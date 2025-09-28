@@ -107,7 +107,7 @@ lazy val CoreProject = (project in file("."))
   )
   .settings(
     name := "core",
-    version := "1.0.0",
+    version := "1.1.0-test",
     organization := "edu.uci.ics",
     scalaVersion := "2.13.12",
     publishMavenStyle := true
