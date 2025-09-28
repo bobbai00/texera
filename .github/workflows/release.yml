@@ -1,0 +1,348 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  JAVA_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+  JVM_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+            RELEASE_TAG="v${VERSION}"
+          else
+            RELEASE_TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${RELEASE_TAG#v}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          echo "Release version: ${VERSION}"
+          echo "Release tag: ${RELEASE_TAG}"
+
+  build-backend:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 11
+
+      - name: Setup sbt launcher
+        uses: sbt/setup-sbt@v1
+
+      - uses: coursier/cache-action@v6
+        with:
+          extraSbtFiles: '["core/*.sbt", "core/project/**.{scala,sbt}", "core/project/build.properties" ]'
+
+      - name: Generate NOTICE file
+        run: |
+          chmod +x scripts/generate-notice.sh
+          ./scripts/generate-notice.sh
+
+      - name: Build Backend Services
+        run: |
+          cd core
+          sbt clean dist
+
+      - name: Prepare Backend Artifacts
+        run: |
+          mkdir -p release-artifacts/backend
+          find core -name "*.zip" -path "*/target/universal/*" -exec cp {} release-artifacts/backend/ \;
+          # Add NOTICE file to each backend artifact
+          for zipfile in release-artifacts/backend/*.zip; do
+            if [ -f "$zipfile" ]; then
+              echo "Adding NOTICE to $(basename $zipfile)"
+              cp NOTICE /tmp/NOTICE
+              zip -j "$zipfile" /tmp/NOTICE
+            fi
+          done
+          ls -la release-artifacts/backend/
+
+      - name: Upload Backend Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: backend-artifacts-${{ needs.prepare-release.outputs.version }}
+          path: release-artifacts/backend/
+
+  build-frontend:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Cache Yarn dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            core/gui/node_modules
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Prepare Yarn 4.5.1
+        run: |
+          corepack enable
+          corepack prepare yarn@4.5.1 --activate
+          yarn --cwd core/gui set version 4.5.1
+
+      - name: Install Dependencies
+        run: yarn --cwd core/gui install --immutable --network-timeout=100000
+
+      - name: Build Frontend
+        run: yarn --cwd core/gui run build:ci
+
+      - name: Generate NOTICE file
+        run: |
+          chmod +x scripts/generate-notice.sh
+          ./scripts/generate-notice.sh
+
+      - name: Package Frontend
+        run: |
+          # Copy NOTICE file to dist directory
+          cp NOTICE core/gui/dist/
+          cd core/gui/dist
+          tar -czf texera-frontend-${{ needs.prepare-release.outputs.version }}.tar.gz *
+          mv texera-frontend-${{ needs.prepare-release.outputs.version }}.tar.gz ../../../
+
+      - name: Upload Frontend Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-artifacts-${{ needs.prepare-release.outputs.version }}
+          path: texera-frontend-${{ needs.prepare-release.outputs.version }}.tar.gz
+
+  build-docker-images:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - dockerfile: texera-web-application.dockerfile
+            image: texera-web-application
+          - dockerfile: computing-unit-master.dockerfile
+            image: computing-unit-master
+          - dockerfile: computing-unit-worker.dockerfile
+            image: computing-unit-worker
+          - dockerfile: config-service.dockerfile
+            image: config-service
+          - dockerfile: file-service.dockerfile
+            image: file-service
+          - dockerfile: workflow-compiling-service.dockerfile
+            image: workflow-compiling-service
+          - dockerfile: workflow-computing-unit-managing-service.dockerfile
+            image: computing-unit-managing-service
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Setup JDK (for building)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 11
+
+      - name: Setup sbt launcher
+        uses: sbt/setup-sbt@v1
+
+      - name: Build Application
+        run: |
+          cd core
+          sbt clean dist
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deployment/${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            texera/${{ matrix.image }}:latest
+            texera/${{ matrix.image }}:${{ needs.prepare-release.outputs.version }}
+            texera/${{ matrix.image }}:${{ needs.prepare-release.outputs.release_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-special-docker-images:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - context: deployment/pylsp
+            dockerfile: deployment/pylsp/Dockerfile
+            image: pylsp
+          - context: deployment/y-websocket-server
+            dockerfile: deployment/y-websocket-server/Dockerfile
+            image: y-websocket-server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            texera/${{ matrix.image }}:latest
+            texera/${{ matrix.image }}:${{ needs.prepare-release.outputs.version }}
+            texera/${{ matrix.image }}:${{ needs.prepare-release.outputs.release_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  create-release:
+    needs: [prepare-release, build-backend, build-frontend, build-docker-images, build-special-docker-images]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Backend Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: backend-artifacts-${{ needs.prepare-release.outputs.version }}
+          path: backend-artifacts/
+
+      - name: Download Frontend Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: frontend-artifacts-${{ needs.prepare-release.outputs.version }}
+          path: frontend-artifacts/
+
+      - name: Prepare Deployment Bundle
+        run: |
+          mkdir -p release-bundle
+          cp -r deployment/single-node release-bundle/texera-single-node-${{ needs.prepare-release.outputs.version }}
+          cd release-bundle
+          tar -czf texera-single-node-${{ needs.prepare-release.outputs.version }}.tar.gz texera-single-node-${{ needs.prepare-release.outputs.version }}
+          cd ..
+
+      - name: Generate Release Notes
+        id: release_notes
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 ${{ needs.prepare-release.outputs.release_tag }}^)
+
+          # Generate changelog
+          echo "## What's Changed" > release_notes.md
+          echo "" >> release_notes.md
+
+          # Get commit messages between tags
+          git log ${PREV_TAG}..${{ needs.prepare-release.outputs.release_tag }} --pretty=format:"- %s (%an)" >> release_notes.md
+
+          echo "" >> release_notes.md
+          echo "## Docker Images" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "The following Docker images have been published to Docker Hub:" >> release_notes.md
+          echo "- \`texera/texera-web-application:${{ needs.prepare-release.outputs.version }}\`" >> release_notes.md
+          echo "- \`texera/computing-unit-master:${{ needs.prepare-release.outputs.version }}\`" >> release_notes.md
+          echo "- \`texera/computing-unit-worker:${{ needs.prepare-release.outputs.version }}\`" >> release_notes.md
+          echo "- \`texera/config-service:${{ needs.prepare-release.outputs.version }}\`" >> release_notes.md
+          echo "- \`texera/file-service:${{ needs.prepare-release.outputs.version }}\`" >> release_notes.md
+          echo "- \`texera/workflow-compiling-service:${{ needs.prepare-release.outputs.version }}\`" >> release_notes.md
+          echo "- \`texera/computing-unit-managing-service:${{ needs.prepare-release.outputs.version }}\`" >> release_notes.md
+          echo "- \`texera/pylsp:${{ needs.prepare-release.outputs.version }}\`" >> release_notes.md
+          echo "- \`texera/y-websocket-server:${{ needs.prepare-release.outputs.version }}\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## Installation" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "Download the single-node deployment bundle and follow the instructions in the [Getting Started Guide](https://github.com/Texera/texera/wiki/Getting-Started)." >> release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.release_tag }}
+          name: Release ${{ needs.prepare-release.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          files: |
+            backend-artifacts/*
+            frontend-artifacts/*
+            release-bundle/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

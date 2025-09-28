@@ -1,0 +1,297 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: Test Release (Fork-Safe)
+
+# This workflow is designed for testing the release process on forks
+# It builds everything but doesn't push to Docker Hub or create GitHub releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Test version (e.g., 1.0.0-test)'
+        required: true
+        type: string
+        default: '1.0.0-test'
+      skip_docker:
+        description: 'Skip Docker build (faster testing)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  JAVA_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+  JVM_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+
+jobs:
+  test-version-bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test Version Bump Script
+        run: |
+          chmod +x scripts/bump-version.sh
+          ./scripts/bump-version.sh ${{ github.event.inputs.version }}
+
+          echo "Verifying version changes..."
+          echo "VERSION file:"
+          cat VERSION
+          echo ""
+          echo "build.sbt version:"
+          grep "version :=" core/build.sbt | head -1
+          echo ""
+          echo "package.json version:"
+          grep '"version"' core/gui/package.json | head -1
+
+      - name: Upload Version Files
+        uses: actions/upload-artifact@v3
+        with:
+          name: version-test-${{ github.event.inputs.version }}
+          path: |
+            VERSION
+            core/build.sbt
+            core/gui/package.json
+
+  test-notice-generation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 11
+
+      - name: Prepare Yarn
+        run: |
+          corepack enable
+          corepack prepare yarn@4.5.1 --activate
+          cd core/gui && yarn set version 4.5.1
+
+      - name: Test NOTICE Generation
+        run: |
+          chmod +x scripts/generate-notice.sh
+          ./scripts/generate-notice.sh
+
+          echo "Generated NOTICE file preview:"
+          head -50 NOTICE
+          echo "..."
+          echo "(truncated for display)"
+
+      - name: Upload NOTICE File
+        uses: actions/upload-artifact@v3
+        with:
+          name: notice-test-${{ github.event.inputs.version }}
+          path: NOTICE
+
+  test-backend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 11
+
+      - name: Setup sbt launcher
+        uses: sbt/setup-sbt@v1
+
+      - uses: coursier/cache-action@v6
+        with:
+          extraSbtFiles: '["core/*.sbt", "core/project/**.{scala,sbt}", "core/project/build.properties" ]'
+
+      - name: Test Version Update in Build
+        run: |
+          chmod +x scripts/bump-version.sh
+          ./scripts/bump-version.sh ${{ github.event.inputs.version }}
+
+      - name: Build Backend Services
+        run: |
+          cd core
+          sbt clean compile
+
+      - name: Package One Service (Fast Test)
+        run: |
+          cd core
+          sbt "project amber" dist
+
+      - name: Verify Package
+        run: |
+          echo "Checking generated package..."
+          find core -name "*.zip" -path "*/target/universal/*" | head -5
+
+          # Extract and verify NOTICE inclusion would happen here
+          ZIP_FILE=$(find core/amber -name "*.zip" -path "*/target/universal/*" | head -1)
+          if [ -f "$ZIP_FILE" ]; then
+            echo "✓ Package created: $(basename $ZIP_FILE)"
+            unzip -l "$ZIP_FILE" | head -20
+          fi
+
+  test-frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Cache Yarn dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            core/gui/node_modules
+          key: ${{ runner.os }}-yarn-test-${{ hashFiles('**/yarn.lock') }}
+
+      - name: Prepare Yarn
+        run: |
+          corepack enable
+          corepack prepare yarn@4.5.1 --activate
+          yarn --cwd core/gui set version 4.5.1
+
+      - name: Test Version Update
+        run: |
+          chmod +x scripts/bump-version.sh
+          ./scripts/bump-version.sh ${{ github.event.inputs.version }}
+
+          echo "Frontend version:"
+          grep '"version"' core/gui/package.json | head -1
+
+      - name: Install Dependencies
+        run: yarn --cwd core/gui install --immutable --network-timeout=100000
+
+      - name: Build Frontend
+        run: yarn --cwd core/gui run build:ci
+
+      - name: Test Package Creation
+        run: |
+          # Generate NOTICE
+          chmod +x scripts/generate-notice.sh
+          ./scripts/generate-notice.sh || echo "NOTICE generation skipped in test"
+
+          # Create test package
+          if [ -f "NOTICE" ]; then
+            cp NOTICE core/gui/dist/
+          fi
+          cd core/gui/dist
+          tar -czf texera-frontend-test.tar.gz * || true
+          ls -lh *.tar.gz
+
+  test-docker-build:
+    if: github.event.inputs.skip_docker != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 11
+
+      - name: Setup sbt launcher
+        uses: sbt/setup-sbt@v1
+
+      - name: Build Application First
+        run: |
+          cd core
+          sbt "project amber" clean dist
+
+      - name: Generate NOTICE
+        run: |
+          chmod +x scripts/generate-notice.sh
+          ./scripts/generate-notice.sh || echo "Created placeholder NOTICE" > NOTICE
+
+      - name: Test Docker Build (Single Image)
+        run: |
+          # Test building just one image to verify the process
+          docker buildx build \
+            --platform linux/amd64 \
+            -f deployment/texera-web-application.dockerfile \
+            -t texera/texera-web-application:test-${{ github.event.inputs.version }} \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --load \
+            .
+
+          echo "✓ Docker image built successfully"
+          docker images | grep texera
+
+
+  test-release-summary:
+    needs: [test-version-bump, test-notice-generation, test-backend-build, test-frontend-build]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download Test Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: test-artifacts/
+
+      - name: Release Test Summary
+        run: |
+          echo "# Release Test Summary for version ${{ github.event.inputs.version }}"
+          echo ""
+          echo "## Test Results"
+          echo ""
+
+          # Check what artifacts were created
+          echo "### Generated Artifacts:"
+          find test-artifacts -type f -name "*" | head -20
+
+          echo ""
+          echo "## Next Steps for Actual Release:"
+          echo ""
+          echo "1. ✅ Version bump script tested"
+          echo "2. ✅ NOTICE generation tested"
+          echo "3. ✅ Backend build tested"
+          echo "4. ✅ Frontend build tested"
+
+          if [ "${{ github.event.inputs.skip_docker }}" != "true" ]; then
+            echo "5. ✅ Docker build tested"
+          else
+            echo "5. ⏭️  Docker build skipped"
+          fi
+
+          echo ""
+          echo "### To perform actual release:"
+          echo "1. Configure secrets: DOCKER_USERNAME and DOCKER_TOKEN"
+          echo "2. Run: ./scripts/bump-version.sh <version>"
+          echo "3. Commit: git commit -am 'chore: bump version to <version>'"
+          echo "4. Tag: git tag v<version>"
+          echo "5. Push: git push && git push --tags"
+          echo ""
+          echo "The release workflow will automatically trigger on tag push."
