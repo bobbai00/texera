@@ -112,8 +112,8 @@ jobs:
           export STORAGE_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME="localhost:5432/texera_iceberg_catalog"
           export STORAGE_ICEBERG_CATALOG_POSTGRES_USERNAME="postgres"
           export STORAGE_ICEBERG_CATALOG_POSTGRES_PASSWORD="postgres"
-          # Run JOOQ generation only
-          sbt "project DAO" compile
+          # Run JOOQ generation
+          sbt "DAO/runMain edu.uci.ics.texera.dao.JooqCodeGenerator"
           echo "JOOQ code generation completed"
 
       - name: Upload JOOQ Generated Code
