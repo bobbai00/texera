@@ -67,6 +67,18 @@ jobs:
   build-backend:
     needs: prepare-release
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -83,6 +95,11 @@ jobs:
       - uses: coursier/cache-action@v6
         with:
           extraSbtFiles: '["core/*.sbt", "core/project/**.{scala,sbt}", "core/project/build.properties" ]'
+
+      - name: Create Database
+        run: psql -h localhost -U postgres -f deployment/k8s/texera-helmchart/files/texera_ddl.sql
+        env:
+          PGPASSWORD: postgres
 
       - name: Generate NOTICE file
         run: |
@@ -169,6 +186,18 @@ jobs:
   build-docker-images:
     needs: prepare-release
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     strategy:
       matrix:
         include:
@@ -211,12 +240,18 @@ jobs:
       - name: Setup sbt launcher
         uses: sbt/setup-sbt@v1
 
-      - name: Build Application
+      - name: Create Database
+        run: psql -h localhost -U postgres -f deployment/k8s/texera-helmchart/files/texera_ddl.sql
+        env:
+          PGPASSWORD: postgres
+
+      - name: Build Application with JOOQ
         run: |
           cd core
+          # JOOQ code generation happens automatically during sbt dist
           sbt clean dist
 
-      - name: Build and Push Docker Image
+      - name: Build and Push Multi-arch Docker Image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -258,7 +293,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
-      - name: Build and Push Docker Image
+      - name: Build and Push Multi-arch Docker Image
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.context }}
