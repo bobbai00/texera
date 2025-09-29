@@ -64,7 +64,7 @@ jobs:
           echo "Release version: ${VERSION}"
           echo "Release tag: ${RELEASE_TAG}"
 
-  build-backend:
+  generate-jooq:
     needs: prepare-release
     runs-on: ubuntu-latest
     services:
@@ -100,6 +100,66 @@ jobs:
         run: psql -h localhost -U postgres -f deployment/k8s/texera-helmchart/files/texera_ddl.sql
         env:
           PGPASSWORD: postgres
+
+      - name: Generate JOOQ Code
+        run: |
+          cd core
+          # Set environment variables to use the PostgreSQL service container
+          export STORAGE_JDBC_URL="jdbc:postgresql://localhost:5432/texera_db?currentSchema=texera_db,public"
+          export STORAGE_JDBC_USERNAME="postgres"
+          export STORAGE_JDBC_PASSWORD="postgres"
+          # Also set Iceberg catalog connection
+          export STORAGE_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME="localhost:5432/texera_iceberg_catalog"
+          export STORAGE_ICEBERG_CATALOG_POSTGRES_USERNAME="postgres"
+          export STORAGE_ICEBERG_CATALOG_POSTGRES_PASSWORD="postgres"
+          # Run JOOQ generation only
+          sbt "project DAO" compile
+          echo "JOOQ code generation completed"
+
+      - name: Upload JOOQ Generated Code
+        uses: actions/upload-artifact@v4
+        with:
+          name: jooq-generated-code
+          path: core/dao/src/main/scala/edu/uci/ics/texera/dao/jooq/generated/
+          retention-days: 1
+
+  build-backend:
+    needs: [prepare-release, generate-jooq]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 11
+
+      - name: Setup sbt launcher
+        uses: sbt/setup-sbt@v1
+
+      - uses: coursier/cache-action@v6
+        with:
+          extraSbtFiles: '["core/*.sbt", "core/project/**.{scala,sbt}", "core/project/build.properties" ]'
+
+      - name: Download JOOQ Generated Code
+        uses: actions/download-artifact@v4
+        with:
+          name: jooq-generated-code
+          path: core/dao/src/main/scala/edu/uci/ics/texera/dao/jooq/generated/
 
       - name: Generate NOTICE file
         run: |
@@ -248,23 +308,16 @@ jobs:
       - name: Setup sbt launcher
         uses: sbt/setup-sbt@v1
 
-      - name: Create Database
-        run: psql -h localhost -U postgres -f deployment/k8s/texera-helmchart/files/texera_ddl.sql
-        env:
-          PGPASSWORD: postgres
+      - name: Download JOOQ Generated Code
+        uses: actions/download-artifact@v4
+        with:
+          name: jooq-generated-code
+          path: core/dao/src/main/scala/edu/uci/ics/texera/dao/jooq/generated/
 
-      - name: Build Application with JOOQ
+      - name: Build Application
         run: |
           cd core
-          # Set environment variables for JOOQ generation to use the PostgreSQL service
-          export STORAGE_JDBC_URL="jdbc:postgresql://localhost:5432/texera_db?currentSchema=texera_db,public"
-          export STORAGE_JDBC_USERNAME="postgres"
-          export STORAGE_JDBC_PASSWORD="postgres"
-          # Also set Iceberg catalog connection
-          export STORAGE_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME="localhost:5432/texera_iceberg_catalog"
-          export STORAGE_ICEBERG_CATALOG_POSTGRES_USERNAME="postgres"
-          export STORAGE_ICEBERG_CATALOG_POSTGRES_PASSWORD="postgres"
-          # JOOQ code generation happens automatically during sbt dist
+          # Build without regenerating JOOQ (already done in previous job)
           sbt clean dist
 
       - name: Build and Push Multi-arch Docker Image
@@ -324,7 +377,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   create-release:
-    needs: [prepare-release, build-backend, build-frontend, build-docker-images, build-special-docker-images]
+    needs: [prepare-release, generate-jooq, build-backend, build-frontend, build-docker-images, build-special-docker-images]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
