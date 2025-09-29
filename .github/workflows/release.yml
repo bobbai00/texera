@@ -109,7 +109,7 @@ jobs:
           ls -la release-artifacts/backend/
 
       - name: Upload Backend Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: backend-artifacts-${{ needs.prepare-release.outputs.version }}
           path: release-artifacts/backend/
@@ -161,7 +161,7 @@ jobs:
           mv texera-frontend-${{ needs.prepare-release.outputs.version }}.tar.gz ../../../
 
       - name: Upload Frontend Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: frontend-artifacts-${{ needs.prepare-release.outputs.version }}
           path: texera-frontend-${{ needs.prepare-release.outputs.version }}.tar.gz
@@ -282,13 +282,13 @@ jobs:
           fetch-depth: 0
 
       - name: Download Backend Artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: backend-artifacts-${{ needs.prepare-release.outputs.version }}
           path: backend-artifacts/
 
       - name: Download Frontend Artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: frontend-artifacts-${{ needs.prepare-release.outputs.version }}
           path: frontend-artifacts/
