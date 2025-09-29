@@ -109,6 +109,14 @@ jobs:
       - name: Build Backend Services
         run: |
           cd core
+          # Set environment variables to use the PostgreSQL service container
+          export STORAGE_JDBC_URL="jdbc:postgresql://localhost:5432/texera_db?currentSchema=texera_db,public"
+          export STORAGE_JDBC_USERNAME="postgres"
+          export STORAGE_JDBC_PASSWORD="postgres"
+          # Also set Iceberg catalog connection
+          export STORAGE_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME="localhost:5432/texera_iceberg_catalog"
+          export STORAGE_ICEBERG_CATALOG_POSTGRES_USERNAME="postgres"
+          export STORAGE_ICEBERG_CATALOG_POSTGRES_PASSWORD="postgres"
           sbt clean dist
 
       - name: Prepare Backend Artifacts
@@ -248,6 +256,14 @@ jobs:
       - name: Build Application with JOOQ
         run: |
           cd core
+          # Set environment variables for JOOQ generation to use the PostgreSQL service
+          export STORAGE_JDBC_URL="jdbc:postgresql://localhost:5432/texera_db?currentSchema=texera_db,public"
+          export STORAGE_JDBC_USERNAME="postgres"
+          export STORAGE_JDBC_PASSWORD="postgres"
+          # Also set Iceberg catalog connection
+          export STORAGE_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME="localhost:5432/texera_iceberg_catalog"
+          export STORAGE_ICEBERG_CATALOG_POSTGRES_USERNAME="postgres"
+          export STORAGE_ICEBERG_CATALOG_POSTGRES_PASSWORD="postgres"
           # JOOQ code generation happens automatically during sbt dist
           sbt clean dist
 
