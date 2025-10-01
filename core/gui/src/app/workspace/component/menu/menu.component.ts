@@ -54,6 +54,7 @@ import { ComputingUnitStatusService } from "../../service/computing-unit-status/
 import { ComputingUnitState } from "../../types/computing-unit-connection.interface";
 import { ComputingUnitSelectionComponent } from "../power-button/computing-unit-selection.component";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
+import { AgentService } from "../../service/agent/agent.service";
 
 /**
  * MenuComponent is the top level menu bar that shows
@@ -114,6 +115,10 @@ export class MenuComponent implements OnInit, OnDestroy {
 
   @ViewChild(ComputingUnitSelectionComponent) computingUnitSelectionComponent!: ComputingUnitSelectionComponent;
 
+  // AI Agent variables
+  public agentPresent: boolean = false;
+  public agentInviting: boolean = false;
+
   constructor(
     public executeWorkflowService: ExecuteWorkflowService,
     public workflowActionService: WorkflowActionService,
@@ -135,7 +140,8 @@ export class MenuComponent implements OnInit, OnDestroy {
     private reportGenerationService: ReportGenerationService,
     private panelService: PanelService,
     private computingUnitStatusService: ComputingUnitStatusService,
-    protected config: GuiConfigService
+    protected config: GuiConfigService,
+    public agentService: AgentService
   ) {
     workflowWebsocketService
       .subscribeToEvent("ExecutionDurationUpdateEvent")
@@ -195,6 +201,13 @@ export class MenuComponent implements OnInit, OnDestroy {
 
     this.registerWorkflowMetadataDisplayRefresh();
     this.handleWorkflowVersionDisplay();
+
+    // Subscribe to agent presence updates
+    this.agentService.agentPresent$
+      .pipe(untilDestroyed(this))
+      .subscribe(present => {
+        this.agentPresent = present;
+      });
   }
 
   ngOnDestroy(): void {
@@ -254,6 +267,58 @@ export class MenuComponent implements OnInit, OnDestroy {
       nzCentered: true,
       nzWidth: "800px",
     });
+  }
+
+  /**
+   * Invites the AI Assistant to join the workflow
+   */
+  public async onClickInviteAgent(): Promise<void> {
+    if (this.agentInviting) {
+      return;
+    }
+
+    // Check if workflow is saved
+    if (!this.workflowId) {
+      this.notificationService.error("Please save the workflow before inviting AI Assistant");
+      return;
+    }
+
+    // Check if user is logged in
+    if (!this.userService.isLogin()) {
+      this.notificationService.error("Please login to use AI Assistant");
+      return;
+    }
+
+    this.agentInviting = true;
+
+    try {
+      // Show model selection dialog if needed
+      const modelConfig = await firstValueFrom(this.agentService.selectModel());
+      if (modelConfig) {
+        await firstValueFrom(this.agentService.inviteToWorkflow(modelConfig));
+      }
+    } catch (error) {
+      console.error("Error inviting AI Assistant:", error);
+      this.notificationService.error("Failed to invite AI Assistant");
+    } finally {
+      this.agentInviting = false;
+    }
+  }
+
+  /**
+   * Removes the AI Assistant from the workflow
+   */
+  public async onClickRemoveAgent(): Promise<void> {
+    if (!this.agentPresent) {
+      return;
+    }
+
+    try {
+      await firstValueFrom(this.agentService.removeFromWorkflow());
+    } catch (error) {
+      console.error("Error removing AI Assistant:", error);
+      this.notificationService.error("Failed to remove AI Assistant");
+    }
   }
 
   // apply a behavior to the run button via bound variables

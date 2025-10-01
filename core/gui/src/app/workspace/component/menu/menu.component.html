@@ -88,8 +88,11 @@
       </div>
 
       <ng-container *ngFor="let user of coeditorPresenceService.coeditors">
-        <texera-coeditor-user-icon [coeditor]="user"></texera-coeditor-user-icon>
+        <texera-coeditor-user-icon *ngIf="user.uid > 0" [coeditor]="user"></texera-coeditor-user-icon>
       </ng-container>
+
+      <!-- Show AI Agent presence indicator separately -->
+      <texera-agent-presence-indicator [compact]="true"></texera-agent-presence-indicator>
 
       <texera-user-icon></texera-user-icon>
     </div>
@@ -339,6 +342,19 @@
             nzType="share-alt"
             nzTheme="outline"></span>
           Share
+        </button>
+        <button
+          nz-button
+          id="agent-button"
+          *ngIf="this.config.env.userSystemEnabled"
+          (click)="agentPresent ? onClickRemoveAgent() : onClickInviteAgent()"
+          [disabled]="agentInviting || !isWorkflowModifiable"
+          [nzType]="agentPresent ? 'default' : 'primary'">
+          <span
+            nz-icon
+            [nzType]="agentPresent ? 'robot' : 'robot'"
+            nzTheme="outline"></span>
+          {{ agentPresent ? 'Remove AI' : 'AI Assistant' }}
         </button>
         <button
           (click)="handleKill()"

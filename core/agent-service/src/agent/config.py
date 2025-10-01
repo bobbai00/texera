@@ -1,0 +1,141 @@
+"""
+Configuration management for the agent service.
+"""
+
+import os
+from pathlib import Path
+from typing import Dict, Any, Optional
+from pyhocon import ConfigFactory
+import structlog
+
+logger = structlog.get_logger()
+
+
+class AgentConfig:
+    """Manages agent service configuration from HOCON file and environment variables."""
+
+    def __init__(self, config_path: Optional[str] = None):
+        """
+        Initialize configuration.
+
+        Args:
+            config_path: Path to the configuration file. If None, uses default path.
+        """
+        if config_path is None:
+            # Default to conf/src/main/resources/agent-service.conf
+            base_dir = Path(__file__).parent.parent.parent.parent
+            config_path = base_dir / "conf" / "src" / "main" / "resources" / "agent-service.conf"
+
+        self.config_path = Path(config_path)
+        self.config = self._load_config()
+
+    def _load_config(self) -> Dict[str, Any]:
+        """Load configuration from HOCON file and environment variables."""
+        if not self.config_path.exists():
+            logger.warning(f"Config file not found: {self.config_path}, using defaults")
+            return self._get_default_config()
+
+        try:
+            config = ConfigFactory.parse_file(self.config_path)
+            # Resolve environment variables
+            config = ConfigFactory.parse_string(str(config))
+            return config
+        except Exception as e:
+            logger.error(f"Error loading config: {e}, using defaults")
+            return self._get_default_config()
+
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Get default configuration."""
+        return {
+            "agent": {
+                "enabled": True,
+                "providers": {
+                    "openai": {
+                        "apiKey": os.getenv("OPENAI_API_KEY", ""),
+                        "baseUrl": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+                    },
+                    "anthropic": {
+                        "apiKey": os.getenv("ANTHROPIC_API_KEY", ""),
+                        "baseUrl": os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1")
+                    }
+                },
+                "defaultModel": {
+                    "provider": os.getenv("AGENT_DEFAULT_PROVIDER", "openai"),
+                    "model": os.getenv("AGENT_DEFAULT_MODEL", "gpt-4-turbo-preview"),
+                    "temperature": float(os.getenv("AGENT_DEFAULT_TEMPERATURE", "0.7")),
+                    "maxTokens": int(os.getenv("AGENT_DEFAULT_MAX_TOKENS", "4096"))
+                },
+                "rateLimit": {
+                    "requestsPerMinute": int(os.getenv("AGENT_RATE_LIMIT_RPM", "60")),
+                    "tokensPerMinute": int(os.getenv("AGENT_RATE_LIMIT_TPM", "100000"))
+                },
+                "sharedEditing": {
+                    "url": os.getenv("SHARED_EDITING_URL", "ws://localhost:1234"),
+                    "reconnectInterval": int(os.getenv("SHARED_EDITING_RECONNECT_INTERVAL", "5000")),
+                    "maxReconnectAttempts": int(os.getenv("SHARED_EDITING_MAX_RECONNECT", "5"))
+                },
+                "capabilities": {
+                    "workflowEditing": True,
+                    "executionControl": True,
+                    "resultViewing": True,
+                    "suggestionMode": True
+                },
+                "security": {
+                    "maxWorkflowSize": int(os.getenv("AGENT_MAX_WORKFLOW_SIZE", "1000")),
+                    "operationTimeout": int(os.getenv("AGENT_OPERATION_TIMEOUT", "30")),
+                    "auditLogging": os.getenv("AGENT_AUDIT_LOGGING", "true").lower() == "true"
+                }
+            }
+        }
+
+    def get(self, path: str, default: Any = None) -> Any:
+        """
+        Get configuration value by path.
+
+        Args:
+            path: Dot-separated path to the configuration value
+            default: Default value if path not found
+
+        Returns:
+            Configuration value or default
+        """
+        parts = path.split(".")
+        value = self.config
+
+        for part in parts:
+            if isinstance(value, dict) and part in value:
+                value = value[part]
+            else:
+                return default
+
+        return value
+
+    @property
+    def is_enabled(self) -> bool:
+        """Check if agent service is enabled."""
+        return self.get("agent.enabled", True)
+
+    @property
+    def openai_api_key(self) -> str:
+        """Get OpenAI API key."""
+        return self.get("agent.providers.openai.apiKey", "")
+
+    @property
+    def anthropic_api_key(self) -> str:
+        """Get Anthropic API key."""
+        return self.get("agent.providers.anthropic.apiKey", "")
+
+    @property
+    def default_model(self) -> Dict[str, Any]:
+        """Get default model configuration."""
+        return self.get("agent.defaultModel", {})
+
+    @property
+    def shared_editing_url(self) -> str:
+        """Get shared editing WebSocket URL."""
+        return self.get("agent.sharedEditing.url", "ws://localhost:1234")
+
+    @property
+    def rate_limits(self) -> Dict[str, int]:
+        """Get rate limit configuration."""
+        return self.get("agent.rateLimit", {})
