@@ -4,8 +4,14 @@ Pydantic models for agent service.
 
 from enum import Enum
 from typing import Dict, Any, Optional, List, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, field_serializer
 import time
+
+
+def to_camel(string: str) -> str:
+    """Convert snake_case to camelCase."""
+    components = string.split('_')
+    return components[0] + ''.join(x.title() for x in components[1:])
 
 
 class AgentStatus(str, Enum):
@@ -146,20 +152,26 @@ class GetExecutionStatusTool(BaseModel):
 # API Request/Response models
 class InviteAgentRequest(BaseModel):
     """Request to invite agent to workflow."""
-    workflow_id: int
-    llm_config: Optional[ModelConfig] = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    workflow_id: int = Field(..., alias="workflowId")
+    llm_config: Optional[ModelConfig] = Field(None, alias="modelConfig")
 
 
 class InviteAgentResponse(BaseModel):
     """Response from agent invitation."""
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)
+
     success: bool
-    agent_user_id: Optional[int] = None
+    agent_user_id: Optional[int] = Field(None, serialization_alias="agentUserId")
     message: str
 
 
 class RemoveAgentRequest(BaseModel):
     """Request to remove agent from workflow."""
-    workflow_id: int
+    model_config = ConfigDict(populate_by_name=True)
+
+    workflow_id: int = Field(..., alias="workflowId")
 
 
 class RemoveAgentResponse(BaseModel):
