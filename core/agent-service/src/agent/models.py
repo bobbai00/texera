@@ -73,7 +73,7 @@ class AgentSession(BaseModel):
     """Active agent session."""
     workflow_id: int
     agent_user_id: int
-    model_config: ModelConfig
+    llm_config: ModelConfig
     start_time: int
     status: AgentStatus = AgentStatus.CONNECTING
     workflow_state: Optional[WorkflowState] = None
@@ -147,7 +147,7 @@ class GetExecutionStatusTool(BaseModel):
 class InviteAgentRequest(BaseModel):
     """Request to invite agent to workflow."""
     workflow_id: int
-    model_config: Optional[ModelConfig] = None
+    llm_config: Optional[ModelConfig] = None
 
 
 class InviteAgentResponse(BaseModel):

@@ -71,7 +71,7 @@ class AgentService:
             session = AgentSession(
                 workflow_id=workflow_id,
                 agent_user_id=self._generate_agent_user_id(),
-                model_config=request.model_config or ModelConfig(**self.config.default_model),
+                llm_config=request.llm_config or ModelConfig(**self.config.default_model),
                 start_time=int(time.time() * 1000),
                 status=AgentStatus.CONNECTING,
                 workflow_state=WorkflowState()
@@ -191,7 +191,7 @@ class AgentService:
             tool_response = await self.llm_provider.get_tool_completion(
                 messages=messages,
                 tools=self.workflow_toolkit.get_tool_classes(),
-                model_config=session.model_config
+                model_config=session.llm_config
             )
 
             if tool_response:

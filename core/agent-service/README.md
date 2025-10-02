@@ -35,7 +35,7 @@ uv pip install -e ".[dev]"
 
 ## Configuration
 
-The service reads configuration from `conf/src/main/resources/agent-service.conf`.
+The service reads configuration from `config/src/main/resources/agent-service.conf`.
 
 Key environment variables:
 - `OPENAI_API_KEY`: OpenAI API key

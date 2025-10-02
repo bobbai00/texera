@@ -22,71 +22,21 @@ class AgentConfig:
             config_path: Path to the configuration file. If None, uses default path.
         """
         if config_path is None:
-            # Default to conf/src/main/resources/agent-service.conf
+            # Default to config/src/main/resources/agent-service.conf
             base_dir = Path(__file__).parent.parent.parent.parent
-            config_path = base_dir / "conf" / "src" / "main" / "resources" / "agent-service.conf"
+            config_path = base_dir / "config" / "src" / "main" / "resources" / "agent-service.conf"
 
         self.config_path = Path(config_path)
         self.config = self._load_config()
 
     def _load_config(self) -> Dict[str, Any]:
-        """Load configuration from HOCON file and environment variables."""
+        """Load configuration from HOCON file with environment variable substitution."""
         if not self.config_path.exists():
-            logger.warning(f"Config file not found: {self.config_path}, using defaults")
-            return self._get_default_config()
+            raise FileNotFoundError(f"Config file not found: {self.config_path}")
 
-        try:
-            config = ConfigFactory.parse_file(self.config_path)
-            # Resolve environment variables
-            config = ConfigFactory.parse_string(str(config))
-            return config
-        except Exception as e:
-            logger.error(f"Error loading config: {e}, using defaults")
-            return self._get_default_config()
-
-    def _get_default_config(self) -> Dict[str, Any]:
-        """Get default configuration."""
-        return {
-            "agent": {
-                "enabled": True,
-                "providers": {
-                    "openai": {
-                        "apiKey": os.getenv("OPENAI_API_KEY", ""),
-                        "baseUrl": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-                    },
-                    "anthropic": {
-                        "apiKey": os.getenv("ANTHROPIC_API_KEY", ""),
-                        "baseUrl": os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1")
-                    }
-                },
-                "defaultModel": {
-                    "provider": os.getenv("AGENT_DEFAULT_PROVIDER", "openai"),
-                    "model": os.getenv("AGENT_DEFAULT_MODEL", "gpt-4-turbo-preview"),
-                    "temperature": float(os.getenv("AGENT_DEFAULT_TEMPERATURE", "0.7")),
-                    "maxTokens": int(os.getenv("AGENT_DEFAULT_MAX_TOKENS", "4096"))
-                },
-                "rateLimit": {
-                    "requestsPerMinute": int(os.getenv("AGENT_RATE_LIMIT_RPM", "60")),
-                    "tokensPerMinute": int(os.getenv("AGENT_RATE_LIMIT_TPM", "100000"))
-                },
-                "sharedEditing": {
-                    "url": os.getenv("SHARED_EDITING_URL", "ws://localhost:1234"),
-                    "reconnectInterval": int(os.getenv("SHARED_EDITING_RECONNECT_INTERVAL", "5000")),
-                    "maxReconnectAttempts": int(os.getenv("SHARED_EDITING_MAX_RECONNECT", "5"))
-                },
-                "capabilities": {
-                    "workflowEditing": True,
-                    "executionControl": True,
-                    "resultViewing": True,
-                    "suggestionMode": True
-                },
-                "security": {
-                    "maxWorkflowSize": int(os.getenv("AGENT_MAX_WORKFLOW_SIZE", "1000")),
-                    "operationTimeout": int(os.getenv("AGENT_OPERATION_TIMEOUT", "30")),
-                    "auditLogging": os.getenv("AGENT_AUDIT_LOGGING", "true").lower() == "true"
-                }
-            }
-        }
+        # Load the HOCON file - pyhocon automatically resolves ${?VAR} environment variables
+        config = ConfigFactory.parse_file(str(self.config_path))
+        return config.as_plain_ordered_dict()
 
     def get(self, path: str, default: Any = None) -> Any:
         """
