@@ -114,13 +114,9 @@ export class AgentPresenceIndicatorComponent implements OnInit {
   }
 
   /**
-   * Gets the agent display name with model info
+   * Gets the agent display name
    */
   public getAgentDisplayName(): string {
-    const session = this.agentService.getCurrentSession();
-    if (session && session.modelConfig) {
-      return `AI Assistant (${session.modelConfig.model})`;
-    }
     return "AI Assistant";
   }
 }

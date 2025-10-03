@@ -19,15 +19,16 @@ env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
     try:
         from dotenv import load_dotenv
+
         load_dotenv(env_path)
         print(f"Loaded environment variables from {env_path}")
     except ImportError:
         # If dotenv is not installed, just read the file manually
-        with open(env_path, 'r') as f:
+        with open(env_path, "r") as f:
             for line in f:
                 line = line.strip()
-                if line and not line.startswith('#'):
-                    key, _, value = line.partition('=')
+                if line and not line.startswith("#"):
+                    key, _, value = line.partition("=")
                     if key and value:
                         os.environ[key.strip()] = value.strip()
         print(f"Loaded environment variables from {env_path} (manual parsing)")
@@ -45,9 +46,7 @@ def setup_logging(log_level: str = "DEBUG"):
     """
     # Configure standard logging
     logging.basicConfig(
-        format="%(message)s",
-        level=getattr(logging, log_level.upper()),
-        stream=sys.stdout
+        format="%(message)s", level=getattr(logging, log_level.upper()), stream=sys.stdout
     )
 
     # Configure structlog
@@ -61,7 +60,7 @@ def setup_logging(log_level: str = "DEBUG"):
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.processors.UnicodeDecoder(),
-            structlog.dev.ConsoleRenderer()
+            structlog.dev.ConsoleRenderer(),
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,
@@ -120,7 +119,9 @@ def log_config_info(config: AgentConfig):
         api_key = provider_config.get("apiKey", "")
         if api_key:
             available_providers.append(provider)
-    logger.info(f"Available providers: {', '.join(available_providers) if available_providers else 'None'}")
+    logger.info(
+        f"Available providers: {', '.join(available_providers) if available_providers else 'None'}"
+    )
 
     logger.info("=" * 60)
 
@@ -129,33 +130,17 @@ def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Texera Agent Service")
     parser.add_argument(
-        "--host",
-        type=str,
-        default="0.0.0.0",
-        help="Host to bind to (default: 0.0.0.0)"
+        "--host", type=str, default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
     )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8090,
-        help="Port to bind to (default: 8090)"
-    )
-    parser.add_argument(
-        "--reload",
-        action="store_true",
-        help="Enable auto-reload for development"
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        help="Path to configuration file"
-    )
+    parser.add_argument("--port", type=int, default=8090, help="Port to bind to (default: 8090)")
+    parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
+    parser.add_argument("--config", type=str, help="Path to configuration file")
     parser.add_argument(
         "--log-level",
         type=str,
         default="DEBUG",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Log level (default: DEBUG)"
+        help="Log level (default: DEBUG)",
     )
 
     args = parser.parse_args()
@@ -184,11 +169,7 @@ def main():
 
     # Start the server
     logger.info(f"Starting agent service on {args.host}:{args.port}")
-    start_server(
-        host=args.host,
-        port=args.port,
-        reload=args.reload
-    )
+    start_server(host=args.host, port=args.port, reload=args.reload)
 
 
 if __name__ == "__main__":

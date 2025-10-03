@@ -19,7 +19,7 @@ from .models import (
     GetOperatorInfoTool,
     GetExecutionStatusTool,
     WorkflowState,
-    AgentSession
+    AgentSession,
 )
 
 logger = structlog.get_logger()
@@ -41,7 +41,7 @@ class WorkflowToolkit:
             ViewOperatorResultsTool,
             GetWorkflowGraphTool,
             GetOperatorInfoTool,
-            GetExecutionStatusTool
+            GetExecutionStatusTool,
         ]
 
     def get_tool_classes(self):
@@ -49,10 +49,7 @@ class WorkflowToolkit:
         return self.tool_classes
 
     async def execute_tool(
-        self,
-        tool_instance: Any,
-        session: AgentSession,
-        ws_connection: Optional[Any] = None
+        self, tool_instance: Any, session: AgentSession, ws_connection: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
         Execute a tool instance.
@@ -99,10 +96,7 @@ class WorkflowToolkit:
             return {"success": False, "error": str(e)}
 
     async def _execute_add_operator(
-        self,
-        tool: AddOperatorTool,
-        session: AgentSession,
-        ws_connection: Optional[Any]
+        self, tool: AddOperatorTool, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
         """Execute add operator tool through HTTP API."""
         # Instead of WebSocket, we'll use HTTP API to add operator
@@ -121,13 +115,14 @@ class WorkflowToolkit:
             "outputPorts": [],
             "showAdvanced": False,
             "isDisabled": False,
-            "customDisplayName": tool.display_name
+            "customDisplayName": tool.display_name,
         }
 
         # Call Texera backend API to add operator
         try:
             # Get the backend URL from environment or use default
             import os
+
             backend_url = os.environ.get("TEXERA_BACKEND_URL", "http://localhost:8080")
 
             async with aiohttp.ClientSession() as http_session:
@@ -136,9 +131,11 @@ class WorkflowToolkit:
                     f"{backend_url}/api/workflow/{session.workflow_id}/operator",
                     json={
                         "operator": operator_data,
-                        "position": {"x": position.x if hasattr(position, 'x') else position["x"],
-                                   "y": position.y if hasattr(position, 'y') else position["y"]}
-                    }
+                        "position": {
+                            "x": position.x if hasattr(position, "x") else position["x"],
+                            "y": position.y if hasattr(position, "y") else position["y"],
+                        },
+                    },
                 ) as resp:
                     if resp.status == 200:
                         logger.info(f"Added operator {tool.operator_id} via API")
@@ -151,32 +148,27 @@ class WorkflowToolkit:
         # Update local state
         if session.workflow_state:
             from .models import OperatorInfo
+
             session.workflow_state.operators.append(
                 OperatorInfo(
                     operator_id=tool.operator_id,
                     operator_type=tool.operator_type,
                     display_name=tool.display_name,
-                    position=tool.position
+                    position=tool.position,
                 )
             )
 
         return {
             "success": True,
             "operator_id": tool.operator_id,
-            "message": f"Added operator {tool.display_name}"
+            "message": f"Added operator {tool.display_name}",
         }
 
     async def _execute_delete_operator(
-        self,
-        tool: DeleteOperatorTool,
-        session: AgentSession,
-        ws_connection: Optional[Any]
+        self, tool: DeleteOperatorTool, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
         """Execute delete operator tool."""
-        event = {
-            "type": "operatorDelete",
-            "operatorId": tool.operator_id
-        }
+        event = {"type": "operatorDelete", "operatorId": tool.operator_id}
 
         if ws_connection:
             await self._send_to_websocket(ws_connection, event)
@@ -184,27 +176,23 @@ class WorkflowToolkit:
         # Update local state
         if session.workflow_state:
             session.workflow_state.operators = [
-                op for op in session.workflow_state.operators
-                if op.operator_id != tool.operator_id
+                op for op in session.workflow_state.operators if op.operator_id != tool.operator_id
             ]
 
         return {
             "success": True,
             "deleted": tool.operator_id,
-            "message": f"Deleted operator {tool.operator_id}"
+            "message": f"Deleted operator {tool.operator_id}",
         }
 
     async def _execute_set_property(
-        self,
-        tool: SetOperatorPropertyTool,
-        session: AgentSession,
-        ws_connection: Optional[Any]
+        self, tool: SetOperatorPropertyTool, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
         """Execute set operator property tool."""
         event = {
             "type": "operatorPropertyChange",
             "operatorId": tool.operator_id,
-            "properties": tool.properties
+            "properties": tool.properties,
         }
 
         if ws_connection:
@@ -220,27 +208,18 @@ class WorkflowToolkit:
         return {
             "success": True,
             "operator_id": tool.operator_id,
-            "message": f"Updated properties for {tool.operator_id}"
+            "message": f"Updated properties for {tool.operator_id}",
         }
 
     async def _execute_add_link(
-        self,
-        tool: AddLinkTool,
-        session: AgentSession,
-        ws_connection: Optional[Any]
+        self, tool: AddLinkTool, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
         """Execute add link tool."""
         event = {
             "type": "linkAdd",
             "linkId": tool.link_id,
-            "source": {
-                "operatorId": tool.source_operator_id,
-                "portId": tool.source_port_id
-            },
-            "target": {
-                "operatorId": tool.target_operator_id,
-                "portId": tool.target_port_id
-            }
+            "source": {"operatorId": tool.source_operator_id, "portId": tool.source_port_id},
+            "target": {"operatorId": tool.target_operator_id, "portId": tool.target_port_id},
         }
 
         if ws_connection:
@@ -249,37 +228,26 @@ class WorkflowToolkit:
         # Update local state
         if session.workflow_state:
             from .models import LinkInfo, PortInfo
+
             session.workflow_state.links.append(
                 LinkInfo(
                     link_id=tool.link_id,
                     source=PortInfo(
-                        operator_id=tool.source_operator_id,
-                        port_id=tool.source_port_id
+                        operator_id=tool.source_operator_id, port_id=tool.source_port_id
                     ),
                     target=PortInfo(
-                        operator_id=tool.target_operator_id,
-                        port_id=tool.target_port_id
-                    )
+                        operator_id=tool.target_operator_id, port_id=tool.target_port_id
+                    ),
                 )
             )
 
-        return {
-            "success": True,
-            "link_id": tool.link_id,
-            "message": f"Added link {tool.link_id}"
-        }
+        return {"success": True, "link_id": tool.link_id, "message": f"Added link {tool.link_id}"}
 
     async def _execute_delete_link(
-        self,
-        tool: DeleteLinkTool,
-        session: AgentSession,
-        ws_connection: Optional[Any]
+        self, tool: DeleteLinkTool, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
         """Execute delete link tool."""
-        event = {
-            "type": "linkDelete",
-            "linkId": tool.link_id
-        }
+        event = {"type": "linkDelete", "linkId": tool.link_id}
 
         if ws_connection:
             await self._send_to_websocket(ws_connection, event)
@@ -287,20 +255,13 @@ class WorkflowToolkit:
         # Update local state
         if session.workflow_state:
             session.workflow_state.links = [
-                link for link in session.workflow_state.links
-                if link.link_id != tool.link_id
+                link for link in session.workflow_state.links if link.link_id != tool.link_id
             ]
 
-        return {
-            "success": True,
-            "deleted": tool.link_id,
-            "message": f"Deleted link {tool.link_id}"
-        }
+        return {"success": True, "deleted": tool.link_id, "message": f"Deleted link {tool.link_id}"}
 
     async def _execute_run_workflow(
-        self,
-        session: AgentSession,
-        ws_connection: Optional[Any]
+        self, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
         """Execute run workflow tool."""
         event = {"type": "executeWorkflow"}
@@ -312,16 +273,10 @@ class WorkflowToolkit:
         if session.workflow_state:
             session.workflow_state.execution_status = "running"
 
-        return {
-            "success": True,
-            "status": "running",
-            "message": "Workflow execution started"
-        }
+        return {"success": True, "status": "running", "message": "Workflow execution started"}
 
     async def _execute_pause_workflow(
-        self,
-        session: AgentSession,
-        ws_connection: Optional[Any]
+        self, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
         """Execute pause workflow tool."""
         event = {"type": "pauseWorkflow"}
@@ -333,23 +288,13 @@ class WorkflowToolkit:
         if session.workflow_state:
             session.workflow_state.execution_status = "paused"
 
-        return {
-            "success": True,
-            "status": "paused",
-            "message": "Workflow execution paused"
-        }
+        return {"success": True, "status": "paused", "message": "Workflow execution paused"}
 
     async def _execute_view_results(
-        self,
-        tool: ViewOperatorResultsTool,
-        session: AgentSession,
-        ws_connection: Optional[Any]
+        self, tool: ViewOperatorResultsTool, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
         """Execute view operator results tool."""
-        event = {
-            "type": "viewResults",
-            "operatorId": tool.operator_id
-        }
+        event = {"type": "viewResults", "operatorId": tool.operator_id}
 
         if ws_connection:
             await self._send_to_websocket(ws_connection, event)
@@ -357,48 +302,36 @@ class WorkflowToolkit:
         return {
             "success": True,
             "operator_id": tool.operator_id,
-            "message": f"Viewing results for {tool.operator_id}"
+            "message": f"Viewing results for {tool.operator_id}",
         }
 
     async def _execute_get_graph(self, session: AgentSession) -> Dict[str, Any]:
         """Execute get workflow graph tool."""
         if not session.workflow_state:
-            return {
-                "success": False,
-                "error": "No workflow state available"
-            }
+            return {"success": False, "error": "No workflow state available"}
 
         return {
             "success": True,
             "operators": [
-                {
-                    "id": op.operator_id,
-                    "type": op.operator_type,
-                    "name": op.display_name
-                }
+                {"id": op.operator_id, "type": op.operator_type, "name": op.display_name}
                 for op in session.workflow_state.operators
             ],
             "links": [
                 {
                     "id": link.link_id,
                     "source": link.source.operator_id,
-                    "target": link.target.operator_id
+                    "target": link.target.operator_id,
                 }
                 for link in session.workflow_state.links
-            ]
+            ],
         }
 
     async def _execute_get_operator_info(
-        self,
-        tool: GetOperatorInfoTool,
-        session: AgentSession
+        self, tool: GetOperatorInfoTool, session: AgentSession
     ) -> Dict[str, Any]:
         """Execute get operator info tool."""
         if not session.workflow_state:
-            return {
-                "success": False,
-                "error": "No workflow state available"
-            }
+            return {"success": False, "error": "No workflow state available"}
 
         for op in session.workflow_state.operators:
             if op.operator_id == tool.operator_id:
@@ -408,14 +341,11 @@ class WorkflowToolkit:
                         "id": op.operator_id,
                         "type": op.operator_type,
                         "name": op.display_name,
-                        "properties": op.properties
-                    }
+                        "properties": op.properties,
+                    },
                 }
 
-        return {
-            "success": False,
-            "error": f"Operator {tool.operator_id} not found"
-        }
+        return {"success": False, "error": f"Operator {tool.operator_id} not found"}
 
     async def _execute_get_status(self, session: AgentSession) -> Dict[str, Any]:
         """Execute get execution status tool."""
@@ -423,11 +353,7 @@ class WorkflowToolkit:
         if session.workflow_state and session.workflow_state.execution_status:
             status = session.workflow_state.execution_status
 
-        return {
-            "success": True,
-            "status": status,
-            "message": f"Workflow status: {status}"
-        }
+        return {"success": True, "status": status, "message": f"Workflow status: {status}"}
 
     async def _send_to_websocket(self, ws_connection: Any, event: Dict[str, Any]):
         """Send event to WebSocket connection."""

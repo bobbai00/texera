@@ -10,12 +10,13 @@ import time
 
 def to_camel(string: str) -> str:
     """Convert snake_case to camelCase."""
-    components = string.split('_')
-    return components[0] + ''.join(x.title() for x in components[1:])
+    components = string.split("_")
+    return components[0] + "".join(x.title() for x in components[1:])
 
 
 class AgentStatus(str, Enum):
     """Agent connection status."""
+
     CONNECTING = "Connecting"
     CONNECTED = "Connected"
     ACTIVE = "Active"
@@ -25,6 +26,7 @@ class AgentStatus(str, Enum):
 
 class ModelConfig(BaseModel):
     """LLM model configuration."""
+
     provider: str = Field(default="openai", description="LLM provider")
     model: str = Field(default="gpt-4-turbo-preview", description="Model name")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
@@ -33,18 +35,21 @@ class ModelConfig(BaseModel):
 
 class Position(BaseModel):
     """Position in workflow canvas."""
+
     x: float
     y: float
 
 
 class PortInfo(BaseModel):
     """Port information for links."""
+
     operator_id: str = Field(description="ID of the operator")
     port_id: str = Field(description="ID of the port")
 
 
 class OperatorInfo(BaseModel):
     """Operator information."""
+
     operator_id: str = Field(description="Unique operator ID")
     operator_type: str = Field(description="Type of operator")
     display_name: str = Field(description="Display name")
@@ -54,6 +59,7 @@ class OperatorInfo(BaseModel):
 
 class LinkInfo(BaseModel):
     """Link information."""
+
     link_id: str = Field(description="Unique link ID")
     source: PortInfo = Field(description="Source port")
     target: PortInfo = Field(description="Target port")
@@ -61,6 +67,7 @@ class LinkInfo(BaseModel):
 
 class WorkflowState(BaseModel):
     """Current workflow state."""
+
     operators: List[OperatorInfo] = Field(default_factory=list)
     links: List[LinkInfo] = Field(default_factory=list)
     execution_status: Optional[str] = None
@@ -68,6 +75,7 @@ class WorkflowState(BaseModel):
 
 class WorkflowEvent(BaseModel):
     """Event from shared editing system."""
+
     event_type: str
     operator_id: Optional[str] = None
     link_id: Optional[str] = None
@@ -77,6 +85,7 @@ class WorkflowEvent(BaseModel):
 
 class AgentSession(BaseModel):
     """Active agent session."""
+
     workflow_id: int
     agent_user_id: int
     llm_config: ModelConfig
@@ -88,6 +97,7 @@ class AgentSession(BaseModel):
 # Tool models for instructor
 class AddOperatorTool(BaseModel):
     """Add a new operator to the workflow."""
+
     operator_type: str = Field(description="Type of operator (e.g., 'CSVScanSource', 'Filter')")
     operator_id: str = Field(description="Unique ID for the operator")
     display_name: str = Field(description="Display name for the operator")
@@ -96,17 +106,20 @@ class AddOperatorTool(BaseModel):
 
 class DeleteOperatorTool(BaseModel):
     """Delete an operator from the workflow."""
+
     operator_id: str = Field(description="ID of operator to delete")
 
 
 class SetOperatorPropertyTool(BaseModel):
     """Set or update operator properties."""
+
     operator_id: str = Field(description="ID of operator to modify")
     properties: Dict[str, Any] = Field(description="Properties to set")
 
 
 class AddLinkTool(BaseModel):
     """Add a link between two operators."""
+
     link_id: str = Field(description="Unique ID for the link")
     source_operator_id: str = Field(description="Source operator ID")
     source_port_id: str = Field(description="Source port ID")
@@ -116,50 +129,50 @@ class AddLinkTool(BaseModel):
 
 class DeleteLinkTool(BaseModel):
     """Delete a link from the workflow."""
+
     link_id: str = Field(description="ID of link to delete")
 
 
 class RunWorkflowTool(BaseModel):
     """Execute the workflow."""
+
     pass
 
 
 class PauseWorkflowTool(BaseModel):
     """Pause workflow execution."""
+
     pass
 
 
 class ViewOperatorResultsTool(BaseModel):
     """View execution results of an operator."""
+
     operator_id: str = Field(description="ID of operator whose results to view")
 
 
 class GetWorkflowGraphTool(BaseModel):
     """Get the current workflow graph structure."""
+
     pass
 
 
 class GetOperatorInfoTool(BaseModel):
     """Get detailed information about an operator."""
+
     operator_id: str = Field(description="ID of operator to get info about")
 
 
 class GetExecutionStatusTool(BaseModel):
     """Get current workflow execution status."""
+
     pass
 
 
 # API Request/Response models
-class InviteAgentRequest(BaseModel):
-    """Request to invite agent to workflow."""
-    model_config = ConfigDict(populate_by_name=True)
-
-    workflow_id: int = Field(..., alias="workflowId")
-    llm_config: Optional[ModelConfig] = Field(None, alias="modelConfig")
-
-
 class InviteAgentResponse(BaseModel):
     """Response from agent invitation."""
+
     model_config = ConfigDict(populate_by_name=True, by_alias=True)
 
     success: bool
@@ -167,21 +180,16 @@ class InviteAgentResponse(BaseModel):
     message: str
 
 
-class RemoveAgentRequest(BaseModel):
-    """Request to remove agent from workflow."""
-    model_config = ConfigDict(populate_by_name=True)
-
-    workflow_id: int = Field(..., alias="workflowId")
-
-
 class RemoveAgentResponse(BaseModel):
     """Response from agent removal."""
+
     success: bool
     message: str
 
 
 class AgentStatusResponse(BaseModel):
     """Agent status response."""
+
     workflow_id: int
     is_active: bool
     status: Optional[AgentStatus] = None
@@ -189,6 +197,7 @@ class AgentStatusResponse(BaseModel):
 
 class ModelInfo(BaseModel):
     """Available model information."""
+
     id: str
     name: str
     provider: str
@@ -196,12 +205,14 @@ class ModelInfo(BaseModel):
 
 class AvailableModelsResponse(BaseModel):
     """Response with available models."""
+
     models: List[ModelInfo]
 
 
 # Chat models
 class ChatMessage(BaseModel):
     """A single chat message."""
+
     model_config = ConfigDict(populate_by_name=True, by_alias=True)
 
     role: Literal["user", "assistant", "system"] = Field(description="Message role")
@@ -212,15 +223,18 @@ class ChatMessage(BaseModel):
 
 class SendChatRequest(BaseModel):
     """Request to send a chat message to agent."""
+
     model_config = ConfigDict(populate_by_name=True)
 
-    workflow_id: int = Field(..., alias="workflowId")
     message: str = Field(..., description="User message to agent")
-    workflow_state: Optional[Dict[str, Any]] = Field(None, alias="workflowState", description="Current workflow state")
+    workflow_state: Optional[Dict[str, Any]] = Field(
+        None, alias="workflowState", description="Current workflow state"
+    )
 
 
 class SendChatResponse(BaseModel):
     """Response from sending chat message."""
+
     model_config = ConfigDict(populate_by_name=True, by_alias=True)
 
     success: bool
@@ -230,15 +244,16 @@ class SendChatResponse(BaseModel):
 
 class ChatHistoryRequest(BaseModel):
     """Request to get chat history."""
+
     model_config = ConfigDict(populate_by_name=True)
 
-    workflow_id: int = Field(..., alias="workflowId")
     limit: Optional[int] = Field(50, description="Number of messages to retrieve")
     before_timestamp: Optional[int] = Field(None, alias="beforeTimestamp")
 
 
 class ChatHistoryResponse(BaseModel):
     """Response with chat history."""
+
     model_config = ConfigDict(populate_by_name=True, by_alias=True)
 
     success: bool

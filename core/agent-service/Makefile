@@ -20,13 +20,12 @@ test:  ## Run tests
 coverage:  ## Run tests with coverage
 	uv run pytest --cov=agent --cov-report=html --cov-report=term tests/
 
-format:  ## Format code with black and ruff
-	uv run black src/
-	uv run ruff check --fix src/
+format:  ## Format code with ruff
+	uv run ruff format .
 
 lint:  ## Run linting checks
-	uv run ruff check src/
-	uv run black --check src/
+	uv run ruff check .
+	uv run ruff format --check .
 	uv run mypy src/
 
 run:  ## Run the agent service

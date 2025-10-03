@@ -19,16 +19,14 @@ from .models import (
     ModelConfig,
     WorkflowEvent,
     WorkflowState,
-    InviteAgentRequest,
     InviteAgentResponse,
-    RemoveAgentRequest,
     RemoveAgentResponse,
     AgentStatusResponse,
     SendChatRequest,
     SendChatResponse,
     ChatHistoryRequest,
     ChatHistoryResponse,
-    ChatMessage
+    ChatMessage,
 )
 
 logger = structlog.get_logger()
@@ -51,36 +49,41 @@ class AgentService:
         self.ws_connections: Dict[int, websockets.WebSocketClientProtocol] = {}
         self.chat_history: Dict[int, List[ChatMessage]] = {}  # Store chat history per workflow
 
-    async def invite_agent(self, request: InviteAgentRequest) -> InviteAgentResponse:
+    async def invite_agent(self, workflow_id: int) -> InviteAgentResponse:
         """
         Invite agent to join a workflow.
 
         Args:
-            request: Invitation request with workflow ID and optional model config
+            workflow_id: Workflow ID to invite agent to
 
         Returns:
             Invitation response with agent user ID
         """
-        workflow_id = request.workflow_id
-
         # Check if agent already in workflow
         if workflow_id in self.active_sessions:
             session = self.active_sessions[workflow_id]
             return InviteAgentResponse(
                 success=True,
                 agent_user_id=session.agent_user_id,
-                message="Agent already in workflow"
+                message="Agent already in workflow",
             )
 
         try:
+            # Always use default configuration from environment
+            default_model_dict = self.config.default_model
+            llm_config = ModelConfig(**default_model_dict)
+            logger.info(
+                f"Using default model config: provider={llm_config.provider}, model={llm_config.model}"
+            )
+
             # Create new session
             session = AgentSession(
                 workflow_id=workflow_id,
                 agent_user_id=self._generate_agent_user_id(),
-                llm_config=request.llm_config or ModelConfig(**self.config.default_model),
+                llm_config=llm_config,
                 start_time=int(time.time() * 1000),
                 status=AgentStatus.CONNECTING,
-                workflow_state=WorkflowState()
+                workflow_state=WorkflowState(),
             )
 
             # Connect to shared editing
@@ -94,33 +97,26 @@ class AgentService:
             return InviteAgentResponse(
                 success=True,
                 agent_user_id=session.agent_user_id,
-                message="Agent successfully joined workflow"
+                message="Agent successfully joined workflow",
             )
 
         except Exception as e:
             logger.error(f"Error inviting agent to workflow {workflow_id}: {e}")
-            return InviteAgentResponse(
-                success=False,
-                message=f"Failed to invite agent: {str(e)}"
-            )
+            return InviteAgentResponse(success=False, message=f"Failed to invite agent: {str(e)}")
 
-    async def remove_agent(self, request: RemoveAgentRequest) -> RemoveAgentResponse:
+    async def remove_agent(self, workflow_id: int) -> RemoveAgentResponse:
         """
         Remove agent from a workflow.
 
         Args:
-            request: Removal request with workflow ID
+            workflow_id: Workflow ID to remove agent from
 
         Returns:
             Removal response
         """
-        workflow_id = request.workflow_id
 
         if workflow_id not in self.active_sessions:
-            return RemoveAgentResponse(
-                success=False,
-                message="Agent not in workflow"
-            )
+            return RemoveAgentResponse(success=False, message="Agent not in workflow")
 
         try:
             # Close WebSocket connection
@@ -134,16 +130,12 @@ class AgentService:
             logger.info(f"Agent removed from workflow {workflow_id}")
 
             return RemoveAgentResponse(
-                success=True,
-                message="Agent successfully removed from workflow"
+                success=True, message="Agent successfully removed from workflow"
             )
 
         except Exception as e:
             logger.error(f"Error removing agent from workflow {workflow_id}: {e}")
-            return RemoveAgentResponse(
-                success=False,
-                message=f"Failed to remove agent: {str(e)}"
-            )
+            return RemoveAgentResponse(success=False, message=f"Failed to remove agent: {str(e)}")
 
     async def get_agent_status(self, workflow_id: int) -> AgentStatusResponse:
         """
@@ -158,21 +150,12 @@ class AgentService:
         if workflow_id in self.active_sessions:
             session = self.active_sessions[workflow_id]
             return AgentStatusResponse(
-                workflow_id=workflow_id,
-                is_active=True,
-                status=session.status
+                workflow_id=workflow_id, is_active=True, status=session.status
             )
         else:
-            return AgentStatusResponse(
-                workflow_id=workflow_id,
-                is_active=False
-            )
+            return AgentStatusResponse(workflow_id=workflow_id, is_active=False)
 
-    async def handle_workflow_event(
-        self,
-        workflow_id: int,
-        event: WorkflowEvent
-    ) -> Optional[Any]:
+    async def handle_workflow_event(self, workflow_id: int, event: WorkflowEvent) -> Optional[Any]:
         """
         Handle workflow event and generate agent response.
 
@@ -197,16 +180,14 @@ class AgentService:
             tool_response = await self.llm_provider.get_tool_completion(
                 messages=messages,
                 tools=self.workflow_toolkit.get_tool_classes(),
-                model_config=session.llm_config
+                model_config=session.llm_config,
             )
 
             if tool_response:
                 # Execute the tool
                 ws_connection = self.ws_connections.get(workflow_id)
                 result = await self.workflow_toolkit.execute_tool(
-                    tool_response,
-                    session,
-                    ws_connection
+                    tool_response, session, ws_connection
                 )
                 logger.info(f"Executed tool for workflow {workflow_id}: {result}")
                 return result
@@ -215,10 +196,7 @@ class AgentService:
             logger.error(f"Error handling workflow event: {e}")
             return None
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _connect_to_shared_editing(self, session: AgentSession):
         """
         Connect to shared editing WebSocket server.
@@ -247,9 +225,7 @@ class AgentService:
             raise
 
     async def _listen_to_websocket(
-        self,
-        session: AgentSession,
-        websocket: websockets.WebSocketClientProtocol
+        self, session: AgentSession, websocket: websockets.WebSocketClientProtocol
     ):
         """
         Listen to WebSocket messages and handle events.
@@ -287,9 +263,7 @@ class AgentService:
             session.status = AgentStatus.ERROR
 
     def _build_context_messages(
-        self,
-        session: AgentSession,
-        event: WorkflowEvent
+        self, session: AgentSession, event: WorkflowEvent
     ) -> List[Dict[str, str]]:
         """
         Build context messages for LLM.
@@ -325,7 +299,7 @@ class AgentService:
 
         return [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
+            {"role": "user", "content": user_message},
         ]
 
     def _generate_agent_user_id(self) -> int:
@@ -336,17 +310,19 @@ class AgentService:
         """Get list of available models."""
         return self.llm_provider.get_available_models()
 
-    async def send_chat_message(self, request: SendChatRequest) -> SendChatResponse:
+    async def send_chat_message(
+        self, workflow_id: int, request: SendChatRequest
+    ) -> SendChatResponse:
         """
         Send a chat message to the agent.
 
         Args:
-            request: Chat request with workflow ID and message
+            workflow_id: Workflow ID
+            request: Chat request with message
 
         Returns:
             Chat response with agent's reply
         """
-        workflow_id = request.workflow_id
         user_message = request.message
 
         # Initialize chat history if needed
@@ -355,9 +331,7 @@ class AgentService:
 
         # Add user message to history
         user_chat_message = ChatMessage(
-            role="user",
-            content=user_message,
-            timestamp=int(time.time() * 1000)
+            role="user", content=user_message, timestamp=int(time.time() * 1000)
         )
         self.chat_history[workflow_id].append(user_chat_message)
 
@@ -366,9 +340,11 @@ class AgentService:
             session = self.active_sessions[workflow_id]
             if session.workflow_state:
                 # Update with current state from frontend
-                session.workflow_state.operators = request.workflow_state.get('operators', [])
-                session.workflow_state.links = request.workflow_state.get('links', [])
-                session.workflow_state.execution_status = request.workflow_state.get('execution_status')
+                session.workflow_state.operators = request.workflow_state.get("operators", [])
+                session.workflow_state.links = request.workflow_state.get("links", [])
+                session.workflow_state.execution_status = request.workflow_state.get(
+                    "execution_status"
+                )
 
         try:
             # Get or create session
@@ -376,14 +352,19 @@ class AgentService:
                 # Create model config from default settings
                 default_model_dict = self.config.default_model
 
+                # Log the configuration being used
+                logger.info(
+                    f"Creating new session with default config: provider={default_model_dict.get('provider')}, model={default_model_dict.get('model')}"
+                )
+
                 # Validate that we have the required API key
-                provider = default_model_dict.get('provider', 'openai')
-                if provider == 'anthropic' and not self.config.anthropic_api_key:
+                provider = default_model_dict.get("provider", "openai")
+                if provider == "anthropic" and not self.config.anthropic_api_key:
                     raise ValueError(
                         "Anthropic provider is configured but ANTHROPIC_API_KEY is not set. "
                         "Please set the ANTHROPIC_API_KEY environment variable."
                     )
-                elif provider == 'openai' and not self.config.openai_api_key:
+                elif provider == "openai" and not self.config.openai_api_key:
                     raise ValueError(
                         "OpenAI provider is configured but OPENAI_API_KEY is not set. "
                         "Please set the OPENAI_API_KEY environment variable."
@@ -396,7 +377,7 @@ class AgentService:
                     llm_config=ModelConfig(**default_model_dict),
                     start_time=int(time.time() * 1000),
                     status=AgentStatus.CONNECTED,
-                    workflow_state=WorkflowState()
+                    workflow_state=WorkflowState(),
                 )
                 self.active_sessions[workflow_id] = session
             else:
@@ -406,69 +387,67 @@ class AgentService:
             messages = self._build_chat_messages(workflow_id, user_message)
 
             # Log model config being used
-            logger.info(f"Using model config for chat: provider={session.llm_config.provider}, model={session.llm_config.model}")
+            logger.info(
+                f"Using model config for chat: provider={session.llm_config.provider}, model={session.llm_config.model}"
+            )
 
             # Get response from LLM with tools
             tool_response = await self.llm_provider.get_tool_completion(
                 messages=messages,
                 tools=self.workflow_toolkit.get_tool_classes(),
-                model_config=session.llm_config
+                model_config=session.llm_config,
             )
 
             # Process tool response if any
             if tool_response:
                 ws_connection = self.ws_connections.get(workflow_id)
                 result = await self.workflow_toolkit.execute_tool(
-                    tool_response,
-                    session,
-                    ws_connection
+                    tool_response, session, ws_connection
                 )
 
                 # Create a more structured response
                 tool_name = tool_response.__class__.__name__
-                tool_type = tool_name.replace('Tool', '')
+                tool_type = tool_name.replace("Tool", "")
 
                 # Format the response for easy parsing
-                if result.get('success'):
+                if result.get("success"):
                     assistant_content = f"I've successfully executed the {tool_type} operation.\n\n"
                     assistant_content += f"**Action**: {tool_name}\n"
-                    assistant_content += f"**Parameters**: {json.dumps(tool_response.__dict__, indent=2)}\n"
+                    assistant_content += (
+                        f"**Parameters**: {json.dumps(tool_response.__dict__, indent=2)}\n"
+                    )
                     assistant_content += f"**Result**: Operation completed successfully"
 
-                    if result.get('message'):
+                    if result.get("message"):
                         assistant_content += f" - {result['message']}"
                 else:
                     assistant_content = f"I attempted to execute {tool_type} but encountered an error: {result.get('error', 'Unknown error')}"
             else:
                 # Get text response from LLM without tools
                 text_response = await self.llm_provider.get_completion(
-                    messages=messages,
-                    model_config=session.llm_config
+                    messages=messages, model_config=session.llm_config
                 )
                 assistant_content = text_response
 
             # Add assistant message to history
             assistant_message = ChatMessage(
-                role="assistant",
-                content=assistant_content,
-                timestamp=int(time.time() * 1000)
+                role="assistant", content=assistant_content, timestamp=int(time.time() * 1000)
             )
             self.chat_history[workflow_id].append(assistant_message)
 
             # Create response with tool execution metadata
-            response = SendChatResponse(
-                success=True,
-                message=assistant_message
-            )
+            response = SendChatResponse(success=True, message=assistant_message)
 
             # Add tool execution data to response for frontend
-            if tool_response and result.get('success'):
+            if tool_response and result.get("success"):
                 response_dict = response.dict()
-                response_dict['message']['toolExecutions'] = [{
-                    'type': tool_response.__class__.__name__.replace('Tool', ''),
-                    'data': tool_response.__dict__,
-                    'result': result
-                }]
+                response_dict["message"]["toolExecutions"] = [
+                    {
+                        "type": tool_response.__class__.__name__.replace("Tool", ""),
+                        "data": tool_response.__dict__,
+                        "result": result,
+                    }
+                ]
                 return SendChatResponse(**response_dict)
 
             return response
@@ -478,28 +457,25 @@ class AgentService:
 
             # Add error message to history
             error_message = ChatMessage(
-                role="system",
-                content=f"Error: {str(e)}",
-                timestamp=int(time.time() * 1000)
+                role="system", content=f"Error: {str(e)}", timestamp=int(time.time() * 1000)
             )
             self.chat_history[workflow_id].append(error_message)
 
-            return SendChatResponse(
-                success=False,
-                error=str(e)
-            )
+            return SendChatResponse(success=False, error=str(e))
 
-    async def get_chat_history(self, request: ChatHistoryRequest) -> ChatHistoryResponse:
+    async def get_chat_history(
+        self, workflow_id: int, request: ChatHistoryRequest
+    ) -> ChatHistoryResponse:
         """
         Get chat history for a workflow.
 
         Args:
-            request: History request with workflow ID and filters
+            workflow_id: Workflow ID
+            request: History request with filters
 
         Returns:
             Chat history response
         """
-        workflow_id = request.workflow_id
         limit = request.limit or 50
         before_timestamp = request.before_timestamp
 
@@ -517,11 +493,7 @@ class AgentService:
         else:
             has_more = False
 
-        return ChatHistoryResponse(
-            success=True,
-            messages=history,
-            has_more=has_more
-        )
+        return ChatHistoryResponse(success=True, messages=history, has_more=has_more)
 
     def _build_chat_messages(self, workflow_id: int, user_message: str) -> List[Dict[str, str]]:
         """
@@ -561,10 +533,7 @@ class AgentService:
         recent_history = history[-10:] if len(history) > 10 else history
 
         for msg in recent_history[:-1]:  # Exclude the last message (current user message)
-            messages.append({
-                "role": msg.role,
-                "content": msg.content
-            })
+            messages.append({"role": msg.role, "content": msg.content})
 
         # Add current user message
         messages.append({"role": "user", "content": user_message})

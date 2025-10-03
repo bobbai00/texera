@@ -65,7 +65,6 @@ export interface AgentSession {
   workflowId: number;
   agentUserId: number;
   status: AgentStatus;
-  modelConfig?: ModelConfig;
 }
 
 /**
@@ -100,10 +99,9 @@ export class AgentService {
 
   /**
    * Invites an AI agent to join the current workflow
-   * @param modelConfig Optional model configuration
    * @returns Observable of the invitation response
    */
-  public inviteToWorkflow(modelConfig?: ModelConfig): Observable<any> {
+  public inviteToWorkflow(): Observable<any> {
     const workflowId = this.workflowActionService.getWorkflowMetadata().wid;
 
     if (!workflowId) {
@@ -116,26 +114,20 @@ export class AgentService {
       return of(null);
     }
 
-    const request = {
-      workflowId,
-      modelConfig: modelConfig || this.getDefaultModelConfig()
-    };
-
-    return this.http.post(`${this.API_BASE}/invite`, request).pipe(
+    return this.http.post(`${this.API_BASE}/${workflowId}/invite`, {}).pipe(
       map((response: any) => {
         if (response.success) {
           this.currentSession = {
             workflowId,
             agentUserId: response.agentUserId,
-            status: AgentStatus.CONNECTED,
-            modelConfig: modelConfig || this.getDefaultModelConfig()
+            status: AgentStatus.CONNECTED
           };
           this.agentPresentSubject.next(true);
           this.notificationService.success("AI Assistant has joined the workflow");
         }
         return response;
       }),
-      catchError(error => {
+      catchError((error: any) => {
         this.notificationService.error("Failed to invite AI Assistant");
         console.error("Agent invitation error:", error);
         return of(null);
@@ -154,7 +146,7 @@ export class AgentService {
       return of(null);
     }
 
-    return this.http.post(`${this.API_BASE}/remove`, { workflowId }).pipe(
+    return this.http.post(`${this.API_BASE}/${workflowId}/remove`, {}).pipe(
       map((response: any) => {
         if (response.success) {
           this.currentSession = null;
@@ -163,7 +155,7 @@ export class AgentService {
         }
         return response;
       }),
-      catchError(error => {
+      catchError((error: any) => {
         this.notificationService.error("Failed to remove AI Assistant");
         console.error("Agent removal error:", error);
         return of(null);
@@ -177,7 +169,7 @@ export class AgentService {
    * @returns Observable of agent status
    */
   public getAgentStatus(workflowId: number): Observable<AgentStatus | null> {
-    return this.http.get(`${this.API_BASE}/status/${workflowId}`).pipe(
+    return this.http.get(`${this.API_BASE}/${workflowId}/status`).pipe(
       map((response: any) => {
         return response.isActive ? response.status : null;
       }),
@@ -283,7 +275,7 @@ export class AgentService {
    */
   public selectModel(): Observable<ModelConfig | null> {
     // This would open a dialog for model selection
-    // For now, return default
-    return of(this.getDefaultModelConfig());
+    // For now, return null to let backend use its configured defaults
+    return of(null);
   }
 }

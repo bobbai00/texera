@@ -292,11 +292,8 @@ export class MenuComponent implements OnInit, OnDestroy {
     this.agentInviting = true;
 
     try {
-      // Show model selection dialog if needed
-      const modelConfig = await firstValueFrom(this.agentService.selectModel());
-      if (modelConfig) {
-        await firstValueFrom(this.agentService.inviteToWorkflow(modelConfig));
-      }
+      // Invite agent using backend's configured defaults
+      await firstValueFrom(this.agentService.inviteToWorkflow());
     } catch (error) {
       console.error("Error inviting AI Assistant:", error);
       this.notificationService.error("Failed to invite AI Assistant");

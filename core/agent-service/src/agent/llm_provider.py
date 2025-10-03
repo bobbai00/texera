@@ -72,17 +72,16 @@ class LLMProvider:
 
         # Log the default model configuration
         default_model = self.config.default_model
-        logger.info(f"Default model configuration: provider={default_model.get('provider')}, model={default_model.get('model')}")
+        logger.info(
+            f"Default model configuration: provider={default_model.get('provider')}, model={default_model.get('model')}"
+        )
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10)
-    )
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def get_completion(
         self,
         messages: List[Dict[str, str]],
         model_config: Optional[ModelConfig] = None,
-        response_model: Optional[Type[BaseModel]] = None
+        response_model: Optional[Type[BaseModel]] = None,
     ) -> Union[str, BaseModel]:
         """
         Get completion from LLM with optional structured output.
@@ -121,7 +120,7 @@ class LLMProvider:
         self,
         messages: List[Dict[str, str]],
         model_config: ModelConfig,
-        response_model: Type[BaseModel]
+        response_model: Type[BaseModel],
     ) -> BaseModel:
         """Get structured completion from OpenAI using instructor."""
         try:
@@ -130,7 +129,7 @@ class LLMProvider:
                 messages=messages,
                 temperature=model_config.temperature,
                 max_tokens=model_config.max_tokens,
-                response_model=response_model
+                response_model=response_model,
             )
             logger.info(f"Got structured response from OpenAI: {type(response).__name__}")
             return response
@@ -142,7 +141,7 @@ class LLMProvider:
         self,
         messages: List[Dict[str, str]],
         model_config: ModelConfig,
-        response_model: Type[BaseModel]
+        response_model: Type[BaseModel],
     ) -> BaseModel:
         """Get structured completion from Anthropic using instructor."""
         try:
@@ -156,7 +155,7 @@ class LLMProvider:
                 messages=user_messages,
                 temperature=model_config.temperature,
                 max_tokens=model_config.max_tokens,
-                response_model=response_model
+                response_model=response_model,
             )
             logger.info(f"Got structured response from Anthropic: {type(response).__name__}")
             return response
@@ -165,9 +164,7 @@ class LLMProvider:
             raise
 
     async def _get_standard_completion(
-        self,
-        messages: List[Dict[str, str]],
-        model_config: ModelConfig
+        self, messages: List[Dict[str, str]], model_config: ModelConfig
     ) -> str:
         """Get standard text completion using litellm."""
         try:
@@ -178,7 +175,9 @@ class LLMProvider:
                 model_string = f"anthropic/{model_config.model}"
 
                 # Ensure Anthropic API key is set - check both config and environment
-                anthropic_key = self.config.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+                anthropic_key = self.config.anthropic_api_key or os.environ.get(
+                    "ANTHROPIC_API_KEY", ""
+                )
                 if not anthropic_key:
                     raise ValueError("Anthropic API key not configured")
 
@@ -201,13 +200,15 @@ class LLMProvider:
                 logger.info(f"Using {model_config.provider} model: {model_string}")
 
             # Log the actual call for debugging
-            logger.debug(f"Calling litellm with model={model_string}, provider={model_config.provider}")
+            logger.debug(
+                f"Calling litellm with model={model_string}, provider={model_config.provider}"
+            )
 
             response = await litellm.acompletion(
                 model=model_string,
                 messages=messages,
                 temperature=model_config.temperature,
-                max_tokens=model_config.max_tokens
+                max_tokens=model_config.max_tokens,
             )
 
             content = response.choices[0].message.content
@@ -221,7 +222,7 @@ class LLMProvider:
         self,
         messages: List[Dict[str, str]],
         tools: List[Type[BaseModel]],
-        model_config: Optional[ModelConfig] = None
+        model_config: Optional[ModelConfig] = None,
     ) -> Optional[BaseModel]:
         """
         Get tool-based completion from LLM.
@@ -246,12 +247,13 @@ class LLMProvider:
                 fields = []
                 for field_name, field_info in tool.model_fields.items():
                     field_desc = field_info.description or field_name
-                    field_type = str(field_info.annotation).replace('typing.', '')
+                    field_type = str(field_info.annotation).replace("typing.", "")
                     fields.append(f"  - {field_name} ({field_type}): {field_desc}")
 
                 tool_descriptions.append(
-                    f"{tool_name}: {tool_doc}\n" +
-                    "Parameters:\n" + "\n".join(fields) if fields else ""
+                    f"{tool_name}: {tool_doc}\n" + "Parameters:\n" + "\n".join(fields)
+                    if fields
+                    else ""
                 )
 
             # Add tool instructions to system message
@@ -271,10 +273,9 @@ class LLMProvider:
             system_added = False
             for msg in messages:
                 if msg["role"] == "system" and not system_added:
-                    modified_messages.append({
-                        "role": "system",
-                        "content": tool_prompt + "\n\n" + msg["content"]
-                    })
+                    modified_messages.append(
+                        {"role": "system", "content": tool_prompt + "\n\n" + msg["content"]}
+                    )
                     system_added = True
                 else:
                     modified_messages.append(msg)
@@ -290,7 +291,7 @@ class LLMProvider:
             import re
 
             # Extract JSON from response (it might be wrapped in markdown or other text)
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if not json_match:
                 logger.info("No JSON found in tool response")
                 return None
@@ -326,18 +327,34 @@ class LLMProvider:
 
         # Add OpenAI models if configured
         if self.config.openai_api_key:
-            models.extend([
-                {"id": "gpt-4-turbo-preview", "name": "GPT-4 Turbo", "provider": "openai"},
-                {"id": "gpt-4", "name": "GPT-4", "provider": "openai"},
-                {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "provider": "openai"}
-            ])
+            models.extend(
+                [
+                    {"id": "gpt-4-turbo-preview", "name": "GPT-4 Turbo", "provider": "openai"},
+                    {"id": "gpt-4", "name": "GPT-4", "provider": "openai"},
+                    {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "provider": "openai"},
+                ]
+            )
 
         # Add Anthropic models if configured
         if self.config.anthropic_api_key:
-            models.extend([
-                {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "provider": "anthropic"},
-                {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet", "provider": "anthropic"},
-                {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "provider": "anthropic"}
-            ])
+            models.extend(
+                [
+                    {
+                        "id": "claude-3-opus-20240229",
+                        "name": "Claude 3 Opus",
+                        "provider": "anthropic",
+                    },
+                    {
+                        "id": "claude-3-sonnet-20240229",
+                        "name": "Claude 3 Sonnet",
+                        "provider": "anthropic",
+                    },
+                    {
+                        "id": "claude-3-haiku-20240307",
+                        "name": "Claude 3 Haiku",
+                        "provider": "anthropic",
+                    },
+                ]
+            )
 
         return models
