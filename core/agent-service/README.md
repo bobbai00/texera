@@ -40,14 +40,44 @@ The service reads configuration from `config/src/main/resources/agent-service.co
 Key environment variables:
 - `OPENAI_API_KEY`: OpenAI API key
 - `ANTHROPIC_API_KEY`: Anthropic API key
-- `AGENT_DEFAULT_MODEL`: Default model to use (e.g., "gpt-4-turbo-preview")
+- `AGENT_DEFAULT_PROVIDER`: LLM provider to use (e.g., "openai", "anthropic")
+- `AGENT_DEFAULT_MODEL`: Default model to use (e.g., "gpt-4-turbo-preview", "claude-3-sonnet-20240229")
 - `SHARED_EDITING_URL`: WebSocket URL for shared editing (default: ws://localhost:1234)
+
+### Example Configurations
+
+For Anthropic (Claude):
+```bash
+export AGENT_DEFAULT_PROVIDER="anthropic"
+export AGENT_DEFAULT_MODEL="claude-3-sonnet-20240229"
+export ANTHROPIC_API_KEY="your-anthropic-api-key"
+```
+
+For OpenAI (GPT):
+```bash
+export AGENT_DEFAULT_PROVIDER="openai"
+export AGENT_DEFAULT_MODEL="gpt-4-turbo-preview"
+export OPENAI_API_KEY="your-openai-api-key"
+```
 
 ## Running the Service
 
+### Quick Start (with validation)
+```bash
+# Test your configuration first
+python test_config.py
+
+# Start with configuration validation
+python start_agent.py
+```
+
 ### Development Mode
 ```bash
-# With auto-reload
+# From src directory
+cd src
+python -m agent.api
+
+# With auto-reload (if main.py exists)
 python src/main.py --reload
 
 # Custom port
@@ -65,11 +95,23 @@ gunicorn agent.api:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8090
 
 ## API Endpoints
 
+### Chat Endpoints (NEW)
+- `POST /api/agent/chat/send` - Send a message to the agent
+- `POST /api/agent/chat/history` - Get chat history for a workflow
+
+### Agent Management
 - `POST /api/agent/invite` - Invite agent to workflow
 - `POST /api/agent/remove` - Remove agent from workflow
 - `GET /api/agent/status/{workflow_id}` - Get agent status
 - `GET /api/agent/models` - Get available models
-- `GET /health` - Health check
+
+### Health Check
+- `GET /api/health` - Health check
+
+### API Documentation
+Once running, visit:
+- Swagger UI: `http://localhost:8090/docs`
+- ReDoc: `http://localhost:8090/redoc`
 
 ## Available Tools
 

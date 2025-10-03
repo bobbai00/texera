@@ -35,28 +35,44 @@ class LLMProvider:
     def _setup_clients(self):
         """Setup LLM clients with instructor patches."""
         # Setup OpenAI client with instructor
-        if self.config.openai_api_key:
-            openai_client = OpenAI(api_key=self.config.openai_api_key)
+        openai_key = self.config.openai_api_key or os.environ.get("OPENAI_API_KEY", "")
+        if openai_key:
+            logger.info("Setting up OpenAI client")
+            openai_client = OpenAI(api_key=openai_key)
             self.openai_client = instructor.from_openai(openai_client)
         else:
             self.openai_client = None
+            logger.info("OpenAI client not configured (no API key)")
 
         # Setup Anthropic client with instructor
-        if self.config.anthropic_api_key:
-            anthropic_client = Anthropic(api_key=self.config.anthropic_api_key)
+        anthropic_key = self.config.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        if anthropic_key:
+            logger.info("Setting up Anthropic client")
+            anthropic_client = Anthropic(api_key=anthropic_key)
             self.anthropic_client = instructor.from_anthropic(anthropic_client)
         else:
             self.anthropic_client = None
+            logger.info("Anthropic client not configured (no API key)")
 
     def _configure_litellm(self):
         """Configure litellm with API keys."""
-        if self.config.openai_api_key:
-            os.environ["OPENAI_API_KEY"] = self.config.openai_api_key
-        if self.config.anthropic_api_key:
-            os.environ["ANTHROPIC_API_KEY"] = self.config.anthropic_api_key
+        # Check config first, then environment
+        openai_key = self.config.openai_api_key or os.environ.get("OPENAI_API_KEY", "")
+        if openai_key:
+            os.environ["OPENAI_API_KEY"] = openai_key
+            logger.info("OpenAI API key configured for litellm")
+
+        anthropic_key = self.config.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        if anthropic_key:
+            os.environ["ANTHROPIC_API_KEY"] = anthropic_key
+            logger.info("Anthropic API key configured for litellm")
 
         # Set litellm to not print verbose logs
         litellm.set_verbose = False
+
+        # Log the default model configuration
+        default_model = self.config.default_model
+        logger.info(f"Default model configuration: provider={default_model.get('provider')}, model={default_model.get('model')}")
 
     @retry(
         stop=stop_after_attempt(3),
@@ -80,7 +96,11 @@ class LLMProvider:
             String response or structured model instance
         """
         if model_config is None:
-            model_config = ModelConfig(**self.config.default_model)
+            default_dict = self.config.default_model
+            logger.info(f"Using default model config: {default_dict}")
+            model_config = ModelConfig(**default_dict)
+
+        logger.info(f"Model config: provider={model_config.provider}, model={model_config.model}")
 
         # Determine which client to use based on provider
         if response_model and model_config.provider == "openai" and self.openai_client:
@@ -152,10 +172,36 @@ class LLMProvider:
         """Get standard text completion using litellm."""
         try:
             # Build full model string for litellm
-            if model_config.provider != "openai":
-                model_string = f"{model_config.provider}/{model_config.model}"
-            else:
+            if model_config.provider == "anthropic":
+                # For Anthropic models in litellm, we ALWAYS need anthropic/ prefix
+                # Even for claude-3 models, litellm requires the prefix
+                model_string = f"anthropic/{model_config.model}"
+
+                # Ensure Anthropic API key is set - check both config and environment
+                anthropic_key = self.config.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+                if not anthropic_key:
+                    raise ValueError("Anthropic API key not configured")
+
+                # Log for debugging
+                logger.info(f"Using Anthropic model: {model_string}")
+
+            elif model_config.provider == "openai":
                 model_string = model_config.model
+                # Ensure OpenAI API key is set - check both config and environment
+                openai_key = self.config.openai_api_key or os.environ.get("OPENAI_API_KEY", "")
+                if not openai_key:
+                    raise ValueError("OpenAI API key not configured")
+
+                # Log for debugging
+                logger.info(f"Using OpenAI model: {model_string}")
+
+            else:
+                # For other providers, use provider/model format
+                model_string = f"{model_config.provider}/{model_config.model}"
+                logger.info(f"Using {model_config.provider} model: {model_string}")
+
+            # Log the actual call for debugging
+            logger.debug(f"Calling litellm with model={model_string}, provider={model_config.provider}")
 
             response = await litellm.acompletion(
                 model=model_string,
@@ -191,43 +237,84 @@ class LLMProvider:
         if model_config is None:
             model_config = ModelConfig(**self.config.default_model)
 
-        # Create a union type of all tools for instructor
-        if len(tools) == 1:
-            response_model = tools[0]
-        else:
-            from typing import Union as UnionType
-            response_model = UnionType[tuple(tools)]
-
         try:
-            # Add instructions about tool usage to the system message
-            tool_instructions = (
-                "\n\nYou have access to the following tools:\n" +
-                "\n".join([f"- {tool.__name__}: {tool.__doc__}" for tool in tools]) +
-                "\n\nUse the appropriate tool to accomplish the user's request."
+            # Build tool descriptions for the prompt
+            tool_descriptions = []
+            for tool in tools:
+                tool_name = tool.__name__
+                tool_doc = tool.__doc__ or f"Use {tool_name}"
+                fields = []
+                for field_name, field_info in tool.model_fields.items():
+                    field_desc = field_info.description or field_name
+                    field_type = str(field_info.annotation).replace('typing.', '')
+                    fields.append(f"  - {field_name} ({field_type}): {field_desc}")
+
+                tool_descriptions.append(
+                    f"{tool_name}: {tool_doc}\n" +
+                    "Parameters:\n" + "\n".join(fields) if fields else ""
+                )
+
+            # Add tool instructions to system message
+            tool_prompt = (
+                "You are an AI assistant that helps users build workflows. "
+                "When the user asks you to modify the workflow, respond with the appropriate tool call.\n\n"
+                "Available tools:\n" + "\n\n".join(tool_descriptions) + "\n\n"
+                "Respond with a JSON object containing:\n"
+                "- tool: the name of the tool to use\n"
+                "- parameters: the parameters for the tool\n\n"
+                "Example response:\n"
+                '{"tool": "AddOperatorTool", "parameters": {"operator_type": "Filter", "operator_id": "filter_1", "display_name": "Data Filter"}}'
             )
 
-            # Append tool instructions to system message
-            modified_messages = messages.copy()
-            for msg in modified_messages:
-                if msg["role"] == "system":
-                    msg["content"] += tool_instructions
-                    break
-            else:
-                # No system message found, add one
-                modified_messages.insert(0, {
-                    "role": "system",
-                    "content": tool_instructions
-                })
+            # Modify messages to include tool instructions
+            modified_messages = []
+            system_added = False
+            for msg in messages:
+                if msg["role"] == "system" and not system_added:
+                    modified_messages.append({
+                        "role": "system",
+                        "content": tool_prompt + "\n\n" + msg["content"]
+                    })
+                    system_added = True
+                else:
+                    modified_messages.append(msg)
 
-            # Get structured response
-            response = await self.get_completion(
-                messages=modified_messages,
-                model_config=model_config,
-                response_model=response_model
-            )
+            if not system_added:
+                modified_messages.insert(0, {"role": "system", "content": tool_prompt})
 
-            logger.info(f"Got tool response: {type(response).__name__}")
-            return response
+            # Get text response
+            response = await self._get_standard_completion(modified_messages, model_config)
+
+            # Try to parse the response as JSON
+            import json
+            import re
+
+            # Extract JSON from response (it might be wrapped in markdown or other text)
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if not json_match:
+                logger.info("No JSON found in tool response")
+                return None
+
+            try:
+                response_data = json.loads(json_match.group())
+                tool_name = response_data.get("tool")
+                parameters = response_data.get("parameters", {})
+
+                # Find the matching tool class
+                for tool_class in tools:
+                    if tool_class.__name__ == tool_name:
+                        # Create an instance of the tool with the parameters
+                        tool_instance = tool_class(**parameters)
+                        logger.info(f"Created tool instance: {tool_name}")
+                        return tool_instance
+
+                logger.warning(f"Tool {tool_name} not found in available tools")
+                return None
+
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse tool response as JSON: {e}")
+                logger.debug(f"Response was: {response}")
+                return None
 
         except Exception as e:
             logger.error(f"Error getting tool completion: {e}")

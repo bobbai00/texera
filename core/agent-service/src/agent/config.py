@@ -36,7 +36,24 @@ class AgentConfig:
 
         # Load the HOCON file - pyhocon automatically resolves ${?VAR} environment variables
         config = ConfigFactory.parse_file(str(self.config_path))
-        return config.as_plain_ordered_dict()
+        config_dict = config.as_plain_ordered_dict()
+
+        # Log environment variables for debugging
+        logger.info(f"Environment ANTHROPIC_API_KEY exists: {'ANTHROPIC_API_KEY' in os.environ}")
+        logger.info(f"Environment AGENT_DEFAULT_PROVIDER: {os.environ.get('AGENT_DEFAULT_PROVIDER', 'not set')}")
+        logger.info(f"Environment AGENT_DEFAULT_MODEL: {os.environ.get('AGENT_DEFAULT_MODEL', 'not set')}")
+
+        # Log loaded config for debugging
+        if 'agent' in config_dict:
+            if 'providers' in config_dict['agent']:
+                if 'anthropic' in config_dict['agent']['providers']:
+                    has_key = bool(config_dict['agent']['providers']['anthropic'].get('apiKey'))
+                    logger.info(f"Config has Anthropic API key: {has_key}")
+            if 'defaultModel' in config_dict['agent']:
+                logger.info(f"Config default provider: {config_dict['agent']['defaultModel'].get('provider')}")
+                logger.info(f"Config default model: {config_dict['agent']['defaultModel'].get('model')}")
+
+        return config_dict
 
     def get(self, path: str, default: Any = None) -> Any:
         """

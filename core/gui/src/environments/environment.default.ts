@@ -31,10 +31,17 @@ export type AppEnv = {
    * root API URL of the backend
    */
   apiUrl: string;
+
+  /**
+   * root API URL of the agent service
+   */
+  agentApiUrl?: string;
 };
 
 export const defaultEnvironment: AppEnv = {
   production: false,
 
   apiUrl: "api",
+
+  agentApiUrl: "http://localhost:8090",
 };

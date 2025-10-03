@@ -74,6 +74,7 @@ import { ResultPanelComponent } from "./workspace/component/result-panel/result-
 import { VisualizationFrameContentComponent } from "./workspace/component/visualization-panel-content/visualization-frame-content.component";
 import { WorkflowEditorComponent } from "./workspace/component/workflow-editor/workflow-editor.component";
 import { WorkspaceComponent } from "./workspace/component/workspace.component";
+import { AgentChatComponent } from "./workspace/component/agent-chat/agent-chat.component";
 import { NzCardModule } from "ng-zorro-antd/card";
 import { NzTagModule } from "ng-zorro-antd/tag";
 import { NzAvatarModule } from "ng-zorro-antd/avatar";
@@ -183,6 +184,7 @@ registerLocaleData(en);
     PublicProjectComponent,
     AppComponent,
     WorkspaceComponent,
+    AgentChatComponent,
     MenuComponent,
     OperatorMenuComponent,
     SettingsComponent,
@@ -311,6 +313,7 @@ registerLocaleData(en);
     NzAvatarModule,
     NzTabsModule,
     NzPaginationModule,
+    NzSpinModule,
     NzCommentModule,
     ColorPickerModule,
     NzSwitchModule,

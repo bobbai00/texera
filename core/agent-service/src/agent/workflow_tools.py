@@ -104,22 +104,49 @@ class WorkflowToolkit:
         session: AgentSession,
         ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
-        """Execute add operator tool."""
-        event = {
-            "type": "operatorAdd",
-            "operatorId": tool.operator_id,
+        """Execute add operator tool through HTTP API."""
+        # Instead of WebSocket, we'll use HTTP API to add operator
+        import aiohttp
+
+        # Default position if not provided
+        position = tool.position or {"x": 300, "y": 300}
+
+        # Create operator predicate matching Texera's format
+        operator_data = {
+            "operatorID": tool.operator_id,
             "operatorType": tool.operator_type,
-            "displayName": tool.display_name
+            "operatorVersion": "v1",  # Default version
+            "operatorProperties": {},
+            "inputPorts": [],
+            "outputPorts": [],
+            "showAdvanced": False,
+            "isDisabled": False,
+            "customDisplayName": tool.display_name
         }
 
-        if tool.position:
-            event["position"] = {
-                "x": tool.position.x,
-                "y": tool.position.y
-            }
+        # Call Texera backend API to add operator
+        try:
+            # Get the backend URL from environment or use default
+            import os
+            backend_url = os.environ.get("TEXERA_BACKEND_URL", "http://localhost:8080")
 
-        if ws_connection:
-            await self._send_to_websocket(ws_connection, event)
+            async with aiohttp.ClientSession() as http_session:
+                # Add operator via REST API
+                async with http_session.post(
+                    f"{backend_url}/api/workflow/{session.workflow_id}/operator",
+                    json={
+                        "operator": operator_data,
+                        "position": {"x": position.x if hasattr(position, 'x') else position["x"],
+                                   "y": position.y if hasattr(position, 'y') else position["y"]}
+                    }
+                ) as resp:
+                    if resp.status == 200:
+                        logger.info(f"Added operator {tool.operator_id} via API")
+                    else:
+                        logger.warning(f"API call returned status {resp.status}")
+        except Exception as e:
+            logger.error(f"Error calling backend API: {e}")
+            # Continue even if API call fails, as we'll update through shared editing
 
         # Update local state
         if session.workflow_state:

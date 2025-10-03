@@ -197,3 +197,50 @@ class ModelInfo(BaseModel):
 class AvailableModelsResponse(BaseModel):
     """Response with available models."""
     models: List[ModelInfo]
+
+
+# Chat models
+class ChatMessage(BaseModel):
+    """A single chat message."""
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)
+
+    role: Literal["user", "assistant", "system"] = Field(description="Message role")
+    content: str = Field(description="Message content")
+    timestamp: int = Field(default_factory=lambda: int(time.time() * 1000))
+    message_id: Optional[str] = Field(None, serialization_alias="messageId")
+
+
+class SendChatRequest(BaseModel):
+    """Request to send a chat message to agent."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    workflow_id: int = Field(..., alias="workflowId")
+    message: str = Field(..., description="User message to agent")
+    workflow_state: Optional[Dict[str, Any]] = Field(None, alias="workflowState", description="Current workflow state")
+
+
+class SendChatResponse(BaseModel):
+    """Response from sending chat message."""
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)
+
+    success: bool
+    message: Optional[ChatMessage] = None
+    error: Optional[str] = None
+
+
+class ChatHistoryRequest(BaseModel):
+    """Request to get chat history."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    workflow_id: int = Field(..., alias="workflowId")
+    limit: Optional[int] = Field(50, description="Number of messages to retrieve")
+    before_timestamp: Optional[int] = Field(None, alias="beforeTimestamp")
+
+
+class ChatHistoryResponse(BaseModel):
+    """Response with chat history."""
+    model_config = ConfigDict(populate_by_name=True, by_alias=True)
+
+    success: bool
+    messages: List[ChatMessage] = Field(default_factory=list)
+    has_more: bool = Field(False, serialization_alias="hasMore")

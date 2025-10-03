@@ -312,9 +312,9 @@ class DatasetResource {
           createdDataset.getName,
           createdDataset.getRepositoryName,
           createdDataset.getIsPublic,
-          createdDataset.getIsDownloadable,
           createdDataset.getDescription,
-          createdDataset.getCreationTime
+          createdDataset.getCreationTime,
+          createdDataset.getIsDownloadable,
         ),
         user.getEmail,
         PrivilegeEnum.WRITE,

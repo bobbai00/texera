@@ -5,6 +5,7 @@ Main entry point for the Texera agent service.
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -12,6 +13,24 @@ import structlog
 
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Try to load .env file if it exists
+env_path = Path(__file__).parent.parent / ".env"
+if env_path.exists():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_path)
+        print(f"Loaded environment variables from {env_path}")
+    except ImportError:
+        # If dotenv is not installed, just read the file manually
+        with open(env_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    key, _, value = line.partition('=')
+                    if key and value:
+                        os.environ[key.strip()] = value.strip()
+        print(f"Loaded environment variables from {env_path} (manual parsing)")
 
 from agent.api import start_server
 from agent.config import AgentConfig

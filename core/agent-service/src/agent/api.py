@@ -18,7 +18,12 @@ from .models import (
     RemoveAgentResponse,
     AgentStatusResponse,
     ModelInfo,
-    AvailableModelsResponse
+    AvailableModelsResponse,
+    SendChatRequest,
+    SendChatResponse,
+    ChatHistoryRequest,
+    ChatHistoryResponse,
+    ChatMessage
 )
 
 # Setup logging
@@ -203,6 +208,77 @@ async def get_available_models():
 
     except Exception as e:
         logger.error(f"Error getting available models: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+# Chat endpoints
+@app.post(
+    "/api/agent/chat/send",
+    response_model=SendChatResponse,
+    dependencies=[Depends(check_service_enabled)]
+)
+async def send_chat_message(request: SendChatRequest):
+    """
+    Send a chat message to the agent.
+
+    Args:
+        request: Chat request with workflow ID and message
+
+    Returns:
+        Chat response with agent's reply
+    """
+    try:
+        logger.info(f"Sending chat message to agent for workflow {request.workflow_id}")
+        response = await agent_service.send_chat_message(request)
+
+        if not response.success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=response.error
+            )
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error sending chat message: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@app.post(
+    "/api/agent/chat/history",
+    response_model=ChatHistoryResponse,
+    dependencies=[Depends(check_service_enabled)]
+)
+async def get_chat_history(request: ChatHistoryRequest):
+    """
+    Get chat history for a workflow.
+
+    Args:
+        request: History request with workflow ID and filters
+
+    Returns:
+        Chat history response
+    """
+    try:
+        logger.info(f"Getting chat history for workflow {request.workflow_id}")
+        response = await agent_service.get_chat_history(request)
+
+        if not response.success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to retrieve chat history"
+            )
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error getting chat history: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
