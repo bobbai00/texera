@@ -21,6 +21,7 @@ from .models import (
     WorkflowState,
     AgentSession,
 )
+from .shared_editing_client import SharedEditingClient
 
 logger = structlog.get_logger()
 
@@ -43,10 +44,33 @@ class WorkflowToolkit:
             GetOperatorInfoTool,
             GetExecutionStatusTool,
         ]
+        self.shared_editing_clients: Dict[int, SharedEditingClient] = {}
 
     def get_tool_classes(self):
         """Get all available tool classes for instructor."""
         return self.tool_classes
+
+    async def get_or_create_shared_editing_client(self, workflow_id: int) -> SharedEditingClient:
+        """
+        Get or create a shared editing client for the workflow.
+
+        Args:
+            workflow_id: The workflow ID
+
+        Returns:
+            SharedEditingClient instance
+        """
+        if workflow_id not in self.shared_editing_clients:
+            # Create new client
+            import os
+
+            rtc_url = os.environ.get("SHARED_EDITING_URL", "ws://localhost:1234")
+            client = SharedEditingClient(workflow_id, rtc_url)
+            await client.connect()
+            self.shared_editing_clients[workflow_id] = client
+            logger.info(f"Created new shared editing client for workflow {workflow_id}")
+
+        return self.shared_editing_clients[workflow_id]
 
     async def execute_tool(
         self, tool_instance: Any, session: AgentSession, ws_connection: Optional[Any] = None
@@ -98,167 +122,215 @@ class WorkflowToolkit:
     async def _execute_add_operator(
         self, tool: AddOperatorTool, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
-        """Execute add operator tool through HTTP API."""
-        # Instead of WebSocket, we'll use HTTP API to add operator
-        import aiohttp
-
-        # Default position if not provided
-        position = tool.position or {"x": 300, "y": 300}
-
-        # Create operator predicate matching Texera's format
-        operator_data = {
-            "operatorID": tool.operator_id,
-            "operatorType": tool.operator_type,
-            "operatorVersion": "v1",  # Default version
-            "operatorProperties": {},
-            "inputPorts": [],
-            "outputPorts": [],
-            "showAdvanced": False,
-            "isDisabled": False,
-            "customDisplayName": tool.display_name,
-        }
-
-        # Call Texera backend API to add operator
+        """Execute add operator tool through shared editing Y.js."""
         try:
-            # Get the backend URL from environment or use default
-            import os
+            # Get shared editing client
+            client = await self.get_or_create_shared_editing_client(session.workflow_id)
 
-            backend_url = os.environ.get("TEXERA_BACKEND_URL", "http://localhost:8080")
+            # Default position if not provided
+            position = tool.position or {"x": 300, "y": 300}
 
-            async with aiohttp.ClientSession() as http_session:
-                # Add operator via REST API
-                async with http_session.post(
-                    f"{backend_url}/api/workflow/{session.workflow_id}/operator",
-                    json={
-                        "operator": operator_data,
-                        "position": {
-                            "x": position.x if hasattr(position, "x") else position["x"],
-                            "y": position.y if hasattr(position, "y") else position["y"],
-                        },
-                    },
-                ) as resp:
-                    if resp.status == 200:
-                        logger.info(f"Added operator {tool.operator_id} via API")
-                    else:
-                        logger.warning(f"API call returned status {resp.status}")
-        except Exception as e:
-            logger.error(f"Error calling backend API: {e}")
-            # Continue even if API call fails, as we'll update through shared editing
+            # Create operator predicate matching Texera's format
+            operator_data = {
+                "operatorType": tool.operator_type,
+                "operatorVersion": "v1",  # Default version
+                "operatorProperties": {},
+                "inputPorts": [],
+                "outputPorts": [],
+                "showAdvanced": False,
+                "isDisabled": False,
+                "customDisplayName": tool.display_name,
+            }
 
-        # Update local state
-        if session.workflow_state:
-            from .models import OperatorInfo
-
-            session.workflow_state.operators.append(
-                OperatorInfo(
-                    operator_id=tool.operator_id,
-                    operator_type=tool.operator_type,
-                    display_name=tool.display_name,
-                    position=tool.position,
-                )
+            # Add operator through Y.js shared editing
+            client.add_operator(
+                operator_id=tool.operator_id,
+                operator_data=operator_data,
+                position={
+                    "x": position.get("x", 300) if isinstance(position, dict) else position.x,
+                    "y": position.get("y", 300) if isinstance(position, dict) else position.y,
+                },
             )
 
-        return {
-            "success": True,
-            "operator_id": tool.operator_id,
-            "message": f"Added operator {tool.display_name}",
-        }
+            # Update local state
+            if session.workflow_state:
+                from .models import OperatorInfo
+
+                session.workflow_state.operators.append(
+                    OperatorInfo(
+                        operator_id=tool.operator_id,
+                        operator_type=tool.operator_type,
+                        display_name=tool.display_name,
+                        position=tool.position,
+                    )
+                )
+
+            logger.info(f"Added operator {tool.operator_id} via shared editing")
+
+            return {
+                "success": True,
+                "operator_id": tool.operator_id,
+                "message": f"Added operator {tool.display_name}",
+            }
+
+        except Exception as e:
+            logger.error(f"Error adding operator: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"Failed to add operator: {str(e)}",
+            }
 
     async def _execute_delete_operator(
         self, tool: DeleteOperatorTool, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
-        """Execute delete operator tool."""
-        event = {"type": "operatorDelete", "operatorId": tool.operator_id}
+        """Execute delete operator tool through shared editing Y.js."""
+        try:
+            # Get shared editing client
+            client = await self.get_or_create_shared_editing_client(session.workflow_id)
 
-        if ws_connection:
-            await self._send_to_websocket(ws_connection, event)
+            # Delete operator through Y.js
+            client.delete_operator(tool.operator_id)
 
-        # Update local state
-        if session.workflow_state:
-            session.workflow_state.operators = [
-                op for op in session.workflow_state.operators if op.operator_id != tool.operator_id
-            ]
+            # Update local state
+            if session.workflow_state:
+                session.workflow_state.operators = [
+                    op
+                    for op in session.workflow_state.operators
+                    if op.operator_id != tool.operator_id
+                ]
 
-        return {
-            "success": True,
-            "deleted": tool.operator_id,
-            "message": f"Deleted operator {tool.operator_id}",
-        }
+            logger.info(f"Deleted operator {tool.operator_id} via shared editing")
+
+            return {
+                "success": True,
+                "deleted": tool.operator_id,
+                "message": f"Deleted operator {tool.operator_id}",
+            }
+
+        except Exception as e:
+            logger.error(f"Error deleting operator: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"Failed to delete operator: {str(e)}",
+            }
 
     async def _execute_set_property(
         self, tool: SetOperatorPropertyTool, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
-        """Execute set operator property tool."""
-        event = {
-            "type": "operatorPropertyChange",
-            "operatorId": tool.operator_id,
-            "properties": tool.properties,
-        }
+        """Execute set operator property tool through shared editing Y.js."""
+        try:
+            # Get shared editing client
+            client = await self.get_or_create_shared_editing_client(session.workflow_id)
 
-        if ws_connection:
-            await self._send_to_websocket(ws_connection, event)
+            # Update properties through Y.js
+            client.set_operator_property(tool.operator_id, tool.properties)
 
-        # Update local state
-        if session.workflow_state:
-            for op in session.workflow_state.operators:
-                if op.operator_id == tool.operator_id:
-                    op.properties.update(tool.properties)
-                    break
+            # Update local state
+            if session.workflow_state:
+                for op in session.workflow_state.operators:
+                    if op.operator_id == tool.operator_id:
+                        op.properties.update(tool.properties)
+                        break
 
-        return {
-            "success": True,
-            "operator_id": tool.operator_id,
-            "message": f"Updated properties for {tool.operator_id}",
-        }
+            logger.info(f"Updated properties for {tool.operator_id} via shared editing")
+
+            return {
+                "success": True,
+                "operator_id": tool.operator_id,
+                "message": f"Updated properties for {tool.operator_id}",
+            }
+
+        except Exception as e:
+            logger.error(f"Error updating operator properties: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"Failed to update properties: {str(e)}",
+            }
 
     async def _execute_add_link(
         self, tool: AddLinkTool, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
-        """Execute add link tool."""
-        event = {
-            "type": "linkAdd",
-            "linkId": tool.link_id,
-            "source": {"operatorId": tool.source_operator_id, "portId": tool.source_port_id},
-            "target": {"operatorId": tool.target_operator_id, "portId": tool.target_port_id},
-        }
+        """Execute add link tool through shared editing Y.js."""
+        try:
+            # Get shared editing client
+            client = await self.get_or_create_shared_editing_client(session.workflow_id)
 
-        if ws_connection:
-            await self._send_to_websocket(ws_connection, event)
-
-        # Update local state
-        if session.workflow_state:
-            from .models import LinkInfo, PortInfo
-
-            session.workflow_state.links.append(
-                LinkInfo(
-                    link_id=tool.link_id,
-                    source=PortInfo(
-                        operator_id=tool.source_operator_id, port_id=tool.source_port_id
-                    ),
-                    target=PortInfo(
-                        operator_id=tool.target_operator_id, port_id=tool.target_port_id
-                    ),
-                )
+            # Add link through Y.js
+            client.add_link(
+                link_id=tool.link_id,
+                source_op=tool.source_operator_id,
+                source_port=tool.source_port_id,
+                target_op=tool.target_operator_id,
+                target_port=tool.target_port_id,
             )
 
-        return {"success": True, "link_id": tool.link_id, "message": f"Added link {tool.link_id}"}
+            # Update local state
+            if session.workflow_state:
+                from .models import LinkInfo, PortInfo
+
+                session.workflow_state.links.append(
+                    LinkInfo(
+                        link_id=tool.link_id,
+                        source=PortInfo(
+                            operator_id=tool.source_operator_id, port_id=tool.source_port_id
+                        ),
+                        target=PortInfo(
+                            operator_id=tool.target_operator_id, port_id=tool.target_port_id
+                        ),
+                    )
+                )
+
+            logger.info(f"Added link {tool.link_id} via shared editing")
+
+            return {
+                "success": True,
+                "link_id": tool.link_id,
+                "message": f"Added link {tool.link_id}",
+            }
+
+        except Exception as e:
+            logger.error(f"Error adding link: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"Failed to add link: {str(e)}",
+            }
 
     async def _execute_delete_link(
         self, tool: DeleteLinkTool, session: AgentSession, ws_connection: Optional[Any]
     ) -> Dict[str, Any]:
-        """Execute delete link tool."""
-        event = {"type": "linkDelete", "linkId": tool.link_id}
+        """Execute delete link tool through shared editing Y.js."""
+        try:
+            # Get shared editing client
+            client = await self.get_or_create_shared_editing_client(session.workflow_id)
 
-        if ws_connection:
-            await self._send_to_websocket(ws_connection, event)
+            # Delete link through Y.js
+            client.delete_link(tool.link_id)
 
-        # Update local state
-        if session.workflow_state:
-            session.workflow_state.links = [
-                link for link in session.workflow_state.links if link.link_id != tool.link_id
-            ]
+            # Update local state
+            if session.workflow_state:
+                session.workflow_state.links = [
+                    link for link in session.workflow_state.links if link.link_id != tool.link_id
+                ]
 
-        return {"success": True, "deleted": tool.link_id, "message": f"Deleted link {tool.link_id}"}
+            logger.info(f"Deleted link {tool.link_id} via shared editing")
+
+            return {
+                "success": True,
+                "deleted": tool.link_id,
+                "message": f"Deleted link {tool.link_id}",
+            }
+
+        except Exception as e:
+            logger.error(f"Error deleting link: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"Failed to delete link: {str(e)}",
+            }
 
     async def _execute_run_workflow(
         self, session: AgentSession, ws_connection: Optional[Any]
@@ -307,24 +379,41 @@ class WorkflowToolkit:
 
     async def _execute_get_graph(self, session: AgentSession) -> Dict[str, Any]:
         """Execute get workflow graph tool."""
-        if not session.workflow_state:
-            return {"success": False, "error": "No workflow state available"}
+        try:
+            # Get shared editing client to get current state
+            client = await self.get_or_create_shared_editing_client(session.workflow_id)
 
-        return {
-            "success": True,
-            "operators": [
-                {"id": op.operator_id, "type": op.operator_type, "name": op.display_name}
-                for op in session.workflow_state.operators
-            ],
-            "links": [
-                {
-                    "id": link.link_id,
-                    "source": link.source.operator_id,
-                    "target": link.target.operator_id,
+            # Get workflow state from Y.js
+            state = client.get_workflow_state()
+
+            return {
+                "success": True,
+                "operators": state.get("operators", []),
+                "links": state.get("links", []),
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting workflow graph: {e}")
+
+            # Fall back to local state if available
+            if session.workflow_state:
+                return {
+                    "success": True,
+                    "operators": [
+                        {"id": op.operator_id, "type": op.operator_type, "name": op.display_name}
+                        for op in session.workflow_state.operators
+                    ],
+                    "links": [
+                        {
+                            "id": link.link_id,
+                            "source": link.source.operator_id,
+                            "target": link.target.operator_id,
+                        }
+                        for link in session.workflow_state.links
+                    ],
                 }
-                for link in session.workflow_state.links
-            ],
-        }
+
+            return {"success": False, "error": str(e)}
 
     async def _execute_get_operator_info(
         self, tool: GetOperatorInfoTool, session: AgentSession
@@ -354,13 +443,3 @@ class WorkflowToolkit:
             status = session.workflow_state.execution_status
 
         return {"success": True, "status": status, "message": f"Workflow status: {status}"}
-
-    async def _send_to_websocket(self, ws_connection: Any, event: Dict[str, Any]):
-        """Send event to WebSocket connection."""
-        try:
-            message = json.dumps(event)
-            await ws_connection.send(message)
-            logger.info(f"Sent WebSocket event: {event['type']}")
-        except Exception as e:
-            logger.error(f"Error sending to WebSocket: {e}")
-            raise

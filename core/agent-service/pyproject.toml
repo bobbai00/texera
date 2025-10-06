@@ -36,6 +36,8 @@ dependencies = [
     "tenacity>=8.2.0",
     "python-jose[cryptography]>=3.3.0",
     "passlib>=1.7.4",
+    "ypy-websocket>=0.12.4",
+    "y-py>=0.6.2",
 ]
 
 [project.optional-dependencies]
