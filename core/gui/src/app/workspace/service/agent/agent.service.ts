@@ -171,6 +171,7 @@ export class AgentService {
   public getAgentStatus(workflowId: number): Observable<AgentStatus | null> {
     return this.http.get(`${this.API_BASE}/${workflowId}/status`).pipe(
       map((response: any) => {
+        // Only return status if agent is active, but don't modify session
         return response.isActive ? response.status : null;
       }),
       catchError(() => of(null))
@@ -228,6 +229,9 @@ export class AgentService {
     });
 
     // Periodically check agent status if we have a session
+    // Disable automatic status checking that might interfere with the chat
+    // Status will be checked only when explicitly needed
+    /*
     interval(30000).pipe(
       filter(() => this.currentSession !== null),
       switchMap(() => {
@@ -243,6 +247,7 @@ export class AgentService {
         this.agentPresentSubject.next(false);
       }
     });
+    */
   }
 
   /**

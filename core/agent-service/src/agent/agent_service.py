@@ -8,7 +8,6 @@ import time
 from typing import Dict, List, Optional, Any
 import websockets
 import structlog
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .config import AgentConfig
 from .llm_provider import LLMProvider
@@ -196,7 +195,6 @@ class AgentService:
             logger.error(f"Error handling workflow event: {e}")
             return None
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _connect_to_shared_editing(self, session: AgentSession):
         """
         Connect to shared editing WebSocket server.
