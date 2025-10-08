@@ -69,7 +69,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean
 
 # Install R and needed libraries
-ENV R_VERSION=4.3.3
+ENV R_VERSION=4.4.2
 RUN curl -O https://cran.r-project.org/src/base/R-4/R-${R_VERSION}.tar.gz && \
     tar -xf R-${R_VERSION}.tar.gz && \
     cd R-${R_VERSION} && \
@@ -84,6 +84,15 @@ RUN curl -O https://cran.r-project.org/src/base/R-4/R-${R_VERSION}.tar.gz && \
     pip3 install -r /tmp/requirements.txt && \
     pip3 install -r /tmp/operator-requirements.txt && \
     pip3 install -r /tmp/r-requirements.txt
+
+# Install mm tool from GitHub
+RUN cd /tmp && \
+    git clone https://github.com/porchard/mm.git && \
+    cd mm && \
+    make install && \
+    cd .. && \
+    rm -rf mm
+
 # Install R packages, pinning arrow to 14.0.2.1 explicitly
 RUN Rscript -e "options(repos = c(CRAN = 'https://cran.r-project.org')); \
                 install.packages(c('coro', 'dplyr'), \
@@ -94,6 +103,29 @@ RUN Rscript -e "options(repos = c(CRAN = 'https://cran.r-project.org')); \
                 remotes::install_version('arrow', version='14.0.2.1', \
                   repos='https://cran.r-project.org', upgrade='never'); \
                 cat('R arrow version: ', as.character(packageVersion('arrow')), '\n')"
+
+# Install BiocManager and Bioconductor packages
+RUN Rscript -e "if (!requireNamespace('BiocManager', quietly=TRUE)) \
+                  install.packages('BiocManager'); \
+                BiocManager::install(c('optparse', 'DropletUtils', 'SingleCellExperiment', \
+                  'SummarizedExperiment', 'Biobase', 'GenomicRanges', 'GenomeInfoDb', \
+                  'IRanges', 'S4Vectors', 'BiocGenerics', 'MatrixGenerics', 'matrixStats', \
+                  'Matrix', 'limma', 'scuttle', 'rhdf5filters', 'DelayedMatrixStats', \
+                  'BiocParallel', 'statmod', 'XVector', 'S4Arrays', 'DelayedArray', \
+                  'GenomeInfoDbData', 'HDF5Array', 'SparseArray', 'Rhdf5lib', 'zlibbioc', \
+                  'locfit', 'edgeR', 'dqrng', 'sparseMatrixStats', 'rhdf5', 'beachmat', \
+                  'UCSC.utils'), Ncpus = parallel::detectCores())"
+
+# Install additional CRAN packages
+RUN Rscript -e "options(repos = c(CRAN = 'https://cran.r-project.org')); \
+                install.packages(c('jsonlite', 'crayon', 'Rcpp', 'R6', 'getopt', \
+                  'R.utils', 'R.methodsS3', 'R.oo', 'codetools', 'abind', 'httr'), \
+                  Ncpus = parallel::detectCores())"
+
+# Install DoubletFinder from GitHub
+RUN Rscript -e "if (!requireNamespace('remotes', quietly=TRUE)) \
+                  install.packages('remotes'); \
+                remotes::install_github('chris-mcginnis-ucsf/DoubletFinder')"
 ENV LD_LIBRARY_PATH=/usr/local/lib/R/lib:$LD_LIBRARY_PATH
 
 # Copy the built texera binary from the build phase
