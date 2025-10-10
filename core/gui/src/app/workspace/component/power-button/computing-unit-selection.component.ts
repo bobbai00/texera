@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { ChangeDetectorRef, Component, OnInit, ViewChild, ElementRef, AfterViewInit } from "@angular/core";
+import { Component, OnInit, ChangeDetectorRef, ViewChild, ElementRef, AfterViewInit, OnDestroy } from "@angular/core";
 import { take } from "rxjs/operators";
 import { WorkflowComputingUnitManagingService } from "../../service/workflow-computing-unit/workflow-computing-unit-managing.service";
 import { DashboardWorkflowComputingUnit, WorkflowComputingUnitType } from "../../types/workflow-computing-unit";
@@ -32,10 +32,13 @@ import { WorkflowExecutionsService } from "../../../dashboard/service/user/workf
 import { WorkflowExecutionsEntry } from "../../../dashboard/type/workflow-executions-entry";
 import { ExecutionState } from "../../types/execute-workflow.interface";
 import { ShareAccessComponent } from "../../../dashboard/component/user/share-access/share-access.component";
+import { combineLatest, Subscription } from "rxjs";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { ComputingUnitSshService } from "../../service/computing-unit-ssh/computing-unit-ssh.service";
+import { UserService } from "../../../common/service/user/user.service";
 
 @UntilDestroy()
 @Component({
@@ -43,7 +46,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
   templateUrl: "./computing-unit-selection.component.html",
   styleUrls: ["./computing-unit-selection.component.scss"],
 })
-export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit {
+export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit, OnDestroy {
   // current workflow's Id, will change with wid in the workflowActionService.metadata
   workflowId: number | undefined;
 
@@ -58,6 +61,9 @@ export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit {
   private terminal?: Terminal;
   private fitAddon?: FitAddon;
   private currentUnit?: DashboardWorkflowComputingUnit;
+  private sshConnectionSubscription?: Subscription;
+  private sshErrorSubscription?: Subscription;
+  private resizeListener?: () => void;
 
   // variables for creating a computing unit
   addComputeUnitModalVisible = false;
@@ -97,7 +103,9 @@ export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit {
     private computingUnitStatusService: ComputingUnitStatusService,
     private workflowExecutionsService: WorkflowExecutionsService,
     private modalService: NzModalService,
-    private cdr: ChangeDetectorRef
+    private cdr: ChangeDetectorRef,
+    private sshService: ComputingUnitSshService,
+    private userService: UserService
   ) {}
 
   ngOnInit(): void {
@@ -171,6 +179,10 @@ export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit {
 
   ngAfterViewInit(): void {
     // Terminal initialization will happen when modal opens
+  }
+
+  ngOnDestroy(): void {
+    this.closeSshTerminal();
   }
 
   /**
@@ -958,14 +970,38 @@ export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit {
    */
   closeSshTerminal(): void {
     this.sshModalVisible = false;
+
+    // Clean up SSH service connection
+    this.sshService.closeConnection();
+
+    // Clean up subscriptions
+    if (this.sshConnectionSubscription) {
+      this.sshConnectionSubscription.unsubscribe();
+      this.sshConnectionSubscription = undefined;
+    }
+
+    if (this.sshErrorSubscription) {
+      this.sshErrorSubscription.unsubscribe();
+      this.sshErrorSubscription = undefined;
+    }
+
+    // Clean up resize listener
+    if (this.resizeListener) {
+      window.removeEventListener("resize", this.resizeListener);
+      this.resizeListener = undefined;
+    }
+
+    // Dispose terminal and addons
     if (this.terminal) {
       this.terminal.dispose();
       this.terminal = undefined;
     }
+
     if (this.fitAddon) {
       this.fitAddon.dispose();
       this.fitAddon = undefined;
     }
+
     this.currentUnit = undefined;
   }
 
@@ -973,7 +1009,7 @@ export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit {
    * Initialize the terminal
    */
   private initializeTerminal(): void {
-    if (!this.terminalContainer || !this.terminalContainer.nativeElement) {
+    if (!this.terminalContainer || !this.terminalContainer.nativeElement || !this.currentUnit) {
       return;
     }
 
@@ -1019,43 +1055,46 @@ export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit {
     // Fit terminal to container
     this.fitAddon.fit();
 
-    // Add dummy welcome message
-    this.terminal.writeln("Welcome to SSH Terminal (Demo Mode)");
-    this.terminal.writeln(`Connected to: ${this.currentUnit?.computingUnit.name}`);
-    this.terminal.writeln(`Type: ${this.currentUnit?.computingUnit.type}`);
+    // Show connecting message
+    this.terminal.writeln("Connecting to SSH Terminal...");
+    this.terminal.writeln(`Target: ${this.currentUnit.computingUnit.name}`);
+    this.terminal.writeln(`Type: ${this.currentUnit.computingUnit.type}`);
     this.terminal.writeln("");
-    this.terminal.write("$ ");
 
-    // Handle terminal input (dummy implementation)
-    this.terminal.onData(data => {
-      if (!this.terminal) return;
-
-      // Handle special keys
-      if (data === "\r") {
-        // Enter key
+    // Subscribe to connection status
+    this.sshConnectionSubscription = this.sshService.getConnectionStatusStream().subscribe(connected => {
+      if (connected && this.terminal) {
+        this.terminal.clear();
+        this.terminal.writeln("\r\x1b[32m✓ SSH Connection Established\x1b[0m");
         this.terminal.writeln("");
-        this.terminal.writeln("This is a demo terminal. SSH connection not implemented.");
-        this.terminal.write("$ ");
-      } else if (data === "\u007F") {
-        // Backspace
-        if ((this.terminal as any).buffer.active.cursorX > 2) {
-          this.terminal.write("\b \b");
-        }
-      } else if (data === "\u0003") {
-        // Ctrl+C
-        this.terminal.writeln("^C");
-        this.terminal.write("$ ");
-      } else {
-        // Regular character
-        this.terminal.write(data);
       }
     });
+
+    // Subscribe to errors
+    this.sshErrorSubscription = this.sshService.getErrorStream().subscribe(error => {
+      if (this.terminal) {
+        this.terminal.writeln(`\r\n\x1b[31mError: ${error}\x1b[0m\r\n`);
+      }
+      this.notificationService.error(`SSH Error: ${error}`);
+    });
+
+    // Get current user ID
+    const uid = this.userService.getCurrentUser()?.uid || 1;
+    const cuid = this.currentUnit.computingUnit.cuid;
+
+    // Open SSH connection via WebSocket
+    this.sshService.openSSHConnection(this.terminal, this.fitAddon, uid, cuid);
 
     // Handle window resize
-    window.addEventListener("resize", () => {
+    this.resizeListener = () => {
       if (this.fitAddon && this.sshModalVisible) {
         this.fitAddon.fit();
+        const dimensions = this.fitAddon.proposeDimensions();
+        if (dimensions) {
+          this.sshService.resizeTerminal(dimensions.cols, dimensions.rows);
+        }
       }
-    });
+    };
+    window.addEventListener("resize", this.resizeListener);
   }
 }
