@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { ChangeDetectorRef, Component, OnInit } from "@angular/core";
+import { ChangeDetectorRef, Component, OnInit, ViewChild, ElementRef, AfterViewInit } from "@angular/core";
 import { take } from "rxjs/operators";
 import { WorkflowComputingUnitManagingService } from "../../service/workflow-computing-unit/workflow-computing-unit-managing.service";
 import { DashboardWorkflowComputingUnit, WorkflowComputingUnitType } from "../../types/workflow-computing-unit";
@@ -33,6 +33,9 @@ import { WorkflowExecutionsEntry } from "../../../dashboard/type/workflow-execut
 import { ExecutionState } from "../../types/execute-workflow.interface";
 import { ShareAccessComponent } from "../../../dashboard/component/user/share-access/share-access.component";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 
 @UntilDestroy()
 @Component({
@@ -40,13 +43,21 @@ import { GuiConfigService } from "../../../common/service/gui-config.service";
   templateUrl: "./computing-unit-selection.component.html",
   styleUrls: ["./computing-unit-selection.component.scss"],
 })
-export class ComputingUnitSelectionComponent implements OnInit {
+export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit {
   // current workflow's Id, will change with wid in the workflowActionService.metadata
   workflowId: number | undefined;
 
   lastSelectedCuid?: number;
   selectedComputingUnit: DashboardWorkflowComputingUnit | null = null;
   allComputingUnits: DashboardWorkflowComputingUnit[] = [];
+
+  // SSH Terminal properties
+  @ViewChild("terminalContainer", { read: ElementRef }) terminalContainer?: ElementRef;
+  sshModalVisible = false;
+  sshModalTitle = "SSH Terminal";
+  private terminal?: Terminal;
+  private fitAddon?: FitAddon;
+  private currentUnit?: DashboardWorkflowComputingUnit;
 
   // variables for creating a computing unit
   addComputeUnitModalVisible = false;
@@ -156,6 +167,10 @@ export class ComputingUnitSelectionComponent implements OnInit {
       });
 
     this.registerWorkflowMetadataSubscription();
+  }
+
+  ngAfterViewInit(): void {
+    // Terminal initialization will happen when modal opens
   }
 
   /**
@@ -923,4 +938,124 @@ export class ComputingUnitSelectionComponent implements OnInit {
       terminateTooltip: "Terminate this computing unit",
     },
   } as const;
+
+  /**
+   * Open SSH Terminal modal
+   */
+  openSshTerminal(unit: DashboardWorkflowComputingUnit): void {
+    this.currentUnit = unit;
+    this.sshModalTitle = `SSH Terminal - ${unit.computingUnit.name}`;
+    this.sshModalVisible = true;
+
+    // Initialize terminal after modal is shown
+    setTimeout(() => {
+      this.initializeTerminal();
+    }, 100);
+  }
+
+  /**
+   * Close SSH Terminal modal
+   */
+  closeSshTerminal(): void {
+    this.sshModalVisible = false;
+    if (this.terminal) {
+      this.terminal.dispose();
+      this.terminal = undefined;
+    }
+    if (this.fitAddon) {
+      this.fitAddon.dispose();
+      this.fitAddon = undefined;
+    }
+    this.currentUnit = undefined;
+  }
+
+  /**
+   * Initialize the terminal
+   */
+  private initializeTerminal(): void {
+    if (!this.terminalContainer || !this.terminalContainer.nativeElement) {
+      return;
+    }
+
+    // Create terminal instance
+    this.terminal = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: '"Cascadia Code", "Courier New", monospace',
+      theme: {
+        background: "#1e1e1e",
+        foreground: "#cccccc",
+        cursor: "#ffffff",
+        black: "#000000",
+        red: "#cd3131",
+        green: "#0dbc79",
+        yellow: "#e5e510",
+        blue: "#2472c8",
+        magenta: "#bc3fbc",
+        cyan: "#11a8cd",
+        white: "#e5e5e5",
+        brightBlack: "#666666",
+        brightRed: "#f14c4c",
+        brightGreen: "#23d18b",
+        brightYellow: "#f5f543",
+        brightBlue: "#3b8eea",
+        brightMagenta: "#d670d6",
+        brightCyan: "#29b8db",
+        brightWhite: "#e5e5e5",
+      },
+    });
+
+    // Add fit addon
+    this.fitAddon = new FitAddon();
+    this.terminal.loadAddon(this.fitAddon);
+
+    // Add web links addon
+    const webLinksAddon = new WebLinksAddon();
+    this.terminal.loadAddon(webLinksAddon);
+
+    // Attach terminal to container
+    this.terminal.open(this.terminalContainer.nativeElement);
+
+    // Fit terminal to container
+    this.fitAddon.fit();
+
+    // Add dummy welcome message
+    this.terminal.writeln("Welcome to SSH Terminal (Demo Mode)");
+    this.terminal.writeln(`Connected to: ${this.currentUnit?.computingUnit.name}`);
+    this.terminal.writeln(`Type: ${this.currentUnit?.computingUnit.type}`);
+    this.terminal.writeln("");
+    this.terminal.write("$ ");
+
+    // Handle terminal input (dummy implementation)
+    this.terminal.onData(data => {
+      if (!this.terminal) return;
+
+      // Handle special keys
+      if (data === "\r") {
+        // Enter key
+        this.terminal.writeln("");
+        this.terminal.writeln("This is a demo terminal. SSH connection not implemented.");
+        this.terminal.write("$ ");
+      } else if (data === "\u007F") {
+        // Backspace
+        if ((this.terminal as any).buffer.active.cursorX > 2) {
+          this.terminal.write("\b \b");
+        }
+      } else if (data === "\u0003") {
+        // Ctrl+C
+        this.terminal.writeln("^C");
+        this.terminal.write("$ ");
+      } else {
+        // Regular character
+        this.terminal.write(data);
+      }
+    });
+
+    // Handle window resize
+    window.addEventListener("resize", () => {
+      if (this.fitAddon && this.sshModalVisible) {
+        this.fitAddon.fit();
+      }
+    });
+  }
 }
