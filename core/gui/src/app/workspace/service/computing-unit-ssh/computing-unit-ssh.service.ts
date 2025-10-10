@@ -94,7 +94,7 @@ export class ComputingUnitSshService {
       uid +
       "&cuid=" +
       cuid +
-      (this.config.env.userSystemEnabled && AuthService.getAccessToken() !== null
+      (AuthService.getAccessToken() !== null
         ? "&access-token=" + AuthService.getAccessToken()
         : "");
 
