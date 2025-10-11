@@ -35,7 +35,7 @@ spec:
       containers:
         - name: {{ .Values.yWebsocketServer.name }}
           image: {{ .Values.yWebsocketServer.image | quote }}
-          imagePullPolicy: Always
+          imagePullPolicy: {{ .Values.texeraImages.pullPolicy }}
           ports:
             - containerPort: 1234
 ---
