@@ -178,10 +178,14 @@ export class UserQuotaComponent implements OnInit {
         text: title,
       },
       xaxis: {
-        title: x_label,
+        title: {
+          text: x_label,
+        },
       },
       yaxis: {
-        title: y_label,
+        title: {
+          text: y_label,
+        },
         rangemode: "tozero" as const,
         zeroline: true,
         zerolinewidth: 2,
