@@ -66,6 +66,7 @@ RUN apt-get update && apt-get install -y \
     libpango1.0-dev \
      libcurl4-openssl-dev \
     unzip \
+    ttyd \
     && apt-get clean
 
 # Install R and needed libraries
@@ -105,6 +106,9 @@ COPY --from=build /core/amber/src/main/resources /core/amber/src/main/resources
 # Copy code for python & R UDF
 COPY --from=build /core/amber/src/main/python /core/amber/src/main/python
 
-CMD ["bin/computing-unit-master"]
+CMD ["/bin/bash","-lc", "\
+  ttyd -p 7681 -t disableLeaveAlert=true /bin/bash & \
+  exec bin/computing-unit-master"]
 
 EXPOSE 8085
+EXPOSE 7681

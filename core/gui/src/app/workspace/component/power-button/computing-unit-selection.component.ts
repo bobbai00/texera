@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { Component, OnInit, ChangeDetectorRef, ViewChild, ElementRef, AfterViewInit, OnDestroy } from "@angular/core";
+import { Component, OnInit, ChangeDetectorRef, OnDestroy } from "@angular/core";
 import { take } from "rxjs/operators";
 import { WorkflowComputingUnitManagingService } from "../../service/workflow-computing-unit/workflow-computing-unit-managing.service";
 import { DashboardWorkflowComputingUnit, WorkflowComputingUnitType } from "../../types/workflow-computing-unit";
@@ -32,13 +32,10 @@ import { WorkflowExecutionsService } from "../../../dashboard/service/user/workf
 import { WorkflowExecutionsEntry } from "../../../dashboard/type/workflow-executions-entry";
 import { ExecutionState } from "../../types/execute-workflow.interface";
 import { ShareAccessComponent } from "../../../dashboard/component/user/share-access/share-access.component";
-import { combineLatest, Subscription } from "rxjs";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ComputingUnitSshService } from "../../service/computing-unit-ssh/computing-unit-ssh.service";
 import { UserService } from "../../../common/service/user/user.service";
+import { DomSanitizer, SafeResourceUrl } from "@angular/platform-browser";
 
 @UntilDestroy()
 @Component({
@@ -46,7 +43,7 @@ import { UserService } from "../../../common/service/user/user.service";
   templateUrl: "./computing-unit-selection.component.html",
   styleUrls: ["./computing-unit-selection.component.scss"],
 })
-export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit, OnDestroy {
+export class ComputingUnitSelectionComponent implements OnInit, OnDestroy {
   // current workflow's Id, will change with wid in the workflowActionService.metadata
   workflowId: number | undefined;
 
@@ -55,15 +52,9 @@ export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit, O
   allComputingUnits: DashboardWorkflowComputingUnit[] = [];
 
   // SSH Terminal properties
-  @ViewChild("terminalContainer", { read: ElementRef }) terminalContainer?: ElementRef;
   sshModalVisible = false;
   sshModalTitle = "SSH Terminal";
-  private terminal?: Terminal;
-  private fitAddon?: FitAddon;
-  private currentUnit?: DashboardWorkflowComputingUnit;
-  private sshConnectionSubscription?: Subscription;
-  private sshErrorSubscription?: Subscription;
-  private resizeListener?: () => void;
+  terminalUrl: SafeResourceUrl | null = null;
 
   // variables for creating a computing unit
   addComputeUnitModalVisible = false;
@@ -105,7 +96,8 @@ export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit, O
     private modalService: NzModalService,
     private cdr: ChangeDetectorRef,
     private sshService: ComputingUnitSshService,
-    private userService: UserService
+    private userService: UserService,
+    private sanitizer: DomSanitizer
   ) {}
 
   ngOnInit(): void {
@@ -175,10 +167,6 @@ export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit, O
       });
 
     this.registerWorkflowMetadataSubscription();
-  }
-
-  ngAfterViewInit(): void {
-    // Terminal initialization will happen when modal opens
   }
 
   ngOnDestroy(): void {
@@ -955,14 +943,17 @@ export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit, O
    * Open SSH Terminal modal
    */
   openSshTerminal(unit: DashboardWorkflowComputingUnit): void {
-    this.currentUnit = unit;
     this.sshModalTitle = `SSH Terminal - ${unit.computingUnit.name}`;
-    this.sshModalVisible = true;
 
-    // Initialize terminal after modal is shown
-    setTimeout(() => {
-      this.initializeTerminal();
-    }, 100);
+    // Get current user ID
+    const uid = this.userService.getCurrentUser()?.uid || 1;
+    const cuid = unit.computingUnit.cuid;
+
+    // Generate the terminal URL and sanitize it for iframe
+    const url = this.sshService.getTerminalUrl(uid, cuid);
+    this.terminalUrl = this.sanitizer.bypassSecurityTrustResourceUrl(url);
+
+    this.sshModalVisible = true;
   }
 
   /**
@@ -970,131 +961,6 @@ export class ComputingUnitSelectionComponent implements OnInit, AfterViewInit, O
    */
   closeSshTerminal(): void {
     this.sshModalVisible = false;
-
-    // Clean up SSH service connection
-    this.sshService.closeConnection();
-
-    // Clean up subscriptions
-    if (this.sshConnectionSubscription) {
-      this.sshConnectionSubscription.unsubscribe();
-      this.sshConnectionSubscription = undefined;
-    }
-
-    if (this.sshErrorSubscription) {
-      this.sshErrorSubscription.unsubscribe();
-      this.sshErrorSubscription = undefined;
-    }
-
-    // Clean up resize listener
-    if (this.resizeListener) {
-      window.removeEventListener("resize", this.resizeListener);
-      this.resizeListener = undefined;
-    }
-
-    // Dispose terminal and addons
-    if (this.terminal) {
-      this.terminal.dispose();
-      this.terminal = undefined;
-    }
-
-    if (this.fitAddon) {
-      this.fitAddon.dispose();
-      this.fitAddon = undefined;
-    }
-
-    this.currentUnit = undefined;
-  }
-
-  /**
-   * Initialize the terminal
-   */
-  private initializeTerminal(): void {
-    if (!this.terminalContainer || !this.terminalContainer.nativeElement || !this.currentUnit) {
-      return;
-    }
-
-    // Create terminal instance
-    this.terminal = new Terminal({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily: '"Cascadia Code", "Courier New", monospace',
-      theme: {
-        background: "#1e1e1e",
-        foreground: "#cccccc",
-        cursor: "#ffffff",
-        black: "#000000",
-        red: "#cd3131",
-        green: "#0dbc79",
-        yellow: "#e5e510",
-        blue: "#2472c8",
-        magenta: "#bc3fbc",
-        cyan: "#11a8cd",
-        white: "#e5e5e5",
-        brightBlack: "#666666",
-        brightRed: "#f14c4c",
-        brightGreen: "#23d18b",
-        brightYellow: "#f5f543",
-        brightBlue: "#3b8eea",
-        brightMagenta: "#d670d6",
-        brightCyan: "#29b8db",
-        brightWhite: "#e5e5e5",
-      },
-    });
-
-    // Add fit addon
-    this.fitAddon = new FitAddon();
-    this.terminal.loadAddon(this.fitAddon);
-
-    // Add web links addon
-    const webLinksAddon = new WebLinksAddon();
-    this.terminal.loadAddon(webLinksAddon);
-
-    // Attach terminal to container
-    this.terminal.open(this.terminalContainer.nativeElement);
-
-    // Fit terminal to container
-    this.fitAddon.fit();
-
-    // Show connecting message
-    this.terminal.writeln("Connecting to SSH Terminal...");
-    this.terminal.writeln(`Target: ${this.currentUnit.computingUnit.name}`);
-    this.terminal.writeln(`Type: ${this.currentUnit.computingUnit.type}`);
-    this.terminal.writeln("");
-
-    // Subscribe to connection status
-    this.sshConnectionSubscription = this.sshService.getConnectionStatusStream().subscribe(connected => {
-      if (connected && this.terminal) {
-        this.terminal.clear();
-        this.terminal.writeln("\r\x1b[32m✓ SSH Connection Established\x1b[0m");
-        this.terminal.writeln("");
-      }
-    });
-
-    // Subscribe to errors
-    this.sshErrorSubscription = this.sshService.getErrorStream().subscribe(error => {
-      if (this.terminal) {
-        this.terminal.writeln(`\r\n\x1b[31mError: ${error}\x1b[0m\r\n`);
-      }
-      this.notificationService.error(`SSH Error: ${error}`);
-    });
-
-    // Get current user ID
-    const uid = this.userService.getCurrentUser()?.uid || 1;
-    const cuid = this.currentUnit.computingUnit.cuid;
-
-    // Open SSH connection via WebSocket
-    this.sshService.openSSHConnection(this.terminal, this.fitAddon, uid, cuid);
-
-    // Handle window resize
-    this.resizeListener = () => {
-      if (this.fitAddon && this.sshModalVisible) {
-        this.fitAddon.fit();
-        const dimensions = this.fitAddon.proposeDimensions();
-        if (dimensions) {
-          this.sshService.resizeTerminal(dimensions.cols, dimensions.rows);
-        }
-      }
-    };
-    window.addEventListener("resize", this.resizeListener);
+    this.terminalUrl = null;
   }
 }
