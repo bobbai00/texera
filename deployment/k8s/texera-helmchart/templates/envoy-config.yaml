@@ -105,8 +105,8 @@ data:
                                 if cuid then
                                   -- Handle SSH WebSocket connections
                                   if string.match(uri, "^/wsapi/cu%-ssh") then
-                                    -- For SSH connections, route to the SSH port of the computing unit
-                                    local new_host = "computing-unit-" .. cuid .. ".{{ .Values.workflowComputingUnitPool.name }}-svc.{{ .Values.workflowComputingUnitPool.namespace }}.svc.cluster.local:22"
+                                    -- For SSH connections, route to ttyd WebSocket port
+                                    local new_host = "computing-unit-" .. cuid .. ".{{ .Values.workflowComputingUnitPool.name }}-svc.{{ .Values.workflowComputingUnitPool.namespace }}.svc.cluster.local:7681"
                                     request_handle:headers():replace(":authority", new_host)
                                   else
                                     -- For regular WebSocket connections, route to the standard port

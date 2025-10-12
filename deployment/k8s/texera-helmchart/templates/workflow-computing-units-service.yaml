@@ -29,7 +29,7 @@ spec:
       protocol: TCP
       port: {{ .Values.workflowComputingUnitPool.service.port }}
       targetPort: {{ .Values.workflowComputingUnitPool.service.targetPort }}
-    - name: ssh
+    - name: ttyd
       protocol: TCP
-      port: 22
-      targetPort: 22
+      port: 7681
+      targetPort: 7681

@@ -133,6 +133,7 @@ object KubernetesClient {
       specBuilder.withRuntimeClassName("nvidia")
     }
 
+    // Add main computing unit container
     val containerBuilder = specBuilder
       .addNewContainer()
       .withName("computing-unit-master")
@@ -141,10 +142,6 @@ object KubernetesClient {
       .addNewPort()
       .withContainerPort(KubernetesConfig.computeUnitPortNumber)
       .withName("http")
-      .endPort()
-      .addNewPort()
-      .withContainerPort(22)
-      .withName("ssh")
       .endPort()
       .withEnv(envList)
       .withResources(resourceBuilder.build())
@@ -159,6 +156,35 @@ object KubernetesClient {
     }
 
     containerBuilder.endContainer()
+
+    // Add ttyd sidecar container for web terminal
+    specBuilder
+      .addNewContainer()
+      .withName("ttyd")
+      .withImage("tsl0922/ttyd:latest")
+      .withImagePullPolicy("IfNotPresent")
+      .addNewPort()
+      .withContainerPort(7681)
+      .withName("ttyd")
+      .endPort()
+      .withCommand("ttyd")
+      .withArgs(
+        "-W",              // Enable WebSocket mode
+        "-p", "7681",      // Port
+        "-t", "disableLeaveAlert=true",  // Disable leave alert
+        "--writable",      // Allow write
+        "-c", "admin:admin",  // Basic auth (will be handled by Envoy)
+        "/bin/bash"
+      )
+      .withResources(
+        new ResourceRequirementsBuilder()
+          .addToLimits("cpu", new Quantity("100m"))
+          .addToLimits("memory", new Quantity("128Mi"))
+          .addToRequests("cpu", new Quantity("50m"))
+          .addToRequests("memory", new Quantity("64Mi"))
+          .build()
+      )
+      .endContainer()
 
     // Add tmpfs volume if needed
     shmSize.foreach { size =>

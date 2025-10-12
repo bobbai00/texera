@@ -19,7 +19,6 @@
 
 import { Injectable } from "@angular/core";
 import { BehaviorSubject, Observable, Subject, Subscription } from "rxjs";
-import { webSocket, WebSocketSubject } from "rxjs/webSocket";
 import { AuthService } from "../../../common/service/user/auth.service";
 import { getWebsocketUrl } from "src/app/common/util/url";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
@@ -28,25 +27,16 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { AttachAddon } from "@xterm/addon-attach";
 
-interface SSHMessage {
-  type: "data" | "resize" | "error" | "connected" | "disconnected";
-  data?: string;
-  cols?: number;
-  rows?: number;
-  error?: string;
-}
-
 @Injectable({
   providedIn: "root",
 })
 export class ComputingUnitSshService {
   private static readonly SSH_WEBSOCKET_ENDPOINT = "wsapi/cu-ssh";
 
-  private websocket?: WebSocketSubject<SSHMessage>;
+  private websocket?: WebSocket;
   private terminal?: Terminal;
   private fitAddon?: FitAddon;
   private attachAddon?: AttachAddon;
-  private wsSubscription?: Subscription;
   private readonly connectionStatusSubject = new BehaviorSubject<boolean>(false);
   private readonly errorSubject = new Subject<string>();
 
@@ -74,7 +64,7 @@ export class ComputingUnitSshService {
   }
 
   /**
-   * Open SSH connection to a computing unit
+   * Open SSH connection to a computing unit using ttyd
    */
   public openSSHConnection(
     terminal: Terminal,
@@ -87,7 +77,8 @@ export class ComputingUnitSshService {
     this.terminal = terminal;
     this.fitAddon = fitAddon;
 
-    // Build WebSocket URL with parameters
+    // Build WebSocket URL for ttyd
+    // ttyd uses a simpler protocol - just raw WebSocket
     const websocketUrl =
       getWebsocketUrl(ComputingUnitSshService.SSH_WEBSOCKET_ENDPOINT, "") +
       "?uid=" +
@@ -98,104 +89,61 @@ export class ComputingUnitSshService {
         ? "&access-token=" + AuthService.getAccessToken()
         : "");
 
-    console.log("SSH WebSocket URL:", websocketUrl);
+    console.log("Connecting to ttyd WebSocket:", websocketUrl);
 
-    // Create WebSocket connection
-    this.websocket = webSocket<SSHMessage>({
-      url: websocketUrl,
-      deserializer: msg => JSON.parse(msg.data),
-      serializer: msg => JSON.stringify(msg),
-    });
+    try {
+      // Create native WebSocket connection for ttyd
+      this.websocket = new WebSocket(websocketUrl);
 
-    // Subscribe to WebSocket messages
-    this.wsSubscription = this.websocket.subscribe({
-      next: (message: SSHMessage) => {
-        this.handleSSHMessage(message);
-      },
-      error: (error: any) => {
-        console.error("SSH WebSocket error:", error);
-        this.errorSubject.next("SSH connection error: " + error.message);
-        this.updateConnectionStatus(false);
-      },
-      complete: () => {
-        console.log("SSH WebSocket connection closed");
-        this.updateConnectionStatus(false);
-      },
-    });
+      // ttyd uses a binary protocol, so we need to use the AttachAddon
+      this.attachAddon = new AttachAddon(this.websocket);
+      this.terminal.loadAddon(this.attachAddon);
 
-    // Handle terminal input
-    this.terminal.onData((data: string) => {
-      if (this.websocket && this.isConnected) {
-        this.websocket.next({
-          type: "data",
-          data: data,
-        });
-      }
-    });
-
-    // Handle terminal resize
-    this.terminal.onResize((size: { cols: number; rows: number }) => {
-      if (this.websocket && this.isConnected) {
-        this.websocket.next({
-          type: "resize",
-          cols: size.cols,
-          rows: size.rows,
-        });
-      }
-    });
-
-    // Send initial terminal size
-    if (this.fitAddon) {
-      const { cols, rows } = this.fitAddon.proposeDimensions() || { cols: 80, rows: 24 };
-      setTimeout(() => {
-        if (this.websocket) {
-          this.websocket.next({
-            type: "resize",
-            cols: cols,
-            rows: rows,
-          });
-        }
-      }, 100);
-    }
-  }
-
-  /**
-   * Handle incoming SSH messages
-   */
-  private handleSSHMessage(message: SSHMessage): void {
-    switch (message.type) {
-      case "data":
-        if (this.terminal && message.data) {
-          this.terminal.write(message.data);
-        }
-        break;
-
-      case "connected":
-        console.log("SSH connection established");
+      // Handle WebSocket events
+      this.websocket.onopen = () => {
+        console.log("ttyd WebSocket connected");
         this.updateConnectionStatus(true);
-        if (this.terminal) {
-          this.terminal.writeln("\r\n*** SSH Connection Established ***\r\n");
-        }
-        break;
 
-      case "disconnected":
-        console.log("SSH connection closed");
+        // Send initial terminal size to ttyd
+        // ttyd expects: '1' (resize command) + JSON with cols and rows
+        if (this.fitAddon) {
+          const { cols, rows } = this.fitAddon.proposeDimensions() || { cols: 80, rows: 24 };
+          const resizeMessage = JSON.stringify({ cols, rows });
+          // ttyd protocol: '1' prefix for resize command
+          this.websocket?.send('1' + resizeMessage);
+        }
+      };
+
+      this.websocket.onerror = (error) => {
+        console.error("ttyd WebSocket error:", error);
+        this.errorSubject.next("Terminal connection error");
         this.updateConnectionStatus(false);
-        if (this.terminal) {
-          this.terminal.writeln("\r\n*** SSH Connection Closed ***\r\n");
-        }
-        break;
+      };
 
-      case "error":
-        console.error("SSH error:", message.error);
-        this.errorSubject.next(message.error || "Unknown SSH error");
-        if (this.terminal && message.error) {
-          this.terminal.writeln(`\r\n*** Error: ${message.error} ***\r\n`);
-        }
-        break;
+      this.websocket.onclose = () => {
+        console.log("ttyd WebSocket closed");
+        this.updateConnectionStatus(false);
 
-      default:
-        console.warn("Unknown SSH message type:", message);
+        // Clean up AttachAddon
+        if (this.attachAddon) {
+          this.attachAddon.dispose();
+          this.attachAddon = undefined;
+        }
+      };
+
+      // Handle terminal resize for ttyd
+      this.terminal.onResize((size: { cols: number; rows: number }) => {
+        if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+          // ttyd resize protocol
+          const resizeMessage = JSON.stringify({ cols: size.cols, rows: size.rows });
+          this.websocket.send('1' + resizeMessage);
+        }
+      });
+
+    } catch (error) {
+      console.error("Failed to connect to ttyd:", error);
+      this.errorSubject.next("Failed to establish terminal connection");
+      this.updateConnectionStatus(false);
     }
   }
 
@@ -203,19 +151,18 @@ export class ComputingUnitSshService {
    * Close SSH connection
    */
   public closeConnection(): void {
-    if (this.wsSubscription) {
-      this.wsSubscription.unsubscribe();
-      this.wsSubscription = undefined;
-    }
-
-    if (this.websocket) {
-      this.websocket.complete();
-      this.websocket = undefined;
-    }
-
+    // Clean up AttachAddon first
     if (this.attachAddon) {
       this.attachAddon.dispose();
       this.attachAddon = undefined;
+    }
+
+    // Close WebSocket
+    if (this.websocket) {
+      if (this.websocket.readyState === WebSocket.OPEN) {
+        this.websocket.close();
+      }
+      this.websocket = undefined;
     }
 
     this.terminal = undefined;
@@ -233,14 +180,12 @@ export class ComputingUnitSshService {
   }
 
   /**
-   * Send command to SSH session
+   * Send command to terminal (for programmatic input)
    */
   public sendCommand(command: string): void {
-    if (this.websocket && this.isConnected) {
-      this.websocket.next({
-        type: "data",
-        data: command,
-      });
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      // Send raw data to ttyd
+      this.websocket.send(command);
     }
   }
 
@@ -248,12 +193,10 @@ export class ComputingUnitSshService {
    * Resize terminal
    */
   public resizeTerminal(cols: number, rows: number): void {
-    if (this.websocket && this.isConnected) {
-      this.websocket.next({
-        type: "resize",
-        cols: cols,
-        rows: rows,
-      });
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      // ttyd resize protocol: '1' + JSON
+      const resizeMessage = JSON.stringify({ cols, rows });
+      this.websocket.send('1' + resizeMessage);
     }
   }
 }
