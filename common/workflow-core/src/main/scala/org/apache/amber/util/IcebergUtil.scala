@@ -20,7 +20,7 @@
 package org.apache.amber.util
 
 import org.apache.amber.config.StorageConfig
-import org.apache.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
+import org.apache.amber.core.tuple.{Attribute, AttributeType, BigObjectPointer, Schema, Tuple}
 import org.apache.hadoop.conf.Configuration
 import org.apache.iceberg.catalog.{Catalog, TableIdentifier}
 import org.apache.iceberg.data.parquet.GenericParquetReaders
@@ -51,6 +51,9 @@ import scala.jdk.CollectionConverters._
   * Util functions to interact with Iceberg Tables
   */
 object IcebergUtil {
+
+  // Unique suffix for BIG_OBJECT field encoding
+  private val BIG_OBJECT_FIELD_SUFFIX = "__texera_big_obj_ptr"
 
   /**
     * Creates and initializes a HadoopCatalog with the given parameters.
@@ -207,7 +210,9 @@ object IcebergUtil {
   def toIcebergSchema(amberSchema: Schema): IcebergSchema = {
     val icebergFields = amberSchema.getAttributes.zipWithIndex.map {
       case (attribute, index) =>
-        Types.NestedField.optional(index + 1, attribute.getName, toIcebergType(attribute.getType))
+        // Encode field name for BIG_OBJECT types to ensure they can be detected when reading back
+        val encodedName = encodeBigObjectFieldName(attribute.getName, attribute.getType)
+        Types.NestedField.optional(index + 1, encodedName, toIcebergType(attribute.getType))
     }
     new IcebergSchema(icebergFields.asJava)
   }
@@ -227,6 +232,8 @@ object IcebergUtil {
       case AttributeType.BOOLEAN   => Types.BooleanType.get()
       case AttributeType.TIMESTAMP => Types.TimestampType.withoutZone()
       case AttributeType.BINARY    => Types.BinaryType.get()
+      case AttributeType.BIG_OBJECT =>
+        Types.StringType.get() // Store BigObjectPointer URI as string
       case AttributeType.ANY =>
         throw new IllegalArgumentException("ANY type is not supported in Iceberg")
     }
@@ -244,12 +251,14 @@ object IcebergUtil {
     tuple.schema.getAttributes.zipWithIndex.foreach {
       case (attribute, index) =>
         val value = tuple.getField[AnyRef](index) match {
-          case null               => null
-          case ts: Timestamp      => ts.toInstant.atZone(ZoneId.systemDefault()).toLocalDateTime
-          case bytes: Array[Byte] => ByteBuffer.wrap(bytes)
-          case other              => other
+          case null                        => null
+          case ts: Timestamp               => ts.toInstant.atZone(ZoneId.systemDefault()).toLocalDateTime
+          case bytes: Array[Byte]          => ByteBuffer.wrap(bytes)
+          case bigObjPtr: BigObjectPointer => bigObjPtr.getUri
+          case other                       => other
         }
-        record.setField(attribute.getName, value)
+        val fieldName = encodeBigObjectFieldName(attribute.getName, attribute.getType)
+        record.setField(fieldName, value)
     }
 
     record
@@ -264,19 +273,52 @@ object IcebergUtil {
     */
   def fromRecord(record: Record, amberSchema: Schema): Tuple = {
     val fieldValues = amberSchema.getAttributes.map { attribute =>
-      val value = record.getField(attribute.getName) match {
-        case null               => null
-        case ldt: LocalDateTime => Timestamp.valueOf(ldt)
-        case buffer: ByteBuffer =>
+      val fieldName = encodeBigObjectFieldName(attribute.getName, attribute.getType)
+      val rawValue = record.getField(fieldName)
+
+      (rawValue, attribute.getType) match {
+        case (null, _)               => null
+        case (ldt: LocalDateTime, _) => Timestamp.valueOf(ldt)
+        case (buffer: ByteBuffer, _) =>
           val bytes = new Array[Byte](buffer.remaining())
           buffer.get(bytes)
           bytes
-        case other => other
+        case (uri: String, AttributeType.BIG_OBJECT) => new BigObjectPointer(uri)
+        case (other, _)                              => other
       }
-      value
     }
 
     Tuple(amberSchema, fieldValues.toArray)
+  }
+
+  /**
+    * Encodes a field name for BIG_OBJECT types by adding a unique system suffix.
+    * This ensures BIG_OBJECT fields can be identified when reading from Iceberg.
+    *
+    * @param fieldName The original field name
+    * @param attributeType The attribute type
+    * @return The encoded field name with a unique suffix for BIG_OBJECT types
+    */
+  def encodeBigObjectFieldName(fieldName: String, attributeType: AttributeType): String = {
+    attributeType match {
+      case AttributeType.BIG_OBJECT => s"${fieldName}${BIG_OBJECT_FIELD_SUFFIX}"
+      case _                        => fieldName
+    }
+  }
+
+  /**
+    * Decodes a field name by removing the unique system suffix if present.
+    * This restores the original user-defined field name.
+    *
+    * @param fieldName The encoded field name
+    * @return The original field name with system suffix removed
+    */
+  def decodeBigObjectFieldName(fieldName: String): String = {
+    if (fieldName.endsWith(BIG_OBJECT_FIELD_SUFFIX)) {
+      fieldName.substring(0, fieldName.length - BIG_OBJECT_FIELD_SUFFIX.length)
+    } else {
+      fieldName
+    }
   }
 
   /**
@@ -290,7 +332,16 @@ object IcebergUtil {
       .columns()
       .asScala
       .map { field =>
-        new Attribute(field.name(), fromIcebergType(field.`type`().asPrimitiveType()))
+        // Determine the attribute type using field name hints
+        val attributeType = fromIcebergType(
+          field.`type`().asPrimitiveType(),
+          field.name()
+        )
+
+        // Decode field name to restore original name for BIG_OBJECT types
+        val originalName = decodeBigObjectFieldName(field.name())
+
+        new Attribute(originalName, attributeType)
       }
       .toList
 
@@ -301,11 +352,21 @@ object IcebergUtil {
     * Converts an Iceberg `Type` to an Amber `AttributeType`.
     *
     * @param icebergType The Iceberg Type.
+    * @param fieldName The field name (used to detect BIG_OBJECT by suffix).
     * @return The corresponding Amber AttributeType.
     */
-  def fromIcebergType(icebergType: PrimitiveType): AttributeType = {
+  def fromIcebergType(
+      icebergType: PrimitiveType,
+      fieldName: String = ""
+  ): AttributeType = {
     icebergType match {
-      case _: Types.StringType    => AttributeType.STRING
+      case _: Types.StringType =>
+        // Check for BIG_OBJECT by examining the unique suffix pattern
+        if (fieldName.nonEmpty && fieldName.endsWith(BIG_OBJECT_FIELD_SUFFIX)) {
+          AttributeType.BIG_OBJECT
+        } else {
+          AttributeType.STRING
+        }
       case _: Types.IntegerType   => AttributeType.INTEGER
       case _: Types.LongType      => AttributeType.LONG
       case _: Types.DoubleType    => AttributeType.DOUBLE

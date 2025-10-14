@@ -24,7 +24,9 @@ import software.amazon.awssdk.auth.credentials.{AwsBasicCredentials, StaticCrede
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.model._
 import software.amazon.awssdk.services.s3.{S3Client, S3Configuration}
+import software.amazon.awssdk.core.sync.RequestBody
 
+import java.io.InputStream
 import java.security.MessageDigest
 import scala.jdk.CollectionConverters._
 
@@ -138,5 +140,134 @@ object S3StorageClient {
       // Perform batch deletion
       s3Client.deleteObjects(deleteObjectsRequest)
     }
+  }
+
+  /**
+    * Uploads an object to S3 using multipart upload.
+    * Handles streams of any size without loading into memory.
+    */
+  def uploadObject(bucketName: String, objectKey: String, inputStream: InputStream): String = {
+    val buffer = new Array[Byte](MINIMUM_NUM_OF_MULTIPART_S3_PART.toInt)
+    val uploadId = s3Client
+      .createMultipartUpload(
+        CreateMultipartUploadRequest.builder().bucket(bucketName).key(objectKey).build()
+      )
+      .uploadId()
+
+    try {
+      val parts = Iterator
+        .from(1)
+        .map { partNumber =>
+          // Fill buffer completely
+          var offset = 0
+          var read = 0
+          while (
+            offset < buffer.length && {
+              read = inputStream.read(buffer, offset, buffer.length - offset); read > 0
+            }
+          ) {
+            offset += read
+          }
+
+          if (offset > 0) {
+            val eTag = s3Client
+              .uploadPart(
+                UploadPartRequest
+                  .builder()
+                  .bucket(bucketName)
+                  .key(objectKey)
+                  .uploadId(uploadId)
+                  .partNumber(partNumber)
+                  .build(),
+                RequestBody.fromBytes(buffer.take(offset))
+              )
+              .eTag()
+            Some(CompletedPart.builder().partNumber(partNumber).eTag(eTag).build())
+          } else None
+        }
+        .takeWhile(_.isDefined)
+        .flatten
+        .toList
+
+      s3Client
+        .completeMultipartUpload(
+          CompleteMultipartUploadRequest
+            .builder()
+            .bucket(bucketName)
+            .key(objectKey)
+            .uploadId(uploadId)
+            .multipartUpload(CompletedMultipartUpload.builder().parts(parts.asJava).build())
+            .build()
+        )
+        .eTag()
+
+    } catch {
+      case e: Exception =>
+        try {
+          s3Client.abortMultipartUpload(
+            AbortMultipartUploadRequest
+              .builder()
+              .bucket(bucketName)
+              .key(objectKey)
+              .uploadId(uploadId)
+              .build()
+          )
+        } catch { case _: Exception => }
+        throw e
+    }
+  }
+
+  /**
+    * Downloads an object from S3 as an InputStream.
+    *
+    * @param bucketName The S3 bucket name.
+    * @param objectKey The object key (path) in S3.
+    * @return An InputStream containing the object data.
+    */
+  def downloadObject(bucketName: String, objectKey: String): InputStream = {
+    val getObjectRequest = GetObjectRequest
+      .builder()
+      .bucket(bucketName)
+      .key(objectKey)
+      .build()
+
+    s3Client.getObject(getObjectRequest)
+  }
+
+  /**
+    * Checks if an object exists in S3.
+    *
+    * @param bucketName The S3 bucket name.
+    * @param objectKey The object key (path) in S3.
+    * @return True if the object exists, false otherwise.
+    */
+  def objectExists(bucketName: String, objectKey: String): Boolean = {
+    try {
+      val headObjectRequest = HeadObjectRequest
+        .builder()
+        .bucket(bucketName)
+        .key(objectKey)
+        .build()
+      s3Client.headObject(headObjectRequest)
+      true
+    } catch {
+      case _: Exception => false
+    }
+  }
+
+  /**
+    * Deletes a single object from S3.
+    *
+    * @param bucketName The S3 bucket name.
+    * @param objectKey The object key (path) in S3.
+    */
+  def deleteObject(bucketName: String, objectKey: String): Unit = {
+    val deleteObjectRequest = DeleteObjectRequest
+      .builder()
+      .bucket(bucketName)
+      .key(objectKey)
+      .build()
+
+    s3Client.deleteObject(deleteObjectRequest)
   }
 }

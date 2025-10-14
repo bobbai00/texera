@@ -42,6 +42,10 @@ trait InitializeExecutorHandler {
     dp.serializationManager.setOpInitialization(req)
     val workerIdx = VirtualIdentityUtils.getWorkerIndex(actorId)
     val workerCount = req.totalWorkerCount
+
+    // Set execution context for this thread
+    ExecutionContext.setExecutionId(req.executionId)
+
     dp.executor = req.opExecInitInfo match {
       case OpExecWithClassName(className, descString) =>
         ExecFactory.newExecFromJavaClassName(className, descString, workerIdx, workerCount)

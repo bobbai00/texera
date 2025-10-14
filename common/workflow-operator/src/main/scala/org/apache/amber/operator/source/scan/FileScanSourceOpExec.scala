@@ -19,7 +19,7 @@
 
 package org.apache.amber.operator.source.scan
 
-import org.apache.amber.core.executor.SourceOperatorExecutor
+import org.apache.amber.core.executor.{ExecutionContext, SourceOperatorExecutor}
 import org.apache.amber.core.storage.DocumentFactory
 import org.apache.amber.core.tuple.AttributeTypeUtils.parseField
 import org.apache.amber.core.tuple.TupleLike
@@ -27,6 +27,7 @@ import org.apache.amber.util.JSONUtils.objectMapper
 import org.apache.commons.compress.archivers.ArchiveStreamFactory
 import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream
 import org.apache.commons.io.IOUtils.toByteArray
+import org.apache.texera.service.util.BigObjectManager
 
 import java.io._
 import java.net.URI
@@ -84,6 +85,14 @@ class FileScanSourceOpExec private[scan] (
             fields.addOne(desc.attributeType match {
               case FileAttributeType.SINGLE_STRING =>
                 new String(toByteArray(entry), desc.fileEncoding.getCharset)
+              case FileAttributeType.BIG_OBJECT =>
+                // For big objects, create a big object pointer from the input stream
+                // Get execution ID from thread-local context
+                val executionId = ExecutionContext.getExecutionId
+                  .getOrElse(
+                    throw new IllegalStateException("Execution ID not set in ExecutionContext")
+                  )
+                BigObjectManager.create(executionId, entry)
               case _ => parseField(toByteArray(entry), desc.attributeType.getType)
             })
             TupleLike(fields.toSeq: _*)
