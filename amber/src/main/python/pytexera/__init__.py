@@ -27,6 +27,7 @@ from .udf.udf_operator import (
     UDFBatchOperator,
     UDFSourceOperator,
 )
+from .big_object_manager import BigObjectManager
 
 __all__ = [
     "State",
@@ -41,6 +42,7 @@ __all__ = [
     "UDFBatchOperator",
     "UDFSourceOperator",
     "DatasetFileDocument",
+    "BigObjectManager",
     # export external tools to be used
     "overrides",
     "logger",

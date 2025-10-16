@@ -26,15 +26,12 @@ import org.apache.texera.dao.jooq.generated.Tables.BIG_OBJECT
 
 import java.io.{Closeable, InputStream}
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import scala.jdk.CollectionConverters._
 
 /**
-  * BigObjectStream wraps an InputStream and tracks its lifecycle for proper cleanup.
+  * BigObjectStream wraps an InputStream for reading big objects.
   */
-class BigObjectStream(private val inputStream: InputStream, private val pointer: BigObjectPointer)
-    extends InputStream
-    with Closeable {
+class BigObjectStream(private val inputStream: InputStream) extends InputStream with Closeable {
 
   @volatile private var closed = false
 
@@ -63,12 +60,10 @@ class BigObjectStream(private val inputStream: InputStream, private val pointer:
     if (!closed) {
       closed = true
       inputStream.close()
-      BigObjectManager.closeStream(pointer)
     }
   }
 
   def isClosed: Boolean = closed
-  def getPointer: BigObjectPointer = pointer
 }
 
 /**
@@ -76,7 +71,6 @@ class BigObjectStream(private val inputStream: InputStream, private val pointer:
   */
 object BigObjectManager extends LazyLogging {
   private val DEFAULT_BUCKET = "texera-big-objects"
-  private val openStreams = new ConcurrentHashMap[BigObjectPointer, BigObjectStream]()
   private lazy val context = SqlServer.getInstance().createDSLContext()
 
   /**
@@ -134,9 +128,7 @@ object BigObjectManager extends LazyLogging {
     )
 
     val inputStream = S3StorageClient.downloadObject(ptr.getBucketName, ptr.getObjectKey)
-    val stream = new BigObjectStream(inputStream, ptr)
-    openStreams.put(ptr, stream)
-    stream
+    new BigObjectStream(inputStream)
   }
 
   /**
@@ -166,7 +158,6 @@ object BigObjectManager extends LazyLogging {
     uris.foreach { uri =>
       try {
         val ptr = new BigObjectPointer(uri)
-        Option(openStreams.get(ptr)).foreach(_.close())
         S3StorageClient.deleteObject(ptr.getBucketName, ptr.getObjectKey)
       } catch {
         case e: Exception =>
@@ -179,21 +170,5 @@ object BigObjectManager extends LazyLogging {
       .deleteFrom(BIG_OBJECT)
       .where(BIG_OBJECT.EXECUTION_ID.eq(executionId))
       .execute()
-  }
-
-  /**
-    * Closes a big object stream. Typically called automatically when the stream is closed.
-    */
-  def close(ptr: BigObjectPointer): Unit = {
-    Option(openStreams.get(ptr)).foreach { stream =>
-      if (!stream.isClosed) stream.close()
-    }
-  }
-
-  /**
-    * Internal method to remove a stream from tracking when it's closed.
-    */
-  private[util] def closeStream(ptr: BigObjectPointer): Unit = {
-    openStreams.remove(ptr)
   }
 }

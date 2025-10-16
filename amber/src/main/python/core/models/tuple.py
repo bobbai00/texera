@@ -29,6 +29,7 @@ from pympler import asizeof
 from typing import Any, List, Iterator, Callable
 from typing_extensions import Protocol, runtime_checkable
 
+from core.storage.big_object_pointer import BigObjectPointer
 from .schema.attribute_type import TO_PYOBJECT_MAPPING, AttributeType
 from .schema.field import Field
 from .schema.schema import Schema
@@ -86,6 +87,7 @@ class ArrowTableTupleProvider:
             """
             value = self._table.column(field_name).chunks[chunk_idx][tuple_idx].as_py()
             field_type = self._table.schema.field(field_name).type
+            field_metadata = self._table.schema.field(field_name).metadata
 
             # for binary types, convert pickled objects back.
             if (
@@ -94,6 +96,16 @@ class ArrowTableTupleProvider:
                 and value[:6] == b"pickle"
             ):
                 value = pickle.loads(value[10:])
+
+            # Convert URI string to BigObjectPointer for BIG_OBJECT types
+            # Metadata is set by Scala ArrowUtils or Python iceberg_utils
+            elif (
+                value is not None
+                and field_metadata
+                and field_metadata.get(b"texera_type") == b"BIG_OBJECT"
+            ):
+                value = BigObjectPointer(value)
+
             return value
 
         self._current_idx += 1
@@ -322,8 +334,10 @@ class Tuple:
 
         for field_name, field_value in self.as_key_value_pairs():
             expected = schema.get_attr_type(field_name)
-            if not isinstance(
-                field_value, (TO_PYOBJECT_MAPPING.get(expected), type(None))
+            expected_type = TO_PYOBJECT_MAPPING.get(expected)
+
+            if expected_type is not None and not isinstance(
+                field_value, (expected_type, type(None))
             ):
                 raise TypeError(
                     f"Unmatched type for field '{field_name}', expected {expected}, "
