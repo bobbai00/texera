@@ -243,7 +243,7 @@ def amber_tuples_to_arrow_table(
     Converts a list of amber tuples to a pyarrow table for serialization.
     Handles BIG_OBJECT field name encoding and serialization.
     """
-    from core.storage.big_object_pointer import BigObjectPointer
+    from core.models.schema.big_object_pointer import BigObjectPointer
 
     # Build data dict using Iceberg schema field names (encoded)
     data_dict = {}

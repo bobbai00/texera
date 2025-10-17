@@ -17,7 +17,7 @@
 
 """
 BigObjectPointer represents a reference to a large object stored externally (e.g., S3).
-This is a storage reference class used throughout the system for handling big objects.
+This is a schema type class used throughout the system for handling BIG_OBJECT attribute types.
 """
 
 

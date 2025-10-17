@@ -85,8 +85,17 @@ class RTupleExecutor(TupleOperatorV2):
                 non_binary_tuple_schema: pa.Schema = (
                     non_binary_tuple._schema.as_arrow_schema()
                 )
+
+                # Serialize BigObjectPointer to URI string for Arrow
+                from core.models.schema.big_object_pointer import BigObjectPointer
+
+                serialized_dict = {
+                    k: (v.uri if isinstance(v, BigObjectPointer) else v)
+                    for k, v in non_binary_tuple.as_dict().items()
+                }
+
                 non_binary_pyarrow_array: pa.StructArray = pa.array(
-                    [non_binary_tuple.as_dict()],
+                    [serialized_dict],
                     type=pa.struct(non_binary_tuple_schema),
                 )
 
@@ -112,6 +121,25 @@ class RTupleExecutor(TupleOperatorV2):
                     non_binary_pyarrow_array, binary_r_list
                 )
             )
+
+            # Wrap URI strings → R BigObjectPointer objects for BIG_OBJECT fields
+            from core.models.schema.attribute_type import AttributeType
+
+            pointer_class = robjects.r("BigObjectPointer")
+            wrapped = {
+                name: (
+                    pointer_class(input_r_list.rx2(name)[0])
+                    if (
+                        input_r_list.rx2(name)
+                        and isinstance(input_r_list.rx2(name)[0], str)
+                        and tuple_._schema.get_attr_type(name)
+                        == AttributeType.BIG_OBJECT
+                    )
+                    else input_r_list.rx2(name)
+                )
+                for name in input_r_list.names
+            }
+            input_r_list = robjects.vectors.ListVector(wrapped)
 
             output_r_generator: rpy2.robjects.SignatureTranslatedFunction = self._func(
                 input_r_list, port

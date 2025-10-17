@@ -29,7 +29,7 @@ from pympler import asizeof
 from typing import Any, List, Iterator, Callable
 from typing_extensions import Protocol, runtime_checkable
 
-from core.storage.big_object_pointer import BigObjectPointer
+from core.models.schema.big_object_pointer import BigObjectPointer
 from .schema.attribute_type import TO_PYOBJECT_MAPPING, AttributeType
 from .schema.field import Field
 from .schema.schema import Schema

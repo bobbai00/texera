@@ -20,7 +20,7 @@ import pyarrow as pa
 from bidict import bidict
 from enum import Enum
 from pyarrow import lib
-from core.storage.big_object_pointer import BigObjectPointer
+from core.models.schema.big_object_pointer import BigObjectPointer
 
 
 class AttributeType(Enum):

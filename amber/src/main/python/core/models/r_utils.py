@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import os
 import rpy2
 import rpy2.rinterface as rinterface
 import rpy2.robjects as robjects
@@ -24,6 +25,15 @@ from core.models import Tuple
 
 warnings.filterwarnings(action="ignore", category=UserWarning, module=r"rpy2*")
 
+# Auto-load R BigObject user-facing API when this module is imported
+# Load order: pointer → manager (dependency order)
+_r_files = [
+    os.path.join(os.path.dirname(__file__), "big_object_pointer.R"),
+    os.path.join(os.path.dirname(__file__), "big_object_manager.R"),
+]
+for r_file in _r_files:
+    robjects.r(f'source("{r_file}")')
+
 
 def convert_r_to_py(value: rpy2.robjects):
     """
@@ -31,6 +41,14 @@ def convert_r_to_py(value: rpy2.robjects):
     :return: A Python representation of the value, if convertable.
         If not, it returns the value itself
     """
+    # Convert R BigObjectPointer to Python BigObjectPointer
+    if hasattr(value, "rclass") and value.rclass and "BigObjectPointer" in value.rclass:
+        from core.models.schema.big_object_pointer import BigObjectPointer
+
+        uri_field = robjects.r("function(obj) obj$uri")(value)
+        uri = str(uri_field[0]) if len(uri_field) > 0 else str(uri_field)
+        return BigObjectPointer(uri)
+
     if isinstance(value, robjects.vectors.BoolVector):
         return bool(value[0])
     if isinstance(value, robjects.vectors.IntVector):

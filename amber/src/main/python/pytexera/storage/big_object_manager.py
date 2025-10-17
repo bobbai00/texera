@@ -19,36 +19,39 @@
 
 import os
 from typing import BinaryIO
-from core.storage.big_object_pointer import BigObjectPointer
+from core.models.schema.big_object_pointer import BigObjectPointer
 
 
 class BigObjectStream:
-    """Stream for reading big objects (matches Scala BigObjectStream)."""
+    """Stream for reading big objects (matches Scala/R BigObjectStream)."""
 
     def __init__(self, body: BinaryIO, pointer: BigObjectPointer):
         self._body = body
         self._pointer = pointer
         self._closed = False
 
-    def read(self, amt=None):
+    def read(self, n: int = -1) -> bytes:
+        """Read n bytes from stream (-1 = read all)."""
         if self._closed:
             raise ValueError("I/O operation on closed stream")
-        return self._body.read(amt)
+        if n == -1:
+            return self._body.read()
+        return self._body.read(n)
 
     def close(self):
+        """Close the stream."""
         if not self._closed:
             self._closed = True
             self._body.close()
 
     def __enter__(self):
+        """Context manager entry."""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - automatically cleanup."""
         self.close()
-
-    @property
-    def closed(self):
-        return self._closed
+        return False
 
 
 class BigObjectManager:

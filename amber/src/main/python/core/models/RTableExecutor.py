@@ -23,7 +23,14 @@ from rpy2.robjects.conversion import localconverter as local_converter
 from rpy2_arrow.arrow import rarrow_to_py_table, converter as arrow_converter
 from typing import Iterator, Optional, Union
 
-from core.models import ArrowTableTupleProvider, Tuple, TupleLike, Table, TableLike
+from core.models import (
+    ArrowTableTupleProvider,
+    Tuple,
+    TupleLike,
+    Table,
+    TableLike,
+    r_utils,
+)
 from core.models.operator import SourceOperator, TableOperator
 
 
@@ -43,6 +50,36 @@ class RTableExecutor(TableOperator):
         library(arrow)
         function(df) { return (arrow::as_arrow_table(df)) }
         """
+    )
+
+    # BigObject column conversion helpers
+    _wrap_big_object_cols = robjects.r(
+        """
+        function(df, cols) {
+            for (col in cols) {
+                df[[col]] <- new_BigObjectPointerColumn(lapply(df[[col]], function(uri) {
+                    if (is.na(uri) || is.null(uri) || nchar(uri) == 0) NA else BigObjectPointer$new(uri)
+                }))
+            }
+            df
+        }
+    """
+    )
+
+    _unwrap_big_object_cols = robjects.r(
+        """
+        function(df, cols) {
+            for (col in cols) {
+                vals <- if (inherits(df[[col]], "BigObjectPointerColumn")) unclass(df[[col]]) else df[[col]]
+                df[[col]] <- sapply(vals, function(obj) {
+                    if (is.na(obj) || is.null(obj)) NA_character_
+                    else if (inherits(obj, "BigObjectPointer")) obj$uri
+                    else as.character(obj)
+                })
+            }
+            df
+        }
+    """
     )
 
     def __init__(self, r_code: str):
@@ -67,20 +104,71 @@ class RTableExecutor(TableOperator):
         :return: Iterator[Optional[TableLike]], producing one TableLike object at a
         time, or None.
         """
-        input_pyarrow_table = pa.Table.from_pandas(table)
-        with local_converter(arrow_converter):
-            input_r_dataframe = RTableExecutor._arrow_to_r_dataframe(
-                input_pyarrow_table
-            )
-            output_r_dataframe = self._func(input_r_dataframe, port)
-            output_rarrow_table = RTableExecutor._r_dataframe_to_arrow(
-                output_r_dataframe
-            )
-            output_pyarrow_table = rarrow_to_py_table(output_rarrow_table)
+        from core.models.schema.big_object_pointer import BigObjectPointer
+        from core.models.schema import Schema, AttributeType
+        from core.models.schema.attribute_type import FROM_ARROW_MAPPING
 
-        for field_accessor in ArrowTableTupleProvider(output_pyarrow_table):
+        # Step 1: Identify and serialize BigObjectPointer → URI strings for input
+        input_big_object_cols = [
+            col
+            for col in table.columns
+            if len(table[col]) > 0 and isinstance(table[col].iloc[0], BigObjectPointer)
+        ]
+
+        if input_big_object_cols:
+            table = table.copy()
+            for col in input_big_object_cols:
+                table[col] = table[col].apply(
+                    lambda x: x.uri if isinstance(x, BigObjectPointer) else x
+                )
+
+        # Step 2: Python → R conversion and execution
+        with local_converter(arrow_converter):
+            # Convert pandas → Arrow → R dataframe
+            arrow_table = pa.Table.from_pandas(table)
+            r_df = RTableExecutor._arrow_to_r_dataframe(arrow_table)
+
+            # Wrap input BIG_OBJECT columns as BigObjectPointer for R UDF
+            if input_big_object_cols:
+                r_df = RTableExecutor._wrap_big_object_cols(r_df, input_big_object_cols)
+
+            # Execute user's R function
+            r_df = self._func(r_df, port)
+
+            # Detect which OUTPUT columns are BIG_OBJECT
+            output_big_object_cols = list(
+                robjects.r(
+                    'function(df) names(df)[sapply(df, inherits, "BigObjectPointerColumn")]'
+                )(r_df)
+            )
+
+            # Unwrap output BIG_OBJECT columns to URI strings for Python
+            if output_big_object_cols:
+                r_df = RTableExecutor._unwrap_big_object_cols(
+                    r_df, output_big_object_cols
+                )
+
+            # Convert R dataframe → Arrow → pandas
+            arrow_table = rarrow_to_py_table(RTableExecutor._r_dataframe_to_arrow(r_df))
+
+        # Step 3: Build output schema with correct BIG_OBJECT type information
+        output_schema = Schema()
+        for col in arrow_table.column_names:
+            attr_type = (
+                AttributeType.BIG_OBJECT
+                if col in output_big_object_cols
+                else FROM_ARROW_MAPPING[arrow_table.schema.field(col).type.id]
+            )
+            output_schema.add(col, attr_type)
+
+        # Step 4: Create Arrow table with metadata and yield Tuples
+        arrow_with_metadata = pa.Table.from_pandas(
+            arrow_table.to_pandas(), schema=output_schema.as_arrow_schema()
+        )
+
+        for field_accessor in ArrowTableTupleProvider(arrow_with_metadata):
             yield Tuple(
-                {name: field_accessor for name in output_pyarrow_table.column_names}
+                {name: field_accessor for name in arrow_with_metadata.column_names}
             )
 
 

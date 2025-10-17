@@ -21,13 +21,14 @@ from typing import Iterator, Optional, Union
 
 from pyamber import *
 from .storage.dataset_file_document import DatasetFileDocument
+from .storage.big_object_manager import BigObjectManager
 from .udf.udf_operator import (
     UDFOperatorV2,
     UDFTableOperator,
     UDFBatchOperator,
     UDFSourceOperator,
 )
-from .big_object_manager import BigObjectManager
+from core.models.schema.big_object_pointer import BigObjectPointer
 
 __all__ = [
     "State",
@@ -43,6 +44,7 @@ __all__ = [
     "UDFSourceOperator",
     "DatasetFileDocument",
     "BigObjectManager",
+    "BigObjectPointer",
     # export external tools to be used
     "overrides",
     "logger",
