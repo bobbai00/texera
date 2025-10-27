@@ -23,6 +23,7 @@ from threading import Event
 from typing import Iterator, Optional
 
 from core.architecture.managers import Context
+from core.architecture.managers.execution_context import ExecutionContext
 from core.models import ExceptionInfo, State, TupleLike, InternalMarker
 from core.models.internal_marker import StartChannel, EndChannel
 from core.models.table import all_output_to_tuple
@@ -51,6 +52,10 @@ class DataProcessor(Runnable, Stoppable):
         self._running.set()
         self._switch_context()
         while self._running.is_set():
+            # Sync ExecutionContext from context (for thread-local storage)
+            ExecutionContext.set_execution_id(self._context.execution_id)
+            ExecutionContext.set_operator_id(self._context.operator_id)
+
             marker = self._context.tuple_processing_manager.get_internal_marker()
             state = self._context.state_processing_manager.get_input_state()
             tuple_ = self._context.tuple_processing_manager.current_input_tuple

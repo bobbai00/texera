@@ -20,6 +20,7 @@
 package org.apache.texera.service.util
 
 import com.typesafe.scalalogging.LazyLogging
+import org.apache.amber.core.executor.ExecutionContext
 import org.apache.amber.core.tuple.BigObjectPointer
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.BIG_OBJECT
@@ -74,16 +75,20 @@ object BigObjectManager extends LazyLogging {
   private lazy val context = SqlServer.getInstance().createDSLContext()
 
   /**
-    * Creates a big object from an InputStream using multipart upload.
-    * Handles streams of any size without loading into memory.
-    * Registers the big object in the database for cleanup tracking.
+    * Creates a big object from InputStream, uploads to S3, and registers in database.
+    * Automatically retrieves execution ID and operator ID from ExecutionContext.
     *
-    * @param executionId The execution ID this big object belongs to.
-    * @param operatorId The operator ID that created this big object.
-    * @param stream The input stream containing the big object data.
-    * @return A BigObjectPointer that can be used in tuples.
+    * @param stream Input stream containing the data.
+    * @return BigObjectPointer for use in tuples.
     */
-  def create(executionId: Int, operatorId: String, stream: InputStream): BigObjectPointer = {
+  def create(stream: InputStream): BigObjectPointer = {
+    val executionId = ExecutionContext.getExecutionId.getOrElse(
+      throw new IllegalStateException("Execution ID not set in ExecutionContext")
+    )
+    val operatorId = ExecutionContext.getOperatorId.getOrElse(
+      throw new IllegalStateException("Operator ID not set in ExecutionContext")
+    )
+
     S3StorageClient.createBucketIfNotExist(DEFAULT_BUCKET)
 
     val objectKey = s"${System.currentTimeMillis()}/${UUID.randomUUID()}"
@@ -102,13 +107,11 @@ object BigObjectManager extends LazyLogging {
       logger.debug(s"Registered big object: eid=$executionId, opid=$operatorId, uri=$uri")
     } catch {
       case e: Exception =>
-        // Database failed - clean up S3 object
         logger.error(s"Failed to register big object, cleaning up: $uri", e)
         try {
           S3StorageClient.deleteObject(DEFAULT_BUCKET, objectKey)
         } catch {
-          case cleanupError: Exception =>
-            logger.error(s"Failed to cleanup orphaned S3 object: $uri", cleanupError)
+          case _: Exception => // Best effort cleanup
         }
         throw new RuntimeException(s"Failed to create big object: ${e.getMessage}", e)
     }

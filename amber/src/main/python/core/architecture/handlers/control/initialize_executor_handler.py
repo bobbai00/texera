@@ -28,6 +28,11 @@ class InitializeExecutorHandler(ControlHandler):
 
     async def initialize_executor(self, req: InitializeExecutorRequest) -> EmptyReturn:
         op_exec_with_code: OpExecWithCode = get_one_of(req.op_exec_init_info)
+
+        # Store execution_id in context (from InitializeExecutorRequest)
+        # This is the real execution ID, not the workflow ID
+        self.context.execution_id = req.execution_id
+
         self.context.executor_manager.initialize_executor(
             op_exec_with_code.code, req.is_source, op_exec_with_code.language
         )

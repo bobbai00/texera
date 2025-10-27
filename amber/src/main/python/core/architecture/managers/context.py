@@ -16,6 +16,7 @@
 # under the License.
 
 from typing import Optional
+import re
 
 from proto.org.apache.amber.core import ActorVirtualIdentity, ChannelIdentity
 from proto.org.apache.amber.engine.architecture.worker import WorkerState
@@ -23,6 +24,7 @@ from .console_message_manager import ConsoleMessageManager
 from .debug_manager import DebugManager
 from .embedded_control_message_manager import EmbeddedControlMessageManager
 from .exception_manager import ExceptionManager
+from .execution_context import ExecutionContext
 from .executor_manager import ExecutorManager
 from .pause_manager import PauseManager
 from .state_manager import StateManager
@@ -46,6 +48,17 @@ class Context:
     def __init__(self, worker_id, input_queue):
         self.worker_id = worker_id
         self.input_queue: InternalQueue = input_queue
+
+        # execution_id: set by InitializeExecutorHandler from InitializeExecutorRequest
+        # operator_id: parsed from worker_id (format: Worker:WF{wid}-{opid}-{layer}-{idx})
+        self.execution_id: Optional[int] = None
+        self.operator_id: Optional[str] = None
+
+        # Extract operator_id from worker_id (e.g., "Worker:WF78-op-scan-main-0" → "op-scan")
+        match = re.match(r"Worker:WF\d+-(.+)-\w+-\d+", worker_id)
+        if match:
+            self.operator_id = match.group(1)
+
         self.executor_manager = ExecutorManager()
         self.current_input_channel_id: Optional[ChannelIdentity] = None
         self.tuple_processing_manager = TupleProcessingManager()
