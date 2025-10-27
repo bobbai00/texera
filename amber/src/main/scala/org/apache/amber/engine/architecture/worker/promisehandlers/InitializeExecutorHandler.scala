@@ -19,18 +19,24 @@
 
 package org.apache.amber.engine.architecture.worker.promisehandlers
 
+import com.google.protobuf.timestamp.Timestamp
 import com.twitter.util.Future
 import org.apache.amber.core.executor._
 import org.apache.amber.engine.architecture.rpc.controlcommands.{
   AsyncRPCContext,
+  BigObjectEvent,
+  BigObjectEventTriggeredRequest,
+  BigObjectEventType,
   InitializeExecutorRequest
 }
 import org.apache.amber.engine.architecture.rpc.controlreturns.EmptyReturn
 import org.apache.amber.engine.architecture.worker.DataProcessorRPCHandlerInitializer
+import org.apache.amber.engine.common.virtualidentity.util.CONTROLLER
 import org.apache.amber.operator.source.cache.CacheSourceOpExec
 import org.apache.amber.util.VirtualIdentityUtils
 
 import java.net.URI
+import java.time.Instant
 
 trait InitializeExecutorHandler {
   this: DataProcessorRPCHandlerInitializer =>
@@ -43,9 +49,22 @@ trait InitializeExecutorHandler {
     val workerIdx = VirtualIdentityUtils.getWorkerIndex(actorId)
     val workerCount = req.totalWorkerCount
 
-    // Set execution context for this thread
     ExecutionContext.setExecutionId(req.executionId)
     ExecutionContext.setOperatorId(VirtualIdentityUtils.getPhysicalOpId(actorId).logicalOpId.id)
+    ExecutionContext.setBigObjectEventCallback((operatorId, uri, eventType) =>
+      try {
+        val event = BigObjectEvent(
+          operatorId,
+          uri,
+          if (eventType == "CREATE") BigObjectEventType.CREATE else BigObjectEventType.READ,
+          Timestamp(Instant.now)
+        )
+        dp.asyncRPCClient.controllerInterface.bigObjectEventTriggered(
+          BigObjectEventTriggeredRequest(event),
+          dp.asyncRPCClient.mkContext(CONTROLLER)
+        )
+      } catch { case _: Exception => }
+    )
 
     dp.executor = req.opExecInitInfo match {
       case OpExecWithClassName(className, descString) =>

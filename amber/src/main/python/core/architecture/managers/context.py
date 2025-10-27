@@ -53,6 +53,7 @@ class Context:
         # operator_id: parsed from worker_id (format: Worker:WF{wid}-{opid}-{layer}-{idx})
         self.execution_id: Optional[int] = None
         self.operator_id: Optional[str] = None
+        self.async_rpc_client = None  # Set by MainLoop after creation
 
         # Extract operator_id from worker_id (e.g., "Worker:WF78-op-scan-main-0" → "op-scan")
         match = re.match(r"Worker:WF\d+-(.+)-\w+-\d+", worker_id)

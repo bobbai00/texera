@@ -21,6 +21,7 @@ import time
 import uuid
 from typing import BinaryIO, Union, Optional
 from io import BytesIO
+from datetime import datetime
 from core.models.schema.big_object_pointer import BigObjectPointer
 from core.storage.storage_config import StorageConfig
 from core.architecture.managers.execution_context import ExecutionContext
@@ -216,6 +217,9 @@ class BigObjectManager:
                 pass
             raise RuntimeError(f"Failed to create big object: {e}")
 
+        # Send event to frontend
+        cls._send_big_object_event(operator_id, uri, "CREATE")
+
         return BigObjectPointer(uri)
 
     @classmethod
@@ -240,6 +244,43 @@ class BigObjectManager:
 
         try:
             body = cls._get_s3_client().get_object(Bucket=bucket, Key=key)["Body"]
+
+            # Send event to frontend
+            operator_id = ExecutionContext.get_operator_id()
+            if operator_id:
+                cls._send_big_object_event(operator_id, pointer.uri, "READ")
+
             return BigObjectStream(body, pointer)
         except Exception as e:
             raise RuntimeError(f"Failed to open {pointer.uri}: {e}")
+
+    @classmethod
+    def _send_big_object_event(cls, operator_id: str, uri: str, event_type: str):
+        """Sends BigObjectEvent to controller for forwarding to frontend."""
+        try:
+            from proto.org.apache.amber.engine.architecture.rpc import (
+                BigObjectEvent,
+                BigObjectEventTriggeredRequest,
+                BigObjectEventType,
+            )
+            from datetime import datetime, timezone
+
+            client = ExecutionContext.get_async_rpc_client()
+            if not client:
+                return
+
+            event = BigObjectEvent(
+                operator_id=operator_id,
+                uri=uri,
+                event_type=(
+                    BigObjectEventType.CREATE
+                    if event_type == "CREATE"
+                    else BigObjectEventType.READ
+                ),
+                timestamp=datetime.now(timezone.utc),
+            )
+            client.controller_stub().big_object_event_triggered(
+                BigObjectEventTriggeredRequest(event=event)
+            )
+        except Exception:
+            pass

@@ -55,6 +55,8 @@ class DataProcessor(Runnable, Stoppable):
             # Sync ExecutionContext from context (for thread-local storage)
             ExecutionContext.set_execution_id(self._context.execution_id)
             ExecutionContext.set_operator_id(self._context.operator_id)
+            if self._context.async_rpc_client:
+                ExecutionContext.set_async_rpc_client(self._context.async_rpc_client)
 
             marker = self._context.tuple_processing_manager.get_internal_marker()
             state = self._context.state_processing_manager.get_input_state()

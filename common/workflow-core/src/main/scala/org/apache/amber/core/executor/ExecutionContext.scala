@@ -27,6 +27,8 @@ object ExecutionContext {
   private val executionIdThreadLocal: ThreadLocal[Option[Int]] = ThreadLocal.withInitial(() => None)
   private val operatorIdThreadLocal: ThreadLocal[Option[String]] =
     ThreadLocal.withInitial(() => None)
+  private val eventCallbackThreadLocal: ThreadLocal[Option[(String, String, String) => Unit]] =
+    ThreadLocal.withInitial(() => None)
 
   /**
     * Sets the execution ID for the current thread.
@@ -61,11 +63,27 @@ object ExecutionContext {
   }
 
   /**
+    * Sets a callback for sending big object events.
+    * The callback takes (operatorId, uri, eventType) as parameters.
+    */
+  def setBigObjectEventCallback(callback: (String, String, String) => Unit): Unit = {
+    eventCallbackThreadLocal.set(Some(callback))
+  }
+
+  /**
+    * Gets the big object event callback for the current thread.
+    */
+  def getBigObjectEventCallback: Option[(String, String, String) => Unit] = {
+    eventCallbackThreadLocal.get()
+  }
+
+  /**
     * Clears the execution context for the current thread.
     * Should be called when cleaning up.
     */
   def clear(): Unit = {
     executionIdThreadLocal.remove()
     operatorIdThreadLocal.remove()
+    eventCallbackThreadLocal.remove()
   }
 }

@@ -22,7 +22,10 @@ execution_id and operator_id without requiring explicit parameters.
 """
 
 import threading
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.architecture.rpc.async_rpc_client import AsyncRPCClient
 
 
 class ExecutionContext:
@@ -54,9 +57,21 @@ class ExecutionContext:
         return getattr(cls._thread_local, "operator_id", None)
 
     @classmethod
+    def set_async_rpc_client(cls, client: "AsyncRPCClient") -> None:
+        """Set the AsyncRPCClient for the current thread."""
+        cls._thread_local.async_rpc_client = client
+
+    @classmethod
+    def get_async_rpc_client(cls) -> Optional["AsyncRPCClient"]:
+        """Get the AsyncRPCClient for the current thread, or None if not set."""
+        return getattr(cls._thread_local, "async_rpc_client", None)
+
+    @classmethod
     def clear(cls) -> None:
         """Clear all execution context information for the current thread."""
         if hasattr(cls._thread_local, "execution_id"):
             delattr(cls._thread_local, "execution_id")
         if hasattr(cls._thread_local, "operator_id"):
             delattr(cls._thread_local, "operator_id")
+        if hasattr(cls._thread_local, "async_rpc_client"):
+            delattr(cls._thread_local, "async_rpc_client")

@@ -46,6 +46,7 @@ message ControlRequest {
     PortCompletedRequest portCompletedRequest = 9;
     WorkerStateUpdatedRequest workerStateUpdatedRequest = 10;
     LinkWorkersRequest linkWorkersRequest = 11;
+    BigObjectEventTriggeredRequest bigObjectEventTriggeredRequest = 12;
 
     // request for worker
     AddInputChannelRequest addInputChannelRequest = 50;
@@ -161,6 +162,23 @@ message ConsoleMessage {
 
 message ConsoleMessageTriggeredRequest {
   ConsoleMessage consoleMessage = 1 [(scalapb.field).no_box = true];
+}
+
+enum BigObjectEventType {
+  CREATE = 0;
+  READ = 1;
+}
+
+message BigObjectEvent {
+  option (scalapb.message).extends = "org.apache.amber.engine.architecture.controller.ClientEvent";
+  string operator_id = 1;
+  string uri = 2;
+  BigObjectEventType event_type = 3;
+  google.protobuf.Timestamp timestamp = 4 [(scalapb.field).no_box = true];
+}
+
+message BigObjectEventTriggeredRequest {
+  BigObjectEvent event = 1 [(scalapb.field).no_box = true];
 }
 
 message PortCompletedRequest {

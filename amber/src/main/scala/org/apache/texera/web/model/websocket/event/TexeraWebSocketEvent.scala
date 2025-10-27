@@ -38,7 +38,8 @@ import org.apache.texera.web.model.websocket.response.{HeartBeatResponse, Modify
     new Type(value = classOf[PaginatedResultEvent]),
     new Type(value = classOf[PythonExpressionEvaluateResponse]),
     new Type(value = classOf[WorkerAssignmentUpdateEvent]),
-    new Type(value = classOf[ModifyLogicResponse])
+    new Type(value = classOf[ModifyLogicResponse]),
+    new Type(value = classOf[BigObjectUpdateEvent])
   )
 )
 trait TexeraWebSocketEvent {}

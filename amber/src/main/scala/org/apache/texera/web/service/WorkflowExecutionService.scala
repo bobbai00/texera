@@ -102,6 +102,7 @@ class WorkflowExecutionService(
   var executionStatsService: ExecutionStatsService = _
   var executionRuntimeService: ExecutionRuntimeService = _
   var executionConsoleService: ExecutionConsoleService = _
+  var executionBigObjectService: ExecutionBigObjectService = _
 
   def executeWorkflow(): Unit = {
     try {
@@ -134,6 +135,7 @@ class WorkflowExecutionService(
     )
     executionConsoleService =
       new ExecutionConsoleService(client, executionStateStore, wsInput, workflow.context)
+    executionBigObjectService = new ExecutionBigObjectService(client, executionStateStore)
 
     logger.info("Starting the workflow execution.")
     resultService.attachToExecution(

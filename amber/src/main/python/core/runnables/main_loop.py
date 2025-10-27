@@ -81,6 +81,9 @@ class MainLoop(StoppableQueueBlockingRunnable):
         self.context = Context(worker_id, input_queue)
         self._async_rpc_server = AsyncRPCServer(output_queue, context=self.context)
         self._async_rpc_client = AsyncRPCClient(output_queue, context=self.context)
+        self.context.async_rpc_client = (
+            self._async_rpc_client
+        )  # Store reference for BigObjectManager
 
         self.data_processor = DataProcessor(self.context)
         threading.Thread(

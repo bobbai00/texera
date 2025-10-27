@@ -36,6 +36,7 @@ service ControllerService {
   rpc DebugCommand(DebugCommandRequest) returns (EmptyReturn);
   rpc EvaluatePythonExpression(EvaluatePythonExpressionRequest) returns (EvaluatePythonExpressionResponse);
   rpc ConsoleMessageTriggered(ConsoleMessageTriggeredRequest) returns (EmptyReturn);
+  rpc BigObjectEventTriggered(BigObjectEventTriggeredRequest) returns (EmptyReturn);
   rpc PortCompleted(PortCompletedRequest) returns (EmptyReturn);
   rpc StartWorkflow(EmptyRequest) returns (StartWorkflowResponse);
   rpc ResumeWorkflow(EmptyRequest) returns (EmptyReturn);

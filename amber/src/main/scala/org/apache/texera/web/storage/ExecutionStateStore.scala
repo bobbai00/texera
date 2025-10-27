@@ -55,8 +55,19 @@ class ExecutionStateStore {
   val consoleStore = new StateStore(ExecutionConsoleStore())
   val breakpointStore = new StateStore(ExecutionBreakpointStore())
   val reconfigurationStore = new StateStore(ExecutionReconfigurationStore())
+  val bigObjectStore =
+    new StateStore[Seq[org.apache.amber.engine.architecture.rpc.controlcommands.BigObjectEvent]](
+      Seq.empty
+    )
 
   def getAllStores: Iterable[StateStore[_]] = {
-    Iterable(statsStore, consoleStore, breakpointStore, metadataStore, reconfigurationStore)
+    Iterable(
+      statsStore,
+      consoleStore,
+      breakpointStore,
+      metadataStore,
+      reconfigurationStore,
+      bigObjectStore
+    )
   }
 }

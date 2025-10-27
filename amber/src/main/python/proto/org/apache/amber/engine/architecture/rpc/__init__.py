@@ -60,6 +60,11 @@ class ConsoleMessageType(betterproto.Enum):
     DEBUGGER = 3
 
 
+class BigObjectEventType(betterproto.Enum):
+    CREATE = 0
+    READ = 1
+
+
 class ErrorLanguage(betterproto.Enum):
     PYTHON = 0
     SCALA = 1
@@ -112,6 +117,9 @@ class ControlRequest(betterproto.Message):
     )
     link_workers_request: "LinkWorkersRequest" = betterproto.message_field(
         11, group="sealed_value"
+    )
+    big_object_event_triggered_request: "BigObjectEventTriggeredRequest" = (
+        betterproto.message_field(12, group="sealed_value")
     )
     add_input_channel_request: "AddInputChannelRequest" = betterproto.message_field(
         50, group="sealed_value"
@@ -248,6 +256,19 @@ class ConsoleMessage(betterproto.Message):
 @dataclass(eq=False, repr=False)
 class ConsoleMessageTriggeredRequest(betterproto.Message):
     console_message: "ConsoleMessage" = betterproto.message_field(1)
+
+
+@dataclass(eq=False, repr=False)
+class BigObjectEvent(betterproto.Message):
+    operator_id: str = betterproto.string_field(1)
+    uri: str = betterproto.string_field(2)
+    event_type: "BigObjectEventType" = betterproto.enum_field(3)
+    timestamp: datetime = betterproto.message_field(4)
+
+
+@dataclass(eq=False, repr=False)
+class BigObjectEventTriggeredRequest(betterproto.Message):
+    event: "BigObjectEvent" = betterproto.message_field(1)
 
 
 @dataclass(eq=False, repr=False)
@@ -1152,6 +1173,23 @@ class ControllerServiceStub(betterproto.ServiceStub):
             metadata=metadata,
         )
 
+    async def big_object_event_triggered(
+        self,
+        big_object_event_triggered_request: "BigObjectEventTriggeredRequest",
+        *,
+        timeout: Optional[float] = None,
+        deadline: Optional["Deadline"] = None,
+        metadata: Optional["MetadataLike"] = None
+    ) -> "EmptyReturn":
+        return await self._unary_unary(
+            "/org.apache.amber.engine.architecture.rpc.ControllerService/BigObjectEventTriggered",
+            big_object_event_triggered_request,
+            EmptyReturn,
+            timeout=timeout,
+            deadline=deadline,
+            metadata=metadata,
+        )
+
     async def port_completed(
         self,
         port_completed_request: "PortCompletedRequest",
@@ -1865,6 +1903,11 @@ class ControllerServiceBase(ServiceBase):
     ) -> "EmptyReturn":
         raise grpclib.GRPCError(grpclib.const.Status.UNIMPLEMENTED)
 
+    async def big_object_event_triggered(
+        self, big_object_event_triggered_request: "BigObjectEventTriggeredRequest"
+    ) -> "EmptyReturn":
+        raise grpclib.GRPCError(grpclib.const.Status.UNIMPLEMENTED)
+
     async def port_completed(
         self, port_completed_request: "PortCompletedRequest"
     ) -> "EmptyReturn":
@@ -1951,6 +1994,14 @@ class ControllerServiceBase(ServiceBase):
     ) -> None:
         request = await stream.recv_message()
         response = await self.console_message_triggered(request)
+        await stream.send_message(response)
+
+    async def __rpc_big_object_event_triggered(
+        self,
+        stream: "grpclib.server.Stream[BigObjectEventTriggeredRequest, EmptyReturn]",
+    ) -> None:
+        request = await stream.recv_message()
+        response = await self.big_object_event_triggered(request)
         await stream.send_message(response)
 
     async def __rpc_port_completed(
@@ -2052,6 +2103,12 @@ class ControllerServiceBase(ServiceBase):
                 self.__rpc_console_message_triggered,
                 grpclib.const.Cardinality.UNARY_UNARY,
                 ConsoleMessageTriggeredRequest,
+                EmptyReturn,
+            ),
+            "/org.apache.amber.engine.architecture.rpc.ControllerService/BigObjectEventTriggered": grpclib.const.Handler(
+                self.__rpc_big_object_event_triggered,
+                grpclib.const.Cardinality.UNARY_UNARY,
+                BigObjectEventTriggeredRequest,
                 EmptyReturn,
             ),
             "/org.apache.amber.engine.architecture.rpc.ControllerService/PortCompleted": grpclib.const.Handler(

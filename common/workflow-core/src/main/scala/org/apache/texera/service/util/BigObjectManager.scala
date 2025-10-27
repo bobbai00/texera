@@ -116,6 +116,9 @@ object BigObjectManager extends LazyLogging {
         throw new RuntimeException(s"Failed to create big object: ${e.getMessage}", e)
     }
 
+    // Send event to frontend
+    sendBigObjectEvent(operatorId, uri, "CREATE")
+
     new BigObjectPointer(uri)
   }
 
@@ -132,7 +135,35 @@ object BigObjectManager extends LazyLogging {
     )
 
     val inputStream = S3StorageClient.downloadObject(ptr.getBucketName, ptr.getObjectKey)
+
+    // Send event to frontend
+    ExecutionContext.getOperatorId.foreach { operatorId =>
+      sendBigObjectEvent(operatorId, ptr.getUri, "READ")
+    }
+
     new BigObjectStream(inputStream)
+  }
+
+  /**
+    * Sends a BigObjectEvent using the registered callback.
+    *
+    * @param operatorId The operator ID
+    * @param uri The big object URI
+    * @param eventType The event type ("CREATE" or "READ")
+    */
+  private def sendBigObjectEvent(
+      operatorId: String,
+      uri: String,
+      eventType: String
+  ): Unit = {
+    ExecutionContext.getBigObjectEventCallback.foreach { callback =>
+      try {
+        callback(operatorId, uri, eventType)
+      } catch {
+        case e: Exception =>
+          logger.warn(s"Failed to send BigObjectEvent: ${e.getMessage}")
+      }
+    }
   }
 
   /**
