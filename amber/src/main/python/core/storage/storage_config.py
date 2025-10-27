@@ -25,12 +25,24 @@ class StorageConfig:
 
     _initialized = False
 
+    # Iceberg configs
     ICEBERG_POSTGRES_CATALOG_URI_WITHOUT_SCHEME = None
     ICEBERG_POSTGRES_CATALOG_USERNAME = None
     ICEBERG_POSTGRES_CATALOG_PASSWORD = None
     ICEBERG_TABLE_RESULT_NAMESPACE = None
     ICEBERG_FILE_STORAGE_DIRECTORY_PATH = None
     ICEBERG_TABLE_COMMIT_BATCH_SIZE = None
+
+    # S3 configs (for BigObjectManager)
+    S3_ENDPOINT = None
+    S3_REGION = None
+    S3_AUTH_USERNAME = None
+    S3_AUTH_PASSWORD = None
+
+    # JDBC configs (for BigObjectManager database registration)
+    JDBC_URL = None
+    JDBC_USERNAME = None
+    JDBC_PASSWORD = None
 
     @classmethod
     def initialize(
@@ -41,18 +53,38 @@ class StorageConfig:
         table_result_namespace,
         directory_path,
         commit_batch_size,
+        s3_endpoint,
+        s3_region,
+        s3_auth_username,
+        s3_auth_password,
+        jdbc_url,
+        jdbc_username,
+        jdbc_password,
     ):
         if cls._initialized:
             raise RuntimeError(
-                "Storage config has already been initialized" "and cannot be modified."
+                "Storage config has already been initialized and cannot be modified."
             )
 
+        # Iceberg configs
         cls.ICEBERG_POSTGRES_CATALOG_URI_WITHOUT_SCHEME = postgres_uri_without_scheme
         cls.ICEBERG_POSTGRES_CATALOG_USERNAME = postgres_username
         cls.ICEBERG_POSTGRES_CATALOG_PASSWORD = postgres_password
         cls.ICEBERG_TABLE_RESULT_NAMESPACE = table_result_namespace
         cls.ICEBERG_FILE_STORAGE_DIRECTORY_PATH = directory_path
         cls.ICEBERG_TABLE_COMMIT_BATCH_SIZE = int(commit_batch_size)
+
+        # S3 configs
+        cls.S3_ENDPOINT = s3_endpoint
+        cls.S3_REGION = s3_region
+        cls.S3_AUTH_USERNAME = s3_auth_username
+        cls.S3_AUTH_PASSWORD = s3_auth_password
+
+        # JDBC configs
+        cls.JDBC_URL = jdbc_url
+        cls.JDBC_USERNAME = jdbc_username
+        cls.JDBC_PASSWORD = jdbc_password
+
         cls._initialized = True
 
     def __new__(cls, *args, **kwargs):

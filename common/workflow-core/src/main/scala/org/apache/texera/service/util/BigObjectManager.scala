@@ -79,10 +79,11 @@ object BigObjectManager extends LazyLogging {
     * Registers the big object in the database for cleanup tracking.
     *
     * @param executionId The execution ID this big object belongs to.
+    * @param operatorId The operator ID that created this big object.
     * @param stream The input stream containing the big object data.
     * @return A BigObjectPointer that can be used in tuples.
     */
-  def create(executionId: Int, stream: InputStream): BigObjectPointer = {
+  def create(executionId: Int, operatorId: String, stream: InputStream): BigObjectPointer = {
     S3StorageClient.createBucketIfNotExist(DEFAULT_BUCKET)
 
     val objectKey = s"${System.currentTimeMillis()}/${UUID.randomUUID()}"
@@ -95,10 +96,10 @@ object BigObjectManager extends LazyLogging {
     try {
       context
         .insertInto(BIG_OBJECT)
-        .columns(BIG_OBJECT.EXECUTION_ID, BIG_OBJECT.URI)
-        .values(Int.box(executionId), uri)
+        .columns(BIG_OBJECT.EXECUTION_ID, BIG_OBJECT.OPERATOR_ID, BIG_OBJECT.URI)
+        .values(Int.box(executionId), operatorId, uri)
         .execute()
-      logger.debug(s"Registered big object: eid=$executionId, uri=$uri")
+      logger.debug(s"Registered big object: eid=$executionId, opid=$operatorId, uri=$uri")
     } catch {
       case e: Exception =>
         // Database failed - clean up S3 object
