@@ -21,10 +21,12 @@ package org.apache.amber.core.executor
 
 /**
   * ExecutionContext provides thread-local access to execution metadata.
-  * This allows operator executors to access execution ID.
+  * This allows operator executors to access execution ID and operator ID.
   */
 object ExecutionContext {
   private val executionIdThreadLocal: ThreadLocal[Option[Int]] = ThreadLocal.withInitial(() => None)
+  private val operatorIdThreadLocal: ThreadLocal[Option[String]] =
+    ThreadLocal.withInitial(() => None)
 
   /**
     * Sets the execution ID for the current thread.
@@ -43,10 +45,27 @@ object ExecutionContext {
   }
 
   /**
-    * Clears the execution ID for the current thread.
+    * Sets the operator ID for the current thread.
+    * Should be called when initializing an executor.
+    */
+  def setOperatorId(operatorId: String): Unit = {
+    operatorIdThreadLocal.set(Some(operatorId))
+  }
+
+  /**
+    * Gets the operator ID for the current thread.
+    * @return Some(operatorId) if set, None otherwise
+    */
+  def getOperatorId: Option[String] = {
+    operatorIdThreadLocal.get()
+  }
+
+  /**
+    * Clears the execution context for the current thread.
     * Should be called when cleaning up.
     */
   def clear(): Unit = {
     executionIdThreadLocal.remove()
+    operatorIdThreadLocal.remove()
   }
 }

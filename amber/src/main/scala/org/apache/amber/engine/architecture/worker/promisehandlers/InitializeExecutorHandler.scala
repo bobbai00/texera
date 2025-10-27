@@ -45,6 +45,7 @@ trait InitializeExecutorHandler {
 
     // Set execution context for this thread
     ExecutionContext.setExecutionId(req.executionId)
+    ExecutionContext.setOperatorId(VirtualIdentityUtils.getPhysicalOpId(actorId).logicalOpId.id)
 
     dp.executor = req.opExecInitInfo match {
       case OpExecWithClassName(className, descString) =>

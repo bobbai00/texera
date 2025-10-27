@@ -446,6 +446,7 @@ END $$;
 
 CREATE TABLE big_object (
   execution_id INT NOT NULL,
+  operator_id VARCHAR(100) NOT NULL,
   uri TEXT NOT NULL UNIQUE,
   creation_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (execution_id) REFERENCES workflow_executions(eid) ON DELETE CASCADE
