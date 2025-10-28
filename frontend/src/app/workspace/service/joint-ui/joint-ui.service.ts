@@ -106,6 +106,7 @@ export const operatorViewResultIconClass = "texera-operator-view-result-icon";
 export const operatorStateClass = "texera-operator-state";
 export const operatorCoeditorEditingClass = "texera-operator-coeditor-editing";
 export const operatorCoeditorChangedPropertyClass = "texera-operator-coeditor-changed-property";
+export const operatorBigObjectStatusClass = "texera-operator-big-object-status";
 
 export const operatorIconClass = "texera-operator-icon";
 export const operatorNameClass = "texera-operator-name";
@@ -131,6 +132,7 @@ class TexeraCustomJointElement extends joint.shapes.devs.Model {
       <text class="${operatorPortMetricsClass}"></text>
       <text class="${operatorWorkerCountClass}"></text>
       <text class="${operatorStateClass}"></text>
+      <text class="${operatorBigObjectStatusClass}"></text>
       <text class="${operatorReuseCacheTextClass}"></text>
       <text class="${operatorCoeditorEditingClass}"></text>
       <text class="${operatorCoeditorChangedPropertyClass}"></text>
@@ -428,6 +430,31 @@ export class JointUIService {
     });
   }
 
+  public changeBigObjectStatus(
+    jointPaper: joint.dia.Paper,
+    operatorID: string,
+    status: "uploading" | "retrieving" | null
+  ): void {
+    const element = jointPaper.getModelById(operatorID);
+    if (!element) {
+      return;
+    }
+
+    if (status === null) {
+      element.attr({
+        [`.${operatorBigObjectStatusClass}`]: { visibility: "hidden", text: "" },
+      });
+    } else {
+      const statusText = status === "uploading" ? "📤 Uploading" : "📥 Retrieving";
+      element.attr({
+        [`.${operatorBigObjectStatusClass}`]: {
+          visibility: "visible",
+          text: statusText,
+        },
+      });
+    }
+  }
+
   /**
    * This method will change the operator's color based on the validation status
    *  valid  : default color
@@ -695,6 +722,18 @@ export class JointUIService {
         visibility: "hidden",
         "ref-x": 0.5,
         "ref-y": 100,
+        ref: "rect.body",
+        "y-alignment": "middle",
+        "x-alignment": "middle",
+      },
+      ".texera-operator-big-object-status": {
+        text: "",
+        "font-size": "12px",
+        "font-weight": "bold",
+        fill: "#1890ff",
+        visibility: "hidden",
+        "ref-x": 0.5,
+        "ref-y": -25,
         ref: "rect.body",
         "y-alignment": "middle",
         "x-alignment": "middle",

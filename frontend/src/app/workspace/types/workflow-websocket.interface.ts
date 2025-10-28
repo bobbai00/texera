@@ -177,6 +177,20 @@ export type RegionUpdateEvent = Readonly<{
   regions: readonly string[][];
 }>;
 
+export type BigObjectEvent = Readonly<{
+  operatorId: string;
+  uri: string;
+  eventType: "CREATE" | "READ" | 0 | 1; // May come as string or enum number (0=CREATE, 1=READ)
+  timestamp: {
+    nanos: number;
+    seconds: number;
+  };
+}>;
+
+export type BigObjectUpdateEvent = Readonly<{
+  events: ReadonlyArray<BigObjectEvent>;
+}>;
+
 export type ModifyLogicResponse = Readonly<{
   opId: string;
   isValid: boolean;
@@ -234,6 +248,7 @@ export type TexeraWebsocketEventTypeMap = {
   ExecutionDurationUpdateEvent: ExecutionDurationUpdateEvent;
   ClusterStatusUpdateEvent: ClusterStatusUpdateEvent;
   RegionUpdateEvent: RegionUpdateEvent;
+  BigObjectUpdateEvent: BigObjectUpdateEvent;
 };
 
 // helper type definitions to generate the request and event types

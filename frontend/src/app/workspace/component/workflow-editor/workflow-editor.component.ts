@@ -28,6 +28,7 @@ import { fromJointPaperEvent, JointUIService, linkPathStrokeColor } from "../../
 import { ValidationWorkflowService } from "../../service/validation/validation-workflow.service";
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
 import { WorkflowStatusService } from "../../service/workflow-status/workflow-status.service";
+import { BigObjectService } from "../../service/big-object/big-object.service";
 import { ExecutionState, OperatorState } from "../../types/execute-workflow.interface";
 import { LogicalPort, OperatorLink } from "../../types/workflow-common.interface";
 import { auditTime, filter, map, takeUntil } from "rxjs/operators";
@@ -102,6 +103,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     private validationWorkflowService: ValidationWorkflowService,
     private jointUIService: JointUIService,
     private workflowStatusService: WorkflowStatusService,
+    private bigObjectService: BigObjectService,
     private executeWorkflowService: ExecuteWorkflowService,
     private nzModalService: NzModalService,
     private changeDetectorRef: ChangeDetectorRef,
@@ -163,6 +165,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     this.handlePortHighlightEvent();
     this.registerPortDisplayNameChangeHandler();
     this.handleOperatorStatisticsUpdate();
+    this.handleBigObjectStatusUpdate();
     this.handleRegionUpdate();
     this.handleOperatorSuggestionHighlightEvent();
     this.handleElementDelete();
@@ -390,6 +393,29 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
       ];
     });
     regionElement.attr("body/d", line().curve(curveCatmullRomClosed)(concaveman(points, 2, 0) as [number, number][]));
+  }
+
+  /**
+   * Subscribes to big object status updates and displays the status on operators
+   */
+  private handleBigObjectStatusUpdate(): void {
+    this.bigObjectService
+      .getStatusUpdateStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(statusMap => {
+        // Update all operators with their big object status
+        this.workflowActionService
+          .getTexeraGraph()
+          .getAllOperators()
+          .forEach(op => {
+            const status = statusMap.get(op.operatorID);
+            if (status) {
+              this.jointUIService.changeBigObjectStatus(this.paper, op.operatorID, status.status);
+            } else {
+              this.jointUIService.changeBigObjectStatus(this.paper, op.operatorID, null);
+            }
+          });
+      });
   }
 
   /**
