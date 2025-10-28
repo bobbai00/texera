@@ -433,7 +433,8 @@ export class JointUIService {
   public changeBigObjectStatus(
     jointPaper: joint.dia.Paper,
     operatorID: string,
-    status: "uploading" | "retrieving" | null
+    status: "producing" | "consuming" | null,
+    uri?: string
   ): void {
     const element = jointPaper.getModelById(operatorID);
     if (!element) {
@@ -445,7 +446,9 @@ export class JointUIService {
         [`.${operatorBigObjectStatusClass}`]: { visibility: "hidden", text: "" },
       });
     } else {
-      const statusText = status === "uploading" ? "📤 Uploading" : "📥 Retrieving";
+      const emoji = status === "producing" ? "🏭" : "🔄";
+      const action = status === "producing" ? "Produce" : "Consume";
+      const statusText = uri ? `${emoji} ${action}: ${uri}` : `${emoji} ${action}`;
       element.attr({
         [`.${operatorBigObjectStatusClass}`]: {
           visibility: "visible",

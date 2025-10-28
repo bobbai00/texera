@@ -25,7 +25,7 @@ import { ExecutionState } from "../../types/execute-workflow.interface";
 
 export interface BigObjectStatus {
   operatorId: string;
-  status: "uploading" | "retrieving" | null;
+  status: "producing" | "consuming" | null;
   timestamp: number;
   uri?: string;
 }
@@ -43,31 +43,23 @@ export class BigObjectService {
   }
 
   private registerBigObjectUpdateEventHandler() {
-    this.workflowWebsocketService
-      .subscribeToEvent("BigObjectUpdateEvent")
-      .subscribe((event: BigObjectUpdateEvent) => {
-        event.events.forEach((bigObjectEvent: BigObjectEvent) => {
-          // Debug: log the actual eventType value
-          console.log("BigObjectEvent received:", bigObjectEvent);
+    this.workflowWebsocketService.subscribeToEvent("BigObjectUpdateEvent").subscribe((event: BigObjectUpdateEvent) => {
+      event.events.forEach((bigObjectEvent: BigObjectEvent) => {
+        // Check the eventType object's name property
+        const isCreate = bigObjectEvent.eventType.name === "CREATE";
 
-          // Handle both string and potential enum number formats
-          const isCreate =
-            bigObjectEvent.eventType === "CREATE" ||
-            bigObjectEvent.eventType === 0 ||
-            (bigObjectEvent.eventType as any) === "CREATE";
+        const status: BigObjectStatus = {
+          operatorId: bigObjectEvent.operatorId,
+          status: isCreate ? "producing" : "consuming",
+          timestamp: bigObjectEvent.timestamp.seconds * 1000 + bigObjectEvent.timestamp.nanos / 1000000,
+          uri: bigObjectEvent.uri,
+        };
 
-          const status: BigObjectStatus = {
-            operatorId: bigObjectEvent.operatorId,
-            status: isCreate ? "uploading" : "retrieving",
-            timestamp: bigObjectEvent.timestamp.seconds * 1000 + bigObjectEvent.timestamp.nanos / 1000000,
-            uri: bigObjectEvent.uri,
-          };
-
-          this.operatorStatuses.set(bigObjectEvent.operatorId, status);
-        });
-
-        this.statusUpdateStream.next(new Map(this.operatorStatuses));
+        this.operatorStatuses.set(bigObjectEvent.operatorId, status);
       });
+
+      this.statusUpdateStream.next(new Map(this.operatorStatuses));
+    });
   }
 
   private registerAutoClearStatuses() {

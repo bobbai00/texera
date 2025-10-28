@@ -26,6 +26,7 @@ import { VersionsListComponent } from "./versions-list/versions-list.component";
 import { WorkflowExecutionHistoryComponent } from "../../../dashboard/component/user/user-workflow/ngbd-modal-workflow-executions/workflow-execution-history.component";
 import { TimeTravelComponent } from "./time-travel/time-travel.component";
 import { SettingsComponent } from "./settings/settings.component";
+import { ModelComponent } from "./model/model.component";
 import { calculateTotalTranslate3d } from "../../../common/util/panel-dock";
 import { PanelService } from "../../service/panel/panel.service";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
@@ -50,6 +51,7 @@ export class LeftPanelComponent implements OnDestroy, OnInit, AfterViewInit {
   items = [
     { component: null, title: "", icon: "", enabled: true },
     { component: OperatorMenuComponent, title: "Operators", icon: "appstore", enabled: true },
+    { component: ModelComponent, title: "Model", icon: "experiment", enabled: true },
     { component: VersionsListComponent, title: "Versions", icon: "schedule", enabled: true },
     {
       component: SettingsComponent,

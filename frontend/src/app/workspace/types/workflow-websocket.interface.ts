@@ -173,6 +173,15 @@ export type ClusterStatusUpdateEvent = Readonly<{
   numWorkers: number;
 }>;
 
+export type BigObjectEventType = Readonly<{
+  value: number;
+  read: boolean;
+  index: number;
+  name: "CREATE" | "READ";
+  unrecognized: boolean;
+  create: boolean;
+}>;
+
 export type RegionUpdateEvent = Readonly<{
   regions: readonly string[][];
 }>;
@@ -180,7 +189,7 @@ export type RegionUpdateEvent = Readonly<{
 export type BigObjectEvent = Readonly<{
   operatorId: string;
   uri: string;
-  eventType: "CREATE" | "READ" | 0 | 1; // May come as string or enum number (0=CREATE, 1=READ)
+  eventType: BigObjectEventType;
   timestamp: {
     nanos: number;
     seconds: number;

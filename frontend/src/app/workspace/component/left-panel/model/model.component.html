@@ -1,0 +1,104 @@
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+-->
+
+<div class="model-panel">
+  <div class="model-panel-content">
+    <div
+      *ngIf="bigObjects.length === 0"
+      class="empty-state">
+      <nz-empty
+        nzNotFoundContent="No big objects in this workflow"
+        [nzNotFoundImage]="'simple'">
+      </nz-empty>
+    </div>
+
+    <div
+      *ngIf="bigObjects.length > 0"
+      class="objects-list">
+      <nz-card
+        *ngFor="let object of bigObjects"
+        [nzTitle]="'Model ' + object.index"
+        [nzSize]="'small'"
+        class="object-card"
+        (mouseenter)="onCardHover(object)"
+        (mouseleave)="onCardLeave(object)"
+        [class.hovered]="hoveredObjectUri === object.uri">
+        <p class="object-info">
+          <span
+            nz-icon
+            nzType="link"></span>
+          <strong>URI:</strong>
+          <span class="uri-text">{{ object.uri }}</span>
+        </p>
+
+        <div class="stats-section">
+          <div class="stat-item">
+            <span
+              nz-icon
+              nzType="dashboard"
+              class="stat-icon"></span>
+            <div class="stat-content">
+              <span class="stat-label">Inference Speed:</span>
+              <span class="stat-value">{{ object.stats.inferenceSpeed }} tuple/s</span>
+            </div>
+          </div>
+          <div class="stat-item">
+            <span
+              nz-icon
+              nzType="fund"
+              class="stat-icon"></span>
+            <div class="stat-content">
+              <span class="stat-label">F1 Score:</span>
+              <span class="stat-value">{{ object.stats.f1Score }}</span>
+            </div>
+          </div>
+        </div>
+
+        <nz-collapse
+          class="columns-section"
+          nzGhost>
+          <nz-collapse-panel
+            nzHeader="Input Columns"
+            [nzActive]="false">
+            <div class="column-list">
+              <div
+                *ngFor="let column of object.inputColumns"
+                class="column-item">
+                <span class="column-name">{{ column.name }}</span>
+                <span class="column-type">{{ column.type }}</span>
+              </div>
+            </div>
+          </nz-collapse-panel>
+          <nz-collapse-panel
+            nzHeader="Feature Columns"
+            [nzActive]="false">
+            <div class="column-list">
+              <div
+                *ngFor="let column of object.featureColumns"
+                class="column-item">
+                <span class="column-name">{{ column.name }}</span>
+                <span class="column-type">{{ column.type }}</span>
+              </div>
+            </div>
+          </nz-collapse-panel>
+        </nz-collapse>
+      </nz-card>
+    </div>
+  </div>
+</div>

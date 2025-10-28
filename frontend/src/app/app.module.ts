@@ -68,6 +68,7 @@ import { MenuComponent } from "./workspace/component/menu/menu.component";
 import { OperatorLabelComponent } from "./workspace/component/left-panel/operator-menu/operator-label/operator-label.component";
 import { OperatorMenuComponent } from "./workspace/component/left-panel/operator-menu/operator-menu.component";
 import { SettingsComponent } from "./workspace/component/left-panel/settings/settings.component";
+import { ModelComponent } from "./workspace/component/left-panel/model/model.component";
 import { PropertyEditorComponent } from "./workspace/component/property-editor/property-editor.component";
 import { TypeCastingDisplayComponent } from "./workspace/component/property-editor/typecasting-display/type-casting-display.component";
 import { ResultPanelComponent } from "./workspace/component/result-panel/result-panel.component";
@@ -189,6 +190,7 @@ registerLocaleData(en);
     MenuComponent,
     OperatorMenuComponent,
     SettingsComponent,
+    ModelComponent,
     PropertyEditorComponent,
     VersionsListComponent,
     TimeTravelComponent,
