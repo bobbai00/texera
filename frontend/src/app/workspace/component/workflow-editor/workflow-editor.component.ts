@@ -720,46 +720,102 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   }
 
   private handleDataLineageHighlightEvent(): void {
-    // Define the DataLineageRegion element with light blue fill
-    const DataLineageRegion = joint.dia.Element.define(
-      "dataLineageRegion",
-      {
+    let dataLineageEdges: SVGPathElement[] = [];
+    let highlightedOperatorIDs: string[] = [];
+
+    const haloHighlightOptions = {
+      name: "stroke",
+      options: {
         attrs: {
-          body: {
-            fill: "rgba(173, 216, 230, 0.3)",
-            pointerEvents: "none",
-            class: "data-lineage-region",
-          },
+          "stroke-width": 8,
+          stroke: "rgba(173, 216, 230, 0.6)",
+          "stroke-opacity": 0.6,
         },
       },
-      {
-        markup: [{ tagName: "path", selector: "body" }],
-      }
-    );
-
-    let dataLineageRegionElement: joint.dia.Element | null = null;
-    let dataLineageOperators: joint.dia.Cell[] = [];
+    };
 
     // highlight on DataLineageHighlightStream
     this.wrapper
       .getJointDataLineageHighlightStream()
       .pipe(untilDestroyed(this))
-      .subscribe(elementIDs => {
-        // Remove existing data lineage region if any
-        if (dataLineageRegionElement) {
-          dataLineageRegionElement.remove();
-          dataLineageRegionElement = null;
-        }
+      .subscribe(({ sourceOperatorID, destinationOperatorIDs }) => {
+        // Remove existing edges
+        dataLineageEdges.forEach(edge => edge.remove());
+        dataLineageEdges = [];
 
-        // Get the operator cells
-        dataLineageOperators = elementIDs.map(id => this.paper.getModelById(id)).filter(cell => cell !== undefined);
+        // Unhighlight previously highlighted operators
+        highlightedOperatorIDs.forEach(opID => {
+          const view = this.paper.findViewByModel(opID);
+          if (view) {
+            view.unhighlight("rect.body", { highlighter: haloHighlightOptions });
+          }
+        });
 
-        if (dataLineageOperators.length > 0) {
-          // Create new region element
-          dataLineageRegionElement = new DataLineageRegion();
-          this.paper.model.addCell(dataLineageRegionElement);
-          this.updateDataLineageRegion(dataLineageRegionElement, dataLineageOperators);
-        }
+        // Get source operator position
+        const sourceElement = this.paper.getModelById(sourceOperatorID);
+        if (!sourceElement) return;
+
+        const sourceBBox = sourceElement.getBBox();
+        const sourceCenter = { x: sourceBBox.x + sourceBBox.width / 2, y: sourceBBox.y + sourceBBox.height / 2 };
+
+        // Draw curved edges from source to each destination
+        destinationOperatorIDs.forEach(destOperatorID => {
+          const destElement = this.paper.getModelById(destOperatorID);
+          if (!destElement) return;
+
+          const destBBox = destElement.getBBox();
+          const destCenter = { x: destBBox.x + destBBox.width / 2, y: destBBox.y + destBBox.height / 2 };
+
+          // Create curved path using cubic bezier
+          const path = this.createCurvedEdge(sourceCenter, destCenter);
+          dataLineageEdges.push(path);
+          this.paper.svg.appendChild(path);
+        });
+
+        // Add halo highlights to all operators (source + destinations)
+        highlightedOperatorIDs = [sourceOperatorID, ...destinationOperatorIDs];
+        highlightedOperatorIDs.forEach(opID => {
+          const view = this.paper.findViewByModel(opID);
+          if (view) {
+            view.highlight("rect.body", { highlighter: haloHighlightOptions });
+          }
+        });
+
+        // Update edges when operators move
+        const updateEdges = () => {
+          dataLineageEdges.forEach(edge => edge.remove());
+          dataLineageEdges = [];
+
+          const updatedSourceElement = this.paper.getModelById(sourceOperatorID);
+          if (!updatedSourceElement) return;
+
+          const updatedSourceBBox = updatedSourceElement.getBBox();
+          const updatedSourceCenter = {
+            x: updatedSourceBBox.x + updatedSourceBBox.width / 2,
+            y: updatedSourceBBox.y + updatedSourceBBox.height / 2,
+          };
+
+          destinationOperatorIDs.forEach(destOperatorID => {
+            const destElement = this.paper.getModelById(destOperatorID);
+            if (!destElement) return;
+
+            const destBBox = destElement.getBBox();
+            const destCenter = { x: destBBox.x + destBBox.width / 2, y: destBBox.y + destBBox.height / 2 };
+
+            const path = this.createCurvedEdge(updatedSourceCenter, destCenter);
+            dataLineageEdges.push(path);
+            this.paper.svg.appendChild(path);
+          });
+        };
+
+        // Listen to position changes for dynamic updates
+        const positionListener = (cell: any) => {
+          if (highlightedOperatorIDs.includes(cell.id)) {
+            updateEdges();
+          }
+        };
+
+        this.paper.model.on("change:position", positionListener);
       });
 
     // unhighlight on DataLineageUnhighlightStream
@@ -767,34 +823,51 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
       .getJointDataLineageUnhighlightStream()
       .pipe(untilDestroyed(this))
       .subscribe(() => {
-        // Remove the data lineage region element
-        if (dataLineageRegionElement) {
-          dataLineageRegionElement.remove();
-          dataLineageRegionElement = null;
-          dataLineageOperators = [];
-        }
-      });
+        // Remove all edges
+        dataLineageEdges.forEach(edge => edge.remove());
+        dataLineageEdges = [];
 
-    // Update region when operators move
-    this.paper.model.on("change:position", operator => {
-      if (dataLineageRegionElement && dataLineageOperators.includes(operator)) {
-        this.updateDataLineageRegion(dataLineageRegionElement, dataLineageOperators);
-      }
-    });
+        // Unhighlight all operators
+        highlightedOperatorIDs.forEach(opID => {
+          const view = this.paper.findViewByModel(opID);
+          if (view) {
+            view.unhighlight("rect.body", { highlighter: haloHighlightOptions });
+          }
+        });
+        highlightedOperatorIDs = [];
+      });
   }
 
-  private updateDataLineageRegion(regionElement: joint.dia.Element, operators: joint.dia.Cell[]): void {
-    const points = operators.flatMap(op => {
-      const { x, y, width, height } = op.getBBox();
-      const padding = 15;
-      return [
-        [x - padding, y - padding],
-        [x + width + padding, y - padding],
-        [x - padding, y + height + padding + 10],
-        [x + width + padding, y + height + padding + 10],
-      ];
-    });
-    regionElement.attr("body/d", line().curve(curveCatmullRomClosed)(concaveman(points, 2, 0) as [number, number][]));
+  private createCurvedEdge(source: { x: number; y: number }, dest: { x: number; y: number }): SVGPathElement {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+
+    // Calculate control points for cubic bezier curve
+    const dx = dest.x - source.x;
+    const dy = dest.y - source.y;
+
+    // Create a nice curve with control points offset perpendicular to the line
+    const midX = (source.x + dest.x) / 2;
+    const midY = (source.y + dest.y) / 2;
+
+    // Perpendicular offset for curve
+    const offset = Math.sqrt(dx * dx + dy * dy) * 0.3;
+    const perpX = (-dy / Math.sqrt(dx * dx + dy * dy)) * offset;
+    const perpY = (dx / Math.sqrt(dx * dx + dy * dy)) * offset;
+
+    const cp1x = midX + perpX;
+    const cp1y = midY + perpY;
+
+    // Create cubic bezier path
+    const d = `M ${source.x} ${source.y} Q ${cp1x} ${cp1y} ${dest.x} ${dest.y}`;
+
+    path.setAttribute("d", d);
+    path.setAttribute("stroke", "#ADD8E6");
+    path.setAttribute("stroke-width", "3");
+    path.setAttribute("fill", "none");
+    path.setAttribute("pointer-events", "none");
+    path.setAttribute("opacity", "0.8");
+
+    return path;
   }
 
   private openCommentBox(commentBoxID: string): void {

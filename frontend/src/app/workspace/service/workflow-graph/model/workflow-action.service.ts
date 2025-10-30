@@ -527,12 +527,12 @@ export class WorkflowActionService {
     this.getJointGraphWrapper().unhighlightPorts(...ports);
   }
 
-  public highlightOperatorsForDataLineage(...operatorIDs: string[]): void {
-    this.getJointGraphWrapper().highlightOperatorsForDataLineage(...operatorIDs);
+  public highlightOperatorsForDataLineage(sourceOperatorID: string, destinationOperatorIDs: string[]): void {
+    this.getJointGraphWrapper().highlightOperatorsForDataLineage(sourceOperatorID, destinationOperatorIDs);
   }
 
-  public unhighlightOperatorsForDataLineage(...operatorIDs: string[]): void {
-    this.getJointGraphWrapper().unhighlightOperatorsForDataLineage(...operatorIDs);
+  public unhighlightOperatorsForDataLineage(): void {
+    this.getJointGraphWrapper().unhighlightOperatorsForDataLineage();
   }
 
   public disableOperators(ops: readonly string[]): void {

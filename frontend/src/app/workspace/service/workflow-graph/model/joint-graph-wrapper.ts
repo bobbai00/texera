@@ -135,8 +135,11 @@ export class JointGraphWrapper {
   private jointPortUnhighlightStream = new Subject<readonly LogicalPort[]>();
 
   // data lineage highlighting streams
-  private jointDataLineageHighlightStream = new Subject<readonly string[]>();
-  private jointDataLineageUnhighlightStream = new Subject<readonly string[]>();
+  private jointDataLineageHighlightStream = new Subject<{
+    sourceOperatorID: string;
+    destinationOperatorIDs: readonly string[];
+  }>();
+  private jointDataLineageUnhighlightStream = new Subject<void>();
   private currentDataLineageHighlightedOperators: string[] = [];
 
   private currentHighlightedCommentBoxes: string[] = [];
@@ -429,40 +432,22 @@ export class JointGraphWrapper {
   }
 
   /**
-   * Highlights operators for data lineage visualization.
+   * Highlights operators for data lineage visualization with curved edges from source to destinations.
    *
-   * @param operatorIDs
+   * @param sourceOperatorID the source operator (the one with results being viewed)
+   * @param destinationOperatorIDs the destination operators (upstream operators)
    */
-  public highlightOperatorsForDataLineage(...operatorIDs: string[]): void {
-    const highlightedOperatorIDs: string[] = [];
-    operatorIDs.forEach(operatorID => {
-      if (!this.currentDataLineageHighlightedOperators.includes(operatorID)) {
-        this.currentDataLineageHighlightedOperators.push(operatorID);
-        highlightedOperatorIDs.push(operatorID);
-      }
-    });
-    if (highlightedOperatorIDs.length > 0) {
-      this.jointDataLineageHighlightStream.next(highlightedOperatorIDs);
-    }
+  public highlightOperatorsForDataLineage(sourceOperatorID: string, destinationOperatorIDs: string[]): void {
+    this.currentDataLineageHighlightedOperators = [sourceOperatorID, ...destinationOperatorIDs];
+    this.jointDataLineageHighlightStream.next({ sourceOperatorID, destinationOperatorIDs });
   }
 
   /**
    * Unhighlights operators for data lineage visualization.
-   *
-   * @param operatorIDs
    */
-  public unhighlightOperatorsForDataLineage(...operatorIDs: string[]): void {
-    const unhighlightedOperatorIDs: string[] = [];
-    operatorIDs.forEach(operatorID => {
-      const index = this.currentDataLineageHighlightedOperators.indexOf(operatorID);
-      if (index !== -1) {
-        this.currentDataLineageHighlightedOperators.splice(index, 1);
-        unhighlightedOperatorIDs.push(operatorID);
-      }
-    });
-    if (unhighlightedOperatorIDs.length > 0) {
-      this.jointDataLineageUnhighlightStream.next(unhighlightedOperatorIDs);
-    }
+  public unhighlightOperatorsForDataLineage(): void {
+    this.currentDataLineageHighlightedOperators = [];
+    this.jointDataLineageUnhighlightStream.next();
   }
 
   /**
@@ -549,14 +534,17 @@ export class JointGraphWrapper {
   /**
    * Gets the event stream of operators being highlighted for data lineage.
    */
-  public getJointDataLineageHighlightStream(): Observable<readonly string[]> {
+  public getJointDataLineageHighlightStream(): Observable<{
+    sourceOperatorID: string;
+    destinationOperatorIDs: readonly string[];
+  }> {
     return this.jointDataLineageHighlightStream.asObservable();
   }
 
   /**
    * Gets the event stream of operators being unhighlighted for data lineage.
    */
-  public getJointDataLineageUnhighlightStream(): Observable<readonly string[]> {
+  public getJointDataLineageUnhighlightStream(): Observable<void> {
     return this.jointDataLineageUnhighlightStream.asObservable();
   }
 

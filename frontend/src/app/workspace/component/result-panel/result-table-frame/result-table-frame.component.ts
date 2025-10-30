@@ -416,25 +416,57 @@ export class ResultTableFrameComponent implements OnInit, OnChanges {
       return;
     }
 
-    // Get upstream operators using BFS traversal
-    const upstreamOperators = this.workflowActionService.getUpstreamOperators(this.operatorId);
+    // Get all operators including the current one using BFS traversal
+    const allOperators = this.workflowActionService.getUpstreamOperators(this.operatorId);
 
-    // Store the highlighted operators so we can unhighlight them later
-    this.dataLineageHighlightedOperators = upstreamOperators;
+    // Store for unhighlighting later
+    this.dataLineageHighlightedOperators = allOperators;
 
-    // Highlight the upstream operators with light blue color
-    if (this.dataLineageHighlightedOperators.length > 0) {
-      this.workflowActionService.highlightOperatorsForDataLineage(...this.dataLineageHighlightedOperators);
+    if (allOperators.length > 0) {
+      // Find the source operator (the one with no incoming links from within the highlighted set)
+      const sourceOperator = this.findSourceOperator(allOperators);
+
+      // All other operators are destinations (including the current result operator)
+      const destinationOperators = allOperators.filter(opId => opId !== sourceOperator);
+
+      // Draw curved edges from the source operator to all other operators
+      if (destinationOperators.length > 0) {
+        this.workflowActionService.highlightOperatorsForDataLineage(sourceOperator, destinationOperators);
+      }
     }
+  }
+
+  /**
+   * Finds the source operator (the one with no incoming links from the highlighted set).
+   * This is the "first" operator in the data lineage chain.
+   * @param operatorIDs list of operator IDs in the data lineage
+   * @returns the source operator ID
+   */
+  private findSourceOperator(operatorIDs: string[]): string {
+    const allLinks = this.workflowActionService.getTexeraGraph().getAllLinks();
+
+    // Find operator with no incoming links from within the highlighted set
+    for (const operatorID of operatorIDs) {
+      const hasIncomingLink = allLinks.some(
+        link => link.target.operatorID === operatorID && operatorIDs.includes(link.source.operatorID)
+      );
+
+      if (!hasIncomingLink) {
+        return operatorID;
+      }
+    }
+
+    // Fallback: return the first operator if no source found
+    return operatorIDs[0];
   }
 
   /**
    * Handles column header unhover event to remove data lineage highlighting.
    */
   onColumnHeaderUnhover(): void {
-    // Unhighlight the previously highlighted operators
+    // Unhighlight the data lineage visualization
     if (this.dataLineageHighlightedOperators.length > 0) {
-      this.workflowActionService.unhighlightOperatorsForDataLineage(...this.dataLineageHighlightedOperators);
+      this.workflowActionService.unhighlightOperatorsForDataLineage();
       this.dataLineageHighlightedOperators = [];
     }
   }
