@@ -720,54 +720,81 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   }
 
   private handleDataLineageHighlightEvent(): void {
+    // Define the DataLineageRegion element with light blue fill
+    const DataLineageRegion = joint.dia.Element.define(
+      "dataLineageRegion",
+      {
+        attrs: {
+          body: {
+            fill: "rgba(173, 216, 230, 0.3)",
+            pointerEvents: "none",
+            class: "data-lineage-region",
+          },
+        },
+      },
+      {
+        markup: [{ tagName: "path", selector: "body" }],
+      }
+    );
+
+    let dataLineageRegionElement: joint.dia.Element | null = null;
+    let dataLineageOperators: joint.dia.Cell[] = [];
+
     // highlight on DataLineageHighlightStream
     this.wrapper
       .getJointDataLineageHighlightStream()
       .pipe(untilDestroyed(this))
-      .subscribe(elementIDs =>
-        elementIDs.forEach(elementID => {
-          const view = this.paper.findViewByModel(elementID);
-          // Add filled area highlight with light blue semi-transparent background
-          view.highlight("rect.body", {
-            highlighter: {
-              name: "stroke",
-              options: {
-                attrs: {
-                  "stroke-width": 3,
-                  stroke: "#ADD8E6",
-                  fill: "rgba(173, 216, 230, 0.3)",
-                  "fill-opacity": 0.3,
-                },
-              },
-            },
-          });
-        })
-      );
+      .subscribe(elementIDs => {
+        // Remove existing data lineage region if any
+        if (dataLineageRegionElement) {
+          dataLineageRegionElement.remove();
+          dataLineageRegionElement = null;
+        }
+
+        // Get the operator cells
+        dataLineageOperators = elementIDs.map(id => this.paper.getModelById(id)).filter(cell => cell !== undefined);
+
+        if (dataLineageOperators.length > 0) {
+          // Create new region element
+          dataLineageRegionElement = new DataLineageRegion();
+          this.paper.model.addCell(dataLineageRegionElement);
+          this.updateDataLineageRegion(dataLineageRegionElement, dataLineageOperators);
+        }
+      });
 
     // unhighlight on DataLineageUnhighlightStream
     this.wrapper
       .getJointDataLineageUnhighlightStream()
       .pipe(untilDestroyed(this))
-      .subscribe(elementIDs =>
-        elementIDs.forEach(elementID => {
-          const elem = this.paper.findViewByModel(elementID);
-          if (elem !== undefined) {
-            elem.unhighlight("rect.body", {
-              highlighter: {
-                name: "stroke",
-                options: {
-                  attrs: {
-                    "stroke-width": 3,
-                    stroke: "#ADD8E6",
-                    fill: "rgba(173, 216, 230, 0.3)",
-                    "fill-opacity": 0.3,
-                  },
-                },
-              },
-            });
-          }
-        })
-      );
+      .subscribe(() => {
+        // Remove the data lineage region element
+        if (dataLineageRegionElement) {
+          dataLineageRegionElement.remove();
+          dataLineageRegionElement = null;
+          dataLineageOperators = [];
+        }
+      });
+
+    // Update region when operators move
+    this.paper.model.on("change:position", operator => {
+      if (dataLineageRegionElement && dataLineageOperators.includes(operator)) {
+        this.updateDataLineageRegion(dataLineageRegionElement, dataLineageOperators);
+      }
+    });
+  }
+
+  private updateDataLineageRegion(regionElement: joint.dia.Element, operators: joint.dia.Cell[]): void {
+    const points = operators.flatMap(op => {
+      const { x, y, width, height } = op.getBBox();
+      const padding = 15;
+      return [
+        [x - padding, y - padding],
+        [x + width + padding, y - padding],
+        [x - padding, y + height + padding + 10],
+        [x + width + padding, y + height + padding + 10],
+      ];
+    });
+    regionElement.attr("body/d", line().curve(curveCatmullRomClosed)(concaveman(points, 2, 0) as [number, number][]));
   }
 
   private openCommentBox(commentBoxID: string): void {
