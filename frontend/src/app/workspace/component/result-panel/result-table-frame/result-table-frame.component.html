@@ -46,7 +46,9 @@
             *ngFor="let column of currentColumns; let i = index"
             ngClass="header-size"
             style="text-align: center"
-            nzWidth="widthPercent">
+            nzWidth="widthPercent"
+            (mouseenter)="onColumnHeaderHover(column.header)"
+            (mouseleave)="onColumnHeaderUnhover()">
             {{ column.header }}
           </th>
         </tr>

@@ -43,6 +43,7 @@ import { isDefined } from "../../../common/util/predicate";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
 import { line, curveCatmullRomClosed } from "d3-shape";
 import concaveman from "concaveman";
+import { BigObjectService } from "../../service/big-object/big-object.service";
 
 // jointjs interactive options for enabling and disabling interactivity
 // https://resources.jointjs.com/docs/jointjs/v3.2/joint.html#dia.Paper.prototype.options.interactive
@@ -96,6 +97,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   private breakpointButton!: new () => joint.linkTools.Button;
 
   constructor(
+    private bigObjectService: BigObjectService,
     private workflowActionService: WorkflowActionService,
     private dynamicSchemaService: DynamicSchemaService,
     private dragDropService: DragDropService,
@@ -161,6 +163,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     this.handlePaperPan();
     this.handleOperatorSelectionEvents();
     this.handlePortHighlightEvent();
+    this.handleDataLineageHighlightEvent();
     this.registerPortDisplayNameChangeHandler();
     this.handleOperatorStatisticsUpdate();
     this.handleBigObjectStatusUpdate();
@@ -714,6 +717,42 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
           });
         });
       });
+  }
+
+  private handleDataLineageHighlightEvent(): void {
+    // handle data lineage highlighting with a light blue color
+    const dataLineageHighlightOptions = {
+      name: "stroke",
+      options: {
+        attrs: {
+          "stroke-width": 3,
+          stroke: "#ADD8E6",
+        },
+      },
+    };
+
+    // highlight on DataLineageHighlightStream
+    this.wrapper
+      .getJointDataLineageHighlightStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(elementIDs =>
+        elementIDs.forEach(elementID => {
+          this.paper.findViewByModel(elementID).highlight("rect.body", { highlighter: dataLineageHighlightOptions });
+        })
+      );
+
+    // unhighlight on DataLineageUnhighlightStream
+    this.wrapper
+      .getJointDataLineageUnhighlightStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(elementIDs =>
+        elementIDs.forEach(elementID => {
+          const elem = this.paper.findViewByModel(elementID);
+          if (elem !== undefined) {
+            elem.unhighlight("rect.body", { highlighter: dataLineageHighlightOptions });
+          }
+        })
+      );
   }
 
   private openCommentBox(commentBoxID: string): void {

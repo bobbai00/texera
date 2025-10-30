@@ -527,6 +527,14 @@ export class WorkflowActionService {
     this.getJointGraphWrapper().unhighlightPorts(...ports);
   }
 
+  public highlightOperatorsForDataLineage(...operatorIDs: string[]): void {
+    this.getJointGraphWrapper().highlightOperatorsForDataLineage(...operatorIDs);
+  }
+
+  public unhighlightOperatorsForDataLineage(...operatorIDs: string[]): void {
+    this.getJointGraphWrapper().unhighlightOperatorsForDataLineage(...operatorIDs);
+  }
+
   public disableOperators(ops: readonly string[]): void {
     this.texeraGraph.bundleActions(() => {
       ops.forEach(op => {
@@ -918,5 +926,44 @@ export class WorkflowActionService {
 
   public getHighlightingEnabled() {
     return this.highlightingEnabled;
+  }
+
+  /**
+   * Performs BFS traversal from source operators to the target operator,
+   * returning all upstream operators (predecessors) of the target operator.
+   * @param targetOperatorID the operator to find upstream operators for
+   * @returns array of operator IDs that are upstream of the target operator
+   */
+  public getUpstreamOperators(targetOperatorID: string): string[] {
+    if (!this.texeraGraph.hasOperator(targetOperatorID)) {
+      return [];
+    }
+
+    const upstreamOperators = new Set<string>();
+    const queue: string[] = [targetOperatorID];
+    const visited = new Set<string>();
+
+    while (queue.length > 0) {
+      const currentOperatorID = queue.shift()!;
+
+      if (visited.has(currentOperatorID)) {
+        continue;
+      }
+      visited.add(currentOperatorID);
+
+      // Get all incoming links to the current operator
+      const incomingLinks = this.texeraGraph.getAllLinks().filter(link => link.target.operatorID === currentOperatorID);
+
+      // Add source operators to the queue and to the result set
+      incomingLinks.forEach(link => {
+        const sourceOperatorID = link.source.operatorID;
+        upstreamOperators.add(sourceOperatorID);
+        if (!visited.has(sourceOperatorID)) {
+          queue.push(sourceOperatorID);
+        }
+      });
+    }
+
+    return Array.from(upstreamOperators);
   }
 }

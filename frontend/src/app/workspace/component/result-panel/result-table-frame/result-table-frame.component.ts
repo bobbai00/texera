@@ -73,6 +73,7 @@ export class ResultTableFrameComponent implements OnInit, OnChanges {
   sinkStorageMode: string = "";
   private schema: ReadonlyArray<SchemaAttribute> = [];
   isOperatorFinished: boolean = false;
+  private dataLineageHighlightedOperators: string[] = [];
 
   constructor(
     private modalService: NzModalService,
@@ -404,5 +405,37 @@ export class ResultTableFrameComponent implements OnInit, OnChanges {
       },
       nzFooter: null,
     });
+  }
+
+  /**
+   * Handles column header hover event to highlight data lineage operators.
+   * @param columnName the name of the column being hovered over
+   */
+  onColumnHeaderHover(columnName: string): void {
+    if (!this.operatorId) {
+      return;
+    }
+
+    // Get upstream operators using BFS traversal
+    const upstreamOperators = this.workflowActionService.getUpstreamOperators(this.operatorId);
+
+    // Store the highlighted operators so we can unhighlight them later
+    this.dataLineageHighlightedOperators = upstreamOperators;
+
+    // Highlight the upstream operators with light blue color
+    if (this.dataLineageHighlightedOperators.length > 0) {
+      this.workflowActionService.highlightOperatorsForDataLineage(...this.dataLineageHighlightedOperators);
+    }
+  }
+
+  /**
+   * Handles column header unhover event to remove data lineage highlighting.
+   */
+  onColumnHeaderUnhover(): void {
+    // Unhighlight the previously highlighted operators
+    if (this.dataLineageHighlightedOperators.length > 0) {
+      this.workflowActionService.unhighlightOperatorsForDataLineage(...this.dataLineageHighlightedOperators);
+      this.dataLineageHighlightedOperators = [];
+    }
   }
 }

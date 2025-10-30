@@ -134,6 +134,11 @@ export class JointGraphWrapper {
 
   private jointPortUnhighlightStream = new Subject<readonly LogicalPort[]>();
 
+  // data lineage highlighting streams
+  private jointDataLineageHighlightStream = new Subject<readonly string[]>();
+  private jointDataLineageUnhighlightStream = new Subject<readonly string[]>();
+  private currentDataLineageHighlightedOperators: string[] = [];
+
   private currentHighlightedCommentBoxes: string[] = [];
 
   // event stream of zooming the jointJS paper
@@ -424,6 +429,43 @@ export class JointGraphWrapper {
   }
 
   /**
+   * Highlights operators for data lineage visualization.
+   *
+   * @param operatorIDs
+   */
+  public highlightOperatorsForDataLineage(...operatorIDs: string[]): void {
+    const highlightedOperatorIDs: string[] = [];
+    operatorIDs.forEach(operatorID => {
+      if (!this.currentDataLineageHighlightedOperators.includes(operatorID)) {
+        this.currentDataLineageHighlightedOperators.push(operatorID);
+        highlightedOperatorIDs.push(operatorID);
+      }
+    });
+    if (highlightedOperatorIDs.length > 0) {
+      this.jointDataLineageHighlightStream.next(highlightedOperatorIDs);
+    }
+  }
+
+  /**
+   * Unhighlights operators for data lineage visualization.
+   *
+   * @param operatorIDs
+   */
+  public unhighlightOperatorsForDataLineage(...operatorIDs: string[]): void {
+    const unhighlightedOperatorIDs: string[] = [];
+    operatorIDs.forEach(operatorID => {
+      const index = this.currentDataLineageHighlightedOperators.indexOf(operatorID);
+      if (index !== -1) {
+        this.currentDataLineageHighlightedOperators.splice(index, 1);
+        unhighlightedOperatorIDs.push(operatorID);
+      }
+    });
+    if (unhighlightedOperatorIDs.length > 0) {
+      this.jointDataLineageUnhighlightStream.next(unhighlightedOperatorIDs);
+    }
+  }
+
+  /**
    * Gets the event stream of an operator being highlighted.
    */
   public getJointOperatorHighlightStream(): Observable<readonly string[]> {
@@ -503,6 +545,21 @@ export class JointGraphWrapper {
   public getJointPortUnhighlightStream(): Observable<readonly LogicalPort[]> {
     return this.jointPortUnhighlightStream.asObservable();
   }
+
+  /**
+   * Gets the event stream of operators being highlighted for data lineage.
+   */
+  public getJointDataLineageHighlightStream(): Observable<readonly string[]> {
+    return this.jointDataLineageHighlightStream.asObservable();
+  }
+
+  /**
+   * Gets the event stream of operators being unhighlighted for data lineage.
+   */
+  public getJointDataLineageUnhighlightStream(): Observable<readonly string[]> {
+    return this.jointDataLineageUnhighlightStream.asObservable();
+  }
+
   /**
    * Returns an Observable stream capturing the element cell delete event in JointJS graph.
    * An element cell can be an operator or an group.
