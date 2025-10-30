@@ -930,9 +930,9 @@ export class WorkflowActionService {
 
   /**
    * Performs BFS traversal from source operators to the target operator,
-   * returning all upstream operators (predecessors) of the target operator.
+   * returning all upstream operators (predecessors) of the target operator, including the target itself.
    * @param targetOperatorID the operator to find upstream operators for
-   * @returns array of operator IDs that are upstream of the target operator
+   * @returns array of operator IDs that are upstream of the target operator (including the target)
    */
   public getUpstreamOperators(targetOperatorID: string): string[] {
     if (!this.texeraGraph.hasOperator(targetOperatorID)) {
@@ -942,6 +942,9 @@ export class WorkflowActionService {
     const upstreamOperators = new Set<string>();
     const queue: string[] = [targetOperatorID];
     const visited = new Set<string>();
+
+    // Add the target operator itself
+    upstreamOperators.add(targetOperatorID);
 
     while (queue.length > 0) {
       const currentOperatorID = queue.shift()!;

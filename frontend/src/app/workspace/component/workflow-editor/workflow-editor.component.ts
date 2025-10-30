@@ -720,24 +720,27 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   }
 
   private handleDataLineageHighlightEvent(): void {
-    // handle data lineage highlighting with a light blue color
-    const dataLineageHighlightOptions = {
-      name: "stroke",
-      options: {
-        attrs: {
-          "stroke-width": 3,
-          stroke: "#ADD8E6",
-        },
-      },
-    };
-
     // highlight on DataLineageHighlightStream
     this.wrapper
       .getJointDataLineageHighlightStream()
       .pipe(untilDestroyed(this))
       .subscribe(elementIDs =>
         elementIDs.forEach(elementID => {
-          this.paper.findViewByModel(elementID).highlight("rect.body", { highlighter: dataLineageHighlightOptions });
+          const view = this.paper.findViewByModel(elementID);
+          // Add filled area highlight with light blue semi-transparent background
+          view.highlight("rect.body", {
+            highlighter: {
+              name: "stroke",
+              options: {
+                attrs: {
+                  "stroke-width": 3,
+                  stroke: "#ADD8E6",
+                  fill: "rgba(173, 216, 230, 0.3)",
+                  "fill-opacity": 0.3,
+                },
+              },
+            },
+          });
         })
       );
 
@@ -749,7 +752,19 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
         elementIDs.forEach(elementID => {
           const elem = this.paper.findViewByModel(elementID);
           if (elem !== undefined) {
-            elem.unhighlight("rect.body", { highlighter: dataLineageHighlightOptions });
+            elem.unhighlight("rect.body", {
+              highlighter: {
+                name: "stroke",
+                options: {
+                  attrs: {
+                    "stroke-width": 3,
+                    stroke: "#ADD8E6",
+                    fill: "rgba(173, 216, 230, 0.3)",
+                    "fill-opacity": 0.3,
+                  },
+                },
+              },
+            });
           }
         })
       );
