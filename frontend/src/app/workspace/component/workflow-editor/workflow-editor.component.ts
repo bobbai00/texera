@@ -765,7 +765,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
           const destCenter = { x: destBBox.x + destBBox.width / 2, y: destBBox.y + destBBox.height / 2 };
 
           // Create curved path using cubic bezier
-          const path = this.createCurvedEdge(sourceCenter, destCenter);
+          const path = this.createCurvedEdge(sourceCenter, destCenter, this.paper);
           dataLineageEdges.push(path);
           this.paper.svg.appendChild(path);
         });
@@ -800,7 +800,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
             const destBBox = destElement.getBBox();
             const destCenter = { x: destBBox.x + destBBox.width / 2, y: destBBox.y + destBBox.height / 2 };
 
-            const path = this.createCurvedEdge(updatedSourceCenter, destCenter);
+            const path = this.createCurvedEdge(updatedSourceCenter, destCenter, this.paper);
             dataLineageEdges.push(path);
             this.paper.svg.appendChild(path);
           });
@@ -836,27 +836,47 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
       });
   }
 
-  private createCurvedEdge(source: { x: number; y: number }, dest: { x: number; y: number }): SVGPathElement {
+  private createCurvedEdge(
+    source: { x: number; y: number },
+    dest: { x: number; y: number },
+    paper: joint.dia.Paper
+  ): SVGPathElement {
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
 
+    // Get paper transformations
+    const scale = paper.scale();
+    const translate = paper.translate();
+
+    // Convert from model coordinates to paper coordinates
+    const sourceScreen = {
+      x: source.x * scale.sx + translate.tx,
+      y: source.y * scale.sy + translate.ty,
+    };
+
+    const destScreen = {
+      x: dest.x * scale.sx + translate.tx,
+      y: dest.y * scale.sy + translate.ty,
+    };
+
     // Calculate control points for cubic bezier curve
-    const dx = dest.x - source.x;
-    const dy = dest.y - source.y;
+    const dx = destScreen.x - sourceScreen.x;
+    const dy = destScreen.y - sourceScreen.y;
 
     // Create a nice curve with control points offset perpendicular to the line
-    const midX = (source.x + dest.x) / 2;
-    const midY = (source.y + dest.y) / 2;
+    const midX = (sourceScreen.x + destScreen.x) / 2;
+    const midY = (sourceScreen.y + destScreen.y) / 2;
 
     // Perpendicular offset for curve
-    const offset = Math.sqrt(dx * dx + dy * dy) * 0.3;
-    const perpX = (-dy / Math.sqrt(dx * dx + dy * dy)) * offset;
-    const perpY = (dx / Math.sqrt(dx * dx + dy * dy)) * offset;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const offset = distance * 0.3;
+    const perpX = distance > 0 ? (-dy / distance) * offset : 0;
+    const perpY = distance > 0 ? (dx / distance) * offset : 0;
 
     const cp1x = midX + perpX;
     const cp1y = midY + perpY;
 
     // Create cubic bezier path
-    const d = `M ${source.x} ${source.y} Q ${cp1x} ${cp1y} ${dest.x} ${dest.y}`;
+    const d = `M ${sourceScreen.x} ${sourceScreen.y} Q ${cp1x} ${cp1y} ${destScreen.x} ${destScreen.y}`;
 
     path.setAttribute("d", d);
     path.setAttribute("stroke", "#ADD8E6");
