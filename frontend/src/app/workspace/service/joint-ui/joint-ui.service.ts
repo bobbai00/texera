@@ -446,7 +446,7 @@ export class JointUIService {
         [`.${operatorBigObjectStatusClass}`]: { visibility: "hidden", text: "" },
       });
     } else {
-      const emoji = status === "producing" ? "🏭" : "🔄";
+      const emoji = status === "producing" ? "⬆️" : "⬇️";
       const action = status === "producing" ? "Produce" : "Consume";
       const statusText = uri ? `${emoji} ${action}: ${uri}` : `${emoji} ${action}`;
       element.attr({

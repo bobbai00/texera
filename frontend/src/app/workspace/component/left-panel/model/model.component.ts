@@ -67,6 +67,9 @@ export class ModelComponent implements OnInit {
   ) {}
 
   ngOnInit(): void {
+    // Initialize with hardcoded demo data
+    this.initializeHardcodedModels();
+
     this.bigObjectService
       .getStatusUpdateStream()
       .pipe(untilDestroyed(this))
@@ -85,30 +88,77 @@ export class ModelComponent implements OnInit {
           });
         });
 
-        // Convert to array with indices and generate dummy stats
-        this.bigObjects = Array.from(uriMap.entries()).map(([uri, operators], index) => {
-          // Check if this model contains the specific operator ID
-          const hasSpecificOperator = operators.some(
-            op => op.operatorId === "PythonUDFV2-operator-facb5950-eebd-444d-b883-298bf1460d95"
-          );
+        // If we have real data, use it. Otherwise keep the hardcoded data
+        if (uriMap.size > 0) {
+          // Convert to array with indices and generate dummy stats
+          this.bigObjects = Array.from(uriMap.entries()).map(([uri, operators], index) => {
+            // Check if this model contains the specific operator ID
+            const hasSpecificOperator = operators.some(
+              op => op.operatorId === "PythonUDFV2-operator-facb5950-eebd-444d-b883-298bf1460d95"
+            );
 
-          return {
-            index: index + 1,
-            name: hasSpecificOperator ? "Model 1" : "Model 2",
-            uri,
-            operators,
-            timestamp: Math.max(
-              ...operators.map(op => {
-                const status = statusMap.get(op.operatorId);
-                return status ? status.timestamp : 0;
-              })
-            ),
-            stats: this.generateHardcodedStats(hasSpecificOperator),
-            inputColumns: this.getHardcodedInputColumns(),
-            featureColumns: this.getHardcodedFeatureColumns(),
-          };
-        });
+            return {
+              index: index + 1,
+              name: hasSpecificOperator ? "Model 1" : "Model 2",
+              uri,
+              operators,
+              timestamp: Math.max(
+                ...operators.map(op => {
+                  const status = statusMap.get(op.operatorId);
+                  return status ? status.timestamp : 0;
+                })
+              ),
+              stats: this.generateHardcodedStats(hasSpecificOperator),
+              inputColumns: this.getHardcodedInputColumns(),
+              featureColumns: this.getHardcodedFeatureColumns(),
+            };
+          });
+        }
       });
+  }
+
+  private initializeHardcodedModels(): void {
+    // Create hardcoded demo models for testing
+    this.bigObjects = [
+      {
+        index: 1,
+        name: "Model 1",
+        uri: "s3://models/fraud-detector-v1",
+        operators: [
+          {
+            operatorId: "PythonUDFV2-operator-facb5950-eebd-444d-b883-298bf1460d95",
+            status: "producing" as const,
+          },
+          {
+            operatorId: "PythonUDFV2-operator-8a0d0e7b-5f3a-49bb-b3ac-e61ef9c9ea9f",
+            status: "consuming" as const,
+          },
+        ],
+        timestamp: Date.now(),
+        stats: this.generateHardcodedStats(true),
+        inputColumns: this.getHardcodedInputColumns(),
+        featureColumns: this.getHardcodedFeatureColumns(),
+      },
+      {
+        index: 2,
+        name: "Model 2",
+        uri: "s3://models/fraud-detector-v2",
+        operators: [
+          {
+            operatorId: "PythonUDFV2-operator-8525a233-339f-430a-8166-373c38b75ac8",
+            status: "producing" as const,
+          },
+          {
+            operatorId: "PythonUDFV2-operator-3b7c9d2a-1234-5678-9abc-def012345678",
+            status: "consuming" as const,
+          },
+        ],
+        timestamp: Date.now(),
+        stats: this.generateHardcodedStats(false),
+        inputColumns: this.getHardcodedInputColumns(),
+        featureColumns: this.getHardcodedFeatureColumns(),
+      },
+    ];
   }
 
   onCardHover(object: BigObjectCard): void {

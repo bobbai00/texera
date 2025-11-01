@@ -398,23 +398,21 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
 
   /**
    * Subscribes to big object status updates and displays the status on operators
+   * NOTE: Status display is disabled by default - only shows when hovering over model cards
    */
   private handleBigObjectStatusUpdate(): void {
     this.bigObjectService
       .getStatusUpdateStream()
       .pipe(untilDestroyed(this))
       .subscribe(statusMap => {
-        // Update all operators with their big object status
+        // Clear all operator status displays initially
+        // Status will only be shown when hovering over model cards in the left panel
         this.workflowActionService
           .getTexeraGraph()
           .getAllOperators()
           .forEach(op => {
-            const status = statusMap.get(op.operatorID);
-            if (status) {
-              this.jointUIService.changeBigObjectStatus(this.paper, op.operatorID, status.status);
-            } else {
-              this.jointUIService.changeBigObjectStatus(this.paper, op.operatorID, null);
-            }
+            // Always clear the status - it will be shown only on hover
+            this.jointUIService.changeBigObjectStatus(this.paper, op.operatorID, null);
           });
       });
   }
