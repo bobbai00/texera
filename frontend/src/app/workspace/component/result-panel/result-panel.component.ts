@@ -245,10 +245,10 @@ export class ResultPanelComponent implements OnInit, OnDestroy {
 
     if (this.currentOperatorId) {
       this.displayResult(this.currentOperatorId);
-      const operator = this.workflowActionService.getTexeraGraph().getOperator(this.currentOperatorId);
-      if (this.workflowConsoleService.hasConsoleMessages(this.currentOperatorId) || isPythonUdf(operator)) {
-        this.displayConsole(this.currentOperatorId, isPythonUdf(operator));
-      }
+      // const operator = this.workflowActionService.getTexeraGraph().getOperator(this.currentOperatorId);
+      // if (this.workflowConsoleService.hasConsoleMessages(this.currentOperatorId) || isPythonUdf(operator)) {
+      //   this.displayConsole(this.currentOperatorId, isPythonUdf(operator));
+      // }
     }
   }
 
