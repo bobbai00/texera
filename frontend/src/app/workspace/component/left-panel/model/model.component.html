@@ -33,7 +33,7 @@
       class="objects-list">
       <nz-card
         *ngFor="let object of bigObjects"
-        [nzTitle]="'Model ' + object.index"
+        [nzTitle]="object.name"
         [nzSize]="'small'"
         class="object-card"
         (mouseenter)="onCardHover(object)"
@@ -66,6 +66,16 @@
             <div class="stat-content">
               <span class="stat-label">F1 Score:</span>
               <span class="stat-value">{{ object.stats.f1Score }}</span>
+            </div>
+          </div>
+          <div class="stat-item">
+            <span
+              nz-icon
+              nzType="number"
+              class="stat-icon"></span>
+            <div class="stat-content">
+              <span class="stat-label">Tuple Count:</span>
+              <span class="stat-value">{{ object.stats.tupleCount }}</span>
             </div>
           </div>
         </div>

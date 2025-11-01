@@ -31,6 +31,7 @@ interface OperatorStatus {
 interface ModelStats {
   inferenceSpeed: number;
   f1Score: string;
+  tupleCount: number;
 }
 
 interface Column {
@@ -40,6 +41,7 @@ interface Column {
 
 interface BigObjectCard {
   index: number;
+  name: string;
   uri: string;
   operators: OperatorStatus[];
   timestamp: number;
@@ -84,20 +86,28 @@ export class ModelComponent implements OnInit {
         });
 
         // Convert to array with indices and generate dummy stats
-        this.bigObjects = Array.from(uriMap.entries()).map(([uri, operators], index) => ({
-          index: index + 1,
-          uri,
-          operators,
-          timestamp: Math.max(
-            ...operators.map(op => {
-              const status = statusMap.get(op.operatorId);
-              return status ? status.timestamp : 0;
-            })
-          ),
-          stats: this.generateDummyStats(),
-          inputColumns: this.generateDummyColumns("input"),
-          featureColumns: this.generateDummyColumns("feature"),
-        }));
+        this.bigObjects = Array.from(uriMap.entries()).map(([uri, operators], index) => {
+          // Check if this model contains the specific operator ID
+          const hasSpecificOperator = operators.some(
+            op => op.operatorId === "PythonUDFV2-operator-facb5950-eebd-444d-b883-298bf1460d95"
+          );
+
+          return {
+            index: index + 1,
+            name: hasSpecificOperator ? "Model 1" : "Model 2",
+            uri,
+            operators,
+            timestamp: Math.max(
+              ...operators.map(op => {
+                const status = statusMap.get(op.operatorId);
+                return status ? status.timestamp : 0;
+              })
+            ),
+            stats: this.generateHardcodedStats(hasSpecificOperator),
+            inputColumns: this.getHardcodedInputColumns(),
+            featureColumns: this.getHardcodedFeatureColumns(),
+          };
+        });
       });
   }
 
@@ -123,26 +133,38 @@ export class ModelComponent implements OnInit {
     }
   }
 
-  private generateDummyStats(): ModelStats {
-    // Generate random inference speed between 100 and 10000 tuples/second
-    const inferenceSpeed = Math.floor(Math.random() * 9900) + 100;
+  private generateHardcodedStats(isModel1: boolean): ModelStats {
+    // Hardcoded F1 scores based on model type
+    const f1Score = isModel1 ? "0.032" : "0.685";
 
-    // Generate random F1 score between 0.75 and 0.99
-    const f1Score = (Math.random() * 0.24 + 0.75).toFixed(3);
+    // Generate tuple count: 3333 + random variance (-200 to +200)
+    const tupleCountVariance = Math.floor(Math.random() * 401) - 200; // -200 to 200
+    const tupleCount = 3333 + tupleCountVariance;
+
+    // Generate inference speed: 3333 + random variance (-50 to +50)
+    const speedVariance = Math.floor(Math.random() * 101) - 50; // -50 to 50
+    const inferenceSpeed = 3333 + speedVariance;
 
     return {
       inferenceSpeed,
       f1Score,
+      tupleCount,
     };
   }
 
-  private generateDummyColumns(prefix: string): Column[] {
-    const types = ["Integer", "String", "Float", "Boolean", "Date"];
-    const columnCount = Math.floor(Math.random() * 5) + 3; // 3-7 columns
+  private getHardcodedInputColumns(): Column[] {
+    return [
+      { name: "category", type: "Integer" },
+      { name: "amt", type: "Double" },
+      { name: "gender", type: "Integer" },
+      { name: "street", type: "Integer" },
+      { name: "city", type: "Integer" },
+      { name: "state", type: "Integer" },
+      { name: "job", type: "Integer" },
+    ];
+  }
 
-    return Array.from({ length: columnCount }, (_, i) => ({
-      name: `${prefix}_col_${i + 1}`,
-      type: types[Math.floor(Math.random() * types.length)],
-    }));
+  private getHardcodedFeatureColumns(): Column[] {
+    return [{ name: "is_fraud", type: "Integer" }];
   }
 }
