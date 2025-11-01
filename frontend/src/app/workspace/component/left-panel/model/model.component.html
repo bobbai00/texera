@@ -35,79 +35,114 @@
         *ngFor="let object of bigObjects"
         [nzTitle]="object.name"
         [nzSize]="'small'"
-        class="object-card"
+        class="object-card ml-card"
         (mouseenter)="onCardHover(object)"
         (mouseleave)="onCardLeave(object)"
         [class.hovered]="hoveredObjectUri === object.uri">
-        <p class="object-info">
-          <span
-            nz-icon
-            nzType="link"></span>
-          <strong>URI:</strong>
-          <span class="uri-text">{{ object.uri }}</span>
-        </p>
+        <div class="ml-card-content">
+          <!-- Left side: ML Icon + Columns (1/3) -->
+          <div class="ml-left-section">
+            <div class="ml-icon-container">
+              <span
+                nz-icon
+                nzType="experiment"
+                nzTheme="twotone"
+                class="ml-model-icon"></span>
+            </div>
 
-        <div class="stats-section">
-          <div class="stat-item">
-            <span
-              nz-icon
-              nzType="dashboard"
-              class="stat-icon"></span>
-            <div class="stat-content">
-              <span class="stat-label">Inference Speed:</span>
-              <span class="stat-value">{{ object.stats.inferenceSpeed }} tuple/s</span>
+            <!-- Columns Section -->
+            <div class="ml-columns-compact">
+              <div class="column-section">
+                <div class="column-header">
+                  <span
+                    nz-icon
+                    nzType="import"></span>
+                  Input Columns
+                </div>
+                <div class="column-list-compact">
+                  <div
+                    *ngFor="let column of object.inputColumns"
+                    class="column-item-compact">
+                    <span class="column-name">{{ column.name }}</span>
+                    <span class="column-type">{{ column.type }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="column-section">
+                <div class="column-header">
+                  <span
+                    nz-icon
+                    nzType="export"></span>
+                  Output Columns
+                </div>
+                <div class="column-list-compact">
+                  <div
+                    *ngFor="let column of object.featureColumns"
+                    class="column-item-compact">
+                    <span class="column-name">{{ column.name }}</span>
+                    <span class="column-type">{{ column.type }}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="stat-item">
-            <span
-              nz-icon
-              nzType="fund"
-              class="stat-icon"></span>
-            <div class="stat-content">
-              <span class="stat-label">F1 Score:</span>
-              <span class="stat-value">{{ object.stats.f1Score }}</span>
+
+          <!-- Right side: Metrics and Info (2/3) -->
+          <div class="ml-metrics-section">
+            <!-- URI Info -->
+            <div class="ml-uri-info">
+              <span
+                nz-icon
+                nzType="link"
+                class="uri-icon"></span>
+              <span class="uri-text">{{ object.uri }}</span>
             </div>
-          </div>
-          <div class="stat-item">
-            <span
-              nz-icon
-              nzType="number"
-              class="stat-icon"></span>
-            <div class="stat-content">
-              <span class="stat-label">Tuple Count:</span>
-              <span class="stat-value">{{ object.stats.tupleCount }}</span>
+
+            <!-- Stats Grid -->
+            <div class="ml-stats-grid">
+              <div class="ml-stat-item">
+                <div class="ml-stat-label">
+                  <span
+                    nz-icon
+                    nzType="dashboard"></span>
+                  Inference Speed
+                </div>
+                <div class="ml-stat-value">{{ object.stats.inferenceSpeed }} tuple/s</div>
+              </div>
+
+              <div class="ml-stat-item">
+                <div class="ml-stat-label">
+                  <span
+                    nz-icon
+                    nzType="fund"></span>
+                  F1 Score
+                </div>
+                <div class="ml-stat-value">{{ object.stats.f1Score }}</div>
+              </div>
+
+              <div class="ml-stat-item">
+                <div class="ml-stat-label">
+                  <span
+                    nz-icon
+                    nzType="database"></span>
+                  Size
+                </div>
+                <div class="ml-stat-value">{{ object.stats.size }} MB</div>
+              </div>
+
+              <div class="ml-stat-item">
+                <div class="ml-stat-label">
+                  <span
+                    nz-icon
+                    nzType="team"></span>
+                  # Consumer
+                </div>
+                <div class="ml-stat-value">{{ object.stats.consumerCount }}</div>
+              </div>
             </div>
           </div>
         </div>
-
-        <nz-collapse
-          class="columns-section"
-          nzGhost>
-          <nz-collapse-panel
-            nzHeader="Input Columns"
-            [nzActive]="false">
-            <div class="column-list">
-              <div
-                *ngFor="let column of object.inputColumns"
-                class="column-item">
-                <span class="column-name">{{ column.name }}</span>
-                <span class="column-type">{{ column.type }}</span>
-              </div>
-            </div>
-          </nz-collapse-panel>
-          <nz-collapse-panel
-            nzHeader="Feature Columns"
-            [nzActive]="false">
-            <div class="column-list">
-              <div
-                *ngFor="let column of object.featureColumns"
-                class="column-item">
-                <span class="column-name">{{ column.name }}</span>
-                <span class="column-type">{{ column.type }}</span>
-              </div>
-            </div>
-          </nz-collapse-panel>
-        </nz-collapse>
       </nz-card>
     </div>
   </div>

@@ -32,6 +32,8 @@ interface ModelStats {
   inferenceSpeed: number;
   f1Score: string;
   tupleCount: number;
+  size: number; // in MB
+  consumerCount: number;
 }
 
 interface Column {
@@ -195,10 +197,19 @@ export class ModelComponent implements OnInit {
     const speedVariance = Math.floor(Math.random() * 101) - 50; // -50 to 50
     const inferenceSpeed = 3333 + speedVariance;
 
+    // Generate size: 300 MB + random variance (-15 to +15)
+    const sizeVariance = Math.floor(Math.random() * 31) - 15; // -15 to 15
+    const size = 300 + sizeVariance;
+
+    // Hardcoded consumer count based on model type
+    const consumerCount = isModel1 ? 0 : 1;
+
     return {
       inferenceSpeed,
       f1Score,
       tupleCount,
+      size,
+      consumerCount,
     };
   }
 
