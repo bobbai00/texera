@@ -438,14 +438,10 @@ export class JointGraphWrapper {
    * @param destinationOperatorIDs the destination operators (upstream operators)
    */
   public highlightOperatorsForDataLineage(sourceOperatorID: string, destinationOperatorIDs: string[]): void {
-    // Hardcoded lineage for demo purposes
-    const hardcodedSourceOperatorID = "PythonUDFV2-operator-8525a233-339f-430a-8166-373c38b75ac8";
-    const hardcodedDestinationOperatorIDs = ["PythonUDFV2-operator-8a0d0e7b-5f3a-49bb-b3ac-e61ef9c9ea9f"];
-
-    this.currentDataLineageHighlightedOperators = [hardcodedSourceOperatorID, ...hardcodedDestinationOperatorIDs];
+    this.currentDataLineageHighlightedOperators = [sourceOperatorID, ...destinationOperatorIDs];
     this.jointDataLineageHighlightStream.next({
-      sourceOperatorID: hardcodedSourceOperatorID,
-      destinationOperatorIDs: hardcodedDestinationOperatorIDs,
+      sourceOperatorID,
+      destinationOperatorIDs,
     });
   }
 

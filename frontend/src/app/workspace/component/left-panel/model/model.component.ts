@@ -22,6 +22,8 @@ import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { BigObjectService, BigObjectStatus } from "../../../service/big-object/big-object.service";
 import { JointUIService } from "../../../service/joint-ui/joint-ui.service";
 import { WorkflowActionService } from "../../../service/workflow-graph/model/workflow-action.service";
+import { ExecuteWorkflowService } from "../../../service/execute-workflow/execute-workflow.service";
+import { ExecutionState } from "../../../types/execute-workflow.interface";
 
 interface OperatorStatus {
   operatorId: string;
@@ -65,12 +67,20 @@ export class ModelComponent implements OnInit {
   constructor(
     private bigObjectService: BigObjectService,
     private jointUIService: JointUIService,
-    private workflowActionService: WorkflowActionService
+    private workflowActionService: WorkflowActionService,
+    private executeWorkflowService: ExecuteWorkflowService
   ) {}
 
   ngOnInit(): void {
-    // Initialize with hardcoded demo data
-    this.initializeHardcodedModels();
+    // Clear models when workflow execution starts (Initializing state)
+    this.executeWorkflowService
+      .getExecutionStateStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(event => {
+        if (event.current.state === ExecutionState.Initializing) {
+          this.bigObjects = [];
+        }
+      });
 
     this.bigObjectService
       .getStatusUpdateStream()
@@ -90,78 +100,33 @@ export class ModelComponent implements OnInit {
           });
         });
 
-        // If we have real data, use it. Otherwise keep the hardcoded data
-        if (uriMap.size > 0) {
-          // Convert to array with indices and generate dummy stats
-          this.bigObjects = Array.from(uriMap.entries()).map(([uri, operators], index) => {
-            // Check if this model contains the specific operator ID
-            const hasSpecificOperator = operators.some(
-              op => op.operatorId === "PythonUDFV2-operator-facb5950-eebd-444d-b883-298bf1460d95"
-            );
-
-            return {
-              index: index + 1,
-              name: hasSpecificOperator ? "Model 1" : "Model 2",
-              uri,
-              operators,
-              timestamp: Math.max(
-                ...operators.map(op => {
-                  const status = statusMap.get(op.operatorId);
-                  return status ? status.timestamp : 0;
-                })
-              ),
-              stats: this.generateHardcodedStats(hasSpecificOperator),
-              inputColumns: this.getHardcodedInputColumns(),
-              featureColumns: this.getHardcodedFeatureColumns(),
-            };
+        // Convert to array with indices and stats
+        this.bigObjects = Array.from(uriMap.entries()).map(([uri, operators], index) => {
+          // Check if this model is "Train Model 2" by checking operator customDisplayName
+          const isModel2 = operators.some(op => {
+            const operator = this.workflowActionService.getTexeraGraph().getOperator(op.operatorId);
+            return operator && operator.customDisplayName === "Train Model 2";
           });
-        }
+
+          return {
+            index: index + 1,
+            name: isModel2 ? "Model 2" : "Model 1",
+            uri,
+            operators,
+            timestamp: Math.max(
+              ...operators.map(op => {
+                const status = statusMap.get(op.operatorId);
+                return status ? status.timestamp : 0;
+              })
+            ),
+            stats: this.generateHardcodedStats(isModel2),
+            inputColumns: this.getHardcodedInputColumns(),
+            featureColumns: this.getHardcodedFeatureColumns(),
+          };
+        });
       });
   }
 
-  private initializeHardcodedModels(): void {
-    // Create hardcoded demo models for testing
-    this.bigObjects = [
-      {
-        index: 1,
-        name: "Model 1",
-        uri: "s3://models/fraud-detector-v1",
-        operators: [
-          {
-            operatorId: "PythonUDFV2-operator-facb5950-eebd-444d-b883-298bf1460d95",
-            status: "producing" as const,
-          },
-          {
-            operatorId: "PythonUDFV2-operator-8a0d0e7b-5f3a-49bb-b3ac-e61ef9c9ea9f",
-            status: "consuming" as const,
-          },
-        ],
-        timestamp: Date.now(),
-        stats: this.generateHardcodedStats(true),
-        inputColumns: this.getHardcodedInputColumns(),
-        featureColumns: this.getHardcodedFeatureColumns(),
-      },
-      {
-        index: 2,
-        name: "Model 2",
-        uri: "s3://models/fraud-detector-v2",
-        operators: [
-          {
-            operatorId: "PythonUDFV2-operator-8525a233-339f-430a-8166-373c38b75ac8",
-            status: "producing" as const,
-          },
-          {
-            operatorId: "PythonUDFV2-operator-3b7c9d2a-1234-5678-9abc-def012345678",
-            status: "consuming" as const,
-          },
-        ],
-        timestamp: Date.now(),
-        stats: this.generateHardcodedStats(false),
-        inputColumns: this.getHardcodedInputColumns(),
-        featureColumns: this.getHardcodedFeatureColumns(),
-      },
-    ];
-  }
 
   onCardHover(object: BigObjectCard): void {
     this.hoveredObjectUri = object.uri;
@@ -185,9 +150,10 @@ export class ModelComponent implements OnInit {
     }
   }
 
-  private generateHardcodedStats(isModel1: boolean): ModelStats {
+  private generateHardcodedStats(isModel2: boolean): ModelStats {
     // Hardcoded F1 scores based on model type
-    const f1Score = isModel1 ? "0.032" : "0.685";
+    // Model 2 (Train Model 2) has higher F1 score
+    const f1Score = isModel2 ? "0.685" : "0.032";
 
     // Generate tuple count: 3333 + random variance (-200 to +200)
     const tupleCountVariance = Math.floor(Math.random() * 401) - 200; // -200 to 200
@@ -197,12 +163,13 @@ export class ModelComponent implements OnInit {
     const speedVariance = Math.floor(Math.random() * 101) - 50; // -50 to 50
     const inferenceSpeed = 3333 + speedVariance;
 
-    // Generate size: 300 MB + random variance (-15 to +15)
-    const sizeVariance = Math.floor(Math.random() * 31) - 15; // -15 to 15
-    const size = 300 + sizeVariance;
+    // Hardcoded size based on model type
+    // Model 2: 306 MB, Model 1: 285 MB
+    const size = isModel2 ? 306 : 285;
 
     // Hardcoded consumer count based on model type
-    const consumerCount = isModel1 ? 0 : 1;
+    // Model 2 (Train Model 2) has 1 consumer
+    const consumerCount = isModel2 ? 1 : 0;
 
     return {
       inferenceSpeed,

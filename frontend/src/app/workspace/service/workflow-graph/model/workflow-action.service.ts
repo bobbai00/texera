@@ -528,7 +528,21 @@ export class WorkflowActionService {
   }
 
   public highlightOperatorsForDataLineage(sourceOperatorID: string, destinationOperatorIDs: string[]): void {
-    this.getJointGraphWrapper().highlightOperatorsForDataLineage(sourceOperatorID, destinationOperatorIDs);
+    // Find operators by customDisplayName for hardcoded demo
+    const trainModel1Operator = this.texeraGraph
+      .getAllOperators()
+      .find(op => op.customDisplayName === "Train Model 2");
+    const inferenceOperator = this.texeraGraph.getAllOperators().find(op => op.customDisplayName === "Inference");
+
+    // If both operators exist, use them for the lineage
+    if (trainModel1Operator && inferenceOperator) {
+      this.getJointGraphWrapper().highlightOperatorsForDataLineage(trainModel1Operator.operatorID, [
+        inferenceOperator.operatorID,
+      ]);
+    } else {
+      // Fallback to the provided parameters if custom named operators don't exist
+      this.getJointGraphWrapper().highlightOperatorsForDataLineage(sourceOperatorID, destinationOperatorIDs);
+    }
   }
 
   public unhighlightOperatorsForDataLineage(): void {
