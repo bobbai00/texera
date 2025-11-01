@@ -878,12 +878,40 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     // Create cubic bezier path
     const d = `M ${sourceScreen.x} ${sourceScreen.y} Q ${cp1x} ${cp1y} ${destScreen.x} ${destScreen.y}`;
 
+    // Create or reuse arrow marker definition
+    const markerId = "lineage-arrow-marker";
+    let defs = paper.svg.querySelector("defs");
+    if (!defs) {
+      defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+      paper.svg.insertBefore(defs, paper.svg.firstChild);
+    }
+
+    // Check if marker already exists
+    if (!defs.querySelector(`#${markerId}`)) {
+      const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+      marker.setAttribute("id", markerId);
+      marker.setAttribute("markerWidth", "10");
+      marker.setAttribute("markerHeight", "10");
+      marker.setAttribute("refX", "9");
+      marker.setAttribute("refY", "3");
+      marker.setAttribute("orient", "auto");
+      marker.setAttribute("markerUnits", "strokeWidth");
+
+      const arrowPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      arrowPath.setAttribute("d", "M0,0 L0,6 L9,3 z");
+      arrowPath.setAttribute("fill", "#FF8C00"); // Orange color
+      marker.appendChild(arrowPath);
+
+      defs.appendChild(marker);
+    }
+
     path.setAttribute("d", d);
-    path.setAttribute("stroke", "#ADD8E6");
+    path.setAttribute("stroke", "#FF8C00"); // Orange color
     path.setAttribute("stroke-width", "3");
     path.setAttribute("fill", "none");
     path.setAttribute("pointer-events", "none");
     path.setAttribute("opacity", "0.8");
+    path.setAttribute("marker-end", `url(#${markerId})`);
 
     return path;
   }
