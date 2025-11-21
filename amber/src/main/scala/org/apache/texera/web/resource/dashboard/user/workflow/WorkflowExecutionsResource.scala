@@ -315,7 +315,8 @@ object WorkflowExecutionsResource {
   def getWorkflowExecutions(
       wid: Integer,
       context: DSLContext,
-      statusCodes: Set[Byte] = Set.empty
+      statusCodes: Set[Byte] = Set.empty,
+      cuid: Option[Integer] = None
   ): List[WorkflowExecutionEntry] = {
     var condition = WORKFLOW_VERSION.WID.eq(wid)
 
@@ -323,6 +324,11 @@ object WorkflowExecutionsResource {
       condition = condition.and(
         WORKFLOW_EXECUTIONS.STATUS.in(statusCodes.map(Byte.box).asJava)
       )
+    }
+
+    // Filter by computing unit ID if provided
+    cuid.foreach { computingUnitId =>
+      condition = condition.and(WORKFLOW_EXECUTIONS.CUID.eq(computingUnitId))
     }
 
     context
@@ -645,7 +651,8 @@ class WorkflowExecutionsResource {
   def retrieveExecutionsOfWorkflow(
       @PathParam("wid") wid: Integer,
       @Auth sessionUser: SessionUser,
-      @QueryParam("status") status: String
+      @QueryParam("status") status: String,
+      @QueryParam("cuid") cuid: Integer
   ): List[WorkflowExecutionEntry] = {
     val user = sessionUser.getUser
     if (!WorkflowAccessResource.hasReadAccess(wid, user.getUid)) {
@@ -665,7 +672,8 @@ class WorkflowExecutionsResource {
             }
           }
           .getOrElse(Set.empty[Byte])
-      getWorkflowExecutions(wid, context, statusCodes)
+      val cuidOption = Option(cuid)
+      getWorkflowExecutions(wid, context, statusCodes, cuidOption)
     }
   }
 

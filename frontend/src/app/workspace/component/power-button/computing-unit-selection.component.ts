@@ -140,7 +140,7 @@ export class ComputingUnitSelectionComponent implements OnInit {
 
         // ── compare with the *previous* cuid, not the one we are just about to store ──
         if (isDefined(wid) && unit?.computingUnit.cuid !== this.lastSelectedCuid) {
-          this.updateWorkflowModificationStatus(wid);
+          this.updateWorkflowModificationStatus(wid, unit?.computingUnit.cuid);
         }
 
         // update local caches **after** the comparison
@@ -161,9 +161,9 @@ export class ComputingUnitSelectionComponent implements OnInit {
   /**
    * Helper to query backend and (de)activate modification status.
    */
-  private updateWorkflowModificationStatus(wid: number): void {
+  private updateWorkflowModificationStatus(wid: number, cuid?: number): void {
     this.workflowExecutionsService
-      .retrieveWorkflowExecutions(wid, [ExecutionState.Running, ExecutionState.Initializing])
+      .retrieveWorkflowExecutions(wid, [ExecutionState.Running, ExecutionState.Initializing], cuid)
       .pipe(take(1), untilDestroyed(this))
       .subscribe(execList => {
         if (execList.length > 0) {

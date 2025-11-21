@@ -49,14 +49,18 @@ export class WorkflowExecutionsService {
    * @param statuses  optional list of status strings
    *                  (e.g. ["running", "completed"]).  If the array is empty or
    *                  omitted, no status filter is applied.
+   * @param cuid      optional computing unit ID to filter executions by
    */
-  retrieveWorkflowExecutions(wid: number, statuses?: ExecutionState[]): Observable<WorkflowExecutionsEntry[]> {
+  retrieveWorkflowExecutions(wid: number, statuses?: ExecutionState[], cuid?: number): Observable<WorkflowExecutionsEntry[]> {
     /* -------------------------------------------------------------------- */
-    /* build query-string ?status=running,completed …                        */
+    /* build query-string ?status=running,completed&cuid=123 …               */
     /* -------------------------------------------------------------------- */
     let params = new HttpParams();
     if (statuses && statuses.length > 0) {
       params = params.set("status", statuses.join(","));
+    }
+    if (cuid !== undefined && cuid !== null) {
+      params = params.set("cuid", cuid.toString());
     }
 
     return this.http.get<WorkflowExecutionsEntry[]>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}`, { params });
