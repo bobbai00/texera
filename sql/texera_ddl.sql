@@ -48,6 +48,7 @@ SET search_path TO texera_db, public;
 -- ============================================
 DROP TABLE IF EXISTS operator_executions CASCADE;
 DROP TABLE IF EXISTS operator_port_executions CASCADE;
+DROP TABLE IF EXISTS workflow_cache CASCADE;
 DROP TABLE IF EXISTS workflow_user_access CASCADE;
 DROP TABLE IF EXISTS workflow_of_user CASCADE;
 DROP TABLE IF EXISTS user_config CASCADE;
@@ -295,6 +296,24 @@ CREATE TABLE operator_port_executions
     PRIMARY KEY (workflow_execution_id, global_port_id),
     FOREIGN KEY (workflow_execution_id) REFERENCES workflow_executions(eid) ON DELETE CASCADE
 );
+
+-- workflow_cache: stores cached operator results
+CREATE TABLE IF NOT EXISTS workflow_cache
+(
+    cache_key         VARCHAR(64) PRIMARY KEY,
+    operator_id       VARCHAR(100) NOT NULL,
+    port_id           VARCHAR(100) NOT NULL,
+    result_uri        TEXT NOT NULL,
+    result_size       INT DEFAULT 0,
+    tuple_count       BIGINT DEFAULT 0,
+    schema_json       TEXT,
+    created_time      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_accessed     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    access_count      INT DEFAULT 1
+);
+
+-- Create index on last_accessed for efficient cache eviction queries
+CREATE INDEX IF NOT EXISTS idx_workflow_cache_last_accessed ON workflow_cache(last_accessed);
 
 -- workflow_user_likes
 CREATE TABLE IF NOT EXISTS workflow_user_likes

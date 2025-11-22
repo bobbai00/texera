@@ -291,6 +291,8 @@ class ExecutionResultService(
     with LazyLogging {
   private val resultPullingFrequency = ApplicationConfig.executionResultPollingInSecs
   private var resultUpdateCancellable: Cancellable = _
+  private val cacheService = new WorkflowCacheService()
+  private var cacheKeyGenerator: Option[WorkflowCacheKeyGenerator] = None
 
   def attachToExecution(
       executionId: ExecutionIdentity,
@@ -303,6 +305,9 @@ class ExecutionResultService(
     }
 
     unsubscribeAll()
+
+    // Initialize cache key generator for this execution
+    cacheKeyGenerator = Some(new WorkflowCacheKeyGenerator(physicalPlan))
 
     addSubscription(stateStore.metadataStore.getStateObservable.subscribe {
       newState: ExecutionMetadataStore =>
@@ -333,6 +338,11 @@ class ExecutionResultService(
             if (resultUpdateCancellable.cancel() || resultUpdateCancellable.isCancelled) {
               // immediately perform final update
               onResultUpdate(executionId, physicalPlan)
+
+              // Store results to cache if execution completed successfully
+              if (evt.state == COMPLETED) {
+                storeToCacheOnCompletion(executionId, physicalPlan)
+              }
             }
           }
         })
@@ -479,6 +489,87 @@ class ExecutionResultService(
           .toMap
       }
       WorkflowResultStore(newInfo)
+    }
+  }
+
+  /**
+    * Stores execution results to cache for future reuse.
+    * This method is called when a workflow execution completes successfully.
+    *
+    * @param executionId The execution ID
+    * @param physicalPlan The physical plan of the execution
+    */
+  private def storeToCacheOnCompletion(
+      executionId: ExecutionIdentity,
+      physicalPlan: PhysicalPlan
+  ): Unit = {
+    cacheKeyGenerator.foreach { generator =>
+      try {
+        // Get all result URIs for this execution
+        val resultUris = WorkflowExecutionsResource.getResultUrisByExecutionId(executionId)
+
+        resultUris.foreach { uri =>
+          try {
+            val (_, _, globalPortIdOption, _) = VFSURIFactory.decodeURI(uri)
+
+            globalPortIdOption.foreach { globalPortId =>
+              val operatorId = globalPortId.opId
+              val portId = globalPortId.portId
+
+              // Get the physical operator
+              val physicalOps = physicalPlan.getPhysicalOpsOfLogicalOp(operatorId.logicalOpId)
+
+              physicalOps.foreach { physicalOp =>
+                if (physicalOp.outputPorts.contains(portId)) {
+                  // Generate cache key for this operator and port
+                  val cacheKey = generator.getCacheKey(physicalOp.id, portId)
+
+                  // Get result metadata
+                  val (document, _) = DocumentFactory.openDocument(uri)
+                  val tupleCount = document.getCount
+                  val resultSize = document match {
+                    case vd: VirtualDocument[_] =>
+                      try {
+                        vd.getTotalFileSize.toInt
+                      } catch {
+                        case _: Exception => 0
+                      }
+                    case _ => 0
+                  }
+
+                  // Get schema from output port
+                  val schemaOpt = physicalOp.outputPorts.get(portId).flatMap {
+                    case (_, _, Right(schema)) => Some(schema)
+                    case _                     => None
+                  }
+
+                  // Store to cache
+                  cacheService.storeCache(
+                    cacheKey = cacheKey,
+                    operatorId = operatorId.id,
+                    portId = portId.id.toString,
+                    resultUri = uri,
+                    resultSize = resultSize,
+                    tupleCount = tupleCount,
+                    schema = schemaOpt
+                  )
+
+                  logger.info(
+                    s"Stored result to cache: operator=${operatorId.id}, port=${portId.id}, " +
+                      s"cacheKey=$cacheKey, tuples=$tupleCount"
+                  )
+                }
+              }
+            }
+          } catch {
+            case e: Exception =>
+              logger.warn(s"Failed to store result to cache for URI: $uri", e)
+          }
+        }
+      } catch {
+        case e: Exception =>
+          logger.error("Failed to store results to cache", e)
+      }
     }
   }
 
