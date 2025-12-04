@@ -702,6 +702,7 @@ export class TexeraCopilot {
       operatorTools.createModifyOperatorTool(
         this.workflowActionService,
         this.agentActionService,
+        this.operatorMetadataService,
         this.agentId,
         this.agentName
       ),
@@ -711,6 +712,28 @@ export class TexeraCopilot {
       operatorTools.createDeleteFromWorkflowTool(
         this.workflowActionService,
         this.agentActionService,
+        this.agentId,
+        this.agentName
+      ),
+      this.settings.toolTimeoutMs
+    );
+
+    // Workflow metadata tools - list operator types and get schemas
+    const listAllAvailableOperatorTypesTool = toolWithTimeout(
+      workflowMetadataTools.createListAllAvailableOperatorTypesTool(this.operatorMetadataService),
+      this.settings.toolTimeoutMs
+    );
+    const getOperatorSchemaTool = toolWithTimeout(
+      workflowMetadataTools.createGetOperatorSchemaTool(this.operatorMetadataService),
+      this.settings.toolTimeoutMs
+    );
+
+    // Generic addOperator tool - can add any operator type
+    const addOperatorTool = toolWithTimeout(
+      operatorTools.createAddOperatorTool(
+        this.workflowActionService,
+        this.agentActionService,
+        this.operatorMetadataService,
         this.agentId,
         this.agentName
       ),
@@ -728,7 +751,15 @@ export class TexeraCopilot {
       [currentWorkflowExecutionTools.TOOL_NAME_GET_EXISTING_WORKFLOW_EXECUTION_RESULT]:
         getExistingWorkflowExecutionResultTool,
       [currentWorkflowExecutionTools.TOOL_NAME_GET_CURRENT_COMPUTING_UNIT_STATUS]: getCurrentComputingUnitStatusTool,
-      // Operator-specific tools
+
+      // Workflow metadata tools - discover and inspect operator types
+      [workflowMetadataTools.TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: listAllAvailableOperatorTypesTool,
+      [workflowMetadataTools.TOOL_NAME_GET_OPERATOR_SCHEMA]: getOperatorSchemaTool,
+
+      // Generic operator tool - can add any operator type
+      [operatorTools.TOOL_NAME_ADD_OPERATOR]: addOperatorTool,
+
+      // Operator-specific tools (convenience tools with typed schemas)
       [operatorTools.TOOL_NAME_ADD_PYTHON_UDF_V2]: addPythonUDFV2Tool,
       [operatorTools.TOOL_NAME_ADD_AGGREGATE]: addAggregateTool,
       [operatorTools.TOOL_NAME_ADD_PROJECTION]: addProjectionTool,

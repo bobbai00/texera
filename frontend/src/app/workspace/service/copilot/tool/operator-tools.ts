@@ -21,9 +21,13 @@ import { z } from "zod";
 import { tool } from "ai";
 import { WorkflowActionService } from "../../workflow-graph/model/workflow-action.service";
 import { AgentActionService } from "../../agent-action/agent-action.service";
+import { OperatorMetadataService } from "../../operator-metadata/operator-metadata.service";
 import { createSuccessResult, createErrorResult } from "./tools-utility";
+import { validateOperatorProperties } from "./workflow-metadata-tools";
+import { Validation } from "../../validation/validation-workflow.service";
 
 // Tool name constants for operator-specific tools
+export const TOOL_NAME_ADD_OPERATOR = "addOperator";
 export const TOOL_NAME_ADD_PYTHON_UDF_V2 = "addPythonUDFV2";
 export const TOOL_NAME_ADD_AGGREGATE = "addAggregate";
 export const TOOL_NAME_ADD_PROJECTION = "addProjection";
@@ -72,6 +76,15 @@ function createAndRecordAgentAction(
     beforeWorkflowContent,
     afterWorkflowContent
   );
+}
+
+/**
+ * Format validation result into a readable message for the agent.
+ */
+function formatValidationErrors(validation: Validation): string {
+  if (validation.isValid) return "";
+  const errorMessages = Object.entries(validation.messages).map(([key, msg]) => `  - ${key}: ${msg}`);
+  return `Schema validation errors:\n${errorMessages.join("\n")}`;
 }
 
 /**
@@ -133,6 +146,73 @@ function addOperatorHelper(
   } catch (error: any) {
     return createErrorResult(error.message);
   }
+}
+
+/**
+ * Create a generic addOperator tool that can add any available operator type.
+ * Use listAllAvailableOperatorTypes to discover available operators and
+ * getOperatorSchema to understand the required properties.
+ */
+export function createAddOperatorTool(
+  workflowActionService: WorkflowActionService,
+  agentActionService: AgentActionService,
+  operatorMetadataService: OperatorMetadataService,
+  agentId: string = "",
+  agentName: string = ""
+) {
+  return tool({
+    name: TOOL_NAME_ADD_OPERATOR,
+    description:
+      "Add any available operator type to the workflow. " +
+      "First use listAllAvailableOperatorTypes to discover operators, " +
+      "then use getOperatorSchema to understand required properties. " +
+      "Pass the operatorType, customDisplayName, and operatorProperties.",
+    inputSchema: z.object({
+      operatorType: z
+        .string()
+        .describe("The type of operator to add (e.g., 'PythonUDFV2', 'Aggregate', 'CSVFileScan')"),
+      customDisplayName: z.string().describe("Brief custom name summarizing what this operator does"),
+      operatorProperties: z
+        .record(z.any())
+        .default({})
+        .describe("Properties for the operator based on its schema (use getOperatorSchema to see required properties)"),
+    }),
+    execute: async (args: {
+      operatorType: string;
+      customDisplayName: string;
+      operatorProperties: Record<string, any>;
+    }) => {
+      // Validate operator type exists
+      if (!operatorMetadataService.operatorTypeExists(args.operatorType)) {
+        return createErrorResult(
+          `Operator type "${args.operatorType}" not found. Use listAllAvailableOperatorTypes to see available operators.`
+        );
+      }
+
+      // Validate properties against schema
+      const validation = validateOperatorProperties(
+        operatorMetadataService,
+        args.operatorType,
+        args.operatorProperties
+      );
+      if (!validation.isValid) {
+        return createErrorResult(
+          `Invalid operator properties for "${args.operatorType}". ${formatValidationErrors(validation)}\n` +
+            `Use getOperatorSchema("${args.operatorType}") to see the required property format.`
+        );
+      }
+
+      return addOperatorHelper(
+        workflowActionService,
+        agentActionService,
+        agentId,
+        agentName,
+        args.operatorType,
+        args.customDisplayName,
+        args.operatorProperties
+      );
+    },
+  });
 }
 
 /**
@@ -622,6 +702,7 @@ export function createAddLinkTool(
 export function createModifyOperatorTool(
   workflowActionService: WorkflowActionService,
   agentActionService: AgentActionService,
+  operatorMetadataService: OperatorMetadataService,
   agentId: string = "",
   agentName: string = ""
 ) {
@@ -630,17 +711,29 @@ export function createModifyOperatorTool(
     description: "Modify properties of an existing operator in the workflow",
     inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to modify"),
-      operatorProperties: z
-        .record(z.union([z.string(), z.number(), z.boolean(), z.null()]))
-        .describe("Flat map of operator properties to update (no nested objects allowed)"),
+      operatorProperties: z.record(z.any()).describe("Map of operator properties to update"),
       summary: z.string().describe("A brief summary of what this modification accomplishes"),
     }),
-    execute: async (args: {
-      operatorId: string;
-      operatorProperties: Record<string, string | number | boolean | null>;
-      summary: string;
-    }) => {
+    execute: async (args: { operatorId: string; operatorProperties: Record<string, any>; summary: string }) => {
       try {
+        // Get the operator to find its type and current properties
+        const operator = workflowActionService.getTexeraGraph().getOperator(args.operatorId);
+        if (!operator) {
+          return createErrorResult(`Operator with ID "${args.operatorId}" not found in the workflow.`);
+        }
+
+        // Merge current properties with new properties for validation
+        const mergedProperties = { ...operator.operatorProperties, ...args.operatorProperties };
+
+        // Validate merged properties against schema
+        const validation = validateOperatorProperties(operatorMetadataService, operator.operatorType, mergedProperties);
+        if (!validation.isValid) {
+          return createErrorResult(
+            `Invalid operator properties for "${operator.operatorType}". ${formatValidationErrors(validation)}\n` +
+              `Use getOperatorSchema("${operator.operatorType}") to see the required property format.`
+          );
+        }
+
         const beforeContent = workflowActionService.getWorkflowContent();
         const results = workflowActionService.applyAgentAction({
           modify: {
