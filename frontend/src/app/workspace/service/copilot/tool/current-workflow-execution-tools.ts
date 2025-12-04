@@ -33,7 +33,8 @@ import { IndexableObject } from "../../../types/result-table.interface";
 import { PaginatedResultEvent } from "../../../types/workflow-websocket.interface";
 import {
   estimateTokenCount,
-  MAX_OPERATOR_RESULT_TOKEN_LIMIT,
+  DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
+  DEFAULT_EXECUTION_TIMEOUT_MS,
   createSuccessResult,
   createErrorResult,
 } from "./tools-utility";
@@ -48,9 +49,6 @@ export const TOOL_NAME_HAS_CURRENT_OPERATOR_RESULT = "hasCurrentOperatorResult";
 export const TOOL_NAME_GET_EXISTING_WORKFLOW_EXECUTION_RESULT = "getExistingWorkflowExecutionResult";
 export const TOOL_NAME_GET_CURRENT_OPERATOR_RESULT_INFO = "getCurrentOperatorResultInfo";
 export const TOOL_NAME_GET_CURRENT_COMPUTING_UNIT_STATUS = "getCurrentComputingUnitStatus";
-
-// Execution timeout in milliseconds (10 minutes)
-const EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
  * Helper to collect console logs for specified operators
@@ -107,8 +105,13 @@ function formatOperatorStates(
 
 /**
  * Helper to filter results by token limit
+ * @param rows - The rows to filter
+ * @param maxTokenLimit - Maximum token limit (default: DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT)
  */
-function filterByTokenLimit(rows: readonly IndexableObject[]): {
+function filterByTokenLimit(
+  rows: readonly IndexableObject[],
+  maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
+): {
   limited: IndexableObject[];
   tokenCount: number;
   truncated: boolean;
@@ -117,7 +120,7 @@ function filterByTokenLimit(rows: readonly IndexableObject[]): {
   let tokenCount = 0;
   for (const row of rows) {
     const rowTokens = estimateTokenCount(row);
-    if (tokenCount + rowTokens > MAX_OPERATOR_RESULT_TOKEN_LIMIT) break;
+    if (tokenCount + rowTokens > maxTokenLimit) break;
     limited.push(row);
     tokenCount += rowTokens;
   }
@@ -161,6 +164,17 @@ export interface ExecuteWorkflowResult {
 }
 
 /**
+ * Intermediate result used during workflow execution pipeline
+ */
+interface WorkflowExecutionIntermediateResult {
+  finalState: ExecutionStateInfo;
+  finalStateInfo: ExecutionStateInfo;
+  formattedStates: Record<string, FormattedOperatorState>;
+  consoleLogs: Record<string, ReadonlyArray<ConsoleMessage>>;
+  operatorResults: Record<string, OperatorResultInfo>;
+}
+
+/**
  * Services required for workflow execution
  */
 export interface WorkflowExecutionServices {
@@ -171,6 +185,9 @@ export interface WorkflowExecutionServices {
   workflowConsoleService: WorkflowConsoleService;
   workflowStatusService: WorkflowStatusService;
   workflowResultService: WorkflowResultService;
+  // Optional configuration parameters (use defaults if not provided)
+  maxOperatorResultTokenLimit?: number;
+  executionTimeoutMs?: number;
 }
 
 /**
@@ -197,6 +214,8 @@ export function executeWorkflowAndGetResults$(
     workflowConsoleService,
     workflowStatusService,
     workflowResultService,
+    maxOperatorResultTokenLimit = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
+    executionTimeoutMs = DEFAULT_EXECUTION_TIMEOUT_MS,
   } = services;
 
   const name = options.executionName || "Copilot Execution";
@@ -330,37 +349,52 @@ export function executeWorkflowAndGetResults$(
 
       return executionState$.pipe(
         take(1),
-        timeout(EXECUTION_TIMEOUT_MS),
-        map(finalState => ({ finalState, allOperators })),
+        timeout(executionTimeoutMs),
+        map((finalState: ExecutionStateInfo) => ({ finalState, allOperators })),
         tap(() => stuckDetectionSubscription.unsubscribe()),
         catchError((error: unknown) => {
           stuckDetectionSubscription.unsubscribe();
           if (error instanceof Error && error.name === "TimeoutError") {
-            return throwError(() => new Error(`Execution timed out after ${EXECUTION_TIMEOUT_MS / 1000}s.`));
+            return throwError(() => new Error(`Execution timed out after ${executionTimeoutMs / 1000}s.`));
           }
           return throwError(() => error);
         })
       );
     }),
     // Step 4: Collect results at the end
-    switchMap(({ finalState, allOperators }) => {
-      const finalStateInfo = executeWorkflowService.getExecutionState();
-      const allOperatorIds = allOperators.map(op => op.operatorID);
-      const consoleLogs = collectConsoleLogs(allOperatorIds, workflowConsoleService);
-      const formattedStates = formatOperatorStates(workflowStatusService.getCurrentStatus());
+    switchMap(
+      ({
+        finalState,
+        allOperators,
+      }: {
+        finalState: ExecutionStateInfo;
+        allOperators: readonly OperatorPredicate[];
+      }): Observable<WorkflowExecutionIntermediateResult> => {
+        const finalStateInfo = executeWorkflowService.getExecutionState();
+        const allOperatorIds = allOperators.map(op => op.operatorID);
+        const consoleLogs = collectConsoleLogs(allOperatorIds, workflowConsoleService);
+        const formattedStates = formatOperatorStates(workflowStatusService.getCurrentStatus());
 
-      // Collect results at the end using RxJS
-      if (!includeResults) {
-        return of({ finalState, finalStateInfo, formattedStates, consoleLogs, operatorResults: {} });
+        // Collect results at the end using RxJS
+        if (!includeResults) {
+          return of({
+            finalState,
+            finalStateInfo,
+            formattedStates,
+            consoleLogs,
+            operatorResults: {} as Record<string, OperatorResultInfo>,
+          });
+        }
+
+        const opsToFetch = targetIds.length > 0 ? targetIds : allOperatorIds;
+        return collectOperatorResults$(opsToFetch, workflowResultService, maxOperatorResultTokenLimit).pipe(
+          map(operatorResults => ({ finalState, finalStateInfo, formattedStates, consoleLogs, operatorResults }))
+        );
       }
-
-      const opsToFetch = targetIds.length > 0 ? targetIds : allOperatorIds;
-      return collectOperatorResults$(opsToFetch, workflowResultService).pipe(
-        map(operatorResults => ({ finalState, finalStateInfo, formattedStates, consoleLogs, operatorResults }))
-      );
-    }),
+    ),
     // Step 5: Build result
-    map(({ finalState, finalStateInfo, formattedStates, consoleLogs, operatorResults }) => {
+    map((result: WorkflowExecutionIntermediateResult) => {
+      const { finalState, finalStateInfo, formattedStates, consoleLogs, operatorResults } = result;
       const errorMessages = executeWorkflowService.getErrorMessages();
       const targetMsg = isSingleOperatorMode ? ` up to operator ${executeToOperatorId}` : "";
 
@@ -434,6 +468,8 @@ export function executeWorkflowAndGetResults$(
 
 /**
  * Create unified executeWorkflow tool that validates, executes, monitors, and returns results
+ * @param maxOperatorResultTokenLimit - Maximum token limit for operator results (default: DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT)
+ * @param executionTimeoutMs - Workflow execution timeout in milliseconds (default: DEFAULT_EXECUTION_TIMEOUT_MS)
  */
 export function createExecuteCurrentWorkflowTool(
   executeWorkflowService: ExecuteWorkflowService,
@@ -442,7 +478,9 @@ export function createExecuteCurrentWorkflowTool(
   workflowActionService: WorkflowActionService,
   workflowConsoleService: WorkflowConsoleService,
   workflowStatusService: WorkflowStatusService,
-  workflowResultService: WorkflowResultService
+  workflowResultService: WorkflowResultService,
+  maxOperatorResultTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
+  executionTimeoutMs: number = DEFAULT_EXECUTION_TIMEOUT_MS
 ) {
   const services: WorkflowExecutionServices = {
     executeWorkflowService,
@@ -452,6 +490,8 @@ export function createExecuteCurrentWorkflowTool(
     workflowConsoleService,
     workflowStatusService,
     workflowResultService,
+    maxOperatorResultTokenLimit,
+    executionTimeoutMs,
   };
 
   return tool({
@@ -522,10 +562,14 @@ const RESULT_WAIT_DELAY_MS = 200;
 
 /**
  * Get operator result as Observable with token limit
+ * @param operatorId - ID of the operator to get results for
+ * @param workflowResultService - Service to access workflow results
+ * @param maxTokenLimit - Maximum token limit for results (default: DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT)
  */
 function getOperatorResult$(
   operatorId: string,
-  workflowResultService: WorkflowResultService
+  workflowResultService: WorkflowResultService,
+  maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
 ): Observable<OperatorResultInfo | null> {
   return defer(() => {
     // Try paginated result service first
@@ -535,7 +579,7 @@ function getOperatorResult$(
         timeout(RESULT_FETCH_TIMEOUT_MS),
         map((resultEvent): OperatorResultInfo => {
           const table = (resultEvent.table || []) as IndexableObject[];
-          const { limited, tokenCount, truncated } = filterByTokenLimit(table);
+          const { limited, tokenCount, truncated } = filterByTokenLimit(table, maxTokenLimit);
           return {
             mode: "pagination",
             totalRows: paginatedResultService.getCurrentTotalNumTuples(),
@@ -548,28 +592,32 @@ function getOperatorResult$(
         }),
         catchError(() => {
           // Fall through to try snapshot result service
-          return getSnapshotResult$(operatorId, workflowResultService);
+          return getSnapshotResult$(operatorId, workflowResultService, maxTokenLimit);
         })
       );
     }
 
     // Try snapshot result service
-    return getSnapshotResult$(operatorId, workflowResultService);
+    return getSnapshotResult$(operatorId, workflowResultService, maxTokenLimit);
   });
 }
 
 /**
  * Get snapshot result as Observable
+ * @param operatorId - ID of the operator to get results for
+ * @param workflowResultService - Service to access workflow results
+ * @param maxTokenLimit - Maximum token limit for results (default: DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT)
  */
 function getSnapshotResult$(
   operatorId: string,
-  workflowResultService: WorkflowResultService
+  workflowResultService: WorkflowResultService,
+  maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
 ): Observable<OperatorResultInfo | null> {
   const resultService = workflowResultService.getResultService(operatorId);
   if (resultService) {
     const snapshot = resultService.getCurrentResultSnapshot() as IndexableObject[] | null;
     if (snapshot && snapshot.length > 0) {
-      const { limited, tokenCount, truncated } = filterByTokenLimit(snapshot);
+      const { limited, tokenCount, truncated } = filterByTokenLimit(snapshot, maxTokenLimit);
       return of({
         mode: "snapshot" as const,
         totalRows: snapshot.length,
@@ -609,10 +657,14 @@ function waitForResults$(
 
 /**
  * Collect operator results for given operator IDs using RxJS
+ * @param operatorIds - IDs of operators to collect results for
+ * @param workflowResultService - Service to access workflow results
+ * @param maxTokenLimit - Maximum token limit for results (default: DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT)
  */
 function collectOperatorResults$(
   operatorIds: readonly string[],
-  workflowResultService: WorkflowResultService
+  workflowResultService: WorkflowResultService,
+  maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
 ): Observable<Record<string, OperatorResultInfo>> {
   if (operatorIds.length === 0) {
     return of({});
@@ -625,7 +677,9 @@ function collectOperatorResults$(
       }
 
       const resultObservables = availableIds.map(operatorId =>
-        getOperatorResult$(operatorId, workflowResultService).pipe(map(result => ({ operatorId, result })))
+        getOperatorResult$(operatorId, workflowResultService, maxTokenLimit).pipe(
+          map(result => ({ operatorId, result }))
+        )
       );
 
       return forkJoin(resultObservables).pipe(
@@ -665,7 +719,8 @@ function buildResultMessage(
 export function createGetExistingWorkflowExecutionResultTool(
   workflowResultService: WorkflowResultService,
   workflowConsoleService: WorkflowConsoleService,
-  workflowActionService: WorkflowActionService
+  workflowActionService: WorkflowActionService,
+  maxOperatorResultTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
 ) {
   return tool({
     name: TOOL_NAME_GET_EXISTING_WORKFLOW_EXECUTION_RESULT,
@@ -704,7 +759,7 @@ export function createGetExistingWorkflowExecutionResultTool(
                 paginatedResultService.selectPage(1, 200).pipe(timeout(RESULT_FETCH_TIMEOUT_MS))
               );
               const table = (resultEvent.table || []) as IndexableObject[];
-              const { limited, tokenCount, truncated } = filterByTokenLimit(table);
+              const { limited, tokenCount, truncated } = filterByTokenLimit(table, maxOperatorResultTokenLimit);
               const totalRows = paginatedResultService.getCurrentTotalNumTuples();
 
               operatorResults[operatorId] = {
@@ -727,7 +782,7 @@ export function createGetExistingWorkflowExecutionResultTool(
           if (resultService) {
             const snapshot = resultService.getCurrentResultSnapshot() as IndexableObject[] | null;
             if (snapshot && snapshot.length > 0) {
-              const { limited, tokenCount, truncated } = filterByTokenLimit(snapshot);
+              const { limited, tokenCount, truncated } = filterByTokenLimit(snapshot, maxOperatorResultTokenLimit);
               operatorResults[operatorId] = {
                 mode: "snapshot",
                 totalRows: snapshot.length,

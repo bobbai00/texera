@@ -427,7 +427,7 @@ export class TexeraCopilotManagerService {
    */
   public getSystemInfo(agentId: string): Observable<{
     systemPrompt: string;
-    tools: Array<{ name: string; description: string; inputSchema: any }>;
+    tools: Array<{ name: string; description: string; inputSchema: any; enabled: boolean }>;
   }> {
     return defer(() => {
       const agent = this.agents.get(agentId);

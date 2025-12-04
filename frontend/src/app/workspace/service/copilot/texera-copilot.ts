@@ -21,7 +21,12 @@ import { Injectable } from "@angular/core";
 import { BehaviorSubject, Observable, of, throwError, defer } from "rxjs";
 import { finalize } from "rxjs/operators";
 import { WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
-import { toolWithTimeout } from "./tool/tools-utility";
+import {
+  toolWithTimeout,
+  DEFAULT_TOOL_TIMEOUT_MS,
+  DEFAULT_EXECUTION_TIMEOUT_MS,
+  DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
+} from "./tool/tools-utility";
 import * as workflowMetadataTools from "./tool/workflow-metadata-tools";
 import * as currentWorkflowEditingObservingTools from "./tool/current-workflow-editing-observing-tools";
 import * as currentWorkflowExecutionTools from "./tool/current-workflow-execution-tools";
@@ -60,6 +65,23 @@ import { WorkflowPersistService } from "../../../common/service/workflow-persist
 import { WorkflowVersionService } from "../../../dashboard/service/user/workflow-version/workflow-version.service";
 import { TOOL_NAME_GET_CURRENT_WORKFLOW } from "./tool/current-workflow-editing-observing-tools";
 import { parseOperatorAccessFromStep, ToolOperatorAccess } from "./tool/react-step-operator-parser";
+
+/**
+ * Agent settings that can be customized per-agent.
+ * These settings are ephemeral - they are lost when the agent is deleted.
+ */
+export interface AgentSettings {
+  /** Current system prompt - always reflects the actual prompt being used */
+  systemPrompt: string;
+  /** Set of disabled tool names. Tools not in this set are enabled. */
+  disabledTools: Set<string>;
+  /** Maximum token limit for operator results */
+  maxOperatorResultTokenLimit: number;
+  /** Tool execution timeout in milliseconds */
+  toolTimeoutMs: number;
+  /** Workflow execution timeout in milliseconds */
+  executionTimeoutMs: number;
+}
 
 /**
  * Copilot state enum.
@@ -157,6 +179,17 @@ export class TexeraCopilot {
   }>({ isWaitingForApproval: false });
   public agentActionApproval$ = this.agentActionApprovalSubject.asObservable();
 
+  // Agent settings - customizable per-agent, ephemeral (lost when agent is deleted)
+  // Note: systemPrompt is initialized lazily in initialize() after mode is set
+  private settings: AgentSettings = {
+    systemPrompt: "",
+    disabledTools: new Set<string>(),
+    maxOperatorResultTokenLimit: DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
+    toolTimeoutMs: DEFAULT_TOOL_TIMEOUT_MS,
+    executionTimeoutMs: DEFAULT_EXECUTION_TIMEOUT_MS,
+  };
+  private settingsInitialized = false;
+
   constructor(
     private workflowActionService: WorkflowActionService,
     private workflowUtilService: WorkflowUtilService,
@@ -230,6 +263,9 @@ export class TexeraCopilot {
           apiKey: "dummy",
         }).chat(this.modelType);
 
+        // Initialize settings with default system prompt based on current mode
+        this.initializeSettings();
+
         this.setState(CopilotState.AVAILABLE);
         return of(undefined);
       } catch (error: unknown) {
@@ -237,6 +273,16 @@ export class TexeraCopilot {
         return throwError(() => error);
       }
     });
+  }
+
+  /**
+   * Initialize settings with default values based on current mode.
+   */
+  private initializeSettings(): void {
+    if (!this.settingsInitialized) {
+      this.settings.systemPrompt = this.getDefaultSystemPrompt();
+      this.settingsInitialized = true;
+    }
   }
 
   public sendMessage(message: string): Observable<void> {
@@ -256,15 +302,8 @@ export class TexeraCopilot {
       this.setState(CopilotState.GENERATING);
       this.shouldStopAfterAgentAction = false;
 
-      // Determine the system prompt based on mode
-      let systemPrompt: string;
-      if (this.baselineMode) {
-        systemPrompt = BASELINE_SYSTEM_PROMPT;
-      } else if (this.planningMode) {
-        systemPrompt = this.getCopilotPromptWithSchemas() + "\n\n" + PLANNING_MODE_PROMPT;
-      } else {
-        systemPrompt = this.getCopilotPromptWithSchemas();
-      }
+      // Use the system prompt from settings (which is always up to date)
+      const systemPrompt = this.settings.systemPrompt;
 
       let lastError: unknown = null;
 
@@ -303,7 +342,9 @@ export class TexeraCopilot {
         this.reActSteps.push(userUIMessage);
         this.reActStepsSubject.next([...this.reActSteps]);
 
-        const tools = this.baselineMode ? this.createBaselineTools() : this.createWorkflowTools();
+        const allTools = this.baselineMode ? this.createBaselineTools() : this.createWorkflowTools();
+        // Filter out disabled tools
+        const tools = this.filterEnabledTools(allTools);
         let isFirstStep = true;
         let stepIndex = 0;
         let wasStopped = false;
@@ -340,7 +381,7 @@ export class TexeraCopilot {
                 // Replace escaped newlines and quotes that are incorrectly double-escaped
                 let repaired = rawInput
                   .replace(/\\\\n/g, "\\n") // \\n -> \n
-                  .replace(/\\\\"/g, '\\"') // \\" -> \"
+                  .replace(/\\\\"/g, "\\\"") // \\" -> \"
                   .replace(/\\\\t/g, "\\t"); // \\t -> \t
 
                 const parsed = JSON.parse(repaired);
@@ -534,10 +575,11 @@ export class TexeraCopilot {
       currentWorkflowEditingObservingTools.createGetCurrentWorkflowTool(
         this.workflowActionService,
         this.workflowCompilingService
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
 
-    // Workflow execution tools
+    // Workflow execution tools - pass settings for configurable timeouts and token limits
     const executeCurrentWorkflowTool = toolWithTimeout(
       currentWorkflowExecutionTools.createExecuteCurrentWorkflowTool(
         this.executeWorkflowService,
@@ -546,27 +588,34 @@ export class TexeraCopilot {
         this.workflowActionService,
         this.workflowConsoleService,
         this.workflowStatusService,
-        this.workflowResultService
-      )
+        this.workflowResultService,
+        this.settings.maxOperatorResultTokenLimit,
+        this.settings.executionTimeoutMs
+      ),
+      this.settings.toolTimeoutMs
     );
     const getExistingWorkflowExecutionResultTool = toolWithTimeout(
       currentWorkflowExecutionTools.createGetExistingWorkflowExecutionResultTool(
         this.workflowResultService,
         this.workflowConsoleService,
-        this.workflowActionService
-      )
+        this.workflowActionService,
+        this.settings.maxOperatorResultTokenLimit
+      ),
+      this.settings.toolTimeoutMs
     );
     const getCurrentComputingUnitStatusTool = toolWithTimeout(
-      currentWorkflowExecutionTools.createGetCurrentComputingUnitStatusTool(this.computingUnitStatusService)
+      currentWorkflowExecutionTools.createGetCurrentComputingUnitStatusTool(this.computingUnitStatusService),
+      this.settings.toolTimeoutMs
     );
-    // Operator-specific tools
+    // Operator-specific tools - all use the configurable tool timeout
     const addPythonUDFV2Tool = toolWithTimeout(
       operatorTools.createAddPythonUDFV2Tool(
         this.workflowActionService,
         this.agentActionService,
         this.agentId,
         this.agentName
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
     const addAggregateTool = toolWithTimeout(
       operatorTools.createAddAggregateTool(
@@ -574,7 +623,8 @@ export class TexeraCopilot {
         this.agentActionService,
         this.agentId,
         this.agentName
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
     const addProjectionTool = toolWithTimeout(
       operatorTools.createAddProjectionTool(
@@ -582,7 +632,8 @@ export class TexeraCopilot {
         this.agentActionService,
         this.agentId,
         this.agentName
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
     const addHashJoinTool = toolWithTimeout(
       operatorTools.createAddHashJoinTool(
@@ -590,10 +641,17 @@ export class TexeraCopilot {
         this.agentActionService,
         this.agentId,
         this.agentName
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
     const addSortTool = toolWithTimeout(
-      operatorTools.createAddSortTool(this.workflowActionService, this.agentActionService, this.agentId, this.agentName)
+      operatorTools.createAddSortTool(
+        this.workflowActionService,
+        this.agentActionService,
+        this.agentId,
+        this.agentName
+      ),
+      this.settings.toolTimeoutMs
     );
     const addUnionTool = toolWithTimeout(
       operatorTools.createAddUnionTool(
@@ -601,7 +659,8 @@ export class TexeraCopilot {
         this.agentActionService,
         this.agentId,
         this.agentName
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
     const addIntersectTool = toolWithTimeout(
       operatorTools.createAddIntersectTool(
@@ -609,7 +668,8 @@ export class TexeraCopilot {
         this.agentActionService,
         this.agentId,
         this.agentName
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
     const addCartesianProductTool = toolWithTimeout(
       operatorTools.createAddCartesianProductTool(
@@ -617,7 +677,8 @@ export class TexeraCopilot {
         this.agentActionService,
         this.agentId,
         this.agentName
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
     const addCSVFileScanTool = toolWithTimeout(
       operatorTools.createAddCSVFileScanTool(
@@ -625,10 +686,17 @@ export class TexeraCopilot {
         this.agentActionService,
         this.agentId,
         this.agentName
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
     const addLinkTool = toolWithTimeout(
-      operatorTools.createAddLinkTool(this.workflowActionService, this.agentActionService, this.agentId, this.agentName)
+      operatorTools.createAddLinkTool(
+        this.workflowActionService,
+        this.agentActionService,
+        this.agentId,
+        this.agentName
+      ),
+      this.settings.toolTimeoutMs
     );
     const modifyOperatorTool = toolWithTimeout(
       operatorTools.createModifyOperatorTool(
@@ -636,7 +704,8 @@ export class TexeraCopilot {
         this.agentActionService,
         this.agentId,
         this.agentName
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
     const deleteFromWorkflowTool = toolWithTimeout(
       operatorTools.createDeleteFromWorkflowTool(
@@ -644,7 +713,8 @@ export class TexeraCopilot {
         this.agentActionService,
         this.agentId,
         this.agentName
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
 
     // Base tools available in both modes
@@ -690,10 +760,12 @@ export class TexeraCopilot {
         this.agentActionService,
         this.agentId,
         this.agentName
-      )
+      ),
+      this.settings.toolTimeoutMs
     );
 
     // Execute to operator tool - executes workflow up to a specific operator
+    // Pass settings for configurable timeouts and token limits
     const executeToOperatorTool = toolWithTimeout(
       baselineTools.createExecuteToOperatorTool(
         this.executeWorkflowService,
@@ -702,8 +774,11 @@ export class TexeraCopilot {
         this.workflowActionService,
         this.workflowConsoleService,
         this.workflowStatusService,
-        this.workflowResultService
-      )
+        this.workflowResultService,
+        this.settings.maxOperatorResultTokenLimit,
+        this.settings.executionTimeoutMs
+      ),
+      this.settings.toolTimeoutMs
     );
 
     return {
@@ -813,7 +888,76 @@ export class TexeraCopilot {
     return this.state !== CopilotState.UNAVAILABLE;
   }
 
+  /**
+   * Get the current system prompt from settings.
+   * This reflects the actual prompt that will be used.
+   */
   public getSystemPrompt(): string {
+    return this.settings.systemPrompt;
+  }
+
+  /**
+   * Get info about all available tools with their enabled state.
+   * Returns tools that are currently enabled (not in disabledTools set).
+   */
+  public getToolsInfo(): Array<{ name: string; description: string; inputSchema: any; enabled: boolean }> {
+    const allTools = this.baselineMode ? this.createBaselineTools() : this.createWorkflowTools();
+    return Object.entries(allTools).map(([name, tool]) => ({
+      name: name,
+      description: tool.description || "No description available",
+      inputSchema: tool.inputSchema || tool.parameters || {},
+      enabled: !this.settings.disabledTools.has(name),
+    }));
+  }
+
+  // =====================
+  // Agent Settings Methods
+  // =====================
+
+  /**
+   * Filter tools to only include enabled ones (not in disabledTools set).
+   */
+  private filterEnabledTools(tools: Record<string, any>): Record<string, any> {
+    const filtered: Record<string, any> = {};
+    for (const [name, tool] of Object.entries(tools)) {
+      if (!this.settings.disabledTools.has(name)) {
+        filtered[name] = tool;
+      }
+    }
+    return filtered;
+  }
+
+  /**
+   * Get the current agent settings.
+   */
+  public getSettings(): AgentSettings {
+    return {
+      systemPrompt: this.settings.systemPrompt,
+      disabledTools: new Set(this.settings.disabledTools),
+      maxOperatorResultTokenLimit: this.settings.maxOperatorResultTokenLimit,
+      toolTimeoutMs: this.settings.toolTimeoutMs,
+      executionTimeoutMs: this.settings.executionTimeoutMs,
+    };
+  }
+
+  /**
+   * Set the system prompt directly.
+   */
+  public setSystemPrompt(prompt: string): void {
+    this.settings.systemPrompt = prompt;
+  }
+
+  /**
+   * Reset system prompt to default based on current mode.
+   */
+  public resetSystemPromptToDefault(): void {
+    this.settings.systemPrompt = this.getDefaultSystemPrompt();
+  }
+
+  /**
+   * Get the default system prompt (based on current mode).
+   */
+  public getDefaultSystemPrompt(): string {
     if (this.baselineMode) {
       return BASELINE_SYSTEM_PROMPT;
     }
@@ -821,12 +965,66 @@ export class TexeraCopilot {
     return this.planningMode ? copilotPrompt + "\n\n" + PLANNING_MODE_PROMPT : copilotPrompt;
   }
 
-  public getToolsInfo(): Array<{ name: string; description: string; inputSchema: any }> {
-    const tools = this.baselineMode ? this.createBaselineTools() : this.createWorkflowTools();
-    return Object.entries(tools).map(([name, tool]) => ({
-      name: name,
-      description: tool.description || "No description available",
-      inputSchema: tool.parameters || {},
-    }));
+  /**
+   * Enable a specific tool.
+   */
+  public enableTool(toolName: string): void {
+    this.settings.disabledTools.delete(toolName);
+  }
+
+  /**
+   * Disable a specific tool.
+   */
+  public disableTool(toolName: string): void {
+    this.settings.disabledTools.add(toolName);
+  }
+
+  /**
+   * Check if a tool is enabled.
+   */
+  public isToolEnabled(toolName: string): boolean {
+    return !this.settings.disabledTools.has(toolName);
+  }
+
+  /**
+   * Set the max operator result token limit.
+   */
+  public setMaxOperatorResultTokenLimit(limit: number): void {
+    this.settings.maxOperatorResultTokenLimit = Math.max(100, limit);
+  }
+
+  /**
+   * Get the current max operator result token limit.
+   */
+  public getMaxOperatorResultTokenLimit(): number {
+    return this.settings.maxOperatorResultTokenLimit;
+  }
+
+  /**
+   * Set the tool execution timeout in milliseconds.
+   */
+  public setToolTimeoutMs(timeoutMs: number): void {
+    this.settings.toolTimeoutMs = Math.max(1000, timeoutMs);
+  }
+
+  /**
+   * Get the current tool execution timeout in milliseconds.
+   */
+  public getToolTimeoutMs(): number {
+    return this.settings.toolTimeoutMs;
+  }
+
+  /**
+   * Set the workflow execution timeout in milliseconds.
+   */
+  public setExecutionTimeoutMs(timeoutMs: number): void {
+    this.settings.executionTimeoutMs = Math.max(1000, timeoutMs);
+  }
+
+  /**
+   * Get the current workflow execution timeout in milliseconds.
+   */
+  public getExecutionTimeoutMs(): number {
+    return this.settings.executionTimeoutMs;
   }
 }

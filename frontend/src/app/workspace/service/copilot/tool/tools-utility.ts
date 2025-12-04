@@ -17,12 +17,15 @@
  * under the License.
  */
 
-// Tool execution timeout in milliseconds (2 minutes)
-export const TOOL_TIMEOUT_MS = 120000;
+// Default tool execution timeout in milliseconds (2 minutes)
+export const DEFAULT_TOOL_TIMEOUT_MS = 120000;
 
-// Maximum token limit for operator result data to prevent overwhelming LLM context
+// Default maximum token limit for operator result data to prevent overwhelming LLM context
 // Estimated as characters / 4 (common approximation for token counting)
-export const MAX_OPERATOR_RESULT_TOKEN_LIMIT = 1000;
+export const DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT = 1000;
+
+// Default execution timeout for workflow execution in milliseconds (10 minutes)
+export const DEFAULT_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
  * Base interface for all tool execution results.
@@ -106,8 +109,11 @@ export function estimateTokenCount(data: any): number {
 /**
  * Wraps a tool definition to add timeout protection to its execute function
  * Uses AbortController to properly cancel operations on timeout
+ *
+ * @param toolConfig - The tool configuration to wrap
+ * @param timeoutMs - Optional timeout in milliseconds (default: DEFAULT_TOOL_TIMEOUT_MS)
  */
-export function toolWithTimeout(toolConfig: any): any {
+export function toolWithTimeout(toolConfig: any, timeoutMs: number = DEFAULT_TOOL_TIMEOUT_MS): any {
   const originalExecute = toolConfig.execute;
 
   return {
@@ -119,7 +125,7 @@ export function toolWithTimeout(toolConfig: any): any {
         setTimeout(() => {
           abortController.abort();
           reject(new Error("timeout"));
-        }, TOOL_TIMEOUT_MS);
+        }, timeoutMs);
       });
 
       try {
@@ -127,8 +133,9 @@ export function toolWithTimeout(toolConfig: any): any {
         return await Promise.race([originalExecute(argsWithSignal), timeoutPromise]);
       } catch (error: any) {
         if (error.message === "timeout") {
+          const timeoutMinutes = Math.round(timeoutMs / 60000);
           return createErrorResult(
-            "Tool execution timeout - operation took longer than 2 minutes. Please try again later."
+            `Tool execution timeout - operation took longer than ${timeoutMinutes} minute(s). Please try again later.`
           );
         }
         throw error;

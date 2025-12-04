@@ -29,7 +29,12 @@ import { WorkflowCompilingService } from "../../compile-workflow/workflow-compil
 import { WorkflowConsoleService } from "../../workflow-console/workflow-console.service";
 import { WorkflowStatusService } from "../../workflow-status/workflow-status.service";
 import { WorkflowResultService } from "../../workflow-result/workflow-result.service";
-import { createSuccessResult, createErrorResult } from "./tools-utility";
+import {
+  createSuccessResult,
+  createErrorResult,
+  DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
+  DEFAULT_EXECUTION_TIMEOUT_MS,
+} from "./tools-utility";
 import { executeWorkflowAndGetResults$, WorkflowExecutionServices } from "./current-workflow-execution-tools";
 import { firstValueFrom } from "rxjs";
 
@@ -147,6 +152,8 @@ export function createPythonUDFTool(
  * Create a tool for executing the workflow up to a specific operator and retrieving results.
  * This tool executes the workflow in "executeTo" mode, running only the operators
  * necessary to produce results for the target operator.
+ * @param maxOperatorResultTokenLimit - Maximum token limit for operator results (default: DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT)
+ * @param executionTimeoutMs - Workflow execution timeout in milliseconds (default: DEFAULT_EXECUTION_TIMEOUT_MS)
  */
 export function createExecuteToOperatorTool(
   executeWorkflowService: ExecuteWorkflowService,
@@ -155,7 +162,9 @@ export function createExecuteToOperatorTool(
   workflowActionService: WorkflowActionService,
   workflowConsoleService: WorkflowConsoleService,
   workflowStatusService: WorkflowStatusService,
-  workflowResultService: WorkflowResultService
+  workflowResultService: WorkflowResultService,
+  maxOperatorResultTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
+  executionTimeoutMs: number = DEFAULT_EXECUTION_TIMEOUT_MS
 ) {
   const executionServices: WorkflowExecutionServices = {
     executeWorkflowService,
@@ -165,6 +174,8 @@ export function createExecuteToOperatorTool(
     workflowConsoleService,
     workflowStatusService,
     workflowResultService,
+    maxOperatorResultTokenLimit,
+    executionTimeoutMs,
   };
 
   return tool({

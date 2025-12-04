@@ -457,7 +457,7 @@
   [agentId]="agentInfo.id">
 </texera-react-step-detail-modal>
 
-<!-- System Info Modal -->
+<!-- System Info Modal (with editing capabilities) -->
 <nz-modal
   [(nzVisible)]="isSystemInfoModalVisible"
   nzTitle="Agent System Information"
@@ -465,72 +465,205 @@
   (nzOnCancel)="closeSystemInfoModal()"
   [nzFooter]="null">
   <ng-container *nzModalContent>
-    <div style="max-height: 600px; overflow-y: auto">
-      <!-- System Prompt Section -->
-      <div style="margin-bottom: 24px">
-        <h4 style="margin-bottom: 12px; color: #595959">
-          <i
-            nz-icon
-            nzType="file-text"
-            nzTheme="outline"
-            style="margin-right: 8px"></i>
-          System Prompt
-        </h4>
-        <div
-          style="
-            background: #fafafa;
-            padding: 12px;
-            border-radius: 4px;
-            border: 1px solid #d9d9d9;
-            max-height: 300px;
-            overflow-y: auto;
-          ">
-          <markdown [data]="systemPrompt"></markdown>
+    <nz-tabset>
+      <!-- System Prompt Tab -->
+      <nz-tab nzTitle="System Prompt">
+        <div class="settings-section">
+          <!-- View Mode -->
+          <div *ngIf="!isEditingSystemPrompt">
+            <div class="settings-prompt-actions">
+              <button
+                nz-button
+                nzType="link"
+                nzSize="small"
+                (click)="startEditingSystemPrompt()">
+                <i
+                  nz-icon
+                  nzType="edit"
+                  nzTheme="outline"></i>
+                Edit
+              </button>
+              <button
+                nz-button
+                nzType="link"
+                nzSize="small"
+                (click)="resetSystemPromptToDefault()">
+                <i
+                  nz-icon
+                  nzType="undo"
+                  nzTheme="outline"></i>
+                Reset to default
+              </button>
+            </div>
+            <div class="settings-prompt-display">
+              <markdown [data]="systemPrompt"></markdown>
+            </div>
+          </div>
+
+          <!-- Edit Mode -->
+          <div *ngIf="isEditingSystemPrompt">
+            <div class="settings-prompt-actions">
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveSystemPrompt()">
+                <i
+                  nz-icon
+                  nzType="save"
+                  nzTheme="outline"></i>
+                Save
+              </button>
+              <button
+                nz-button
+                nzType="default"
+                nzSize="small"
+                (click)="cancelEditingSystemPrompt()">
+                Cancel
+              </button>
+            </div>
+            <textarea
+              nz-input
+              [(ngModel)]="editingSystemPrompt"
+              [nzAutosize]="{ minRows: 20, maxRows: 30 }"
+              placeholder="Enter system prompt..."
+              class="settings-textarea"></textarea>
+          </div>
         </div>
-      </div>
+      </nz-tab>
 
-      <!-- Available Tools Section -->
-      <div>
-        <h4 style="margin-bottom: 12px; color: #595959">
-          <i
-            nz-icon
-            nzType="tool"
-            nzTheme="outline"
-            style="margin-right: 8px"></i>
-          Available Tools ({{ availableTools.length }})
-        </h4>
-        <nz-collapse>
-          <nz-collapse-panel
-            *ngFor="let tool of availableTools"
-            [nzHeader]="tool.name"
-            [nzActive]="false">
-            <!-- Tool Description -->
-            <div style="background: #fafafa; padding: 12px; border-radius: 4px; margin-bottom: 12px">
-              <div style="margin-bottom: 8px">
-                <strong style="color: #595959">Description:</strong>
-              </div>
-              <div style="color: #262626">{{ tool.description }}</div>
+      <!-- Tools Tab -->
+      <nz-tab [nzTitle]="'Tools (' + getEnabledToolsCount() + '/' + availableTools.length + ')'">
+        <div class="settings-section">
+          <div class="settings-tools-header">
+            <span class="settings-tools-count"
+              >{{ getEnabledToolsCount() }} of {{ availableTools.length }} tools enabled</span
+            >
+            <div class="settings-tools-actions">
+              <button
+                nz-button
+                nzType="link"
+                nzSize="small"
+                (click)="enableAllTools()">
+                Enable all
+              </button>
+              <button
+                nz-button
+                nzType="link"
+                nzSize="small"
+                (click)="disableAllTools()">
+                Disable all
+              </button>
             </div>
+          </div>
 
-            <!-- Tool Input Schema -->
-            <div style="background: #fafafa; padding: 12px; border-radius: 4px">
-              <div style="margin-bottom: 8px">
-                <strong style="color: #595959">Input Schema:</strong>
-              </div>
-              <pre
-                style="
-                  background: #fff;
-                  padding: 12px;
-                  border: 1px solid #d9d9d9;
-                  border-radius: 4px;
-                  overflow-x: auto;
-                  margin: 0;
-                "><code class="language-json">{{ formatJson(tool.inputSchema) }}</code></pre>
+          <div class="settings-tools-list">
+            <nz-collapse [nzBordered]="false">
+              <nz-collapse-panel
+                *ngFor="let tool of availableTools"
+                [nzHeader]="toolHeaderTemplate"
+                [nzActive]="expandedToolName === tool.name"
+                (nzActiveChange)="onToolPanelChange(tool.name, $event)"
+                class="settings-tool-panel">
+                <ng-template #toolHeaderTemplate>
+                  <div
+                    class="settings-tool-item"
+                    (click)="$event.stopPropagation()">
+                    <nz-switch
+                      [ngModel]="tool.enabled"
+                      (ngModelChange)="toggleToolEnabled(tool)"
+                      nzSize="small"></nz-switch>
+                    <div class="settings-tool-info">
+                      <span class="settings-tool-name">{{ tool.name }}</span>
+                      <span class="settings-tool-description">{{ tool.description }}</span>
+                    </div>
+                  </div>
+                </ng-template>
+                <!-- Collapsible Input Schema Content -->
+                <div class="settings-tool-schema">
+                  <div class="schema-header">
+                    <i
+                      nz-icon
+                      nzType="code"
+                      nzTheme="outline"></i>
+                    <span>Input Schema</span>
+                  </div>
+                  <pre class="schema-content">{{ formatToolSchema(tool.inputSchema) }}</pre>
+                </div>
+              </nz-collapse-panel>
+            </nz-collapse>
+          </div>
+        </div>
+      </nz-tab>
+
+      <!-- Parameters Tab -->
+      <nz-tab nzTitle="Parameters">
+        <div class="settings-section">
+          <div class="settings-param-item">
+            <label class="settings-param-label">Max Operator Result Token Limit</label>
+            <div class="settings-param-input">
+              <nz-input-number
+                [(ngModel)]="settingsMaxTokenLimit"
+                [nzMin]="100"
+                [nzMax]="10000"
+                [nzStep]="100"
+                nzSize="small"
+                style="width: 120px"></nz-input-number>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveMaxTokenLimit()">
+                Save
+              </button>
+              <span class="settings-param-hint">Limits the token count in operator results (100-10000)</span>
             </div>
-          </nz-collapse-panel>
-        </nz-collapse>
-      </div>
-    </div>
+          </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">Tool Execution Timeout (seconds)</label>
+            <div class="settings-param-input">
+              <nz-input-number
+                [(ngModel)]="settingsToolTimeoutSeconds"
+                [nzMin]="1"
+                [nzMax]="600"
+                [nzStep]="10"
+                nzSize="small"
+                style="width: 120px"></nz-input-number>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveToolTimeout()">
+                Save
+              </button>
+              <span class="settings-param-hint">Max time for individual tool execution (1-600 seconds)</span>
+            </div>
+          </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">Workflow Execution Timeout (minutes)</label>
+            <div class="settings-param-input">
+              <nz-input-number
+                [(ngModel)]="settingsExecutionTimeoutMinutes"
+                [nzMin]="1"
+                [nzMax]="60"
+                [nzStep]="1"
+                nzSize="small"
+                style="width: 120px"></nz-input-number>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveExecutionTimeout()">
+                Save
+              </button>
+              <span class="settings-param-hint">Max time for workflow execution (1-60 minutes)</span>
+            </div>
+          </div>
+        </div>
+      </nz-tab>
+    </nz-tabset>
   </ng-container>
 </nz-modal>
 

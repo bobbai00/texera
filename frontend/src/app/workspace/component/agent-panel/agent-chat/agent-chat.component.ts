@@ -72,7 +72,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked {
   public hoveredMessageIndex: number | null = null;
   public isSystemInfoModalVisible = false;
   public systemPrompt: string = "";
-  public availableTools: Array<{ name: string; description: string; inputSchema: any }> = [];
+  public availableTools: Array<{ name: string; description: string; inputSchema: any; enabled: boolean }> = [];
   public agentState: CopilotState = CopilotState.UNAVAILABLE;
   public isStatsModalVisible = false;
   public messageStats: CopilotMessageStats[] = [];
@@ -85,6 +85,16 @@ export class AgentChatComponent implements OnInit, AfterViewChecked {
 
   // Unified agent action preview state
   public previewState: AgentActionPreviewState | null = null;
+
+  // System info modal state (with editing capabilities)
+  public isEditingSystemPrompt = false;
+  public editingSystemPrompt = "";
+  public settingsMaxTokenLimit = 1000;
+  public settingsToolTimeoutSeconds = 120; // 2 minutes default
+  public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
+
+  // Tool panel state
+  public expandedToolName: string | null = null;
 
   constructor(
     private agentActionService: AgentActionService,
@@ -212,18 +222,35 @@ export class AgentChatComponent implements OnInit, AfterViewChecked {
   }
 
   public showSystemInfo(): void {
+    this.refreshSystemInfo();
+    this.isSystemInfoModalVisible = true;
+  }
+
+  /**
+   * Refresh system info from the agent.
+   */
+  private refreshSystemInfo(): void {
     this.copilotManagerService
       .getSystemInfo(this.agentInfo.id)
       .pipe(untilDestroyed(this))
       .subscribe(systemInfo => {
         this.systemPrompt = systemInfo.systemPrompt;
         this.availableTools = systemInfo.tools;
-        this.isSystemInfoModalVisible = true;
+        const agent = this.agentInfo.instance;
+        if (agent) {
+          this.settingsMaxTokenLimit = agent.getMaxOperatorResultTokenLimit();
+          this.settingsToolTimeoutSeconds = Math.round(agent.getToolTimeoutMs() / 1000);
+          this.settingsExecutionTimeoutMinutes = Math.round(agent.getExecutionTimeoutMs() / 60000);
+        }
+        this.isEditingSystemPrompt = false;
+        this.editingSystemPrompt = "";
+        this.expandedToolName = null;
       });
   }
 
   public closeSystemInfoModal(): void {
     this.isSystemInfoModalVisible = false;
+    this.isEditingSystemPrompt = false;
   }
 
   public showStatsModal(): void {
@@ -772,5 +799,232 @@ export class AgentChatComponent implements OnInit, AfterViewChecked {
       return "";
     }
     return `${currentIndex + 1} / ${actions.length}`;
+  }
+
+  // =====================
+  // System Info Modal Editing Methods
+  // =====================
+
+  /**
+   * Start editing the system prompt.
+   */
+  public startEditingSystemPrompt(): void {
+    this.editingSystemPrompt = this.systemPrompt;
+    this.isEditingSystemPrompt = true;
+  }
+
+  /**
+   * Cancel editing the system prompt.
+   */
+  public cancelEditingSystemPrompt(): void {
+    this.isEditingSystemPrompt = false;
+    this.editingSystemPrompt = "";
+  }
+
+  /**
+   * Save the edited system prompt.
+   */
+  public saveSystemPrompt(): void {
+    const agent = this.agentInfo.instance;
+    if (agent) {
+      agent.setSystemPrompt(this.editingSystemPrompt);
+      this.systemPrompt = this.editingSystemPrompt;
+      this.isEditingSystemPrompt = false;
+      this.notificationService.success("System prompt updated");
+    }
+  }
+
+  /**
+   * Reset system prompt to default.
+   */
+  public resetSystemPromptToDefault(): void {
+    const agent = this.agentInfo.instance;
+    if (agent) {
+      agent.resetSystemPromptToDefault();
+      this.refreshSystemInfo();
+      this.notificationService.success("System prompt reset to default");
+    }
+  }
+
+  /**
+   * Toggle a specific tool's enabled state.
+   */
+  public toggleToolEnabled(tool: { name: string; enabled: boolean }): void {
+    const agent = this.agentInfo.instance;
+    if (agent) {
+      if (tool.enabled) {
+        agent.disableTool(tool.name);
+      } else {
+        agent.enableTool(tool.name);
+      }
+      // Refresh to get updated tool states
+      this.refreshSystemInfo();
+    }
+  }
+
+  /**
+   * Enable all tools.
+   */
+  public enableAllTools(): void {
+    const agent = this.agentInfo.instance;
+    if (agent) {
+      for (const tool of this.availableTools) {
+        agent.enableTool(tool.name);
+      }
+      this.refreshSystemInfo();
+      this.notificationService.success("All tools enabled");
+    }
+  }
+
+  /**
+   * Disable all tools.
+   */
+  public disableAllTools(): void {
+    const agent = this.agentInfo.instance;
+    if (agent) {
+      for (const tool of this.availableTools) {
+        agent.disableTool(tool.name);
+      }
+      this.refreshSystemInfo();
+      this.notificationService.success("All tools disabled");
+    }
+  }
+
+  /**
+   * Get count of enabled tools.
+   */
+  public getEnabledToolsCount(): number {
+    return this.availableTools.filter(t => t.enabled).length;
+  }
+
+  /**
+   * Save the max token limit.
+   */
+  public saveMaxTokenLimit(): void {
+    const agent = this.agentInfo.instance;
+    if (agent) {
+      agent.setMaxOperatorResultTokenLimit(this.settingsMaxTokenLimit);
+      this.notificationService.success("Max token limit updated");
+    }
+  }
+
+  /**
+   * Save the tool execution timeout.
+   */
+  public saveToolTimeout(): void {
+    const agent = this.agentInfo.instance;
+    if (agent) {
+      const timeoutMs = this.settingsToolTimeoutSeconds * 1000;
+      agent.setToolTimeoutMs(timeoutMs);
+      this.notificationService.success("Tool timeout updated");
+    }
+  }
+
+  /**
+   * Save the workflow execution timeout.
+   */
+  public saveExecutionTimeout(): void {
+    const agent = this.agentInfo.instance;
+    if (agent) {
+      const timeoutMs = this.settingsExecutionTimeoutMinutes * 60 * 1000;
+      agent.setExecutionTimeoutMs(timeoutMs);
+      this.notificationService.success("Execution timeout updated");
+    }
+  }
+
+  /**
+   * Handle tool panel expand/collapse.
+   */
+  public onToolPanelChange(toolName: string, expanded: boolean): void {
+    this.expandedToolName = expanded ? toolName : null;
+  }
+
+  /**
+   * Format tool input schema for display.
+   * Handles Zod schemas by extracting their JSON schema representation.
+   */
+  public formatToolSchema(schema: any): string {
+    try {
+      // Check if it's a Zod schema (has _def property)
+      if (schema && schema._def) {
+        // Extract the shape from Zod object schema
+        if (schema._def.typeName === "ZodObject" && schema._def.shape) {
+          const shape = typeof schema._def.shape === "function" ? schema._def.shape() : schema._def.shape;
+          const properties: Record<string, any> = {};
+
+          for (const [key, value] of Object.entries(shape)) {
+            properties[key] = this.extractZodSchemaInfo(value);
+          }
+
+          return JSON.stringify({ type: "object", properties }, null, 2);
+        }
+        // For other Zod types, try to extract basic info
+        return JSON.stringify(this.extractZodSchemaInfo(schema), null, 2);
+      }
+
+      // If it's already a plain object (JSON schema), stringify directly
+      return JSON.stringify(schema, null, 2);
+    } catch (e) {
+      return "Unable to display schema";
+    }
+  }
+
+  /**
+   * Extract schema information from a Zod schema definition.
+   */
+  private extractZodSchemaInfo(zodSchema: any): any {
+    if (!zodSchema || !zodSchema._def) {
+      return { type: "unknown" };
+    }
+
+    const def = zodSchema._def;
+    const result: any = {};
+
+    // Add description if available
+    if (def.description) {
+      result.description = def.description;
+    }
+
+    switch (def.typeName) {
+      case "ZodString":
+        result.type = "string";
+        break;
+      case "ZodNumber":
+        result.type = "number";
+        break;
+      case "ZodBoolean":
+        result.type = "boolean";
+        break;
+      case "ZodArray":
+        result.type = "array";
+        if (def.type) {
+          result.items = this.extractZodSchemaInfo(def.type);
+        }
+        break;
+      case "ZodObject":
+        result.type = "object";
+        if (def.shape) {
+          const shape = typeof def.shape === "function" ? def.shape() : def.shape;
+          result.properties = {};
+          for (const [key, value] of Object.entries(shape)) {
+            result.properties[key] = this.extractZodSchemaInfo(value);
+          }
+        }
+        break;
+      case "ZodOptional":
+        const innerOptional = this.extractZodSchemaInfo(def.innerType);
+        return { ...innerOptional, optional: true };
+      case "ZodDefault":
+        const innerDefault = this.extractZodSchemaInfo(def.innerType);
+        return { ...innerDefault, default: def.defaultValue?.() };
+      case "ZodEnum":
+        result.type = "enum";
+        result.values = def.values;
+        break;
+      default:
+        result.type = def.typeName?.replace("Zod", "").toLowerCase() || "unknown";
+    }
+
+    return result;
   }
 }
