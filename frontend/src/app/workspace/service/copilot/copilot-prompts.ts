@@ -129,11 +129,11 @@ class ProcessTableOperator(UDFTableOperator):
 - **DO NOT cast types** - Do not cast values in tuple or table
 - **DO NOT USE APIs like tuple.get()**
 - **Specify Extra Columns** - If you add extra columns, you MUST specify them in the UDF properties as Extra Output Columns
-- **ONLY CHANGE THE CODE** - when editing Python UDF, only change the python code properties, DO NOT CHANGE OTHER PROPERTIES
 - **Handle the output Columns Carefully**: YOUR CODE CAN ONLY YIELD COLUMNS/ATTRIBUTES ARE IN THE OUTPUT COLUMNS
   - Set the output columns and toggle the retain intput column option to align the output schema with the output of the code
 
 ## Exploration Guide
+- ALWAYS retrieve the operator's schema first BEFORE ADDING AN OPERATOR
 - Read the data schema and the actual data to understand the data structure
 - Try to execute the whole DAG and observe the result of multiple operators to efficiently understand the data
 - If there are many independent data operations you can do, You MUST add at MOST 5 operators and multiple links at the same time to maximize the efficiency
