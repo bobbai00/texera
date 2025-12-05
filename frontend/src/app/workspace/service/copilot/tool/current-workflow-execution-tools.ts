@@ -563,52 +563,47 @@ const RESULT_WAIT_MAX_RETRIES = 10;
 const RESULT_WAIT_DELAY_MS = 200;
 
 /**
- * Get operator result as Observable with token limit
+ * Get paginated result as Observable.
+ * Used for operators that produce large tabular results (PaginationMode).
  * @param operatorId - ID of the operator to get results for
  * @param workflowResultService - Service to access workflow results
- * @param maxTokenLimit - Maximum token limit for results (default: DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT)
+ * @param maxTokenLimit - Maximum token limit for results
  */
-function getOperatorResult$(
+function getPaginatedResult$(
   operatorId: string,
   workflowResultService: WorkflowResultService,
   maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
 ): Observable<OperatorResultInfo | null> {
-  return defer(() => {
-    // Try paginated result service first
-    const paginatedResultService = workflowResultService.getPaginatedResultService(operatorId);
-    if (paginatedResultService) {
-      return paginatedResultService.selectPage(1, 200).pipe(
-        timeout(RESULT_FETCH_TIMEOUT_MS),
-        map((resultEvent): OperatorResultInfo => {
-          const table = (resultEvent.table || []) as IndexableObject[];
-          const { limited, tokenCount, truncated } = filterByTokenLimit(table, maxTokenLimit);
-          return {
-            mode: "pagination",
-            totalRows: paginatedResultService.getCurrentTotalNumTuples(),
-            displayedRows: limited.length,
-            estimatedTokens: tokenCount,
-            truncated,
-            tableStats: paginatedResultService.getStats(),
-            result: limited,
-          };
-        }),
-        catchError(() => {
-          // Fall through to try snapshot result service
-          return getSnapshotResult$(operatorId, workflowResultService, maxTokenLimit);
-        })
-      );
-    }
+  const paginatedResultService = workflowResultService.getPaginatedResultService(operatorId);
+  if (!paginatedResultService) {
+    return of(null);
+  }
 
-    // Try snapshot result service
-    return getSnapshotResult$(operatorId, workflowResultService, maxTokenLimit);
-  });
+  return paginatedResultService.selectPage(1, 200).pipe(
+    timeout(RESULT_FETCH_TIMEOUT_MS),
+    map((resultEvent): OperatorResultInfo => {
+      const table = (resultEvent.table || []) as IndexableObject[];
+      const { limited, tokenCount, truncated } = filterByTokenLimit(table, maxTokenLimit);
+      return {
+        mode: "pagination",
+        totalRows: paginatedResultService.getCurrentTotalNumTuples(),
+        displayedRows: limited.length,
+        estimatedTokens: tokenCount,
+        truncated,
+        tableStats: paginatedResultService.getStats(),
+        result: limited,
+      };
+    }),
+    catchError(() => of(null))
+  );
 }
 
 /**
- * Get snapshot result as Observable
+ * Get snapshot result as Observable.
+ * Used for operators that produce complete result snapshots (SetSnapshotMode), like visualizations.
  * @param operatorId - ID of the operator to get results for
  * @param workflowResultService - Service to access workflow results
- * @param maxTokenLimit - Maximum token limit for results (default: DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT)
+ * @param maxTokenLimit - Maximum token limit for results
  */
 function getSnapshotResult$(
   operatorId: string,
@@ -616,21 +611,56 @@ function getSnapshotResult$(
   maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
 ): Observable<OperatorResultInfo | null> {
   const resultService = workflowResultService.getResultService(operatorId);
-  if (resultService) {
-    const snapshot = resultService.getCurrentResultSnapshot() as IndexableObject[] | null;
-    if (snapshot && snapshot.length > 0) {
-      const { limited, tokenCount, truncated } = filterByTokenLimit(snapshot, maxTokenLimit);
-      return of({
-        mode: "snapshot" as const,
-        totalRows: snapshot.length,
-        displayedRows: limited.length,
-        estimatedTokens: tokenCount,
-        truncated,
-        result: limited,
-      });
-    }
+  if (!resultService) {
+    return of(null);
   }
-  return of(null);
+
+  const snapshot = resultService.getCurrentResultSnapshot() as IndexableObject[] | null;
+  if (!snapshot || snapshot.length === 0) {
+    return of(null);
+  }
+
+  const { limited, tokenCount, truncated } = filterByTokenLimit(snapshot, maxTokenLimit);
+  return of({
+    mode: "snapshot" as const,
+    totalRows: snapshot.length,
+    displayedRows: limited.length,
+    estimatedTokens: tokenCount,
+    truncated,
+    result: limited,
+  });
+}
+
+/**
+ * Get operator result as Observable with token limit.
+ * Each operator's result is either paginated (tabular) or snapshot (visualization).
+ * Result modes:
+ * - PaginationMode: Large tabular results fetched page-by-page
+ * - SetSnapshotMode: Complete result snapshots (visualizations)
+ * - SetDeltaMode: Incremental deltas (not accumulated on frontend)
+ *
+ * @param operatorId - ID of the operator to get results for
+ * @param workflowResultService - Service to access workflow results
+ * @param maxTokenLimit - Maximum token limit for results
+ */
+function getOperatorResult$(
+  operatorId: string,
+  workflowResultService: WorkflowResultService,
+  maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
+): Observable<OperatorResultInfo | null> {
+  return defer(() => {
+    // Check which result service is available for this operator
+    // An operator can only have ONE type of result at a time
+    if (workflowResultService.hasPaginatedResult(operatorId)) {
+      return getPaginatedResult$(operatorId, workflowResultService, maxTokenLimit);
+    }
+
+    if (workflowResultService.hasResult(operatorId)) {
+      return getSnapshotResult$(operatorId, workflowResultService, maxTokenLimit);
+    }
+
+    return of(null);
+  });
 }
 
 /**
@@ -700,21 +730,6 @@ function collectOperatorResults$(
 }
 
 /**
- * Helper to build result message
- */
-function buildResultMessage(
-  operatorId: string,
-  mode: string,
-  displayedRows: number,
-  totalRows: number,
-  tokenCount: number,
-  truncated: boolean
-): string {
-  const base = `Retrieved ${displayedRows} rows (out of ${totalRows} total, ~${tokenCount} tokens) from ${mode} results for operator ${operatorId}`;
-  return truncated ? base.replace(")", ", limited by token count)") : base;
-}
-
-/**
  * Create getExistingWorkflowExecutionResult tool that retrieves results and console logs
  * from a previous workflow execution. Optionally filters by operator IDs.
  */
@@ -749,57 +764,10 @@ export function createGetExistingWorkflowExecutionResultTool(
         // Collect console logs for all target operators
         const consoleLogs = collectConsoleLogs(targetIds, workflowConsoleService);
 
-        // Collect results for all target operators
-        const operatorResults: Record<string, OperatorResultInfo | { error: string }> = {};
-
-        for (const operatorId of targetIds) {
-          // Try paginated result service first
-          const paginatedResultService = workflowResultService.getPaginatedResultService(operatorId);
-          if (paginatedResultService) {
-            try {
-              const resultEvent = await firstValueFrom(
-                paginatedResultService.selectPage(1, 200).pipe(timeout(RESULT_FETCH_TIMEOUT_MS))
-              );
-              const table = (resultEvent.table || []) as IndexableObject[];
-              const { limited, tokenCount, truncated } = filterByTokenLimit(table, maxOperatorResultTokenLimit);
-              const totalRows = paginatedResultService.getCurrentTotalNumTuples();
-
-              operatorResults[operatorId] = {
-                mode: "pagination",
-                totalRows,
-                displayedRows: limited.length,
-                estimatedTokens: tokenCount,
-                truncated,
-                tableStats: paginatedResultService.getStats(),
-                result: limited,
-              };
-              continue;
-            } catch {
-              // Fall through to try snapshot
-            }
-          }
-
-          // Try snapshot result service
-          const resultService = workflowResultService.getResultService(operatorId);
-          if (resultService) {
-            const snapshot = resultService.getCurrentResultSnapshot() as IndexableObject[] | null;
-            if (snapshot && snapshot.length > 0) {
-              const { limited, tokenCount, truncated } = filterByTokenLimit(snapshot, maxOperatorResultTokenLimit);
-              operatorResults[operatorId] = {
-                mode: "snapshot",
-                totalRows: snapshot.length,
-                displayedRows: limited.length,
-                estimatedTokens: tokenCount,
-                truncated,
-                result: limited,
-              };
-              continue;
-            }
-          }
-
-          // No results available for this operator - mark as empty (not an error)
-          // Don't add anything, the operator simply has no results
-        }
+        // Collect results for all target operators using the shared helper
+        const operatorResults = await firstValueFrom(
+          collectOperatorResults$(targetIds, workflowResultService, maxOperatorResultTokenLimit)
+        );
 
         const operatorsWithResults = Object.keys(operatorResults).length;
         const operatorsWithLogs = Object.keys(consoleLogs).length;
