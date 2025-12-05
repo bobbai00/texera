@@ -87,50 +87,6 @@
         </div>
       </div>
 
-      <!-- Dependent Steps Section -->
-      <div
-        *ngIf="dependentSteps.length > 0"
-        style="margin-bottom: 24px">
-        <h4 style="margin-bottom: 12px; color: #595959">
-          <i
-            nz-icon
-            nzType="branches"
-            nzTheme="outline"
-            style="margin-right: 8px"></i>
-          Dependent Steps ({{ dependentSteps.length }})
-        </h4>
-        <div
-          style="
-            background: #fafafa;
-            padding: 12px;
-            border-radius: 4px;
-            border: 1px solid #d9d9d9;
-            max-height: 200px;
-            overflow-y: auto;
-          ">
-          <nz-list
-            nzSize="small"
-            [nzDataSource]="dependentSteps"
-            nzBordered>
-            <nz-list-item *ngFor="let depStep of dependentSteps">
-              <div style="display: flex; align-items: center; width: 100%">
-                <nz-tag
-                  [nzColor]="'blue'"
-                  style="margin-right: 8px"
-                  >{{ depStep.stepId }}</nz-tag
-                >
-                <code style="font-family: monospace; font-size: 11px; color: #8c8c8c; margin-right: 8px">
-                  {{ depStep.messageId }}
-                </code>
-                <span style="flex: 1; font-size: 12px; color: #595959">
-                  {{ depStep.timestamp | date: 'HH:mm:ss' }}
-                </span>
-              </div>
-            </nz-list-item>
-          </nz-list>
-        </div>
-      </div>
-
       <!-- Token Usage Section -->
       <div
         *ngIf="step.usage"
@@ -224,6 +180,24 @@
                     {{ opId }}
                   </nz-tag>
                 </div>
+                <div
+                  *ngIf="getToolOperatorAccess(step, idx)!.addedOperatorIds.length > 0"
+                  style="margin-bottom: 8px">
+                  <span style="color: #722ed1; font-weight: 500; margin-right: 8px">
+                    <i
+                      nz-icon
+                      nzType="plus-circle"
+                      nzTheme="outline"
+                      style="margin-right: 4px"></i>
+                    ADDED:
+                  </span>
+                  <nz-tag
+                    *ngFor="let opId of getToolOperatorAccess(step, idx)!.addedOperatorIds"
+                    [nzColor]="'purple'"
+                    style="margin: 2px; font-family: monospace; font-size: 12px">
+                    {{ opId }}
+                  </nz-tag>
+                </div>
                 <div *ngIf="getToolOperatorAccess(step, idx)!.modifiedOperatorIds.length > 0">
                   <span style="color: #52c41a; font-weight: 500; margin-right: 8px">
                     <i
@@ -252,8 +226,7 @@
           (!step.content || step.content.trim().length === 0) &&
           !step.usage &&
           (!step.toolCalls || step.toolCalls.length === 0) &&
-          !hasOperatorAccess(step) &&
-          dependentSteps.length === 0
+          !hasOperatorAccess(step)
         "
         style="text-align: center; padding: 40px; color: #8c8c8c">
         <i

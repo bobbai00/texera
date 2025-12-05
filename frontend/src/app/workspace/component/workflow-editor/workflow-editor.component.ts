@@ -44,7 +44,6 @@ import { GuiConfigService } from "../../../common/service/gui-config.service";
 import { line, curveCatmullRomClosed } from "d3-shape";
 import concaveman from "concaveman";
 import { AgentActionService } from "../../service/agent-action/agent-action.service";
-import { ContextHighlightService } from "../../service/context-highlight/context-highlight.service";
 import { TexeraCopilotManagerService } from "../../service/copilot/texera-copilot-manager.service";
 import { isPythonUdf } from "../../service/workflow-graph/model/workflow-graph";
 
@@ -145,7 +144,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     private elementRef: ElementRef,
     private config: GuiConfigService,
     private agentActionService: AgentActionService,
-    private contextHighlightService: ContextHighlightService,
     private copilotManagerService: TexeraCopilotManagerService
   ) {
     this.wrapper = this.workflowActionService.getJointGraphWrapper();
@@ -198,8 +196,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     this.registerPortDisplayNameChangeHandler();
     this.handleOperatorStatisticsUpdate();
     this.handleRegionEvents();
-    // this.handleAgentActionHighlight(); // Temporarily disabled
-    this.handleContextHighlight();
     this.handleOperatorSuggestionHighlightEvent();
     this.handleAgentHoverHighlight();
     this.handleCodePanels();
@@ -441,334 +437,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
       ];
     });
     regionElement.attr("body/d", line().curve(curveCatmullRomClosed)(concaveman(points, 2, 0) as [number, number][]));
-  }
-
-  private handleAgentActionHighlight(): void {
-    // Define AgentAction JointJS element with transparent fill and border only
-    const AgentAction = joint.dia.Element.define(
-      "agent-action",
-      {
-        attrs: {
-          body: {
-            fill: "transparent",
-            stroke: "rgba(79,195,255,0.6)",
-            strokeWidth: 2,
-            strokeDasharray: "5,5",
-            pointerEvents: "none",
-            class: "agent-action",
-          },
-        },
-      },
-      {
-        markup: [{ tagName: "path", selector: "body" }],
-      }
-    );
-
-    // Track current highlight element and cleanup handler
-    let currentElement: joint.dia.Element | null = null;
-    let currentPositionHandler: ((operator: joint.dia.Cell) => void) | null = null;
-
-    // Subscribe to agent action highlight events
-    this.agentActionService
-      .getAgentActionHighlightStream()
-      .pipe(untilDestroyed(this))
-      .subscribe(agentAction => {
-        // Get operator elements from IDs
-        const operators = agentAction.operatorIds.map(id => this.paper.getModelById(id)).filter(op => op !== undefined);
-
-        if (operators.length === 0) {
-          return; // No valid operators found
-        }
-
-        // Create agent action highlight element
-        currentElement = new AgentAction();
-        this.paper.model.addCell(currentElement);
-
-        // Update the highlight to wrap around operators
-        this.updateAgentActionElement(currentElement, operators);
-
-        // Listen to operator position changes to update the highlight
-        currentPositionHandler = (operator: joint.dia.Cell) => {
-          if (operators.includes(operator) && currentElement) {
-            this.updateAgentActionElement(currentElement, operators);
-          }
-        };
-        this.paper.model.on("change:position", currentPositionHandler);
-      });
-
-    // Subscribe to cleanup stream - triggered when user accepts/rejects
-    this.agentActionService
-      .getCleanupStream()
-      .pipe(untilDestroyed(this))
-      .subscribe(() => {
-        // Remove highlight element
-        if (currentElement) {
-          currentElement.remove();
-          currentElement = null;
-        }
-
-        // Remove position handler
-        if (currentPositionHandler) {
-          this.paper.model.off("change:position", currentPositionHandler);
-          currentPositionHandler = null;
-        }
-      });
-  }
-
-  /**
-   * Calculate bounding box that encompasses all operators
-   */
-  private getOperatorsBoundingBox(operators: joint.dia.Cell[]): {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } {
-    const bboxes = operators.map(op => op.getBBox());
-    const minX = Math.min(...bboxes.map(b => b.x));
-    const minY = Math.min(...bboxes.map(b => b.y));
-    const maxX = Math.max(...bboxes.map(b => b.x + b.width));
-    const maxY = Math.max(...bboxes.map(b => b.y + b.height));
-
-    return {
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
-    };
-  }
-
-  /**
-   * Calculate panel position to the right of the operators, considering canvas boundaries
-   */
-  private calculatePanelPosition(bbox: { x: number; y: number; width: number; height: number }): {
-    x: number;
-    y: number;
-  } {
-    const panelWidth = 400;
-    const panelOffset = 40; // Space between operators and panel
-
-    // Try to position to the right of operators
-    let x = bbox.x + bbox.width + panelOffset;
-    let y = bbox.y;
-
-    // If panel would go off the right edge, position it to the left
-    const paperWidth = this.paper.getComputedSize().width;
-    if (x + panelWidth > paperWidth) {
-      x = bbox.x - panelWidth - panelOffset;
-    }
-
-    // Ensure panel stays within vertical bounds
-    const paperHeight = this.paper.getComputedSize().height;
-    if (y < 20) {
-      y = 20;
-    } else if (y + 300 > paperHeight) {
-      // Approximate panel height
-      y = paperHeight - 320;
-    }
-
-    return { x, y };
-  }
-
-  private updateAgentActionElement(element: joint.dia.Element, operators: joint.dia.Cell[]) {
-    const points = operators.flatMap(op => {
-      const { x, y, width, height } = op.getBBox(),
-        padding = 20; // Slightly larger padding than regions
-      return [
-        [x - padding, y - padding],
-        [x + width + padding, y - padding],
-        [x - padding, y + height + padding + 10],
-        [x + width + padding, y + height + padding + 10],
-      ];
-    });
-    element.attr("body/d", line().curve(curveCatmullRomClosed)(concaveman(points, 2, 0) as [number, number][]));
-  }
-
-  /**
-   * Handle context highlighting for relevant operators.
-   * Similar to agent action highlighting but uses a different color (light blue).
-   * Supports multiple disconnected components by creating separate highlight regions.
-   */
-  private handleContextHighlight(): void {
-    // Define ContextHighlight JointJS element with light blue stroke
-    const ContextHighlight = joint.dia.Element.define(
-      "context-highlight",
-      {
-        attrs: {
-          body: {
-            fill: "rgba(135,206,250,0.1)", // Light blue fill with low opacity
-            stroke: "rgba(135,206,250,0.8)", // Light blue stroke
-            strokeWidth: 3,
-            strokeDasharray: "8,4",
-            pointerEvents: "none",
-            class: "context-highlight",
-          },
-        },
-      },
-      {
-        markup: [{ tagName: "path", selector: "body" }],
-      }
-    );
-
-    // Track current highlight elements (can be multiple for disconnected components)
-    const currentElements: joint.dia.Element[] = [];
-    let currentPositionHandler: ((cell: joint.dia.Cell) => void) | null = null;
-
-    // Subscribe to context highlight events
-    this.contextHighlightService
-      .getContextHighlightStream()
-      .pipe(untilDestroyed(this))
-      .subscribe(operatorIds => {
-        // Clear any existing highlights first
-        this.clearContextHighlightElements(currentElements, currentPositionHandler);
-
-        if (operatorIds.length === 0) {
-          return;
-        }
-
-        // Get operator elements from IDs
-        const operators = operatorIds.map(id => this.paper.getModelById(id)).filter(op => op !== undefined);
-
-        if (operators.length === 0) {
-          return; // No valid operators found
-        }
-
-        // Group operators into connected components
-        const connectedComponents = this.findConnectedComponents(operators);
-
-        // Create a highlight region for each connected component
-        connectedComponents.forEach(component => {
-          if (component.length > 0) {
-            const highlightElement = new ContextHighlight();
-            this.paper.model.addCell(highlightElement);
-            currentElements.push(highlightElement);
-
-            // Update the highlight to wrap around operators in this component
-            this.updateContextHighlightElement(highlightElement, component);
-          }
-        });
-
-        // Listen to operator position changes to update all highlights
-        currentPositionHandler = (cell: joint.dia.Cell) => {
-          if (operators.includes(cell)) {
-            // Re-group and update all highlights
-            const updatedComponents = this.findConnectedComponents(operators);
-            updatedComponents.forEach((component, index) => {
-              if (index < currentElements.length) {
-                this.updateContextHighlightElement(currentElements[index], component);
-              }
-            });
-          }
-        };
-        this.paper.model.on("change:position", currentPositionHandler);
-      });
-
-    // Subscribe to cleanup stream
-    this.contextHighlightService
-      .getClearHighlightStream()
-      .pipe(untilDestroyed(this))
-      .subscribe(() => {
-        this.clearContextHighlightElements(currentElements, currentPositionHandler);
-        currentPositionHandler = null;
-      });
-  }
-
-  /**
-   * Clear all context highlight elements and remove position handler.
-   */
-  private clearContextHighlightElements(
-    elements: joint.dia.Element[],
-    positionHandler: ((cell: joint.dia.Cell) => void) | null
-  ): void {
-    // Remove all highlight elements
-    elements.forEach(element => element.remove());
-    elements.length = 0; // Clear the array
-
-    // Remove position handler
-    if (positionHandler) {
-      this.paper.model.off("change:position", positionHandler);
-    }
-  }
-
-  /**
-   * Find connected components among operators based on workflow links.
-   * Returns array of operator groups where each group is a connected component.
-   */
-  private findConnectedComponents(operators: joint.dia.Cell[]): joint.dia.Cell[][] {
-    const operatorIds = new Set(operators.map(op => op.id));
-    const visited = new Set<string>();
-    const components: joint.dia.Cell[][] = [];
-
-    // Get all links in the workflow
-    const allLinks = this.workflowActionService.getTexeraGraph().getAllLinks();
-
-    // Build adjacency map
-    const adjacencyMap = new Map<string, Set<string>>();
-    allLinks.forEach(link => {
-      const source = link.source.operatorID;
-      const target = link.target.operatorID;
-
-      if (!adjacencyMap.has(source)) {
-        adjacencyMap.set(source, new Set());
-      }
-      if (!adjacencyMap.has(target)) {
-        adjacencyMap.set(target, new Set());
-      }
-
-      adjacencyMap.get(source)!.add(target);
-      adjacencyMap.get(target)!.add(source);
-    });
-
-    // DFS to find connected component starting from a node
-    const dfs = (operatorId: string, component: joint.dia.Cell[]) => {
-      if (visited.has(operatorId)) {
-        return;
-      }
-
-      visited.add(operatorId);
-      const operator = operators.find(op => op.id === operatorId);
-      if (operator) {
-        component.push(operator);
-      }
-
-      const neighbors = adjacencyMap.get(operatorId) || new Set();
-      neighbors.forEach(neighborId => {
-        if (operatorIds.has(neighborId) && !visited.has(neighborId)) {
-          dfs(neighborId, component);
-        }
-      });
-    };
-
-    // Find all connected components
-    operators.forEach(operator => {
-      if (!visited.has(operator.id as string)) {
-        const component: joint.dia.Cell[] = [];
-        dfs(operator.id as string, component);
-        if (component.length > 0) {
-          components.push(component);
-        }
-      }
-    });
-
-    return components;
-  }
-
-  /**
-   * Update context highlight element to wrap around operators.
-   * Similar to updateAgentActionElement but for context highlights.
-   */
-  private updateContextHighlightElement(element: joint.dia.Element, operators: joint.dia.Cell[]) {
-    const points = operators.flatMap(op => {
-      const { x, y, width, height } = op.getBBox();
-      const padding = 25; // Slightly larger padding for context highlights
-      return [
-        [x - padding, y - padding],
-        [x + width + padding, y - padding],
-        [x - padding, y + height + padding + 10],
-        [x + width + padding, y + height + padding + 10],
-      ];
-    });
-    element.attr("body/d", line().curve(curveCatmullRomClosed)(concaveman(points, 2, 0) as [number, number][]));
   }
 
   /**
@@ -1790,11 +1458,10 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   }
 
   /**
-   * Handle agent hover highlighting to show "Viewing" and "Modifying" labels on operators
+   * Handle agent hover highlighting to show "viewed", "added", and "modified" labels on operators
    */
   private handleAgentHoverHighlight(): void {
-    // Subscribe to all agents and their hover events
-    this.copilotManagerService.agentChange$.pipe(untilDestroyed(this)).subscribe(() => {
+    const setupAgentHoverSubscription = () => {
       this.copilotManagerService
         .getAllAgents()
         .pipe(untilDestroyed(this))
@@ -1804,57 +1471,42 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
             this.copilotManagerService
               .getHoveredMessageOperatorsObservable(agent.id)
               .pipe(untilDestroyed(this))
-              .subscribe(({ viewedOperatorIds, modifiedOperatorIds }) => {
+              .subscribe(({ viewedOperatorIds, addedOperatorIds, modifiedOperatorIds }) => {
                 // Clear all previous labels first
                 this.clearAllAgentActionLabels();
 
-                // Show "Viewing" labels on viewed operators
+                // Show "viewed" labels on viewed operators
                 viewedOperatorIds.forEach(operatorId => {
                   if (this.workflowActionService.getTexeraGraph().hasOperator(operatorId)) {
-                    this.jointUIService.showAgentActionLabel(this.paper, operatorId, "viewing", agent.name);
+                    this.jointUIService.showAgentActionLabel(this.paper, operatorId, "viewed", agent.name);
                   }
                 });
 
-                // Show "Modifying" labels on modified operators
+                // Show "added" labels on added operators
+                addedOperatorIds.forEach(operatorId => {
+                  if (this.workflowActionService.getTexeraGraph().hasOperator(operatorId)) {
+                    this.jointUIService.showAgentActionLabel(this.paper, operatorId, "added", agent.name);
+                  }
+                });
+
+                // Show "modified" labels on modified operators
                 modifiedOperatorIds.forEach(operatorId => {
                   if (this.workflowActionService.getTexeraGraph().hasOperator(operatorId)) {
-                    this.jointUIService.showAgentActionLabel(this.paper, operatorId, "modifying", agent.name);
+                    this.jointUIService.showAgentActionLabel(this.paper, operatorId, "modified", agent.name);
                   }
                 });
               });
           });
         });
+    };
+
+    // Subscribe to agent changes to set up hover subscriptions
+    this.copilotManagerService.agentChange$.pipe(untilDestroyed(this)).subscribe(() => {
+      setupAgentHoverSubscription();
     });
 
     // Initial setup
-    this.copilotManagerService
-      .getAllAgents()
-      .pipe(untilDestroyed(this))
-      .subscribe(agents => {
-        agents.forEach(agent => {
-          this.copilotManagerService
-            .getHoveredMessageOperatorsObservable(agent.id)
-            .pipe(untilDestroyed(this))
-            .subscribe(({ viewedOperatorIds, modifiedOperatorIds }) => {
-              // Clear all previous labels first
-              this.clearAllAgentActionLabels();
-
-              // Show "Viewing" labels on viewed operators
-              viewedOperatorIds.forEach(operatorId => {
-                if (this.workflowActionService.getTexeraGraph().hasOperator(operatorId)) {
-                  this.jointUIService.showAgentActionLabel(this.paper, operatorId, "viewing", agent.name);
-                }
-              });
-
-              // Show "Modifying" labels on modified operators
-              modifiedOperatorIds.forEach(operatorId => {
-                if (this.workflowActionService.getTexeraGraph().hasOperator(operatorId)) {
-                  this.jointUIService.showAgentActionLabel(this.paper, operatorId, "modifying", agent.name);
-                }
-              });
-            });
-        });
-      });
+    setupAgentHoverSubscription();
   }
 
   /**

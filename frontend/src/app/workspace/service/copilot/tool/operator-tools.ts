@@ -134,14 +134,15 @@ function addOperatorHelper(
       afterContent
     );
 
-    // Return success with the added operator marked as modified
+    // Return success with the added operator marked as added (not modified)
     return createSuccessResult(
       {
         operatorId: results.addedOperatorIds[0],
         agentActionId: agentAction.id,
       },
       [], // viewedOperatorIds - none for add
-      results.addedOperatorIds // modifiedOperatorIds - the newly added operator
+      results.addedOperatorIds, // addedOperatorIds - the newly added operator
+      [] // modifiedOperatorIds - none for add (it's a new operator)
     );
   } catch (error: any) {
     return createErrorResult(error.message);
@@ -687,6 +688,7 @@ export function createAddLinkTool(
             message: "Added link successfully",
           },
           [args.sourceOperatorId, args.targetOperatorId], // viewedOperatorIds - both ends of the link
+          [], // addedOperatorIds - adding a link doesn't add operators
           [] // modifiedOperatorIds - adding a link doesn't modify operators
         );
       } catch (error: any) {
@@ -775,6 +777,7 @@ export function createModifyOperatorTool(
             message: `Modified operator ${args.operatorId}`,
           },
           [], // viewedOperatorIds - none for modify
+          [], // addedOperatorIds - none for modify
           results.modifiedOperatorIds // modifiedOperatorIds - the operators that were modified
         );
       } catch (error: any) {
@@ -826,7 +829,7 @@ export function createDeleteFromWorkflowTool(
           afterContent
         );
 
-        // Return success with the deleted operators marked as modified (they were affected by deletion)
+        // Return success - deleted operators are not in any category since they no longer exist
         return createSuccessResult(
           {
             agentActionId: agentAction.id,
@@ -835,7 +838,8 @@ export function createDeleteFromWorkflowTool(
             message: `Deleted ${results.deletedOperatorIds.length} operator(s) and ${results.deletedLinkIds.length} link(s)`,
           },
           [], // viewedOperatorIds - none for delete
-          results.deletedOperatorIds // modifiedOperatorIds - the operators that were deleted
+          [], // addedOperatorIds - none for delete
+          [] // modifiedOperatorIds - none for delete (deleted operators no longer exist)
         );
       } catch (error: any) {
         return createErrorResult(error.message);

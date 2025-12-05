@@ -137,8 +137,9 @@ export function createPythonUDFTool(
             message: `Created PythonUDFSource operator${args.customDisplayName ? ` "${args.customDisplayName}"` : ""}. Use executeToOperator to run it.`,
             code: args.code,
           },
-          [],
-          [operator.operatorID]
+          [], // viewedOperatorIds
+          [operator.operatorID], // addedOperatorIds - the newly created operator
+          [] // modifiedOperatorIds
         );
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -224,8 +225,9 @@ export function createExecuteToOperatorTool(
               allConsoleLogs: executionResult.consoleLogs,
               operatorStates: executionResult.operatorStates,
             },
-            [],
-            [args.operatorId]
+            [args.operatorId], // viewedOperatorIds - the operator that was executed
+            [], // addedOperatorIds
+            [] // modifiedOperatorIds
           );
         } else {
           return createSuccessResult(
@@ -238,8 +240,9 @@ export function createExecuteToOperatorTool(
               allConsoleLogs: executionResult.consoleLogs,
               operatorStates: executionResult.operatorStates,
             },
-            [],
-            [args.operatorId]
+            [args.operatorId], // viewedOperatorIds - the operator that was executed
+            [], // addedOperatorIds
+            [] // modifiedOperatorIds
           );
         }
       } catch (error: unknown) {

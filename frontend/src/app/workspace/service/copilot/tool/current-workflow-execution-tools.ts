@@ -527,8 +527,9 @@ export function createExecuteCurrentWorkflowTool(
               consoleLogs: result.consoleLogs,
               operatorResults: result.operatorResults,
             },
-            [],
-            []
+            [], // viewedOperatorIds
+            [], // addedOperatorIds
+            [] // modifiedOperatorIds
           );
         } else {
           // Include console logs, operator states, and operator results even on failure for debugging
@@ -541,6 +542,7 @@ export function createExecuteCurrentWorkflowTool(
             consoleLogs: result.consoleLogs,
             operatorResults: result.operatorResults,
             viewedOperatorIds: [],
+            addedOperatorIds: [],
             modifiedOperatorIds: [],
           };
         }
@@ -816,8 +818,9 @@ export function createGetExistingWorkflowExecutionResultTool(
               `Retrieved execution results for ${operatorsWithResults}/${targetIds.length} operators ` +
               `and console logs for ${operatorsWithLogs} operators.`,
           },
-          targetIds,
-          []
+          targetIds, // viewedOperatorIds - the operators whose results were retrieved
+          [], // addedOperatorIds
+          [] // modifiedOperatorIds
         );
       } catch (error: unknown) {
         return createErrorResult(error instanceof Error ? error.message : String(error));
@@ -858,8 +861,9 @@ export function createGetCurrentOperatorResultInfoTool(
             schema: schema,
             message: `Operator ${args.operatorId} has ${totalTuples} result tuples`,
           },
-          [args.operatorId],
-          []
+          [args.operatorId], // viewedOperatorIds - the operator whose info was retrieved
+          [], // addedOperatorIds
+          [] // modifiedOperatorIds
         );
       } catch (error: unknown) {
         return createErrorResult(error instanceof Error ? error.message : String(error));
@@ -896,8 +900,9 @@ export function createGetCurrentComputingUnitStatusTool(computingUnitStatusServi
               message:
                 "No computing unit is selected. Workflow execution is not available. Please remind the user to connect to a computing unit.",
             },
-            [],
-            []
+            [], // viewedOperatorIds
+            [], // addedOperatorIds
+            [] // modifiedOperatorIds
           );
         }
 
@@ -918,8 +923,9 @@ export function createGetCurrentComputingUnitStatusTool(computingUnitStatusServi
                 ? `Computing unit "${selectedUnit.computingUnit.name}" is pending/starting. Workflow execution may not be available yet.`
                 : `Computing unit is in state: ${unitStatus}. Workflow execution may not be available.`,
           },
-          [],
-          []
+          [], // viewedOperatorIds
+          [], // addedOperatorIds
+          [] // modifiedOperatorIds
         );
       } catch (error: unknown) {
         return createErrorResult(error instanceof Error ? error.message : String(error));

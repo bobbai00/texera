@@ -49,7 +49,13 @@ export interface BaseToolResult {
   viewedOperatorIds: string[];
 
   /**
-   * List of operator IDs that were modified/written during tool execution.
+   * List of operator IDs that were newly added during tool execution.
+   * Empty array if no operators were added.
+   */
+  addedOperatorIds: string[];
+
+  /**
+   * List of operator IDs that were modified/updated during tool execution.
    * Empty array if no operators were modified.
    */
   modifiedOperatorIds: string[];
@@ -61,17 +67,20 @@ export interface BaseToolResult {
  *
  * @param data - Custom data fields for the tool result
  * @param viewedOperatorIds - Operator IDs that were viewed (default: [])
+ * @param addedOperatorIds - Operator IDs that were added (default: [])
  * @param modifiedOperatorIds - Operator IDs that were modified (default: [])
  * @returns BaseToolResult with success=true and provided data
  */
 export function createSuccessResult<T extends Record<string, any>>(
   data: T,
   viewedOperatorIds: string[] = [],
+  addedOperatorIds: string[] = [],
   modifiedOperatorIds: string[] = []
 ): BaseToolResult & T {
   return {
     success: true,
     viewedOperatorIds,
+    addedOperatorIds,
     modifiedOperatorIds,
     ...data,
   };
@@ -88,6 +97,7 @@ export function createErrorResult(error: string): BaseToolResult {
     success: false,
     error,
     viewedOperatorIds: [],
+    addedOperatorIds: [],
     modifiedOperatorIds: [],
   };
 }

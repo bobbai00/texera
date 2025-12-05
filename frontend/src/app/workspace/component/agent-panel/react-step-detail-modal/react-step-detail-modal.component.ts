@@ -17,43 +17,23 @@
  * under the License.
  */
 
-import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges } from "@angular/core";
-import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
+import { Component, Input, Output, EventEmitter } from "@angular/core";
 import { ReActStep } from "../../../service/copilot/texera-copilot";
-import { TexeraCopilotManagerService } from "../../../service/copilot/texera-copilot-manager.service";
-import { ToolOperatorAccess } from "../../../service/copilot/tool/react-step-operator-parser";
 
 /**
  * Reusable modal component for displaying ReActStep details.
- * Shows step identification, token usage, tool calls, and dependent steps.
+ * Shows step identification, token usage, and tool calls.
  */
-@UntilDestroy()
 @Component({
   selector: "texera-react-step-detail-modal",
   templateUrl: "./react-step-detail-modal.component.html",
   styleUrls: ["./react-step-detail-modal.component.scss"],
 })
-export class ReActStepDetailModalComponent implements OnChanges {
+export class ReActStepDetailModalComponent {
   @Input() visible: boolean = false;
   @Input() step: ReActStep | null = null;
   @Input() agentId: string | null = null;
   @Output() visibleChange = new EventEmitter<boolean>();
-
-  public dependentSteps: ReActStep[] = [];
-
-  constructor(private copilotManagerService: TexeraCopilotManagerService) {}
-
-  ngOnChanges(changes: SimpleChanges): void {
-    if (changes.step && this.step && this.agentId) {
-      // Load dependent steps when step changes
-      this.copilotManagerService
-        .getDependentReActSteps(this.agentId, this.step.messageId, this.step.stepId)
-        .pipe(untilDestroyed(this))
-        .subscribe(steps => {
-          this.dependentSteps = steps;
-        });
-    }
-  }
 
   public closeModal(): void {
     this.visible = false;
@@ -75,7 +55,7 @@ export class ReActStepDetailModalComponent implements OnChanges {
   public getToolOperatorAccess(
     step: ReActStep,
     toolCallIndex: number
-  ): { viewedOperatorIds: string[]; modifiedOperatorIds: string[] } | null {
+  ): { viewedOperatorIds: string[]; addedOperatorIds: string[]; modifiedOperatorIds: string[] } | null {
     if (!step.operatorAccess) {
       return null;
     }

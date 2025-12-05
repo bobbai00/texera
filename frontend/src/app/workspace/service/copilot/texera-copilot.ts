@@ -159,9 +159,6 @@ export class TexeraCopilot {
   private shouldStopAfterAgentAction: boolean = false;
   private planningMode: boolean = false;
   private baselineMode: boolean = false;
-  private relevantOperators: string[] = [];
-  private relevantOperatorsSubject = new BehaviorSubject<string[]>([]);
-  public relevantOperators$ = this.relevantOperatorsSubject.asObservable();
   private messageStatsMap: Map<string, CopilotMessageStats> = new Map();
   private messageStatsSubject = new BehaviorSubject<Map<string, CopilotMessageStats>>(new Map());
   public messageStats$ = this.messageStatsSubject.asObservable();
@@ -169,8 +166,9 @@ export class TexeraCopilot {
   // Track which message is being hovered and its operator IDs
   private hoveredMessageOperatorsSubject = new BehaviorSubject<{
     viewedOperatorIds: string[];
+    addedOperatorIds: string[];
     modifiedOperatorIds: string[];
-  }>({ viewedOperatorIds: [], modifiedOperatorIds: [] });
+  }>({ viewedOperatorIds: [], addedOperatorIds: [], modifiedOperatorIds: [] });
   public hoveredMessageOperators$ = this.hoveredMessageOperatorsSubject.asObservable();
   // Agent action approval blocking state
   private agentActionApprovalSubject = new BehaviorSubject<{
@@ -856,8 +854,6 @@ export class TexeraCopilot {
     this.messages = [];
     this.reActSteps = [];
     this.reActStepsSubject.next([]);
-    this.relevantOperators = [];
-    this.relevantOperatorsSubject.next([]);
     this.messageStatsMap.clear();
     this.messageStatsSubject.next(new Map());
   }
@@ -870,33 +866,36 @@ export class TexeraCopilot {
     return this.state;
   }
 
-  public getRelevantOperators(): string[] {
-    return [...this.relevantOperators];
-  }
-
   /**
    * Set the hovered message and emit its operator IDs.
    * @param step The ReActStep being hovered, or null to clear
    */
   public setHoveredMessage(step: ReActStep | null): void {
     if (!step) {
-      this.hoveredMessageOperatorsSubject.next({ viewedOperatorIds: [], modifiedOperatorIds: [] });
+      this.hoveredMessageOperatorsSubject.next({
+        viewedOperatorIds: [],
+        addedOperatorIds: [],
+        modifiedOperatorIds: [],
+      });
       return;
     }
 
     // Collect all operator IDs from this step's tool calls
     const viewedOperatorIds = new Set<string>();
+    const addedOperatorIds = new Set<string>();
     const modifiedOperatorIds = new Set<string>();
 
     if (step.operatorAccess) {
       step.operatorAccess.forEach((access, _) => {
         access.viewedOperatorIds.forEach(id => viewedOperatorIds.add(id));
+        access.addedOperatorIds.forEach(id => addedOperatorIds.add(id));
         access.modifiedOperatorIds.forEach(id => modifiedOperatorIds.add(id));
       });
     }
 
     this.hoveredMessageOperatorsSubject.next({
       viewedOperatorIds: Array.from(viewedOperatorIds),
+      addedOperatorIds: Array.from(addedOperatorIds),
       modifiedOperatorIds: Array.from(modifiedOperatorIds),
     });
   }

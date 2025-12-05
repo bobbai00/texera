@@ -306,7 +306,7 @@ export function createListAllAvailableOperatorTypesTool(operatorMetadataService:
       if (count === 0) {
         return createErrorResult("Operator metadata not yet loaded. Please try again.");
       }
-      return createSuccessResult({ operators, count }, [], []);
+      return createSuccessResult({ operators, count }, [], [], []);
     },
   });
 }
@@ -330,7 +330,7 @@ export function createGetOperatorSchemaTool(operatorMetadataService: OperatorMet
       if (!compactSchema) {
         return createErrorResult(`Operator type "${args.operatorType}" not found.`);
       }
-      return createSuccessResult({ operatorType: args.operatorType, schema: compactSchema }, [], []);
+      return createSuccessResult({ operatorType: args.operatorType, schema: compactSchema }, [], [], []);
     },
   });
 }

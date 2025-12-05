@@ -141,8 +141,9 @@ export function createGetCurrentWorkflowTool(
             },
             message: `Retrieved ${operatorsToReturn.length} operator(s) and ${links.length} link(s) from the workflow.`,
           },
-          operatorIds,
-          []
+          operatorIds, // viewedOperatorIds - all operators that were retrieved
+          [], // addedOperatorIds
+          [] // modifiedOperatorIds
         );
       } catch (error: any) {
         return createErrorResult(error.message || String(error));

@@ -23,24 +23,27 @@
  */
 
 /**
- * Operator access information indicating which operators were viewed or modified.
+ * Operator access information indicating which operators were viewed, added, or modified.
  * Tools should populate these fields in their results to indicate operator interaction.
+ * - viewedOperatorIds: operators that were read/observed but not changed
+ * - addedOperatorIds: operators that were newly created
+ * - modifiedOperatorIds: operators that existed and were updated
  */
 export interface ToolOperatorAccess {
   viewedOperatorIds: string[];
+  addedOperatorIds: string[];
   modifiedOperatorIds: string[];
 }
 
 /**
  * Parse operator access from a tool call's result.
- * Tools should populate viewedOperatorIds and modifiedOperatorIds in their results.
+ * Tools should populate viewedOperatorIds, addedOperatorIds, and modifiedOperatorIds in their results.
  *
- * @param toolCall - The tool call object containing toolName and args
  * @param toolResult - The tool result object containing the output/result with operator IDs
- * @returns ToolOperatorAccess object with viewedOperatorIds and modifiedOperatorIds
+ * @returns ToolOperatorAccess object with viewedOperatorIds, addedOperatorIds, and modifiedOperatorIds
  */
-export function parseOperatorAccessFromToolCall(toolCall: any, toolResult?: any): ToolOperatorAccess {
-  const access: ToolOperatorAccess = { viewedOperatorIds: [], modifiedOperatorIds: [] };
+export function parseOperatorAccessFromToolCall(toolResult?: any): ToolOperatorAccess {
+  const access: ToolOperatorAccess = { viewedOperatorIds: [], addedOperatorIds: [], modifiedOperatorIds: [] };
 
   if (!toolResult || !toolResult.output) {
     return access;
@@ -54,6 +57,11 @@ export function parseOperatorAccessFromToolCall(toolCall: any, toolResult?: any)
       access.viewedOperatorIds = output.viewedOperatorIds.filter((id: any) => id && typeof id === "string");
     }
 
+    // Extract addedOperatorIds from tool result
+    if (Array.isArray(output.addedOperatorIds)) {
+      access.addedOperatorIds = output.addedOperatorIds.filter((id: any) => id && typeof id === "string");
+    }
+
     // Extract modifiedOperatorIds from tool result
     if (Array.isArray(output.modifiedOperatorIds)) {
       access.modifiedOperatorIds = output.modifiedOperatorIds.filter((id: any) => id && typeof id === "string");
@@ -61,6 +69,7 @@ export function parseOperatorAccessFromToolCall(toolCall: any, toolResult?: any)
 
     // Remove duplicates
     access.viewedOperatorIds = [...new Set(access.viewedOperatorIds)];
+    access.addedOperatorIds = [...new Set(access.addedOperatorIds)];
     access.modifiedOperatorIds = [...new Set(access.modifiedOperatorIds)];
   } catch (error) {
     console.error("Error parsing operator access from tool result:", error);
@@ -84,69 +93,18 @@ export function parseOperatorAccessFromStep(toolCalls: any[], toolResults?: any[
   }
 
   for (let i = 0; i < toolCalls.length; i++) {
-    const toolCall = toolCalls[i];
     const toolResult = toolResults && toolResults[i] ? toolResults[i] : undefined;
-    const access = parseOperatorAccessFromToolCall(toolCall, toolResult);
+    const access = parseOperatorAccessFromToolCall(toolResult);
 
-    // Only add to map if there are any viewed or modified operations
-    if (access.viewedOperatorIds.length > 0 || access.modifiedOperatorIds.length > 0) {
+    // Only add to map if there are any viewed, added, or modified operations
+    if (
+      access.viewedOperatorIds.length > 0 ||
+      access.addedOperatorIds.length > 0 ||
+      access.modifiedOperatorIds.length > 0
+    ) {
       accessMap.set(i, access);
     }
   }
 
   return accessMap;
-}
-
-/**
- * Extract all viewed operator IDs from a ReActStep.
- *
- * @param step - The ReActStep to extract from
- * @returns Array of unique operator IDs that were viewed
- */
-export function getAllViewedOperatorIds(step: { operatorAccess?: Map<number, ToolOperatorAccess> }): string[] {
-  if (!step.operatorAccess) {
-    return [];
-  }
-
-  const allViewedIds: string[] = [];
-  for (const access of step.operatorAccess.values()) {
-    allViewedIds.push(...access.viewedOperatorIds);
-  }
-
-  // Return unique operator IDs
-  return [...new Set(allViewedIds)];
-}
-
-/**
- * Extract all modified operator IDs from a ReActStep.
- *
- * @param step - The ReActStep to extract from
- * @returns Array of unique operator IDs that were modified
- */
-export function getAllModifiedOperatorIds(step: { operatorAccess?: Map<number, ToolOperatorAccess> }): string[] {
-  if (!step.operatorAccess) {
-    return [];
-  }
-
-  const allModifiedIds: string[] = [];
-  for (const access of step.operatorAccess.values()) {
-    allModifiedIds.push(...access.modifiedOperatorIds);
-  }
-
-  // Return unique operator IDs
-  return [...new Set(allModifiedIds)];
-}
-
-/**
- * Extract all operator IDs (both viewed and modified) from a ReActStep.
- *
- * @param step - The ReActStep to extract from
- * @returns Array of unique operator IDs involved in this step
- */
-export function getAllOperatorIds(step: { operatorAccess?: Map<number, ToolOperatorAccess> }): string[] {
-  const viewedIds = getAllViewedOperatorIds(step);
-  const modifiedIds = getAllModifiedOperatorIds(step);
-
-  // Combine and return unique IDs
-  return [...new Set([...viewedIds, ...modifiedIds])];
 }

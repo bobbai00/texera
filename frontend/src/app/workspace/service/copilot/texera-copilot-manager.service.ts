@@ -441,22 +441,6 @@ export class TexeraCopilotManagerService {
     });
   }
 
-  public getRelevantOperators(agentId: string): string[] {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      throw new Error(`Agent with ID ${agentId} not found`);
-    }
-    return agent.instance.getRelevantOperators();
-  }
-
-  public getRelevantOperatorsObservable(agentId: string): Observable<string[]> {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      throw new Error(`Agent with ID ${agentId} not found`);
-    }
-    return agent.instance.relevantOperators$;
-  }
-
   public setHoveredMessage(agentId: string, step: ReActStep | null): void {
     const agent = this.agents.get(agentId);
     if (!agent) {
@@ -467,7 +451,7 @@ export class TexeraCopilotManagerService {
 
   public getHoveredMessageOperatorsObservable(
     agentId: string
-  ): Observable<{ viewedOperatorIds: string[]; modifiedOperatorIds: string[] }> {
+  ): Observable<{ viewedOperatorIds: string[]; addedOperatorIds: string[]; modifiedOperatorIds: string[] }> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`Agent with ID ${agentId} not found`);
@@ -538,84 +522,6 @@ export class TexeraCopilotManagerService {
       }
 
       return of({ viewedBy, modifiedBy });
-    });
-  }
-
-  /**
-   * Get ReActSteps that depend on a specific step.
-   * A step B depends on step A if:
-   * - Step A comes earlier (lower stepId or earlier timestamp)
-   * - Step A modified some operator IDs
-   * - Step B viewed or modified those same operator IDs
-   */
-  public getDependentReActSteps(agentId: string, messageId: string, stepId: number): Observable<ReActStep[]> {
-    return defer(() => {
-      const agent = this.agents.get(agentId);
-      if (!agent) {
-        return throwError(() => new Error(`Agent with ID ${agentId} not found`));
-      }
-
-      const allSteps = agent.instance.getReActSteps();
-
-      // Find the target step
-      const targetStep = allSteps.find(s => s.messageId === messageId && s.stepId === stepId);
-      if (!targetStep) {
-        return of([]);
-      }
-
-      // Collect all operator IDs modified by the target step
-      const modifiedOperatorIds = new Set<string>();
-      if (targetStep.operatorAccess) {
-        targetStep.operatorAccess.forEach(access => {
-          access.modifiedOperatorIds.forEach(opId => modifiedOperatorIds.add(opId));
-        });
-      }
-
-      // If target step didn't modify anything, no steps can depend on it
-      if (modifiedOperatorIds.size === 0) {
-        return of([]);
-      }
-
-      // Find all later steps that viewed or modified the same operators
-      const dependentSteps: ReActStep[] = [];
-      for (const step of allSteps) {
-        // Skip if it's the same step or comes before the target step
-        if (step.messageId === targetStep.messageId && step.stepId === targetStep.stepId) {
-          continue;
-        }
-
-        // Check if step comes after target step (by timestamp)
-        if (step.timestamp <= targetStep.timestamp) {
-          continue;
-        }
-
-        // Check if this step viewed or modified any of the target step's modified operators
-        let hasAccess = false;
-        if (step.operatorAccess) {
-          step.operatorAccess.forEach(access => {
-            // Check viewedOperatorIds
-            for (const opId of access.viewedOperatorIds) {
-              if (modifiedOperatorIds.has(opId)) {
-                hasAccess = true;
-                break;
-              }
-            }
-            // Check modifiedOperatorIds
-            for (const opId of access.modifiedOperatorIds) {
-              if (modifiedOperatorIds.has(opId)) {
-                hasAccess = true;
-                break;
-              }
-            }
-          });
-        }
-
-        if (hasAccess) {
-          dependentSteps.push(step);
-        }
-      }
-
-      return of(dependentSteps);
     });
   }
 

@@ -29,7 +29,6 @@ import {
   operatorCoeditorChangedPropertyClass,
   operatorCoeditorEditingClass,
   operatorAgentActionProgressClass,
-  operatorAgentActionIconClass,
 } from "../../joint-ui/joint-ui.service";
 import { dia } from "jointjs/types/joint";
 import * as _ from "lodash";
@@ -1026,22 +1025,16 @@ export class JointGraphWrapper {
    * @param isCompleted Whether the action is completed
    */
   public setAgentActionProgress(operatorId: string, agentName: string, isCompleted: boolean): void {
-    const iconUrl = isCompleted
-      ? "assets/svg/done.svg" // Green check mark for completed
-      : "assets/gif/loading.gif"; // Yellow spinner for in-progress
-
-    const textColor = isCompleted ? "green" : "orange"; // Same colors as operator states
+    const textColor = isCompleted ? "green" : "orange";
+    const statusText = isCompleted ? "done" : "working";
 
     const element = this.getMainJointPaper()?.getModelById(operatorId);
     if (element) {
       element.attr({
         [`.${operatorAgentActionProgressClass}`]: {
-          text: agentName,
+          text: `${agentName}: ${statusText}`,
           fill: textColor,
-          visibility: "visible",
-        },
-        [`.${operatorAgentActionIconClass}`]: {
-          "xlink:href": iconUrl,
+          "font-weight": "bold",
           visibility: "visible",
         },
       });
@@ -1058,10 +1051,6 @@ export class JointGraphWrapper {
       .attr({
         [`.${operatorAgentActionProgressClass}`]: {
           text: "",
-          visibility: "hidden",
-        },
-        [`.${operatorAgentActionIconClass}`]: {
-          "xlink:href": "",
           visibility: "hidden",
         },
       });

@@ -118,7 +118,6 @@ export const operatorStateClass = "texera-operator-state";
 export const operatorCoeditorEditingClass = "texera-operator-coeditor-editing";
 export const operatorCoeditorChangedPropertyClass = "texera-operator-coeditor-changed-property";
 export const operatorAgentActionProgressClass = "texera-operator-agent-action-progress";
-export const operatorAgentActionIconClass = "texera-operator-agent-action-icon";
 
 export const operatorIconClass = "texera-operator-icon";
 export const operatorNameClass = "texera-operator-name";
@@ -148,12 +147,8 @@ class TexeraCustomJointElement extends joint.shapes.devs.Model {
       <text class="${operatorCoeditorEditingClass}"></text>
       <text class="${operatorCoeditorChangedPropertyClass}"></text>
       <text class="${operatorAgentActionProgressClass}"></text>
-      <image class="${operatorAgentActionIconClass}"></image>
       <image class="${operatorViewResultIconClass}"></image>
       <image class="${operatorReuseCacheIconClass}"></image>
-      <text class="${operatorCoeditorEditingClass}"></text>
-      <text class="${operatorCoeditorChangedPropertyClass}"></text>
-      <image class="${operatorViewResultIconClass}"></image>
       <rect class="boundary"></rect>
       <path class="left-boundary"></path>
       <path class="right-boundary"></path>
@@ -707,26 +702,15 @@ export class JointUIService {
       ".texera-operator-agent-action-progress": {
         text: "",
         "font-size": "11px",
-        "font-weight": "500",
+        "font-weight": "bold",
         "font-family": "'Inter', 'SF Pro Display', -apple-system, sans-serif",
         visibility: "hidden",
-        "ref-x": 64, // Right next to icon (outside operator box)
-        "ref-y": 12, // Same vertical position as icon
+        "ref-x": 0.5, // Center horizontally
+        "ref-y": 95, // Below the operator name
         ref: "rect.body",
-        "text-anchor": "start", // Left-align text from this point
-        "y-alignment": "middle",
-      },
-      ".texera-operator-agent-action-icon": {
-        "xlink:href": "",
-        width: 16,
-        height: 16,
-        visibility: "hidden",
-        "ref-x": 47, // Top right corner (operator width is 60px)
-        "ref-y": 12, // Near top edge
-        ref: "rect.body",
+        "text-anchor": "middle",
         "x-alignment": "middle",
         "y-alignment": "middle",
-        cursor: "pointer",
       },
       ".texera-operator-state": {
         text: "",
@@ -1012,16 +996,17 @@ export class JointUIService {
   }
 
   /**
-   * Shows agent action labels (Viewing/Modifying) on operators.
+   * Shows agent action labels (viewed/added/modified) on operators.
+   * Displays bold agent name and action type as text below the operator.
    * @param jointPaper The JointJS paper
    * @param operatorID The operator ID to show labels on
-   * @param actionType The type of action: "viewing" or "modifying"
+   * @param actionType The type of action: "viewed", "added", or "modified"
    * @param agentName The name of the agent performing the action
    */
   public showAgentActionLabel(
     jointPaper: joint.dia.Paper,
     operatorID: string,
-    actionType: "viewing" | "modifying",
+    actionType: "viewed" | "added" | "modified",
     agentName: string = "Agent"
   ): void {
     const element = jointPaper.getModelById(operatorID);
@@ -1029,18 +1014,15 @@ export class JointUIService {
       return;
     }
 
-    const iconUrl = actionType === "viewing" ? "assets/gif/agent-viewing.gif" : "assets/gif/agent-modifying.gif";
+    // Format: "AgentName: action" with bold styling
+    const labelText = `${agentName}: ${actionType}`;
 
     element.attr({
-      [`.${operatorAgentActionIconClass}`]: {
-        "xlink:href": iconUrl,
-        visibility: "visible",
-      },
       [`.${operatorAgentActionProgressClass}`]: {
-        text: agentName,
-        fill: "orange",
+        text: labelText,
+        fill: "#595959",
+        "font-weight": "bold",
         visibility: "visible",
-        "ref-y": 7, // Move up 5px from default position (was 12)
       },
     });
   }
@@ -1057,24 +1039,11 @@ export class JointUIService {
     }
 
     element.attr({
-      [`.${operatorAgentActionIconClass}`]: {
-        "xlink:href": "",
-        visibility: "hidden",
-      },
       [`.${operatorAgentActionProgressClass}`]: {
         text: "",
         visibility: "hidden",
       },
     });
-
-    // Remove tooltip
-    const iconElement = jointPaper.findViewByModel(operatorID)?.el.querySelector(`.${operatorAgentActionIconClass}`);
-    if (iconElement) {
-      const existingTitle = iconElement.querySelector("title");
-      if (existingTitle) {
-        existingTitle.remove();
-      }
-    }
   }
 }
 
