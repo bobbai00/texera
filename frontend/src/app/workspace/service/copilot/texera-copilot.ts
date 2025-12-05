@@ -28,9 +28,7 @@ import {
   DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
 } from "./tool/tools-utility";
 import * as workflowMetadataTools from "./tool/workflow-metadata-tools";
-import * as currentWorkflowEditingObservingTools from "./tool/current-workflow-editing-observing-tools";
 import * as currentWorkflowExecutionTools from "./tool/current-workflow-execution-tools";
-import * as agentActionTools from "./tool/agent-action-tools";
 import * as baselineTools from "./tool/baseline-tools";
 import * as operatorTools from "./tool/operator-tools";
 import { OperatorMetadataService } from "../operator-metadata/operator-metadata.service";
@@ -63,7 +61,7 @@ import { WorkflowConsoleService } from "../workflow-console/workflow-console.ser
 import { WorkflowStatusService } from "../workflow-status/workflow-status.service";
 import { WorkflowPersistService } from "../../../common/service/workflow-persist/workflow-persist.service";
 import { WorkflowVersionService } from "../../../dashboard/service/user/workflow-version/workflow-version.service";
-import { TOOL_NAME_GET_CURRENT_WORKFLOW } from "./tool/current-workflow-editing-observing-tools";
+import { TOOL_NAME_GET_CURRENT_WORKFLOW } from "./tool/operator-tools";
 import { parseOperatorAccessFromStep, ToolOperatorAccess } from "./tool/react-step-operator-parser";
 
 /**
@@ -379,7 +377,7 @@ export class TexeraCopilot {
                 // Replace escaped newlines and quotes that are incorrectly double-escaped
                 let repaired = rawInput
                   .replace(/\\\\n/g, "\\n") // \\n -> \n
-                  .replace(/\\\\"/g, "\\\"") // \\" -> \"
+                  .replace(/\\\\"/g, '\\"') // \\" -> \"
                   .replace(/\\\\t/g, "\\t"); // \\t -> \t
 
                 const parsed = JSON.parse(repaired);
@@ -421,9 +419,9 @@ export class TexeraCopilot {
               // Check if planning mode is on and there's any workflow action tool call
               if (this.planningMode && toolCalls && toolResults) {
                 const workflowActionToolNames = [
-                  agentActionTools.TOOL_NAME_ADD_TO_WORKFLOW,
-                  agentActionTools.TOOL_NAME_MODIFY_IN_WORKFLOW,
-                  agentActionTools.TOOL_NAME_DELETE_FROM_WORKFLOW,
+                  operatorTools.TOOL_NAME_ADD_OPERATOR,
+                  operatorTools.TOOL_NAME_MODIFY_OPERATOR,
+                  operatorTools.TOOL_NAME_DELETE_FROM_WORKFLOW,
                 ];
                 const agentActionCallIndex = toolCalls.findIndex(call =>
                   workflowActionToolNames.includes(call.toolName)
@@ -568,12 +566,9 @@ export class TexeraCopilot {
    * Create workflow manipulation tools with timeout protection.
    */
   private createWorkflowTools(): Record<string, any> {
-    // Current workflow editing and observing tools - merged into single getCurrentWorkflow tool
+    // Current workflow observing tool - returns operators and links
     const getCurrentWorkflowTool = toolWithTimeout(
-      currentWorkflowEditingObservingTools.createGetCurrentWorkflowTool(
-        this.workflowActionService,
-        this.workflowCompilingService
-      ),
+      operatorTools.createGetCurrentWorkflowTool(this.workflowActionService, this.workflowCompilingService),
       this.settings.toolTimeoutMs
     );
 
@@ -740,8 +735,8 @@ export class TexeraCopilot {
 
     // Base tools available in both modes
     const baseTools: Record<string, any> = {
-      // Merged workflow observing tool (replaces listCurrentLinks and listCurrentRelevantOperatorIds)
-      [currentWorkflowEditingObservingTools.TOOL_NAME_GET_CURRENT_WORKFLOW]: getCurrentWorkflowTool,
+      // Workflow observing tool (returns operators and links)
+      [operatorTools.TOOL_NAME_GET_CURRENT_WORKFLOW]: getCurrentWorkflowTool,
 
       // Workflow execution tools
       [currentWorkflowExecutionTools.TOOL_NAME_EXECUTE_CURRENT_WORKFLOW_AND_RETRIEVE_RESULTS]:

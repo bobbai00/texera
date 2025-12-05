@@ -19,15 +19,15 @@
 
 /**
  * Tool groups for categorizing copilot tools in the timeline visualization.
- * Groups: Observe, Execute, Modify, Record
+ * Groups: Observe, Execute, Modify
+ *
+ * Only includes tools that are actively used in texera-copilot.ts.
  */
 
 // Import tool name constants from each tool file
 import * as workflowMetadataTools from "./workflow-metadata-tools";
 import * as baselineTools from "./baseline-tools";
-import * as currentWorkflowEditingObservingTools from "./current-workflow-editing-observing-tools";
 import * as currentWorkflowExecutionTools from "./current-workflow-execution-tools";
-import * as agentActionTools from "./agent-action-tools";
 import * as operatorTools from "./operator-tools";
 
 export enum ToolGroup {
@@ -66,62 +66,29 @@ export const TOOL_GROUP_CONFIGS: Record<ToolGroup, ToolGroupConfig> = {
 };
 
 // Mapping of tool names to their groups
+// Only includes tools actively used in texera-copilot.ts
 export const TOOL_NAME_TO_GROUP: Record<string, ToolGroup> = {
-  // Observe group - metadata tools
-  [workflowMetadataTools.TOOL_NAME_LIST_ALL_OPERATOR_TYPES_AND_SCHEMAS]: ToolGroup.OBSERVE,
-  [workflowMetadataTools.TOOL_NAME_GET_OPERATOR_PORTS_INFO]: ToolGroup.OBSERVE,
-  [workflowMetadataTools.TOOL_NAME_GET_OPERATOR_METADATA]: ToolGroup.OBSERVE,
-
-  // Baseline mode tools
+  // baseline mode tools
   [baselineTools.TOOL_NAME_CREATE_PYTHON_UDF]: ToolGroup.MODIFY,
   [baselineTools.TOOL_NAME_EXECUTE_TO_OPERATOR]: ToolGroup.EXECUTE,
 
+  // Observe group - workflow metadata tools
+  [workflowMetadataTools.TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: ToolGroup.OBSERVE,
+  [workflowMetadataTools.TOOL_NAME_GET_OPERATOR_SCHEMA]: ToolGroup.OBSERVE,
+
   // Observe group - workflow inspection tools
-  [currentWorkflowEditingObservingTools.TOOL_NAME_GET_CURRENT_WORKFLOW]: ToolGroup.OBSERVE,
-  [currentWorkflowEditingObservingTools.TOOL_NAME_LIST_CURRENT_RELEVANT_OPERATOR_IDS]: ToolGroup.OBSERVE,
-  [currentWorkflowEditingObservingTools.TOOL_NAME_LIST_CURRENT_LINKS]: ToolGroup.OBSERVE,
-  [currentWorkflowEditingObservingTools.TOOL_NAME_GET_CURRENT_OPERATOR]: ToolGroup.OBSERVE,
-  [currentWorkflowEditingObservingTools.TOOL_NAME_GET_CURRENT_WORKFLOW_COMPILATION_STATE]: ToolGroup.OBSERVE,
-  [currentWorkflowEditingObservingTools.TOOL_NAME_LIST_OPERATORS_IN_CURRENT_WORKFLOW]: ToolGroup.OBSERVE,
+  [operatorTools.TOOL_NAME_GET_CURRENT_WORKFLOW]: ToolGroup.OBSERVE,
+  [currentWorkflowExecutionTools.TOOL_NAME_GET_EXISTING_WORKFLOW_EXECUTION_RESULT]: ToolGroup.OBSERVE,
+  [currentWorkflowExecutionTools.TOOL_NAME_GET_CURRENT_COMPUTING_UNIT_STATUS]: ToolGroup.OBSERVE,
 
   // Execute group - workflow execution tools
   [currentWorkflowExecutionTools.TOOL_NAME_EXECUTE_CURRENT_WORKFLOW_AND_RETRIEVE_RESULTS]: ToolGroup.EXECUTE,
-  [currentWorkflowExecutionTools.TOOL_NAME_GET_EXISTING_WORKFLOW_EXECUTION_RESULT]: ToolGroup.EXECUTE,
-  [currentWorkflowExecutionTools.TOOL_NAME_GET_CURRENT_EXECUTION_STATE]: ToolGroup.EXECUTE,
-  [currentWorkflowExecutionTools.TOOL_NAME_KILL_CURRENT_WORKFLOW]: ToolGroup.EXECUTE,
-  [currentWorkflowExecutionTools.TOOL_NAME_HAS_CURRENT_OPERATOR_RESULT]: ToolGroup.EXECUTE,
-  [currentWorkflowExecutionTools.TOOL_NAME_GET_CURRENT_OPERATOR_RESULT_INFO]: ToolGroup.EXECUTE,
-  [currentWorkflowExecutionTools.TOOL_NAME_GET_CURRENT_COMPUTING_UNIT_STATUS]: ToolGroup.EXECUTE,
 
-  // Modify group - agent action tools (workflow modifications)
-  [agentActionTools.TOOL_NAME_ADD_TO_WORKFLOW]: ToolGroup.MODIFY,
-  [agentActionTools.TOOL_NAME_MODIFY_IN_WORKFLOW]: ToolGroup.MODIFY,
-  [agentActionTools.TOOL_NAME_GET_AGENT_ACTION]: ToolGroup.MODIFY,
-  [agentActionTools.TOOL_NAME_LIST_AGENT_ACTIONS]: ToolGroup.MODIFY,
-  [agentActionTools.TOOL_NAME_DELETE_AGENT_ACTION]: ToolGroup.MODIFY,
-  [agentActionTools.TOOL_NAME_UPDATE_AGENT_ACTION]: ToolGroup.MODIFY,
-
-  // Modify group - operator-specific tools
-  [operatorTools.TOOL_NAME_ADD_PYTHON_UDF_V2]: ToolGroup.MODIFY,
-  [operatorTools.TOOL_NAME_ADD_AGGREGATE]: ToolGroup.MODIFY,
-  [operatorTools.TOOL_NAME_ADD_PROJECTION]: ToolGroup.MODIFY,
-  [operatorTools.TOOL_NAME_ADD_HASH_JOIN]: ToolGroup.MODIFY,
-  [operatorTools.TOOL_NAME_ADD_SORT]: ToolGroup.MODIFY,
-  [operatorTools.TOOL_NAME_ADD_UNION]: ToolGroup.MODIFY,
-  [operatorTools.TOOL_NAME_ADD_INTERSECT]: ToolGroup.MODIFY,
-  [operatorTools.TOOL_NAME_ADD_CARTESIAN_PRODUCT]: ToolGroup.MODIFY,
-  [operatorTools.TOOL_NAME_ADD_CSV_FILE_SCAN]: ToolGroup.MODIFY,
+  // Modify group - operator tools
+  [operatorTools.TOOL_NAME_ADD_OPERATOR]: ToolGroup.MODIFY,
   [operatorTools.TOOL_NAME_ADD_LINK]: ToolGroup.MODIFY,
   [operatorTools.TOOL_NAME_MODIFY_OPERATOR]: ToolGroup.MODIFY,
   [operatorTools.TOOL_NAME_DELETE_FROM_WORKFLOW]: ToolGroup.MODIFY,
-
-  // Modify group - direct workflow editing tools (currently commented out in copilot)
-  [currentWorkflowEditingObservingTools.TOOL_NAME_ADD_OPERATOR_TO_CURRENT_WORKFLOW]: ToolGroup.MODIFY,
-  [currentWorkflowEditingObservingTools.TOOL_NAME_ADD_LINK_TO_CURRENT_WORKFLOW]: ToolGroup.MODIFY,
-  [currentWorkflowEditingObservingTools.TOOL_NAME_DELETE_OPERATOR_IN_CURRENT_WORKFLOW]: ToolGroup.MODIFY,
-  [currentWorkflowEditingObservingTools.TOOL_NAME_DELETE_LINK_IN_CURRENT_WORKFLOW]: ToolGroup.MODIFY,
-  [currentWorkflowEditingObservingTools.TOOL_NAME_SET_OPERATOR_PROPERTY_IN_CURRENT_WORKFLOW]: ToolGroup.MODIFY,
-  [currentWorkflowEditingObservingTools.TOOL_NAME_SET_PORT_PROPERTY_IN_CURRENT_WORKFLOW]: ToolGroup.MODIFY,
 };
 
 /**

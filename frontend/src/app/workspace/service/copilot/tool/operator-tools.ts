@@ -22,7 +22,8 @@ import { tool } from "ai";
 import { WorkflowActionService } from "../../workflow-graph/model/workflow-action.service";
 import { AgentActionService } from "../../agent-action/agent-action.service";
 import { OperatorMetadataService } from "../../operator-metadata/operator-metadata.service";
-import { createSuccessResult, createErrorResult } from "./tools-utility";
+import { WorkflowCompilingService } from "../../compile-workflow/workflow-compiling.service";
+import { createSuccessResult, createErrorResult, OperatorDetail } from "./tools-utility";
 import { validateOperatorProperties } from "./workflow-metadata-tools";
 import { Validation } from "../../validation/validation-workflow.service";
 
@@ -40,6 +41,7 @@ export const TOOL_NAME_ADD_CSV_FILE_SCAN = "addCSVFileScan";
 export const TOOL_NAME_ADD_LINK = "addLink";
 export const TOOL_NAME_MODIFY_OPERATOR = "modifyOperator";
 export const TOOL_NAME_DELETE_FROM_WORKFLOW = "deleteFromWorkflow";
+export const TOOL_NAME_GET_CURRENT_WORKFLOW = "getCurrentWorkflow";
 
 /**
  * Helper to create agent action and return its ID
@@ -843,6 +845,105 @@ export function createDeleteFromWorkflowTool(
         );
       } catch (error: any) {
         return createErrorResult(error.message);
+      }
+    },
+  });
+}
+
+/**
+ * Create unified getCurrentWorkflow tool that returns both operators and links
+ * This merges the functionality of listCurrentLinks and listCurrentRelevantOperatorIds
+ */
+export function createGetCurrentWorkflowTool(
+  workflowActionService: WorkflowActionService,
+  workflowCompilingService: WorkflowCompilingService
+) {
+  return tool({
+    name: TOOL_NAME_GET_CURRENT_WORKFLOW,
+    description:
+      "Get the current workflow structure including operators and links. " +
+      "Returns a list of operators (with id, type, name, properties, input/output schemas) and a list of links. " +
+      "Optionally filter to specific operator IDs. If no operatorIds provided, returns all enabled operators.",
+    inputSchema: z.object({
+      operatorIds: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Optional list of operator IDs to retrieve. If empty or not provided, returns all enabled operators in the workflow."
+        ),
+    }),
+    execute: async (args: { operatorIds?: string[] }) => {
+      try {
+        const texeraGraph = workflowActionService.getTexeraGraph();
+
+        // Get all links
+        const links = texeraGraph.getAllLinks();
+
+        // Determine which operators to return
+        let operatorsToReturn: OperatorDetail[];
+
+        if (args.operatorIds && args.operatorIds.length > 0) {
+          // Filter to specific operator IDs
+          const mappedOperators = args.operatorIds.map(operatorId => {
+            try {
+              const operator = texeraGraph.getOperator(operatorId);
+              if (!operator) return null;
+
+              const inputSchemaMap = workflowCompilingService.getOperatorInputSchemaMap(operatorId);
+              const outputSchemaMap = workflowCompilingService.getOperatorOutputSchemaMap(operatorId);
+
+              return {
+                operatorId: operator.operatorID,
+                operatorType: operator.operatorType,
+                customDisplayName: operator.customDisplayName,
+                operatorProperties: operator.operatorProperties,
+                inputSchema: inputSchemaMap || {},
+                outputSchema: outputSchemaMap || {},
+              } as OperatorDetail;
+            } catch {
+              return null;
+            }
+          });
+          operatorsToReturn = mappedOperators.filter(
+            (op): op is NonNullable<typeof op> => op !== null
+          ) as OperatorDetail[];
+        } else {
+          // Return all enabled operators
+          const enabledOperators = texeraGraph.getAllEnabledOperators();
+          operatorsToReturn = enabledOperators.map(operator => {
+            const operatorId = operator.operatorID;
+            const inputSchemaMap = workflowCompilingService.getOperatorInputSchemaMap(operatorId);
+            const outputSchemaMap = workflowCompilingService.getOperatorOutputSchemaMap(operatorId);
+
+            return {
+              operatorId: operator.operatorID,
+              operatorType: operator.operatorType,
+              customDisplayName: operator.customDisplayName,
+              operatorProperties: operator.operatorProperties,
+              inputSchema: inputSchemaMap || {},
+              outputSchema: outputSchemaMap || {},
+            };
+          });
+        }
+
+        const operatorIds = operatorsToReturn.map(op => op.operatorId);
+
+        return createSuccessResult(
+          {
+            operators: operatorsToReturn,
+            links: links,
+            summary: {
+              operatorCount: operatorsToReturn.length,
+              linkCount: links.length,
+            },
+            message: `Retrieved ${operatorsToReturn.length} operator(s) and ${links.length} link(s) from the workflow.`,
+          },
+          operatorIds, // viewedOperatorIds - all operators that were retrieved
+          [], // addedOperatorIds
+          [] // modifiedOperatorIds
+        );
+      } catch (error: any) {
+        return createErrorResult(error.message || String(error));
       }
     },
   });

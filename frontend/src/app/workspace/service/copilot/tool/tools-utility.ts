@@ -197,6 +197,18 @@ export function extractEssentialPlotlyData(fullPlotlyJson: any): EssentialPlotly
 }
 
 /**
+ * Operator detail information including operatorProperties (not port properties)
+ */
+export interface OperatorDetail {
+  operatorId: string;
+  operatorType: string;
+  customDisplayName?: string;
+  operatorProperties: Record<string, any>;
+  inputSchema: Record<string, any>;
+  outputSchema: Record<string, any>;
+}
+
+/**
  * Wraps a tool definition to add timeout protection to its execute function
  * Uses AbortController to properly cancel operations on timeout
  *
