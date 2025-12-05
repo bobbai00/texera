@@ -36,6 +36,7 @@ import {
   DEFAULT_EXECUTION_TIMEOUT_MS,
   createSuccessResult,
   createErrorResult,
+  extractEssentialPlotlyData,
 } from "./tools-utility";
 import { Observable, of, throwError, defer, timer, interval, EMPTY, firstValueFrom, forkJoin } from "rxjs";
 import { filter, timeout, map, switchMap, catchError, take, tap, defaultIfEmpty } from "rxjs/operators";
@@ -143,11 +144,27 @@ export interface PaginatedOperatorResultInfo {
  * Operator result with metadata for visualization (snapshot) results.
  * Visualization operators output both html-content and json-content.
  * The json-content is the native Plotly JSON representation of the chart.
+ *
+ * The chartData is filtered to contain only essential information:
+ * - data: Array of trace objects containing the actual chart data (x, y values, etc.)
+ * - layout: Only essential properties (title, axis titles, legend, annotations)
+ *
+ * Template/theme data is stripped to reduce token usage for LLM consumption.
  */
 export interface VisualizationOperatorResultInfo {
   mode: "visualization";
-  /** The parsed JSON content from plotly.io.to_json() */
-  chartData?: any;
+  /** Essential chart data extracted from Plotly JSON (data traces + key layout properties) */
+  chartData?: {
+    data: any[];
+    layout?: {
+      title?: any;
+      xaxis?: { title?: any };
+      yaxis?: { title?: any };
+      zaxis?: { title?: any };
+      legend?: any;
+      annotations?: any[];
+    };
+  };
   /** Error message if JSON parsing failed */
   parseError?: string;
 }
@@ -646,7 +663,10 @@ function getSnapshotResult$(
   const jsonContent = lastItem?.["json-content"];
   if (jsonContent && typeof jsonContent === "string" && jsonContent !== "{}") {
     try {
-      const chartData = JSON.parse(jsonContent);
+      const fullChartData = JSON.parse(jsonContent);
+      // Extract only essential data (data traces + axis titles) to reduce token usage
+      // This removes the large template/theme sections that don't add analytical value
+      const chartData = extractEssentialPlotlyData(fullChartData);
       return of({
         mode: "visualization",
         chartData,

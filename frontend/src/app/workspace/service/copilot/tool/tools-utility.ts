@@ -117,6 +117,86 @@ export function estimateTokenCount(data: any): number {
 }
 
 /**
+ * Essential Plotly chart data structure.
+ * Contains only the data traces and relevant layout properties for LLM consumption.
+ */
+export interface EssentialPlotlyData {
+  /** The data traces (series) of the chart - this is the actual chart data */
+  data: any[];
+  /** Essential layout properties (titles, axis labels) */
+  layout?: {
+    title?: any;
+    xaxis?: { title?: any };
+    yaxis?: { title?: any };
+    zaxis?: { title?: any };
+    legend?: any;
+    annotations?: any[];
+  };
+}
+
+/**
+ * Extracts essential data from a full Plotly JSON object.
+ * Removes template/theme data that bloats the JSON without adding analytical value.
+ *
+ * The full Plotly JSON from plotly.io.to_json() contains:
+ * - data: Array of trace objects (the actual chart data) - KEPT
+ * - layout: Object with layout properties - FILTERED to keep only essential parts
+ *   - layout.template: Default styling/theme data (hundreds of lines) - REMOVED
+ *   - layout.xaxis/yaxis/title: Useful for understanding the chart - KEPT
+ *
+ * @param fullPlotlyJson - The complete Plotly JSON object from plotly.io.to_json()
+ * @returns Essential Plotly data with only data traces and key layout properties
+ */
+export function extractEssentialPlotlyData(fullPlotlyJson: any): EssentialPlotlyData {
+  if (!fullPlotlyJson || typeof fullPlotlyJson !== "object") {
+    return { data: [] };
+  }
+
+  const result: EssentialPlotlyData = {
+    data: Array.isArray(fullPlotlyJson.data) ? fullPlotlyJson.data : [],
+  };
+
+  // Extract only essential layout properties (skip template and other theme data)
+  if (fullPlotlyJson.layout && typeof fullPlotlyJson.layout === "object") {
+    const layout = fullPlotlyJson.layout;
+    const essentialLayout: EssentialPlotlyData["layout"] = {};
+
+    // Keep title
+    if (layout.title !== undefined) {
+      essentialLayout.title = layout.title;
+    }
+
+    // Keep axis titles (but not full axis config with gridcolor, linecolor, etc.)
+    if (layout.xaxis?.title !== undefined) {
+      essentialLayout.xaxis = { title: layout.xaxis.title };
+    }
+    if (layout.yaxis?.title !== undefined) {
+      essentialLayout.yaxis = { title: layout.yaxis.title };
+    }
+    if (layout.zaxis?.title !== undefined) {
+      essentialLayout.zaxis = { title: layout.zaxis.title };
+    }
+
+    // Keep legend configuration if present
+    if (layout.legend !== undefined) {
+      essentialLayout.legend = layout.legend;
+    }
+
+    // Keep annotations if present (useful for understanding chart context)
+    if (Array.isArray(layout.annotations) && layout.annotations.length > 0) {
+      essentialLayout.annotations = layout.annotations;
+    }
+
+    // Only include layout if we have any essential properties
+    if (Object.keys(essentialLayout).length > 0) {
+      result.layout = essentialLayout;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Wraps a tool definition to add timeout protection to its execute function
  * Uses AbortController to properly cancel operations on timeout
  *
