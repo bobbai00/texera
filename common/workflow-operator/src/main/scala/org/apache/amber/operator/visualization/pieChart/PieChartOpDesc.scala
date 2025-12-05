@@ -61,7 +61,7 @@ class PieChartOpDesc extends PythonOperatorDescriptor {
   ): Map[PortIdentity, Schema] = {
     val outputSchema = Schema()
       .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+      .add("json-content", AttributeType.STRING)
     Map(operatorInfo.outputPorts.head.id -> outputSchema)
   }
 
@@ -110,20 +110,21 @@ class PieChartOpDesc extends PythonOperatorDescriptor {
          |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
          |        original_table = table
          |        if table.empty:
-         |           yield {'html-content': self.render_error("input table is empty.")}
+         |           yield {'html-content': self.render_error("input table is empty."), 'json-content': '{}'}
          |           return
          |        ${manipulateTable()}
          |        if table.empty:
-         |           yield {'html-content': self.render_error("value column contains only non-positive numbers.")}
+         |           yield {'html-content': self.render_error("value column contains only non-positive numbers."), 'json-content': '{}'}
          |           return
          |        duplicates = table.duplicated(subset=['$name'])
          |        if duplicates.any():
-         |           yield {'html-content': self.render_error("duplicates in name column, need to aggregate")}
+         |           yield {'html-content': self.render_error("duplicates in name column, need to aggregate"), 'json-content': '{}'}
          |           return
          |        ${createPlotlyFigure()}
-         |        # convert fig to html content
+         |        # convert fig to html and json content
          |        html = plotly.io.to_html(fig, include_plotlyjs='cdn', auto_play=False)
-         |        yield {'html-content': html}
+         |        json_content = plotly.io.to_json(fig)
+         |        yield {'html-content': html, 'json-content': json_content}
          |
          |""".stripMargin
     finalcode

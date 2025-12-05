@@ -754,19 +754,19 @@ export class TexeraCopilot {
       [workflowMetadataTools.TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: listAllAvailableOperatorTypesTool,
       [workflowMetadataTools.TOOL_NAME_GET_OPERATOR_SCHEMA]: getOperatorSchemaTool,
 
+      // Relational operator-specific tools (convenience tools with typed schemas)
+      // [operatorTools.TOOL_NAME_ADD_PYTHON_UDF_V2]: addPythonUDFV2Tool,
+      // [operatorTools.TOOL_NAME_ADD_AGGREGATE]: addAggregateTool,
+      // [operatorTools.TOOL_NAME_ADD_PROJECTION]: addProjectionTool,
+      // [operatorTools.TOOL_NAME_ADD_HASH_JOIN]: addHashJoinTool,
+      // [operatorTools.TOOL_NAME_ADD_SORT]: addSortTool,
+      // [operatorTools.TOOL_NAME_ADD_UNION]: addUnionTool,
+      // [operatorTools.TOOL_NAME_ADD_INTERSECT]: addIntersectTool,
+      // [operatorTools.TOOL_NAME_ADD_CARTESIAN_PRODUCT]: addCartesianProductTool,
+      // [operatorTools.TOOL_NAME_ADD_CSV_FILE_SCAN]: addCSVFileScanTool,
+
       // Generic operator tool - can add any operator type
       [operatorTools.TOOL_NAME_ADD_OPERATOR]: addOperatorTool,
-
-      // Operator-specific tools (convenience tools with typed schemas)
-      [operatorTools.TOOL_NAME_ADD_PYTHON_UDF_V2]: addPythonUDFV2Tool,
-      [operatorTools.TOOL_NAME_ADD_AGGREGATE]: addAggregateTool,
-      [operatorTools.TOOL_NAME_ADD_PROJECTION]: addProjectionTool,
-      [operatorTools.TOOL_NAME_ADD_HASH_JOIN]: addHashJoinTool,
-      [operatorTools.TOOL_NAME_ADD_SORT]: addSortTool,
-      [operatorTools.TOOL_NAME_ADD_UNION]: addUnionTool,
-      [operatorTools.TOOL_NAME_ADD_INTERSECT]: addIntersectTool,
-      [operatorTools.TOOL_NAME_ADD_CARTESIAN_PRODUCT]: addCartesianProductTool,
-      [operatorTools.TOOL_NAME_ADD_CSV_FILE_SCAN]: addCSVFileScanTool,
       [operatorTools.TOOL_NAME_ADD_LINK]: addLinkTool,
       [operatorTools.TOOL_NAME_MODIFY_OPERATOR]: modifyOperatorTool,
       [operatorTools.TOOL_NAME_DELETE_FROM_WORKFLOW]: deleteFromWorkflowTool,

@@ -22,12 +22,13 @@ import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.VisualizationConstants
 
 class GaugeChartOpDesc extends PythonOperatorDescriptor {
   @JsonProperty(value = "value", required = true)
@@ -54,8 +55,7 @@ class GaugeChartOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    val outputSchema = Schema().add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 
   override def operatorInfo: OperatorInfo =
@@ -99,7 +99,7 @@ class GaugeChartOpDesc extends PythonOperatorDescriptor {
          |    @overrides
          |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
          |        if table.empty:
-         |            yield {'html-content': self.render_error("Input table is empty.")}
+         |            yield {'html-content': self.render_error("Input table is empty."), 'json-content': '{}'}
          |            return
          |
          |        try:
@@ -115,7 +115,7 @@ class GaugeChartOpDesc extends PythonOperatorDescriptor {
          |
          |            table = table.dropna(subset=[gauge_value])
          |            if table.empty:
-         |                yield {'html-content': self.render_error("No non-null rows found for the value column.")}
+         |                yield {'html-content': self.render_error("No non-null rows found for the value column."), 'json-content': '{}'}
          |                return
          |
          |            try:
@@ -180,10 +180,10 @@ class GaugeChartOpDesc extends PythonOperatorDescriptor {
          |                except Exception as e:
          |                    html_chunks.append(self.render_error(f"Error generating chart: {str(e)}"))
          |
-         |            yield {"html-content": "<div>" + "".join(html_chunks) + "</div>"}
+         |            yield {"html-content": "<div>" + "".join(html_chunks) + "</div>", "json-content": "{}"}
          |
          |        except Exception as e:
-         |            yield {'html-content': self.render_error(f"General error: {str(e)}")}
+         |            yield {'html-content': self.render_error(f"General error: {str(e)}"), 'json-content': '{}'}
          |""".stripMargin
   }
 }

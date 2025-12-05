@@ -21,12 +21,13 @@ package org.apache.amber.operator.visualization.dumbbellPlot
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.VisualizationConstants
 
 import java.util
 import javax.validation.constraints.{NotBlank, NotNull}
@@ -87,10 +88,7 @@ class DumbbellPlotOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    val outputSchema = Schema()
-      .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 
   override def operatorInfo: OperatorInfo =
@@ -174,23 +172,17 @@ class DumbbellPlotOpDesc extends PythonOperatorDescriptor {
        |import numpy as np
        |
        |class ProcessTableOperator(UDFTableOperator):
-       |    def render_error(self, error_msg):
-       |        return '''<h1>DumbbellPlot is not available.</h1>
-       |                  <p>Reason is: {} </p>
-       |               '''.format(error_msg)
+       |${VisualizationConstants.RenderErrorMethodCode}
        |
        |    @overrides
        |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
        |        if table.empty:
-       |           yield {'html-content': self.render_error("input table is empty.")}
+       |           yield self.render_error_with_json("input table is empty.")
        |           return
        |        ${createPlotlyDumbbellLineFigure()}
        |        ${addPlotlyDots()}
-       |        # convert fig to html content
        |        fig.update_layout(margin=dict(l=0, r=0, b=60, t=0))
-       |        html = plotly.io.to_html(fig, include_plotlyjs='cdn', auto_play=False)
-       |        yield {'html-content': html}
-       |
+       |${VisualizationConstants.OutputCode}
        |""".stripMargin
   }
 }

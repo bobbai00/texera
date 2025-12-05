@@ -21,12 +21,13 @@ package org.apache.amber.operator.visualization.funnelPlot
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.VisualizationConstants
 @JsonSchemaInject(json = """
 {
   "attributeTypeRules": {
@@ -57,10 +58,7 @@ class FunnelPlotOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    val outputSchema = Schema()
-      .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 
   override def operatorInfo: OperatorInfo =
@@ -100,21 +98,15 @@ class FunnelPlotOpDesc extends PythonOperatorDescriptor {
          |import numpy as np
          |
          |class ProcessTableOperator(UDFTableOperator):
-         |    def render_error(self, error_msg):
-         |        return '''<h1>Chart is not available.</h1>
-         |                  <p>Reason is: {} </p>
-         |               '''.format(error_msg)
+         |${VisualizationConstants.RenderErrorMethodCode}
          |
          |    @overrides
          |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
          |        if table.empty:
-         |           yield {'html-content': self.render_error("input table is empty.")}
+         |           yield self.render_error_with_json("input table is empty.")
          |           return
          |        ${createPlotlyFigure()}
-         |        # convert fig to html content
-         |        html = plotly.io.to_html(fig, include_plotlyjs='cdn', auto_play=False)
-         |        yield {'html-content': html}
-         |
+         |${VisualizationConstants.OutputCode}
          |""".stripMargin
 
     finalcode

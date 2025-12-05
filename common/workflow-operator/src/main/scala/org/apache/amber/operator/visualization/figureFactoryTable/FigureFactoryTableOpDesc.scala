@@ -21,11 +21,12 @@ package org.apache.amber.operator.visualization.figureFactoryTable
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.VisualizationConstants
 class FigureFactoryTableOpDesc extends PythonOperatorDescriptor {
 
   @JsonProperty(required = false)
@@ -93,23 +94,23 @@ class FigureFactoryTableOpDesc extends PythonOperatorDescriptor {
        |import plotly.io
        |
        |class TableChartOperator(UDFTableOperator):
+       |${VisualizationConstants.RenderErrorMethodCode}
        |
        |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
        |
        |        if table.empty:
-       |           yield {'html-content': self.render_error("input table is empty.")}
+       |           yield self.render_error_with_json("input table is empty.")
        |           return
        |
        |        ${manipulateTable()}
        |
        |        if table.empty:
-       |           yield {'html-content': self.render_error("value column contains only non-positive numbers or nulls.")}
+       |           yield self.render_error_with_json("value column contains only non-positive numbers or nulls.")
        |           return
        |
        |        ${createFigureFactoryTablePlotlyFigure()}
        |        fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))
-       |        html_content = plotly.io.to_html(fig, include_plotlyjs='cdn', include_mathjax='cdn')
-       |        yield {'html-content': html_content}
+       |${VisualizationConstants.OutputCode}
   """.stripMargin
   }
 
@@ -126,9 +127,6 @@ class FigureFactoryTableOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    val outputSchema = Schema()
-      .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 }

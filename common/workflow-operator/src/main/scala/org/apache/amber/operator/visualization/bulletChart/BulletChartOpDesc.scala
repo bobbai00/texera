@@ -21,12 +21,13 @@ package org.apache.amber.operator.visualization.bulletChart
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.VisualizationConstants
 
 import java.util.{ArrayList, List => JList}
 import scala.jdk.CollectionConverters._
@@ -60,8 +61,7 @@ class BulletChartOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    val outputSchema = Schema().add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 
   override def operatorInfo: OperatorInfo =
@@ -129,7 +129,7 @@ class BulletChartOpDesc extends PythonOperatorDescriptor {
          |    @overrides
          |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
          |        if table.empty:
-         |            yield {'html-content': self.render_error("Input table is empty.")}
+         |            yield {'html-content': self.render_error("Input table is empty."), 'json-content': '{}'}
          |            return
          |
          |        try:
@@ -137,12 +137,12 @@ class BulletChartOpDesc extends PythonOperatorDescriptor {
          |            delta_ref = float("$deltaReference") if "$deltaReference".strip() else 0
          |
          |            if value_col not in table.columns:
-         |                yield {'html-content': self.render_error(f"Column '{value_col}' not found in input table.")}
+         |                yield {'html-content': self.render_error(f"Column '{value_col}' not found in input table."), 'json-content': '{}'}
          |                return
          |
          |            table = table.dropna(subset=[value_col])
          |            if table.empty:
-         |                yield {'html-content': self.render_error("No valid data rows found after dropping nulls.")}
+         |                yield {'html-content': self.render_error("No valid data rows found after dropping nulls."), 'json-content': '{}'}
          |                return
          |
          |            try:
@@ -222,9 +222,9 @@ class BulletChartOpDesc extends PythonOperatorDescriptor {
          |
          |            # Combine HTML chunks into final output
          |            final_html = "<div>" + "".join(html_chunks) + "</div>"
-         |            yield {"html-content": final_html}
+         |            yield {"html-content": final_html, "json-content": "{}"}
          |        except Exception as e:
-         |            yield {'html-content': self.render_error(f"General error: {str(e)}")}
+         |            yield {'html-content': self.render_error(f"General error: {str(e)}"), 'json-content': '{}'}
          |""".stripMargin
     finalCode
   }

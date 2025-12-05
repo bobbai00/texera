@@ -21,12 +21,13 @@ package org.apache.amber.operator.visualization.treeplot
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.VisualizationConstants
 
 /**
   * Visualization Operator for Tree Plots.
@@ -56,10 +57,7 @@ class TreePlotOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    Map(
-      operatorInfo.outputPorts.head.id -> Schema()
-        .add("html-content", AttributeType.STRING)
-    )
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 
   override def generatePythonCode(): String = {
@@ -76,10 +74,7 @@ class TreePlotOpDesc extends PythonOperatorDescriptor {
        |import ast
        |
        |class ProcessTableOperator(UDFTableOperator):
-       |
-       |    def render_error(self, error_msg):
-       |        return f'''<h1>Tree Plot is not available.</h1>
-       |                   <p>Reason: {error_msg} </p>'''
+       |${VisualizationConstants.RenderErrorMethodCode}
        |
        |    def make_annotations(self, pos, text):
        |        font_color = 'rgb(250,250,250)'
@@ -109,7 +104,7 @@ class TreePlotOpDesc extends PythonOperatorDescriptor {
        |    @overrides
        |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
        |        if table.empty:
-       |            yield {'html-content': self.render_error("Input table is empty.")}
+       |            yield self.render_error_with_json("Input table is empty.")
        |            return
        |
        |        edges = []
@@ -122,7 +117,7 @@ class TreePlotOpDesc extends PythonOperatorDescriptor {
        |                pass
        |
        |        if not edges:
-       |            yield {'html-content': self.render_error("No valid [parent, child] pairs found in column '$edgeListColumn'.")}
+       |            yield self.render_error_with_json("No valid [parent, child] pairs found in column '$edgeListColumn'.")
        |            return
        |
        |        G = Graph.TupleList(edges, directed=True)
@@ -132,7 +127,7 @@ class TreePlotOpDesc extends PythonOperatorDescriptor {
        |        try:
        |            lay = G.layout(layout_algorithm)
        |        except Exception as e:
-       |             yield {'html-content': self.render_error(f"Layout algorithm '{layout_algorithm}' failed: {e}")}
+       |             yield self.render_error_with_json(f"Layout algorithm '{layout_algorithm}' failed: {e}")
        |             return
        |
        |        HORIZONTAL_DENSITY = 120
@@ -181,9 +176,7 @@ class TreePlotOpDesc extends PythonOperatorDescriptor {
        |                          hovermode='closest',
        |                          plot_bgcolor='rgb(248,248,248)')
        |
-       |        html = plotly.io.to_html(fig, include_plotlyjs='cdn', auto_play=False)
-       |        yield {'html-content': html}
-       |
+       |${VisualizationConstants.OutputCode}
        |""".stripMargin
   }
 }

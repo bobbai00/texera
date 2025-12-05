@@ -21,12 +21,13 @@ package org.apache.amber.operator.visualization.quiverPlot
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.VisualizationConstants
 
 @JsonSchemaInject(json = """
 {
@@ -64,10 +65,7 @@ class QuiverPlotOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    val outputSchema = Schema()
-      .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 
   override def operatorInfo: OperatorInfo =
@@ -97,21 +95,17 @@ class QuiverPlotOpDesc extends PythonOperatorDescriptor {
          |import plotly.graph_objects as go
          |
          |class ProcessTableOperator(UDFTableOperator):
-         |
-         |    def render_error(self, error_msg):
-         |        return '''<h1>Quiver Plot is not available.</h1>
-         |                  <p>Reasons are: {} </p>
-         |               '''.format(error_msg)
+         |${VisualizationConstants.RenderErrorMethodCode}
          |
          |    @overrides
          |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
          |        if table.empty:
-         |            yield {'html-content': self.render_error("Input table is empty.")}
+         |            yield self.render_error_with_json("Input table is empty.")
          |            return
          |
          |        required_columns = {'${x}', '${y}', '${u}', '${v}'}
          |        if not required_columns.issubset(table.columns):
-         |            yield {'html-content': self.render_error(f"Input table must contain columns: {', '.join(required_columns)}")}
+         |            yield self.render_error_with_json(f"Input table must contain columns: {', '.join(required_columns)}")
          |            return
          |
          |        ${manipulateTable()}
@@ -120,7 +114,7 @@ class QuiverPlotOpDesc extends PythonOperatorDescriptor {
          |            return isinstance(value,(int,float))
          |        for col in required_columns:
          |            if not table[col].apply(type_check).all():
-         |                yield {"html-content": "Type error: All columns should only contain numerical data"}
+         |                yield self.render_error_with_json("Type error: All columns should only contain numerical data")
          |                return
          |
          |        try:
@@ -130,13 +124,10 @@ class QuiverPlotOpDesc extends PythonOperatorDescriptor {
          |                table['${u}'], table['${v}'],
          |                scale=0.1
          |            )
-         |            html = fig.to_html(include_plotlyjs='cdn', full_html=False)
          |        except Exception as e:
-         |            yield {'html-content': self.render_error(f"Plotly error: {str(e)}")}
+         |            yield self.render_error_with_json(f"Plotly error: {str(e)}")
          |            return
-         |
-         |        html = plotly.io.to_html(fig, include_plotlyjs='cdn', auto_play=False)
-         |        yield {'html-content': html}
+         |${VisualizationConstants.OutputCode}
          |""".stripMargin
     finalCode
   }

@@ -30,7 +30,6 @@ import { ExecutionState, ExecutionStateInfo, OperatorStatistics } from "../../..
 import { CompilationState } from "../../../types/workflow-compiling.interface";
 import { ConsoleMessage, OperatorPredicate } from "../../../types/workflow-common.interface";
 import { IndexableObject } from "../../../types/result-table.interface";
-import { PaginatedResultEvent } from "../../../types/workflow-websocket.interface";
 import {
   estimateTokenCount,
   DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
@@ -128,17 +127,35 @@ function filterByTokenLimit(
 }
 
 /**
- * Operator result with metadata
+ * Operator result with metadata for paginated (tabular) results
  */
-export interface OperatorResultInfo {
-  mode: "pagination" | "snapshot";
+export interface PaginatedOperatorResultInfo {
+  mode: "table";
   totalRows: number;
   displayedRows: number;
   estimatedTokens: number;
   truncated: boolean;
   tableStats?: Record<string, Record<string, number>>;
-  result: PaginatedResultEvent | IndexableObject[];
+  result: IndexableObject[];
 }
+
+/**
+ * Operator result with metadata for visualization (snapshot) results.
+ * Visualization operators output both html-content and json-content.
+ * The json-content is the native Plotly JSON representation of the chart.
+ */
+export interface VisualizationOperatorResultInfo {
+  mode: "visualization";
+  /** The parsed JSON content from plotly.io.to_json() */
+  chartData?: any;
+  /** Error message if JSON parsing failed */
+  parseError?: string;
+}
+
+/**
+ * Union type for all operator result types
+ */
+export type OperatorResultInfo = PaginatedOperatorResultInfo | VisualizationOperatorResultInfo;
 
 /**
  * Options for the common execution function
@@ -585,7 +602,7 @@ function getPaginatedResult$(
       const table = (resultEvent.table || []) as IndexableObject[];
       const { limited, tokenCount, truncated } = filterByTokenLimit(table, maxTokenLimit);
       return {
-        mode: "pagination",
+        mode: "table",
         totalRows: paginatedResultService.getCurrentTotalNumTuples(),
         displayedRows: limited.length,
         estimatedTokens: tokenCount,
@@ -601,34 +618,54 @@ function getPaginatedResult$(
 /**
  * Get snapshot result as Observable.
  * Used for operators that produce complete result snapshots (SetSnapshotMode), like visualizations.
+ * Visualization operators output json-content which contains the native Plotly JSON.
+ *
  * @param operatorId - ID of the operator to get results for
  * @param workflowResultService - Service to access workflow results
- * @param maxTokenLimit - Maximum token limit for results
+ * @param _maxTokenLimit - Maximum token limit (unused for visualizations, kept for signature consistency)
  */
 function getSnapshotResult$(
   operatorId: string,
   workflowResultService: WorkflowResultService,
-  maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
+  _maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
 ): Observable<OperatorResultInfo | null> {
   const resultService = workflowResultService.getResultService(operatorId);
   if (!resultService) {
     return of(null);
   }
 
-  const snapshot = resultService.getCurrentResultSnapshot() as IndexableObject[] | null;
+  const snapshot = resultService.getCurrentResultSnapshot();
   if (!snapshot || snapshot.length === 0) {
     return of(null);
   }
 
-  const { limited, tokenCount, truncated } = filterByTokenLimit(snapshot, maxTokenLimit);
+  // Get the last snapshot item (most recent)
+  const lastItem = snapshot[snapshot.length - 1] as Record<string, any>;
+
+  // Check for json-content (new visualization format with Plotly JSON)
+  const jsonContent = lastItem?.["json-content"];
+  if (jsonContent && typeof jsonContent === "string" && jsonContent !== "{}") {
+    try {
+      const chartData = JSON.parse(jsonContent);
+      return of({
+        mode: "visualization",
+        chartData,
+      } as VisualizationOperatorResultInfo);
+    } catch (e) {
+      return of({
+        mode: "visualization",
+        parseError: `Failed to parse json-content: ${e instanceof Error ? e.message : String(e)}`,
+      } as VisualizationOperatorResultInfo);
+    }
+  }
+
+  // Fallback: no json-content available (old visualization format or non-Plotly visualization)
+  // Return a visualization result with error indicating no JSON available
   return of({
-    mode: "snapshot" as const,
-    totalRows: snapshot.length,
-    displayedRows: limited.length,
-    estimatedTokens: tokenCount,
-    truncated,
-    result: limited,
-  });
+    mode: "visualization",
+    parseError: "No json-content available. This visualization may use an older format without JSON export.",
+    estimatedTokens: 0,
+  } as VisualizationOperatorResultInfo);
 }
 
 /**
@@ -807,7 +844,7 @@ export function createGetCurrentOperatorResultInfoTool(
   return tool({
     name: TOOL_NAME_GET_CURRENT_OPERATOR_RESULT_INFO,
     description:
-      "Get information about an operator's results in the current workflow, including total count and pagination details",
+      "Get information about an operator's results in the current workflow, including total count and table details",
     inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to get result info for"),
     }),

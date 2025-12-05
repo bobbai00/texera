@@ -20,12 +20,13 @@ package org.apache.amber.operator.visualization.histogram2d
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.{VisualizationConstants}
 
 class Histogram2DOpDesc extends PythonOperatorDescriptor {
 
@@ -70,8 +71,7 @@ class Histogram2DOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    val outputSchema = Schema().add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 
   override def generatePythonCode(): String = {
@@ -87,20 +87,19 @@ class Histogram2DOpDesc extends PythonOperatorDescriptor {
        |import plotly.io
        |
        |class ProcessTableOperator(UDFTableOperator):
-       |    def render_error(self, msg):
-       |        return f"<h1>2D Histogram failed</h1><p>{msg}</p>"
+       |${VisualizationConstants.RenderErrorMethodCode}
        |
        |    @overrides
        |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
        |        # Empty-table guard
        |        if table.empty:
-       |            yield {"html-content": self.render_error("Input table is empty.")}
+       |            yield self.render_error_with_json("Input table is empty.")
        |            return
        |
        |        # Drop rows with missing x/y
        |        table.dropna(subset=['${xColumn}', '${yColumn}'], inplace=True)
        |        if table.empty:
-       |            yield {"html-content": self.render_error("No rows after dropping nulls.")}
+       |            yield self.render_error_with_json("No rows after dropping nulls.")
        |            return
        |
        |        fig = px.density_heatmap(
@@ -113,8 +112,7 @@ class Histogram2DOpDesc extends PythonOperatorDescriptor {
        |            text_auto=True
        |        )
        |
-       |        html = plotly.io.to_html(fig, include_plotlyjs='cdn', auto_play=False)
-       |        yield {"html-content": html}
+       |${VisualizationConstants.OutputCode}
        |""".stripMargin
   }
 }

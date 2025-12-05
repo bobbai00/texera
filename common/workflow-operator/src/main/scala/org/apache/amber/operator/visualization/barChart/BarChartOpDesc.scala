@@ -78,7 +78,7 @@ class BarChartOpDesc extends PythonOperatorDescriptor {
   ): Map[PortIdentity, Schema] = {
     val outputSchema = Schema()
       .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+      .add("json-content", AttributeType.STRING)
     Map(operatorInfo.outputPorts.head.id -> outputSchema)
   }
 
@@ -142,14 +142,13 @@ class BarChartOpDesc extends PythonOperatorDescriptor {
          |           else:
          |               fig = go.Figure(px.bar(table, y='$value', x='$fields', color="$categoryColumn" if $isCategoryColumn else None, pattern_shape="$pattern" if $isPatternSelected else None))
          |           fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
-         |           html = plotly.io.to_html(fig, include_plotlyjs = 'cdn', auto_play = False)
-         |           # use latest plotly lib in html
-         |           #html = html.replace('https://cdn.plot.ly/plotly-2.3.1.min.js', 'https://cdn.plot.ly/plotly-2.18.2.min.js')
+         |           html = plotly.io.to_html(fig, include_plotlyjs='cdn', auto_play=False)
+         |           json_content = plotly.io.to_json(fig)
+         |           yield {'html-content': html, 'json-content': json_content}
          |        elif '$fields' == '$value':
-         |           html = self.render_error('Fields should not have the same value.')
+         |           yield {'html-content': self.render_error('Fields should not have the same value.'), 'json-content': '{}'}
          |        elif table.empty:
-         |           html = self.render_error('Table should not have any empty/null values or fields.')
-         |        yield {'html-content':html}
+         |           yield {'html-content': self.render_error('Table should not have any empty/null values or fields.'), 'json-content': '{}'}
          |        """.stripMargin
     finalCode
   }

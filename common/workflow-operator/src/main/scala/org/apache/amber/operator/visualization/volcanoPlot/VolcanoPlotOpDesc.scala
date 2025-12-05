@@ -21,12 +21,13 @@ package org.apache.amber.operator.visualization.volcanoPlot
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.VisualizationConstants
 
 class VolcanoPlotOpDesc extends PythonOperatorDescriptor {
 
@@ -60,10 +61,7 @@ class VolcanoPlotOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    val outputSchema = Schema()
-      .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 
   override def generatePythonCode(): String = {
@@ -74,24 +72,22 @@ class VolcanoPlotOpDesc extends PythonOperatorDescriptor {
        |import numpy as np
        |
        |class ProcessTableOperator(UDFTableOperator):
-       |
-       |    def render_error(self, msg):
-       |        return f"<h1>Volcano Plot failed</h1><p>{msg}</p>"
+       |${VisualizationConstants.RenderErrorMethodCode}
        |
        |    @overrides
        |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
        |        if table.empty:
-       |            yield {"html-content": self.render_error("Input table is empty.")}
+       |            yield self.render_error_with_json("Input table is empty.")
        |            return
        |
        |        if "$pvalueColumn" not in table.columns or "$effectColumn" not in table.columns:
-       |            yield {"html-content": self.render_error("Missing required columns in table.")}
+       |            yield self.render_error_with_json("Missing required columns in table.")
        |            return
        |
        |        # Filter out non-positive p-values to avoid math errors
        |        table = table[table["$pvalueColumn"] > 0]
        |        if table.empty:
-       |            yield {"html-content": self.render_error("No rows with valid p-values.")}
+       |            yield self.render_error_with_json("No rows with valid p-values.")
        |            return
        |
        |        table["-log10(pvalue)"] = -np.log10(table["$pvalueColumn"])
@@ -105,9 +101,7 @@ class VolcanoPlotOpDesc extends PythonOperatorDescriptor {
        |            color_continuous_scale="RdBu",
        |            title="Volcano Plot"
        |        )
-       |
-       |        html = plotly.io.to_html(fig, include_plotlyjs='cdn', auto_play=False)
-       |        yield {"html-content": html}
+       |${VisualizationConstants.OutputCode}
        |""".stripMargin
   }
 

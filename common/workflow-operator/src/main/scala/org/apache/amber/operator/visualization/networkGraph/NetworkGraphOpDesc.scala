@@ -21,12 +21,13 @@ package org.apache.amber.operator.visualization.networkGraph
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.VisualizationConstants
 
 class NetworkGraphOpDesc extends PythonOperatorDescriptor {
   @JsonProperty(required = true)
@@ -48,10 +49,7 @@ class NetworkGraphOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    val outputSchema = Schema()
-      .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 
   override def operatorInfo: OperatorInfo =
@@ -84,109 +82,102 @@ class NetworkGraphOpDesc extends PythonOperatorDescriptor {
          |import networkx as nx
          |
          |class ProcessTableOperator(UDFTableOperator):
-         |    def render_error(self, error_msg):
-         |        return '''<h1>Network graph is not available.</h1>
-         |                  <p>Reason is: {} </p>
-         |               '''.format(error_msg)
+         |${VisualizationConstants.RenderErrorMethodCode}
          |
          |    @overrides
          |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
-         |        if not table.empty:
-         |            sources = table['$source']
-         |            destinations = table['$destination']
-         |            nodes = set(sources + destinations)
-         |            G = nx.Graph()
-         |            for node in nodes:
-         |                G.add_node(node)
-         |            for i, j in table.iterrows():
-         |                G.add_edges_from([(j['$source'], j['$destination'])])
-         |            pos = nx.spring_layout(G, k=0.5, iterations=50)
-         |            for n, p in pos.items():
-         |                G.nodes[n]['pos'] = p
+         |        if table.empty:
+         |            yield self.render_error_with_json('Table should not have any empty/null values or fields.')
+         |            return
+         |        sources = table['$source']
+         |        destinations = table['$destination']
+         |        nodes = set(sources + destinations)
+         |        G = nx.Graph()
+         |        for node in nodes:
+         |            G.add_node(node)
+         |        for i, j in table.iterrows():
+         |            G.add_edges_from([(j['$source'], j['$destination'])])
+         |        pos = nx.spring_layout(G, k=0.5, iterations=50)
+         |        for n, p in pos.items():
+         |            G.nodes[n]['pos'] = p
          |
-         |            edge_trace = go.Scatter(
-         |                x=[],
-         |                y=[],
-         |                name='Edges',
-         |                line=dict(width=0.5, color='#888'),
-         |                hoverinfo='none',
-         |                mode='lines',
-         |                visible=True
+         |        edge_trace = go.Scatter(
+         |            x=[],
+         |            y=[],
+         |            name='Edges',
+         |            line=dict(width=0.5, color='#888'),
+         |            hoverinfo='none',
+         |            mode='lines',
+         |            visible=True
+         |        )
+         |
+         |        for edge in G.edges():
+         |            x0, y0 = G.nodes[edge[0]]['pos']
+         |            x1, y1 = G.nodes[edge[1]]['pos']
+         |            edge_trace['x'] += tuple([x0, x1, None])
+         |            edge_trace['y'] += tuple([y0, y1, None])
+         |
+         |        node_trace = go.Scatter(
+         |            x=[],
+         |            y=[],
+         |            name='Nodes',
+         |            text=[],
+         |            mode='markers',
+         |            hoverinfo='text',
+         |            visible=True,
+         |            marker=dict(
+         |                showscale=True,
+         |                colorscale='plasma',
+         |                reversescale=True,
+         |                color=[],
+         |                size=15,
+         |                colorbar=dict(
+         |                    thickness=10,
+         |                    title='Node Connections',
+         |                    xanchor='left',
+         |                    titleside='right'
+         |                ),
+         |                line=dict(width=0)
          |            )
+         |        )
          |
-         |            for edge in G.edges():
-         |                x0, y0 = G.nodes[edge[0]]['pos']
-         |                x1, y1 = G.nodes[edge[1]]['pos']
-         |                edge_trace['x'] += tuple([x0, x1, None])
-         |                edge_trace['y'] += tuple([y0, y1, None])
+         |        for node in G.nodes():
+         |            x, y = G.nodes[node]['pos']
+         |            node_trace['x'] += tuple([x])
+         |            node_trace['y'] += tuple([y])
          |
-         |            node_trace = go.Scatter(
-         |                x=[],
-         |                y=[],
-         |                name='Nodes',
-         |                text=[],
-         |                mode='markers',
-         |                hoverinfo='text',
-         |                visible=True,
-         |                marker=dict(
-         |                    showscale=True,
-         |                    colorscale='plasma',
-         |                    reversescale=True,
-         |                    color=[],
-         |                    size=15,
-         |                    colorbar=dict(
-         |                        thickness=10,
-         |                        title='Node Connections',
-         |                        xanchor='left',
-         |                        titleside='right'
-         |                    ),
-         |                    line=dict(width=0)
-         |                )
+         |        for node, adjacencies in enumerate(G.adjacency()):
+         |            node_trace['marker']['color'] += tuple([len(adjacencies[1])])
+         |            node_info = str(adjacencies[0]) + ': ' + str(len(adjacencies[1])) + ' connections.'
+         |            node_trace['text'] += tuple([node_info])
+         |
+         |        fig = go.Figure(
+         |            data=[edge_trace, node_trace],
+         |            layout=go.Layout(
+         |                title='<br>$title',
+         |                hovermode='closest',
+         |                showlegend=False,
+         |                margin=dict(b=20, l=5, r=5, t=40),
+         |                annotations=[
+         |                    dict(
+         |                        text='',
+         |                        showarrow=False,
+         |                        xref="paper",
+         |                        yref="paper"
+         |                    )
+         |                ],
+         |                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+         |                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
          |            )
-         |
-         |            for node in G.nodes():
-         |                x, y = G.nodes[node]['pos']
-         |                node_trace['x'] += tuple([x])
-         |                node_trace['y'] += tuple([y])
-         |
-         |            for node, adjacencies in enumerate(G.adjacency()):
-         |                node_trace['marker']['color'] += tuple([len(adjacencies[1])])
-         |                node_info = str(adjacencies[0]) + ': ' + str(len(adjacencies[1])) + ' connections.'
-         |                node_trace['text'] += tuple([node_info])
-         |
-         |            fig = go.Figure(
-         |                data=[edge_trace, node_trace],
-         |                layout=go.Layout(
-         |                    title='<br>$title',
-         |                    hovermode='closest',
-         |                    showlegend=False,
-         |                    margin=dict(b=20, l=5, r=5, t=40),
-         |                    annotations=[
-         |                        dict(
-         |                            text='',
-         |                            showarrow=False,
-         |                            xref="paper",
-         |                            yref="paper"
-         |                        )
-         |                    ],
-         |                    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-         |                    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
-         |                )
+         |        )
+         |        fig.update_layout(
+         |            margin=dict(l=0, r=0, t=0, b=0),
+         |            legend=dict(
+         |                itemclick=False,
+         |                itemdoubleclick=False
          |            )
-         |            fig.update_layout(
-         |                margin=dict(l=0, r=0, t=0, b=0),
-         |                legend=dict(
-         |                    itemclick=False,
-         |                    itemdoubleclick=False
-         |                )
-         |            )
-         |
-         |            html = plotly.io.to_html(fig, include_plotlyjs='cdn', auto_play=False)
-         |        else:
-         |            html = self.render_error('Table should not have any empty/null values or fields.')
-         |
-         |        yield {'html-content': html}
-         |
+         |        )
+         |${VisualizationConstants.OutputCode}
          |""".stripMargin
     finalCode
   }

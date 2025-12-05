@@ -21,12 +21,13 @@ package org.apache.amber.operator.visualization.candlestickChart
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.VisualizationConstants
 
 class CandlestickChartOpDesc extends PythonOperatorDescriptor {
 
@@ -63,10 +64,7 @@ class CandlestickChartOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    val outputSchema = Schema()
-      .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 
   override def operatorInfo: OperatorInfo =
@@ -83,12 +81,17 @@ class CandlestickChartOpDesc extends PythonOperatorDescriptor {
        |from pytexera import *
        |
        |import plotly.graph_objects as go
+       |import plotly.io
        |import pandas as pd
        |
        |class ProcessTableOperator(UDFTableOperator):
+       |${VisualizationConstants.RenderErrorMethodCode}
        |
        |    @overrides
        |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
+       |        if table.empty:
+       |            yield self.render_error_with_json("Input table is empty.")
+       |            return
        |        # Convert table to dictionary
        |        table_dict = table.to_dict()
        |
@@ -103,8 +106,7 @@ class CandlestickChartOpDesc extends PythonOperatorDescriptor {
        |            close=df['$close']
        |        )])
        |        fig.update_layout(title='Candlestick Chart')
-       |        html = fig.to_html(include_plotlyjs='cdn', full_html=False)
-       |        yield {'html-content': html}
+       |${VisualizationConstants.OutputCode}
        |""".stripMargin
   }
 

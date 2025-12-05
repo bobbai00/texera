@@ -21,12 +21,13 @@ package org.apache.amber.operator.visualization.contourPlot
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
-import org.apache.amber.core.tuple.{AttributeType, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.workflow.OutputPort.OutputMode
 import org.apache.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.amber.operator.PythonOperatorDescriptor
 import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
+import org.apache.amber.operator.visualization.VisualizationConstants
 
 class ContourPlotOpDesc extends PythonOperatorDescriptor {
 
@@ -68,10 +69,7 @@ class ContourPlotOpDesc extends PythonOperatorDescriptor {
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
   ): Map[PortIdentity, Schema] = {
-    val outputSchema = Schema()
-      .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(operatorInfo.outputPorts.head.id -> VisualizationConstants.createVisualizationSchema())
   }
 
   override def operatorInfo: OperatorInfo =
@@ -88,12 +86,16 @@ class ContourPlotOpDesc extends PythonOperatorDescriptor {
        |import numpy as np
        |import plotly.graph_objects as go
        |from scipy.interpolate import griddata
-       |import plotly.io as pio
+       |import plotly.io
        |
        |class ProcessTableOperator(UDFTableOperator):
+       |${VisualizationConstants.RenderErrorMethodCode}
        |
        |    @overrides
        |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
+       |        if table.empty:
+       |            yield self.render_error_with_json("Input table is empty.")
+       |            return
        |        x = table['$x'].values
        |        y = table['$y'].values
        |        z = table['$z'].values
@@ -112,8 +114,7 @@ class ContourPlotOpDesc extends PythonOperatorDescriptor {
        |            colorbar_title='$z'
        |        ))
        |        fig.update_layout(title='Contour Plot')
-       |        html = pio.to_html(fig, include_plotlyjs='cdn', full_html=False)
-       |        yield {'html-content': html}
+       |${VisualizationConstants.OutputCode}
        |""".stripMargin
   }
 }

@@ -50,7 +50,7 @@ class LineChartOpDesc extends PythonOperatorDescriptor {
   ): Map[PortIdentity, Schema] = {
     val outputSchema = Schema()
       .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+      .add("json-content", AttributeType.STRING)
     Map(operatorInfo.outputPorts.head.id -> outputSchema)
   }
 
@@ -117,12 +117,13 @@ class LineChartOpDesc extends PythonOperatorDescriptor {
          |    @overrides
          |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
          |        if table.empty:
-         |            yield {'html-content': self.render_error("input table is empty.")}
+         |            yield {'html-content': self.render_error("input table is empty."), 'json-content': '{}'}
          |            return
          |        ${createPlotlyFigure()}
-         |        # convert fig to html content
+         |        # convert fig to html and json content
          |        html = plotly.io.to_html(fig, include_plotlyjs='cdn', auto_play=False)
-         |        yield {'html-content': html}
+         |        json_content = plotly.io.to_json(fig)
+         |        yield {'html-content': html, 'json-content': json_content}
          |""".stripMargin
     finalCode
   }
