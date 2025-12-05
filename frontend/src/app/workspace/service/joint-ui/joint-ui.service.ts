@@ -1020,7 +1020,7 @@ export class JointUIService {
     element.attr({
       [`.${operatorAgentActionProgressClass}`]: {
         text: labelText,
-        fill: "#595959",
+        fill: "#52c41a",
         "font-weight": "bold",
         visibility: "visible",
       },
