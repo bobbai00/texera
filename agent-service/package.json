@@ -1,0 +1,35 @@
+{
+  "name": "texera-agent-service",
+  "version": "0.1.0",
+  "description": "Texera Agent Service - AI agents for workflow manipulation",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "bun run --watch src/server.ts",
+    "dev:node": "npx tsx --watch src/server.ts",
+    "start": "bun run src/server.ts",
+    "start:node": "npx tsx src/server.ts",
+    "gui": "bun run src/gui/index.tsx",
+    "gui:node": "npx tsx src/gui/index.tsx",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ai": "^4.0.0",
+    "@ai-sdk/openai": "^1.0.0",
+    "zod": "^3.23.0",
+    "ink": "^5.0.1",
+    "react": "^18.3.1",
+    "ink-text-input": "^6.0.0",
+    "ink-spinner": "^5.0.0",
+    "ink-box": "^2.0.0",
+    "chalk": "^5.3.0",
+    "figures": "^6.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "@types/react": "^18.3.0",
+    "typescript": "^5.3.0",
+    "tsx": "^4.7.0"
+  }
+}
