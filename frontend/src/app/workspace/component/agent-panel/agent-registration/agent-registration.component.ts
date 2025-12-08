@@ -20,6 +20,7 @@
 import { Component, EventEmitter, OnDestroy, OnInit, Output } from "@angular/core";
 import { TexeraCopilotManagerService, ModelType } from "../../../service/copilot/texera-copilot-manager.service";
 import { NotificationService } from "../../../../common/service/notification/notification.service";
+import { WorkflowActionService } from "../../../service/workflow-graph/model/workflow-action.service";
 import { Subject, takeUntil } from "rxjs";
 
 @Component({
@@ -41,7 +42,8 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
 
   constructor(
     private copilotManagerService: TexeraCopilotManagerService,
-    private notificationService: NotificationService
+    private notificationService: NotificationService,
+    private workflowActionService: WorkflowActionService
   ) {}
 
   ngOnInit(): void {
@@ -90,8 +92,12 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
 
     this.isCreating = true;
 
+    // Get current workflow ID for delegate mode
+    const workflowMetadata = this.workflowActionService.getWorkflowMetadata();
+    const workflowId = workflowMetadata?.wid;
+
     this.copilotManagerService
-      .createAgent(this.selectedModelType, this.customAgentName || undefined, this.isBaselineMode)
+      .createAgent(this.selectedModelType, this.customAgentName || undefined, this.isBaselineMode, workflowId)
       .pipe(takeUntil(this.destroy$))
       .subscribe({
         next: agentInfo => {

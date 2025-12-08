@@ -57,6 +57,20 @@ export function generateLinkId(): string {
 }
 
 // ============================================================================
+// Change Listener Types
+// ============================================================================
+
+export type WorkflowChangeType = "add" | "modify" | "delete";
+
+export interface WorkflowChangeEvent {
+  type: WorkflowChangeType;
+  operatorIds?: string[];
+  linkIds?: string[];
+}
+
+export type WorkflowChangeListener = (event: WorkflowChangeEvent) => void;
+
+// ============================================================================
 // Workflow State Class
 // ============================================================================
 
@@ -74,6 +88,9 @@ export class WorkflowState {
   private operatorsToViewResult: Set<string> = new Set();
   private disabledOperators: Set<string> = new Set();
 
+  // Change listeners for auto-persistence
+  private changeListeners: Set<WorkflowChangeListener> = new Set();
+
   // Execution state
   private executionState: ExecutionStateInfo = { state: ExecutionState.Uninitialized };
   private operatorStatistics: Map<string, OperatorStatistics> = new Map();
@@ -86,11 +103,43 @@ export class WorkflowState {
   private operatorOutputSchemas: Map<string, OperatorPortSchemaMap> = new Map();
 
   // ============================================================================
+  // Change Listener Management
+  // ============================================================================
+
+  /**
+   * Register a listener to be called when the workflow changes
+   */
+  addChangeListener(listener: WorkflowChangeListener): void {
+    this.changeListeners.add(listener);
+  }
+
+  /**
+   * Remove a registered listener
+   */
+  removeChangeListener(listener: WorkflowChangeListener): void {
+    this.changeListeners.delete(listener);
+  }
+
+  /**
+   * Emit a change event to all listeners
+   */
+  private emitChange(event: WorkflowChangeEvent): void {
+    for (const listener of this.changeListeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        console.error("[WorkflowState] Error in change listener:", error);
+      }
+    }
+  }
+
+  // ============================================================================
   // Operator Operations
   // ============================================================================
 
   addOperator(operator: OperatorPredicate): void {
     this.operators.set(operator.operatorID, operator);
+    this.emitChange({ type: "add", operatorIds: [operator.operatorID] });
   }
 
   getOperator(operatorId: string): OperatorPredicate | undefined {
@@ -108,12 +157,18 @@ export class WorkflowState {
   deleteOperator(operatorId: string): boolean {
     // Also delete any links connected to this operator
     const linksToDelete = this.getLinksConnectedToOperator(operatorId);
+    const deletedLinkIds: string[] = [];
     for (const link of linksToDelete) {
       this.links.delete(link.linkID);
+      deletedLinkIds.push(link.linkID);
     }
     this.operatorsToViewResult.delete(operatorId);
     this.disabledOperators.delete(operatorId);
-    return this.operators.delete(operatorId);
+    const deleted = this.operators.delete(operatorId);
+    if (deleted) {
+      this.emitChange({ type: "delete", operatorIds: [operatorId], linkIds: deletedLinkIds });
+    }
+    return deleted;
   }
 
   setOperatorProperty(operatorId: string, propertyPath: string, value: any): boolean {
@@ -138,6 +193,7 @@ export class WorkflowState {
       operatorProperties: newProperties,
     };
     this.operators.set(operatorId, updatedOperator);
+    this.emitChange({ type: "modify", operatorIds: [operatorId] });
     return true;
   }
 
@@ -150,6 +206,7 @@ export class WorkflowState {
       operatorProperties: { ...operator.operatorProperties, ...properties },
     };
     this.operators.set(operatorId, updatedOperator);
+    this.emitChange({ type: "modify", operatorIds: [operatorId] });
     return true;
   }
 
@@ -167,6 +224,7 @@ export class WorkflowState {
 
   addLink(link: OperatorLink): void {
     this.links.set(link.linkID, link);
+    this.emitChange({ type: "add", linkIds: [link.linkID] });
   }
 
   getLink(linkId: string): OperatorLink | undefined {
@@ -178,7 +236,11 @@ export class WorkflowState {
   }
 
   deleteLink(linkId: string): boolean {
-    return this.links.delete(linkId);
+    const deleted = this.links.delete(linkId);
+    if (deleted) {
+      this.emitChange({ type: "delete", linkIds: [linkId] });
+    }
+    return deleted;
   }
 
   getLinksConnectedToOperator(operatorId: string): OperatorLink[] {

@@ -212,3 +212,57 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   toolTimeoutMs: 120000, // 2 minutes
   executionTimeoutMs: 600000, // 10 minutes
 };
+
+// ============================================================================
+// User Delegate Configuration
+// ============================================================================
+
+/**
+ * User information extracted from JWT token
+ */
+export interface UserInfo {
+  uid: number;
+  name: string;
+  email: string;
+  role: string;
+}
+
+/**
+ * Configuration for an agent acting as a user delegate
+ */
+export interface AgentDelegateConfig {
+  /** JWT token for authenticated API calls */
+  userToken: string;
+  /** User information extracted from token */
+  userInfo: UserInfo;
+  /** Associated workflow ID (wid) */
+  workflowId?: number;
+  /** Workflow name */
+  workflowName?: string;
+}
+
+/**
+ * Extended agent info including delegate configuration
+ */
+export interface AgentInfo {
+  id: string;
+  name: string;
+  modelType: string;
+  state: AgentState;
+  createdAt: Date;
+  /** Delegate configuration (if acting on behalf of a user) */
+  delegate?: AgentDelegateConfig;
+}
+
+/**
+ * Request to create a new agent
+ */
+export interface CreateAgentRequest {
+  modelType: string;
+  name?: string;
+  /** JWT token for delegate mode */
+  userToken?: string;
+  /** Workflow ID to associate with */
+  workflowId?: number;
+}
+

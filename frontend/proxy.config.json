@@ -1,5 +1,10 @@
 {
-  "/api/models": {
+  "/api/agents": {
+    "target": "http://localhost:3000",
+    "secure": false,
+    "changeOrigin": true
+  },
+"/api/models": {
     "target": "http://localhost:9096",
     "secure": false,
     "changeOrigin": true

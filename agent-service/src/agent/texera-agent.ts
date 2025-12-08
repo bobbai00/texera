@@ -182,6 +182,34 @@ export class TexeraAgent {
     return [...this.messages];
   }
 
+  /**
+   * Get system info including system prompt and tool definitions.
+   * This is used by the frontend to display agent configuration.
+   */
+  getSystemInfo(): {
+    systemPrompt: string;
+    tools: Array<{ name: string; description: string; inputSchema: any; enabled: boolean }>;
+  } {
+    const toolsInfo = Object.entries(this.tools).map(([name, toolDef]) => {
+      // Extract description and parameters from the tool definition
+      const description = toolDef.description || "";
+      const inputSchema = toolDef.parameters || {};
+      const enabled = !this.settings.disabledTools.has(name);
+
+      return {
+        name,
+        description,
+        inputSchema,
+        enabled,
+      };
+    });
+
+    return {
+      systemPrompt: this.systemPrompt,
+      tools: toolsInfo,
+    };
+  }
+
   // ============================================================================
   // Message Processing
   // ============================================================================

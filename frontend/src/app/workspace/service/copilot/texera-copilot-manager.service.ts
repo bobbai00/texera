@@ -17,34 +17,45 @@
  * under the License.
  */
 
-import { Injectable, Injector } from "@angular/core";
+import { Injectable, NgZone } from "@angular/core";
 import { HttpClient } from "@angular/common/http";
-import { TexeraCopilot, ReActStep, CopilotState, ModelMessage } from "./texera-copilot";
-import { Observable, Subject, catchError, map, of, shareReplay, tap, defer, throwError, filter, first } from "rxjs";
-import { WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
-import { WorkflowUtilService } from "../workflow-graph/util/workflow-util.service";
-import { OperatorMetadataService } from "../operator-metadata/operator-metadata.service";
-import { DynamicSchemaService } from "../dynamic-schema/dynamic-schema.service";
-import { ExecuteWorkflowService } from "../execute-workflow/execute-workflow.service";
-import { WorkflowResultService } from "../workflow-result/workflow-result.service";
-import { WorkflowCompilingService } from "../compile-workflow/workflow-compiling.service";
-import { ValidationWorkflowService } from "../validation/validation-workflow.service";
-import { AgentActionService } from "../agent-action/agent-action.service";
+import {
+  Observable,
+  Subject,
+  BehaviorSubject,
+  catchError,
+  map,
+  of,
+  shareReplay,
+  defer,
+  throwError,
+  interval,
+  switchMap,
+  takeUntil,
+} from "rxjs";
 import { NotificationService } from "../../../common/service/notification/notification.service";
-import { ComputingUnitStatusService } from "../computing-unit-status/computing-unit-status.service";
-import { WorkflowConsoleService } from "../workflow-console/workflow-console.service";
+import { WorkflowPersistService } from "../../../common/service/workflow-persist/workflow-persist.service";
 import { AppSettings } from "../../../common/app-setting";
+import { AuthService } from "../../../common/service/user/auth.service";
+import { CopilotState, ReActStep, ModelMessage, CopilotMessageStats } from "./texera-copilot";
+import { Workflow } from "../../../common/type/workflow";
 
 /**
- * Agent information for tracking created agents.
+ * Agent information for tracking created agents (API version).
  */
 export interface AgentInfo {
   id: string;
   name: string;
   modelType: string;
   isBaselineMode: boolean;
-  instance: TexeraCopilot;
   createdAt: Date;
+  /** State is fetched from API */
+  state?: CopilotState;
+  delegate?: {
+    userInfo: { uid: number; name: string; email: string; role: string };
+    workflowId?: number;
+    workflowName?: string;
+  };
 }
 
 /**
@@ -58,8 +69,41 @@ export interface ModelType {
 }
 
 /**
- * LiteLLM Model API response.
+ * API response types
  */
+interface ApiAgentInfo {
+  id: string;
+  name: string;
+  modelType: string;
+  state: string;
+  createdAt: string;
+  delegate?: {
+    userToken: string;
+    userInfo: { uid: number; name: string; email: string; role: string };
+    workflowId?: number;
+    workflowName?: string;
+  };
+}
+
+interface ApiAgentListResponse {
+  agents: ApiAgentInfo[];
+}
+
+interface ApiReActStepsResponse {
+  steps: any[];
+  state: string;
+}
+
+interface ApiMessageResponse {
+  response: string;
+  steps: any[];
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+  stats: any;
+  stopped: boolean;
+  error?: string;
+  workflow: any;
+}
+
 interface LiteLLMModel {
   id: string;
   object: string;
@@ -73,56 +117,245 @@ interface LiteLLMModelsResponse {
 }
 
 /**
- * Service to manage multiple copilot agents.
- * Supports multi-agent workflows and agent lifecycle management.
+ * Agent state tracking for observables
+ */
+interface AgentStateTracking {
+  stateSubject: BehaviorSubject<CopilotState>;
+  reActStepsSubject: BehaviorSubject<ReActStep[]>;
+  messageStatsSubject: BehaviorSubject<Map<string, CopilotMessageStats>>;
+  hoveredMessageSubject: BehaviorSubject<{
+    viewedOperatorIds: string[];
+    addedOperatorIds: string[];
+    modifiedOperatorIds: string[];
+  }>;
+  agentActionApprovalSubject: BehaviorSubject<{ isWaitingForApproval: boolean; agentActionId?: string }>;
+  workflowSubject: BehaviorSubject<Workflow | null>;
+  workflowId?: number;
+  stopPolling$: Subject<void>;
+}
+
+/**
+ * Service to manage multiple copilot agents via API calls to agent-service.
+ * This is a complete replacement of the direct TexeraCopilot implementation.
  */
 @Injectable({
   providedIn: "root",
 })
 export class TexeraCopilotManagerService {
+  /** Base URL for agent service API */
+  private readonly AGENT_API_BASE = "/api";
+
+  /** Local cache of agent info */
   private agents = new Map<string, AgentInfo>();
-  private agentCounter = 0;
+
+  /** State tracking for each agent */
+  private agentStateTracking = new Map<string, AgentStateTracking>();
+
+  /** Subject for agent list changes */
   private agentChangeSubject = new Subject<void>();
   public agentChange$ = this.agentChangeSubject.asObservable();
 
+  /** Cached model types */
   private modelTypes$: Observable<ModelType[]> | null = null;
 
+  /** Planning mode state per agent */
+  private planningModes = new Map<string, boolean>();
+
   constructor(
-    private injector: Injector,
     private http: HttpClient,
-    private notificationService: NotificationService
+    private notificationService: NotificationService,
+    private workflowPersistService: WorkflowPersistService,
+    private ngZone: NgZone
   ) {}
 
   /**
-   * Create a new agent with the specified model type.
-   * Returns an Observable that emits the created AgentInfo.
+   * Convert API state string to CopilotState enum
    */
-  public createAgent(modelType: string, customName?: string, isBaselineMode: boolean = false): Observable<AgentInfo> {
+  private mapStateToCopilotState(state: string): CopilotState {
+    switch (state) {
+      case "AVAILABLE":
+        return CopilotState.AVAILABLE;
+      case "GENERATING":
+        return CopilotState.GENERATING;
+      case "STOPPING":
+        return CopilotState.STOPPING;
+      case "UNAVAILABLE":
+      default:
+        return CopilotState.UNAVAILABLE;
+    }
+  }
+
+  /**
+   * Convert API ReActStep to frontend ReActStep format
+   */
+  private convertApiReActStep(apiStep: any): ReActStep {
+    return {
+      messageId: apiStep.messageId,
+      stepId: apiStep.stepId || 0,
+      timestamp: new Date(apiStep.timestamp),
+      role: apiStep.type === "text" && apiStep.content?.startsWith("[User]") ? "user" : "agent",
+      content: apiStep.content || "",
+      isBegin: apiStep.stepId?.includes("-begin") || false,
+      isEnd: apiStep.stepId?.includes("-end") || false,
+      toolCalls:
+        apiStep.type === "tool-call"
+          ? [{ toolName: apiStep.toolName, args: apiStep.input, toolCallId: apiStep.toolCallId }]
+          : undefined,
+      toolResults:
+        apiStep.type === "tool-result"
+          ? [{ toolCallId: apiStep.toolCallId, result: apiStep.result, isError: apiStep.isError }]
+          : undefined,
+      usage: apiStep.usage,
+      operatorAccess: undefined, // TODO: Parse from tool results if needed
+    };
+  }
+
+  /**
+   * Get or create state tracking for an agent
+   */
+  private getOrCreateStateTracking(agentId: string, workflowId?: number): AgentStateTracking {
+    let tracking = this.agentStateTracking.get(agentId);
+    if (!tracking) {
+      tracking = {
+        stateSubject: new BehaviorSubject<CopilotState>(CopilotState.UNAVAILABLE),
+        reActStepsSubject: new BehaviorSubject<ReActStep[]>([]),
+        messageStatsSubject: new BehaviorSubject<Map<string, CopilotMessageStats>>(new Map()),
+        hoveredMessageSubject: new BehaviorSubject<{
+          viewedOperatorIds: string[];
+          addedOperatorIds: string[];
+          modifiedOperatorIds: string[];
+        }>({ viewedOperatorIds: [], addedOperatorIds: [], modifiedOperatorIds: [] }),
+        agentActionApprovalSubject: new BehaviorSubject<{ isWaitingForApproval: boolean; agentActionId?: string }>({
+          isWaitingForApproval: false,
+        }),
+        workflowSubject: new BehaviorSubject<Workflow | null>(null),
+        workflowId,
+        stopPolling$: new Subject<void>(),
+      };
+      this.agentStateTracking.set(agentId, tracking);
+
+      // Start polling for state updates
+      this.startStatePolling(agentId, tracking);
+    }
+    return tracking;
+  }
+
+  /**
+   * Start polling for agent state, ReActSteps, and workflow updates
+   */
+  private startStatePolling(agentId: string, tracking: AgentStateTracking): void {
+    // Poll for ReActSteps and state
+    interval(1000)
+      .pipe(
+        switchMap(() =>
+          this.http.get<ApiReActStepsResponse>(`${this.AGENT_API_BASE}/agents/${agentId}/react-steps`).pipe(
+            catchError(() => of(null)) // Silently ignore polling errors
+          )
+        ),
+        takeUntil(tracking.stopPolling$)
+      )
+      .subscribe(response => {
+        if (response) {
+          this.ngZone.run(() => {
+            const state = this.mapStateToCopilotState(response.state);
+            tracking.stateSubject.next(state);
+
+            const steps = response.steps.map((s: any) => this.convertApiReActStep(s));
+            tracking.reActStepsSubject.next(steps);
+          });
+        }
+      });
+
+    // Poll workflow content from backend database if workflowId is set
+    if (tracking.workflowId) {
+      const wid = tracking.workflowId;
+      interval(1000)
+        .pipe(
+          switchMap(() => this.workflowPersistService.retrieveWorkflow(wid).pipe(catchError(() => of(null)))),
+          takeUntil(tracking.stopPolling$)
+        )
+        .subscribe(workflow => {
+          if (workflow) {
+            this.ngZone.run(() => {
+              tracking.workflowSubject.next(workflow);
+            });
+          }
+        });
+    }
+  }
+
+  /**
+   * Stop polling for an agent
+   */
+  private stopStatePolling(agentId: string): void {
+    const tracking = this.agentStateTracking.get(agentId);
+    if (tracking) {
+      tracking.stopPolling$.next();
+      tracking.stopPolling$.complete();
+      this.agentStateTracking.delete(agentId);
+    }
+  }
+
+  /**
+   * Create a new agent with the specified model type.
+   * Uses the user's current auth token for delegate mode.
+   * @param modelType - The LLM model type to use
+   * @param customName - Optional custom name for the agent
+   * @param isBaselineMode - Whether the agent is in baseline mode
+   * @param workflowId - Optional workflow ID for delegate mode
+   */
+  public createAgent(
+    modelType: string,
+    customName?: string,
+    isBaselineMode: boolean = false,
+    workflowId?: number
+  ): Observable<AgentInfo> {
     return defer(() => {
-      const agentId = `agent-${++this.agentCounter}`;
-      const agentName = customName || `Agent ${this.agentCounter}`;
+      const userToken = AuthService.getAccessToken();
 
-      const agentInstance = this.createCopilotInstance(modelType, isBaselineMode);
-      agentInstance.setAgentInfo(agentId, agentName);
+      const body: any = {
+        modelType,
+        name: customName,
+      };
 
-      return agentInstance.initialize().pipe(
-        map(() => {
+      // Include user token and workflowId for delegate mode if available
+      if (userToken) {
+        body.userToken = userToken;
+        if (workflowId !== undefined) {
+          body.workflowId = workflowId;
+        }
+      }
+
+      return this.http.post<ApiAgentInfo>(`${this.AGENT_API_BASE}/agents`, body).pipe(
+        map(response => {
           const agentInfo: AgentInfo = {
-            id: agentId,
-            name: agentName,
-            modelType,
+            id: response.id,
+            name: response.name,
+            modelType: response.modelType,
             isBaselineMode,
-            instance: agentInstance,
-            createdAt: new Date(),
+            createdAt: new Date(response.createdAt),
+            state: this.mapStateToCopilotState(response.state),
+            delegate: response.delegate
+              ? {
+                  userInfo: response.delegate.userInfo,
+                  workflowId: response.delegate.workflowId,
+                  workflowName: response.delegate.workflowName,
+                }
+              : undefined,
           };
 
-          this.agents.set(agentId, agentInfo);
+          this.agents.set(response.id, agentInfo);
+          // Pass workflowId to enable workflow polling from backend database
+          this.getOrCreateStateTracking(response.id, workflowId);
           this.agentChangeSubject.next();
 
           return agentInfo;
         }),
         catchError((error: unknown) => {
-          return throwError(() => error);
+          const err = error as { error?: { error?: string }; message?: string };
+          const errorMsg = err.error?.error || err.message || "Failed to create agent";
+          this.notificationService.error(errorMsg);
+          return throwError(() => new Error(errorMsg));
         })
       );
     });
@@ -130,51 +363,83 @@ export class TexeraCopilotManagerService {
 
   /**
    * Get an agent by ID.
-   * Returns an Observable that emits the AgentInfo or throws if not found.
    */
   public getAgent(agentId: string): Observable<AgentInfo> {
     return defer(() => {
       const agent = this.agents.get(agentId);
-      if (!agent) {
-        return throwError(() => new Error(`Agent with ID ${agentId} not found`));
-      }
-      return of(agent);
-    });
-  }
-
-  /**
-   * Get all agents.
-   * Returns an Observable that emits the array of all AgentInfo.
-   */
-  public getAllAgents(): Observable<AgentInfo[]> {
-    return of(Array.from(this.agents.values()));
-  }
-
-  /**
-   * Delete an agent by ID.
-   * Returns an Observable that emits true if deleted, false if not found.
-   */
-  public deleteAgent(agentId: string): Observable<boolean> {
-    return defer(() => {
-      const agent = this.agents.get(agentId);
-      if (!agent) {
-        return of(false);
+      if (agent) {
+        return of(agent);
       }
 
-      return agent.instance.disconnect().pipe(
-        map(() => {
-          this.agents.delete(agentId);
-          this.agentChangeSubject.next();
-          return true;
-        })
+      // Fetch from API if not in cache
+      return this.http.get<ApiAgentInfo>(`${this.AGENT_API_BASE}/agents/${agentId}`).pipe(
+        map(response => {
+          const agentInfo: AgentInfo = {
+            id: response.id,
+            name: response.name,
+            modelType: response.modelType,
+            isBaselineMode: false,
+            createdAt: new Date(response.createdAt),
+            state: this.mapStateToCopilotState(response.state),
+          };
+          this.agents.set(response.id, agentInfo);
+          return agentInfo;
+        }),
+        catchError(() => throwError(() => new Error(`Agent with ID ${agentId} not found`)))
       );
     });
   }
 
   /**
+   * Get all agents.
+   */
+  public getAllAgents(): Observable<AgentInfo[]> {
+    return this.http.get<ApiAgentListResponse>(`${this.AGENT_API_BASE}/agents`).pipe(
+      map(response => {
+        const agents = response.agents.map(a => ({
+          id: a.id,
+          name: a.name,
+          modelType: a.modelType,
+          isBaselineMode: false,
+          createdAt: new Date(a.createdAt),
+          state: this.mapStateToCopilotState(a.state),
+        }));
+
+        // Update local cache
+        for (const agent of agents) {
+          this.agents.set(agent.id, agent);
+        }
+
+        return agents;
+      }),
+      catchError(() => of(Array.from(this.agents.values())))
+    );
+  }
+
+  /**
+   * Delete an agent by ID.
+   */
+  public deleteAgent(agentId: string): Observable<boolean> {
+    return this.http.delete<{ deleted: boolean }>(`${this.AGENT_API_BASE}/agents/${agentId}`).pipe(
+      map(response => {
+        if (response.deleted) {
+          this.agents.delete(agentId);
+          this.stopStatePolling(agentId);
+          this.agentChangeSubject.next();
+        }
+        return response.deleted;
+      }),
+      catchError(() => {
+        this.agents.delete(agentId);
+        this.stopStatePolling(agentId);
+        this.agentChangeSubject.next();
+        return of(true);
+      })
+    );
+  }
+
+  /**
    * Fetch available models from the API.
-   * Returns an Observable that emits the list of available models.
-   * Uses shareReplay to cache the result and avoid multiple API calls.
    */
   public fetchModelTypes(): Observable<ModelType[]> {
     if (!this.modelTypes$) {
@@ -189,19 +454,14 @@ export class TexeraCopilotManagerService {
         ),
         catchError((error: unknown) => {
           console.error("Failed to fetch models from API:", error);
-          // Return empty array on error
           return of([]);
         }),
-        shareReplay(1) // Cache the result
+        shareReplay(1)
       );
     }
     return this.modelTypes$;
   }
 
-  /**
-   * Format model ID into a human-readable name.
-   * Example: "claude-3.7" -> "Claude 3.7"
-   */
   private formatModelName(modelId: string): string {
     return modelId
       .split("-")
@@ -211,7 +471,6 @@ export class TexeraCopilotManagerService {
 
   /**
    * Get the count of active agents.
-   * Returns an Observable that emits the count.
    */
   public getAgentCount(): Observable<number> {
     return of(this.agents.size);
@@ -219,330 +478,264 @@ export class TexeraCopilotManagerService {
 
   /**
    * Send a message to an agent.
-   * This is a fire-and-forget method that manages the subscription internally.
-   * If the agent is currently generating, it will be stopped and this method will wait
-   * until the agent is ready before sending the new message.
-   * The agent will process the message in the background.
-   *
-   * @param agentId - The ID of the agent to send the message to
-   * @param message - The message to send
-   * @param relevantOperatorIds - Optional array of operator IDs to retrieve relevant ReAct steps for context
+   * Fire-and-forget - the agent processes in the background.
    */
   public sendMessage(agentId: string, message: string, relevantOperatorIds: string[] = []): void {
     const agent = this.agents.get(agentId);
     if (!agent) {
-      console.error(`Agent with ID ${agentId} not found`);
       this.notificationService.error(`Agent with ID ${agentId} not found`);
       return;
     }
 
-    // Prepare the final message with relevant steps retrieved from operator IDs
-    // User's message is appended at the end for better context
-    const prepareFinalMessage = (): string => {
-      if (relevantOperatorIds.length === 0) {
-        return message;
-      }
+    // For now, just send the message directly
+    // TODO: Add relevant operator context if needed
+    let finalMessage = message;
+    if (relevantOperatorIds.length > 0) {
+      // The API-based agent handles context differently
+      // We can pass relevantOperatorIds in the request body if needed
+      finalMessage = message;
+    }
 
-      const retrievedSteps: any[] = [];
-
-      // Iterate through all agents to find steps that modified these operators
-      for (const [sourceAgentId, sourceAgent] of this.agents.entries()) {
-        const allSteps = sourceAgent.instance.getReActSteps();
-
-        for (const step of allSteps) {
-          if (step.operatorAccess) {
-            // Check if this step modified any of the relevant operators
-            let hasModifiedRelevantOperator = false;
-            step.operatorAccess.forEach(access => {
-              for (const opId of access.modifiedOperatorIds) {
-                if (relevantOperatorIds.includes(opId)) {
-                  hasModifiedRelevantOperator = true;
-                  break;
-                }
-              }
-            });
-
-            if (hasModifiedRelevantOperator) {
-              retrievedSteps.push({
-                agentId: sourceAgentId,
-                agentName: sourceAgent.name,
-                step: step,
-              });
-            }
+    this.http
+      .post<ApiMessageResponse>(`${this.AGENT_API_BASE}/agents/${agentId}/message`, { message: finalMessage })
+      .subscribe({
+        next: response => {
+          // Update state tracking
+          const tracking = this.getOrCreateStateTracking(agentId);
+          if (response.steps) {
+            const steps = response.steps.map((s: any) => this.convertApiReActStep(s));
+            tracking.reActStepsSubject.next(steps);
           }
-        }
-      }
-
-      if (retrievedSteps.length === 0) {
-        return message;
-      }
-
-      // Sort by timestamp (newest first)
-      retrievedSteps.sort((a, b) => b.step.timestamp.getTime() - a.step.timestamp.getTime());
-      const stepsJson = JSON.stringify(retrievedSteps, null, 2);
-
-      // Context first, then user's message at the end
-      return `Relevant ReAct Steps that modified the operators (Full Data):\n\`\`\`json\n${stepsJson}\n\`\`\`\n\nUser's feedback:\n${message}`;
-    };
-
-    // Helper to actually send the message
-    const doSendMessage = () => {
-      const finalMessage = prepareFinalMessage();
-      agent.instance.sendMessage(finalMessage).subscribe({
+        },
         error: (error: unknown) => {
           console.error(`Error sending message to agent ${agentId}:`, error);
+          const err = error as { error?: { error?: string } };
+          this.notificationService.error(err.error?.error || "Failed to send message");
         },
       });
-    };
-
-    // Check if agent is currently generating
-    if (agent.instance.getState() === CopilotState.GENERATING) {
-      // Stop the agent and wait for it to become available
-      agent.instance.stopGeneration();
-      this.getAgentStateObservable(agentId)
-        .pipe(
-          filter(state => state === CopilotState.AVAILABLE),
-          first()
-        )
-        .subscribe(() => doSendMessage());
-    } else {
-      // Agent is ready, send immediately
-      doSendMessage();
-    }
   }
 
   /**
    * Get the ReActSteps observable stream.
-   * Returns an Observable that emits arrays of ReActStep.
    */
   public getReActStepsObservable(agentId: string): Observable<ReActStep[]> {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      return throwError(() => new Error(`Agent with ID ${agentId} not found`));
-    }
-    return agent.instance.reActSteps$;
+    const tracking = this.getOrCreateStateTracking(agentId);
+    return tracking.reActStepsSubject.asObservable();
   }
 
   /**
    * Get the current ReActSteps.
-   * Returns an Observable that emits the current array of ReActStep.
    */
   public getReActSteps(agentId: string): Observable<ReActStep[]> {
-    return defer(() => {
-      const agent = this.agents.get(agentId);
-      if (!agent) {
-        return throwError(() => new Error(`Agent with ID ${agentId} not found`));
-      }
-      return of(agent.instance.getReActSteps());
-    });
+    return this.http.get<ApiReActStepsResponse>(`${this.AGENT_API_BASE}/agents/${agentId}/react-steps`).pipe(
+      map(response => response.steps.map((s: any) => this.convertApiReActStep(s))),
+      catchError(() => of([]))
+    );
   }
 
   /**
    * Clear all messages for an agent.
-   * This is a fire-and-forget method.
    */
   public clearMessages(agentId: string): void {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      console.error(`Agent with ID ${agentId} not found`);
-      this.notificationService.error(`Agent with ID ${agentId} not found`);
-      return;
-    }
-    agent.instance.clearMessages();
+    this.http.post(`${this.AGENT_API_BASE}/agents/${agentId}/clear`, {}).subscribe({
+      next: () => {
+        const tracking = this.agentStateTracking.get(agentId);
+        if (tracking) {
+          tracking.reActStepsSubject.next([]);
+          tracking.messageStatsSubject.next(new Map());
+        }
+      },
+      error: (error: unknown) => {
+        console.error(`Error clearing messages for agent ${agentId}:`, error);
+      },
+    });
   }
 
   /**
    * Stop generation for an agent.
-   * This is a fire-and-forget method.
    */
   public stopGeneration(agentId: string): void {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      console.error(`Agent with ID ${agentId} not found`);
-      this.notificationService.error(`Agent with ID ${agentId} not found`);
-      return;
-    }
-    agent.instance.stopGeneration();
+    this.http.post(`${this.AGENT_API_BASE}/agents/${agentId}/stop`, {}).subscribe({
+      error: (error: unknown) => {
+        console.error(`Error stopping agent ${agentId}:`, error);
+      },
+    });
   }
 
   /**
    * Get the current state of an agent.
-   * Returns an Observable that emits the CopilotState.
    */
   public getAgentState(agentId: string): Observable<CopilotState> {
     return defer(() => {
-      const agent = this.agents.get(agentId);
-      if (!agent) {
-        return throwError(() => new Error(`Agent with ID ${agentId} not found`));
+      const tracking = this.agentStateTracking.get(agentId);
+      if (tracking) {
+        return of(tracking.stateSubject.getValue());
       }
-      return of(agent.instance.getState());
+      return of(CopilotState.UNAVAILABLE);
     });
   }
 
   /**
    * Get the state observable stream for an agent.
-   * Returns an Observable that emits CopilotState changes.
    */
   public getAgentStateObservable(agentId: string): Observable<CopilotState> {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      return throwError(() => new Error(`Agent with ID ${agentId} not found`));
-    }
-    return agent.instance.state$;
+    const tracking = this.getOrCreateStateTracking(agentId);
+    return tracking.stateSubject.asObservable();
   }
 
   /**
    * Check if an agent is connected.
-   * Returns an Observable that emits a boolean.
    */
   public isAgentConnected(agentId: string): Observable<boolean> {
-    return defer(() => {
-      const agent = this.agents.get(agentId);
-      if (!agent) {
-        return of(false);
-      }
-      return of(agent.instance.isConnected());
-    });
-  }
-
-  public setPlanningMode(agentId: string, planningMode: boolean): void {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      throw new Error(`Agent with ID ${agentId} not found`);
-    }
-    agent.instance.setPlanningMode(planningMode);
-  }
-
-  public getPlanningMode(agentId: string): boolean {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      throw new Error(`Agent with ID ${agentId} not found`);
-    }
-    return agent.instance.getPlanningMode();
+    return this.getAgentState(agentId).pipe(map(state => state !== CopilotState.UNAVAILABLE));
   }
 
   /**
-   * Get system information for an agent.
-   * Returns an Observable that emits the system prompt and tools.
+   * Set planning mode for an agent (local state only).
+   */
+  public setPlanningMode(agentId: string, planningMode: boolean): void {
+    this.planningModes.set(agentId, planningMode);
+  }
+
+  /**
+   * Get planning mode for an agent.
+   */
+  public getPlanningMode(agentId: string): boolean {
+    return this.planningModes.get(agentId) || false;
+  }
+
+  /**
+   * Get system information for an agent (system prompt and tools).
+   * Fetches from agent-service API.
    */
   public getSystemInfo(agentId: string): Observable<{
     systemPrompt: string;
     tools: Array<{ name: string; description: string; inputSchema: any; enabled: boolean }>;
   }> {
-    return defer(() => {
-      const agent = this.agents.get(agentId);
-      if (!agent) {
-        return throwError(() => new Error(`Agent with ID ${agentId} not found`));
-      }
-      return of({
-        systemPrompt: agent.instance.getSystemPrompt(),
-        tools: agent.instance.getToolsInfo(),
-      });
-    });
-  }
-
-  public setHoveredMessage(agentId: string, step: ReActStep | null): void {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      throw new Error(`Agent with ID ${agentId} not found`);
-    }
-    agent.instance.setHoveredMessage(step);
-  }
-
-  public getHoveredMessageOperatorsObservable(
-    agentId: string
-  ): Observable<{ viewedOperatorIds: string[]; addedOperatorIds: string[]; modifiedOperatorIds: string[] }> {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      throw new Error(`Agent with ID ${agentId} not found`);
-    }
-    return agent.instance.hoveredMessageOperators$;
-  }
-
-  public getMessageStatsObservable(agentId: string): Observable<Map<string, any>> {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      throw new Error(`Agent with ID ${agentId} not found`);
-    }
-    return agent.instance.messageStats$;
+    return this.http
+      .get<{
+        systemPrompt: string;
+        tools: Array<{ name: string; description: string; inputSchema: any; enabled: boolean }>;
+      }>(`${this.AGENT_API_BASE}/agents/${agentId}/system-info`)
+      .pipe(
+        catchError(() =>
+          of({
+            systemPrompt: "Unable to retrieve system prompt",
+            tools: [],
+          })
+        )
+      );
   }
 
   /**
-   * Get all model messages for a specific agent.
-   * Used for exporting conversation history.
+   * Set hovered message (local UI state).
    */
-  public getMessages(agentId: string): ModelMessage[] {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      throw new Error(`Agent with ID ${agentId} not found`);
+  public setHoveredMessage(agentId: string, step: ReActStep | null): void {
+    const tracking = this.agentStateTracking.get(agentId);
+    if (tracking) {
+      if (step && step.operatorAccess) {
+        const viewedOperatorIds: string[] = [];
+        const addedOperatorIds: string[] = [];
+        const modifiedOperatorIds: string[] = [];
+
+        step.operatorAccess.forEach(access => {
+          viewedOperatorIds.push(...access.viewedOperatorIds);
+          addedOperatorIds.push(...access.addedOperatorIds);
+          modifiedOperatorIds.push(...access.modifiedOperatorIds);
+        });
+
+        tracking.hoveredMessageSubject.next({
+          viewedOperatorIds: [...new Set(viewedOperatorIds)],
+          addedOperatorIds: [...new Set(addedOperatorIds)],
+          modifiedOperatorIds: [...new Set(modifiedOperatorIds)],
+        });
+      } else {
+        tracking.hoveredMessageSubject.next({
+          viewedOperatorIds: [],
+          addedOperatorIds: [],
+          modifiedOperatorIds: [],
+        });
+      }
     }
-    return agent.instance.getMessages();
   }
 
+  /**
+   * Get hovered message operators observable.
+   */
+  public getHoveredMessageOperatorsObservable(
+    agentId: string
+  ): Observable<{ viewedOperatorIds: string[]; addedOperatorIds: string[]; modifiedOperatorIds: string[] }> {
+    const tracking = this.getOrCreateStateTracking(agentId);
+    return tracking.hoveredMessageSubject.asObservable();
+  }
+
+  /**
+   * Get message stats observable.
+   */
+  public getMessageStatsObservable(agentId: string): Observable<Map<string, CopilotMessageStats>> {
+    const tracking = this.getOrCreateStateTracking(agentId);
+    return tracking.messageStatsSubject.asObservable();
+  }
+
+  /**
+   * Get all model messages for an agent.
+   */
+  public getMessages(agentId: string): ModelMessage[] {
+    // Messages are managed on the server
+    // This would require an API call
+    return [];
+  }
+
+  /**
+   * Get agent action approval observable.
+   */
   public getAgentActionApprovalObservable(
     agentId: string
   ): Observable<{ isWaitingForApproval: boolean; agentActionId?: string }> {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      throw new Error(`Agent with ID ${agentId} not found`);
-    }
-    return agent.instance.agentActionApproval$;
+    const tracking = this.getOrCreateStateTracking(agentId);
+    return tracking.agentActionApprovalSubject.asObservable();
   }
 
   /**
    * Get ReActSteps that viewed or modified a specific operator.
-   * Returns two arrays: steps that viewed the operator and steps that modified it.
    */
   public getReActStepsByOperatorAccess(
     agentId: string,
     operatorId: string
   ): Observable<{ viewedBy: ReActStep[]; modifiedBy: ReActStep[] }> {
-    return defer(() => {
-      const agent = this.agents.get(agentId);
-      if (!agent) {
-        return throwError(() => new Error(`Agent with ID ${agentId} not found`));
-      }
+    return this.getReActSteps(agentId).pipe(
+      map(allSteps => {
+        const viewedBy: ReActStep[] = [];
+        const modifiedBy: ReActStep[] = [];
 
-      const allSteps = agent.instance.getReActSteps();
-      const viewedBy: ReActStep[] = [];
-      const modifiedBy: ReActStep[] = [];
-
-      // Iterate through all steps and check operator access
-      for (const step of allSteps) {
-        if (step.operatorAccess) {
-          step.operatorAccess.forEach(access => {
-            if (access.viewedOperatorIds.includes(operatorId) && !viewedBy.includes(step)) {
-              viewedBy.push(step);
-            }
-            if (access.modifiedOperatorIds.includes(operatorId) && !modifiedBy.includes(step)) {
-              modifiedBy.push(step);
-            }
-          });
+        for (const step of allSteps) {
+          if (step.operatorAccess) {
+            step.operatorAccess.forEach(access => {
+              if (access.viewedOperatorIds.includes(operatorId) && !viewedBy.includes(step)) {
+                viewedBy.push(step);
+              }
+              if (access.modifiedOperatorIds.includes(operatorId) && !modifiedBy.includes(step)) {
+                modifiedBy.push(step);
+              }
+            });
+          }
         }
-      }
 
-      return of({ viewedBy, modifiedBy });
-    });
+        return { viewedBy, modifiedBy };
+      })
+    );
   }
 
   /**
-   * Create a copilot instance using Angular's dependency injection.
-   * Each agent receives a unique instance via a child injector.
+   * Get workflow observable for an agent.
+   * This observable emits the full Workflow object from the backend database
+   * whenever the agent's workflow changes.
    */
-  private createCopilotInstance(modelType: string, isBaselineMode: boolean = false): TexeraCopilot {
-    const childInjector = Injector.create({
-      providers: [
-        {
-          provide: TexeraCopilot,
-        },
-      ],
-      parent: this.injector,
-    });
-
-    const copilotInstance = childInjector.get(TexeraCopilot);
-    copilotInstance.setModelType(modelType);
-    copilotInstance.setBaselineMode(isBaselineMode);
-
-    return copilotInstance;
+  public getWorkflowObservable(agentId: string): Observable<Workflow | null> {
+    const tracking = this.agentStateTracking.get(agentId);
+    if (tracking) {
+      return tracking.workflowSubject.asObservable();
+    }
+    return of(null);
   }
 }

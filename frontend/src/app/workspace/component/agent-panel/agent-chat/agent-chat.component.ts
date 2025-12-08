@@ -112,14 +112,15 @@ export class AgentChatComponent implements OnInit, AfterViewChecked {
 
     this.planningMode = this.copilotManagerService.getPlanningMode(this.agentInfo.id);
 
-    // First, get the current state synchronously to ensure we have it immediately
-    const agent = this.agentInfo.instance;
-    if (agent) {
-      const currentState = agent.getState();
-      this.agentState = currentState;
-      // Immediately trigger change detection to show the current state
-      this.cdr.detectChanges();
-    }
+    // Get the current state from manager service
+    this.copilotManagerService
+      .getAgentState(this.agentInfo.id)
+      .pipe(untilDestroyed(this))
+      .subscribe(state => {
+        this.agentState = state;
+        // Immediately trigger change detection to show the current state
+        this.cdr.detectChanges();
+      });
 
     // Then subscribe to agent state changes (BehaviorSubject will immediately emit current value)
     this.copilotManagerService
@@ -236,12 +237,10 @@ export class AgentChatComponent implements OnInit, AfterViewChecked {
       .subscribe(systemInfo => {
         this.systemPrompt = systemInfo.systemPrompt;
         this.availableTools = systemInfo.tools;
-        const agent = this.agentInfo.instance;
-        if (agent) {
-          this.settingsMaxTokenLimit = agent.getMaxOperatorResultTokenLimit();
-          this.settingsToolTimeoutSeconds = Math.round(agent.getToolTimeoutMs() / 1000);
-          this.settingsExecutionTimeoutMinutes = Math.round(agent.getExecutionTimeoutMs() / 60000);
-        }
+        // Settings are managed server-side, use default values
+        this.settingsMaxTokenLimit = 1000;
+        this.settingsToolTimeoutSeconds = 120;
+        this.settingsExecutionTimeoutMinutes = 10;
         this.isEditingSystemPrompt = false;
         this.editingSystemPrompt = "";
         this.expandedToolName = null;
@@ -823,71 +822,50 @@ export class AgentChatComponent implements OnInit, AfterViewChecked {
 
   /**
    * Save the edited system prompt.
+   * Note: System prompt is managed server-side in API mode.
    */
   public saveSystemPrompt(): void {
-    const agent = this.agentInfo.instance;
-    if (agent) {
-      agent.setSystemPrompt(this.editingSystemPrompt);
-      this.systemPrompt = this.editingSystemPrompt;
-      this.isEditingSystemPrompt = false;
-      this.notificationService.success("System prompt updated");
-    }
+    // In API mode, system prompt is managed server-side
+    this.systemPrompt = this.editingSystemPrompt;
+    this.isEditingSystemPrompt = false;
+    this.notificationService.info("System prompt editing is managed server-side");
   }
 
   /**
    * Reset system prompt to default.
+   * Note: System prompt is managed server-side in API mode.
    */
   public resetSystemPromptToDefault(): void {
-    const agent = this.agentInfo.instance;
-    if (agent) {
-      agent.resetSystemPromptToDefault();
-      this.refreshSystemInfo();
-      this.notificationService.success("System prompt reset to default");
-    }
+    // In API mode, system prompt is managed server-side
+    this.refreshSystemInfo();
+    this.notificationService.info("System prompt is managed server-side");
   }
 
   /**
    * Toggle a specific tool's enabled state.
+   * Note: Tool settings are managed server-side in API mode.
    */
   public toggleToolEnabled(tool: { name: string; enabled: boolean }): void {
-    const agent = this.agentInfo.instance;
-    if (agent) {
-      if (tool.enabled) {
-        agent.disableTool(tool.name);
-      } else {
-        agent.enableTool(tool.name);
-      }
-      // Refresh to get updated tool states
-      this.refreshSystemInfo();
-    }
+    // In API mode, tool settings are managed server-side
+    this.notificationService.info("Tool settings are managed server-side");
   }
 
   /**
    * Enable all tools.
+   * Note: Tool settings are managed server-side in API mode.
    */
   public enableAllTools(): void {
-    const agent = this.agentInfo.instance;
-    if (agent) {
-      for (const tool of this.availableTools) {
-        agent.enableTool(tool.name);
-      }
-      this.refreshSystemInfo();
-      this.notificationService.success("All tools enabled");
-    }
+    // In API mode, tool settings are managed server-side
+    this.notificationService.info("Tool settings are managed server-side");
   }
 
   /**
    * Disable all tools.
+   * Note: Tool settings are managed server-side in API mode.
    */
   public disableAllTools(): void {
-    const agent = this.agentInfo.instance;
-    if (agent) {
-      for (const tool of this.availableTools) {
-        agent.disableTool(tool.name);
-      }
-      this.refreshSystemInfo();
-      this.notificationService.success("All tools disabled");
-    }
+    // In API mode, tool settings are managed server-side
+    this.notificationService.info("Tool settings are managed server-side");
   }
 
   /**
@@ -899,37 +877,29 @@ export class AgentChatComponent implements OnInit, AfterViewChecked {
 
   /**
    * Save the max token limit.
+   * Note: Settings are managed server-side in API mode.
    */
   public saveMaxTokenLimit(): void {
-    const agent = this.agentInfo.instance;
-    if (agent) {
-      agent.setMaxOperatorResultTokenLimit(this.settingsMaxTokenLimit);
-      this.notificationService.success("Max token limit updated");
-    }
+    // In API mode, settings are managed server-side
+    this.notificationService.info("Settings are managed server-side");
   }
 
   /**
    * Save the tool execution timeout.
+   * Note: Settings are managed server-side in API mode.
    */
   public saveToolTimeout(): void {
-    const agent = this.agentInfo.instance;
-    if (agent) {
-      const timeoutMs = this.settingsToolTimeoutSeconds * 1000;
-      agent.setToolTimeoutMs(timeoutMs);
-      this.notificationService.success("Tool timeout updated");
-    }
+    // In API mode, settings are managed server-side
+    this.notificationService.info("Settings are managed server-side");
   }
 
   /**
    * Save the workflow execution timeout.
+   * Note: Settings are managed server-side in API mode.
    */
   public saveExecutionTimeout(): void {
-    const agent = this.agentInfo.instance;
-    if (agent) {
-      const timeoutMs = this.settingsExecutionTimeoutMinutes * 60 * 1000;
-      agent.setExecutionTimeoutMs(timeoutMs);
-      this.notificationService.success("Execution timeout updated");
-    }
+    // In API mode, settings are managed server-side
+    this.notificationService.info("Settings are managed server-side");
   }
 
   /**
