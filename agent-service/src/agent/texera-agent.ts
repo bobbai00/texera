@@ -21,7 +21,7 @@
  * Texera Agent - Core agent implementation using Vercel AI SDK.
  */
 
-import { generateText, type CoreMessage, type LanguageModelV1 } from "ai";
+import { generateText, type ModelMessage, type LanguageModel, stepCountIs } from "ai";
 import { WorkflowState } from "../workflow/workflow-state";
 import { OperatorMetadataStore } from "../tools/metadata-tools";
 import type {
@@ -57,7 +57,7 @@ import {
 
 export interface TexeraAgentConfig {
   /** Language model to use */
-  model: LanguageModelV1;
+  model: LanguageModel;
   /** Agent ID */
   agentId: string;
   /** Agent display name */
@@ -105,13 +105,13 @@ export class TexeraAgent {
   private metadataStore: OperatorMetadataStore;
 
   // Configuration
-  private model: LanguageModelV1;
+  private model: LanguageModel;
   private systemPrompt: string;
   private maxSteps: number;
   private settings: AgentSettings;
 
   // Conversation history
-  private messages: CoreMessage[] = [];
+  private messages: ModelMessage[] = [];
 
   // Tools
   private tools: Record<string, any>;
@@ -178,7 +178,7 @@ export class TexeraAgent {
     return this.metadataStore;
   }
 
-  getMessages(): CoreMessage[] {
+  getMessages(): ModelMessage[] {
     return [...this.messages];
   }
 
@@ -263,8 +263,8 @@ export class TexeraAgent {
         system: this.systemPrompt,
         messages: this.messages,
         tools: this.tools,
-        maxSteps: this.maxSteps,
-        onStepFinish: async (event) => {
+        stopWhen: stepCountIs(this.maxSteps),
+        onStepFinish: async ({ text, toolCalls, toolResults, usage }) => {
           stepCount++;
 
           // Check for stop
@@ -273,51 +273,51 @@ export class TexeraAgent {
           }
 
           // Add text step if there's text
-          if (event.text) {
+          if (text) {
             steps.push({
               type: "text",
               messageId,
               stepId: `${messageId}-step-${stepCount}-text`,
               timestamp: Date.now(),
-              content: event.text,
+              content: text,
             });
           }
 
           // Add tool call steps
-          if (event.toolCalls) {
-            for (const toolCall of event.toolCalls) {
+          if (toolCalls) {
+            for (const toolCall of toolCalls) {
               steps.push({
                 type: "tool-call",
                 messageId,
                 stepId: `${messageId}-step-${stepCount}-call-${toolCall.toolCallId}`,
                 timestamp: Date.now(),
                 toolName: toolCall.toolName,
-                input: toolCall.args,
+                input: toolCall.input,
                 toolCallId: toolCall.toolCallId,
               });
             }
           }
 
           // Add tool result steps
-          if (event.toolResults) {
-            for (const toolResult of event.toolResults) {
+          if (toolResults) {
+            for (const toolResult of toolResults) {
               steps.push({
                 type: "tool-result",
                 messageId,
                 stepId: `${messageId}-step-${stepCount}-result-${toolResult.toolCallId}`,
                 timestamp: Date.now(),
                 toolCallId: toolResult.toolCallId,
-                result: toolResult.result,
-                isError: !toolResult.result?.success,
+                result: toolResult.output,
+                isError: !(toolResult.output as any)?.success,
               });
             }
           }
 
-          // Update stats
-          if (event.usage) {
-            stats.totalInputTokens += event.usage.promptTokens;
-            stats.totalOutputTokens += event.usage.completionTokens;
-            stats.totalTokens += event.usage.totalTokens;
+          // Update stats (AI SDK 5 uses inputTokens/outputTokens)
+          if (usage) {
+            stats.totalInputTokens += usage.inputTokens || 0;
+            stats.totalOutputTokens += usage.outputTokens || 0;
+            stats.totalTokens += usage.totalTokens || 0;
           }
         },
       });

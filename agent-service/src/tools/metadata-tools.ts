@@ -299,7 +299,7 @@ export function createListAllAvailableOperatorTypesTool(metadataStore: OperatorM
     description:
       "List all available operator types in Texera with their descriptions. " +
       "Use this to discover what operators are available before adding them to a workflow.",
-    parameters: z.object({}),
+    inputSchema: z.object({}),
     execute: async () => {
       const operators = metadataStore.getAllOperatorTypes();
       const count = Object.keys(operators).length;
@@ -320,7 +320,7 @@ export function createGetOperatorSchemaTool(metadataStore: OperatorMetadataStore
       "Get the JSON schema for a specific operator type. " +
       "Returns a compact schema with inlined definitions. " +
       "Use this to understand what properties an operator requires.",
-    parameters: z.object({
+    inputSchema: z.object({
       operatorType: z.string().describe("The operator type to get the schema for"),
     }),
     execute: async (args: { operatorType: string }) => {

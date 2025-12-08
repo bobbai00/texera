@@ -192,7 +192,7 @@ export function createGetCurrentExecutionStateTool(executionStore: ExecutionStat
     description:
       "Get the current execution state of the workflow. " +
       "Returns the execution state, operator statistics, and any error messages.",
-    parameters: z.object({}),
+    inputSchema: z.object({}),
     execute: async () => {
       const state = executionStore.getExecutionState();
       const operatorStates = executionStore.getOperatorStatistics();
@@ -226,7 +226,7 @@ export function createGetExistingWorkflowExecutionResultTool(
       "Get results and console logs from a previous workflow execution. " +
       "If targetOperatorIds is empty or not provided, retrieves results for all operators in the workflow. " +
       "Returns operator results (limited by token count ~3000 tokens) and console logs for each operator.",
-    parameters: z.object({
+    inputSchema: z.object({
       targetOperatorIds: z
         .array(z.string())
         .optional()
@@ -287,7 +287,7 @@ export function createGetCurrentOperatorResultInfoTool(executionStore: Execution
     description:
       "Get information about an operator's results in the current workflow, " +
       "including total count and table details.",
-    parameters: z.object({
+    inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to get result info for"),
     }),
     execute: async (args: { operatorId: string }) => {

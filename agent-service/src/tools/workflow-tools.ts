@@ -51,7 +51,7 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
       "Get the current workflow structure including operators and links. " +
       "Returns a list of operators (with id, type, name, properties, input/output schemas) and a list of links. " +
       "Optionally filter to specific operator IDs. If no operatorIds provided, returns all enabled operators.",
-    parameters: z.object({
+    inputSchema: z.object({
       operatorIds: z
         .array(z.string())
         .optional()
@@ -137,7 +137,7 @@ export function createAddOperatorTool(
     description:
       "Add a new operator to the workflow. Specify the operator type and its properties. " +
       "Use getOperatorSchema first to understand what properties are required.",
-    parameters: z.object({
+    inputSchema: z.object({
       operatorType: z.string().describe("The type of operator to add (e.g., 'PythonUDFV2', 'Aggregate')"),
       properties: z.record(z.any()).optional().describe("Properties to set on the operator"),
       customDisplayName: z.string().optional().describe("Optional custom display name for the operator"),
@@ -207,7 +207,7 @@ export function createAddLinkTool(workflowState: WorkflowState) {
     description:
       "Add a link connecting two operators in the workflow. " +
       "Specify source operator/port and target operator/port.",
-    parameters: z.object({
+    inputSchema: z.object({
       sourceOperatorId: z.string().describe("ID of the source operator"),
       sourcePortId: z.string().optional().describe("ID of the source port (default: 'output0')"),
       targetOperatorId: z.string().describe("ID of the target operator"),
@@ -276,7 +276,7 @@ export function createModifyOperatorTool(workflowState: WorkflowState) {
     description:
       "Modify properties of an existing operator in the workflow. " +
       "Use getCurrentWorkflow first to see current operator properties.",
-    parameters: z.object({
+    inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to modify"),
       properties: z.record(z.any()).describe("Properties to update (merged with existing)"),
     }),
@@ -316,7 +316,7 @@ export function createModifyOperatorTool(workflowState: WorkflowState) {
 export function createDeleteFromWorkflowTool(workflowState: WorkflowState) {
   return tool({
     description: "Delete operators and/or links from the workflow.",
-    parameters: z.object({
+    inputSchema: z.object({
       operatorIds: z.array(z.string()).optional().describe("List of operator IDs to delete"),
       linkIds: z.array(z.string()).optional().describe("List of link IDs to delete"),
     }),
