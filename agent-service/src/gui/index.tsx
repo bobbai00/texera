@@ -147,16 +147,21 @@ function StepsDisplay({ steps }: { steps: ReActStep[] }) {
   return (
     <Box flexDirection="column" marginLeft={2}>
       {recentSteps.map((step, index) => (
-        <Box key={index}>
-          {step.type === "tool-call" && (
-            <Text color="yellow">
-              {"  "}[Tool] {step.toolName}
+        <Box key={index} flexDirection="column">
+          {/* Show tool calls */}
+          {step.toolCalls && step.toolCalls.map((tc, tcIndex) => (
+            <Text key={`tc-${tcIndex}`} color="yellow">
+              {"  "}[Tool] {tc.toolName}
             </Text>
-          )}
-          {step.type === "tool-result" && (
-            <Text color={step.isError ? "red" : "green"}>{"  "}[Result] {step.isError ? "Error" : "OK"}</Text>
-          )}
-          {step.type === "text" && step.content && (
+          ))}
+          {/* Show tool results */}
+          {step.toolResults && step.toolResults.map((tr, trIndex) => (
+            <Text key={`tr-${trIndex}`} color={tr.isError ? "red" : "green"}>
+              {"  "}[Result] {tr.isError ? "Error" : "OK"}
+            </Text>
+          ))}
+          {/* Show text content */}
+          {step.content && !step.toolCalls && (
             <Text color="gray">{"  "}{step.content.substring(0, 60)}...</Text>
           )}
         </Box>

@@ -145,21 +145,23 @@ export function createAddOperatorTool(
     execute: async (args: { operatorType: string; properties?: Record<string, any>; customDisplayName?: string }) => {
       try {
         // Get schema for this operator type
-        const schema = operatorSchemas.get(args.operatorType);
-        if (!schema) {
+        // Schema entry contains { jsonSchema, additionalMetadata }
+        const schemaEntry = operatorSchemas.get(args.operatorType);
+        if (!schemaEntry) {
           return createErrorResult(`Unknown operator type: ${args.operatorType}`);
         }
 
         const operatorId = generateOperatorId();
+        const { additionalMetadata } = schemaEntry;
 
-        // Build input/output ports from schema
-        const inputPorts = schema.additionalMetadata?.inputPorts?.map((port: any, idx: number) => ({
+        // Build input/output ports from additionalMetadata
+        const inputPorts = additionalMetadata?.inputPorts?.map((port: any, idx: number) => ({
           portID: `input${idx}`,
           displayName: port.displayName || `Input ${idx}`,
           allowMultiInputs: port.allowMultiInputs || false,
         })) || [];
 
-        const outputPorts = schema.additionalMetadata?.outputPorts?.map((port: any, idx: number) => ({
+        const outputPorts = additionalMetadata?.outputPorts?.map((port: any, idx: number) => ({
           portID: `output${idx}`,
           displayName: port.displayName || `Output ${idx}`,
         })) || [];

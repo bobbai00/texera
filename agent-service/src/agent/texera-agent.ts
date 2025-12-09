@@ -91,6 +91,9 @@ export interface AgentMessageResult {
 // Texera Agent Class
 // ============================================================================
 
+/** Callback for receiving ReActStep updates */
+export type ReActStepCallback = (step: ReActStep) => void;
+
 /**
  * TexeraAgent is the core agent implementation.
  * It maintains workflow state and processes user messages using the Vercel AI SDK.
@@ -112,6 +115,15 @@ export class TexeraAgent {
 
   // Conversation history
   private messages: ModelMessage[] = [];
+
+  // ReActSteps - accumulated reasoning steps
+  private reActSteps: ReActStep[] = [];
+
+  // Callback for streaming ReActSteps
+  private stepCallback: ReActStepCallback | null = null;
+
+  // Message counter for generating unique IDs
+  private messageCounter = 0;
 
   // Tools
   private tools: Record<string, any>;
@@ -136,8 +148,24 @@ export class TexeraAgent {
       systemPrompt: this.systemPrompt,
     };
 
-    // Initialize tools
+    // Initialize tools with empty schemas (will be rebuilt after initialize())
     this.tools = this.createTools();
+  }
+
+  /**
+   * Initialize the agent by loading operator metadata from the backend.
+   * Must be called after construction before the agent can be used.
+   */
+  async initialize(): Promise<void> {
+    try {
+      await this.metadataStore.initializeFromBackend();
+      // Rebuild tools with loaded metadata
+      this.tools = this.createTools();
+      console.log(`[TexeraAgent ${this.agentId}] Initialized with ${this.metadataStore.getOperatorCount()} operators`);
+    } catch (error) {
+      console.error(`[TexeraAgent ${this.agentId}] Failed to initialize metadata:`, error);
+      // Continue with empty metadata - tools will still work but addOperator will fail
+    }
   }
 
   // ============================================================================
@@ -146,9 +174,14 @@ export class TexeraAgent {
 
   private createTools(): Record<string, any> {
     // Get operator schemas map for addOperator tool
+    // Each entry needs both jsonSchema and additionalMetadata for port info
     const operatorSchemas = new Map<string, any>();
-    for (const [type, schema] of Object.entries(this.metadataStore.getAllOperatorTypes())) {
-      operatorSchemas.set(type, this.metadataStore.getSchema(type));
+    for (const type of Object.keys(this.metadataStore.getAllOperatorTypes())) {
+      const jsonSchema = this.metadataStore.getSchema(type);
+      const additionalMetadata = this.metadataStore.getAdditionalMetadata(type);
+      if (jsonSchema) {
+        operatorSchemas.set(type, { jsonSchema, additionalMetadata });
+      }
     }
 
     return {
@@ -180,6 +213,31 @@ export class TexeraAgent {
 
   getMessages(): ModelMessage[] {
     return [...this.messages];
+  }
+
+  /**
+   * Get all accumulated ReActSteps.
+   */
+  getReActSteps(): ReActStep[] {
+    return [...this.reActSteps];
+  }
+
+  /**
+   * Set a callback to receive ReActStep updates in real-time.
+   * @param callback - Function to call when a new step is added
+   */
+  setStepCallback(callback: ReActStepCallback | null): void {
+    this.stepCallback = callback;
+  }
+
+  /**
+   * Add a ReActStep and notify the callback if set.
+   */
+  private addStep(step: ReActStep): void {
+    this.reActSteps.push(step);
+    if (this.stepCallback) {
+      this.stepCallback(step);
+    }
   }
 
   /**
@@ -216,12 +274,12 @@ export class TexeraAgent {
 
   /**
    * Process a user message and return the agent's response.
+   * ReActSteps are accumulated internally and streamed via the callback if set.
    */
   async sendMessage(userMessage: string): Promise<AgentMessageResult> {
-    const messageId = `msg-${Date.now()}`;
+    const messageId = `msg-${this.agentId}-${++this.messageCounter}-${Date.now()}`;
     const startTime = Date.now();
-    const steps: ReActStep[] = [];
-    let stepCount = 0;
+    let stepIndex = 0;
 
     // Initialize stats
     const stats: AgentMessageStats = {
@@ -248,14 +306,19 @@ export class TexeraAgent {
         content: userMessage,
       });
 
-      // Create begin step (text type)
-      steps.push({
-        type: "text",
+      // Create user message step (stepId 0)
+      const userStep: ReActStep = {
         messageId,
-        stepId: `${messageId}-begin`,
+        stepId: 0,
         timestamp: Date.now(),
-        content: `[User] ${userMessage}`,
-      });
+        role: "user",
+        content: userMessage,
+        isBegin: true,
+        isEnd: true,
+      };
+      this.addStep(userStep);
+
+      let isFirstStep = true;
 
       // Call the model with tools
       const result = await generateText({
@@ -265,71 +328,90 @@ export class TexeraAgent {
         tools: this.tools,
         stopWhen: stepCountIs(this.maxSteps),
         onStepFinish: async ({ text, toolCalls, toolResults, usage }) => {
-          stepCount++;
-
           // Check for stop
           if (this.shouldStop) {
             return;
           }
 
-          // Add text step if there's text
-          if (text) {
-            steps.push({
-              type: "text",
-              messageId,
-              stepId: `${messageId}-step-${stepCount}-text`,
-              timestamp: Date.now(),
-              content: text,
+          stepIndex++; // Increment first since user message is step 0
+
+          // Build tool calls array in the format expected by frontend
+          const formattedToolCalls = toolCalls?.map((tc) => ({
+            toolName: tc.toolName,
+            toolCallId: tc.toolCallId,
+            input: tc.input,
+          }));
+
+          // Build tool results array in the format expected by frontend
+          const formattedToolResults = toolResults?.map((tr) => ({
+            toolCallId: tr.toolCallId,
+            output: tr.output,
+            isError: !(tr.output as any)?.success,
+          }));
+
+          // Build operator access map from tool results
+          const operatorAccess: Record<number, any> = {};
+          if (toolResults) {
+            toolResults.forEach((tr, index) => {
+              const output = tr.output as any;
+              if (output && (output.viewedOperatorIds || output.addedOperatorIds || output.modifiedOperatorIds)) {
+                operatorAccess[index] = {
+                  viewedOperatorIds: output.viewedOperatorIds || [],
+                  addedOperatorIds: output.addedOperatorIds || [],
+                  modifiedOperatorIds: output.modifiedOperatorIds || [],
+                };
+              }
             });
           }
 
-          // Add tool call steps
-          if (toolCalls) {
-            for (const toolCall of toolCalls) {
-              steps.push({
-                type: "tool-call",
-                messageId,
-                stepId: `${messageId}-step-${stepCount}-call-${toolCall.toolCallId}`,
-                timestamp: Date.now(),
-                toolName: toolCall.toolName,
-                input: toolCall.input,
-                toolCallId: toolCall.toolCallId,
-              });
-            }
-          }
+          // Create agent step with all info combined
+          const agentStep: ReActStep = {
+            messageId,
+            stepId: stepIndex,
+            timestamp: Date.now(),
+            role: "agent",
+            content: text || "",
+            isBegin: isFirstStep,
+            isEnd: false, // Will be updated in the final step
+            toolCalls: formattedToolCalls,
+            toolResults: formattedToolResults,
+            usage: usage ? {
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              totalTokens: usage.totalTokens,
+            } : undefined,
+            operatorAccess: Object.keys(operatorAccess).length > 0 ? operatorAccess : undefined,
+          };
+          this.addStep(agentStep);
 
-          // Add tool result steps
-          if (toolResults) {
-            for (const toolResult of toolResults) {
-              steps.push({
-                type: "tool-result",
-                messageId,
-                stepId: `${messageId}-step-${stepCount}-result-${toolResult.toolCallId}`,
-                timestamp: Date.now(),
-                toolCallId: toolResult.toolCallId,
-                result: toolResult.output,
-                isError: !(toolResult.output as any)?.success,
-              });
-            }
-          }
+          isFirstStep = false;
 
-          // Update stats (AI SDK 5 uses inputTokens/outputTokens)
+          // Update stats
           if (usage) {
-            stats.totalInputTokens += usage.inputTokens || 0;
-            stats.totalOutputTokens += usage.outputTokens || 0;
-            stats.totalTokens += usage.totalTokens || 0;
+            stats.totalInputTokens = usage.inputTokens || 0;
+            stats.totalOutputTokens = usage.outputTokens || 0;
+            stats.totalTokens = usage.totalTokens || 0;
           }
         },
       });
 
-      // Create end step (text type with final response)
-      steps.push({
-        type: "text",
+      // Create final step with the complete response
+      stepIndex++;
+      const finalStep: ReActStep = {
         messageId,
-        stepId: `${messageId}-end`,
+        stepId: stepIndex,
         timestamp: Date.now(),
+        role: "agent",
         content: result.text,
-      });
+        isBegin: false,
+        isEnd: true,
+        usage: result.usage ? {
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          totalTokens: result.usage.totalTokens,
+        } : undefined,
+      };
+      this.addStep(finalStep);
 
       // Add assistant response to history
       this.messages.push({
@@ -339,12 +421,20 @@ export class TexeraAgent {
 
       // Update final stats
       stats.endTime = Date.now();
-      stats.stepCount = stepCount;
+      stats.stepCount = stepIndex;
       stats.status = this.shouldStop ? "stopped" : "completed";
+      if (result.usage) {
+        stats.totalInputTokens = result.usage.inputTokens || 0;
+        stats.totalOutputTokens = result.usage.outputTokens || 0;
+        stats.totalTokens = result.usage.totalTokens || 0;
+      }
+
+      // Return steps for this message only
+      const messageSteps = this.reActSteps.filter(s => s.messageId === messageId);
 
       return {
         response: result.text,
-        steps,
+        steps: messageSteps,
         usage: {
           inputTokens: stats.totalInputTokens,
           outputTokens: stats.totalOutputTokens,
@@ -354,15 +444,30 @@ export class TexeraAgent {
         stopped: this.shouldStop,
       };
     } catch (error: any) {
-      // Handle error
+      // Handle error - add error step
+      stepIndex++;
+      const errorStep: ReActStep = {
+        messageId,
+        stepId: stepIndex,
+        timestamp: Date.now(),
+        role: "agent",
+        content: `Error: ${error.message || String(error)}`,
+        isBegin: false,
+        isEnd: true,
+      };
+      this.addStep(errorStep);
+
+      // Update stats
       stats.endTime = Date.now();
-      stats.stepCount = stepCount;
+      stats.stepCount = stepIndex;
       stats.status = "error";
       stats.errorMessage = error.message || String(error);
 
+      const messageSteps = this.reActSteps.filter(s => s.messageId === messageId);
+
       return {
         response: "",
-        steps,
+        steps: messageSteps,
         usage: {
           inputTokens: stats.totalInputTokens,
           outputTokens: stats.totalOutputTokens,
@@ -386,17 +491,19 @@ export class TexeraAgent {
   }
 
   /**
-   * Clear conversation history.
+   * Clear conversation history and ReActSteps.
    */
   clearHistory(): void {
     this.messages = [];
+    this.reActSteps = [];
   }
 
   /**
-   * Reset the agent (clear history and workflow).
+   * Reset the agent (clear history, ReActSteps, and workflow).
    */
   reset(): void {
     this.messages = [];
+    this.reActSteps = [];
     this.workflowState.reset();
   }
 

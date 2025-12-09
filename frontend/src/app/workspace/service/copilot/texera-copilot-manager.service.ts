@@ -132,6 +132,8 @@ interface AgentStateTracking {
   workflowSubject: BehaviorSubject<Workflow | null>;
   workflowId?: number;
   stopPolling$: Subject<void>;
+  /** WebSocket connection for real-time updates */
+  websocket?: WebSocket;
 }
 
 /**
@@ -186,27 +188,36 @@ export class TexeraCopilotManagerService {
   }
 
   /**
-   * Convert API ReActStep to frontend ReActStep format
+   * Convert API ReActStep to frontend ReActStep format.
+   * The backend now sends ReActSteps in the aligned format, so minimal conversion is needed.
    */
   private convertApiReActStep(apiStep: any): ReActStep {
+    // Convert operator access from object to Map if present
+    let operatorAccess: Map<number, any> | undefined;
+    if (apiStep.operatorAccess) {
+      operatorAccess = new Map();
+      for (const [key, value] of Object.entries(apiStep.operatorAccess)) {
+        operatorAccess.set(parseInt(key), value);
+      }
+    }
+
     return {
       messageId: apiStep.messageId,
       stepId: apiStep.stepId || 0,
       timestamp: new Date(apiStep.timestamp),
-      role: apiStep.type === "text" && apiStep.content?.startsWith("[User]") ? "user" : "agent",
+      role: apiStep.role || "agent",
       content: apiStep.content || "",
-      isBegin: apiStep.stepId?.includes("-begin") || false,
-      isEnd: apiStep.stepId?.includes("-end") || false,
-      toolCalls:
-        apiStep.type === "tool-call"
-          ? [{ toolName: apiStep.toolName, args: apiStep.input, toolCallId: apiStep.toolCallId }]
-          : undefined,
-      toolResults:
-        apiStep.type === "tool-result"
-          ? [{ toolCallId: apiStep.toolCallId, result: apiStep.result, isError: apiStep.isError }]
-          : undefined,
+      isBegin: apiStep.isBegin || false,
+      isEnd: apiStep.isEnd || false,
+      toolCalls: apiStep.toolCalls,
+      toolResults: apiStep.toolResults?.map((tr: any) => ({
+        ...tr,
+        // Ensure compatibility: backend uses 'output', frontend expects 'result' or 'output'
+        result: tr.output || tr.result,
+        output: tr.output || tr.result,
+      })),
       usage: apiStep.usage,
-      operatorAccess: undefined, // TODO: Parse from tool results if needed
+      operatorAccess,
     };
   }
 
@@ -241,30 +252,41 @@ export class TexeraCopilotManagerService {
   }
 
   /**
-   * Start polling for agent state, ReActSteps, and workflow updates
+   * Start WebSocket connection for real-time ReActSteps updates
    */
   private startStatePolling(agentId: string, tracking: AgentStateTracking): void {
-    // Poll for ReActSteps and state
-    interval(1000)
-      .pipe(
-        switchMap(() =>
-          this.http.get<ApiReActStepsResponse>(`${this.AGENT_API_BASE}/agents/${agentId}/react-steps`).pipe(
-            catchError(() => of(null)) // Silently ignore polling errors
-          )
-        ),
-        takeUntil(tracking.stopPolling$)
-      )
-      .subscribe(response => {
-        if (response) {
-          this.ngZone.run(() => {
-            const state = this.mapStateToCopilotState(response.state);
-            tracking.stateSubject.next(state);
+    // Build WebSocket URL
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${wsProtocol}//${window.location.host}${this.AGENT_API_BASE}/agents/${agentId}/react`;
 
-            const steps = response.steps.map((s: any) => this.convertApiReActStep(s));
-            tracking.reActStepsSubject.next(steps);
-          });
-        }
-      });
+    console.log(`[CopilotManager] Connecting to WebSocket: ${wsUrl}`);
+
+    const ws = new WebSocket(wsUrl);
+    tracking.websocket = ws;
+
+    ws.onopen = () => {
+      console.log(`[CopilotManager] WebSocket connected for agent ${agentId}`);
+    };
+
+    ws.onmessage = event => {
+      try {
+        const message = JSON.parse(event.data);
+        this.ngZone.run(() => {
+          this.handleWebSocketMessage(agentId, tracking, message);
+        });
+      } catch (error) {
+        console.error(`[CopilotManager] Failed to parse WebSocket message:`, error);
+      }
+    };
+
+    ws.onerror = error => {
+      console.error(`[CopilotManager] WebSocket error for agent ${agentId}:`, error);
+    };
+
+    ws.onclose = () => {
+      console.log(`[CopilotManager] WebSocket closed for agent ${agentId}`);
+      tracking.websocket = undefined;
+    };
 
     // Poll workflow content from backend database if workflowId is set
     if (tracking.workflowId) {
@@ -285,11 +307,66 @@ export class TexeraCopilotManagerService {
   }
 
   /**
-   * Stop polling for an agent
+   * Handle incoming WebSocket messages
+   */
+  private handleWebSocketMessage(agentId: string, tracking: AgentStateTracking, message: any): void {
+    switch (message.type) {
+      case "init":
+        // Initial state and steps
+        if (message.state) {
+          tracking.stateSubject.next(this.mapStateToCopilotState(message.state));
+        }
+        if (message.steps && Array.isArray(message.steps)) {
+          const steps = message.steps.map((s: any) => this.convertApiReActStep(s));
+          tracking.reActStepsSubject.next(steps);
+        }
+        break;
+
+      case "step":
+        // New step received - append to existing steps
+        if (message.step) {
+          const convertedStep = this.convertApiReActStep(message.step);
+          const currentSteps = tracking.reActStepsSubject.getValue();
+          tracking.reActStepsSubject.next([...currentSteps, convertedStep]);
+        }
+        break;
+
+      case "state":
+        // State update
+        if (message.state) {
+          tracking.stateSubject.next(this.mapStateToCopilotState(message.state));
+        }
+        break;
+
+      case "complete":
+        // Message processing complete
+        if (message.state) {
+          tracking.stateSubject.next(this.mapStateToCopilotState(message.state));
+        }
+        break;
+
+      case "error":
+        // Error occurred
+        console.error(`[CopilotManager] Agent ${agentId} error:`, message.error);
+        this.notificationService.error(message.error || "Agent error occurred");
+        break;
+
+      default:
+        console.warn(`[CopilotManager] Unknown message type:`, message.type);
+    }
+  }
+
+  /**
+   * Stop WebSocket connection and polling for an agent
    */
   private stopStatePolling(agentId: string): void {
     const tracking = this.agentStateTracking.get(agentId);
     if (tracking) {
+      // Close WebSocket if open
+      if (tracking.websocket) {
+        tracking.websocket.close();
+        tracking.websocket = undefined;
+      }
       tracking.stopPolling$.next();
       tracking.stopPolling$.complete();
       this.agentStateTracking.delete(agentId);
@@ -346,7 +423,9 @@ export class TexeraCopilotManagerService {
 
           this.agents.set(response.id, agentInfo);
           // Pass workflowId to enable workflow polling from backend database
-          this.getOrCreateStateTracking(response.id, workflowId);
+          const tracking = this.getOrCreateStateTracking(response.id, workflowId);
+          // Set the initial state from the API response (agent is AVAILABLE after creation)
+          tracking.stateSubject.next(agentInfo.state || CopilotState.AVAILABLE);
           this.agentChangeSubject.next();
 
           return agentInfo;
@@ -477,8 +556,8 @@ export class TexeraCopilotManagerService {
   }
 
   /**
-   * Send a message to an agent.
-   * Fire-and-forget - the agent processes in the background.
+   * Send a message to an agent via WebSocket.
+   * The message is sent through the WebSocket connection for real-time streaming.
    */
   public sendMessage(agentId: string, message: string, relevantOperatorIds: string[] = []): void {
     const agent = this.agents.get(agentId);
@@ -487,32 +566,25 @@ export class TexeraCopilotManagerService {
       return;
     }
 
-    // For now, just send the message directly
-    // TODO: Add relevant operator context if needed
-    let finalMessage = message;
-    if (relevantOperatorIds.length > 0) {
-      // The API-based agent handles context differently
-      // We can pass relevantOperatorIds in the request body if needed
-      finalMessage = message;
+    const tracking = this.agentStateTracking.get(agentId);
+    if (!tracking || !tracking.websocket || tracking.websocket.readyState !== WebSocket.OPEN) {
+      this.notificationService.error("WebSocket connection not available");
+      return;
     }
 
-    this.http
-      .post<ApiMessageResponse>(`${this.AGENT_API_BASE}/agents/${agentId}/message`, { message: finalMessage })
-      .subscribe({
-        next: response => {
-          // Update state tracking
-          const tracking = this.getOrCreateStateTracking(agentId);
-          if (response.steps) {
-            const steps = response.steps.map((s: any) => this.convertApiReActStep(s));
-            tracking.reActStepsSubject.next(steps);
-          }
-        },
-        error: (error: unknown) => {
-          console.error(`Error sending message to agent ${agentId}:`, error);
-          const err = error as { error?: { error?: string } };
-          this.notificationService.error(err.error?.error || "Failed to send message");
-        },
-      });
+    // Send message via WebSocket
+    const wsMessage = {
+      type: "message",
+      content: message,
+    };
+
+    try {
+      tracking.websocket.send(JSON.stringify(wsMessage));
+      console.log(`[CopilotManager] Sent message to agent ${agentId}: ${message.substring(0, 50)}...`);
+    } catch (error) {
+      console.error(`[CopilotManager] Failed to send message:`, error);
+      this.notificationService.error("Failed to send message");
+    }
   }
 
   /**
@@ -552,14 +624,26 @@ export class TexeraCopilotManagerService {
   }
 
   /**
-   * Stop generation for an agent.
+   * Stop generation for an agent via WebSocket.
    */
   public stopGeneration(agentId: string): void {
-    this.http.post(`${this.AGENT_API_BASE}/agents/${agentId}/stop`, {}).subscribe({
-      error: (error: unknown) => {
-        console.error(`Error stopping agent ${agentId}:`, error);
-      },
-    });
+    const tracking = this.agentStateTracking.get(agentId);
+    if (tracking?.websocket && tracking.websocket.readyState === WebSocket.OPEN) {
+      // Send stop via WebSocket for immediate effect
+      try {
+        tracking.websocket.send(JSON.stringify({ type: "stop" }));
+        console.log(`[CopilotManager] Sent stop command to agent ${agentId}`);
+      } catch (error) {
+        console.error(`[CopilotManager] Failed to send stop command:`, error);
+      }
+    } else {
+      // Fallback to HTTP if WebSocket not available
+      this.http.post(`${this.AGENT_API_BASE}/agents/${agentId}/stop`, {}).subscribe({
+        error: (error: unknown) => {
+          console.error(`Error stopping agent ${agentId}:`, error);
+        },
+      });
+    }
   }
 
   /**

@@ -95,75 +95,45 @@ export interface AgentAction {
 
 // ============================================================================
 // ReAct Step Types (Agent reasoning trace)
+// Aligned with frontend texera-copilot.ts ReActStep interface
 // ============================================================================
 
 /**
  * Token usage statistics
  */
 export interface TokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
   cachedInputTokens?: number;
 }
 
 /**
- * Base step interface
+ * ReActStep - Represents a single reasoning and acting step in the agent's response.
+ * Each step contains the agent's reasoning text, tool calls, results, and metadata.
+ * This format is aligned with the frontend's ReActStep interface.
  */
-interface BaseReActStep {
+export interface ReActStep {
   messageId: string;
-  stepId: string;
-  timestamp: number;
-}
-
-/**
- * Text step - agent thinking or response
- */
-export interface TextReActStep extends BaseReActStep {
-  type: "text";
-  content: string;
-}
-
-/**
- * Tool call step - agent calling a tool
- */
-export interface ToolCallReActStep extends BaseReActStep {
-  type: "tool-call";
-  toolName: string;
-  input: any;
-  toolCallId: string;
-}
-
-/**
- * Tool result step - result from a tool call
- */
-export interface ToolResultReActStep extends BaseReActStep {
-  type: "tool-result";
-  toolCallId: string;
-  result: any;
-  isError: boolean;
-}
-
-/**
- * Single step in agent reasoning (ReAct pattern) - discriminated union
- */
-export type ReActStep = TextReActStep | ToolCallReActStep | ToolResultReActStep;
-
-/**
- * Legacy ReAct step format (for compatibility)
- */
-export interface LegacyReActStep {
-  messageId: string;
-  stepId: string;
-  timestamp: number;
+  stepId: number;
+  timestamp: number; // Unix timestamp in milliseconds
   role: "user" | "agent";
-  content?: string;
-  isBegin?: boolean;
-  isEnd?: boolean;
-  toolCalls?: any[];
-  toolResults?: any[];
+  content: string;
+  isBegin: boolean;
+  isEnd: boolean;
+  toolCalls?: Array<{
+    toolName: string;
+    toolCallId: string;
+    input: any;
+  }>;
+  toolResults?: Array<{
+    toolCallId: string;
+    output: any;
+    isError?: boolean;
+  }>;
   usage?: TokenUsage;
-  operatorAccess?: Map<number, ToolOperatorAccess>;
+  // Map from tool call index to operator access information (serialized as object for JSON)
+  operatorAccess?: Record<number, ToolOperatorAccess>;
 }
 
 /**

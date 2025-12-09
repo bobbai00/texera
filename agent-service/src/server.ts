@@ -20,9 +20,15 @@
 /**
  * Texera Agent Service - HTTP Server using Elysia.js
  *
- * Provides REST API endpoints for agent interaction.
+ * Provides REST API endpoints and WebSocket for agent interaction.
  * Supports user delegation mode where agents act on behalf of authenticated users.
  * Workflow changes are automatically persisted to the backend when in delegate mode.
+ *
+ * WebSocket endpoint: /api/agents/:id/react
+ * - Send message: { type: "message", content: "..." }
+ * - Stop: { type: "stop" }
+ * - Receive steps: { type: "step", step: ReActStep }
+ * - Receive state: { type: "state", state: "AVAILABLE" | "GENERATING" | ... }
  */
 
 import { Elysia, t } from "elysia";
@@ -59,10 +65,10 @@ interface StoredAgent {
   modelType: string;
   createdAt: Date;
   delegate?: AgentDelegateConfig;
-  /** Accumulated ReActSteps for streaming */
-  reActSteps: ReActStep[];
   /** Debounce timer for auto-persist */
   persistTimer?: ReturnType<typeof setTimeout>;
+  /** Active WebSocket connections for this agent */
+  websockets: Set<any>;
 }
 
 // Store for active agents
@@ -127,19 +133,15 @@ async function createAgentInstance(
     agentName: customName || `Agent-${agentId}`,
   });
 
-  // Initialize operators from backend
-  try {
-    await agent.getMetadataStore().initializeFromBackend();
-  } catch (error) {
-    console.warn(`[Server] Failed to load operators from backend for agent ${agentId}:`, error);
-  }
+  // Initialize agent (loads operator metadata from backend and rebuilds tools)
+  await agent.initialize();
 
   const stored: StoredAgent = {
     agent,
     modelType,
     createdAt: new Date(),
     delegate: delegateConfig,
-    reActSteps: [],
+    websockets: new Set(),
   };
 
   // If in delegate mode with workflowId, load workflow and setup auto-persist
@@ -273,7 +275,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     return { deleted: true };
   })
 
-  // Send message to agent
+  // Send message to agent (blocking REST API - returns full ModelMessage list)
   .post(
     "/:id/message",
     async ({ params: { id }, body }) => {
@@ -288,19 +290,15 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 
       const result = await stored.agent.sendMessage(message);
 
-      // Store ReActSteps
-      stored.reActSteps.push(...result.steps);
-
       console.log(`[Server] Agent ${id} completed with ${result.steps.length} steps`);
 
       return {
         response: result.response,
-        steps: result.steps,
+        messages: stored.agent.getMessages(),
         usage: result.usage,
         stats: result.stats,
         stopped: result.stopped,
         error: result.error,
-        workflow: stored.agent.getWorkflowState().getWorkflowContent(),
       };
     },
     {
@@ -310,82 +308,10 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     }
   )
 
-  // Stream message to agent (SSE)
-  .post(
-    "/:id/stream",
-    async function* ({ params: { id }, body }) {
-      const stored = getStoredAgent(id);
-      const { message } = body;
-
-      if (!message || typeof message !== "string") {
-        throw new Error("Message is required");
-      }
-
-      // Yield start event
-      yield { event: "start", data: { agentId: id, message } };
-
-      try {
-        // Process message
-        const result = await stored.agent.sendMessage(message);
-
-        // Yield each step
-        for (const step of result.steps) {
-          stored.reActSteps.push(step);
-          yield { event: "step", data: step };
-        }
-
-        // Yield complete event
-        yield {
-          event: "complete",
-          data: {
-            response: result.response,
-            usage: result.usage,
-            stats: result.stats,
-            workflow: stored.agent.getWorkflowState().getWorkflowContent(),
-          },
-        };
-      } catch (error: any) {
-        yield { event: "error", data: { error: error.message } };
-      }
-    },
-    {
-      body: t.Object({
-        message: t.String(),
-      }),
-    }
-  )
-
-  // Get all ReActSteps
+  // Get all ReActSteps (for polling fallback or initial load)
   .get("/:id/react-steps", ({ params: { id } }) => {
     const stored = getStoredAgent(id);
-    return { steps: stored.reActSteps, state: stored.agent.getState() };
-  })
-
-  // Stream ReActSteps (SSE)
-  .get("/:id/react-steps/stream", async function* ({ params: { id } }) {
-    const stored = getStoredAgent(id);
-    let lastIndex = 0;
-
-    // Send initial steps
-    if (stored.reActSteps.length > 0) {
-      yield { event: "steps", data: stored.reActSteps };
-      lastIndex = stored.reActSteps.length;
-    }
-
-    // Poll for updates
-    while (true) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Send any new steps
-      if (stored.reActSteps.length > lastIndex) {
-        const newSteps = stored.reActSteps.slice(lastIndex);
-        lastIndex = stored.reActSteps.length;
-        yield { event: "steps", data: newSteps };
-      }
-
-      // Send state update
-      yield { event: "state", data: { state: stored.agent.getState() } };
-    }
+    return { steps: stored.agent.getReActSteps(), state: stored.agent.getState() };
   })
 
   // Get workflow
@@ -417,7 +343,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
   .post("/:id/reset", ({ params: { id } }) => {
     const stored = getStoredAgent(id);
     stored.agent.reset();
-    stored.reActSteps = [];
     return { status: "reset" };
   })
 
@@ -425,9 +350,43 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
   .post("/:id/clear", ({ params: { id } }) => {
     const stored = getStoredAgent(id);
     stored.agent.clearHistory();
-    stored.reActSteps = [];
     return { status: "cleared" };
   });
+
+// ============================================================================
+// WebSocket Message Types
+// ============================================================================
+
+interface WsMessage {
+  type: "message" | "stop";
+  content?: string;
+}
+
+interface WsOutgoingMessage {
+  type: "step" | "state" | "error" | "complete" | "init";
+  step?: ReActStep;
+  state?: string;
+  error?: string;
+  steps?: ReActStep[];
+}
+
+/**
+ * Broadcast a message to all WebSocket clients connected to an agent
+ */
+function broadcastToAgent(agentId: string, message: WsOutgoingMessage): void {
+  const stored = agentStore.get(agentId);
+  if (!stored) return;
+
+  const jsonMessage = JSON.stringify(message);
+  for (const ws of stored.websockets) {
+    try {
+      ws.send(jsonMessage);
+    } catch (error) {
+      console.error(`[WS] Failed to send message to client:`, error);
+      stored.websockets.delete(ws);
+    }
+  }
+}
 
 // ============================================================================
 // Main Application
@@ -442,6 +401,101 @@ const app = new Elysia()
   }))
   // Mount agents router under API prefix
   .group(API_PREFIX, app => app.use(agentsRouter))
+  // WebSocket endpoint for real-time ReActSteps streaming
+  .ws(`${API_PREFIX}/agents/:id/react`, {
+    open(ws) {
+      const agentId = (ws.data as any).params?.id;
+      console.log(`[WS] Client connected to agent ${agentId}`);
+
+      const stored = agentStore.get(agentId);
+      if (!stored) {
+        ws.send(JSON.stringify({ type: "error", error: "Agent not found" }));
+        ws.close();
+        return;
+      }
+
+      // Add this websocket to the agent's set
+      stored.websockets.add(ws);
+
+      // Send initial state and existing steps
+      const initMessage: WsOutgoingMessage = {
+        type: "init",
+        state: stored.agent.getState(),
+        steps: stored.agent.getReActSteps(),
+      };
+      ws.send(JSON.stringify(initMessage));
+    },
+
+    async message(ws, messageData) {
+      const agentId = (ws.data as any).params?.id;
+      const stored = agentStore.get(agentId);
+
+      if (!stored) {
+        ws.send(JSON.stringify({ type: "error", error: "Agent not found" }));
+        return;
+      }
+
+      let msg: WsMessage;
+      try {
+        msg = typeof messageData === "string" ? JSON.parse(messageData) : messageData as WsMessage;
+      } catch {
+        ws.send(JSON.stringify({ type: "error", error: "Invalid message format" }));
+        return;
+      }
+
+      if (msg.type === "stop") {
+        stored.agent.stop();
+        // Broadcast state change to all connected clients
+        broadcastToAgent(agentId, { type: "state", state: stored.agent.getState() });
+        return;
+      }
+
+      if (msg.type === "message") {
+        if (!msg.content || typeof msg.content !== "string") {
+          ws.send(JSON.stringify({ type: "error", error: "Message content is required" }));
+          return;
+        }
+
+        console.log(`[WS] Agent ${agentId} received message: ${msg.content.substring(0, 50)}...`);
+
+        // Set up step callback to stream steps in real-time
+        stored.agent.setStepCallback((step: ReActStep) => {
+          broadcastToAgent(agentId, { type: "step", step });
+        });
+
+        // Broadcast state change
+        broadcastToAgent(agentId, { type: "state", state: stored.agent.getState() });
+
+        try {
+          const result = await stored.agent.sendMessage(msg.content);
+
+          // Clear the callback
+          stored.agent.setStepCallback(null);
+
+          // Broadcast completion
+          broadcastToAgent(agentId, {
+            type: "complete",
+            state: stored.agent.getState(),
+          });
+
+          console.log(`[WS] Agent ${agentId} completed with ${result.steps.length} steps`);
+        } catch (error: any) {
+          stored.agent.setStepCallback(null);
+          broadcastToAgent(agentId, { type: "error", error: error.message });
+        }
+      }
+    },
+
+    close(ws) {
+      const agentId = (ws.data as any).params?.id;
+      console.log(`[WS] Client disconnected from agent ${agentId}`);
+
+      const stored = agentStore.get(agentId);
+      if (stored) {
+        stored.websockets.delete(ws);
+      }
+    },
+  })
   // Error handling
   .onError(({ error, set }) => {
     console.error("[Server] Error:", error);
@@ -478,21 +532,27 @@ console.log("=".repeat(60));
 console.log(`Server running at http://localhost:${PORT}`);
 console.log(`API Prefix: ${API_PREFIX}`);
 console.log("");
-console.log("API Endpoints:");
+console.log("REST Endpoints:");
 console.log("  GET  /health                                  - Health check");
 console.log(`  GET  ${API_PREFIX}/agents                              - List all agents`);
 console.log(`  POST ${API_PREFIX}/agents                              - Create new agent`);
 console.log(`  GET  ${API_PREFIX}/agents/:id                          - Get agent info + workflow`);
 console.log(`  DELETE ${API_PREFIX}/agents/:id                        - Delete agent`);
-console.log(`  POST ${API_PREFIX}/agents/:id/message                  - Send message`);
-console.log(`  POST ${API_PREFIX}/agents/:id/stream                   - Send message (SSE)`);
+console.log(`  POST ${API_PREFIX}/agents/:id/message                  - Send message (blocking)`);
 console.log(`  GET  ${API_PREFIX}/agents/:id/react-steps              - Get all ReActSteps`);
-console.log(`  GET  ${API_PREFIX}/agents/:id/react-steps/stream       - Stream ReActSteps (SSE)`);
 console.log(`  GET  ${API_PREFIX}/agents/:id/workflow                 - Get workflow`);
 console.log(`  GET  ${API_PREFIX}/agents/:id/messages                 - Get conversation`);
+console.log(`  GET  ${API_PREFIX}/agents/:id/system-info              - Get system prompt & tools`);
 console.log(`  POST ${API_PREFIX}/agents/:id/stop                     - Stop processing`);
 console.log(`  POST ${API_PREFIX}/agents/:id/reset                    - Reset agent`);
 console.log(`  POST ${API_PREFIX}/agents/:id/clear                    - Clear messages`);
+console.log("");
+console.log("WebSocket Endpoint:");
+console.log(`  WS   ${API_PREFIX}/agents/:id/react                    - Real-time ReActSteps`);
+console.log("       Send: { type: 'message', content: '...' }");
+console.log("       Send: { type: 'stop' }");
+console.log("       Recv: { type: 'step', step: ReActStep }");
+console.log("       Recv: { type: 'state', state: '...' }");
 console.log("");
 console.log("Notes:");
 console.log("  - Workflow changes are auto-persisted when agent has delegate config");
