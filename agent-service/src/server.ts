@@ -531,45 +531,51 @@ const app = new Elysia()
   .listen(PORT);
 
 // ============================================================================
-// Startup Message
+// Startup Message - Using Elysia's routes property
 // ============================================================================
 
-console.log("=".repeat(60));
-console.log("Texera Agent Service (Elysia.js)");
-console.log("=".repeat(60));
-console.log(`Server running at http://localhost:${PORT}`);
-console.log(`API Prefix: ${API_PREFIX}`);
-console.log("");
-console.log("REST Endpoints:");
-console.log("  GET  /health                                  - Health check");
-console.log(`  GET  ${API_PREFIX}/agents                              - List all agents`);
-console.log(`  POST ${API_PREFIX}/agents                              - Create new agent`);
-console.log(`  GET  ${API_PREFIX}/agents/:id                          - Get agent info + workflow`);
-console.log(`  DELETE ${API_PREFIX}/agents/:id                        - Delete agent`);
-console.log(`  POST ${API_PREFIX}/agents/:id/message                  - Send message (blocking)`);
-console.log(`  GET  ${API_PREFIX}/agents/:id/react-steps              - Get all ReActSteps`);
-console.log(`  GET  ${API_PREFIX}/agents/:id/workflow                 - Get workflow`);
-console.log(`  GET  ${API_PREFIX}/agents/:id/messages                 - Get conversation`);
-console.log(`  GET  ${API_PREFIX}/agents/:id/system-info              - Get system prompt & tools`);
-console.log(`  POST ${API_PREFIX}/agents/:id/stop                     - Stop processing`);
-console.log(`  POST ${API_PREFIX}/agents/:id/reset                    - Reset agent`);
-console.log(`  POST ${API_PREFIX}/agents/:id/clear                    - Clear messages`);
-console.log("");
-console.log("WebSocket Endpoint:");
-console.log(`  WS   ${API_PREFIX}/agents/:id/react                    - Real-time ReActSteps`);
-console.log("       Send: { type: 'message', content: '...' }");
-console.log("       Send: { type: 'stop' }");
-console.log("       Recv: { type: 'step', step: ReActStep }");
-console.log("       Recv: { type: 'state', state: '...' }");
-console.log("");
-console.log("Notes:");
-console.log("  - Workflow changes are auto-persisted when agent has delegate config");
-console.log("  - Pass userToken and workflowId when creating agent to enable delegation");
-console.log("");
-console.log("Environment:");
-console.log(`  LLM_API_KEY: ${LLM_API_KEY === "dummy" ? "dummy (default)" : "set"}`);
-console.log(`  MODEL: ${MODEL}`);
-console.log(`  MODELS_ENDPOINT: ${getBackendConfig().modelsEndpoint}`);
-console.log("=".repeat(60));
+function printStartupMessage() {
+  const LINE = "=".repeat(60);
+  console.log(LINE);
+  console.log("Texera Agent Service (Elysia.js)");
+  console.log(LINE);
+  console.log(`Server running at http://localhost:${PORT}`);
+  console.log("");
+
+  // Print routes from Elysia's routes property
+  console.log("Registered Routes:");
+  const routes = app.routes;
+
+  // Group routes by type (HTTP vs WebSocket)
+  const httpRoutes = routes.filter(r => r.method !== "WS");
+  const wsRoutes = routes.filter(r => r.method === "WS");
+
+  // Print HTTP routes
+  for (const route of httpRoutes) {
+    const method = route.method.padEnd(6);
+    console.log(`  ${method} ${route.path}`);
+  }
+
+  // Print WebSocket routes
+  if (wsRoutes.length > 0) {
+    console.log("");
+    console.log("WebSocket Endpoints:");
+    for (const route of wsRoutes) {
+      console.log(`  WS     ${route.path}`);
+    }
+    console.log("         Send: { type: 'message', content: '...' }");
+    console.log("         Send: { type: 'stop' }");
+    console.log("         Recv: { type: 'step' | 'state' | 'complete' | 'error' | 'init', ... }");
+  }
+
+  console.log("");
+  console.log("Environment:");
+  console.log(`  LLM_API_KEY: ${LLM_API_KEY === "dummy" ? "dummy (default)" : "set"}`);
+  console.log(`  MODEL: ${MODEL}`);
+  console.log(`  MODELS_ENDPOINT: ${getBackendConfig().modelsEndpoint}`);
+  console.log(LINE);
+}
+
+printStartupMessage();
 
 export default app;
