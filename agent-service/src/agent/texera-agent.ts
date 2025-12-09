@@ -395,23 +395,13 @@ export class TexeraAgent {
         },
       });
 
-      // Create final step with the complete response
-      stepIndex++;
-      const finalStep: ReActStep = {
-        messageId,
-        stepId: stepIndex,
-        timestamp: Date.now(),
-        role: "agent",
-        content: result.text,
-        isBegin: false,
-        isEnd: true,
-        usage: result.usage ? {
-          inputTokens: result.usage.inputTokens,
-          outputTokens: result.usage.outputTokens,
-          totalTokens: result.usage.totalTokens,
-        } : undefined,
-      };
-      this.addStep(finalStep);
+      // Mark the last step as isEnd: true (instead of creating a duplicate final step)
+      if (this.reActSteps.length > 0) {
+        const lastStep = this.reActSteps[this.reActSteps.length - 1];
+        if (lastStep.messageId === messageId && lastStep.role === "agent") {
+          lastStep.isEnd = true;
+        }
+      }
 
       // Add assistant response to history
       this.messages.push({

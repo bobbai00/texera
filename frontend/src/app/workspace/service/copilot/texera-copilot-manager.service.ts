@@ -323,11 +323,25 @@ export class TexeraCopilotManagerService {
         break;
 
       case "step":
-        // New step received - append to existing steps
+        // New step received - update existing step or append new one
         if (message.step) {
           const convertedStep = this.convertApiReActStep(message.step);
           const currentSteps = tracking.reActStepsSubject.getValue();
-          tracking.reActStepsSubject.next([...currentSteps, convertedStep]);
+
+          // Check if step with same messageId and stepId already exists
+          const existingIndex = currentSteps.findIndex(
+            s => s.messageId === convertedStep.messageId && s.stepId === convertedStep.stepId
+          );
+
+          if (existingIndex >= 0) {
+            // Update existing step (e.g., when isEnd changes from false to true)
+            const updatedSteps = [...currentSteps];
+            updatedSteps[existingIndex] = convertedStep;
+            tracking.reActStepsSubject.next(updatedSteps);
+          } else {
+            // Append new step
+            tracking.reActStepsSubject.next([...currentSteps, convertedStep]);
+          }
         }
         break;
 

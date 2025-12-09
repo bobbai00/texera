@@ -472,6 +472,14 @@ const app = new Elysia()
           // Clear the callback
           stored.agent.setStepCallback(null);
 
+          // Get the last step (which now has isEnd: true) and broadcast it
+          // This ensures the frontend receives the final step with isEnd: true
+          const allSteps = stored.agent.getReActSteps();
+          const lastStep = allSteps[allSteps.length - 1];
+          if (lastStep && lastStep.isEnd) {
+            broadcastToAgent(agentId, { type: "step", step: lastStep });
+          }
+
           // Broadcast completion
           broadcastToAgent(agentId, {
             type: "complete",
