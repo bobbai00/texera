@@ -44,6 +44,8 @@ export interface BackendConfig {
   modelsEndpoint: string;
   /** Compile service endpoint (default: http://localhost:9090) */
   compileEndpoint: string;
+  /** Execution service endpoint (default: http://localhost:8085) */
+  executionEndpoint: string;
   /** WebSocket endpoint (default: ws://localhost:8085) */
   wsEndpoint: string;
   /** Dataset service endpoint (default: http://localhost:9092) */
@@ -90,6 +92,7 @@ function loadConfigFile(): Partial<BackendConfig> {
           operatorMetadataEndpoint: config.services.main?.target,
           modelsEndpoint: config.services.models?.target,
           compileEndpoint: config.services.compile?.target,
+          executionEndpoint: config.services.execution?.target || config.services.websocket?.target?.replace("ws://", "http://"),
           wsEndpoint: config.services.websocket?.target,
           datasetEndpoint: config.services.dataset?.target,
           computingEndpoint: config.services.computing?.target,
@@ -111,6 +114,7 @@ const DEFAULT_CONFIG: BackendConfig = {
     process.env.OPERATOR_METADATA_ENDPOINT || fileConfig.operatorMetadataEndpoint || "http://localhost:8080",
   modelsEndpoint: process.env.MODELS_ENDPOINT || fileConfig.modelsEndpoint || "http://localhost:9096",
   compileEndpoint: process.env.COMPILE_ENDPOINT || fileConfig.compileEndpoint || "http://localhost:9090",
+  executionEndpoint: process.env.EXECUTION_ENDPOINT || fileConfig.executionEndpoint || "http://localhost:8085",
   wsEndpoint: process.env.WS_ENDPOINT || fileConfig.wsEndpoint || "ws://localhost:8085",
   datasetEndpoint: process.env.DATASET_ENDPOINT || fileConfig.datasetEndpoint || "http://localhost:9092",
   computingEndpoint: process.env.COMPUTING_ENDPOINT || fileConfig.computingEndpoint || "http://localhost:8888",

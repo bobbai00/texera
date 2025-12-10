@@ -19,7 +19,7 @@
 
 /**
  * Execution tools for Texera Agent Service.
- * These tools provide workflow execution capabilities via WebSocket.
+ * These tools provide workflow execution capabilities via HTTP REST API.
  */
 
 import { z } from "zod";
@@ -27,20 +27,11 @@ import { tool } from "ai";
 import {
   createSuccessResult,
   createErrorResult,
-  filterByTokenLimit,
-  DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
   DEFAULT_EXECUTION_TIMEOUT_MS,
 } from "./tools-utility";
 import type { WorkflowState } from "../workflow/workflow-state";
-import { ExecutionClient, type LogicalPlan, type LogicalLink, type ExecutionResult } from "../api/execution-api";
-import {
-  ExecutionState,
-  type ExecutionStateInfo,
-  type OperatorStatistics,
-  type ConsoleMessage,
-  type OperatorResultInfo,
-  isNotInExecution,
-} from "../types/execution";
+import { ExecutionClient, type LogicalPlan, type LogicalLink } from "../api/execution-api";
+import type { SyncExecutionResult, OperatorInfo, ConsoleMessage } from "../types/execution";
 
 // ============================================================================
 // Tool Name Constants
@@ -48,9 +39,7 @@ import {
 
 export const TOOL_NAME_EXECUTE_WORKFLOW = "executeWorkflow";
 export const TOOL_NAME_GET_EXECUTION_STATE = "getExecutionState";
-export const TOOL_NAME_KILL_WORKFLOW = "killWorkflow";
 export const TOOL_NAME_GET_EXECUTION_RESULT = "getExecutionResult";
-export const TOOL_NAME_GET_OPERATOR_RESULT = "getOperatorResult";
 
 // ============================================================================
 // Execution Manager
@@ -61,27 +50,25 @@ export const TOOL_NAME_GET_OPERATOR_RESULT = "getOperatorResult";
  * Wraps ExecutionClient with state tracking and lifecycle management.
  */
 export class ExecutionManager {
-  private client: ExecutionClient | null = null;
-  private lastResult: ExecutionResult | null = null;
+  private client: ExecutionClient;
+  private lastResult: SyncExecutionResult | null = null;
   private isExecuting = false;
 
   constructor(
     private config: {
       userToken: string;
       workflowId: number;
-      userId: number;
       computingUnitId?: number;
+      timeoutSeconds?: number;
+      maxResultRows?: number;
     }
-  ) {}
-
-  /**
-   * Get or create the execution client.
-   */
-  private getClient(): ExecutionClient {
-    if (!this.client) {
-      this.client = new ExecutionClient(this.config);
-    }
-    return this.client;
+  ) {
+    this.client = new ExecutionClient({
+      ...config,
+      computingUnitId: config.computingUnitId ?? 0,
+      timeoutSeconds: config.timeoutSeconds ?? 300,
+      maxResultRows: config.maxResultRows ?? 200,
+    });
   }
 
   /**
@@ -94,106 +81,63 @@ export class ExecutionManager {
   /**
    * Get the current execution state.
    */
-  getState(): ExecutionStateInfo {
-    if (!this.client) {
-      return { state: ExecutionState.Uninitialized };
-    }
-    return this.client.getExecutionState();
+  getState(): string {
+    return this.lastResult?.state || "Uninitialized";
   }
 
   /**
    * Get the last execution result.
    */
-  getLastResult(): ExecutionResult | null {
+  getLastResult(): SyncExecutionResult | null {
     return this.lastResult;
   }
 
   /**
    * Execute the workflow with the given logical plan.
    */
-  async execute(logicalPlan: LogicalPlan, executionName?: string, timeoutMs?: number): Promise<ExecutionResult> {
+  async execute(logicalPlan: LogicalPlan, executionName?: string, timeoutMs?: number): Promise<SyncExecutionResult> {
     if (this.isExecuting) {
       throw new Error("A workflow execution is already in progress");
     }
 
-    const client = this.getClient();
     this.isExecuting = true;
 
     try {
-      // Create a timeout promise
+      // Create a timeout promise (additional client-side timeout)
       const timeout = timeoutMs || DEFAULT_EXECUTION_TIMEOUT_MS;
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error(`Execution timeout after ${timeout / 1000} seconds`)), timeout);
       });
 
       // Race execution against timeout
-      this.lastResult = await Promise.race([client.executeWorkflow(logicalPlan, executionName), timeoutPromise]);
+      this.lastResult = await Promise.race([this.client.executeWorkflow(logicalPlan, executionName), timeoutPromise]);
 
       return this.lastResult;
+    } catch (error) {
+      this.lastResult = {
+        success: false,
+        state: "Failed",
+        operators: {},
+        errors: [error instanceof Error ? error.message : String(error)],
+      };
+      throw error;
     } finally {
       this.isExecuting = false;
     }
   }
 
   /**
-   * Kill the current workflow execution.
-   */
-  async kill(): Promise<void> {
-    if (!this.client) {
-      throw new Error("No execution client initialized");
-    }
-    await this.client.killWorkflow();
-    this.isExecuting = false;
-  }
-
-  /**
-   * Request paginated results for an operator.
-   */
-  async getPaginatedResult(operatorId: string, pageIndex: number, pageSize: number = 10) {
-    if (!this.client) {
-      throw new Error("No execution client initialized");
-    }
-    return this.client.requestPaginatedResult(operatorId, pageIndex, pageSize);
-  }
-
-  /**
    * Get operator results from the last execution.
    */
-  getOperatorResults(): Record<string, OperatorResultInfo> {
-    if (!this.client) {
-      return {};
-    }
-    return this.client.getOperatorResults();
+  getOperatorResults(): Record<string, OperatorInfo> {
+    return this.lastResult?.operators || {};
   }
 
   /**
-   * Get operator statistics from the last execution.
+   * Reset state.
    */
-  getOperatorStats(): Record<string, OperatorStatistics> {
-    if (!this.client) {
-      return {};
-    }
-    return this.client.getOperatorStats();
-  }
-
-  /**
-   * Get console logs from the last execution.
-   */
-  getConsoleLogs(): Record<string, ConsoleMessage[]> {
-    if (!this.client) {
-      return {};
-    }
-    return this.client.getConsoleLogs();
-  }
-
-  /**
-   * Disconnect and cleanup.
-   */
-  disconnect(): void {
-    if (this.client) {
-      this.client.disconnect();
-      this.client = null;
-    }
+  reset(): void {
+    this.lastResult = null;
     this.isExecuting = false;
   }
 }
@@ -264,13 +208,13 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
       timeoutSeconds: z
         .number()
         .optional()
-        .describe("Optional timeout in seconds (default: 600 = 10 minutes)."),
+        .describe("Optional timeout in seconds (default: 300 = 5 minutes)."),
     }),
     execute: async (args: { operatorIdsToView?: string[]; executionName?: string; timeoutSeconds?: number }) => {
       try {
         // Check if already executing
         if (executionManager.isRunning()) {
-          return createErrorResult("A workflow execution is already in progress. Use killWorkflow to stop it first.");
+          return createErrorResult("A workflow execution is already in progress.");
         }
 
         // Build logical plan from current workflow state
@@ -284,69 +228,32 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
         const timeoutMs = args.timeoutSeconds ? args.timeoutSeconds * 1000 : DEFAULT_EXECUTION_TIMEOUT_MS;
         const result = await executionManager.execute(logicalPlan, args.executionName, timeoutMs);
 
-        // Format operator states for readability
-        const formattedStats = formatOperatorStats(result.operatorStats);
-
-        // Collect results with token limiting
-        const collectedResults: Record<
-          string,
-          {
-            mode: string;
-            totalRows?: number;
-            displayedRows?: number;
-            truncated?: boolean;
-            data?: any[];
-          }
-        > = {};
-
-        for (const [opId, opResult] of Object.entries(result.operatorResults)) {
-          if (opResult.mode === "table") {
-            const { limited, truncated } = filterByTokenLimit(
-              opResult.result || [],
-              DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
-            );
-            collectedResults[opId] = {
-              mode: "table",
-              totalRows: opResult.totalRows,
-              displayedRows: limited.length,
-              truncated,
-              data: limited,
-            };
-          } else {
-            collectedResults[opId] = {
-              mode: "visualization",
-            };
-          }
-        }
+        // Format operator info for readability
+        const formattedOperators = formatOperatorInfo(result.operators);
 
         // Determine execution status message
-        const stateStr = result.state.state;
         let statusMessage: string;
-        if (stateStr === ExecutionState.Completed) {
+        if (result.success) {
           statusMessage = "Workflow execution completed successfully.";
-        } else if (stateStr === ExecutionState.Failed) {
-          const errorMsgs =
-            "errorMessages" in result.state
-              ? result.state.errorMessages.map((e) => e.message).join("; ")
-              : "Unknown error";
+        } else if (result.state === "Failed") {
+          const errorMsgs = result.errors?.join("; ") || "Unknown error";
           statusMessage = `Workflow execution failed: ${errorMsgs}`;
-        } else if (stateStr === ExecutionState.Killed) {
+        } else if (result.state === "Killed") {
           statusMessage = "Workflow execution was killed.";
         } else {
-          statusMessage = `Workflow execution ended with state: ${stateStr}`;
+          statusMessage = `Workflow execution ended with state: ${result.state}`;
         }
 
         return createSuccessResult(
           {
-            executionState: stateStr,
-            operatorStats: formattedStats,
-            results: collectedResults,
-            consoleLogs: result.consoleLogs,
+            success: result.success,
+            executionState: result.state,
+            operators: formattedOperators,
+            compilationErrors: result.compilationErrors,
             errors: result.errors,
-            durationMs: result.durationMs,
             message: statusMessage,
           },
-          Object.keys(result.operatorStats),
+          Object.keys(result.operators),
           [],
           []
         );
@@ -364,19 +271,20 @@ export function createGetExecutionStateTool(executionManager: ExecutionManager) 
   return tool({
     description:
       "Get the current execution state of the workflow. " +
-      "Returns the execution state and operator statistics.",
+      "Returns the execution state and operator statistics from the last execution.",
     inputSchema: z.object({}),
     execute: async () => {
       const state = executionManager.getState();
-      const stats = executionManager.getOperatorStats();
-      const formattedStats = formatOperatorStats(stats);
+      const lastResult = executionManager.getLastResult();
+      const operatorCount = lastResult ? Object.keys(lastResult.operators).length : 0;
 
       return createSuccessResult(
         {
-          executionState: state.state,
-          isRunning: !isNotInExecution(state.state),
-          operatorStats: formattedStats,
-          message: `Current execution state: ${state.state}`,
+          executionState: state,
+          isRunning: executionManager.isRunning(),
+          hasResults: lastResult !== null,
+          operatorCount,
+          message: `Current execution state: ${state}`,
         },
         [],
         [],
@@ -387,42 +295,11 @@ export function createGetExecutionStateTool(executionManager: ExecutionManager) 
 }
 
 /**
- * Create tool to kill the current workflow execution.
- */
-export function createKillWorkflowTool(executionManager: ExecutionManager) {
-  return tool({
-    description: "Kill (stop) the currently running workflow execution.",
-    inputSchema: z.object({}),
-    execute: async () => {
-      try {
-        if (!executionManager.isRunning()) {
-          return createErrorResult("No workflow execution is currently running.");
-        }
-
-        await executionManager.kill();
-
-        return createSuccessResult(
-          {
-            message: "Workflow execution has been killed.",
-          },
-          [],
-          [],
-          []
-        );
-      } catch (error: any) {
-        return createErrorResult(`Failed to kill workflow: ${error.message || String(error)}`);
-      }
-    },
-  });
-}
-
-/**
  * Create tool to get execution results from the last run.
  */
 export function createGetExecutionResultTool(
   executionManager: ExecutionManager,
-  workflowState: WorkflowState,
-  maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
+  workflowState: WorkflowState
 ) {
   return tool({
     description:
@@ -446,45 +323,35 @@ export function createGetExecutionResultTool(
       const targetIds =
         args.targetOperatorIds && args.targetOperatorIds.length > 0 ? args.targetOperatorIds : allOperatorIds;
 
-      // Collect results
+      // Collect results for target operators
       const operatorResults: Record<string, any> = {};
       for (const opId of targetIds) {
-        const result = lastResult.operatorResults[opId];
-        if (result) {
-          if (result.mode === "table") {
-            const { limited, truncated } = filterByTokenLimit(result.result || [], maxTokenLimit);
-            operatorResults[opId] = {
-              mode: "table",
-              totalRows: result.totalRows,
-              displayedRows: limited.length,
-              truncated,
-              data: limited,
-            };
-          } else {
-            operatorResults[opId] = result;
-          }
-        }
-      }
-
-      // Collect console logs
-      const consoleLogs: Record<string, ConsoleMessage[]> = {};
-      for (const opId of targetIds) {
-        const logs = lastResult.consoleLogs[opId];
-        if (logs && logs.length > 0) {
-          consoleLogs[opId] = logs;
+        const opInfo = lastResult.operators[opId];
+        if (opInfo) {
+          operatorResults[opId] = {
+            state: opInfo.state,
+            inputTuples: opInfo.inputTuples,
+            outputTuples: opInfo.outputTuples,
+            resultMode: opInfo.resultMode,
+            totalRowCount: opInfo.totalRowCount,
+            displayedRows: opInfo.displayedRows,
+            truncated: opInfo.truncated,
+            result: opInfo.result,
+            consoleLogs: opInfo.consoleLogs,
+            error: opInfo.error,
+          };
         }
       }
 
       return createSuccessResult(
         {
-          executionState: lastResult.state.state,
+          executionState: lastResult.state,
+          success: lastResult.success,
           targetOperatorIds: targetIds,
           operatorResults,
-          consoleLogs,
           summary: {
             totalOperatorsChecked: targetIds.length,
             operatorsWithResults: Object.keys(operatorResults).length,
-            operatorsWithConsoleLogs: Object.keys(consoleLogs).length,
           },
           message: `Retrieved results for ${Object.keys(operatorResults).length}/${targetIds.length} operators.`,
         },
@@ -496,82 +363,43 @@ export function createGetExecutionResultTool(
   });
 }
 
-/**
- * Create tool to get paginated results for a specific operator.
- */
-export function createGetOperatorResultTool(
-  executionManager: ExecutionManager,
-  maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
-) {
-  return tool({
-    description:
-      "Get paginated results for a specific operator from the last execution. " +
-      "Useful for operators with large result sets.",
-    inputSchema: z.object({
-      operatorId: z.string().describe("ID of the operator to get results for."),
-      pageIndex: z.number().optional().describe("Page index (0-based, default: 0)."),
-      pageSize: z.number().optional().describe("Number of rows per page (default: 10, max: 100)."),
-    }),
-    execute: async (args: { operatorId: string; pageIndex?: number; pageSize?: number }) => {
-      try {
-        const pageIndex = args.pageIndex || 0;
-        const pageSize = Math.min(args.pageSize || 10, 100);
-
-        const paginatedResult = await executionManager.getPaginatedResult(args.operatorId, pageIndex, pageSize);
-
-        // Apply token limit
-        const { limited, truncated } = filterByTokenLimit(paginatedResult.table || [], maxTokenLimit);
-
-        return createSuccessResult(
-          {
-            operatorId: args.operatorId,
-            pageIndex: paginatedResult.pageIndex,
-            schema: paginatedResult.schema,
-            data: limited,
-            displayedRows: limited.length,
-            truncated,
-            message: `Retrieved page ${pageIndex} of results for operator ${args.operatorId}.`,
-          },
-          [args.operatorId],
-          [],
-          []
-        );
-      } catch (error: any) {
-        return createErrorResult(`Failed to get operator result: ${error.message || String(error)}`);
-      }
-    },
-  });
-}
-
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-interface FormattedOperatorStats {
+interface FormattedOperatorInfo {
   state: string;
-  inputRows: string;
-  outputRows: string;
-  inputPortMetrics: Record<string, string>;
-  outputPortMetrics: Record<string, string>;
+  inputTuples: string;
+  outputTuples: string;
+  resultMode: string;
+  resultSummary: string;
+  consoleLogs?: ConsoleMessage[];
+  error?: string;
 }
 
 /**
- * Format operator statistics with units for readability.
+ * Format operator info with units for readability.
  */
-function formatOperatorStats(stats: Record<string, OperatorStatistics>): Record<string, FormattedOperatorStats> {
-  const formatted: Record<string, FormattedOperatorStats> = {};
+function formatOperatorInfo(operators: Record<string, OperatorInfo>): Record<string, FormattedOperatorInfo> {
+  const formatted: Record<string, FormattedOperatorInfo> = {};
 
-  for (const [operatorId, opStats] of Object.entries(stats)) {
+  for (const [operatorId, opInfo] of Object.entries(operators)) {
+    let resultSummary = "No result";
+    if (opInfo.result) {
+      const displayedRows = opInfo.displayedRows ?? opInfo.result.length;
+      const totalRows = opInfo.totalRowCount ?? displayedRows;
+      const truncatedStr = opInfo.truncated ? " (truncated)" : "";
+      resultSummary = `${displayedRows}/${totalRows} rows${truncatedStr}`;
+    }
+
     formatted[operatorId] = {
-      state: String(opStats.operatorState),
-      inputRows: `${opStats.aggregatedInputRowCount} rows`,
-      outputRows: `${opStats.aggregatedOutputRowCount} rows`,
-      inputPortMetrics: Object.fromEntries(
-        Object.entries(opStats.inputPortMetrics).map(([port, count]) => [port, `${count} rows`])
-      ),
-      outputPortMetrics: Object.fromEntries(
-        Object.entries(opStats.outputPortMetrics).map(([port, count]) => [port, `${count} rows`])
-      ),
+      state: opInfo.state,
+      inputTuples: `${opInfo.inputTuples} rows`,
+      outputTuples: `${opInfo.outputTuples} rows`,
+      resultMode: opInfo.resultMode,
+      resultSummary,
+      consoleLogs: opInfo.consoleLogs,
+      error: opInfo.error,
     };
   }
 
@@ -579,11 +407,7 @@ function formatOperatorStats(stats: Record<string, OperatorStatistics>): Record<
 }
 
 // ============================================================================
-// Re-export ExecutionStateStore for backward compatibility
+// Re-export ExecutionClient for external use
 // ============================================================================
 
-/**
- * Legacy execution state store for standalone use (mock mode).
- * @deprecated Use ExecutionManager with ExecutionClient for real execution.
- */
 export { ExecutionClient } from "../api/execution-api";

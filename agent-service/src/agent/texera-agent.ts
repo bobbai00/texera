@@ -54,14 +54,10 @@ import {
   ExecutionManager,
   createExecuteWorkflowTool,
   createGetExecutionStateTool,
-  createKillWorkflowTool,
   createGetExecutionResultTool,
-  createGetOperatorResultTool,
   TOOL_NAME_EXECUTE_WORKFLOW,
   TOOL_NAME_GET_EXECUTION_STATE,
-  TOOL_NAME_KILL_WORKFLOW,
   TOOL_NAME_GET_EXECUTION_RESULT,
-  TOOL_NAME_GET_OPERATOR_RESULT,
 } from "../tools/execution-tools";
 
 // ============================================================================
@@ -226,9 +222,7 @@ export class TexeraAgent {
     if (this.executionManager) {
       tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, this.executionManager);
       tools[TOOL_NAME_GET_EXECUTION_STATE] = createGetExecutionStateTool(this.executionManager);
-      tools[TOOL_NAME_KILL_WORKFLOW] = createKillWorkflowTool(this.executionManager);
       tools[TOOL_NAME_GET_EXECUTION_RESULT] = createGetExecutionResultTool(this.executionManager, this.workflowState);
-      tools[TOOL_NAME_GET_OPERATOR_RESULT] = createGetOperatorResultTool(this.executionManager);
     }
 
     return tools;
@@ -542,7 +536,7 @@ export class TexeraAgent {
     this.reActSteps = [];
     this.workflowState.reset();
     if (this.executionManager) {
-      this.executionManager.disconnect();
+      this.executionManager.reset();
     }
   }
 
@@ -552,7 +546,7 @@ export class TexeraAgent {
   destroy(): void {
     this.reset();
     if (this.executionManager) {
-      this.executionManager.disconnect();
+      this.executionManager.reset();
       this.executionManager = null;
     }
   }

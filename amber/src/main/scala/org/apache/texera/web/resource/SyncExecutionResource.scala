@@ -1,0 +1,462 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.texera.web.resource
+
+import com.fasterxml.jackson.databind.node.ObjectNode
+import com.typesafe.scalalogging.LazyLogging
+import io.dropwizard.auth.Auth
+import org.apache.amber.config.ApplicationConfig
+import org.apache.amber.core.storage.DocumentFactory
+import org.apache.amber.core.storage.model.VirtualDocument
+import org.apache.amber.core.tuple.Tuple
+import org.apache.amber.core.virtualidentity.{ExecutionIdentity, OperatorIdentity, WorkflowIdentity}
+import org.apache.amber.core.workflow.{PortIdentity, WorkflowSettings}
+import org.apache.amber.engine.architecture.rpc.controlcommands.ConsoleMessage
+import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
+import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
+import org.apache.texera.auth.SessionUser
+import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
+import org.apache.texera.web.model.websocket.request.{LogicalPlanPojo, WorkflowExecuteRequest}
+import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.apache.texera.web.service.{ExecutionResultService, WorkflowService}
+
+import java.net.URI
+import java.util.concurrent.{CountDownLatch, TimeUnit}
+import javax.annotation.security.RolesAllowed
+import javax.ws.rs._
+import javax.ws.rs.core.MediaType
+import scala.collection.mutable
+
+/**
+  * Request body for synchronous workflow execution.
+  */
+case class SyncExecutionRequest(
+    executionName: String,
+    logicalPlan: LogicalPlanPojo,
+    workflowSettings: Option[WorkflowSettings],
+    targetOperatorIds: List[String],
+    timeoutSeconds: Option[Int],
+    maxResultRows: Option[Int]
+)
+
+/**
+  * Console message in a simplified format - just message and type.
+  */
+case class ConsoleMessageInfo(
+    msgType: String,
+    message: String
+)
+
+/**
+  * Per-operator result info - contains everything about one operator.
+  */
+case class OperatorInfo(
+    state: String,
+    inputTuples: Long,
+    outputTuples: Long,
+    resultMode: String, // "table" or "visualization"
+    result: Option[List[ObjectNode]],
+    totalRowCount: Option[Int],
+    displayedRows: Option[Int],
+    truncated: Option[Boolean],
+    consoleLogs: Option[List[ConsoleMessageInfo]],
+    error: Option[String]
+)
+
+/**
+  * Simplified execution result - just success, state, and per-operator info.
+  */
+case class SyncExecutionResult(
+    success: Boolean,
+    state: String,
+    operators: Map[String, OperatorInfo],
+    compilationErrors: Option[Map[String, String]],
+    errors: Option[List[String]]
+)
+
+/**
+  * REST API resource for synchronous (blocking) workflow execution.
+  */
+@Path("/execution")
+@Consumes(Array(MediaType.APPLICATION_JSON))
+@Produces(Array(MediaType.APPLICATION_JSON))
+class SyncExecutionResource extends LazyLogging {
+
+  private val DEFAULT_TIMEOUT_SECONDS = 300
+  private val DEFAULT_MAX_RESULT_ROWS = 200
+
+  @POST
+  @Path("/{wid}/{cuid}/run")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def executeWorkflowSync(
+      @PathParam("wid") workflowId: Long,
+      @PathParam("cuid") computingUnitId: Int,
+      request: SyncExecutionRequest,
+      @Auth user: SessionUser
+  ): SyncExecutionResult = {
+    val timeoutSeconds = request.timeoutSeconds.getOrElse(DEFAULT_TIMEOUT_SECONDS)
+    val maxResultRows = request.maxResultRows.getOrElse(DEFAULT_MAX_RESULT_ROWS)
+
+    logger.info(s"Starting sync execution for workflow $workflowId")
+
+    try {
+      val workflowService = WorkflowService.getOrCreate(
+        WorkflowIdentity(workflowId),
+        computingUnitId
+      )
+
+      val executeRequest = WorkflowExecuteRequest(
+        executionName = request.executionName,
+        engineVersion = "1.0",
+        logicalPlan = request.logicalPlan,
+        replayFromExecution = None,
+        workflowSettings = request.workflowSettings.getOrElse(
+          WorkflowSettings(dataTransferBatchSize = ApplicationConfig.defaultDataTransferBatchSize)
+        ),
+        emailNotificationEnabled = false,
+        computingUnitId = computingUnitId
+      )
+
+      val completionLatch = new CountDownLatch(1)
+      @volatile var finalState: WorkflowAggregatedState = UNINITIALIZED
+      @volatile var operatorStates: Map[String, (String, Long, Long)] =
+        Map.empty // opId -> (state, input, output)
+
+      // Shutdown any previous execution's client before starting a new one.
+      // This ensures clean state when executing workflows multiple times.
+      try {
+        val previousEs = workflowService.executionService.getValue
+        if (previousEs != null && previousEs.client != null) {
+          logger.info(s"Shutting down previous execution client for workflow $workflowId")
+          previousEs.client.shutdown()
+        }
+      } catch {
+        case e: Exception =>
+          logger.warn(s"Error shutting down previous execution client: ${e.getMessage}")
+      }
+
+      val stateDisposable = workflowService.connectToExecution { event =>
+        event match {
+          case org.apache.texera.web.model.websocket.event.WorkflowStateEvent(state) =>
+            val parsedState = parseState(state)
+            if (isTerminalState(parsedState)) {
+              finalState = parsedState
+              completionLatch.countDown()
+            }
+          case org.apache.texera.web.model.websocket.event.OperatorStatisticsUpdateEvent(stats) =>
+            operatorStates = stats.map {
+              case (opId, s) =>
+                opId -> (s.operatorState, s.aggregatedInputRowCount, s.aggregatedOutputRowCount)
+            }
+          case _ =>
+        }
+      }
+
+      try {
+        workflowService.initExecutionService(
+          executeRequest,
+          Some(user.getUser),
+          new URI(s"sync-execution://$workflowId")
+        )
+
+        val completed = completionLatch.await(timeoutSeconds, TimeUnit.SECONDS)
+
+        if (!completed) {
+          try {
+            val es = workflowService.executionService.getValue
+            if (es != null && es.client != null) es.client.shutdown()
+          } catch { case _: Exception => }
+
+          return SyncExecutionResult(
+            success = false,
+            state = "Timeout",
+            operators = Map.empty,
+            compilationErrors = None,
+            errors = Some(List(s"Timeout after $timeoutSeconds seconds"))
+          )
+        }
+
+        val executionService = workflowService.executionService.getValue
+        val executionId = executionService.workflowContext.executionId
+
+        // Wait a bit for results to be persisted to the database
+        // TODO: remove this delay after fixing the issue of reporting "completed" status too early
+        Thread.sleep(1000)
+
+        // Build per-operator info
+        val operatorInfos = mutable.Map[String, OperatorInfo]()
+        val targetOps = if (request.targetOperatorIds.nonEmpty) {
+          request.targetOperatorIds
+        } else {
+          operatorStates.keys.toList
+        }
+
+        logger.info(
+          s"Target operators: $targetOps, operatorStates keys: ${operatorStates.keys.toList}"
+        )
+
+        for (opId <- targetOps) {
+          val (state, inputTuples, outputTuples) =
+            operatorStates.getOrElse(opId, ("Unknown", 0L, 0L))
+
+          // Get result
+          val (resultMode, result, totalRowCount, displayedRows, truncated) =
+            collectOperatorResult(executionId, opId, maxResultRows)
+
+          // Get console logs
+          val consoleLogs = collectConsoleLogs(executionId, opId)
+
+          operatorInfos(opId) = OperatorInfo(
+            state = state,
+            inputTuples = inputTuples,
+            outputTuples = outputTuples,
+            resultMode = resultMode,
+            result = result,
+            totalRowCount = totalRowCount,
+            displayedRows = displayedRows,
+            truncated = truncated,
+            consoleLogs = consoleLogs,
+            error = None
+          )
+        }
+
+        // Collect errors
+        val fatalErrors = executionService.executionStateStore.metadataStore.getState.fatalErrors
+          .map(err => s"${err.`type`}: ${err.message}")
+          .toList
+
+        SyncExecutionResult(
+          success = finalState == COMPLETED,
+          state = stateToString(finalState),
+          operators = operatorInfos.toMap,
+          compilationErrors = None,
+          errors = if (fatalErrors.nonEmpty) Some(fatalErrors) else None
+        )
+
+      } finally {
+        stateDisposable.dispose()
+        workflowService.disconnect()
+      }
+
+    } catch {
+      case e: Exception =>
+        logger.error(s"Sync execution error: ${e.getMessage}", e)
+
+        // Check if this is a compilation error
+        val errorMsg = e.getMessage
+        val isCompilationError = errorMsg != null && (
+          errorMsg.contains("compilation") ||
+            errorMsg.contains("Compilation") ||
+            errorMsg.contains("operator") ||
+            errorMsg.contains("schema")
+        )
+
+        if (isCompilationError) {
+          SyncExecutionResult(
+            success = false,
+            state = "CompilationFailed",
+            operators = Map.empty,
+            compilationErrors = Some(Map("error" -> errorMsg)),
+            errors = Some(List(errorMsg))
+          )
+        } else {
+          SyncExecutionResult(
+            success = false,
+            state = "Error",
+            operators = Map.empty,
+            compilationErrors = None,
+            errors = Some(List(e.getMessage))
+          )
+        }
+    }
+  }
+
+  /**
+    * Collect result for a single operator.
+    * Returns (mode, result, totalRowCount, displayedRows, truncated).
+    */
+  private def collectOperatorResult(
+      executionId: ExecutionIdentity,
+      opId: String,
+      maxRows: Int
+  ): (String, Option[List[ObjectNode]], Option[Int], Option[Int], Option[Boolean]) = {
+    try {
+      logger.debug(s"Collecting result for operator $opId, execution ${executionId.id}")
+
+      val storageUriOption = WorkflowExecutionsResource.getResultUriByLogicalPortId(
+        executionId,
+        OperatorIdentity(opId),
+        PortIdentity()
+      )
+
+      logger.debug(s"Storage URI for $opId: $storageUriOption")
+
+      storageUriOption match {
+        case Some(storageUri) =>
+          val document = DocumentFactory
+            .openDocument(storageUri)
+            ._1
+            .asInstanceOf[VirtualDocument[Tuple]]
+
+          val totalCount = document.getCount.toInt
+          val fetchCount = Math.min(maxRows, totalCount)
+          val tuples = document.getRange(0, fetchCount).toList
+          val displayedRows = tuples.size
+          val truncated = displayedRows < totalCount
+
+          if (tuples.size == 1 && isVisualizationTuple(tuples.head)) {
+            // It's a visualization - extract the JSON content
+            val jsonResults =
+              ExecutionResultService.convertTuplesToJson(tuples, isVisualization = true)
+            (
+              "visualization",
+              Some(jsonResults),
+              Some(totalCount),
+              Some(displayedRows),
+              Some(truncated)
+            )
+          } else {
+            // Regular table result
+            val jsonResults = ExecutionResultService.convertTuplesToJson(tuples)
+            ("table", Some(jsonResults), Some(totalCount), Some(displayedRows), Some(truncated))
+          }
+
+        case None =>
+          ("table", None, None, None, None)
+      }
+    } catch {
+      case e: Exception =>
+        logger.warn(s"Error collecting result for $opId: ${e.getMessage}")
+        ("table", None, None, None, None)
+    }
+  }
+
+  /**
+    * Check if a tuple is a visualization result (contains html-content or json-content).
+    */
+  private def isVisualizationTuple(tuple: Tuple): Boolean = {
+    try {
+      val schema = tuple.getSchema
+      val fieldNames = schema.getAttributes.map(_.getName)
+      fieldNames.exists(name => name == "html-content" || name == "json-content")
+    } catch {
+      case _: Exception => false
+    }
+  }
+
+  /**
+    * Collect console logs for an operator.
+    */
+  private def collectConsoleLogs(
+      executionId: ExecutionIdentity,
+      opId: String
+  ): Option[List[ConsoleMessageInfo]] = {
+    try {
+      val uriOption = getConsoleMessageUri(executionId, OperatorIdentity(opId))
+
+      uriOption.flatMap { uri =>
+        val document = DocumentFactory
+          .openDocument(uri)
+          ._1
+          .asInstanceOf[VirtualDocument[Tuple]]
+
+        val messages = document.get().toList.flatMap { tuple =>
+          try {
+            val protoString = tuple.getField[String](0)
+            val msg = ConsoleMessage.fromAscii(protoString)
+            Some(
+              ConsoleMessageInfo(
+                msgType = msg.msgType.name,
+                message = msg.title // title contains the actual print output
+              )
+            )
+          } catch {
+            case _: Exception => None
+          }
+        }
+
+        if (messages.nonEmpty) Some(messages) else None
+      }
+    } catch {
+      case _: Exception => None
+    }
+  }
+
+  private def getConsoleMessageUri(
+      eid: ExecutionIdentity,
+      opId: OperatorIdentity
+  ): Option[URI] = {
+    val context = SqlServer.getInstance().createDSLContext()
+    Option(
+      context
+        .select(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI)
+        .from(OPERATOR_EXECUTIONS)
+        .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
+        .and(OPERATOR_EXECUTIONS.OPERATOR_ID.eq(opId.id))
+        .fetchOneInto(classOf[String])
+    ).filter(uri => uri != null && uri.nonEmpty)
+      .map(s => URI.create(s))
+  }
+
+  private def parseState(stateStr: String): WorkflowAggregatedState = {
+    stateStr.toUpperCase match {
+      case "UNINITIALIZED" => UNINITIALIZED
+      case "READY"         => READY
+      case "RUNNING"       => RUNNING
+      case "PAUSING"       => PAUSING
+      case "PAUSED"        => PAUSED
+      case "RESUMING"      => RESUMING
+      case "RECOVERING"    => RUNNING
+      case "COMPLETED"     => COMPLETED
+      case "FAILED"        => FAILED
+      case "KILLED"        => KILLED
+      case "TERMINATED"    => TERMINATED
+      case _               => UNINITIALIZED
+    }
+  }
+
+  private def isTerminalState(state: WorkflowAggregatedState): Boolean = {
+    state match {
+      case COMPLETED | FAILED | KILLED | TERMINATED => true
+      case _                                        => false
+    }
+  }
+
+  private def stateToString(state: WorkflowAggregatedState): String = {
+    state match {
+      case UNINITIALIZED => "Uninitialized"
+      case READY         => "Ready"
+      case RUNNING       => "Running"
+      case PAUSING       => "Pausing"
+      case PAUSED        => "Paused"
+      case RESUMING      => "Resuming"
+      case COMPLETED     => "Completed"
+      case FAILED        => "Failed"
+      case KILLED        => "Killed"
+      case TERMINATED    => "Terminated"
+      case _             => "Unknown"
+    }
+  }
+
+  @GET
+  @Path("/health")
+  def healthCheck: Map[String, String] = Map("status" -> "ok")
+}

@@ -31,15 +31,55 @@ import type {
   LogicalLink,
   OperatorPortSchemaMap,
 } from "../types/workflow";
-import {
-  ExecutionState,
-  CompilationState,
-  type ExecutionStateInfo,
-  type CompilationStateInfo,
-  type OperatorStatistics,
-  type OperatorResultInfo,
-  type ConsoleMessage,
-} from "../types/execution";
+import type { OperatorInfo, ConsoleMessage } from "../types/execution";
+
+// ============================================================================
+// Local State Types (for internal workflow tracking)
+// ============================================================================
+
+/**
+ * Workflow execution states
+ */
+export enum ExecutionState {
+  Uninitialized = "Uninitialized",
+  Running = "Running",
+  Completed = "Completed",
+  Failed = "Failed",
+  Killed = "Killed",
+}
+
+/**
+ * Workflow compilation states
+ */
+export enum CompilationState {
+  Uninitialized = "Uninitialized",
+  Succeeded = "Succeeded",
+  Failed = "Failed",
+}
+
+/**
+ * Execution state info
+ */
+export type ExecutionStateInfo = { state: ExecutionState };
+
+/**
+ * Compilation state info
+ */
+export type CompilationStateInfo = { state: CompilationState };
+
+/**
+ * Operator statistics (re-using OperatorInfo from execution types)
+ */
+export type OperatorStatistics = {
+  operatorState: string;
+  aggregatedInputRowCount: number;
+  aggregatedOutputRowCount: number;
+};
+
+/**
+ * Operator result info (alias to OperatorInfo from execution types)
+ */
+export type OperatorResultInfo = OperatorInfo;
 
 // ============================================================================
 // ID Generation
