@@ -36,6 +36,7 @@ agent-service/
 │   │   ├── backend-api.ts  # Texera backend API client (operators, models)
 │   │   ├── auth-api.ts     # JWT token validation and user extraction
 │   │   ├── workflow-api.ts # Workflow CRUD operations against backend
+│   │   ├── execution-api.ts # WebSocket client for workflow execution
 │   │   └── index.ts
 │   ├── tools/
 │   │   ├── workflow-tools.ts   # getCurrentWorkflow, addOperator, addLink, etc.
@@ -121,6 +122,55 @@ Tools are created using Vercel AI SDK's `tool()` function with Zod schemas:
 - `listAllAvailableOperatorTypes` - Get available operator types
 - `getOperatorSchema` - Get JSON schema for an operator type
 
+**Execution Tools** (enabled when `executionConfig` is provided):
+- `executeWorkflow` - Execute the current workflow and retrieve results
+- `getExecutionState` - Get current execution state and operator statistics
+- `killWorkflow` - Stop a running workflow execution
+- `getExecutionResult` - Get results from the last execution
+- `getOperatorResult` - Get paginated results for a specific operator
+
+### Execution Architecture
+
+The execution system uses WebSocket to communicate with the Texera backend:
+
+```
+TexeraAgent
+    └── ExecutionManager
+            └── ExecutionClient (WebSocket)
+                    └── Texera Backend (wsapi/workflow-websocket)
+```
+
+**Key components:**
+
+1. **ExecutionClient** (`src/api/execution-api.ts`)
+   - Manages WebSocket connection to Texera backend
+   - Handles authentication via JWT token in query params
+   - Listens for execution events (state changes, stats, results)
+   - Provides async methods: `executeWorkflow()`, `killWorkflow()`, `requestPaginatedResult()`
+
+2. **ExecutionManager** (`src/tools/execution-tools.ts`)
+   - Wraps ExecutionClient with lifecycle management
+   - Tracks execution state and last result
+   - Handles timeouts and cleanup
+
+3. **Execution Tools**
+   - Created when agent has `executionConfig` with user credentials
+   - Tools build `LogicalPlan` from `WorkflowState` for execution
+
+**Usage:**
+```typescript
+const agent = new TexeraAgent({
+  model: myModel,
+  agentId: "agent-1",
+  executionConfig: {
+    userToken: "jwt-token",
+    workflowId: 123,
+    userId: 1,
+  },
+});
+// Agent now has execution tools available
+```
+
 ## Development
 
 ### Commands
@@ -146,6 +196,7 @@ Backend endpoints can be configured via:
 1. **Environment variables** (highest priority):
    - `API_ENDPOINT` - Main API (default: http://localhost:8080)
    - `MODELS_ENDPOINT` - LLM models API (default: http://localhost:9096)
+   - `WS_ENDPOINT` - WebSocket API (default: ws://localhost:8085)
    - `LLM_API_KEY` - API key for LLM calls
 
 2. **Config file** (`config/backend.config.json`)
@@ -165,11 +216,25 @@ When an agent is created with `userToken` and `workflowId`:
 The frontend (`TexeraCopilotManagerService`) communicates with this service via:
 
 1. **Agent creation**: POST `/api/agents` with `modelType`, `userToken`, `workflowId`
-2. **Message sending**: POST `/api/agents/:id/message`
-3. **State polling**: GET `/api/agents/:id/react-steps` (every 1 second)
+2. **Message sending**: Via WebSocket at `/api/agents/:id/react`
+3. **ReActSteps streaming**: Via WebSocket at `/api/agents/:id/react`
 4. **Workflow content**: Polled from Texera backend, NOT from agent service
 
 The frontend proxy routes `/api/agents` to this service (port 3001).
+
+### Workflow Sync During Agent Activity
+
+When the agent is actively modifying the workflow:
+
+1. **Auto-persist disabled**: The frontend (`AgentChatComponent`) disables auto-persist when agent state is `GENERATING`
+2. **Workflow polling**: Frontend polls workflow content from backend every 1 second via `getWorkflowObservable()`
+3. **Workspace update**: When workflow content changes, `WorkflowActionService.reloadWorkflow()` is called with `preserveViewport=true`
+4. **Auto-persist re-enabled**: When agent returns to `AVAILABLE` state, auto-persist is re-enabled
+
+This ensures:
+- Agent's changes are immediately visible in the workspace
+- No conflict between agent persistence and frontend auto-save
+- User's viewport is preserved during updates
 
 ## Important Notes
 

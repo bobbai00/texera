@@ -17,8 +17,18 @@
  * under the License.
  */
 
-import { Component, ViewChild, ElementRef, Input, OnInit, AfterViewChecked, ChangeDetectorRef } from "@angular/core";
+import {
+  Component,
+  ViewChild,
+  ElementRef,
+  Input,
+  OnInit,
+  AfterViewChecked,
+  ChangeDetectorRef,
+  OnDestroy,
+} from "@angular/core";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
+import { distinctUntilChanged, filter, pairwise, startWith } from "rxjs/operators";
 import { CopilotState, ReActStep, CopilotMessageStats } from "../../../service/copilot/texera-copilot";
 import { AgentInfo, TexeraCopilotManagerService } from "../../../service/copilot/texera-copilot-manager.service";
 import {
@@ -29,6 +39,7 @@ import {
 import { WorkflowActionService } from "../../../service/workflow-graph/model/workflow-action.service";
 import { NotificationService } from "../../../../common/service/notification/notification.service";
 import { WorkflowVersionService } from "../../../../dashboard/service/user/workflow-version/workflow-version.service";
+import { WorkflowPersistService } from "../../../../common/service/workflow-persist/workflow-persist.service";
 import {
   ToolGroup,
   TOOL_GROUP_CONFIGS,
@@ -57,7 +68,7 @@ export interface TimelineNode {
   templateUrl: "agent-chat.component.html",
   styleUrls: ["agent-chat.component.scss"],
 })
-export class AgentChatComponent implements OnInit, AfterViewChecked {
+export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
   @Input() agentInfo!: AgentInfo;
   @ViewChild("messageContainer", { static: false }) messageContainer?: ElementRef;
   @ViewChild("messageInput", { static: false }) messageInput?: ElementRef;
@@ -96,13 +107,17 @@ export class AgentChatComponent implements OnInit, AfterViewChecked {
   // Tool panel state
   public expandedToolName: string | null = null;
 
+  // Track if we disabled auto-persist so we can re-enable it on destroy
+  private disabledAutoPersist = false;
+
   constructor(
     private agentActionService: AgentActionService,
     private copilotManagerService: TexeraCopilotManagerService,
     private workflowActionService: WorkflowActionService,
     private notificationService: NotificationService,
     private cdr: ChangeDetectorRef,
-    private workflowVersionService: WorkflowVersionService
+    private workflowVersionService: WorkflowVersionService,
+    private workflowPersistService: WorkflowPersistService
   ) {}
 
   ngOnInit(): void {
@@ -189,9 +204,65 @@ export class AgentChatComponent implements OnInit, AfterViewChecked {
         this.messageStats = Array.from(statsMap.values());
         this.cdr.detectChanges();
       });
+
+    // Subscribe to agent state changes to manage auto-persist
+    // Disable auto-persist when agent is GENERATING, re-enable when AVAILABLE
+    this.copilotManagerService
+      .getAgentStateObservable(this.agentInfo.id)
+      .pipe(
+        startWith(CopilotState.UNAVAILABLE),
+        pairwise(),
+        untilDestroyed(this)
+      )
+      .subscribe(([previousState, currentState]) => {
+        // When agent starts generating, disable auto-persist
+        if (currentState === CopilotState.GENERATING && previousState !== CopilotState.GENERATING) {
+          this.workflowPersistService.setWorkflowPersistFlag(false);
+          this.disabledAutoPersist = true;
+          console.log("[AgentChat] Disabled auto-persist during agent generation");
+        }
+
+        // When agent finishes (becomes AVAILABLE from GENERATING/STOPPING), re-enable auto-persist
+        if (
+          currentState === CopilotState.AVAILABLE &&
+          (previousState === CopilotState.GENERATING || previousState === CopilotState.STOPPING)
+        ) {
+          this.workflowPersistService.setWorkflowPersistFlag(true);
+          this.disabledAutoPersist = false;
+          console.log("[AgentChat] Re-enabled auto-persist after agent finished");
+        }
+      });
+
+    // Subscribe to workflow changes from agent and reload the workspace
+    // This polls the workflow from backend database and updates the workspace display
+    this.copilotManagerService
+      .getWorkflowObservable(this.agentInfo.id)
+      .pipe(
+        filter(workflow => workflow !== null),
+        distinctUntilChanged((prev, curr) => {
+          // Compare workflow content to avoid unnecessary reloads
+          if (!prev || !curr) return false;
+          return JSON.stringify(prev.content) === JSON.stringify(curr.content);
+        }),
+        untilDestroyed(this)
+      )
+      .subscribe(workflow => {
+        if (workflow) {
+          // Reload the workflow in the workspace with preserveViewport=true
+          // to keep the user's current view position
+          console.log("[AgentChat] Reloading workflow from backend");
+          this.workflowActionService.reloadWorkflow(workflow, false, true);
+        }
+      });
   }
 
-  // Cleanup handled by @UntilDestroy decorator
+  ngOnDestroy(): void {
+    // Re-enable auto-persist if we disabled it
+    if (this.disabledAutoPersist) {
+      this.workflowPersistService.setWorkflowPersistFlag(true);
+      console.log("[AgentChat] Re-enabled auto-persist on component destroy");
+    }
+  }
 
   ngAfterViewChecked(): void {
     if (this.shouldScrollToBottom) {

@@ -50,6 +50,19 @@ import {
   TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES,
   TOOL_NAME_GET_OPERATOR_SCHEMA,
 } from "../tools/metadata-tools";
+import {
+  ExecutionManager,
+  createExecuteWorkflowTool,
+  createGetExecutionStateTool,
+  createKillWorkflowTool,
+  createGetExecutionResultTool,
+  createGetOperatorResultTool,
+  TOOL_NAME_EXECUTE_WORKFLOW,
+  TOOL_NAME_GET_EXECUTION_STATE,
+  TOOL_NAME_KILL_WORKFLOW,
+  TOOL_NAME_GET_EXECUTION_RESULT,
+  TOOL_NAME_GET_OPERATOR_RESULT,
+} from "../tools/execution-tools";
 
 // ============================================================================
 // Agent Configuration
@@ -66,6 +79,13 @@ export interface TexeraAgentConfig {
   systemPrompt?: string;
   /** Maximum number of steps per message */
   maxSteps?: number;
+  /** Execution configuration (optional, enables execution tools) */
+  executionConfig?: {
+    userToken: string;
+    workflowId: number;
+    userId: number;
+    computingUnitId?: number;
+  };
 }
 
 // ============================================================================
@@ -105,7 +125,9 @@ export class TexeraAgent {
   // State
   private state: AgentStateEnum = AgentStateEnum.AVAILABLE;
   private workflowState: WorkflowState;
+  // TODO: this can be separate out as a static metadata store, loaded once when the server launched
   private metadataStore: OperatorMetadataStore;
+  private executionManager: ExecutionManager | null = null;
 
   // Configuration
   private model: LanguageModel;
@@ -141,6 +163,11 @@ export class TexeraAgent {
     // Initialize state
     this.workflowState = new WorkflowState();
     this.metadataStore = new OperatorMetadataStore();
+
+    // Initialize execution manager if config provided
+    if (config.executionConfig) {
+      this.executionManager = new ExecutionManager(config.executionConfig);
+    }
 
     // Initialize settings
     this.settings = {
@@ -184,7 +211,8 @@ export class TexeraAgent {
       }
     }
 
-    return {
+    // Base workflow and metadata tools
+    const tools: Record<string, any> = {
       [TOOL_NAME_GET_CURRENT_WORKFLOW]: createGetCurrentWorkflowTool(this.workflowState),
       [TOOL_NAME_ADD_OPERATOR]: createAddOperatorTool(this.workflowState, operatorSchemas),
       [TOOL_NAME_ADD_LINK]: createAddLinkTool(this.workflowState),
@@ -193,6 +221,17 @@ export class TexeraAgent {
       [TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: createListAllAvailableOperatorTypesTool(this.metadataStore),
       [TOOL_NAME_GET_OPERATOR_SCHEMA]: createGetOperatorSchemaTool(this.metadataStore),
     };
+
+    // Add execution tools if execution manager is available
+    if (this.executionManager) {
+      tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, this.executionManager);
+      tools[TOOL_NAME_GET_EXECUTION_STATE] = createGetExecutionStateTool(this.executionManager);
+      tools[TOOL_NAME_KILL_WORKFLOW] = createKillWorkflowTool(this.executionManager);
+      tools[TOOL_NAME_GET_EXECUTION_RESULT] = createGetExecutionResultTool(this.executionManager, this.workflowState);
+      tools[TOOL_NAME_GET_OPERATOR_RESULT] = createGetOperatorResultTool(this.executionManager);
+    }
+
+    return tools;
   }
 
   // ============================================================================
@@ -209,6 +248,10 @@ export class TexeraAgent {
 
   getMetadataStore(): OperatorMetadataStore {
     return this.metadataStore;
+  }
+
+  getExecutionManager(): ExecutionManager | null {
+    return this.executionManager;
   }
 
   getMessages(): ModelMessage[] {
@@ -409,6 +452,9 @@ export class TexeraAgent {
         content: result.text,
       });
 
+      // TODO: add the whole message history into the history by doing:
+         this.messages.push(...result.response.messages);
+
       // Update final stats
       stats.endTime = Date.now();
       stats.stepCount = stepIndex;
@@ -495,6 +541,20 @@ export class TexeraAgent {
     this.messages = [];
     this.reActSteps = [];
     this.workflowState.reset();
+    if (this.executionManager) {
+      this.executionManager.disconnect();
+    }
+  }
+
+  /**
+   * Cleanup and disconnect any resources.
+   */
+  destroy(): void {
+    this.reset();
+    if (this.executionManager) {
+      this.executionManager.disconnect();
+      this.executionManager = null;
+    }
   }
 
 }

@@ -171,32 +171,6 @@ export class WorkflowState {
     return deleted;
   }
 
-  setOperatorProperty(operatorId: string, propertyPath: string, value: any): boolean {
-    const operator = this.operators.get(operatorId);
-    if (!operator) return false;
-
-    // Deep clone and update
-    const newProperties = { ...operator.operatorProperties };
-    const pathParts = propertyPath.split(".");
-    let current: any = newProperties;
-
-    for (let i = 0; i < pathParts.length - 1; i++) {
-      if (current[pathParts[i]] === undefined) {
-        current[pathParts[i]] = {};
-      }
-      current = current[pathParts[i]];
-    }
-    current[pathParts[pathParts.length - 1]] = value;
-
-    const updatedOperator: OperatorPredicate = {
-      ...operator,
-      operatorProperties: newProperties,
-    };
-    this.operators.set(operatorId, updatedOperator);
-    this.emitChange({ type: "modify", operatorIds: [operatorId] });
-    return true;
-  }
-
   updateOperatorProperties(operatorId: string, properties: Record<string, any>): boolean {
     const operator = this.operators.get(operatorId);
     if (!operator) return false;
