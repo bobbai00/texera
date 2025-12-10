@@ -50,15 +50,7 @@ import {
   TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES,
   TOOL_NAME_GET_OPERATOR_SCHEMA,
 } from "../tools/metadata-tools";
-import {
-  ExecutionManager,
-  createExecuteWorkflowTool,
-  createGetExecutionStateTool,
-  createGetExecutionResultTool,
-  TOOL_NAME_EXECUTE_WORKFLOW,
-  TOOL_NAME_GET_EXECUTION_STATE,
-  TOOL_NAME_GET_EXECUTION_RESULT,
-} from "../tools/execution-tools";
+// Execution is now stateless via HTTP - tools create their own ExecutionClient per request
 
 // ============================================================================
 // Agent Configuration
@@ -75,13 +67,8 @@ export interface TexeraAgentConfig {
   systemPrompt?: string;
   /** Maximum number of steps per message */
   maxSteps?: number;
-  /** Execution configuration (optional, enables execution tools) */
-  executionConfig?: {
-    userToken: string;
-    workflowId: number;
-    userId: number;
-    computingUnitId?: number;
-  };
+  /** Pre-initialized metadata store (optional, uses global singleton if not provided) */
+  metadataStore?: OperatorMetadataStore;
 }
 
 // ============================================================================
@@ -121,9 +108,8 @@ export class TexeraAgent {
   // State
   private state: AgentStateEnum = AgentStateEnum.AVAILABLE;
   private workflowState: WorkflowState;
-  // TODO: this can be separate out as a static metadata store, loaded once when the server launched
+  // Uses global singleton - initialized once at server startup
   private metadataStore: OperatorMetadataStore;
-  private executionManager: ExecutionManager | null = null;
 
   // Configuration
   private model: LanguageModel;
@@ -158,12 +144,8 @@ export class TexeraAgent {
 
     // Initialize state
     this.workflowState = new WorkflowState();
-    this.metadataStore = new OperatorMetadataStore();
-
-    // Initialize execution manager if config provided
-    if (config.executionConfig) {
-      this.executionManager = new ExecutionManager(config.executionConfig);
-    }
+    // Use provided metadata store or global singleton
+    this.metadataStore = config.metadataStore || OperatorMetadataStore.getInstance();
 
     // Initialize settings
     this.settings = {
@@ -171,17 +153,21 @@ export class TexeraAgent {
       systemPrompt: this.systemPrompt,
     };
 
-    // Initialize tools with empty schemas (will be rebuilt after initialize())
+    // Initialize tools - will have operator schemas if metadata store is already initialized
     this.tools = this.createTools();
   }
 
   /**
    * Initialize the agent by loading operator metadata from the backend.
-   * Must be called after construction before the agent can be used.
+   * If the metadata store is already initialized (e.g., global singleton),
+   * this just rebuilds the tools with the existing metadata.
    */
   async initialize(): Promise<void> {
     try {
-      await this.metadataStore.initializeFromBackend();
+      // Only fetch from backend if not already initialized
+      if (!this.metadataStore.isInitialized()) {
+        await this.metadataStore.initializeFromBackend();
+      }
       // Rebuild tools with loaded metadata
       this.tools = this.createTools();
       console.log(`[TexeraAgent ${this.agentId}] Initialized with ${this.metadataStore.getOperatorCount()} operators`);
@@ -207,7 +193,8 @@ export class TexeraAgent {
       }
     }
 
-    // Base workflow and metadata tools
+    // Workflow and metadata tools
+    // Note: Execution tools are now handled via stateless HTTP requests, not via the agent
     const tools: Record<string, any> = {
       [TOOL_NAME_GET_CURRENT_WORKFLOW]: createGetCurrentWorkflowTool(this.workflowState),
       [TOOL_NAME_ADD_OPERATOR]: createAddOperatorTool(this.workflowState, operatorSchemas),
@@ -217,13 +204,6 @@ export class TexeraAgent {
       [TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: createListAllAvailableOperatorTypesTool(this.metadataStore),
       [TOOL_NAME_GET_OPERATOR_SCHEMA]: createGetOperatorSchemaTool(this.metadataStore),
     };
-
-    // Add execution tools if execution manager is available
-    if (this.executionManager) {
-      tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, this.executionManager);
-      tools[TOOL_NAME_GET_EXECUTION_STATE] = createGetExecutionStateTool(this.executionManager);
-      tools[TOOL_NAME_GET_EXECUTION_RESULT] = createGetExecutionResultTool(this.executionManager, this.workflowState);
-    }
 
     return tools;
   }
@@ -242,10 +222,6 @@ export class TexeraAgent {
 
   getMetadataStore(): OperatorMetadataStore {
     return this.metadataStore;
-  }
-
-  getExecutionManager(): ExecutionManager | null {
-    return this.executionManager;
   }
 
   getMessages(): ModelMessage[] {
@@ -535,9 +511,6 @@ export class TexeraAgent {
     this.messages = [];
     this.reActSteps = [];
     this.workflowState.reset();
-    if (this.executionManager) {
-      this.executionManager.reset();
-    }
   }
 
   /**
@@ -547,12 +520,6 @@ export class TexeraAgent {
   destroy(): void {
     // Cleanup workflow state (unsubscribes all RxJS subscriptions, completes subjects)
     this.workflowState.destroy();
-
-    // Reset execution manager
-    if (this.executionManager) {
-      this.executionManager.reset();
-      this.executionManager = null;
-    }
 
     // Clear conversation history
     this.messages = [];

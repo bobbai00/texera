@@ -165,14 +165,40 @@ export function getCompactSchema(jsonSchema: any): CompactOperatorSchema | null 
 }
 
 // ============================================================================
-// Operator Metadata Store
+// Operator Metadata Store (Singleton)
 // ============================================================================
 
 /**
  * In-memory store for operator schemas.
  * Can be populated from backend API or manually registered.
+ * Uses singleton pattern - initialized once at server startup.
  */
 export class OperatorMetadataStore {
+  /** Singleton instance */
+  private static instance: OperatorMetadataStore | null = null;
+
+  /**
+   * Get the singleton instance.
+   */
+  static getInstance(): OperatorMetadataStore {
+    if (!OperatorMetadataStore.instance) {
+      OperatorMetadataStore.instance = new OperatorMetadataStore();
+    }
+    return OperatorMetadataStore.instance;
+  }
+
+  /**
+   * Initialize the global singleton from backend.
+   * Should be called once at server startup.
+   */
+  static async initializeGlobal(): Promise<OperatorMetadataStore> {
+    const store = OperatorMetadataStore.getInstance();
+    if (!store.isInitialized()) {
+      await store.initializeFromBackend();
+    }
+    return store;
+  }
+
   private schemas: Map<string, any> = new Map();
   private descriptions: Map<string, string> = new Map();
   private additionalMetadata: Map<string, any> = new Map();

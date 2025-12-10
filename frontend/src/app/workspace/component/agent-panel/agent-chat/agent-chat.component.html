@@ -663,6 +663,33 @@
           </div>
         </div>
       </nz-tab>
+
+      <!-- Agent State Tab -->
+      <nz-tab nzTitle="Agent State">
+        <div class="settings-section">
+          <div class="settings-prompt-actions">
+            <button
+              nz-button
+              nzType="link"
+              nzSize="small"
+              (click)="loadAgentInternalState()">
+              <i
+                nz-icon
+                nzType="reload"
+                nzTheme="outline"></i>
+              Refresh
+            </button>
+          </div>
+          <div class="settings-prompt-display">
+            <nz-spin [nzSpinning]="isLoadingAgentState">
+              <pre *ngIf="agentInternalState" class="agent-state-json">{{ agentInternalState | json }}</pre>
+              <div *ngIf="!agentInternalState && !isLoadingAgentState">
+                No agent state available
+              </div>
+            </nz-spin>
+          </div>
+        </div>
+      </nz-tab>
     </nz-tabset>
   </ng-container>
 </nz-modal>

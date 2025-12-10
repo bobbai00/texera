@@ -103,6 +103,8 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
   public settingsMaxTokenLimit = 1000;
   public settingsToolTimeoutSeconds = 120; // 2 minutes default
   public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
+  public agentInternalState: object | null = null;
+  public isLoadingAgentState = false;
 
   // Tool panel state
   public expandedToolName: string | null = null;
@@ -315,6 +317,23 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
         this.isEditingSystemPrompt = false;
         this.editingSystemPrompt = "";
         this.expandedToolName = null;
+      });
+
+    // Also load agent internal state
+    this.loadAgentInternalState();
+  }
+
+  /**
+   * Load agent internal state from the server.
+   */
+  public loadAgentInternalState(): void {
+    this.isLoadingAgentState = true;
+    this.copilotManagerService
+      .getAgentInternalState(this.agentInfo.id)
+      .pipe(untilDestroyed(this))
+      .subscribe(state => {
+        this.agentInternalState = state;
+        this.isLoadingAgentState = false;
       });
   }
 

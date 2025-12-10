@@ -665,3 +665,20 @@
     word-break: break-word;
   }
 }
+
+// Agent State JSON display
+.agent-state-json {
+  margin: 0;
+  padding: 12px;
+  background: #f5f5f5;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  max-height: 500px;
+  overflow-y: auto;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  color: #262626;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -44,6 +44,7 @@ import { extractUserFromToken, validateToken } from "./api/auth-api";
 import { persistWorkflow, retrieveWorkflow } from "./api/workflow-api";
 import { compileWorkflow } from "./api/compile-api";
 import { CompilationState, type CompilationStateInfo } from "./workflow/workflow-state";
+import { OperatorMetadataStore } from "./tools/metadata-tools";
 import type {
   AgentInfo,
   AgentDelegateConfig,
@@ -393,6 +394,27 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     return { compilationState: stored.agent.getWorkflowState().getCompilationState() };
   })
 
+  // Get agent internal state (workflow state as JSON for debugging)
+  .get("/:id/state", ({ params: { id } }) => {
+    const stored = getStoredAgent(id);
+    const workflowState = stored.agent.getWorkflowState();
+    return {
+      agentId: id,
+      agentName: stored.agent.agentName,
+      agentState: stored.agent.getState(),
+      workflow: workflowState.getWorkflowContent(),
+      compilationState: workflowState.getCompilationState(),
+      messageCount: stored.agent.getMessages().length,
+      reActStepsCount: stored.agent.getReActSteps().length,
+      createdAt: stored.createdAt,
+      delegate: stored.delegate ? {
+        workflowId: stored.delegate.workflowId,
+        workflowName: stored.delegate.workflowName,
+        userInfo: stored.delegate.userInfo,
+      } : undefined,
+    };
+  })
+
   // Get messages
   .get("/:id/messages", ({ params: { id } }) => {
     const stored = getStoredAgent(id);
@@ -654,6 +676,21 @@ function printStartupMessage() {
   console.log(LINE);
 }
 
-printStartupMessage();
+// Initialize global metadata store at startup
+async function initializeServices() {
+  try {
+    console.log("[Server] Initializing global operator metadata store...");
+    const metadataStore = await OperatorMetadataStore.initializeGlobal();
+    console.log(`[Server] Loaded ${metadataStore.getOperatorCount()} operators into global metadata store`);
+  } catch (error) {
+    console.warn("[Server] Failed to initialize global metadata store:", error);
+    console.warn("[Server] Agents will initialize metadata individually on creation");
+  }
+}
+
+// Run startup initialization
+initializeServices().then(() => {
+  printStartupMessage();
+});
 
 export default app;

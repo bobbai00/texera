@@ -726,6 +726,14 @@ export class TexeraCopilotManagerService {
   }
 
   /**
+   * Get agent internal state for debugging.
+   * Fetches from agent-service API.
+   */
+  public getAgentInternalState(agentId: string): Observable<object> {
+    return this.http.get<object>(`${this.AGENT_API_BASE}/agents/${agentId}/state`).pipe(catchError(() => of({})));
+  }
+
+  /**
    * Set hovered message (local UI state).
    */
   public setHoveredMessage(agentId: string, step: ReActStep | null): void {
