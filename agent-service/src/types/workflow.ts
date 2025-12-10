@@ -134,11 +134,42 @@ export interface LogicalPlan {
 }
 
 /**
- * Complete workflow content (operators + links in frontend format)
+ * 2D point for operator positions
+ */
+export interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Comment box on the workflow canvas
+ */
+export interface CommentBox {
+  readonly commentBoxID: string;
+  readonly comments: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * Workflow settings
+ */
+export interface WorkflowSettings {
+  readonly dataTransferBatchSize: number;
+}
+
+/**
+ * Complete workflow content (operators + links + positions in frontend format)
+ * This must match the frontend's WorkflowContent interface for compatibility.
  */
 export interface WorkflowContent {
   readonly operators: OperatorPredicate[];
+  readonly operatorPositions: { [key: string]: Point };
   readonly links: OperatorLink[];
+  readonly commentBoxes: CommentBox[];
+  readonly settings: WorkflowSettings;
 }
 
 // ============================================================================

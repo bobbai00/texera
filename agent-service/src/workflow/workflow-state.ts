@@ -31,6 +31,9 @@ import type {
   LogicalOperator,
   LogicalLink,
   OperatorPortSchemaMap,
+  Point,
+  CommentBox,
+  WorkflowSettings,
 } from "../types/workflow";
 
 // ============================================================================
@@ -81,10 +84,18 @@ export function generateLinkId(): string {
  *
  * Uses RxJS Subjects for reactive event streams, following the frontend pattern.
  */
+// Default workflow settings
+const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
+  dataTransferBatchSize: 400,
+};
+
 export class WorkflowState {
   // Graph state
   private operators: Map<string, OperatorPredicate> = new Map();
   private links: Map<string, OperatorLink> = new Map();
+  private operatorPositions: Map<string, Point> = new Map();
+  private commentBoxes: CommentBox[] = [];
+  private settings: WorkflowSettings = { ...DEFAULT_WORKFLOW_SETTINGS };
   private operatorsToViewResult: Set<string> = new Set();
 
   // ============================================================================
@@ -157,8 +168,14 @@ export class WorkflowState {
   // Operator Operations
   // ============================================================================
 
-  addOperator(operator: OperatorPredicate): void {
+  addOperator(operator: OperatorPredicate, position?: Point): void {
     this.operators.set(operator.operatorID, operator);
+    // Set default position if not provided - stack operators vertically
+    const defaultPosition: Point = position || {
+      x: 100 + (this.operators.size - 1) * 200,
+      y: 100 + (this.operators.size - 1) * 100,
+    };
+    this.operatorPositions.set(operator.operatorID, defaultPosition);
     this.operatorAddSubject.next(operator);
   }
 
@@ -186,6 +203,7 @@ export class WorkflowState {
     }
 
     this.operatorsToViewResult.delete(operatorId);
+    this.operatorPositions.delete(operatorId);
     const deleted = this.operators.delete(operatorId);
 
     if (deleted) {
@@ -268,9 +286,18 @@ export class WorkflowState {
   // ============================================================================
 
   getWorkflowContent(): WorkflowContent {
+    // Convert operatorPositions Map to object format expected by frontend
+    const positionsObj: { [key: string]: Point } = {};
+    for (const [id, pos] of this.operatorPositions) {
+      positionsObj[id] = pos;
+    }
+
     return {
       operators: this.getAllOperators(),
+      operatorPositions: positionsObj,
       links: this.getAllLinks(),
+      commentBoxes: [...this.commentBoxes],
+      settings: { ...this.settings },
     };
   }
 
@@ -278,6 +305,7 @@ export class WorkflowState {
     // Clear existing state without emitting events
     this.operators.clear();
     this.links.clear();
+    this.operatorPositions.clear();
 
     // Add new content (no events emitted for bulk load)
     for (const op of content.operators) {
@@ -286,6 +314,21 @@ export class WorkflowState {
     for (const link of content.links) {
       this.links.set(link.linkID, link);
     }
+
+    // Load operator positions
+    if (content.operatorPositions) {
+      for (const [id, pos] of Object.entries(content.operatorPositions)) {
+        this.operatorPositions.set(id, pos);
+      }
+    }
+
+    // Load comment boxes
+    this.commentBoxes = content.commentBoxes ? [...content.commentBoxes] : [];
+
+    // Load settings
+    this.settings = content.settings
+      ? { ...content.settings }
+      : { ...DEFAULT_WORKFLOW_SETTINGS };
   }
 
   /**
@@ -349,6 +392,9 @@ export class WorkflowState {
   reset(): void {
     this.operators.clear();
     this.links.clear();
+    this.operatorPositions.clear();
+    this.commentBoxes = [];
+    this.settings = { ...DEFAULT_WORKFLOW_SETTINGS };
     this.operatorsToViewResult.clear();
     this.currentCompilationStateInfo = { state: CompilationState.Uninitialized };
     this.operatorInputSchemas.clear();
