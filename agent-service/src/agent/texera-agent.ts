@@ -542,13 +542,21 @@ export class TexeraAgent {
 
   /**
    * Cleanup and disconnect any resources.
+   * This properly cleans up RxJS subscriptions via workflowState.destroy().
    */
   destroy(): void {
-    this.reset();
+    // Cleanup workflow state (unsubscribes all RxJS subscriptions, completes subjects)
+    this.workflowState.destroy();
+
+    // Reset execution manager
     if (this.executionManager) {
       this.executionManager.reset();
       this.executionManager = null;
     }
+
+    // Clear conversation history
+    this.messages = [];
+    this.reActSteps = [];
   }
 
 }

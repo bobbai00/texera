@@ -19,9 +19,10 @@
 
 /**
  * Workflow State Manager - maintains the workflow graph state for the agent.
- * This is a simplified version of the frontend WorkflowActionService.
+ * Uses RxJS for reactive state management, following the same patterns as the frontend.
  */
 
+import { Subject, Observable, merge, Subscription } from "rxjs";
 import type {
   OperatorPredicate,
   OperatorLink,
@@ -31,22 +32,10 @@ import type {
   LogicalLink,
   OperatorPortSchemaMap,
 } from "../types/workflow";
-import type { OperatorInfo, ConsoleMessage } from "../types/execution";
 
 // ============================================================================
 // Local State Types (for internal workflow tracking)
 // ============================================================================
-
-/**
- * Workflow execution states
- */
-export enum ExecutionState {
-  Uninitialized = "Uninitialized",
-  Running = "Running",
-  Completed = "Completed",
-  Failed = "Failed",
-  Killed = "Killed",
-}
 
 /**
  * Workflow compilation states
@@ -58,28 +47,13 @@ export enum CompilationState {
 }
 
 /**
- * Execution state info
- */
-export type ExecutionStateInfo = { state: ExecutionState };
-
-/**
  * Compilation state info
  */
-export type CompilationStateInfo = { state: CompilationState };
-
-/**
- * Operator statistics (re-using OperatorInfo from execution types)
- */
-export type OperatorStatistics = {
-  operatorState: string;
-  aggregatedInputRowCount: number;
-  aggregatedOutputRowCount: number;
-};
-
-/**
- * Operator result info (alias to OperatorInfo from execution types)
- */
-export type OperatorResultInfo = OperatorInfo;
+export interface CompilationStateInfo {
+  state: CompilationState;
+  operatorOutputSchemas?: Record<string, OperatorPortSchemaMap>;
+  operatorErrors?: Record<string, { type: string; message: string }>;
+}
 
 // ============================================================================
 // ID Generation
@@ -97,80 +71,86 @@ export function generateLinkId(): string {
 }
 
 // ============================================================================
-// Change Listener Types
-// ============================================================================
-
-export type WorkflowChangeType = "add" | "modify" | "delete";
-
-export interface WorkflowChangeEvent {
-  type: WorkflowChangeType;
-  operatorIds?: string[];
-  linkIds?: string[];
-}
-
-export type WorkflowChangeListener = (event: WorkflowChangeEvent) => void;
-
-// ============================================================================
 // Workflow State Class
 // ============================================================================
 
 /**
  * WorkflowState maintains the complete state of a workflow including:
  * - Operators and links (the graph structure)
- * - Execution state
  * - Compilation state and schemas
- * - Results and console logs
+ *
+ * Uses RxJS Subjects for reactive event streams, following the frontend pattern.
  */
 export class WorkflowState {
   // Graph state
   private operators: Map<string, OperatorPredicate> = new Map();
   private links: Map<string, OperatorLink> = new Map();
   private operatorsToViewResult: Set<string> = new Set();
-  private disabledOperators: Set<string> = new Set();
 
-  // Change listeners for auto-persistence
-  private changeListeners: Set<WorkflowChangeListener> = new Set();
+  // ============================================================================
+  // RxJS Subjects for workflow change events (similar to frontend WorkflowGraph)
+  // ============================================================================
 
-  // Execution state
-  private executionState: ExecutionStateInfo = { state: ExecutionState.Uninitialized };
-  private operatorStatistics: Map<string, OperatorStatistics> = new Map();
-  private operatorResults: Map<string, OperatorResultInfo> = new Map();
-  private consoleLogs: Map<string, ConsoleMessage[]> = new Map();
+  /** Emits when an operator is added */
+  private readonly operatorAddSubject = new Subject<OperatorPredicate>();
 
-  // Compilation state
-  private compilationState: CompilationStateInfo = { state: CompilationState.Uninitialized };
+  /** Emits when an operator is deleted */
+  private readonly operatorDeleteSubject = new Subject<{ deletedOperatorID: string }>();
+
+  /** Emits when an operator's properties are changed */
+  private readonly operatorPropertyChangeSubject = new Subject<{ operator: OperatorPredicate }>();
+
+  /** Emits when a link is added */
+  private readonly linkAddSubject = new Subject<OperatorLink>();
+
+  /** Emits when a link is deleted */
+  private readonly linkDeleteSubject = new Subject<{ deletedLink: OperatorLink }>();
+
+  /** Emits when disabled operators change */
+  private readonly disabledOperatorChangedSubject = new Subject<{
+    newDisabled: string[];
+    newEnabled: string[];
+  }>();
+
+  /** Emits when view result operators change */
+  private readonly viewResultOperatorChangedSubject = new Subject<{
+    newViewResultOps: string[];
+    newUnviewResultOps: string[];
+  }>();
+
+  // ============================================================================
+  // Compilation state subjects
+  // ============================================================================
+
+  /** Current compilation state */
+  private currentCompilationStateInfo: CompilationStateInfo = {
+    state: CompilationState.Uninitialized,
+  };
+
+  /** Emits when compilation state changes */
+  private readonly compilationStateChangedSubject = new Subject<CompilationStateInfo>();
+
+  // Compilation schemas
   private operatorInputSchemas: Map<string, OperatorPortSchemaMap> = new Map();
   private operatorOutputSchemas: Map<string, OperatorPortSchemaMap> = new Map();
 
-  // ============================================================================
-  // Change Listener Management
-  // ============================================================================
+  // Track subscriptions for cleanup
+  private subscriptions: Subscription[] = [];
 
   /**
-   * Register a listener to be called when the workflow changes
+   * Gets a merged stream of all workflow topology/property changes.
+   * This is useful for triggering compilation or persistence.
+   * Similar to the frontend's merge pattern in WorkflowCompilingService.
    */
-  addChangeListener(listener: WorkflowChangeListener): void {
-    this.changeListeners.add(listener);
-  }
-
-  /**
-   * Remove a registered listener
-   */
-  removeChangeListener(listener: WorkflowChangeListener): void {
-    this.changeListeners.delete(listener);
-  }
-
-  /**
-   * Emit a change event to all listeners
-   */
-  private emitChange(event: WorkflowChangeEvent): void {
-    for (const listener of this.changeListeners) {
-      try {
-        listener(event);
-      } catch (error) {
-        console.error("[WorkflowState] Error in change listener:", error);
-      }
-    }
+  getWorkflowChangedStream(): Observable<unknown> {
+    return merge(
+      this.operatorAddSubject,
+      this.operatorDeleteSubject,
+      this.operatorPropertyChangeSubject,
+      this.linkAddSubject,
+      this.linkDeleteSubject,
+      this.disabledOperatorChangedSubject
+    );
   }
 
   // ============================================================================
@@ -179,7 +159,7 @@ export class WorkflowState {
 
   addOperator(operator: OperatorPredicate): void {
     this.operators.set(operator.operatorID, operator);
-    this.emitChange({ type: "add", operatorIds: [operator.operatorID] });
+    this.operatorAddSubject.next(operator);
   }
 
   getOperator(operatorId: string): OperatorPredicate | undefined {
@@ -191,23 +171,27 @@ export class WorkflowState {
   }
 
   getAllEnabledOperators(): OperatorPredicate[] {
-    return this.getAllOperators().filter((op) => !this.disabledOperators.has(op.operatorID));
+    return this.getAllOperators();
   }
 
   deleteOperator(operatorId: string): boolean {
+    const operator = this.operators.get(operatorId);
+    if (!operator) return false;
+
     // Also delete any links connected to this operator
     const linksToDelete = this.getLinksConnectedToOperator(operatorId);
-    const deletedLinkIds: string[] = [];
     for (const link of linksToDelete) {
       this.links.delete(link.linkID);
-      deletedLinkIds.push(link.linkID);
+      this.linkDeleteSubject.next({ deletedLink: link });
     }
+
     this.operatorsToViewResult.delete(operatorId);
-    this.disabledOperators.delete(operatorId);
     const deleted = this.operators.delete(operatorId);
+
     if (deleted) {
-      this.emitChange({ type: "delete", operatorIds: [operatorId], linkIds: deletedLinkIds });
+      this.operatorDeleteSubject.next({ deletedOperatorID: operatorId });
     }
+
     return deleted;
   }
 
@@ -220,16 +204,8 @@ export class WorkflowState {
       operatorProperties: { ...operator.operatorProperties, ...properties },
     };
     this.operators.set(operatorId, updatedOperator);
-    this.emitChange({ type: "modify", operatorIds: [operatorId] });
+    this.operatorPropertyChangeSubject.next({ operator: updatedOperator });
     return true;
-  }
-
-  setOperatorDisabled(operatorId: string, disabled: boolean): void {
-    if (disabled) {
-      this.disabledOperators.add(operatorId);
-    } else {
-      this.disabledOperators.delete(operatorId);
-    }
   }
 
   // ============================================================================
@@ -238,7 +214,7 @@ export class WorkflowState {
 
   addLink(link: OperatorLink): void {
     this.links.set(link.linkID, link);
-    this.emitChange({ type: "add", linkIds: [link.linkID] });
+    this.linkAddSubject.next(link);
   }
 
   getLink(linkId: string): OperatorLink | undefined {
@@ -250,9 +226,12 @@ export class WorkflowState {
   }
 
   deleteLink(linkId: string): boolean {
+    const link = this.links.get(linkId);
+    if (!link) return false;
+
     const deleted = this.links.delete(linkId);
     if (deleted) {
-      this.emitChange({ type: "delete", linkIds: [linkId] });
+      this.linkDeleteSubject.next({ deletedLink: link });
     }
     return deleted;
   }
@@ -263,120 +242,25 @@ export class WorkflowState {
     );
   }
 
-  getInputLinks(operatorId: string): OperatorLink[] {
-    return this.getAllLinks().filter((link) => link.target.operatorID === operatorId);
-  }
-
-  getOutputLinks(operatorId: string): OperatorLink[] {
-    return this.getAllLinks().filter((link) => link.source.operatorID === operatorId);
-  }
-
-  // ============================================================================
-  // View Results
-  // ============================================================================
-
-  setViewResult(operatorId: string, viewResult: boolean): void {
-    if (viewResult) {
-      this.operatorsToViewResult.add(operatorId);
-    } else {
-      this.operatorsToViewResult.delete(operatorId);
-    }
-  }
-
-  getOperatorsToViewResult(): string[] {
-    return Array.from(this.operatorsToViewResult);
-  }
-
-  // ============================================================================
-  // Execution State
-  // ============================================================================
-
-  getExecutionState(): ExecutionStateInfo {
-    return this.executionState;
-  }
-
-  setExecutionState(state: ExecutionStateInfo): void {
-    this.executionState = state;
-  }
-
-  getOperatorStatistics(operatorId: string): OperatorStatistics | undefined {
-    return this.operatorStatistics.get(operatorId);
-  }
-
-  setOperatorStatistics(operatorId: string, stats: OperatorStatistics): void {
-    this.operatorStatistics.set(operatorId, stats);
-  }
-
-  getAllOperatorStatistics(): Map<string, OperatorStatistics> {
-    return new Map(this.operatorStatistics);
-  }
-
-  // ============================================================================
-  // Results
-  // ============================================================================
-
-  getOperatorResult(operatorId: string): OperatorResultInfo | undefined {
-    return this.operatorResults.get(operatorId);
-  }
-
-  setOperatorResult(operatorId: string, result: OperatorResultInfo): void {
-    this.operatorResults.set(operatorId, result);
-  }
-
-  hasOperatorResult(operatorId: string): boolean {
-    return this.operatorResults.has(operatorId);
-  }
-
-  clearResults(): void {
-    this.operatorResults.clear();
-    this.consoleLogs.clear();
-    this.operatorStatistics.clear();
-  }
-
-  // ============================================================================
-  // Console Logs
-  // ============================================================================
-
-  getConsoleLogs(operatorId: string): ConsoleMessage[] {
-    return this.consoleLogs.get(operatorId) || [];
-  }
-
-  addConsoleLog(operatorId: string, message: ConsoleMessage): void {
-    const logs = this.consoleLogs.get(operatorId) || [];
-    logs.push(message);
-    this.consoleLogs.set(operatorId, logs);
-  }
-
-  getAllConsoleLogs(): Map<string, ConsoleMessage[]> {
-    return new Map(this.consoleLogs);
-  }
-
   // ============================================================================
   // Compilation State
   // ============================================================================
 
   getCompilationState(): CompilationStateInfo {
-    return this.compilationState;
+    return this.currentCompilationStateInfo;
   }
 
   setCompilationState(state: CompilationStateInfo): void {
-    this.compilationState = state;
+    this.currentCompilationStateInfo = state;
+    this.compilationStateChangedSubject.next(state);
   }
 
   getOperatorInputSchema(operatorId: string): OperatorPortSchemaMap | undefined {
     return this.operatorInputSchemas.get(operatorId);
   }
 
-  setOperatorInputSchema(operatorId: string, schema: OperatorPortSchemaMap): void {
-    this.operatorInputSchemas.set(operatorId, schema);
-  }
-
   getOperatorOutputSchema(operatorId: string): OperatorPortSchemaMap | undefined {
     return this.operatorOutputSchemas.get(operatorId);
-  }
-
-  setOperatorOutputSchema(operatorId: string, schema: OperatorPortSchemaMap): void {
-    this.operatorOutputSchemas.set(operatorId, schema);
   }
 
   // ============================================================================
@@ -391,8 +275,11 @@ export class WorkflowState {
   }
 
   setWorkflowContent(content: WorkflowContent): void {
+    // Clear existing state without emitting events
     this.operators.clear();
     this.links.clear();
+
+    // Add new content (no events emitted for bulk load)
     for (const op of content.operators) {
       this.operators.set(op.operatorID, op);
     }
@@ -445,18 +332,51 @@ export class WorkflowState {
   }
 
   // ============================================================================
-  // Reset
+  // Subscription Management
+  // ============================================================================
+
+  /**
+   * Add a subscription to be tracked for cleanup.
+   */
+  addSubscription(subscription: Subscription): void {
+    this.subscriptions.push(subscription);
+  }
+
+  // ============================================================================
+  // Reset and Cleanup
   // ============================================================================
 
   reset(): void {
     this.operators.clear();
     this.links.clear();
     this.operatorsToViewResult.clear();
-    this.disabledOperators.clear();
-    this.executionState = { state: ExecutionState.Uninitialized };
-    this.compilationState = { state: CompilationState.Uninitialized };
-    this.clearResults();
+    this.currentCompilationStateInfo = { state: CompilationState.Uninitialized };
     this.operatorInputSchemas.clear();
     this.operatorOutputSchemas.clear();
+  }
+
+  /**
+   * Cleanup all subscriptions and complete all subjects.
+   * Call this when the WorkflowState is no longer needed.
+   */
+  destroy(): void {
+    // Unsubscribe all tracked subscriptions
+    for (const sub of this.subscriptions) {
+      sub.unsubscribe();
+    }
+    this.subscriptions = [];
+
+    // Complete all subjects
+    this.operatorAddSubject.complete();
+    this.operatorDeleteSubject.complete();
+    this.operatorPropertyChangeSubject.complete();
+    this.linkAddSubject.complete();
+    this.linkDeleteSubject.complete();
+    this.disabledOperatorChangedSubject.complete();
+    this.viewResultOperatorChangedSubject.complete();
+    this.compilationStateChangedSubject.complete();
+
+    // Clear all state
+    this.reset();
   }
 }

@@ -71,7 +71,6 @@ async function main() {
   const client = new ExecutionClient({
     userToken: userToken!,
     workflowId,
-    userId: 0, // Not used for sync execution
     computingUnitId,
     timeoutSeconds: 300,
     maxResultRows: 100,
