@@ -27,6 +27,20 @@ import type { WorkflowState } from "../workflow/workflow-state";
 import { generateOperatorId, generateLinkId } from "../workflow/workflow-state";
 import type { OperatorPredicate, OperatorLink, OperatorDetail } from "../types/workflow";
 import { createSuccessResult, createErrorResult } from "./tools-utility";
+import { type OperatorMetadataStore, formatValidationErrors } from "./metadata-tools";
+import type { AgentActionManager } from "../agent/agent-action-manager";
+
+// ============================================================================
+// Types for tool context
+// ============================================================================
+
+export interface ToolContext {
+  metadataStore?: OperatorMetadataStore;
+  agentActionManager?: AgentActionManager;
+  agentId?: string;
+  agentName?: string;
+  workflowMetadata?: { wid?: number; name?: string };
+}
 
 // ============================================================================
 // Tool Name Constants
@@ -131,7 +145,8 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
  */
 export function createAddOperatorTool(
   workflowState: WorkflowState,
-  operatorSchemas: Map<string, any>
+  operatorSchemas: Map<string, any>,
+  context?: ToolContext
 ) {
   return tool({
     description:
@@ -148,8 +163,24 @@ export function createAddOperatorTool(
         // Schema entry contains { jsonSchema, additionalMetadata }
         const schemaEntry = operatorSchemas.get(args.operatorType);
         if (!schemaEntry) {
-          return createErrorResult(`Unknown operator type: ${args.operatorType}`);
+          return createErrorResult(
+            `Unknown operator type: ${args.operatorType}. Use listAllAvailableOperatorTypes to see available operators.`
+          );
         }
+
+        // Validate properties against schema if metadataStore is provided
+        if (context?.metadataStore && args.properties) {
+          const validation = context.metadataStore.validateOperatorProperties(args.operatorType, args.properties);
+          if (!validation.isValid) {
+            return createErrorResult(
+              `Invalid operator properties for "${args.operatorType}". ${formatValidationErrors(validation)}\n` +
+                `Use getOperatorSchema("${args.operatorType}") to see the required property format.`
+            );
+          }
+        }
+
+        // Capture before state for agent action
+        const beforeContent = workflowState.getWorkflowContent();
 
         const operatorId = generateOperatorId();
         const { additionalMetadata } = schemaEntry;
@@ -180,10 +211,28 @@ export function createAddOperatorTool(
 
         workflowState.addOperator(operator);
 
+        // Capture after state and create agent action if manager is provided
+        const afterContent = workflowState.getWorkflowContent();
+        let agentActionId: string | undefined;
+
+        if (context?.agentActionManager && context.agentId) {
+          const agentAction = context.agentActionManager.createAgentAction(
+            context.agentId,
+            context.agentName || `Agent-${context.agentId}`,
+            args.customDisplayName || `Added ${args.operatorType}`,
+            { add: { operatorIds: [operatorId], linkIds: [] } },
+            context.workflowMetadata || {},
+            beforeContent,
+            afterContent
+          );
+          agentActionId = agentAction.id;
+        }
+
         return createSuccessResult(
           {
             operatorId,
             operatorType: args.operatorType,
+            agentActionId,
             message: `Added operator ${operatorId} of type ${args.operatorType}`,
           },
           [],
@@ -204,7 +253,7 @@ export function createAddOperatorTool(
 /**
  * Create tool to add a link between two operators.
  */
-export function createAddLinkTool(workflowState: WorkflowState) {
+export function createAddLinkTool(workflowState: WorkflowState, context?: ToolContext) {
   return tool({
     description:
       "Add a link connecting two operators in the workflow. " +
@@ -233,6 +282,9 @@ export function createAddLinkTool(workflowState: WorkflowState) {
           return createErrorResult(`Target operator ${args.targetOperatorId} not found`);
         }
 
+        // Capture before state
+        const beforeContent = workflowState.getWorkflowContent();
+
         const linkId = generateLinkId();
         const link: OperatorLink = {
           linkID: linkId,
@@ -248,14 +300,32 @@ export function createAddLinkTool(workflowState: WorkflowState) {
 
         workflowState.addLink(link);
 
+        // Capture after state and create agent action if manager is provided
+        const afterContent = workflowState.getWorkflowContent();
+        let agentActionId: string | undefined;
+
+        if (context?.agentActionManager && context.agentId) {
+          const agentAction = context.agentActionManager.createAgentAction(
+            context.agentId,
+            context.agentName || `Agent-${context.agentId}`,
+            `Link ${args.sourceOperatorId} to ${args.targetOperatorId}`,
+            { add: { operatorIds: [], linkIds: [linkId] } },
+            context.workflowMetadata || {},
+            beforeContent,
+            afterContent
+          );
+          agentActionId = agentAction.id;
+        }
+
         return createSuccessResult(
           {
             linkId,
+            agentActionId,
             source: link.source,
             target: link.target,
             message: `Added link from ${args.sourceOperatorId} to ${args.targetOperatorId}`,
           },
-          [],
+          [args.sourceOperatorId, args.targetOperatorId],
           [],
           []
         );
@@ -273,7 +343,7 @@ export function createAddLinkTool(workflowState: WorkflowState) {
 /**
  * Create tool to modify an existing operator's properties.
  */
-export function createModifyOperatorTool(workflowState: WorkflowState) {
+export function createModifyOperatorTool(workflowState: WorkflowState, context?: ToolContext) {
   return tool({
     description:
       "Modify properties of an existing operator in the workflow. " +
@@ -281,19 +351,55 @@ export function createModifyOperatorTool(workflowState: WorkflowState) {
     inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to modify"),
       properties: z.record(z.any()).describe("Properties to update (merged with existing)"),
+      summary: z.string().optional().describe("Optional brief summary of what this modification accomplishes"),
     }),
-    execute: async (args: { operatorId: string; properties: Record<string, any> }) => {
+    execute: async (args: { operatorId: string; properties: Record<string, any>; summary?: string }) => {
       try {
         const operator = workflowState.getOperator(args.operatorId);
         if (!operator) {
           return createErrorResult(`Operator ${args.operatorId} not found`);
         }
 
+        // Merge current properties with new properties for validation
+        const mergedProperties = { ...operator.operatorProperties, ...args.properties };
+
+        // Validate merged properties against schema if metadataStore is provided
+        if (context?.metadataStore) {
+          const validation = context.metadataStore.validateOperatorProperties(operator.operatorType, mergedProperties);
+          if (!validation.isValid) {
+            return createErrorResult(
+              `Invalid operator properties for "${operator.operatorType}". ${formatValidationErrors(validation)}\n` +
+                `Use getOperatorSchema("${operator.operatorType}") to see the required property format.`
+            );
+          }
+        }
+
+        // Capture before state
+        const beforeContent = workflowState.getWorkflowContent();
+
         workflowState.updateOperatorProperties(args.operatorId, args.properties);
+
+        // Capture after state and create agent action if manager is provided
+        const afterContent = workflowState.getWorkflowContent();
+        let agentActionId: string | undefined;
+
+        if (context?.agentActionManager && context.agentId) {
+          const agentAction = context.agentActionManager.createAgentAction(
+            context.agentId,
+            context.agentName || `Agent-${context.agentId}`,
+            args.summary || `Modified ${operator.customDisplayName || operator.operatorType}`,
+            { modify: { operatorIds: [args.operatorId] } },
+            context.workflowMetadata || {},
+            beforeContent,
+            afterContent
+          );
+          agentActionId = agentAction.id;
+        }
 
         return createSuccessResult(
           {
             operatorId: args.operatorId,
+            agentActionId,
             updatedProperties: args.properties,
             message: `Modified operator ${args.operatorId}`,
           },
@@ -315,15 +421,19 @@ export function createModifyOperatorTool(workflowState: WorkflowState) {
 /**
  * Create tool to delete operators and/or links from the workflow.
  */
-export function createDeleteFromWorkflowTool(workflowState: WorkflowState) {
+export function createDeleteFromWorkflowTool(workflowState: WorkflowState, context?: ToolContext) {
   return tool({
     description: "Delete operators and/or links from the workflow.",
     inputSchema: z.object({
       operatorIds: z.array(z.string()).optional().describe("List of operator IDs to delete"),
       linkIds: z.array(z.string()).optional().describe("List of link IDs to delete"),
+      summary: z.string().optional().describe("Optional brief summary of what this deletion accomplishes"),
     }),
-    execute: async (args: { operatorIds?: string[]; linkIds?: string[] }) => {
+    execute: async (args: { operatorIds?: string[]; linkIds?: string[]; summary?: string }) => {
       try {
+        // Capture before state
+        const beforeContent = workflowState.getWorkflowContent();
+
         const deletedOperatorIds: string[] = [];
         const deletedLinkIds: string[] = [];
 
@@ -345,10 +455,28 @@ export function createDeleteFromWorkflowTool(workflowState: WorkflowState) {
           }
         }
 
+        // Capture after state and create agent action if manager is provided
+        const afterContent = workflowState.getWorkflowContent();
+        let agentActionId: string | undefined;
+
+        if (context?.agentActionManager && context.agentId && (deletedOperatorIds.length > 0 || deletedLinkIds.length > 0)) {
+          const agentAction = context.agentActionManager.createAgentAction(
+            context.agentId,
+            context.agentName || `Agent-${context.agentId}`,
+            args.summary || `Deleted ${deletedOperatorIds.length} operator(s) and ${deletedLinkIds.length} link(s)`,
+            { delete: { operatorIds: deletedOperatorIds, linkIds: deletedLinkIds } },
+            context.workflowMetadata || {},
+            beforeContent,
+            afterContent
+          );
+          agentActionId = agentAction.id;
+        }
+
         return createSuccessResult(
           {
             deletedOperatorIds,
             deletedLinkIds,
+            agentActionId,
             message: `Deleted ${deletedOperatorIds.length} operator(s) and ${deletedLinkIds.length} link(s)`,
           },
           [],

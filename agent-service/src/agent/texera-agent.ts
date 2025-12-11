@@ -24,11 +24,13 @@
 import { generateText, type ModelMessage, type LanguageModel, stepCountIs } from "ai";
 import { WorkflowState } from "../workflow/workflow-state";
 import { OperatorMetadataStore } from "../tools/metadata-tools";
+import { AgentActionManager } from "./agent-action-manager";
 import type {
   AgentSettings,
   ReActStep,
   AgentMessageStats,
   TokenUsage,
+  AgentAction,
 } from "../types/agent";
 import { AgentState as AgentStateEnum, DEFAULT_AGENT_SETTINGS } from "../types/agent";
 import { COPILOT_SYSTEM_PROMPT } from "./prompts";
@@ -43,6 +45,7 @@ import {
   TOOL_NAME_ADD_LINK,
   TOOL_NAME_MODIFY_OPERATOR,
   TOOL_NAME_DELETE_FROM_WORKFLOW,
+  type ToolContext,
 } from "../tools/workflow-tools";
 import {
   createListAllAvailableOperatorTypesTool,
@@ -110,6 +113,8 @@ export class TexeraAgent {
   private workflowState: WorkflowState;
   // Uses global singleton - initialized once at server startup
   private metadataStore: OperatorMetadataStore;
+  // Agent action manager for tracking workflow modifications
+  private agentActionManager: AgentActionManager;
 
   // Configuration
   private model: LanguageModel;
@@ -122,6 +127,9 @@ export class TexeraAgent {
 
   // ReActSteps - accumulated reasoning steps
   private reActSteps: ReActStep[] = [];
+
+  // Delegate configuration for backend operations
+  private delegateConfig?: { userToken: string; workflowId: number; workflowName?: string };
 
   // Callback for streaming ReActSteps
   private stepCallback: ReActStepCallback | null = null;
@@ -146,6 +154,8 @@ export class TexeraAgent {
     this.workflowState = new WorkflowState();
     // Use provided metadata store or global singleton
     this.metadataStore = config.metadataStore || OperatorMetadataStore.getInstance();
+    // Initialize agent action manager
+    this.agentActionManager = new AgentActionManager();
 
     // Initialize settings
     this.settings = {
@@ -193,14 +203,25 @@ export class TexeraAgent {
       }
     }
 
+    // Build tool context for agent action tracking
+    const context: ToolContext = {
+      metadataStore: this.metadataStore,
+      agentActionManager: this.agentActionManager,
+      agentId: this.agentId,
+      agentName: this.agentName,
+      workflowMetadata: this.delegateConfig
+        ? { wid: this.delegateConfig.workflowId, name: this.delegateConfig.workflowName }
+        : undefined,
+    };
+
     // Workflow and metadata tools
     // Note: Execution tools are now handled via stateless HTTP requests, not via the agent
     const tools: Record<string, any> = {
       [TOOL_NAME_GET_CURRENT_WORKFLOW]: createGetCurrentWorkflowTool(this.workflowState),
-      [TOOL_NAME_ADD_OPERATOR]: createAddOperatorTool(this.workflowState, operatorSchemas),
-      [TOOL_NAME_ADD_LINK]: createAddLinkTool(this.workflowState),
-      [TOOL_NAME_MODIFY_OPERATOR]: createModifyOperatorTool(this.workflowState),
-      [TOOL_NAME_DELETE_FROM_WORKFLOW]: createDeleteFromWorkflowTool(this.workflowState),
+      [TOOL_NAME_ADD_OPERATOR]: createAddOperatorTool(this.workflowState, operatorSchemas, context),
+      [TOOL_NAME_ADD_LINK]: createAddLinkTool(this.workflowState, context),
+      [TOOL_NAME_MODIFY_OPERATOR]: createModifyOperatorTool(this.workflowState, context),
+      [TOOL_NAME_DELETE_FROM_WORKFLOW]: createDeleteFromWorkflowTool(this.workflowState, context),
       [TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: createListAllAvailableOperatorTypesTool(this.metadataStore),
       [TOOL_NAME_GET_OPERATOR_SCHEMA]: createGetOperatorSchemaTool(this.metadataStore),
     };
@@ -222,6 +243,17 @@ export class TexeraAgent {
 
   getMetadataStore(): OperatorMetadataStore {
     return this.metadataStore;
+  }
+
+  getAgentActionManager(): AgentActionManager {
+    return this.agentActionManager;
+  }
+
+  /**
+   * Get all agent actions.
+   */
+  getAgentActions(): AgentAction[] {
+    return this.agentActionManager.getAllAgentActions();
   }
 
   getMessages(): ModelMessage[] {
@@ -286,13 +318,89 @@ export class TexeraAgent {
   // ============================================================================
 
   /**
+   * Load workflow from backend and refresh state.
+   * Called before processing each message to ensure we have the latest workflow.
+   */
+  async refreshWorkflowFromBackend(): Promise<void> {
+    if (!this.delegateConfig?.workflowId || !this.delegateConfig?.userToken) {
+      return;
+    }
+
+    try {
+      const { retrieveWorkflow } = await import("../api/workflow-api");
+      const workflow = await retrieveWorkflow(
+        this.delegateConfig.userToken,
+        this.delegateConfig.workflowId
+      );
+      this.workflowState.setWorkflowContent(workflow.content);
+      console.log(`[TexeraAgent ${this.agentId}] Refreshed workflow ${this.delegateConfig.workflowId} from backend`);
+
+      // Trigger compilation to refresh schemas
+      await this.compileWorkflow();
+    } catch (error) {
+      console.warn(`[TexeraAgent ${this.agentId}] Failed to refresh workflow from backend:`, error);
+    }
+  }
+
+  /**
+   * Compile the current workflow to get schemas.
+   */
+  private async compileWorkflow(): Promise<void> {
+    try {
+      const { compileWorkflowAsync } = await import("../api/compile-api");
+      const { CompilationState } = await import("../workflow/workflow-state");
+      const logicalPlan = this.workflowState.toLogicalPlan();
+
+      if (logicalPlan.operators.length === 0) {
+        this.workflowState.setCompilationState({ state: CompilationState.Uninitialized });
+        return;
+      }
+
+      const response = await compileWorkflowAsync(logicalPlan);
+      if (!response) {
+        this.workflowState.setCompilationState({ state: CompilationState.Uninitialized });
+        return;
+      }
+
+      this.workflowState.setCompilationState(
+        response.physicalPlan
+          ? { state: CompilationState.Succeeded, operatorOutputSchemas: response.operatorOutputSchemas }
+          : { state: CompilationState.Failed, operatorOutputSchemas: response.operatorOutputSchemas, operatorErrors: response.operatorErrors }
+      );
+    } catch (error) {
+      console.warn(`[TexeraAgent ${this.agentId}] Compilation failed:`, error);
+    }
+  }
+
+  /**
+   * Set the delegate configuration for backend operations.
+   * This also rebuilds tools to include the workflow metadata in tool context.
+   */
+  setDelegateConfig(config: { userToken: string; workflowId: number; workflowName?: string }): void {
+    this.delegateConfig = config;
+    // Rebuild tools with updated workflow metadata in context
+    this.tools = this.createTools();
+  }
+
+  /**
+   * Get the delegate configuration.
+   */
+  getDelegateConfig(): { userToken: string; workflowId: number; workflowName?: string } | undefined {
+    return this.delegateConfig;
+  }
+
+  /**
    * Process a user message and return the agent's response.
    * ReActSteps are accumulated internally and streamed via the callback if set.
+   * Before processing, loads the latest workflow from backend and compiles it.
    */
   async sendMessage(userMessage: string): Promise<AgentMessageResult> {
     const messageId = `msg-${this.agentId}-${++this.messageCounter}-${Date.now()}`;
     const startTime = Date.now();
     let stepIndex = 0;
+
+    // Load latest workflow from backend and compile to refresh schemas
+    await this.refreshWorkflowFromBackend();
 
     // Initialize stats
     const stats: AgentMessageStats = {
@@ -520,6 +628,9 @@ export class TexeraAgent {
   destroy(): void {
     // Cleanup workflow state (unsubscribes all RxJS subscriptions, completes subjects)
     this.workflowState.destroy();
+
+    // Cleanup agent action manager
+    this.agentActionManager.destroy();
 
     // Clear conversation history
     this.messages = [];

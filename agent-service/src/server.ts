@@ -50,6 +50,7 @@ import type {
   AgentDelegateConfig,
   CreateAgentRequest,
   ReActStep,
+  AgentAction,
 } from "./types/agent";
 
 // ============================================================================
@@ -77,6 +78,8 @@ interface StoredAgent {
   delegate?: AgentDelegateConfig;
   /** RxJS subscription for workflow change handling */
   workflowSubscription?: Subscription;
+  /** RxJS subscription for agent action streaming */
+  agentActionSubscription?: Subscription;
   /** Active WebSocket connections for this agent */
   websockets: Set<any>;
 }
@@ -226,10 +229,29 @@ async function createAgentInstance(
   // Setup RxJS-based workflow change handlers (persistence + compilation)
   stored.workflowSubscription = setupWorkflowChangeHandlers(agentId, stored);
 
+  // Setup agent action streaming subscription
+  stored.agentActionSubscription = setupAgentActionStreaming(agentId, stored);
+
   agentStore.set(agentId, stored);
   console.log(`[Server] Created new agent: ${agentId} (delegate: ${!!delegateConfig})`);
 
   return { agentId, stored };
+}
+
+/**
+ * Setup RxJS subscription for streaming agent actions to WebSocket clients.
+ */
+function setupAgentActionStreaming(
+  agentId: string,
+  stored: StoredAgent
+): Subscription {
+  const agentActionManager = stored.agent.getAgentActionManager();
+  const agentActionStream$ = agentActionManager.getAgentActionStream();
+
+  return agentActionStream$.subscribe((agentAction: AgentAction) => {
+    console.log(`[Server] Agent ${agentId} created action: ${agentAction.id} - ${agentAction.summary}`);
+    broadcastToAgent(agentId, { type: "agentAction", agentAction });
+  });
 }
 
 /**
@@ -334,10 +356,18 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     // Cleanup RxJS subscriptions via workflow state destroy
     stored.agent.getWorkflowState().destroy();
 
-    // Also unsubscribe the stored subscription if it exists
+    // Unsubscribe workflow subscription if it exists
     if (stored.workflowSubscription) {
       stored.workflowSubscription.unsubscribe();
     }
+
+    // Unsubscribe agent action subscription if it exists
+    if (stored.agentActionSubscription) {
+      stored.agentActionSubscription.unsubscribe();
+    }
+
+    // Destroy agent (cleans up agent action manager)
+    stored.agent.destroy();
 
     agentStore.delete(id);
     return { deleted: true };
@@ -380,6 +410,12 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
   .get("/:id/react-steps", ({ params: { id } }) => {
     const stored = getStoredAgent(id);
     return { steps: stored.agent.getReActSteps(), state: stored.agent.getState() };
+  })
+
+  // Get all agent actions (for polling fallback or initial load)
+  .get("/:id/agent-actions", ({ params: { id } }) => {
+    const stored = getStoredAgent(id);
+    return { agentActions: stored.agent.getAgentActions() };
   })
 
   // Get workflow
@@ -458,11 +494,13 @@ interface WsMessage {
 }
 
 interface WsOutgoingMessage {
-  type: "step" | "state" | "error" | "complete" | "init";
+  type: "step" | "state" | "error" | "complete" | "init" | "agentAction";
   step?: ReActStep;
   state?: string;
   error?: string;
   steps?: ReActStep[];
+  agentAction?: AgentAction;
+  agentActions?: AgentAction[];
 }
 
 /**
@@ -512,11 +550,12 @@ const app = new Elysia()
       // Add this websocket to the agent's set
       stored.websockets.add(ws);
 
-      // Send initial state and existing steps
+      // Send initial state, existing steps, and agent actions
       const initMessage: WsOutgoingMessage = {
         type: "init",
         state: stored.agent.getState(),
         steps: stored.agent.getReActSteps(),
+        agentActions: stored.agent.getAgentActions(),
       };
       ws.send(JSON.stringify(initMessage));
     },

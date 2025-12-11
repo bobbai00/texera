@@ -215,6 +215,16 @@ export class AgentActionService {
   }
 
   /**
+   * Add an agent action received from the backend (preserves the original ID).
+   * Use this when receiving agent actions from the agent-service via WebSocket.
+   */
+  public addAgentAction(agentAction: AgentAction): void {
+    this.agentActions.set(agentAction.id, agentAction);
+    this.emitAgentActions();
+    console.log(`[AgentActionService] Agent action added from backend: ${agentAction.id}`);
+  }
+
+  /**
    * Start previewing an agent action as a pending action (accept/reject mode).
    * This is called in planning mode when a new agent action is created.
    */

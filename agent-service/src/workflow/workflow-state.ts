@@ -59,6 +59,21 @@ export interface CompilationStateInfo {
 }
 
 // ============================================================================
+// Validation Types (matching frontend ValidationWorkflowService)
+// ============================================================================
+
+export type ValidationError = {
+  isValid: false;
+  messages: Record<string, string>;
+};
+export type Validation = { isValid: true } | ValidationError;
+
+export interface ValidationOutput {
+  errors: Record<string, ValidationError>;
+  workflowEmpty: boolean;
+}
+
+// ============================================================================
 // ID Generation
 // ============================================================================
 
@@ -144,6 +159,17 @@ export class WorkflowState {
   // Compilation schemas
   private operatorInputSchemas: Map<string, OperatorPortSchemaMap> = new Map();
   private operatorOutputSchemas: Map<string, OperatorPortSchemaMap> = new Map();
+
+  // ============================================================================
+  // Validation state (similar to frontend ValidationWorkflowService)
+  // ============================================================================
+
+  /** Validation errors by operator ID */
+  private validationErrors: Record<string, ValidationError> = {};
+  private workflowEmpty: boolean = true;
+
+  /** Emits when validation state changes */
+  private readonly validationChangedSubject = new Subject<ValidationOutput>();
 
   // Track subscriptions for cleanup
   private subscriptions: Subscription[] = [];
@@ -282,6 +308,75 @@ export class WorkflowState {
   }
 
   // ============================================================================
+  // Validation State
+  // ============================================================================
+
+  /**
+   * Get validation changed stream for subscribing to validation state changes.
+   */
+  getValidationChangedStream(): Observable<ValidationOutput> {
+    return this.validationChangedSubject.asObservable();
+  }
+
+  /**
+   * Get current validation output (errors and empty state).
+   */
+  getValidationOutput(): ValidationOutput {
+    return {
+      errors: { ...this.validationErrors },
+      workflowEmpty: this.workflowEmpty,
+    };
+  }
+
+  /**
+   * Set validation error for an operator.
+   */
+  setValidationError(operatorId: string, error: ValidationError): void {
+    this.validationErrors[operatorId] = error;
+    this.emitValidationChanged();
+  }
+
+  /**
+   * Clear validation error for an operator.
+   */
+  clearValidationError(operatorId: string): void {
+    delete this.validationErrors[operatorId];
+    this.emitValidationChanged();
+  }
+
+  /**
+   * Set all validation errors at once (e.g., after full validation run).
+   */
+  setAllValidationErrors(errors: Record<string, ValidationError>): void {
+    this.validationErrors = { ...errors };
+    this.updateWorkflowEmptyState();
+    this.emitValidationChanged();
+  }
+
+  /**
+   * Check and update if workflow is empty.
+   */
+  private updateWorkflowEmptyState(): void {
+    const operators = this.getAllOperators();
+    this.workflowEmpty = operators.length === 0;
+
+    // If there are operators, check if they're all disabled
+    if (!this.workflowEmpty) {
+      this.workflowEmpty = operators.every((op) => op.isDisabled);
+    }
+  }
+
+  /**
+   * Emit validation changed event.
+   */
+  private emitValidationChanged(): void {
+    this.validationChangedSubject.next({
+      errors: { ...this.validationErrors },
+      workflowEmpty: this.workflowEmpty,
+    });
+  }
+
+  // ============================================================================
   // Workflow Content (Serialization)
   // ============================================================================
 
@@ -399,6 +494,8 @@ export class WorkflowState {
     this.currentCompilationStateInfo = { state: CompilationState.Uninitialized };
     this.operatorInputSchemas.clear();
     this.operatorOutputSchemas.clear();
+    this.validationErrors = {};
+    this.workflowEmpty = true;
   }
 
   /**
@@ -421,6 +518,7 @@ export class WorkflowState {
     this.disabledOperatorChangedSubject.complete();
     this.viewResultOperatorChangedSubject.complete();
     this.compilationStateChangedSubject.complete();
+    this.validationChangedSubject.complete();
 
     // Clear all state
     this.reset();

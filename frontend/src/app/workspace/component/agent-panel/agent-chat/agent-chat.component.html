@@ -682,10 +682,12 @@
           </div>
           <div class="settings-prompt-display">
             <nz-spin [nzSpinning]="isLoadingAgentState">
-              <pre *ngIf="agentInternalState" class="agent-state-json">{{ agentInternalState | json }}</pre>
-              <div *ngIf="!agentInternalState && !isLoadingAgentState">
-                No agent state available
-              </div>
+              <pre
+                *ngIf="agentInternalState"
+                class="agent-state-json">
+{{ agentInternalState | json }}</pre
+              >
+              <div *ngIf="!agentInternalState && !isLoadingAgentState">No agent state available</div>
             </nz-spin>
           </div>
         </div>

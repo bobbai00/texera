@@ -211,11 +211,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
     // Disable auto-persist when agent is GENERATING, re-enable when AVAILABLE
     this.copilotManagerService
       .getAgentStateObservable(this.agentInfo.id)
-      .pipe(
-        startWith(CopilotState.UNAVAILABLE),
-        pairwise(),
-        untilDestroyed(this)
-      )
+      .pipe(startWith(CopilotState.UNAVAILABLE), pairwise(), untilDestroyed(this))
       .subscribe(([previousState, currentState]) => {
         // When agent starts generating, disable auto-persist
         if (currentState === CopilotState.GENERATING && previousState !== CopilotState.GENERATING) {

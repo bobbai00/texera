@@ -23,8 +23,19 @@
 
 import { z } from "zod";
 import { tool } from "ai";
+import Ajv from "ajv";
 import { createSuccessResult, createErrorResult } from "./tools-utility";
 import { fetchOperatorMetadata, type OperatorSchema, type OperatorMetadata } from "../api/backend-api";
+
+// ============================================================================
+// Validation Types (matching frontend ValidationWorkflowService)
+// ============================================================================
+
+export type ValidationError = {
+  isValid: false;
+  messages: Record<string, string>;
+};
+export type Validation = { isValid: true } | ValidationError;
 
 // ============================================================================
 // Tool Name Constants
@@ -167,6 +178,9 @@ export function getCompactSchema(jsonSchema: any): CompactOperatorSchema | null 
 // ============================================================================
 // Operator Metadata Store (Singleton)
 // ============================================================================
+
+// Shared Ajv instance - same configuration as frontend ValidationWorkflowService
+const ajv = new Ajv({ allErrors: true, strict: false });
 
 /**
  * In-memory store for operator schemas.
@@ -311,6 +325,55 @@ export class OperatorMetadataStore {
   getOperatorCount(): number {
     return this.schemas.size;
   }
+
+  /**
+   * Check if an operator type exists.
+   */
+  operatorTypeExists(operatorType: string): boolean {
+    return this.schemas.has(operatorType);
+  }
+
+  /**
+   * Validate operator properties against its schema using Ajv.
+   * Returns the same Validation type as frontend ValidationWorkflowService for consistency.
+   */
+  validateOperatorProperties(operatorType: string, properties: Record<string, any>): Validation {
+    const schema = this.schemas.get(operatorType);
+    if (!schema) {
+      return { isValid: false, messages: { error: `Unknown operator type: ${operatorType}` } };
+    }
+
+    try {
+      const isValid = ajv.validate(schema, properties);
+
+      if (isValid) {
+        return { isValid: true };
+      }
+
+      // Convert Ajv errors to messages format (same as frontend ValidationWorkflowService)
+      const messages: Record<string, string> = {};
+      if (ajv.errors) {
+        for (const error of ajv.errors) {
+          const key = error.instancePath
+            ? error.instancePath.replace(/^\//, "").replace(/\//g, ".")
+            : (error.params as any)?.missingProperty || error.keyword;
+          messages[key] = error.message || "Validation failed";
+        }
+      }
+      return { isValid: false, messages };
+    } catch (e) {
+      return { isValid: false, messages: { error: `Validation error: ${e}` } };
+    }
+  }
+}
+
+/**
+ * Format validation result into a readable message for the agent.
+ */
+export function formatValidationErrors(validation: Validation): string {
+  if (validation.isValid) return "";
+  const errorMessages = Object.entries(validation.messages).map(([key, msg]) => `  - ${key}: ${msg}`);
+  return `Schema validation errors:\n${errorMessages.join("\n")}`;
 }
 
 // ============================================================================

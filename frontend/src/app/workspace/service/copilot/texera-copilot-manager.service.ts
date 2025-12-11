@@ -38,7 +38,8 @@ import { WorkflowPersistService } from "../../../common/service/workflow-persist
 import { AppSettings } from "../../../common/app-setting";
 import { AuthService } from "../../../common/service/user/auth.service";
 import { CopilotState, ReActStep, ModelMessage, CopilotMessageStats } from "./texera-copilot";
-import { Workflow } from "../../../common/type/workflow";
+import { Workflow, WorkflowContent } from "../../../common/type/workflow";
+import { AgentActionService, AgentAction, AgentActionOperations } from "../agent-action/agent-action.service";
 
 /**
  * Agent information for tracking created agents (API version).
@@ -167,6 +168,7 @@ export class TexeraCopilotManagerService {
     private http: HttpClient,
     private notificationService: NotificationService,
     private workflowPersistService: WorkflowPersistService,
+    private agentActionService: AgentActionService,
     private ngZone: NgZone
   ) {}
 
@@ -219,6 +221,58 @@ export class TexeraCopilotManagerService {
       usage: apiStep.usage,
       operatorAccess,
     };
+  }
+
+  /**
+   * Convert API AgentAction to frontend AgentAction format and add to AgentActionService.
+   * Preserves the original ID from the backend.
+   */
+  private handleAgentActionFromApi(apiAction: any): void {
+    // Convert operations from API format to frontend format
+    const operations: AgentActionOperations = {
+      add: apiAction.operations?.add || { operatorIds: [], linkIds: [] },
+      modify: apiAction.operations?.modify || { operatorIds: [] },
+      delete: apiAction.operations?.delete || { operatorIds: [], linkIds: [] },
+    };
+
+    // Collect all operator and link IDs for highlighting
+    const operatorIds = [
+      ...(operations.add.operatorIds || []),
+      ...(operations.modify.operatorIds || []),
+      ...(operations.delete.operatorIds || []),
+    ];
+    const linkIds = [...(operations.add.linkIds || []), ...(operations.delete.linkIds || [])];
+
+    // Convert API action to frontend AgentAction format (preserving backend's ID)
+    const agentAction: AgentAction = {
+      id: apiAction.id,
+      agentId: apiAction.agentId,
+      agentName: apiAction.agentName,
+      executorAgentId: apiAction.executorAgentId || apiAction.agentId,
+      summary: apiAction.summary,
+      operations,
+      createdAt: new Date(apiAction.createdAt),
+      operatorIds,
+      linkIds,
+      workflowMetadata: apiAction.workflowMetadata || {},
+      beforeWorkflowContent: apiAction.beforeWorkflowContent || { operators: [], links: [], operatorPositions: {} },
+      afterWorkflowContent: apiAction.afterWorkflowContent || { operators: [], links: [], operatorPositions: {} },
+    };
+
+    // Add to AgentActionService (preserves the original ID from backend)
+    this.agentActionService.addAgentAction(agentAction);
+
+    console.log(`[CopilotManager] Received agent action from agent-service: ${apiAction.id} - ${apiAction.summary}`);
+  }
+
+  /**
+   * Handle initial agent actions received from WebSocket init message.
+   */
+  private handleInitialAgentActions(apiActions: any[]): void {
+    for (const apiAction of apiActions) {
+      this.handleAgentActionFromApi(apiAction);
+    }
+    console.log(`[CopilotManager] Initialized ${apiActions.length} agent actions from agent-service`);
   }
 
   /**
@@ -275,7 +329,7 @@ export class TexeraCopilotManagerService {
           this.handleWebSocketMessage(agentId, tracking, message);
         });
       } catch (error) {
-        console.error(`[CopilotManager] Failed to parse WebSocket message:`, error);
+        console.error("[CopilotManager] Failed to parse WebSocket message:", error);
       }
     };
 
@@ -320,6 +374,10 @@ export class TexeraCopilotManagerService {
           const steps = message.steps.map((s: any) => this.convertApiReActStep(s));
           tracking.reActStepsSubject.next(steps);
         }
+        // Handle initial agent actions
+        if (message.agentActions && Array.isArray(message.agentActions)) {
+          this.handleInitialAgentActions(message.agentActions);
+        }
         break;
 
       case "step":
@@ -359,6 +417,13 @@ export class TexeraCopilotManagerService {
         }
         break;
 
+      case "agentAction":
+        // New agent action received from agent-service
+        if (message.agentAction) {
+          this.handleAgentActionFromApi(message.agentAction);
+        }
+        break;
+
       case "error":
         // Error occurred
         console.error(`[CopilotManager] Agent ${agentId} error:`, message.error);
@@ -366,7 +431,7 @@ export class TexeraCopilotManagerService {
         break;
 
       default:
-        console.warn(`[CopilotManager] Unknown message type:`, message.type);
+        console.warn("[CopilotManager] Unknown message type:", message.type);
     }
   }
 
@@ -596,7 +661,7 @@ export class TexeraCopilotManagerService {
       tracking.websocket.send(JSON.stringify(wsMessage));
       console.log(`[CopilotManager] Sent message to agent ${agentId}: ${message.substring(0, 50)}...`);
     } catch (error) {
-      console.error(`[CopilotManager] Failed to send message:`, error);
+      console.error("[CopilotManager] Failed to send message:", error);
       this.notificationService.error("Failed to send message");
     }
   }
@@ -648,7 +713,7 @@ export class TexeraCopilotManagerService {
         tracking.websocket.send(JSON.stringify({ type: "stop" }));
         console.log(`[CopilotManager] Sent stop command to agent ${agentId}`);
       } catch (error) {
-        console.error(`[CopilotManager] Failed to send stop command:`, error);
+        console.error("[CopilotManager] Failed to send stop command:", error);
       }
     } else {
       // Fallback to HTTP if WebSocket not available
