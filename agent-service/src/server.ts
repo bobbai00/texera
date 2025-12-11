@@ -579,8 +579,8 @@ const app = new Elysia()
 
       if (msg.type === "stop") {
         stored.agent.stop();
-        // Broadcast state change to all connected clients
-        broadcastToAgent(agentId, { type: "state", state: stored.agent.getState() });
+        // Broadcast STOPPING state immediately to all connected clients
+        broadcastToAgent(agentId, { type: "state", state: "STOPPING" });
         return;
       }
 
@@ -597,8 +597,9 @@ const app = new Elysia()
           broadcastToAgent(agentId, { type: "step", step });
         });
 
-        // Broadcast state change
-        broadcastToAgent(agentId, { type: "state", state: stored.agent.getState() });
+        // Broadcast GENERATING state immediately before starting processing
+        // The agent will set its internal state in sendMessage, but we want frontend to know immediately
+        broadcastToAgent(agentId, { type: "state", state: "GENERATING" });
 
         try {
           const result = await stored.agent.sendMessage(msg.content);

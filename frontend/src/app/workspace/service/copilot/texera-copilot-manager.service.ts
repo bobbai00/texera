@@ -167,7 +167,53 @@ export class TexeraCopilotManagerService {
     private notificationService: NotificationService,
     private workflowPersistService: WorkflowPersistService,
     private ngZone: NgZone
-  ) {}
+  ) {
+    // Sync local cache with backend on service initialization
+    // This handles cases where the backend was restarted
+    this.syncAgentsWithBackend();
+  }
+
+  /**
+   * Sync local agent cache with the backend.
+   * Removes any agents from local cache that no longer exist on the backend.
+   * This is called on service initialization and handles backend restarts.
+   */
+  private syncAgentsWithBackend(): void {
+    this.http
+      .get<ApiAgentListResponse>(`${this.AGENT_API_BASE}/agents`)
+      .pipe(catchError(() => of({ agents: [] })))
+      .subscribe(response => {
+        const backendAgentIds = new Set(response.agents.map(a => a.id));
+
+        // Remove any local agents that don't exist on the backend
+        const localAgentIds = Array.from(this.agents.keys());
+        for (const localId of localAgentIds) {
+          if (!backendAgentIds.has(localId)) {
+            console.log(`[CopilotManager] Removing stale agent ${localId} (not found on backend)`);
+            this.agents.delete(localId);
+            this.stopStatePolling(localId);
+          }
+        }
+
+        // Update local cache with backend state
+        for (const apiAgent of response.agents) {
+          const existingAgent = this.agents.get(apiAgent.id);
+          if (existingAgent) {
+            // Update state from backend
+            existingAgent.state = this.mapStateToCopilotState(apiAgent.state);
+            const tracking = this.agentStateTracking.get(apiAgent.id);
+            if (tracking) {
+              tracking.stateSubject.next(existingAgent.state);
+            }
+          }
+        }
+
+        // Notify subscribers if there were changes
+        if (localAgentIds.length !== this.agents.size) {
+          this.agentChangeSubject.next();
+        }
+      });
+  }
 
   /**
    * Convert API state string to CopilotState enum
@@ -336,9 +382,18 @@ export class TexeraCopilotManagerService {
       console.error(`[CopilotManager] WebSocket error for agent ${agentId}:`, error);
     };
 
-    ws.onclose = () => {
-      console.log(`[CopilotManager] WebSocket closed for agent ${agentId}`);
+    ws.onclose = event => {
+      console.log(`[CopilotManager] WebSocket closed for agent ${agentId}, code: ${event.code}`);
       tracking.websocket = undefined;
+
+      // If the connection was closed abnormally (e.g., backend restarted),
+      // clean up the agent from local cache
+      if (event.code !== 1000) {
+        // 1000 is normal closure
+        console.log(`[CopilotManager] Abnormal WebSocket close for agent ${agentId}, cleaning up local state`);
+        // Set state to unavailable
+        tracking.stateSubject.next(CopilotState.UNAVAILABLE);
+      }
     };
 
     // Poll workflow content from backend database if workflowId is set
@@ -426,7 +481,18 @@ export class TexeraCopilotManagerService {
       case "error":
         // Error occurred
         console.error(`[CopilotManager] Agent ${agentId} error:`, message.error);
-        this.notificationService.error(message.error || "Agent error occurred");
+
+        // If agent not found on backend (e.g., backend restarted), clean up local state
+        if (message.error === "Agent not found") {
+          console.log(`[CopilotManager] Agent ${agentId} not found on backend, removing from local cache`);
+          this.agents.delete(agentId);
+          tracking.stateSubject.next(CopilotState.UNAVAILABLE);
+          this.stopStatePolling(agentId);
+          this.agentChangeSubject.next();
+          this.notificationService.warning(`Agent was removed (backend may have restarted)`);
+        } else {
+          this.notificationService.error(message.error || "Agent error occurred");
+        }
         break;
 
       default:
