@@ -24,8 +24,9 @@
 import { z } from "zod";
 import { tool } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
-import { generateOperatorId, generateLinkId } from "../workflow/workflow-state";
-import type { OperatorPredicate, OperatorLink, OperatorDetail } from "../types/workflow";
+import { generateLinkId } from "../workflow/workflow-state";
+import { WorkflowUtilService } from "../workflow/workflow-util";
+import type { OperatorLink, OperatorDetail } from "../types/workflow";
 import { createSuccessResult, createErrorResult } from "./tools-utility";
 import { type OperatorMetadataStore, formatValidationErrors } from "./metadata-tools";
 import type { AgentActionManager } from "../agent/agent-action-manager";
@@ -148,6 +149,9 @@ export function createAddOperatorTool(
   operatorSchemas: Map<string, any>,
   context?: ToolContext
 ) {
+  // Create WorkflowUtilService if metadataStore is available
+  const workflowUtil = context?.metadataStore ? new WorkflowUtilService(context.metadataStore) : null;
+
   return tool({
     description:
       "Add a new operator to the workflow. Specify the operator type and its properties. " +
@@ -159,8 +163,7 @@ export function createAddOperatorTool(
     }),
     execute: async (args: { operatorType: string; properties?: Record<string, any>; customDisplayName?: string }) => {
       try {
-        // Get schema for this operator type
-        // Schema entry contains { jsonSchema, additionalMetadata }
+        // Check if operator type exists
         const schemaEntry = operatorSchemas.get(args.operatorType);
         if (!schemaEntry) {
           return createErrorResult(
@@ -182,32 +185,23 @@ export function createAddOperatorTool(
         // Capture before state for agent action
         const beforeContent = workflowState.getWorkflowContent();
 
-        const operatorId = generateOperatorId();
-        const { additionalMetadata } = schemaEntry;
+        // Use WorkflowUtilService to create operator with proper format (matching frontend exactly)
+        if (!workflowUtil) {
+          return createErrorResult("Metadata store not available for operator creation");
+        }
 
-        // Build input/output ports from additionalMetadata
-        const inputPorts = additionalMetadata?.inputPorts?.map((port: any, idx: number) => ({
-          portID: `input${idx}`,
-          displayName: port.displayName || `Input ${idx}`,
-          allowMultiInputs: port.allowMultiInputs || false,
-        })) || [];
+        let operator = workflowUtil.getNewOperatorPredicate(args.operatorType, args.customDisplayName);
 
-        const outputPorts = additionalMetadata?.outputPorts?.map((port: any, idx: number) => ({
-          portID: `output${idx}`,
-          displayName: port.displayName || `Output ${idx}`,
-        })) || [];
-
-        const operator: OperatorPredicate = {
-          operatorID: operatorId,
-          operatorType: args.operatorType,
-          operatorVersion: "1",
-          operatorProperties: args.properties || {},
-          inputPorts,
-          outputPorts,
-          showAdvanced: false,
-          isDisabled: false,
-          customDisplayName: args.customDisplayName,
-        };
+        // Merge provided properties with default properties
+        if (args.properties) {
+          operator = {
+            ...operator,
+            operatorProperties: {
+              ...operator.operatorProperties,
+              ...args.properties,
+            },
+          };
+        }
 
         workflowState.addOperator(operator);
 
@@ -220,7 +214,7 @@ export function createAddOperatorTool(
             context.agentId,
             context.agentName || `Agent-${context.agentId}`,
             args.customDisplayName || `Added ${args.operatorType}`,
-            { add: { operatorIds: [operatorId], linkIds: [] } },
+            { add: { operatorIds: [operator.operatorID], linkIds: [] } },
             context.workflowMetadata || {},
             beforeContent,
             afterContent
@@ -230,13 +224,13 @@ export function createAddOperatorTool(
 
         return createSuccessResult(
           {
-            operatorId,
+            operatorId: operator.operatorID,
             operatorType: args.operatorType,
             agentActionId,
-            message: `Added operator ${operatorId} of type ${args.operatorType}`,
+            message: `Added operator ${operator.operatorID} of type ${args.operatorType}`,
           },
           [],
-          [operatorId],
+          [operator.operatorID],
           []
         );
       } catch (error: any) {
@@ -260,9 +254,9 @@ export function createAddLinkTool(workflowState: WorkflowState, context?: ToolCo
       "Specify source operator/port and target operator/port.",
     inputSchema: z.object({
       sourceOperatorId: z.string().describe("ID of the source operator"),
-      sourcePortId: z.string().optional().describe("ID of the source port (default: 'output0')"),
+      sourcePortId: z.string().optional().describe("ID of the source port (default: 'output-0')"),
       targetOperatorId: z.string().describe("ID of the target operator"),
-      targetPortId: z.string().optional().describe("ID of the target port (default: 'input0')"),
+      targetPortId: z.string().optional().describe("ID of the target port (default: 'input-0')"),
     }),
     execute: async (args: {
       sourceOperatorId: string;
@@ -290,11 +284,11 @@ export function createAddLinkTool(workflowState: WorkflowState, context?: ToolCo
           linkID: linkId,
           source: {
             operatorID: args.sourceOperatorId,
-            portID: args.sourcePortId || "output0",
+            portID: args.sourcePortId || "output-0",
           },
           target: {
             operatorID: args.targetOperatorId,
-            portID: args.targetPortId || "input0",
+            portID: args.targetPortId || "input-0",
           },
         };
 
