@@ -77,7 +77,6 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
   public agentResponses: ReActStep[] = [];
   public currentMessage = "";
   private shouldScrollToBottom = false;
-  public planningMode = false;
   public isDetailsModalVisible = false;
   public selectedResponse: ReActStep | null = null;
   public hoveredMessageIndex: number | null = null;
@@ -94,7 +93,10 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
   public toolGroupConfigs = TOOL_GROUP_CONFIGS;
   public ToolGroup = ToolGroup;
 
-  // Unified agent action preview state
+  // Agent actions for this agent (from copilot manager)
+  public agentActions: AgentAction[] = [];
+
+  // Agent action preview state
   public previewState: AgentActionPreviewState | null = null;
 
   // System info modal state (with editing capabilities)
@@ -126,8 +128,6 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
     if (!this.agentInfo) {
       return;
     }
-
-    this.planningMode = this.copilotManagerService.getPlanningMode(this.agentInfo.id);
 
     // Get the current state from manager service
     this.copilotManagerService
@@ -182,7 +182,16 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
         this.cdr.detectChanges();
       });
 
-    // Subscribe to unified preview state
+    // Subscribe to agent actions from copilot manager
+    this.copilotManagerService
+      .getAgentActionsObservable(this.agentInfo.id)
+      .pipe(untilDestroyed(this))
+      .subscribe(actions => {
+        this.agentActions = actions;
+        this.cdr.detectChanges();
+      });
+
+    // Subscribe to preview state
     this.agentActionService
       .getPreviewStateStream()
       .pipe(untilDestroyed(this))
@@ -555,12 +564,8 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
     return this.agentState === CopilotState.STOPPING;
   }
 
-  public onPlanningModeChange(value: boolean): void {
-    this.copilotManagerService.setPlanningMode(this.agentInfo.id, value);
-  }
-
   /**
-   * Accept the agent action (for pending mode) or Apply (for historical mode)
+   * Apply the previewed agent action to the workflow.
    */
   public onAcceptAgentAction(): void {
     if (!this.previewState) {
@@ -569,20 +574,10 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
 
     // End preview and apply the changes
     this.agentActionService.endPreview(true);
-
-    // In pending mode, send approval message to continue the agent
-    if (this.previewState.isPending) {
-      const feedback = this.currentMessage.trim();
-      const message = feedback
-        ? `I approve this agent action. Additional feedback: ${feedback}`
-        : "I approve this agent action. Please proceed with execution.";
-      this.copilotManagerService.sendMessage(this.agentInfo.id, message);
-      this.currentMessage = "";
-    }
   }
 
   /**
-   * Reject the agent action (for pending mode) or Cancel (for historical mode)
+   * Cancel the preview and restore the original workflow.
    */
   public onRejectAgentAction(): void {
     if (!this.previewState) {
@@ -591,16 +586,6 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
 
     // End preview and reject the changes (restore to before state)
     this.agentActionService.endPreview(false);
-
-    // In pending mode, send rejection message to the agent
-    if (this.previewState.isPending) {
-      const feedback = this.currentMessage.trim();
-      const message = feedback
-        ? `I reject this agent action. Reason: ${feedback}`
-        : "I reject this agent action. Please revise your approach.";
-      this.copilotManagerService.sendMessage(this.agentInfo.id, message);
-      this.currentMessage = "";
-    }
   }
 
   // =====================
@@ -756,7 +741,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
 
     // Fallback: Find agent action by matching timestamp (closest before or at the node timestamp)
     if (!agentActionId) {
-      const allActions = this.agentActionService.getAllAgentActions();
+      const allActions = this.agentActions;
       console.log("[Timeline] No agent action ID found, matching by timestamp. Actions:", allActions.length);
 
       if (allActions.length > 0) {
@@ -790,11 +775,18 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
   }
 
   /**
-   * Preview an agent action by ID (historical mode - from timeline click).
+   * Preview an agent action by ID.
    */
   public previewAgentAction(agentActionId: string): void {
+    const agentAction = this.agentActions.find(a => a.id === agentActionId);
+    if (!agentAction) {
+      console.error(`Agent action ${agentActionId} not found`);
+      this.notificationService.error("Agent action not found");
+      return;
+    }
+
     try {
-      this.agentActionService.startHistoricalPreview(agentActionId);
+      this.agentActionService.startPreview(agentAction);
     } catch (err) {
       console.error("Failed to preview agent action:", err);
       this.notificationService.error("Failed to preview agent action");
@@ -809,10 +801,8 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
    * Get all agent actions for this agent sorted by creation time (chronological order).
    */
   private getAgentActionsForAgent(): AgentAction[] {
-    return this.agentActionService
-      .getAllAgentActions()
-      .filter(action => action.agentId === this.agentInfo.id)
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    // Agent actions are already filtered by agent (from copilot manager), just sort
+    return [...this.agentActions].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 
   /**
@@ -855,7 +845,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
 
     // End current preview without applying changes, then start new preview
     this.agentActionService.endPreview(false);
-    this.agentActionService.startHistoricalPreview(previousAction.id);
+    this.agentActionService.startPreview(previousAction);
   }
 
   /**
@@ -871,7 +861,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
 
     // End current preview without applying changes, then start new preview
     this.agentActionService.endPreview(false);
-    this.agentActionService.startHistoricalPreview(nextAction.id);
+    this.agentActionService.startPreview(nextAction);
   }
 
   /**

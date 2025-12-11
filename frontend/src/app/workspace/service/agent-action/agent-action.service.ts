@@ -18,9 +18,8 @@
  */
 
 import { Injectable } from "@angular/core";
-import { Subject, Observable, BehaviorSubject } from "rxjs";
+import { BehaviorSubject, Observable } from "rxjs";
 import { WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
-import { OperatorPredicate, OperatorLink } from "../../types/workflow-common.interface";
 import { WorkflowVersionService } from "../../../dashboard/service/user/workflow-version/workflow-version.service";
 import { UndoRedoService } from "../undo-redo/undo-redo.service";
 import { WorkflowPersistService } from "../../../common/service/workflow-persist/workflow-persist.service";
@@ -28,20 +27,10 @@ import { Workflow, WorkflowContent } from "../../../common/type/workflow";
 import { WorkflowMetadata } from "../../../dashboard/type/workflow-metadata.interface";
 
 /**
- * Interface for an agent action highlight event
- */
-export interface AgentActionHighlight {
-  operatorIds: string[];
-  linkIds: string[];
-  summary: string;
-}
-
-/**
- * Preview state for agent actions - unified for both planning mode and timeline review
+ * Preview state for agent actions
  */
 export interface AgentActionPreviewState {
   agentAction: AgentAction;
-  isPending: boolean; // true = waiting for accept/reject, false = reviewing historical (apply/cancel)
 }
 
 /**
@@ -87,27 +76,21 @@ export interface AgentAction {
 }
 
 /**
- * Service to manage agent actions, highlights, and user feedback
- * Handles the interactive flow: show action -> wait for user decision -> execute -> track progress
+ * Service to manage agent action preview rendering.
+ * This service is responsible ONLY for showing/hiding previews on the canvas.
+ * Agent actions are stored in TexeraCopilotManagerService per agent.
  */
 @Injectable({
   providedIn: "root",
 })
 export class AgentActionService {
-  private agentActionHighlightSubject = new Subject<AgentActionHighlight>();
-  private cleanupSubject = new Subject<void>();
-
-  // Agent action storage
-  private agentActions = new Map<string, AgentAction>();
-  private agentActionsSubject = new BehaviorSubject<AgentAction[]>([]);
-
-  // Unified preview state - replaces the separate pending and preview states
+  // Preview state
   private previewStateSubject = new BehaviorSubject<AgentActionPreviewState | null>(null);
 
   // Diff preview state
   private currentDiff: DifferentOpIDsList | null = null;
 
-  // Saved workflow content before starting a historical preview (for cancel/restore)
+  // Saved workflow content before starting a preview (for cancel/restore)
   private savedWorkflowContentBeforePreview: WorkflowContent | null = null;
 
   constructor(
@@ -118,29 +101,8 @@ export class AgentActionService {
   ) {}
 
   /**
-   * Get agent action highlight stream
-   */
-  public getAgentActionHighlightStream() {
-    return this.agentActionHighlightSubject.asObservable();
-  }
-
-  /**
-   * Get cleanup stream - emits when user provides feedback (accept/reject)
-   */
-  public getCleanupStream() {
-    return this.cleanupSubject.asObservable();
-  }
-
-  /**
-   * Get all agent actions as observable
-   */
-  public getAgentActionsStream(): Observable<AgentAction[]> {
-    return this.agentActionsSubject.asObservable();
-  }
-
-  /**
-   * Get the unified preview state stream.
-   * Emits when an agent action is being previewed (either pending or historical).
+   * Get the preview state stream.
+   * Emits when an agent action is being previewed.
    */
   public getPreviewStateStream(): Observable<AgentActionPreviewState | null> {
     return this.previewStateSubject.asObservable();
@@ -161,105 +123,17 @@ export class AgentActionService {
   }
 
   /**
-   * Get all agent actions
+   * Start previewing an agent action.
+   * Shows the diff between before and after workflow content.
    */
-  public getAllAgentActions(): AgentAction[] {
-    return Array.from(this.agentActions.values());
-  }
-
-  /**
-   * Get a specific agent action by ID
-   */
-  public getAgentAction(id: string): AgentAction | undefined {
-    return this.agentActions.get(id);
-  }
-
-  /**
-   * Create a new agent action
-   */
-  public createAgentAction(
-    agentId: string,
-    agentName: string,
-    summary: string,
-    operations: AgentActionOperations,
-    operatorIds: string[],
-    linkIds: string[],
-    workflowMetadata: WorkflowMetadata,
-    beforeWorkflowContent: WorkflowContent,
-    afterWorkflowContent: WorkflowContent,
-    executorAgentId?: string // Optional: defaults to agentId if not specified
-  ): AgentAction {
-    const id = this.generateId();
-
-    const agentAction: AgentAction = {
-      id,
-      agentId,
-      agentName,
-      executorAgentId: executorAgentId || agentId, // Default to creator if not specified
-      summary,
-      operations,
-      createdAt: new Date(),
-      operatorIds,
-      linkIds,
-      workflowMetadata,
-      beforeWorkflowContent,
-      afterWorkflowContent,
-    };
-
-    this.agentActions.set(id, agentAction);
-    this.emitAgentActions();
-
-    console.log(`[AgentActionService] Agent action created: ${id}`);
-
-    return agentAction;
-  }
-
-  /**
-   * Add an agent action received from the backend (preserves the original ID).
-   * Use this when receiving agent actions from the agent-service via WebSocket.
-   */
-  public addAgentAction(agentAction: AgentAction): void {
-    this.agentActions.set(agentAction.id, agentAction);
-    this.emitAgentActions();
-    console.log(`[AgentActionService] Agent action added from backend: ${agentAction.id}`);
-  }
-
-  /**
-   * Start previewing an agent action as a pending action (accept/reject mode).
-   * This is called in planning mode when a new agent action is created.
-   */
-  public startPendingPreview(agentActionId: string): void {
-    this.startPreview(agentActionId, true);
-  }
-
-  /**
-   * Start previewing an agent action as historical (apply/cancel mode).
-   * This is called when clicking on a timeline node.
-   */
-  public startHistoricalPreview(agentActionId: string): void {
-    this.startPreview(agentActionId, false);
-  }
-
-  /**
-   * Unified method to start a preview.
-   * Always saves the current workflow content before showing the preview.
-   */
-  private startPreview(agentActionId: string, isPending: boolean): void {
-    const agentAction = this.agentActions.get(agentActionId);
-    if (!agentAction) {
-      console.error(`Agent action ${agentActionId} not found`);
-      return;
-    }
-
-    // Always save the current workflow content BEFORE showing the preview
+  public startPreview(agentAction: AgentAction): void {
+    // Save the current workflow content BEFORE showing the preview
     // This is what we'll restore to if the user cancels
     this.savedWorkflowContentBeforePreview = this.workflowActionService.getWorkflowContent();
 
     this.showPreviewDiff(agentAction);
-    this.previewStateSubject.next({ agentAction, isPending });
-    console.log(
-      `[AgentActionService] Started ${isPending ? "pending" : "historical"} preview for agent action: ${agentActionId}`
-    );
+    this.previewStateSubject.next({ agentAction });
+    console.log(`[AgentActionService] Started preview for agent action: ${agentAction.id}`);
   }
 
   /**
@@ -284,40 +158,6 @@ export class AgentActionService {
     this.savedWorkflowContentBeforePreview = null;
     this.previewStateSubject.next(null);
     console.log(`[AgentActionService] Ended preview, accept=${accept}`);
-  }
-
-  /**
-   * Delete an agent action
-   */
-  public deleteAgentAction(id: string): boolean {
-    if (this.agentActions.has(id)) {
-      this.agentActions.delete(id);
-      this.emitAgentActions();
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Clear all agent actions
-   */
-  public clearAllAgentActions(): void {
-    this.agentActions.clear();
-    this.emitAgentActions();
-  }
-
-  /**
-   * Generate a unique ID for agent actions
-   */
-  private generateId(): string {
-    return `agent-action-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-  }
-
-  /**
-   * Emit the current list of agent actions
-   */
-  private emitAgentActions(): void {
-    this.agentActionsSubject.next(this.getAllAgentActions());
   }
 
   // ===== PREVIEW INTERNAL METHODS =====

@@ -39,7 +39,7 @@ import { AppSettings } from "../../../common/app-setting";
 import { AuthService } from "../../../common/service/user/auth.service";
 import { CopilotState, ReActStep, ModelMessage, CopilotMessageStats } from "./texera-copilot";
 import { Workflow, WorkflowContent } from "../../../common/type/workflow";
-import { AgentActionService, AgentAction, AgentActionOperations } from "../agent-action/agent-action.service";
+import { AgentAction } from "../agent-action/agent-action.service";
 
 /**
  * Agent information for tracking created agents (API version).
@@ -129,7 +129,8 @@ interface AgentStateTracking {
     addedOperatorIds: string[];
     modifiedOperatorIds: string[];
   }>;
-  agentActionApprovalSubject: BehaviorSubject<{ isWaitingForApproval: boolean; agentActionId?: string }>;
+  /** Agent actions received from the backend */
+  agentActionsSubject: BehaviorSubject<AgentAction[]>;
   workflowSubject: BehaviorSubject<Workflow | null>;
   workflowId?: number;
   stopPolling$: Subject<void>;
@@ -161,14 +162,10 @@ export class TexeraCopilotManagerService {
   /** Cached model types */
   private modelTypes$: Observable<ModelType[]> | null = null;
 
-  /** Planning mode state per agent */
-  private planningModes = new Map<string, boolean>();
-
   constructor(
     private http: HttpClient,
     private notificationService: NotificationService,
     private workflowPersistService: WorkflowPersistService,
-    private agentActionService: AgentActionService,
     private ngZone: NgZone
   ) {}
 
@@ -224,12 +221,12 @@ export class TexeraCopilotManagerService {
   }
 
   /**
-   * Convert API AgentAction to frontend AgentAction format and add to AgentActionService.
-   * Preserves the original ID from the backend.
+   * Convert API AgentAction to frontend AgentAction format.
+   * The backend sends the complete action, we just need to convert dates and ensure defaults.
    */
-  private handleAgentActionFromApi(apiAction: any): void {
-    // Convert operations from API format to frontend format
-    const operations: AgentActionOperations = {
+  private convertApiAgentAction(apiAction: any): AgentAction {
+    // Ensure operations have defaults
+    const operations = {
       add: apiAction.operations?.add || { operatorIds: [], linkIds: [] },
       modify: apiAction.operations?.modify || { operatorIds: [] },
       delete: apiAction.operations?.delete || { operatorIds: [], linkIds: [] },
@@ -243,8 +240,7 @@ export class TexeraCopilotManagerService {
     ];
     const linkIds = [...(operations.add.linkIds || []), ...(operations.delete.linkIds || [])];
 
-    // Convert API action to frontend AgentAction format (preserving backend's ID)
-    const agentAction: AgentAction = {
+    return {
       id: apiAction.id,
       agentId: apiAction.agentId,
       agentName: apiAction.agentName,
@@ -258,20 +254,25 @@ export class TexeraCopilotManagerService {
       beforeWorkflowContent: apiAction.beforeWorkflowContent || { operators: [], links: [], operatorPositions: {} },
       afterWorkflowContent: apiAction.afterWorkflowContent || { operators: [], links: [], operatorPositions: {} },
     };
+  }
 
-    // Add to AgentActionService (preserves the original ID from backend)
-    this.agentActionService.addAgentAction(agentAction);
-
+  /**
+   * Handle agent action received from WebSocket.
+   * Adds the action to the agent's action list.
+   */
+  private handleAgentActionFromApi(agentId: string, tracking: AgentStateTracking, apiAction: any): void {
+    const agentAction = this.convertApiAgentAction(apiAction);
+    const currentActions = tracking.agentActionsSubject.getValue();
+    tracking.agentActionsSubject.next([...currentActions, agentAction]);
     console.log(`[CopilotManager] Received agent action from agent-service: ${apiAction.id} - ${apiAction.summary}`);
   }
 
   /**
    * Handle initial agent actions received from WebSocket init message.
    */
-  private handleInitialAgentActions(apiActions: any[]): void {
-    for (const apiAction of apiActions) {
-      this.handleAgentActionFromApi(apiAction);
-    }
+  private handleInitialAgentActions(tracking: AgentStateTracking, apiActions: any[]): void {
+    const agentActions = apiActions.map(apiAction => this.convertApiAgentAction(apiAction));
+    tracking.agentActionsSubject.next(agentActions);
     console.log(`[CopilotManager] Initialized ${apiActions.length} agent actions from agent-service`);
   }
 
@@ -290,9 +291,7 @@ export class TexeraCopilotManagerService {
           addedOperatorIds: string[];
           modifiedOperatorIds: string[];
         }>({ viewedOperatorIds: [], addedOperatorIds: [], modifiedOperatorIds: [] }),
-        agentActionApprovalSubject: new BehaviorSubject<{ isWaitingForApproval: boolean; agentActionId?: string }>({
-          isWaitingForApproval: false,
-        }),
+        agentActionsSubject: new BehaviorSubject<AgentAction[]>([]),
         workflowSubject: new BehaviorSubject<Workflow | null>(null),
         workflowId,
         stopPolling$: new Subject<void>(),
@@ -376,7 +375,7 @@ export class TexeraCopilotManagerService {
         }
         // Handle initial agent actions
         if (message.agentActions && Array.isArray(message.agentActions)) {
-          this.handleInitialAgentActions(message.agentActions);
+          this.handleInitialAgentActions(tracking, message.agentActions);
         }
         break;
 
@@ -420,7 +419,7 @@ export class TexeraCopilotManagerService {
       case "agentAction":
         // New agent action received from agent-service
         if (message.agentAction) {
-          this.handleAgentActionFromApi(message.agentAction);
+          this.handleAgentActionFromApi(agentId, tracking, message.agentAction);
         }
         break;
 
@@ -754,17 +753,20 @@ export class TexeraCopilotManagerService {
   }
 
   /**
-   * Set planning mode for an agent (local state only).
+   * Get agent actions observable for an agent.
+   * Returns the stream of agent actions from the backend.
    */
-  public setPlanningMode(agentId: string, planningMode: boolean): void {
-    this.planningModes.set(agentId, planningMode);
+  public getAgentActionsObservable(agentId: string): Observable<AgentAction[]> {
+    const tracking = this.getOrCreateStateTracking(agentId);
+    return tracking.agentActionsSubject.asObservable();
   }
 
   /**
-   * Get planning mode for an agent.
+   * Get all agent actions for an agent (current snapshot).
    */
-  public getPlanningMode(agentId: string): boolean {
-    return this.planningModes.get(agentId) || false;
+  public getAgentActions(agentId: string): AgentAction[] {
+    const tracking = this.agentStateTracking.get(agentId);
+    return tracking ? tracking.agentActionsSubject.getValue() : [];
   }
 
   /**
@@ -855,16 +857,6 @@ export class TexeraCopilotManagerService {
     // Messages are managed on the server
     // This would require an API call
     return [];
-  }
-
-  /**
-   * Get agent action approval observable.
-   */
-  public getAgentActionApprovalObservable(
-    agentId: string
-  ): Observable<{ isWaitingForApproval: boolean; agentActionId?: string }> {
-    const tracking = this.getOrCreateStateTracking(agentId);
-    return tracking.agentActionApprovalSubject.asObservable();
   }
 
   /**

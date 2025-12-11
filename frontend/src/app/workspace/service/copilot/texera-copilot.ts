@@ -428,17 +428,8 @@ export class TexeraCopilot {
                 );
 
                 if (agentActionCallIndex !== -1) {
-                  // Extract agent action ID from the result
-                  const agentActionResult = toolResults[agentActionCallIndex];
-                  const agentActionId = agentActionResult?.result?.agentActionId;
-
                   // Stop generation after this step to wait for user approval
                   this.shouldStopAfterAgentAction = true;
-
-                  // Start pending preview in the agent action service
-                  if (agentActionId) {
-                    this.agentActionService.startPendingPreview(agentActionId);
-                  }
                 }
               }
 
@@ -602,112 +593,51 @@ export class TexeraCopilot {
     );
     // Operator-specific tools - all use the configurable tool timeout
     const addPythonUDFV2Tool = toolWithTimeout(
-      operatorTools.createAddPythonUDFV2Tool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createAddPythonUDFV2Tool(this.workflowActionService),
       this.settings.toolTimeoutMs
     );
     const addAggregateTool = toolWithTimeout(
-      operatorTools.createAddAggregateTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createAddAggregateTool(this.workflowActionService),
       this.settings.toolTimeoutMs
     );
     const addProjectionTool = toolWithTimeout(
-      operatorTools.createAddProjectionTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createAddProjectionTool(this.workflowActionService),
       this.settings.toolTimeoutMs
     );
     const addHashJoinTool = toolWithTimeout(
-      operatorTools.createAddHashJoinTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createAddHashJoinTool(this.workflowActionService),
       this.settings.toolTimeoutMs
     );
     const addSortTool = toolWithTimeout(
-      operatorTools.createAddSortTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createAddSortTool(this.workflowActionService),
       this.settings.toolTimeoutMs
     );
     const addUnionTool = toolWithTimeout(
-      operatorTools.createAddUnionTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createAddUnionTool(this.workflowActionService),
       this.settings.toolTimeoutMs
     );
     const addIntersectTool = toolWithTimeout(
-      operatorTools.createAddIntersectTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createAddIntersectTool(this.workflowActionService),
       this.settings.toolTimeoutMs
     );
     const addCartesianProductTool = toolWithTimeout(
-      operatorTools.createAddCartesianProductTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createAddCartesianProductTool(this.workflowActionService),
       this.settings.toolTimeoutMs
     );
     const addCSVFileScanTool = toolWithTimeout(
-      operatorTools.createAddCSVFileScanTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createAddCSVFileScanTool(this.workflowActionService),
       this.settings.toolTimeoutMs
     );
     const addLinkTool = toolWithTimeout(
-      operatorTools.createAddLinkTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createAddLinkTool(this.workflowActionService),
       this.settings.toolTimeoutMs
     );
     const modifyOperatorTool = toolWithTimeout(
-      operatorTools.createModifyOperatorTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.operatorMetadataService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createModifyOperatorTool(this.workflowActionService, this.operatorMetadataService),
       this.settings.toolTimeoutMs
     );
     const deleteFromWorkflowTool = toolWithTimeout(
-      operatorTools.createDeleteFromWorkflowTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createDeleteFromWorkflowTool(this.workflowActionService),
       this.settings.toolTimeoutMs
     );
 
@@ -723,13 +653,7 @@ export class TexeraCopilot {
 
     // Generic addOperator tool - can add any operator type
     const addOperatorTool = toolWithTimeout(
-      operatorTools.createAddOperatorTool(
-        this.workflowActionService,
-        this.agentActionService,
-        this.operatorMetadataService,
-        this.agentId,
-        this.agentName
-      ),
+      operatorTools.createAddOperatorTool(this.workflowActionService, this.operatorMetadataService),
       this.settings.toolTimeoutMs
     );
 
@@ -780,10 +704,7 @@ export class TexeraCopilot {
       baselineTools.createPythonUDFTool(
         this.workflowActionService,
         this.workflowUtilService,
-        this.operatorMetadataService,
-        this.agentActionService,
-        this.agentId,
-        this.agentName
+        this.operatorMetadataService
       ),
       this.settings.toolTimeoutMs
     );
