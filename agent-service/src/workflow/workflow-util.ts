@@ -167,24 +167,4 @@ export class WorkflowUtilService {
     };
   }
 
-  /**
-   * Update operator properties on an existing operator predicate.
-   * Merges the new properties with existing ones.
-   *
-   * @param operator - The operator predicate to update
-   * @param properties - Properties to merge
-   * @returns Updated operator predicate
-   */
-  public updateOperatorProperties(
-    operator: OperatorPredicate,
-    properties: Record<string, any>
-  ): OperatorPredicate {
-    return {
-      ...operator,
-      operatorProperties: {
-        ...operator.operatorProperties,
-        ...properties,
-      },
-    };
-  }
 }

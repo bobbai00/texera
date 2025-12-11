@@ -53,7 +53,15 @@ import {
   TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES,
   TOOL_NAME_GET_OPERATOR_SCHEMA,
 } from "../tools/metadata-tools";
-// Execution is now stateless via HTTP - tools create their own ExecutionClient per request
+import {
+  ExecutionManager,
+  createExecuteWorkflowTool,
+  createGetExecutionStateTool,
+  createGetExecutionResultTool,
+  TOOL_NAME_EXECUTE_WORKFLOW,
+  TOOL_NAME_GET_EXECUTION_STATE,
+  TOOL_NAME_GET_EXECUTION_RESULT,
+} from "../tools/execution-tools";
 
 // ============================================================================
 // Agent Configuration
@@ -130,6 +138,9 @@ export class TexeraAgent {
 
   // Delegate configuration for backend operations
   private delegateConfig?: { userToken: string; workflowId: number; workflowName?: string };
+
+  // Execution manager for workflow execution (created when delegateConfig is provided)
+  private executionManager: ExecutionManager | null = null;
 
   // Callback for streaming ReActSteps
   private stepCallback: ReActStepCallback | null = null;
@@ -215,7 +226,6 @@ export class TexeraAgent {
     };
 
     // Workflow and metadata tools
-    // Note: Execution tools are now handled via stateless HTTP requests, not via the agent
     const tools: Record<string, any> = {
       [TOOL_NAME_GET_CURRENT_WORKFLOW]: createGetCurrentWorkflowTool(this.workflowState),
       [TOOL_NAME_ADD_OPERATOR]: createAddOperatorTool(this.workflowState, operatorSchemas, context),
@@ -225,6 +235,13 @@ export class TexeraAgent {
       [TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: createListAllAvailableOperatorTypesTool(this.metadataStore),
       [TOOL_NAME_GET_OPERATOR_SCHEMA]: createGetOperatorSchemaTool(this.metadataStore),
     };
+
+    // Add execution tools if ExecutionManager is available (requires delegateConfig)
+    if (this.executionManager) {
+      tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, this.executionManager);
+      tools[TOOL_NAME_GET_EXECUTION_STATE] = createGetExecutionStateTool(this.executionManager);
+      tools[TOOL_NAME_GET_EXECUTION_RESULT] = createGetExecutionResultTool(this.executionManager, this.workflowState);
+    }
 
     return tools;
   }
@@ -378,7 +395,14 @@ export class TexeraAgent {
    */
   setDelegateConfig(config: { userToken: string; workflowId: number; workflowName?: string }): void {
     this.delegateConfig = config;
-    // Rebuild tools with updated workflow metadata in context
+
+    // Create ExecutionManager for workflow execution
+    this.executionManager = new ExecutionManager({
+      userToken: config.userToken,
+      workflowId: config.workflowId,
+    });
+
+    // Rebuild tools with updated workflow metadata in context and execution tools
     this.tools = this.createTools();
   }
 
