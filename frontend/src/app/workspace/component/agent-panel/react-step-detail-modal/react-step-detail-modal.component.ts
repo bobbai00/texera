@@ -18,7 +18,7 @@
  */
 
 import { Component, Input, Output, EventEmitter } from "@angular/core";
-import { ReActStep } from "../../../service/copilot/texera-copilot";
+import { ReActStep } from "../../../service/copilot/copilot-types";
 
 /**
  * Reusable modal component for displaying ReActStep details.

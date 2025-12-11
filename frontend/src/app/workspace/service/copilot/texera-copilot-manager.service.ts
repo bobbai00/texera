@@ -37,7 +37,7 @@ import { NotificationService } from "../../../common/service/notification/notifi
 import { WorkflowPersistService } from "../../../common/service/workflow-persist/workflow-persist.service";
 import { AppSettings } from "../../../common/app-setting";
 import { AuthService } from "../../../common/service/user/auth.service";
-import { CopilotState, ReActStep, ModelMessage, CopilotMessageStats } from "./texera-copilot";
+import { CopilotState, ReActStep, ModelMessage, CopilotMessageStats } from "./copilot-types";
 import { Workflow, WorkflowContent } from "../../../common/type/workflow";
 import { AgentAction } from "../agent-action/agent-action.service";
 
@@ -489,7 +489,7 @@ export class TexeraCopilotManagerService {
           tracking.stateSubject.next(CopilotState.UNAVAILABLE);
           this.stopStatePolling(agentId);
           this.agentChangeSubject.next();
-          this.notificationService.warning(`Agent was removed (backend may have restarted)`);
+          this.notificationService.warning("Agent was removed (backend may have restarted)");
         } else {
           this.notificationService.error(message.error || "Agent error occurred");
         }

@@ -29,7 +29,7 @@ import {
 } from "@angular/core";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { distinctUntilChanged, filter, pairwise, startWith } from "rxjs/operators";
-import { CopilotState, ReActStep, CopilotMessageStats } from "../../../service/copilot/texera-copilot";
+import { CopilotState, ReActStep, CopilotMessageStats } from "../../../service/copilot/copilot-types";
 import { AgentInfo, TexeraCopilotManagerService } from "../../../service/copilot/texera-copilot-manager.service";
 import {
   AgentAction,
