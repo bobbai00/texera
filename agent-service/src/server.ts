@@ -128,6 +128,7 @@ async function createAgentInstance(
         userToken: delegateConfig.userToken,
         workflowId: delegateConfig.workflowId,
         workflowName: delegateConfig.workflowName,
+        computingUnitId: delegateConfig.computingUnitId,
       });
 
       console.log(`[Server] Loaded workflow ${delegateConfig.workflowId} for agent ${agentId}`);
@@ -208,7 +209,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
   .post(
     "/",
     async ({ body }) => {
-      const { modelType, name, userToken, workflowId } = body as CreateAgentRequest;
+      const { modelType, name, userToken, workflowId, computingUnitId } = body as CreateAgentRequest;
 
       if (!modelType) {
         throw new Error("modelType is required");
@@ -226,6 +227,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           userToken,
           userInfo,
           workflowId,
+          computingUnitId,
         };
       }
 
@@ -238,6 +240,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         name: t.Optional(t.String()),
         userToken: t.Optional(t.String()),
         workflowId: t.Optional(t.Number()),
+        computingUnitId: t.Optional(t.Number()),
       }),
     }
   )

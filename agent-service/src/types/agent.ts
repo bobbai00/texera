@@ -209,6 +209,8 @@ export interface AgentDelegateConfig {
   workflowId?: number;
   /** Workflow name */
   workflowName?: string;
+  /** Computing unit ID (cuid) for workflow execution */
+  computingUnitId?: number;
 }
 
 /**
@@ -234,5 +236,7 @@ export interface CreateAgentRequest {
   userToken?: string;
   /** Workflow ID to associate with */
   workflowId?: number;
+  /** Computing unit ID for workflow execution */
+  computingUnitId?: number;
 }
 

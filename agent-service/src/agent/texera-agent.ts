@@ -146,7 +146,7 @@ export class TexeraAgent {
   private reActSteps: ReActStep[] = [];
 
   // Delegate configuration for backend operations
-  private delegateConfig?: { userToken: string; workflowId: number; workflowName?: string };
+  private delegateConfig?: { userToken: string; workflowId: number; workflowName?: string; computingUnitId?: number };
 
   // Execution manager for workflow execution (created when delegateConfig is provided)
   private executionManager: ExecutionManager | null = null;
@@ -373,13 +373,14 @@ export class TexeraAgent {
    * This also rebuilds tools to include the workflow metadata in tool context,
    * and sets up workflow change handlers for persistence.
    */
-  setDelegateConfig(config: { userToken: string; workflowId: number; workflowName?: string }): void {
+  setDelegateConfig(config: { userToken: string; workflowId: number; workflowName?: string; computingUnitId?: number }): void {
     this.delegateConfig = config;
 
     // Create ExecutionManager for workflow execution
     this.executionManager = new ExecutionManager({
       userToken: config.userToken,
       workflowId: config.workflowId,
+      computingUnitId: config.computingUnitId,
     });
 
     // Rebuild tools with updated workflow metadata in context and execution tools
@@ -392,7 +393,7 @@ export class TexeraAgent {
   /**
    * Get the delegate configuration.
    */
-  getDelegateConfig(): { userToken: string; workflowId: number; workflowName?: string } | undefined {
+  getDelegateConfig(): { userToken: string; workflowId: number; workflowName?: string; computingUnitId?: number } | undefined {
     return this.delegateConfig;
   }
 

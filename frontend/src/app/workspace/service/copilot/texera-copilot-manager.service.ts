@@ -40,6 +40,7 @@ import { AuthService } from "../../../common/service/user/auth.service";
 import { CopilotState, ReActStep, ModelMessage, CopilotMessageStats } from "./copilot-types";
 import { Workflow, WorkflowContent } from "../../../common/type/workflow";
 import { AgentAction } from "../agent-action/agent-action.service";
+import { ComputingUnitStatusService } from "../computing-unit-status/computing-unit-status.service";
 
 /**
  * Agent information for tracking created agents (API version).
@@ -166,7 +167,8 @@ export class TexeraCopilotManagerService {
     private http: HttpClient,
     private notificationService: NotificationService,
     private workflowPersistService: WorkflowPersistService,
-    private ngZone: NgZone
+    private ngZone: NgZone,
+    private computingUnitStatusService: ComputingUnitStatusService
   ) {
     // Sync local cache with backend on service initialization
     // This handles cases where the backend was restarted
@@ -544,6 +546,11 @@ export class TexeraCopilotManagerService {
         body.userToken = userToken;
         if (workflowId !== undefined) {
           body.workflowId = workflowId;
+        }
+        // Include computing unit ID for workflow execution
+        const selectedUnit = this.computingUnitStatusService.getSelectedComputingUnitValue();
+        if (selectedUnit) {
+          body.computingUnitId = selectedUnit.computingUnit.cuid;
         }
       }
 
