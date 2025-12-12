@@ -25,11 +25,12 @@ import { z } from "zod";
 import { tool } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
 import { generateLinkId } from "../workflow/workflow-state";
-import { WorkflowUtilService } from "../workflow/workflow-util";
-import type { OperatorLink, OperatorDetail } from "../types/workflow";
+import { WorkflowUtilService, extractOperatorInputPortSchemaMap } from "../workflow/workflow-util";
+import type { OperatorLink, OperatorDetail, OperatorPortSchemaMap } from "../types/workflow";
 import { createSuccessResult, createErrorResult } from "./tools-utility";
 import { type OperatorMetadataStore, formatValidationErrors } from "./metadata-tools";
 import type { AgentActionManager } from "../agent/agent-action-manager";
+import { compileWorkflowAsync, type WorkflowCompilationResponse } from "../api/compile-api";
 
 // ============================================================================
 // Types for tool context
@@ -41,6 +42,56 @@ export interface ToolContext {
   agentId?: string;
   agentName?: string;
   workflowMetadata?: { wid?: number; name?: string };
+}
+
+// ============================================================================
+// Helper: Compile workflow and extract schemas
+// ============================================================================
+
+/**
+ * Compile the workflow and return operator schemas.
+ * Returns maps of operatorId -> inputSchema and operatorId -> outputSchema.
+ */
+async function compileAndGetSchemas(
+  workflowState: WorkflowState
+): Promise<{
+  inputSchemas: Map<string, OperatorPortSchemaMap>;
+  outputSchemas: Map<string, OperatorPortSchemaMap>;
+  compilationResponse: WorkflowCompilationResponse | null;
+}> {
+  const inputSchemas = new Map<string, OperatorPortSchemaMap>();
+  const outputSchemas = new Map<string, OperatorPortSchemaMap>();
+
+  const logicalPlan = workflowState.toLogicalPlan();
+  if (logicalPlan.operators.length === 0) {
+    return { inputSchemas, outputSchemas, compilationResponse: null };
+  }
+
+  const response = await compileWorkflowAsync(logicalPlan);
+  if (!response || !response.operatorOutputSchemas) {
+    return { inputSchemas, outputSchemas, compilationResponse: response };
+  }
+
+  // Store output schemas
+  for (const [operatorId, portSchemaMap] of Object.entries(response.operatorOutputSchemas)) {
+    outputSchemas.set(operatorId, portSchemaMap);
+  }
+
+  // Derive input schemas from output schemas based on links
+  const links = workflowState.getAllLinks();
+  for (const operator of workflowState.getAllOperators()) {
+    const inputSchema = extractOperatorInputPortSchemaMap(
+      operator.operatorID,
+      operator,
+      response.operatorOutputSchemas,
+      links
+    );
+    if (inputSchema) {
+      inputSchemas.set(operator.operatorID, inputSchema);
+    }
+  }
+
+  return { inputSchemas, outputSchemas, compilationResponse: response };
 }
 
 // ============================================================================
@@ -59,6 +110,7 @@ export const TOOL_NAME_DELETE_FROM_WORKFLOW = "deleteFromWorkflow";
 
 /**
  * Create tool to get the current workflow structure.
+ * Compiles the workflow to get fresh schema information.
  */
 export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
   return tool({
@@ -76,6 +128,9 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
     }),
     execute: async (args: { operatorIds?: string[] }) => {
       try {
+        // Compile workflow to get fresh schemas
+        const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);
+
         const links = workflowState.getAllLinks();
         let operatorsToReturn: OperatorDetail[];
 
@@ -89,8 +144,8 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
                 operatorId: operator.operatorID,
                 operatorType: operator.operatorType,
                 operatorProperties: operator.operatorProperties,
-                inputSchema: workflowState.getOperatorInputSchema(operatorId) || {},
-                outputSchema: workflowState.getOperatorOutputSchema(operatorId) || {},
+                inputSchema: inputSchemas.get(operatorId) || {},
+                outputSchema: outputSchemas.get(operatorId) || {},
               };
               if (operator.customDisplayName) {
                 detail.customDisplayName = operator.customDisplayName;
@@ -104,8 +159,8 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
               operatorId: operator.operatorID,
               operatorType: operator.operatorType,
               operatorProperties: operator.operatorProperties,
-              inputSchema: workflowState.getOperatorInputSchema(operator.operatorID) || {},
-              outputSchema: workflowState.getOperatorOutputSchema(operator.operatorID) || {},
+              inputSchema: inputSchemas.get(operator.operatorID) || {},
+              outputSchema: outputSchemas.get(operator.operatorID) || {},
             };
             if (operator.customDisplayName) {
               detail.customDisplayName = operator.customDisplayName;
@@ -205,6 +260,11 @@ export function createAddOperatorTool(
 
         workflowState.addOperator(operator);
 
+        // Compile workflow to get the new operator's schemas
+        const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);
+        const inputSchema = inputSchemas.get(operator.operatorID) || {};
+        const outputSchema = outputSchemas.get(operator.operatorID) || {};
+
         // Capture after state and create agent action if manager is provided
         const afterContent = workflowState.getWorkflowContent();
         let agentActionId: string | undefined;
@@ -226,6 +286,8 @@ export function createAddOperatorTool(
           {
             operatorId: operator.operatorID,
             operatorType: args.operatorType,
+            inputSchema,
+            outputSchema,
             agentActionId,
             message: `Added operator ${operator.operatorID} of type ${args.operatorType}`,
           },
@@ -294,6 +356,11 @@ export function createAddLinkTool(workflowState: WorkflowState, context?: ToolCo
 
         workflowState.addLink(link);
 
+        // Compile workflow to get updated schemas (links affect input schemas)
+        const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);
+        const targetInputSchema = inputSchemas.get(args.targetOperatorId) || {};
+        const targetOutputSchema = outputSchemas.get(args.targetOperatorId) || {};
+
         // Capture after state and create agent action if manager is provided
         const afterContent = workflowState.getWorkflowContent();
         let agentActionId: string | undefined;
@@ -317,6 +384,10 @@ export function createAddLinkTool(workflowState: WorkflowState, context?: ToolCo
             agentActionId,
             source: link.source,
             target: link.target,
+            targetOperatorSchema: {
+              inputSchema: targetInputSchema,
+              outputSchema: targetOutputSchema,
+            },
             message: `Added link from ${args.sourceOperatorId} to ${args.targetOperatorId}`,
           },
           [args.sourceOperatorId, args.targetOperatorId],
@@ -373,6 +444,11 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
 
         workflowState.updateOperatorProperties(args.operatorId, args.properties);
 
+        // Compile workflow to get the updated operator's schemas
+        const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);
+        const inputSchema = inputSchemas.get(args.operatorId) || {};
+        const outputSchema = outputSchemas.get(args.operatorId) || {};
+
         // Capture after state and create agent action if manager is provided
         const afterContent = workflowState.getWorkflowContent();
         let agentActionId: string | undefined;
@@ -393,6 +469,8 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
         return createSuccessResult(
           {
             operatorId: args.operatorId,
+            inputSchema,
+            outputSchema,
             agentActionId,
             updatedProperties: args.properties,
             message: `Modified operator ${args.operatorId}`,

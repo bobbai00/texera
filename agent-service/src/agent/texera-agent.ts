@@ -22,6 +22,8 @@
  */
 
 import { generateText, type ModelMessage, type LanguageModel, stepCountIs } from "ai";
+import { Subscription } from "rxjs";
+import { debounceTime } from "rxjs/operators";
 import { WorkflowState } from "../workflow/workflow-state";
 import { OperatorMetadataStore } from "../tools/metadata-tools";
 import { AgentActionManager } from "./agent-action-manager";
@@ -62,6 +64,13 @@ import {
   TOOL_NAME_GET_EXECUTION_STATE,
   TOOL_NAME_GET_EXECUTION_RESULT,
 } from "../tools/execution-tools";
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** Debounce interval for auto-persistence (ms) */
+const PERSIST_DEBOUNCE_MS = 500;
 
 // ============================================================================
 // Agent Configuration
@@ -153,6 +162,9 @@ export class TexeraAgent {
 
   // Stop flag
   private shouldStop = false;
+
+  // RxJS subscriptions for workflow change handling (persistence + compilation)
+  private workflowChangeSubscription: Subscription | null = null;
 
   constructor(config: TexeraAgentConfig) {
     this.agentId = config.agentId;
@@ -351,47 +363,15 @@ export class TexeraAgent {
       );
       this.workflowState.setWorkflowContent(workflow.content);
       console.log(`[TexeraAgent ${this.agentId}] Refreshed workflow ${this.delegateConfig.workflowId} from backend`);
-
-      // Trigger compilation to refresh schemas
-      await this.compileWorkflow();
     } catch (error) {
       console.warn(`[TexeraAgent ${this.agentId}] Failed to refresh workflow from backend:`, error);
     }
   }
 
   /**
-   * Compile the current workflow to get schemas.
-   */
-  private async compileWorkflow(): Promise<void> {
-    try {
-      const { compileWorkflowAsync } = await import("../api/compile-api");
-      const { CompilationState } = await import("../workflow/workflow-state");
-      const logicalPlan = this.workflowState.toLogicalPlan();
-
-      if (logicalPlan.operators.length === 0) {
-        this.workflowState.setCompilationState({ state: CompilationState.Uninitialized });
-        return;
-      }
-
-      const response = await compileWorkflowAsync(logicalPlan);
-      if (!response) {
-        this.workflowState.setCompilationState({ state: CompilationState.Uninitialized });
-        return;
-      }
-
-      this.workflowState.setCompilationState(
-        response.physicalPlan
-          ? { state: CompilationState.Succeeded, operatorOutputSchemas: response.operatorOutputSchemas }
-          : { state: CompilationState.Failed, operatorOutputSchemas: response.operatorOutputSchemas, operatorErrors: response.operatorErrors }
-      );
-    } catch (error) {
-      console.warn(`[TexeraAgent ${this.agentId}] Compilation failed:`, error);
-    }
-  }
-
-  /**
    * Set the delegate configuration for backend operations.
-   * This also rebuilds tools to include the workflow metadata in tool context.
+   * This also rebuilds tools to include the workflow metadata in tool context,
+   * and sets up workflow change handlers for persistence.
    */
   setDelegateConfig(config: { userToken: string; workflowId: number; workflowName?: string }): void {
     this.delegateConfig = config;
@@ -404,6 +384,9 @@ export class TexeraAgent {
 
     // Rebuild tools with updated workflow metadata in context and execution tools
     this.tools = this.createTools();
+
+    // Setup workflow change handlers (persistence + compilation)
+    this.setupWorkflowChangeHandlers();
   }
 
   /**
@@ -414,16 +397,61 @@ export class TexeraAgent {
   }
 
   /**
+   * Setup RxJS-based workflow change handling.
+   * Sets up auto-persistence with debounce.
+   */
+  private setupWorkflowChangeHandlers(): void {
+    // Cleanup previous subscription if any
+    if (this.workflowChangeSubscription) {
+      this.workflowChangeSubscription.unsubscribe();
+    }
+
+    const subscription = new Subscription();
+    const workflowChanged$ = this.workflowState.getWorkflowChangedStream();
+
+    // Auto-persistence with debounce (only if in delegate mode)
+    if (this.delegateConfig?.workflowId && this.delegateConfig.userToken) {
+      const persistSubscription = workflowChanged$
+        .pipe(debounceTime(PERSIST_DEBOUNCE_MS))
+        .subscribe(async () => {
+          if (!this.delegateConfig?.workflowId || !this.delegateConfig.userToken) {
+            return;
+          }
+
+          try {
+            const { persistWorkflow } = await import("../api/workflow-api");
+            const workflowContent = this.workflowState.getWorkflowContent();
+            await persistWorkflow(
+              this.delegateConfig.userToken,
+              this.delegateConfig.workflowId,
+              this.delegateConfig.workflowName || "Agent Workflow",
+              workflowContent
+            );
+            console.log(`[TexeraAgent ${this.agentId}] Auto-persisted workflow ${this.delegateConfig.workflowId}`);
+          } catch (error) {
+            console.error(`[TexeraAgent ${this.agentId}] Failed to auto-persist workflow:`, error);
+          }
+        });
+
+      subscription.add(persistSubscription);
+    }
+
+    // Track the subscription
+    this.workflowChangeSubscription = subscription;
+    this.workflowState.addSubscription(subscription);
+  }
+
+  /**
    * Process a user message and return the agent's response.
    * ReActSteps are accumulated internally and streamed via the callback if set.
-   * Before processing, loads the latest workflow from backend and compiles it.
+   * Before processing, loads the latest workflow from backend.
    */
   async sendMessage(userMessage: string): Promise<AgentMessageResult> {
     const messageId = `msg-${this.agentId}-${++this.messageCounter}-${Date.now()}`;
     const startTime = Date.now();
     let stepIndex = 0;
 
-    // Load latest workflow from backend and compile to refresh schemas
+    // Load latest workflow from backend
     await this.refreshWorkflowFromBackend();
 
     // Initialize stats
@@ -650,6 +678,12 @@ export class TexeraAgent {
    * This properly cleans up RxJS subscriptions via workflowState.destroy().
    */
   destroy(): void {
+    // Cleanup workflow change subscription
+    if (this.workflowChangeSubscription) {
+      this.workflowChangeSubscription.unsubscribe();
+      this.workflowChangeSubscription = null;
+    }
+
     // Cleanup workflow state (unsubscribes all RxJS subscriptions, completes subjects)
     this.workflowState.destroy();
 
@@ -660,5 +694,4 @@ export class TexeraAgent {
     this.messages = [];
     this.reActSteps = [];
   }
-
 }

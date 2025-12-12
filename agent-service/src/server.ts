@@ -35,15 +35,10 @@ import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { createOpenAI } from "@ai-sdk/openai";
 import { Subscription } from "rxjs";
-import { debounceTime, switchMap } from "rxjs/operators";
-import { from } from "rxjs";
-import type { WorkflowCompilationResponse } from "./api/compile-api";
 import { TexeraAgent } from "./agent/texera-agent";
 import { getBackendConfig } from "./api/backend-api";
 import { extractUserFromToken, validateToken } from "./api/auth-api";
-import { persistWorkflow, retrieveWorkflow } from "./api/workflow-api";
-import { compileWorkflow } from "./api/compile-api";
-import { CompilationState, type CompilationStateInfo } from "./workflow/workflow-state";
+import { retrieveWorkflow } from "./api/workflow-api";
 import { OperatorMetadataStore } from "./tools/metadata-tools";
 import type {
   AgentInfo,
@@ -62,10 +57,6 @@ const API_PREFIX = process.env.API_PREFIX || "/api";
 const LLM_API_KEY = process.env.LLM_API_KEY || "dummy";
 const MODEL = process.env.MODEL || "gpt-4-turbo";
 
-// Debounce intervals (ms)
-const PERSIST_DEBOUNCE_MS = 500;
-const COMPILATION_DEBOUNCE_MS = 500;
-
 // ============================================================================
 // Agent Management
 // ============================================================================
@@ -76,8 +67,6 @@ interface StoredAgent {
   modelType: string;
   createdAt: Date;
   delegate?: AgentDelegateConfig;
-  /** RxJS subscription for workflow change handling */
-  workflowSubscription?: Subscription;
   /** RxJS subscription for agent action streaming */
   agentActionSubscription?: Subscription;
   /** Active WebSocket connections for this agent */
@@ -89,96 +78,9 @@ const agentStore = new Map<string, StoredAgent>();
 let agentCounter = 0;
 
 /**
- * Setup RxJS-based workflow change handling for an agent.
- * Uses debounced streams for auto-persistence and compilation.
- * This follows the same pattern as the frontend's WorkflowCompilingService.
- */
-function setupWorkflowChangeHandlers(
-  agentId: string,
-  stored: StoredAgent
-): Subscription {
-  const workflowState = stored.agent.getWorkflowState();
-  const subscription = new Subscription();
-
-  // Get the combined workflow change stream
-  const workflowChanged$ = workflowState.getWorkflowChangedStream();
-
-  // 1. Auto-persistence with debounce (only if in delegate mode)
-  if (stored.delegate?.workflowId && stored.delegate.userToken) {
-    const persistSubscription = workflowChanged$
-      .pipe(debounceTime(PERSIST_DEBOUNCE_MS))
-      .subscribe(async () => {
-        if (!stored.delegate?.workflowId || !stored.delegate.userToken) {
-          return;
-        }
-
-        try {
-          const workflowContent = workflowState.getWorkflowContent();
-          await persistWorkflow(
-            stored.delegate.userToken,
-            stored.delegate.workflowId,
-            stored.delegate.workflowName || "Agent Workflow",
-            workflowContent
-          );
-          console.log(`[Server] Auto-persisted workflow ${stored.delegate.workflowId} for agent ${agentId}`);
-        } catch (error) {
-          console.error(`[Server] Failed to auto-persist workflow for agent ${agentId}:`, error);
-        }
-      });
-
-    subscription.add(persistSubscription);
-  }
-
-  // 2. Compilation trigger with debounce (following frontend pattern)
-  const compilationSubscription = workflowChanged$
-    .pipe(
-      debounceTime(COMPILATION_DEBOUNCE_MS),
-      switchMap(() => {
-        const logicalPlan = workflowState.toLogicalPlan();
-        // Only compile if there are operators
-        if (logicalPlan.operators.length === 0) {
-          return from([null]);
-        }
-        return compileWorkflow(logicalPlan);
-      })
-    )
-    .subscribe((response: WorkflowCompilationResponse | null) => {
-      if (!response) {
-        // No operators or error - set to uninitialized
-        workflowState.setCompilationState({
-          state: CompilationState.Uninitialized,
-        });
-        return;
-      }
-
-      // Update compilation state based on response
-      const compilationState: CompilationStateInfo = response.physicalPlan
-        ? {
-            state: CompilationState.Succeeded,
-            operatorOutputSchemas: response.operatorOutputSchemas,
-          }
-        : {
-            state: CompilationState.Failed,
-            operatorOutputSchemas: response.operatorOutputSchemas,
-            operatorErrors: response.operatorErrors,
-          };
-
-      workflowState.setCompilationState(compilationState);
-      console.log(`[Server] Workflow compiled for agent ${agentId}: ${compilationState.state}`);
-    });
-
-  subscription.add(compilationSubscription);
-
-  // Track the subscription in the workflow state for cleanup
-  workflowState.addSubscription(subscription);
-
-  return subscription;
-}
-
-/**
  * Create a new agent with optional delegate configuration.
  * When delegate config is provided, workflow changes are automatically persisted.
- * Uses RxJS for reactive change handling.
+ * The agent handles workflow change subscriptions internally.
  */
 async function createAgentInstance(
   modelType: string,
@@ -211,7 +113,7 @@ async function createAgentInstance(
     websockets: new Set(),
   };
 
-  // If in delegate mode with workflowId, load workflow
+  // If in delegate mode with workflowId, load workflow and setup delegate config
   if (delegateConfig?.workflowId && delegateConfig.userToken) {
     try {
       const workflow = await retrieveWorkflow(delegateConfig.userToken, delegateConfig.workflowId);
@@ -220,14 +122,19 @@ async function createAgentInstance(
       // Load workflow content into agent's workflow state
       const workflowState = agent.getWorkflowState();
       workflowState.setWorkflowContent(workflow.content);
+
+      // Set delegate config on agent (this sets up workflow change handlers internally)
+      agent.setDelegateConfig({
+        userToken: delegateConfig.userToken,
+        workflowId: delegateConfig.workflowId,
+        workflowName: delegateConfig.workflowName,
+      });
+
       console.log(`[Server] Loaded workflow ${delegateConfig.workflowId} for agent ${agentId}`);
     } catch (error) {
       console.warn(`[Server] Failed to load workflow ${delegateConfig.workflowId}:`, error);
     }
   }
-
-  // Setup RxJS-based workflow change handlers (persistence + compilation)
-  stored.workflowSubscription = setupWorkflowChangeHandlers(agentId, stored);
 
   // Setup agent action streaming subscription
   stored.agentActionSubscription = setupAgentActionStreaming(agentId, stored);
@@ -341,7 +248,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     return {
       ...getAgentInfo(id, stored),
       workflow: stored.agent.getWorkflowState().getWorkflowContent(),
-      compilationState: stored.agent.getWorkflowState().getCompilationState(),
       messageCount: stored.agent.getMessages().length,
     };
   })
@@ -353,20 +259,12 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       throw new Error("Agent not found");
     }
 
-    // Cleanup RxJS subscriptions via workflow state destroy
-    stored.agent.getWorkflowState().destroy();
-
-    // Unsubscribe workflow subscription if it exists
-    if (stored.workflowSubscription) {
-      stored.workflowSubscription.unsubscribe();
-    }
-
     // Unsubscribe agent action subscription if it exists
     if (stored.agentActionSubscription) {
       stored.agentActionSubscription.unsubscribe();
     }
 
-    // Destroy agent (cleans up agent action manager)
+    // Destroy agent (cleans up workflow state, subscriptions, and agent action manager)
     stored.agent.destroy();
 
     agentStore.delete(id);
@@ -424,12 +322,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     return { workflow: stored.agent.getWorkflowState().getWorkflowContent() };
   })
 
-  // Get compilation state
-  .get("/:id/compilation", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
-    return { compilationState: stored.agent.getWorkflowState().getCompilationState() };
-  })
-
   // Get agent internal state (workflow state as JSON for debugging)
   .get("/:id/state", ({ params: { id } }) => {
     const stored = getStoredAgent(id);
@@ -439,7 +331,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       agentName: stored.agent.agentName,
       agentState: stored.agent.getState(),
       workflow: workflowState.getWorkflowContent(),
-      compilationState: workflowState.getCompilationState(),
       messageCount: stored.agent.getMessages().length,
       reActStepsCount: stored.agent.getReActSteps().length,
       createdAt: stored.createdAt,
@@ -710,9 +601,9 @@ function printStartupMessage() {
   console.log(`  MODELS_ENDPOINT: ${getBackendConfig().modelsEndpoint}`);
   console.log(`  COMPILE_ENDPOINT: ${getBackendConfig().compileEndpoint}`);
   console.log("");
-  console.log("RxJS Features:");
-  console.log(`  - Workflow changes trigger debounced compilation (${COMPILATION_DEBOUNCE_MS}ms)`);
-  console.log(`  - Auto-persistence with debounce (${PERSIST_DEBOUNCE_MS}ms)`);
+  console.log("Features:");
+  console.log("  - Auto-persistence with debounce (500ms)");
+  console.log("  - Tools compile workflow on-demand for fresh schemas");
   console.log(LINE);
 }
 

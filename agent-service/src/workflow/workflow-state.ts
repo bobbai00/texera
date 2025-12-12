@@ -30,33 +30,10 @@ import type {
   LogicalPlan,
   LogicalOperator,
   LogicalLink,
-  OperatorPortSchemaMap,
   Point,
   CommentBox,
   WorkflowSettings,
 } from "../types/workflow";
-
-// ============================================================================
-// Local State Types (for internal workflow tracking)
-// ============================================================================
-
-/**
- * Workflow compilation states
- */
-export enum CompilationState {
-  Uninitialized = "Uninitialized",
-  Succeeded = "Succeeded",
-  Failed = "Failed",
-}
-
-/**
- * Compilation state info
- */
-export interface CompilationStateInfo {
-  state: CompilationState;
-  operatorOutputSchemas?: Record<string, OperatorPortSchemaMap>;
-  operatorErrors?: Record<string, { type: string; message: string }>;
-}
 
 // ============================================================================
 // Validation Types (matching frontend ValidationWorkflowService)
@@ -95,9 +72,10 @@ export function generateLinkId(): string {
 /**
  * WorkflowState maintains the complete state of a workflow including:
  * - Operators and links (the graph structure)
- * - Compilation state and schemas
+ * - Validation state
  *
  * Uses RxJS Subjects for reactive event streams, following the frontend pattern.
+ * Note: Compilation is done on-demand in tools, not cached here.
  */
 // Default workflow settings
 const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
@@ -143,22 +121,6 @@ export class WorkflowState {
     newViewResultOps: string[];
     newUnviewResultOps: string[];
   }>();
-
-  // ============================================================================
-  // Compilation state subjects
-  // ============================================================================
-
-  /** Current compilation state */
-  private currentCompilationStateInfo: CompilationStateInfo = {
-    state: CompilationState.Uninitialized,
-  };
-
-  /** Emits when compilation state changes */
-  private readonly compilationStateChangedSubject = new Subject<CompilationStateInfo>();
-
-  // Compilation schemas
-  private operatorInputSchemas: Map<string, OperatorPortSchemaMap> = new Map();
-  private operatorOutputSchemas: Map<string, OperatorPortSchemaMap> = new Map();
 
   // ============================================================================
   // Validation state (similar to frontend ValidationWorkflowService)
@@ -284,27 +246,6 @@ export class WorkflowState {
     return this.getAllLinks().filter(
       (link) => link.source.operatorID === operatorId || link.target.operatorID === operatorId
     );
-  }
-
-  // ============================================================================
-  // Compilation State
-  // ============================================================================
-
-  getCompilationState(): CompilationStateInfo {
-    return this.currentCompilationStateInfo;
-  }
-
-  setCompilationState(state: CompilationStateInfo): void {
-    this.currentCompilationStateInfo = state;
-    this.compilationStateChangedSubject.next(state);
-  }
-
-  getOperatorInputSchema(operatorId: string): OperatorPortSchemaMap | undefined {
-    return this.operatorInputSchemas.get(operatorId);
-  }
-
-  getOperatorOutputSchema(operatorId: string): OperatorPortSchemaMap | undefined {
-    return this.operatorOutputSchemas.get(operatorId);
   }
 
   // ============================================================================
@@ -491,9 +432,6 @@ export class WorkflowState {
     this.commentBoxes = [];
     this.settings = { ...DEFAULT_WORKFLOW_SETTINGS };
     this.operatorsToViewResult.clear();
-    this.currentCompilationStateInfo = { state: CompilationState.Uninitialized };
-    this.operatorInputSchemas.clear();
-    this.operatorOutputSchemas.clear();
     this.validationErrors = {};
     this.workflowEmpty = true;
   }
@@ -517,7 +455,6 @@ export class WorkflowState {
     this.linkDeleteSubject.complete();
     this.disabledOperatorChangedSubject.complete();
     this.viewResultOperatorChangedSubject.complete();
-    this.compilationStateChangedSubject.complete();
     this.validationChangedSubject.complete();
 
     // Clear all state

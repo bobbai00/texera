@@ -225,7 +225,7 @@ trait StateTransferFunc
     new Type(value = classOf[HierarchyChartOpDesc], name = "HierarchyChart"),
     new Type(value = classOf[DumbbellPlotOpDesc], name = "DumbbellPlot"),
     new Type(value = classOf[DummyOpDesc], name = "Dummy"),
-    new Type(value = classOf[DataProfileOpDesc], name = "DataProfile"),
+//    new Type(value = classOf[DataProfileOpDesc], name = "DataProfile"),
     new Type(value = classOf[BoxViolinPlotOpDesc], name = "BoxViolinPlot"),
     new Type(value = classOf[NetworkGraphOpDesc], name = "NetworkGraph"),
     new Type(value = classOf[HistogramChartOpDesc], name = "Histogram"),
