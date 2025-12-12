@@ -315,13 +315,19 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
       .subscribe(systemInfo => {
         this.systemPrompt = systemInfo.systemPrompt;
         this.availableTools = systemInfo.tools;
-        // Settings are managed server-side, use default values
-        this.settingsMaxTokenLimit = 1000;
-        this.settingsToolTimeoutSeconds = 120;
-        this.settingsExecutionTimeoutMinutes = 10;
         this.isEditingSystemPrompt = false;
         this.editingSystemPrompt = "";
         this.expandedToolName = null;
+      });
+
+    // Fetch settings from server
+    this.copilotManagerService
+      .getAgentSettings(this.agentInfo.id)
+      .pipe(untilDestroyed(this))
+      .subscribe(settings => {
+        this.settingsMaxTokenLimit = settings.maxOperatorResultTokenLimit ?? 1000;
+        this.settingsToolTimeoutSeconds = settings.toolTimeoutSeconds ?? 120;
+        this.settingsExecutionTimeoutMinutes = settings.executionTimeoutMinutes ?? 10;
       });
 
     // Also load agent internal state
@@ -953,29 +959,47 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
 
   /**
    * Save the max token limit.
-   * Note: Settings are managed server-side in API mode.
    */
   public saveMaxTokenLimit(): void {
-    // In API mode, settings are managed server-side
-    this.notificationService.info("Settings are managed server-side");
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        maxOperatorResultTokenLimit: this.settingsMaxTokenLimit,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () => this.notificationService.success("Max token limit saved"),
+        error: () => {}, // Error already handled by service
+      });
   }
 
   /**
    * Save the tool execution timeout.
-   * Note: Settings are managed server-side in API mode.
    */
   public saveToolTimeout(): void {
-    // In API mode, settings are managed server-side
-    this.notificationService.info("Settings are managed server-side");
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        toolTimeoutSeconds: this.settingsToolTimeoutSeconds,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () => this.notificationService.success("Tool timeout saved"),
+        error: () => {}, // Error already handled by service
+      });
   }
 
   /**
    * Save the workflow execution timeout.
-   * Note: Settings are managed server-side in API mode.
    */
   public saveExecutionTimeout(): void {
-    // In API mode, settings are managed server-side
-    this.notificationService.info("Settings are managed server-side");
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        executionTimeoutMinutes: this.settingsExecutionTimeoutMinutes,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () => this.notificationService.success("Execution timeout saved"),
+        error: () => {}, // Error already handled by service
+      });
   }
 
   /**

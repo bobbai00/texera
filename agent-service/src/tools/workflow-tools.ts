@@ -42,6 +42,15 @@ export interface ToolContext {
   agentId?: string;
   agentName?: string;
   workflowMetadata?: { wid?: number; name?: string };
+  /** Agent settings for tool execution */
+  settings?: {
+    /** Maximum token limit for operator results */
+    maxOperatorResultTokenLimit?: number;
+    /** Tool execution timeout in milliseconds */
+    toolTimeoutMs?: number;
+    /** Workflow execution timeout in milliseconds */
+    executionTimeoutMs?: number;
+  };
 }
 
 // ============================================================================

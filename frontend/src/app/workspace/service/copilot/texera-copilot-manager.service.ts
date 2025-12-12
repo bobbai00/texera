@@ -43,6 +43,20 @@ import { AgentAction } from "../agent-action/agent-action.service";
 import { ComputingUnitStatusService } from "../computing-unit-status/computing-unit-status.service";
 
 /**
+ * Agent settings for API (serializable format).
+ */
+export interface AgentSettingsApi {
+  /** Maximum token limit for operator results */
+  maxOperatorResultTokenLimit?: number;
+  /** Tool execution timeout in seconds */
+  toolTimeoutSeconds?: number;
+  /** Workflow execution timeout in minutes */
+  executionTimeoutMinutes?: number;
+  /** List of disabled tool names */
+  disabledTools?: string[];
+}
+
+/**
  * Agent information for tracking created agents (API version).
  */
 export interface AgentInfo {
@@ -58,6 +72,8 @@ export interface AgentInfo {
     workflowId?: number;
     workflowName?: string;
   };
+  /** Current agent settings */
+  settings?: AgentSettingsApi;
 }
 
 /**
@@ -85,6 +101,7 @@ interface ApiAgentInfo {
     workflowId?: number;
     workflowName?: string;
   };
+  settings?: AgentSettingsApi;
 }
 
 interface ApiAgentListResponse {
@@ -570,6 +587,7 @@ export class TexeraCopilotManagerService {
                   workflowName: response.delegate.workflowName,
                 }
               : undefined,
+            settings: response.settings,
           };
 
           this.agents.set(response.id, agentInfo);
@@ -973,5 +991,44 @@ export class TexeraCopilotManagerService {
       return tracking.workflowSubject.asObservable();
     }
     return of(null);
+  }
+
+  /**
+   * Get agent settings.
+   */
+  public getAgentSettings(agentId: string): Observable<AgentSettingsApi> {
+    return this.http.get<AgentSettingsApi>(`${this.AGENT_API_BASE}/agents/${agentId}/settings`).pipe(
+      catchError(() =>
+        of({
+          maxOperatorResultTokenLimit: 1000,
+          toolTimeoutSeconds: 120,
+          executionTimeoutMinutes: 10,
+          disabledTools: [],
+        })
+      )
+    );
+  }
+
+  /**
+   * Update agent settings.
+   * Only provided values will be updated.
+   */
+  public updateAgentSettings(agentId: string, settings: Partial<AgentSettingsApi>): Observable<AgentSettingsApi> {
+    return this.http.patch<AgentSettingsApi>(`${this.AGENT_API_BASE}/agents/${agentId}/settings`, settings).pipe(
+      map(response => {
+        // Update local cache if we have this agent
+        const agent = this.agents.get(agentId);
+        if (agent) {
+          agent.settings = response;
+        }
+        return response;
+      }),
+      catchError((error: unknown) => {
+        const err = error as { error?: { error?: string }; message?: string };
+        const errorMsg = err.error?.error || err.message || "Failed to update agent settings";
+        this.notificationService.error(errorMsg);
+        return throwError(() => new Error(errorMsg));
+      })
+    );
   }
 }

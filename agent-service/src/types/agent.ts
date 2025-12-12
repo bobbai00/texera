@@ -214,6 +214,20 @@ export interface AgentDelegateConfig {
 }
 
 /**
+ * Agent settings for API (serializable version without Set)
+ */
+export interface AgentSettingsApi {
+  /** Maximum token limit for operator results */
+  maxOperatorResultTokenLimit?: number;
+  /** Tool execution timeout in seconds */
+  toolTimeoutSeconds?: number;
+  /** Workflow execution timeout in minutes */
+  executionTimeoutMinutes?: number;
+  /** List of disabled tool names */
+  disabledTools?: string[];
+}
+
+/**
  * Extended agent info including delegate configuration
  */
 export interface AgentInfo {
@@ -224,6 +238,8 @@ export interface AgentInfo {
   createdAt: Date;
   /** Delegate configuration (if acting on behalf of a user) */
   delegate?: AgentDelegateConfig;
+  /** Current agent settings (serializable format) */
+  settings?: AgentSettingsApi;
 }
 
 /**
@@ -238,5 +254,21 @@ export interface CreateAgentRequest {
   workflowId?: number;
   /** Computing unit ID for workflow execution */
   computingUnitId?: number;
+  /** Optional initial settings */
+  settings?: AgentSettingsApi;
+}
+
+/**
+ * Request to update agent settings
+ */
+export interface UpdateAgentSettingsRequest {
+  /** Maximum token limit for operator results */
+  maxOperatorResultTokenLimit?: number;
+  /** Tool execution timeout in seconds */
+  toolTimeoutSeconds?: number;
+  /** Workflow execution timeout in minutes */
+  executionTimeoutMinutes?: number;
+  /** List of disabled tool names */
+  disabledTools?: string[];
 }
 

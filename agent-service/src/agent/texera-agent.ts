@@ -235,6 +235,11 @@ export class TexeraAgent {
       workflowMetadata: this.delegateConfig
         ? { wid: this.delegateConfig.workflowId, name: this.delegateConfig.workflowName }
         : undefined,
+      settings: {
+        maxOperatorResultTokenLimit: this.settings.maxOperatorResultTokenLimit,
+        toolTimeoutMs: this.settings.toolTimeoutMs,
+        executionTimeoutMs: this.settings.executionTimeoutMs,
+      },
     };
 
     // Workflow and metadata tools
@@ -340,6 +345,41 @@ export class TexeraAgent {
       systemPrompt: this.systemPrompt,
       tools: toolsInfo,
     };
+  }
+
+  /**
+   * Get the current agent settings.
+   */
+  getSettings(): AgentSettings {
+    return { ...this.settings };
+  }
+
+  /**
+   * Update agent settings.
+   * Only provided values will be updated.
+   */
+  updateSettings(updates: {
+    maxOperatorResultTokenLimit?: number;
+    toolTimeoutMs?: number;
+    executionTimeoutMs?: number;
+    disabledTools?: Set<string>;
+  }): void {
+    if (updates.maxOperatorResultTokenLimit !== undefined) {
+      this.settings.maxOperatorResultTokenLimit = updates.maxOperatorResultTokenLimit;
+    }
+    if (updates.toolTimeoutMs !== undefined) {
+      this.settings.toolTimeoutMs = updates.toolTimeoutMs;
+    }
+    if (updates.executionTimeoutMs !== undefined) {
+      this.settings.executionTimeoutMs = updates.executionTimeoutMs;
+    }
+    if (updates.disabledTools !== undefined) {
+      this.settings.disabledTools = updates.disabledTools;
+    }
+
+    // Rebuild tools with updated settings
+    this.tools = this.createTools();
+    console.log(`[TexeraAgent ${this.agentId}] Settings updated`);
   }
 
   // ============================================================================

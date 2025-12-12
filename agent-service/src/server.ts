@@ -44,6 +44,8 @@ import type {
   AgentInfo,
   AgentDelegateConfig,
   CreateAgentRequest,
+  UpdateAgentSettingsRequest,
+  AgentSettingsApi,
   ReActStep,
   AgentAction,
 } from "./types/agent";
@@ -166,6 +168,15 @@ function setupAgentActionStreaming(
  * Get agent info for API response
  */
 function getAgentInfo(agentId: string, stored: StoredAgent): AgentInfo {
+  // Get settings from agent and convert to API format
+  const agentSettings = stored.agent.getSettings();
+  const settingsApi: AgentSettingsApi = {
+    maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
+    toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
+    executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
+    disabledTools: Array.from(agentSettings.disabledTools),
+  };
+
   return {
     id: agentId,
     name: stored.agent.agentName,
@@ -180,6 +191,7 @@ function getAgentInfo(agentId: string, stored: StoredAgent): AgentInfo {
           workflowName: stored.delegate.workflowName,
         }
       : undefined,
+    settings: settingsApi,
   };
 }
 
@@ -209,7 +221,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
   .post(
     "/",
     async ({ body }) => {
-      const { modelType, name, userToken, workflowId, computingUnitId } = body as CreateAgentRequest;
+      const { modelType, name, userToken, workflowId, computingUnitId, settings } = body as CreateAgentRequest;
 
       if (!modelType) {
         throw new Error("modelType is required");
@@ -232,6 +244,17 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       }
 
       const { agentId, stored } = await createAgentInstance(modelType, name, delegateConfig);
+
+      // Apply initial settings if provided
+      if (settings) {
+        stored.agent.updateSettings({
+          maxOperatorResultTokenLimit: settings.maxOperatorResultTokenLimit,
+          toolTimeoutMs: settings.toolTimeoutSeconds ? settings.toolTimeoutSeconds * 1000 : undefined,
+          executionTimeoutMs: settings.executionTimeoutMinutes ? settings.executionTimeoutMinutes * 60000 : undefined,
+          disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
+        });
+      }
+
       return getAgentInfo(agentId, stored);
     },
     {
@@ -241,6 +264,12 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         userToken: t.Optional(t.String()),
         workflowId: t.Optional(t.Number()),
         computingUnitId: t.Optional(t.Number()),
+        settings: t.Optional(t.Object({
+          maxOperatorResultTokenLimit: t.Optional(t.Number()),
+          toolTimeoutSeconds: t.Optional(t.Number()),
+          executionTimeoutMinutes: t.Optional(t.Number()),
+          disabledTools: t.Optional(t.Array(t.String())),
+        })),
       }),
     }
   )
@@ -376,7 +405,52 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     const stored = getStoredAgent(id);
     stored.agent.clearHistory();
     return { status: "cleared" };
-  });
+  })
+
+  // Get agent settings
+  .get("/:id/settings", ({ params: { id } }) => {
+    const stored = getStoredAgent(id);
+    const agentSettings = stored.agent.getSettings();
+    return {
+      maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
+      toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
+      executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
+      disabledTools: Array.from(agentSettings.disabledTools),
+    };
+  })
+
+  // Update agent settings
+  .patch(
+    "/:id/settings",
+    ({ params: { id }, body }) => {
+      const stored = getStoredAgent(id);
+      const settings = body as UpdateAgentSettingsRequest;
+
+      stored.agent.updateSettings({
+        maxOperatorResultTokenLimit: settings.maxOperatorResultTokenLimit,
+        toolTimeoutMs: settings.toolTimeoutSeconds !== undefined ? settings.toolTimeoutSeconds * 1000 : undefined,
+        executionTimeoutMs: settings.executionTimeoutMinutes !== undefined ? settings.executionTimeoutMinutes * 60000 : undefined,
+        disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
+      });
+
+      // Return updated settings
+      const agentSettings = stored.agent.getSettings();
+      return {
+        maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
+        toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
+        executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
+        disabledTools: Array.from(agentSettings.disabledTools),
+      };
+    },
+    {
+      body: t.Object({
+        maxOperatorResultTokenLimit: t.Optional(t.Number()),
+        toolTimeoutSeconds: t.Optional(t.Number()),
+        executionTimeoutMinutes: t.Optional(t.Number()),
+        disabledTools: t.Optional(t.Array(t.String())),
+      }),
+    }
+  );
 
 // ============================================================================
 // WebSocket Message Types
