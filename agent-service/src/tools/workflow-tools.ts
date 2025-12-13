@@ -61,9 +61,7 @@ export interface ToolContext {
  * Compile the workflow and return operator schemas.
  * Returns maps of operatorId -> inputSchema and operatorId -> outputSchema.
  */
-async function compileAndGetSchemas(
-  workflowState: WorkflowState
-): Promise<{
+async function compileAndGetSchemas(workflowState: WorkflowState): Promise<{
   inputSchemas: Map<string, OperatorPortSchemaMap>;
   outputSchemas: Map<string, OperatorPortSchemaMap>;
   compilationResponse: WorkflowCompilationResponse | null;
@@ -145,7 +143,7 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
 
         if (args.operatorIds && args.operatorIds.length > 0) {
           operatorsToReturn = args.operatorIds
-            .map((operatorId) => {
+            .map(operatorId => {
               const operator = workflowState.getOperator(operatorId);
               if (!operator) return null;
 
@@ -163,7 +161,7 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
             })
             .filter((op): op is OperatorDetail => op !== null);
         } else {
-          operatorsToReturn = workflowState.getAllEnabledOperators().map((operator) => {
+          operatorsToReturn = workflowState.getAllEnabledOperators().map(operator => {
             const detail: OperatorDetail = {
               operatorId: operator.operatorID,
               operatorType: operator.operatorType,
@@ -178,7 +176,7 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
           });
         }
 
-        const operatorIds = operatorsToReturn.map((op) => op.operatorId);
+        const operatorIds = operatorsToReturn.map(op => op.operatorId);
 
         return createSuccessResult(
           {
@@ -540,7 +538,11 @@ export function createDeleteFromWorkflowTool(workflowState: WorkflowState, conte
         const afterContent = workflowState.getWorkflowContent();
         let agentActionId: string | undefined;
 
-        if (context?.agentActionManager && context.agentId && (deletedOperatorIds.length > 0 || deletedLinkIds.length > 0)) {
+        if (
+          context?.agentActionManager &&
+          context.agentId &&
+          (deletedOperatorIds.length > 0 || deletedLinkIds.length > 0)
+        ) {
           const agentAction = context.agentActionManager.createAgentAction(
             context.agentId,
             context.agentName || `Agent-${context.agentId}`,

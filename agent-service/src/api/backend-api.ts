@@ -92,7 +92,8 @@ function loadConfigFile(): Partial<BackendConfig> {
           operatorMetadataEndpoint: config.services.main?.target,
           modelsEndpoint: config.services.models?.target,
           compileEndpoint: config.services.compile?.target,
-          executionEndpoint: config.services.execution?.target || config.services.websocket?.target?.replace("ws://", "http://"),
+          executionEndpoint:
+            config.services.execution?.target || config.services.websocket?.target?.replace("ws://", "http://"),
           wsEndpoint: config.services.websocket?.target,
           datasetEndpoint: config.services.dataset?.target,
           computingEndpoint: config.services.computing?.target,
@@ -246,7 +247,7 @@ export async function fetchModels(): Promise<ModelType[]> {
 
     const data: LiteLLMModelsResponse = await response.json();
 
-    return data.data.map((model) => ({
+    return data.data.map(model => ({
       id: model.id,
       name: formatModelName(model.id),
       description: `Model: ${model.id}`,
@@ -264,7 +265,7 @@ export async function fetchModels(): Promise<ModelType[]> {
 function formatModelName(modelId: string): string {
   return modelId
     .split("-")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 }
 

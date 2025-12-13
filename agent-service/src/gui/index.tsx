@@ -115,12 +115,12 @@ function WorkflowDisplay({ agent }: { agent: TexeraAgent | null }) {
         <Text color="gray">Empty workflow - ask the agent to add operators</Text>
       ) : (
         <>
-          {operators.slice(0, 5).map((op) => (
+          {operators.slice(0, 5).map(op => (
             <Text key={op.operatorID} color="white">
               {"  "}• {op.operatorType} <Text color="gray">({op.operatorID.substring(0, 8)})</Text>
             </Text>
           ))}
-          {operators.length > 5 && <Text color="gray">  ... and {operators.length - 5} more operators</Text>}
+          {operators.length > 5 && <Text color="gray"> ... and {operators.length - 5} more operators</Text>}
           {links.length > 0 && (
             <Box marginTop={1}>
               <Text color="cyan">Links:</Text>
@@ -131,7 +131,7 @@ function WorkflowDisplay({ agent }: { agent: TexeraAgent | null }) {
               {"  "}→ {link.source.operatorID.substring(0, 8)} → {link.target.operatorID.substring(0, 8)}
             </Text>
           ))}
-          {links.length > 3 && <Text color="gray">  ... and {links.length - 3} more links</Text>}
+          {links.length > 3 && <Text color="gray"> ... and {links.length - 3} more links</Text>}
         </>
       )}
     </Box>
@@ -149,20 +149,25 @@ function StepsDisplay({ steps }: { steps: ReActStep[] }) {
       {recentSteps.map((step, index) => (
         <Box key={index} flexDirection="column">
           {/* Show tool calls */}
-          {step.toolCalls && step.toolCalls.map((tc, tcIndex) => (
-            <Text key={`tc-${tcIndex}`} color="yellow">
-              {"  "}[Tool] {tc.toolName}
-            </Text>
-          ))}
+          {step.toolCalls &&
+            step.toolCalls.map((tc, tcIndex) => (
+              <Text key={`tc-${tcIndex}`} color="yellow">
+                {"  "}[Tool] {tc.toolName}
+              </Text>
+            ))}
           {/* Show tool results */}
-          {step.toolResults && step.toolResults.map((tr, trIndex) => (
-            <Text key={`tr-${trIndex}`} color={tr.isError ? "red" : "green"}>
-              {"  "}[Result] {tr.isError ? "Error" : "OK"}
-            </Text>
-          ))}
+          {step.toolResults &&
+            step.toolResults.map((tr, trIndex) => (
+              <Text key={`tr-${trIndex}`} color={tr.isError ? "red" : "green"}>
+                {"  "}[Result] {tr.isError ? "Error" : "OK"}
+              </Text>
+            ))}
           {/* Show text content */}
           {step.content && !step.toolCalls && (
-            <Text color="gray">{"  "}{step.content.substring(0, 60)}...</Text>
+            <Text color="gray">
+              {"  "}
+              {step.content.substring(0, 60)}...
+            </Text>
           )}
         </Box>
       ))}
@@ -194,11 +199,9 @@ function ChatPanel({ messages, isProcessing }: { messages: ChatMessage[]; isProc
       <Text bold>Chat</Text>
       <Box flexDirection="column" flexGrow={1}>
         {recentMessages.length === 0 ? (
-          <Text color="gray">
-            Type a message or use commands: /list, /models, /create, /select, /workflow, /help
-          </Text>
+          <Text color="gray">Type a message or use commands: /list, /models, /create, /select, /workflow, /help</Text>
         ) : (
-          recentMessages.map((msg) => <MessageDisplay key={msg.id} message={msg} />)
+          recentMessages.map(msg => <MessageDisplay key={msg.id} message={msg} />)
         )}
         {isProcessing && (
           <Box>
@@ -222,7 +225,7 @@ function AgentListPanel({ agents }: { agents: AgentInfo[] }) {
       {agents.length === 0 ? (
         <Text color="gray">No agents. Use /create to create one.</Text>
       ) : (
-        agents.map((agent) => (
+        agents.map(agent => (
           <Text key={agent.id}>
             {" "}
             {agent.id}: {agent.name} ({agent.modelType})
@@ -245,9 +248,17 @@ function SelectedAgentInfo({ agent }: { agent: AgentInfo | null }) {
   return (
     <Box borderStyle="single" borderColor="green" padding={1} marginBottom={1}>
       <Box flexDirection="column">
-        <Text bold color="green">Selected Agent</Text>
-        <Text>  ID: <Text color="cyan">{agent.id}</Text></Text>
-        <Text>  Model: <Text color="yellow">{agent.modelType}</Text></Text>
+        <Text bold color="green">
+          Selected Agent
+        </Text>
+        <Text>
+          {" "}
+          ID: <Text color="cyan">{agent.id}</Text>
+        </Text>
+        <Text>
+          {" "}
+          Model: <Text color="yellow">{agent.modelType}</Text>
+        </Text>
       </Box>
     </Box>
   );
@@ -273,7 +284,9 @@ function InputArea({
 
   return (
     <Box borderStyle="single" borderColor={borderColor} paddingX={1}>
-      <Text color={promptColor}>[{agentLabel}] {">"} </Text>
+      <Text color={promptColor}>
+        [{agentLabel}] {">"}{" "}
+      </Text>
       <TextInput
         value={value}
         onChange={onChange}
@@ -310,7 +323,7 @@ function App() {
   useEffect(() => {
     fetchModels()
       .then(setModels)
-      .catch((err) => console.warn("Failed to load models:", err));
+      .catch(err => console.warn("Failed to load models:", err));
   }, []);
 
   // Handle Ctrl+C
@@ -321,7 +334,7 @@ function App() {
   });
 
   const addSystemMessage = useCallback((content: string) => {
-    setMessages((prev) => [
+    setMessages(prev => [
       ...prev,
       {
         id: `sys-${Date.now()}`,
@@ -356,7 +369,7 @@ function App() {
           if (agents.length === 0) {
             addSystemMessage("No agents created. Use /create <model> to create one.");
           } else {
-            const list = agents.map((a) => `  ${a.id}: ${a.name} (${a.modelType})`).join("\n");
+            const list = agents.map(a => `  ${a.id}: ${a.name} (${a.modelType})`).join("\n");
             addSystemMessage(`Agents:\n${list}`);
           }
           break;
@@ -368,7 +381,7 @@ function App() {
                 "Make sure the models API is running at localhost:9096"
             );
           } else {
-            const list = models.map((m) => `  ${m.id}: ${m.name}`).join("\n");
+            const list = models.map(m => `  ${m.id}: ${m.name}`).join("\n");
             addSystemMessage(`Available models:\n${list}`);
           }
           break;
@@ -395,7 +408,9 @@ function App() {
             try {
               await agent.getMetadataStore().initializeFromBackend();
             } catch {
-              addSystemMessage("Warning: Could not load operators from backend. Agent will have limited functionality.");
+              addSystemMessage(
+                "Warning: Could not load operators from backend. Agent will have limited functionality."
+              );
             }
 
             const newAgent: AgentInfo = {
@@ -406,7 +421,7 @@ function App() {
               createdAt: new Date(),
             };
 
-            setAgents((prev) => [...prev, newAgent]);
+            setAgents(prev => [...prev, newAgent]);
             setSelectedAgent(newAgent);
             addSystemMessage(`Created and selected agent: ${agentId} (${modelType})`);
           } catch (err: any) {
@@ -421,7 +436,7 @@ function App() {
             addSystemMessage("Usage: /select <agent-id>");
             break;
           }
-          const targetAgent = agents.find((a) => a.id === args[0]);
+          const targetAgent = agents.find(a => a.id === args[0]);
           if (targetAgent) {
             setSelectedAgent(targetAgent);
             addSystemMessage(`Selected agent: ${targetAgent.id}`);
@@ -440,10 +455,10 @@ function App() {
             if (ops.length === 0) {
               addSystemMessage("Workflow is empty.");
             } else {
-              const opList = ops.map((o) => `  ${o.operatorID}: ${o.operatorType}`).join("\n");
+              const opList = ops.map(o => `  ${o.operatorID}: ${o.operatorType}`).join("\n");
               const linkList =
                 links.length > 0
-                  ? links.map((l) => `  ${l.source.operatorID} -> ${l.target.operatorID}`).join("\n")
+                  ? links.map(l => `  ${l.source.operatorID} -> ${l.target.operatorID}`).join("\n")
                   : "  (none)";
               addSystemMessage(`Operators (${ops.length}):\n${opList}\n\nLinks (${links.length}):\n${linkList}`);
             }
@@ -487,7 +502,7 @@ function App() {
         content: value,
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, userMsg]);
+      setMessages(prev => [...prev, userMsg]);
 
       // Process with agent
       setIsProcessing(true);
@@ -501,7 +516,7 @@ function App() {
           steps: result.steps,
           timestamp: new Date(),
         };
-        setMessages((prev) => [...prev, assistantMsg]);
+        setMessages(prev => [...prev, assistantMsg]);
 
         if (result.error) {
           addSystemMessage(`Error: ${result.error}`);

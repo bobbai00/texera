@@ -96,7 +96,7 @@ export function compileWorkflow(logicalPlan: LogicalPlan): Observable<WorkflowCo
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
-    }).then(async (response) => {
+    }).then(async response => {
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`Compilation failed: ${response.status} ${response.statusText} - ${errorText}`);

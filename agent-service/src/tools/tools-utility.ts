@@ -174,9 +174,7 @@ export function withTimeout<TArgs, TResult>(
     } catch (error: any) {
       if (error.message === "timeout") {
         const timeoutMinutes = Math.round(timeoutMs / 60000);
-        return createErrorResult(
-          `Tool execution timeout - operation took longer than ${timeoutMinutes} minute(s).`
-        );
+        return createErrorResult(`Tool execution timeout - operation took longer than ${timeoutMinutes} minute(s).`);
       }
       throw error;
     }

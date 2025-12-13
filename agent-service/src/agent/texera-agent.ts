@@ -27,13 +27,7 @@ import { debounceTime } from "rxjs/operators";
 import { WorkflowState } from "../workflow/workflow-state";
 import { OperatorMetadataStore } from "../tools/metadata-tools";
 import { AgentActionManager } from "./agent-action-manager";
-import type {
-  AgentSettings,
-  ReActStep,
-  AgentMessageStats,
-  TokenUsage,
-  AgentAction,
-} from "../types/agent";
+import type { AgentSettings, ReActStep, AgentMessageStats, TokenUsage, AgentAction } from "../types/agent";
 import { AgentState as AgentStateEnum, DEFAULT_AGENT_SETTINGS } from "../types/agent";
 import { COPILOT_SYSTEM_PROMPT } from "./prompts";
 import {
@@ -55,15 +49,7 @@ import {
   TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES,
   TOOL_NAME_GET_OPERATOR_SCHEMA,
 } from "../tools/metadata-tools";
-import {
-  ExecutionManager,
-  createExecuteWorkflowTool,
-  createGetExecutionStateTool,
-  createGetExecutionResultTool,
-  TOOL_NAME_EXECUTE_WORKFLOW,
-  TOOL_NAME_GET_EXECUTION_STATE,
-  TOOL_NAME_GET_EXECUTION_RESULT,
-} from "../tools/execution-tools";
+import { createExecuteWorkflowTool, TOOL_NAME_EXECUTE_WORKFLOW, type ExecutionConfig } from "../tools/execution-tools";
 
 // ============================================================================
 // Constants
@@ -136,7 +122,6 @@ export class TexeraAgent {
   // Configuration
   private model: LanguageModel;
   private systemPrompt: string;
-  private maxSteps: number;
   private settings: AgentSettings;
 
   // Conversation history
@@ -147,9 +132,6 @@ export class TexeraAgent {
 
   // Delegate configuration for backend operations
   private delegateConfig?: { userToken: string; workflowId: number; workflowName?: string; computingUnitId?: number };
-
-  // Execution manager for workflow execution (created when delegateConfig is provided)
-  private executionManager: ExecutionManager | null = null;
 
   // Callback for streaming ReActSteps
   private stepCallback: ReActStepCallback | null = null;
@@ -171,7 +153,6 @@ export class TexeraAgent {
     this.agentName = config.agentName || `Agent-${config.agentId}`;
     this.model = config.model;
     this.systemPrompt = config.systemPrompt || COPILOT_SYSTEM_PROMPT;
-    this.maxSteps = config.maxSteps || 10;
 
     // Initialize state
     this.workflowState = new WorkflowState();
@@ -180,10 +161,11 @@ export class TexeraAgent {
     // Initialize agent action manager
     this.agentActionManager = new AgentActionManager();
 
-    // Initialize settings
+    // Initialize settings (maxSteps from config or default)
     this.settings = {
       ...DEFAULT_AGENT_SETTINGS,
       systemPrompt: this.systemPrompt,
+      maxSteps: config.maxSteps || DEFAULT_AGENT_SETTINGS.maxSteps,
     };
 
     // Initialize tools - will have operator schemas if metadata store is already initialized
@@ -253,11 +235,14 @@ export class TexeraAgent {
       [TOOL_NAME_GET_OPERATOR_SCHEMA]: createGetOperatorSchemaTool(this.metadataStore),
     };
 
-    // Add execution tools if ExecutionManager is available (requires delegateConfig)
-    if (this.executionManager) {
-      tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, this.executionManager);
-      tools[TOOL_NAME_GET_EXECUTION_STATE] = createGetExecutionStateTool(this.executionManager);
-      tools[TOOL_NAME_GET_EXECUTION_RESULT] = createGetExecutionResultTool(this.executionManager, this.workflowState);
+    // Add execution tools if delegateConfig is available (requires user token and workflow ID)
+    if (this.delegateConfig) {
+      const executionConfig: ExecutionConfig = {
+        userToken: this.delegateConfig.userToken,
+        workflowId: this.delegateConfig.workflowId,
+        computingUnitId: this.delegateConfig.computingUnitId,
+      };
+      tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, executionConfig);
     }
 
     return tools;
@@ -363,6 +348,7 @@ export class TexeraAgent {
     toolTimeoutMs?: number;
     executionTimeoutMs?: number;
     disabledTools?: Set<string>;
+    maxSteps?: number;
   }): void {
     if (updates.maxOperatorResultTokenLimit !== undefined) {
       this.settings.maxOperatorResultTokenLimit = updates.maxOperatorResultTokenLimit;
@@ -375,6 +361,9 @@ export class TexeraAgent {
     }
     if (updates.disabledTools !== undefined) {
       this.settings.disabledTools = updates.disabledTools;
+    }
+    if (updates.maxSteps !== undefined) {
+      this.settings.maxSteps = updates.maxSteps;
     }
 
     // Rebuild tools with updated settings
@@ -397,10 +386,7 @@ export class TexeraAgent {
 
     try {
       const { retrieveWorkflow } = await import("../api/workflow-api");
-      const workflow = await retrieveWorkflow(
-        this.delegateConfig.userToken,
-        this.delegateConfig.workflowId
-      );
+      const workflow = await retrieveWorkflow(this.delegateConfig.userToken, this.delegateConfig.workflowId);
       this.workflowState.setWorkflowContent(workflow.content);
       console.log(`[TexeraAgent ${this.agentId}] Refreshed workflow ${this.delegateConfig.workflowId} from backend`);
     } catch (error) {
@@ -413,15 +399,13 @@ export class TexeraAgent {
    * This also rebuilds tools to include the workflow metadata in tool context,
    * and sets up workflow change handlers for persistence.
    */
-  setDelegateConfig(config: { userToken: string; workflowId: number; workflowName?: string; computingUnitId?: number }): void {
+  setDelegateConfig(config: {
+    userToken: string;
+    workflowId: number;
+    workflowName?: string;
+    computingUnitId?: number;
+  }): void {
     this.delegateConfig = config;
-
-    // Create ExecutionManager for workflow execution
-    this.executionManager = new ExecutionManager({
-      userToken: config.userToken,
-      workflowId: config.workflowId,
-      computingUnitId: config.computingUnitId,
-    });
 
     // Rebuild tools with updated workflow metadata in context and execution tools
     this.tools = this.createTools();
@@ -433,7 +417,9 @@ export class TexeraAgent {
   /**
    * Get the delegate configuration.
    */
-  getDelegateConfig(): { userToken: string; workflowId: number; workflowName?: string; computingUnitId?: number } | undefined {
+  getDelegateConfig():
+    | { userToken: string; workflowId: number; workflowName?: string; computingUnitId?: number }
+    | undefined {
     return this.delegateConfig;
   }
 
@@ -452,27 +438,25 @@ export class TexeraAgent {
 
     // Auto-persistence with debounce (only if in delegate mode)
     if (this.delegateConfig?.workflowId && this.delegateConfig.userToken) {
-      const persistSubscription = workflowChanged$
-        .pipe(debounceTime(PERSIST_DEBOUNCE_MS))
-        .subscribe(async () => {
-          if (!this.delegateConfig?.workflowId || !this.delegateConfig.userToken) {
-            return;
-          }
+      const persistSubscription = workflowChanged$.pipe(debounceTime(PERSIST_DEBOUNCE_MS)).subscribe(async () => {
+        if (!this.delegateConfig?.workflowId || !this.delegateConfig.userToken) {
+          return;
+        }
 
-          try {
-            const { persistWorkflow } = await import("../api/workflow-api");
-            const workflowContent = this.workflowState.getWorkflowContent();
-            await persistWorkflow(
-              this.delegateConfig.userToken,
-              this.delegateConfig.workflowId,
-              this.delegateConfig.workflowName || "Agent Workflow",
-              workflowContent
-            );
-            console.log(`[TexeraAgent ${this.agentId}] Auto-persisted workflow ${this.delegateConfig.workflowId}`);
-          } catch (error) {
-            console.error(`[TexeraAgent ${this.agentId}] Failed to auto-persist workflow:`, error);
-          }
-        });
+        try {
+          const { persistWorkflow } = await import("../api/workflow-api");
+          const workflowContent = this.workflowState.getWorkflowContent();
+          await persistWorkflow(
+            this.delegateConfig.userToken,
+            this.delegateConfig.workflowId,
+            this.delegateConfig.workflowName || "Agent Workflow",
+            workflowContent
+          );
+          console.log(`[TexeraAgent ${this.agentId}] Auto-persisted workflow ${this.delegateConfig.workflowId}`);
+        } catch (error) {
+          console.error(`[TexeraAgent ${this.agentId}] Failed to auto-persist workflow:`, error);
+        }
+      });
 
       subscription.add(persistSubscription);
     }
@@ -540,7 +524,7 @@ export class TexeraAgent {
         system: this.systemPrompt,
         messages: this.messages,
         tools: this.tools,
-        stopWhen: stepCountIs(this.maxSteps),
+        stopWhen: stepCountIs(this.settings.maxSteps),
         onStepFinish: async ({ text, toolCalls, toolResults, usage }) => {
           // Check for stop
           if (this.shouldStop) {
@@ -550,14 +534,14 @@ export class TexeraAgent {
           stepIndex++; // Increment first since user message is step 0
 
           // Build tool calls array in the format expected by frontend
-          const formattedToolCalls = toolCalls?.map((tc) => ({
+          const formattedToolCalls = toolCalls?.map(tc => ({
             toolName: tc.toolName,
             toolCallId: tc.toolCallId,
             input: tc.input,
           }));
 
           // Build tool results array in the format expected by frontend
-          const formattedToolResults = toolResults?.map((tr) => ({
+          const formattedToolResults = toolResults?.map(tr => ({
             toolCallId: tr.toolCallId,
             output: tr.output,
             isError: !(tr.output as any)?.success,
@@ -589,11 +573,13 @@ export class TexeraAgent {
             isEnd: false, // Will be updated in the final step
             toolCalls: formattedToolCalls,
             toolResults: formattedToolResults,
-            usage: usage ? {
-              inputTokens: usage.inputTokens,
-              outputTokens: usage.outputTokens,
-              totalTokens: usage.totalTokens,
-            } : undefined,
+            usage: usage
+              ? {
+                  inputTokens: usage.inputTokens,
+                  outputTokens: usage.outputTokens,
+                  totalTokens: usage.totalTokens,
+                }
+              : undefined,
             operatorAccess: Object.keys(operatorAccess).length > 0 ? operatorAccess : undefined,
           };
           this.addStep(agentStep);
@@ -624,7 +610,7 @@ export class TexeraAgent {
       });
 
       // TODO: add the whole message history into the history by doing:
-         this.messages.push(...result.response.messages);
+      this.messages.push(...result.response.messages);
 
       // Update final stats
       stats.endTime = Date.now();

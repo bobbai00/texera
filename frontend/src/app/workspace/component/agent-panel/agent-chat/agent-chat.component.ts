@@ -105,6 +105,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
   public settingsMaxTokenLimit = 1000;
   public settingsToolTimeoutSeconds = 120; // 2 minutes default
   public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
+  public settingsMaxSteps = 10; // Default max steps per message
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -328,6 +329,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
         this.settingsMaxTokenLimit = settings.maxOperatorResultTokenLimit ?? 1000;
         this.settingsToolTimeoutSeconds = settings.toolTimeoutSeconds ?? 120;
         this.settingsExecutionTimeoutMinutes = settings.executionTimeoutMinutes ?? 10;
+        this.settingsMaxSteps = settings.maxSteps ?? 10;
       });
 
     // Also load agent internal state
@@ -998,6 +1000,21 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
       .pipe(untilDestroyed(this))
       .subscribe({
         next: () => this.notificationService.success("Execution timeout saved"),
+        error: () => {}, // Error already handled by service
+      });
+  }
+
+  /**
+   * Save the max steps per message setting.
+   */
+  public saveMaxSteps(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        maxSteps: this.settingsMaxSteps,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () => this.notificationService.success("Max steps saved"),
         error: () => {}, // Error already handled by service
       });
   }

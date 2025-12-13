@@ -641,6 +641,27 @@
               <span class="settings-param-hint">Max time for workflow execution (1-60 minutes)</span>
             </div>
           </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">Max Steps per Message</label>
+            <div class="settings-param-input">
+              <nz-input-number
+                [(ngModel)]="settingsMaxSteps"
+                [nzMin]="1"
+                [nzMax]="50"
+                [nzStep]="1"
+                nzSize="small"
+                style="width: 120px"></nz-input-number>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveMaxSteps()">
+                Save
+              </button>
+              <span class="settings-param-hint">Maximum reasoning/tool steps per message (1-50)</span>
+            </div>
+          </div>
         </div>
       </nz-tab>
 

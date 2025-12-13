@@ -171,6 +171,8 @@ export interface AgentSettings {
   toolTimeoutMs: number;
   /** Workflow execution timeout in milliseconds */
   executionTimeoutMs: number;
+  /** Maximum number of steps per message */
+  maxSteps: number;
 }
 
 /**
@@ -181,6 +183,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   maxOperatorResultTokenLimit: 1000,
   toolTimeoutMs: 120000, // 2 minutes
   executionTimeoutMs: 600000, // 10 minutes
+  maxSteps: 10,
 };
 
 // ============================================================================
@@ -225,6 +228,8 @@ export interface AgentSettingsApi {
   executionTimeoutMinutes?: number;
   /** List of disabled tool names */
   disabledTools?: string[];
+  /** Maximum number of steps per message */
+  maxSteps?: number;
 }
 
 /**
@@ -270,5 +275,6 @@ export interface UpdateAgentSettingsRequest {
   executionTimeoutMinutes?: number;
   /** List of disabled tool names */
   disabledTools?: string[];
+  /** Maximum number of steps per message */
+  maxSteps?: number;
 }
-

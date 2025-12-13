@@ -12,7 +12,9 @@
     "gui": "bun run src/gui/index.tsx",
     "gui:node": "npx tsx src/gui/index.tsx",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write \"src/**/*.{ts,tsx,json}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,json}\""
   },
   "dependencies": {
     "@ai-sdk/openai": "2.0.79",
@@ -33,6 +35,7 @@
   "devDependencies": {
     "@types/bun": "1.3.3",
     "@types/react": "18.3.27",
+    "prettier": "3.4.2",
     "typescript": "5.9.3",
     "tsx": "4.21.0"
   }

@@ -244,7 +244,7 @@ export class WorkflowState {
 
   getLinksConnectedToOperator(operatorId: string): OperatorLink[] {
     return this.getAllLinks().filter(
-      (link) => link.source.operatorID === operatorId || link.target.operatorID === operatorId
+      link => link.source.operatorID === operatorId || link.target.operatorID === operatorId
     );
   }
 
@@ -303,7 +303,7 @@ export class WorkflowState {
 
     // If there are operators, check if they're all disabled
     if (!this.workflowEmpty) {
-      this.workflowEmpty = operators.every((op) => op.isDisabled);
+      this.workflowEmpty = operators.every(op => op.isDisabled);
     }
   }
 
@@ -362,9 +362,7 @@ export class WorkflowState {
     this.commentBoxes = content.commentBoxes ? [...content.commentBoxes] : [];
 
     // Load settings
-    this.settings = content.settings
-      ? { ...content.settings }
-      : { ...DEFAULT_WORKFLOW_SETTINGS };
+    this.settings = content.settings ? { ...content.settings } : { ...DEFAULT_WORKFLOW_SETTINGS };
   }
 
   /**
@@ -375,7 +373,7 @@ export class WorkflowState {
 
     // If targetOperatorId specified, get subgraph up to that operator
     // For now, simplified: just use all enabled operators
-    const operators: LogicalOperator[] = enabledOperators.map((op) => ({
+    const operators: LogicalOperator[] = enabledOperators.map(op => ({
       operatorID: op.operatorID,
       operatorType: op.operatorType,
       ...op.operatorProperties,
@@ -383,16 +381,16 @@ export class WorkflowState {
       outputPorts: op.outputPorts,
     }));
 
-    const operatorIds = new Set(operators.map((op) => op.operatorID));
+    const operatorIds = new Set(operators.map(op => op.operatorID));
 
     const links: LogicalLink[] = this.getAllLinks()
-      .filter((link) => operatorIds.has(link.source.operatorID) && operatorIds.has(link.target.operatorID))
-      .map((link) => {
+      .filter(link => operatorIds.has(link.source.operatorID) && operatorIds.has(link.target.operatorID))
+      .map(link => {
         const sourceOp = this.getOperator(link.source.operatorID)!;
         const targetOp = this.getOperator(link.target.operatorID)!;
 
-        const fromPortIdx = sourceOp.outputPorts.findIndex((p) => p.portID === link.source.portID);
-        const toPortIdx = targetOp.inputPorts.findIndex((p) => p.portID === link.target.portID);
+        const fromPortIdx = sourceOp.outputPorts.findIndex(p => p.portID === link.source.portID);
+        const toPortIdx = targetOp.inputPorts.findIndex(p => p.portID === link.target.portID);
 
         return {
           fromOpId: link.source.operatorID,
@@ -405,7 +403,7 @@ export class WorkflowState {
     return {
       operators,
       links,
-      opsToViewResult: Array.from(this.operatorsToViewResult).filter((id) => operatorIds.has(id)),
+      opsToViewResult: Array.from(this.operatorsToViewResult).filter(id => operatorIds.has(id)),
       opsToReuseResult: [],
     };
   }

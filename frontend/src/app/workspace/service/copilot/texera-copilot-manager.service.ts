@@ -54,6 +54,8 @@ export interface AgentSettingsApi {
   executionTimeoutMinutes?: number;
   /** List of disabled tool names */
   disabledTools?: string[];
+  /** Maximum number of steps per message */
+  maxSteps?: number;
 }
 
 /**
@@ -1004,6 +1006,7 @@ export class TexeraCopilotManagerService {
           toolTimeoutSeconds: 120,
           executionTimeoutMinutes: 10,
           disabledTools: [],
+          maxSteps: 10,
         })
       )
     );

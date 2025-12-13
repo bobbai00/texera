@@ -151,10 +151,7 @@ async function createAgentInstance(
 /**
  * Setup RxJS subscription for streaming agent actions to WebSocket clients.
  */
-function setupAgentActionStreaming(
-  agentId: string,
-  stored: StoredAgent
-): Subscription {
+function setupAgentActionStreaming(agentId: string, stored: StoredAgent): Subscription {
   const agentActionManager = stored.agent.getAgentActionManager();
   const agentActionStream$ = agentActionManager.getAgentActionStream();
 
@@ -175,6 +172,7 @@ function getAgentInfo(agentId: string, stored: StoredAgent): AgentInfo {
     toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
     executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
     disabledTools: Array.from(agentSettings.disabledTools),
+    maxSteps: agentSettings.maxSteps,
   };
 
   return {
@@ -252,6 +250,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           toolTimeoutMs: settings.toolTimeoutSeconds ? settings.toolTimeoutSeconds * 1000 : undefined,
           executionTimeoutMs: settings.executionTimeoutMinutes ? settings.executionTimeoutMinutes * 60000 : undefined,
           disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
+          maxSteps: settings.maxSteps,
         });
       }
 
@@ -264,12 +263,15 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         userToken: t.Optional(t.String()),
         workflowId: t.Optional(t.Number()),
         computingUnitId: t.Optional(t.Number()),
-        settings: t.Optional(t.Object({
-          maxOperatorResultTokenLimit: t.Optional(t.Number()),
-          toolTimeoutSeconds: t.Optional(t.Number()),
-          executionTimeoutMinutes: t.Optional(t.Number()),
-          disabledTools: t.Optional(t.Array(t.String())),
-        })),
+        settings: t.Optional(
+          t.Object({
+            maxOperatorResultTokenLimit: t.Optional(t.Number()),
+            toolTimeoutSeconds: t.Optional(t.Number()),
+            executionTimeoutMinutes: t.Optional(t.Number()),
+            disabledTools: t.Optional(t.Array(t.String())),
+            maxSteps: t.Optional(t.Number()),
+          })
+        ),
       }),
     }
   )
@@ -366,11 +368,13 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       messageCount: stored.agent.getMessages().length,
       reActStepsCount: stored.agent.getReActSteps().length,
       createdAt: stored.createdAt,
-      delegate: stored.delegate ? {
-        workflowId: stored.delegate.workflowId,
-        workflowName: stored.delegate.workflowName,
-        userInfo: stored.delegate.userInfo,
-      } : undefined,
+      delegate: stored.delegate
+        ? {
+            workflowId: stored.delegate.workflowId,
+            workflowName: stored.delegate.workflowName,
+            userInfo: stored.delegate.userInfo,
+          }
+        : undefined,
     };
   })
 
@@ -416,6 +420,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
       executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
       disabledTools: Array.from(agentSettings.disabledTools),
+      maxSteps: agentSettings.maxSteps,
     };
   })
 
@@ -429,8 +434,10 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       stored.agent.updateSettings({
         maxOperatorResultTokenLimit: settings.maxOperatorResultTokenLimit,
         toolTimeoutMs: settings.toolTimeoutSeconds !== undefined ? settings.toolTimeoutSeconds * 1000 : undefined,
-        executionTimeoutMs: settings.executionTimeoutMinutes !== undefined ? settings.executionTimeoutMinutes * 60000 : undefined,
+        executionTimeoutMs:
+          settings.executionTimeoutMinutes !== undefined ? settings.executionTimeoutMinutes * 60000 : undefined,
         disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
+        maxSteps: settings.maxSteps,
       });
 
       // Return updated settings
@@ -440,6 +447,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
         executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
         disabledTools: Array.from(agentSettings.disabledTools),
+        maxSteps: agentSettings.maxSteps,
       };
     },
     {
@@ -447,6 +455,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         maxOperatorResultTokenLimit: t.Optional(t.Number()),
         toolTimeoutSeconds: t.Optional(t.Number()),
         executionTimeoutMinutes: t.Optional(t.Number()),
+        maxSteps: t.Optional(t.Number()),
         disabledTools: t.Optional(t.Array(t.String())),
       }),
     }
@@ -501,7 +510,7 @@ const app = new Elysia()
     timestamp: new Date().toISOString(),
   }))
   // Mount agents router under API prefix
-  .group(API_PREFIX, (app) => app.use(agentsRouter))
+  .group(API_PREFIX, app => app.use(agentsRouter))
   // WebSocket endpoint for real-time ReActSteps streaming
   .ws(`${API_PREFIX}/agents/:id/react`, {
     open(ws) {
@@ -650,8 +659,8 @@ function printStartupMessage() {
   const routes = app.routes;
 
   // Group routes by type (HTTP vs WebSocket)
-  const httpRoutes = routes.filter((r) => r.method !== "WS");
-  const wsRoutes = routes.filter((r) => r.method === "WS");
+  const httpRoutes = routes.filter(r => r.method !== "WS");
+  const wsRoutes = routes.filter(r => r.method === "WS");
 
   // Print HTTP routes
   for (const route of httpRoutes) {

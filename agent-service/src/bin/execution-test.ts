@@ -1,7 +1,7 @@
 #!/usr/bin/env npx ts-node
 /**
  * Simple e2e test for the execution API.
- * Retrieves a workflow by ID and executes it via the ExecutionClient.
+ * Retrieves a workflow by ID and executes it via HTTP REST API.
  *
  * Services:
  *   - API_ENDPOINT (port 8080): Main web service (workflow CRUD)
@@ -12,8 +12,9 @@
  */
 
 import { retrieveWorkflow } from "../api/workflow-api";
-import { setBackendConfig } from "../api/backend-api";
-import { ExecutionClient, type LogicalPlan } from "../api/execution-api";
+import { setBackendConfig, getBackendConfig } from "../api/backend-api";
+import type { LogicalPlan, SyncExecutionRequest } from "../api/execution-api";
+import type { SyncExecutionResult } from "../types/execution";
 
 // Get config from env
 const userToken = process.env.TEST_USER_TOKEN;
@@ -28,6 +29,58 @@ if (!userToken || !workflowId) {
 }
 
 setBackendConfig({ apiEndpoint, executionEndpoint });
+
+/**
+ * Execute a workflow via HTTP REST API.
+ */
+async function executeWorkflow(
+  token: string,
+  wid: number,
+  cuid: number,
+  logicalPlan: LogicalPlan,
+  executionName: string
+): Promise<SyncExecutionResult> {
+  const backendConfig = getBackendConfig();
+  const endpoint = backendConfig.executionEndpoint || "http://localhost:8085";
+  const url = `${endpoint}/api/execution/${wid}/${cuid}/run`;
+
+  // Get sink operators
+  const operatorsWithOutgoingLinks = new Set(logicalPlan.links.map(link => link.fromOpId));
+  const sinkOperatorIds = logicalPlan.operators
+    .filter(op => !operatorsWithOutgoingLinks.has(op.operatorID))
+    .map(op => op.operatorID);
+
+  const request: SyncExecutionRequest = {
+    executionName,
+    logicalPlan: {
+      operators: logicalPlan.operators,
+      links: logicalPlan.links,
+      opsToViewResult: sinkOperatorIds,
+      opsToReuseResult: [],
+    },
+    targetOperatorIds: sinkOperatorIds,
+    timeoutSeconds: 300,
+    maxResultRows: 100,
+  };
+
+  console.log(`Executing workflow via HTTP: ${url}`);
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Execution request failed: ${response.status} ${response.statusText} - ${errorText}`);
+  }
+
+  return await response.json();
+}
 
 async function main() {
   console.log("=== Execution API E2E Test ===\n");
@@ -65,18 +118,10 @@ async function main() {
   console.log("\n--- Logical Plan ---");
   console.log(JSON.stringify(logicalPlan, null, 2));
 
-  // Step 2: Execute workflow via ExecutionClient
-  console.log("\n--- Executing workflow via ExecutionClient ---");
+  // Step 2: Execute workflow via HTTP
+  console.log("\n--- Executing workflow via HTTP REST API ---");
 
-  const client = new ExecutionClient({
-    userToken: userToken!,
-    workflowId,
-    computingUnitId,
-    timeoutSeconds: 300,
-    maxResultRows: 100,
-  });
-
-  const result = await client.executeWorkflow(logicalPlan, `e2e-test-${Date.now()}`);
+  const result = await executeWorkflow(userToken!, workflowId, computingUnitId, logicalPlan, `e2e-test-${Date.now()}`);
 
   console.log("\n--- Execution Result ---");
   console.log(JSON.stringify(result, null, 2));
@@ -84,7 +129,7 @@ async function main() {
   console.log("\n=== Done ===");
 }
 
-main().catch((err) => {
+main().catch(err => {
   console.error("Error:", err.message);
   process.exit(1);
 });

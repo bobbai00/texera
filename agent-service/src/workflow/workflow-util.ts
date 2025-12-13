@@ -93,9 +93,7 @@ function isEqual(a: unknown, b: unknown): boolean {
   const keysB = Object.keys(b as object);
   if (keysA.length !== keysB.length) return false;
 
-  return keysA.every((key) =>
-    isEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key])
-  );
+  return keysA.every(key => isEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
 }
 
 /**
@@ -109,7 +107,7 @@ export function areAllPortSchemasEqual(schemas: (PortSchema | undefined)[]): boo
   if (schemas.length <= 1) {
     return true;
   }
-  return schemas.every((schema) => isEqual(schemas[0], schema));
+  return schemas.every(schema => isEqual(schemas[0], schema));
 }
 
 // ============================================================================
@@ -121,7 +119,7 @@ export function areAllPortSchemasEqual(schemas: (PortSchema | undefined)[]): boo
  * Gets all links that have the given operator as their target (input links).
  */
 export function getInputLinksByOperatorId(operatorId: string, links: OperatorLink[]): OperatorLink[] {
-  return links.filter((link) => link.target.operatorID === operatorId);
+  return links.filter(link => link.target.operatorID === operatorId);
 }
 
 /**
@@ -151,7 +149,7 @@ export function extractOperatorInputPortSchemaMap(
     inputPortSchemaMap[portId] = undefined;
 
     // Find all links that connect to this input port
-    const linksToThisPort = inputLinks.filter((link) => {
+    const linksToThisPort = inputLinks.filter(link => {
       const parsedPort = parseLogicalOperatorPortID(link.target.portID);
       if (!parsedPort) return false;
       return parsedPort.portNumber === portIndex;
@@ -159,7 +157,7 @@ export function extractOperatorInputPortSchemaMap(
 
     if (linksToThisPort.length > 0) {
       // Collect schemas from all links to this port
-      const schemas: (PortSchema | undefined)[] = linksToThisPort.map((link) => {
+      const schemas: (PortSchema | undefined)[] = linksToThisPort.map(link => {
         const sourcePortSchemaMap = outputSchemas[link.source.operatorID];
         if (!sourcePortSchemaMap) {
           return undefined;
@@ -178,13 +176,13 @@ export function extractOperatorInputPortSchemaMap(
       // and just use the first valid schema
       if (schemas.length > 0) {
         // Use the first defined schema, or undefined if all are undefined
-        inputPortSchemaMap[portId] = schemas.find((s) => s !== undefined);
+        inputPortSchemaMap[portId] = schemas.find(s => s !== undefined);
       }
     }
   });
 
   // Return undefined if no schemas were set
-  const hasAnySchema = Object.values(inputPortSchemaMap).some((s) => s !== undefined);
+  const hasAnySchema = Object.values(inputPortSchemaMap).some(s => s !== undefined);
   return hasAnySchema ? inputPortSchemaMap : undefined;
 }
 
@@ -208,7 +206,7 @@ interface OutputPortInfo {
  * Generate a random UUID for operator IDs
  */
 function generateUUID(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
     const r = (Math.random() * 16) | 0;
     const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
@@ -327,5 +325,4 @@ export class WorkflowUtilService {
       dynamicOutputPorts,
     };
   }
-
 }

@@ -18,12 +18,9 @@
  */
 
 /**
- * Execution API client for Texera Agent Service.
- * Uses synchronous HTTP REST API for workflow execution.
+ * Execution API types for Texera Agent Service.
+ * These types match the backend SyncExecutionResource request/response.
  */
-
-import { getBackendConfig } from "./backend-api";
-import type { SyncExecutionResult } from "../types/execution";
 
 // ============================================================================
 // Types matching the backend SyncExecutionResource
@@ -67,111 +64,4 @@ export interface SyncExecutionRequest {
   targetOperatorIds: string[];
   timeoutSeconds?: number;
   maxResultRows?: number;
-}
-
-// ============================================================================
-// Execution Client Config
-// ============================================================================
-
-export interface ExecutionClientConfig {
-  /** User JWT token for authentication */
-  userToken: string;
-  /** Workflow ID */
-  workflowId: number;
-  /** Optional computing unit ID (defaults to 0) */
-  computingUnitId?: number;
-  /** Execution timeout in seconds (default: 300) */
-  timeoutSeconds?: number;
-  /** Maximum result rows to return (default: 200) */
-  maxResultRows?: number;
-}
-
-// ============================================================================
-// Execution Client - HTTP Based
-// ============================================================================
-
-/**
- * HTTP client for synchronous workflow execution.
- * Uses the backend REST API for blocking execution.
- */
-export class ExecutionClient {
-  private config: ExecutionClientConfig;
-
-  constructor(config: ExecutionClientConfig) {
-    this.config = {
-      computingUnitId: 0,
-      timeoutSeconds: 300,
-      maxResultRows: 200,
-      ...config,
-    };
-  }
-
-  /**
-   * Execute a workflow with the given logical plan.
-   * This is a blocking call that waits for execution to complete.
-   * Returns the backend response directly without transformation.
-   */
-  async executeWorkflow(logicalPlan: LogicalPlan, executionName?: string): Promise<SyncExecutionResult> {
-    const backendConfig = getBackendConfig();
-    const executionEndpoint = backendConfig.executionEndpoint || "http://localhost:8085";
-
-    const url = `${executionEndpoint}/api/execution/${this.config.workflowId}/${this.config.computingUnitId}/run`;
-
-    // Get sink operators (operators without outgoing links)
-    const operatorsWithOutgoingLinks = new Set(logicalPlan.links.map(link => link.fromOpId));
-    const sinkOperatorIds = logicalPlan.operators
-      .filter(op => !operatorsWithOutgoingLinks.has(op.operatorID))
-      .map(op => op.operatorID);
-
-    const request: SyncExecutionRequest = {
-      executionName: executionName || `agent-execution-${Date.now()}`,
-      logicalPlan: {
-        operators: logicalPlan.operators,
-        links: logicalPlan.links,
-        opsToViewResult: sinkOperatorIds,
-        opsToReuseResult: [],
-      },
-      targetOperatorIds: sinkOperatorIds,
-      timeoutSeconds: this.config.timeoutSeconds,
-      maxResultRows: this.config.maxResultRows,
-    };
-
-    console.log(`[ExecutionClient] Executing workflow via HTTP: ${url}`);
-
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.config.userToken}`,
-        },
-        body: JSON.stringify(request),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Execution request failed: ${response.status} ${response.statusText} - ${errorText}`);
-      }
-
-      // Return the backend response directly - no transformation needed
-      const result: SyncExecutionResult = await response.json();
-      return result;
-    } catch (error) {
-      console.error("[ExecutionClient] Execution failed:", error);
-      // Return an error result in the same format as the backend
-      return {
-        success: false,
-        state: "Error",
-        operators: {},
-        errors: [error instanceof Error ? error.message : "Unknown error"],
-      };
-    }
-  }
-
-  /**
-   * Get the current configuration.
-   */
-  getConfig(): ExecutionClientConfig {
-    return { ...this.config };
-  }
 }

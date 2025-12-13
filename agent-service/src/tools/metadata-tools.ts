@@ -136,7 +136,7 @@ function inlineRefs(schema: any, definitions: Record<string, any>): any {
   }
 
   if (Array.isArray(schema)) {
-    return schema.map((item) => inlineRefs(item, definitions));
+    return schema.map(item => inlineRefs(item, definitions));
   }
 
   const result: any = {};

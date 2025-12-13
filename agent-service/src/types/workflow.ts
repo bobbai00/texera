@@ -47,7 +47,12 @@ export interface PortIdentity {
  */
 export type PartitionInfo =
   | { readonly type: "hash"; readonly hashAttributeNames: string[] }
-  | { readonly type: "range"; readonly rangeAttributeNames: string[]; readonly rangeMin: number; readonly rangeMax: number }
+  | {
+      readonly type: "range";
+      readonly rangeAttributeNames: string[];
+      readonly rangeMin: number;
+      readonly rangeMax: number;
+    }
   | { readonly type: "single" }
   | { readonly type: "broadcast" }
   | { readonly type: "none" };
