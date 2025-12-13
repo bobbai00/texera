@@ -31,8 +31,12 @@ from huggingface_hub import hf_hub_download
 from dataflow_agent import (
     DataflowAgent,
     clean_reasoning_trace,
+    delete_all_agents,
+    list_all_agents,
+    get_agent_workflow,
     AGENT_MODEL_TYPE,
     AGENT_MAX_STEPS,
+    TEXERA_AGENT_SERVICE_ENDPOINT,
 )
 
 
@@ -207,10 +211,12 @@ def load_benchmark_dataset(
 def run_single_task(
     task: dict,
     context_files: list[str],
+    run_dir: Path,
     data_dir: str = DATA_DIR,
     model_type: str = AGENT_MODEL_TYPE,
     max_steps: int = AGENT_MAX_STEPS,
     verbosity_level: int = 1,
+    retain: bool = False,
 ) -> dict:
     """
     Run a single benchmark task with a fresh agent and workflow.
@@ -221,13 +227,15 @@ def run_single_task(
     Args:
         task: Task dictionary with task_id, question, guidelines
         context_files: List of context file paths
+        run_dir: Directory to save task results
         data_dir: Directory containing context files
         model_type: LLM model type to use
         max_steps: Maximum agent steps
         verbosity_level: Logging verbosity
+        retain: If True, do not delete the agent and workflow after task
 
     Returns:
-        Dictionary with task_id, agent_answer, reasoning_trace
+        Dictionary with task_id, agent_answer, reasoning_trace, workflow_id, agent_id
     """
     task_id = task["task_id"]
     question = task["question"]
@@ -245,21 +253,28 @@ def run_single_task(
     )
 
     # Create a new agent with fresh workflow for this task
+    # Use task_id as the agent name for easy identification
     agent = DataflowAgent(
         model_type=model_type,
         max_steps=max_steps,
         verbosity_level=verbosity_level,
         workflow_name=f"Benchmark Task {task_id}",
+        agent_name=f"task-{task_id}",
     )
 
     start_time = time.time()
     answer = ""
     logs = []
+    workflow_id = None
+    agent_id = None
+    workflow_content = None
 
     try:
         # Setup agent (creates new workflow)
         agent.setup()
-        print(f"[Task {task_id}] Created agent: {agent.agent_id}")
+        workflow_id = agent._workflow_id
+        agent_id = agent.agent_id
+        print(f"[Task {task_id}] Created agent: {agent_id}, workflow: {workflow_id}")
 
         # Run the agent
         answer = agent.run(prompt)
@@ -267,29 +282,69 @@ def run_single_task(
         elapsed = time.time() - start_time
         print(f"[Task {task_id}] Completed in {elapsed:.1f}s")
         print(f"[Task {task_id}] Answer: {str(answer)[:200]}...")
+
+        # Fetch the workflow after running
+        try:
+            workflow_content = get_agent_workflow(agent_id)
+            # Workflow can be nested under "workflow" key or at top level
+            workflow_data = workflow_content.get("workflow", workflow_content)
+            num_operators = len(workflow_data.get("operators", []))
+            num_links = len(workflow_data.get("links", []))
+            print(
+                f"[Task {task_id}] Fetched workflow with {num_operators} operators, {num_links} links"
+            )
+        except Exception as e:
+            print(f"[Task {task_id}] Failed to fetch workflow: {e}")
+            workflow_content = None
+
     except Exception as e:
         elapsed = time.time() - start_time
         answer = f"ERROR: {e}"
         logs = agent.logs if agent else []
         print(f"[Task {task_id}] Failed after {elapsed:.1f}s: {e}")
     finally:
-        # Always cleanup the agent and workflow
-        agent.cleanup()
+        # Only cleanup if retain is False
+        if not retain:
+            agent.cleanup()
+        else:
+            print(
+                f"[Task {task_id}] Retaining agent: {agent_id}, workflow: {workflow_id}"
+            )
 
-    return {
+    result = {
         "task_id": str(task_id),
         "agent_answer": str(answer),
-        "reasoning_trace": str(clean_reasoning_trace(logs)),
+        "reasoning_trace": clean_reasoning_trace(logs),
+        "workflow_id": workflow_id,
+        "agent_id": agent_id,
+        "elapsed_seconds": elapsed,
     }
+
+    # Save individual task result to run_dir/{task_id}.json
+    task_file = run_dir / f"{task_id}.json"
+    with open(task_file, "w") as f:
+        json.dump(result, f, indent=2)
+    print(f"[Task {task_id}] Saved to {task_file}")
+
+    # Save workflow to run_dir/{task_id}_workflow.json
+    if workflow_content:
+        workflow_file = run_dir / f"{task_id}_workflow.json"
+        with open(workflow_file, "w") as f:
+            json.dump(workflow_content, f, indent=2)
+        print(f"[Task {task_id}] Workflow saved to {workflow_file}")
+
+    return result
 
 
 def run_benchmark(
     dataset: datasets.Dataset,
     context_files: list[str],
+    run_dir: Path,
     data_dir: str = DATA_DIR,
     model_type: str = AGENT_MODEL_TYPE,
     max_steps: int = AGENT_MAX_STEPS,
     verbosity_level: int = 1,
+    retain: bool = False,
 ) -> list[dict]:
     """
     Run the full benchmark.
@@ -299,10 +354,12 @@ def run_benchmark(
     Args:
         dataset: HuggingFace Dataset with tasks
         context_files: List of context file paths
+        run_dir: Directory to save task results
         data_dir: Directory containing context files
         model_type: LLM model type to use
         max_steps: Maximum agent steps per task
         verbosity_level: Logging verbosity
+        retain: If True, do not delete agents and workflows after tasks
 
     Returns:
         List of task results
@@ -312,6 +369,8 @@ def run_benchmark(
 
     print(f"\n[Benchmark] Running {total_tasks} tasks...")
     print(f"[Benchmark] Each task will create a new workflow and agent")
+    if retain:
+        print(f"[Benchmark] RETAIN MODE: Agents and workflows will NOT be deleted")
     print("=" * 60)
 
     for i, task in enumerate(dataset):
@@ -319,10 +378,12 @@ def run_benchmark(
         result = run_single_task(
             task=task,
             context_files=context_files,
+            run_dir=run_dir,
             data_dir=data_dir,
             model_type=model_type,
             max_steps=max_steps,
             verbosity_level=verbosity_level,
+            retain=retain,
         )
         results.append(result)
 
@@ -380,6 +441,48 @@ def evaluate_results(
 # ============================================================================
 
 
+def cleanup_existing_agents() -> int:
+    """
+    Delete all existing agents in the agent service.
+
+    Returns:
+        Number of agents deleted
+    """
+    print("\n[Benchmark] Cleaning up existing agents...")
+    try:
+        agents = list_all_agents(TEXERA_AGENT_SERVICE_ENDPOINT)
+        if not agents:
+            print("[Benchmark] No existing agents found")
+            return 0
+
+        print(f"[Benchmark] Found {len(agents)} existing agents, deleting...")
+        deleted = delete_all_agents(TEXERA_AGENT_SERVICE_ENDPOINT)
+        print(f"[Benchmark] Deleted {deleted} agents")
+        return deleted
+    except Exception as e:
+        print(f"[Benchmark] Failed to cleanup agents: {e}")
+        return 0
+
+
+def create_run_directory() -> tuple[Path, str]:
+    """
+    Create a new run directory with timestamp.
+
+    Returns:
+        Tuple of (run_dir Path, run_id string)
+    """
+    from datetime import datetime
+
+    # Create timestamp-based run ID
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = RUNS_DIR / run_id
+
+    # Create the directory
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    return run_dir, run_id
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run DABstep benchmark with Texera Agent Service"
@@ -435,6 +538,17 @@ def main():
         default=1,
         help="Agent verbosity level (0=quiet, 1=normal, 2=verbose)",
     )
+    parser.add_argument(
+        "-r",
+        "--retain",
+        action="store_true",
+        help="Retain agents and workflows after each task (do not delete)",
+    )
+    parser.add_argument(
+        "--no-cleanup",
+        action="store_true",
+        help="Skip initial cleanup of existing agents",
+    )
 
     args = parser.parse_args()
 
@@ -446,7 +560,12 @@ def main():
     print(f"Model: {args.model}")
     print(f"Max steps: {args.max_steps}")
     print(f"Data dir: {args.data_dir}")
+    print(f"Retain mode: {args.retain}")
     print("=" * 60)
+
+    # Step 0: Cleanup existing agents (unless --no-cleanup is specified)
+    if not args.no_cleanup:
+        cleanup_existing_agents()
 
     # Step 1: Download context files
     if not args.skip_download:
@@ -464,41 +583,70 @@ def main():
         max_tasks=args.max_tasks,
     )
 
-    # Step 3: Run benchmark (each task creates its own agent and workflow)
+    # Step 3: Create run directory with timestamp
+    run_dir, run_id = create_run_directory()
+    print(f"\n[Benchmark] Run directory: {run_dir}")
+
+    # Step 4: Run benchmark (each task creates its own agent and workflow)
     print("\n[Benchmark] Starting benchmark...")
     print(f"[Benchmark] Model: {args.model}, Max steps: {args.max_steps}")
 
     agent_answers = run_benchmark(
         dataset=dataset,
         context_files=context_files,
+        run_dir=run_dir,
         data_dir=args.data_dir,
         model_type=args.model,
         max_steps=args.max_steps,
         verbosity_level=args.verbosity,
+        retain=args.retain,
     )
 
-    # Step 4: Save results
-    run_id = int(time.time())
-    results_file = RUNS_DIR / f"{run_id}.jsonl"
+    # Step 5: Save combined results to run directory
+    results_file = run_dir / "results.jsonl"
     write_jsonl(agent_answers, results_file)
 
     # Also save as DataFrame for inspection
-    results_df = pd.DataFrame(agent_answers)
-    csv_file = RUNS_DIR / f"{run_id}.csv"
+    # Convert reasoning_trace back to string for CSV
+    results_for_csv = []
+    for r in agent_answers:
+        r_copy = r.copy()
+        r_copy["reasoning_trace"] = str(r_copy["reasoning_trace"])
+        results_for_csv.append(r_copy)
+    results_df = pd.DataFrame(results_for_csv)
+    csv_file = run_dir / "results.csv"
     results_df.to_csv(csv_file, index=False)
     print(f"[Benchmark] Results also saved to {csv_file}")
 
-    # Step 5: Evaluate (optional)
+    # Save run metadata
+    metadata = {
+        "run_id": run_id,
+        "split": args.split,
+        "max_tasks": args.max_tasks,
+        "model": args.model,
+        "max_steps": args.max_steps,
+        "data_dir": args.data_dir,
+        "retain": args.retain,
+        "total_tasks": len(agent_answers),
+        "timestamp": run_id,
+    }
+    metadata_file = run_dir / "metadata.json"
+    with open(metadata_file, "w") as f:
+        json.dump(metadata, f, indent=2)
+    print(f"[Benchmark] Metadata saved to {metadata_file}")
+
+    # Step 6: Evaluate (optional)
     if args.evaluate:
         tasks_df = dataset.to_pandas()
         scores = evaluate_results(results_df, tasks_df)
         if scores is not None:
-            scores_file = RUNS_DIR / f"{run_id}_scores.csv"
+            scores_file = run_dir / "scores.csv"
             scores.to_csv(scores_file, index=False)
             print(f"[Benchmark] Scores saved to {scores_file}")
 
     print("\n[Benchmark] Complete!")
     print(f"Run ID: {run_id}")
+    print(f"Run directory: {run_dir}")
     print(f"Results: {results_file}")
 
 

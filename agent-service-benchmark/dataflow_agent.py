@@ -375,6 +375,28 @@ def get_react_steps(
     return data.get("steps", [])
 
 
+def get_agent_workflow(
+    agent_id: str, agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
+) -> dict:
+    """
+    Get the workflow associated with an agent.
+
+    Args:
+        agent_id: Agent ID
+        agent_endpoint: Agent service endpoint URL
+
+    Returns:
+        Workflow dictionary with operators, links, etc.
+
+    Raises:
+        requests.HTTPError: If API call fails
+    """
+    url = f"{agent_endpoint}/api/agents/{agent_id}/workflow"
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json()
+
+
 def clear_agent_history(
     agent_id: str, agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
 ) -> bool:
@@ -417,6 +439,65 @@ def reset_agent(
     response = requests.post(url)
     response.raise_for_status()
     return True
+
+
+def list_all_agents(
+    agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT,
+) -> list[dict]:
+    """
+    List all agents in the agent service.
+
+    Args:
+        agent_endpoint: Agent service endpoint URL
+
+    Returns:
+        List of agent dictionaries with id, name, state, etc.
+
+    Raises:
+        requests.HTTPError: If API call fails
+    """
+    url = f"{agent_endpoint}/api/agents/"
+    response = requests.get(url)
+    response.raise_for_status()
+    data = response.json()
+    # API returns {"agents": [...]} format
+    return data.get("agents", []) if isinstance(data, dict) else data
+
+
+def delete_all_agents(
+    agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT,
+) -> int:
+    """
+    Delete all agents in the agent service.
+
+    Args:
+        agent_endpoint: Agent service endpoint URL
+
+    Returns:
+        Number of agents deleted
+
+    Raises:
+        requests.HTTPError: If API call fails
+    """
+    agents = list_all_agents(agent_endpoint)
+    deleted_count = 0
+
+    for agent in agents:
+        # Handle both dict format (with "id" key) and direct ID strings
+        if isinstance(agent, dict):
+            agent_id = agent.get("id")
+        else:
+            agent_id = str(agent)
+
+        if agent_id:
+            try:
+                delete_agent(agent_id, agent_endpoint)
+                deleted_count += 1
+                print(f"[DataflowAgent] Deleted agent: {agent_id}")
+            except Exception as e:
+                print(f"[DataflowAgent] Failed to delete agent {agent_id}: {e}")
+
+    return deleted_count
 
 
 # ============================================================================
@@ -463,6 +544,7 @@ class DataflowAgent:
         username: str = TEXERA_USERNAME,
         password: str = TEXERA_PASSWORD,
         workflow_name: str = DEFAULT_WORKFLOW_NAME,
+        agent_name: Optional[str] = None,
         verbosity_level: int = 1,
     ):
         """
@@ -480,6 +562,7 @@ class DataflowAgent:
             username: Texera username for authentication
             password: Texera password for authentication
             workflow_name: Name for the created workflow
+            agent_name: Custom name for the agent (optional)
             verbosity_level: Logging verbosity (0=quiet, 1=normal, 2=verbose)
         """
         self.model_type = model_type
@@ -496,6 +579,7 @@ class DataflowAgent:
         self.username = username
         self.password = password
         self.workflow_name = workflow_name
+        self.agent_name = agent_name
         self.verbosity_level = verbosity_level
 
         # State
@@ -566,9 +650,12 @@ class DataflowAgent:
             workflow_id=self._workflow_id,
             computing_unit_id=self._computing_unit_id,
             settings=self.settings,
+            name=self.agent_name,
             agent_endpoint=self.agent_service_endpoint,
         )
-        self._log(f"Created agent: {self._agent_info.id}")
+        self._log(
+            f"Created agent: {self._agent_info.id} (name: {self._agent_info.name})"
+        )
 
         return self
 
