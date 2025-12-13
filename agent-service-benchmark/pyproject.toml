@@ -1,0 +1,16 @@
+[project]
+name = "agent-service-benchmark"
+version = "0.1.0"
+description = "Benchmarking client for Texera Agent Service using DABstep benchmark"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "dabstep-benchmark",
+    "datasets==3.2.0",
+    "smolagents==1.6.0",
+    "requests>=2.31.0",
+    "pandas>=2.0.0",
+]
+
+[tool.uv.sources]
+dabstep-benchmark = { git = "https://hf.co/spaces/adyen/DABstep.git", rev = "main" }
