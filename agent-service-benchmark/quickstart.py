@@ -63,7 +63,7 @@ for filename in CONTEXT_FILENAMES:
         repo_type="dataset",
         filename=filename,
         local_dir=DATA_DIR,
-        force_download=True
+        force_download=True,
     )
 
 CONTEXT_FILENAMES = [f"{DATA_DIR}/{filename}" for filename in CONTEXT_FILENAMES]
@@ -90,7 +90,15 @@ MAX_STEPS = 7
 agent = CodeAgent(
     tools=[],
     model=HfApiModel(MODEL_ID),
-    additional_authorized_imports=["numpy", "pandas", "json", "csv", "os", "glob", "markdown"],
+    additional_authorized_imports=[
+        "numpy",
+        "pandas",
+        "json",
+        "csv",
+        "os",
+        "glob",
+        "markdown",
+    ],
     max_steps=MAX_STEPS,
     verbosity_level=3,
 )
@@ -112,23 +120,21 @@ question = "What are the unique set of merchants in the payments data?"
 guidelines = "Answer with a comma separated list"
 
 PROMPT = PROMPT.format(
-    context_files=CONTEXT_FILENAMES,
-    question=question,
-    guidelines=guidelines
+    context_files=CONTEXT_FILENAMES, question=question, guidelines=guidelines
 )
 
 answer = agent.run(PROMPT)
 
+
 # You can inspect the steps taken by the agent by doing this
 def clean_reasoning_trace(trace: list) -> list:
-  for step in trace:
-      # Remove memory from logs to make them more compact.
-      if hasattr(step, "memory"):
-          step.memory = None
-      if isinstance(step, ActionStep):
-          step.agent_memory = None
-  return trace
-
+    for step in trace:
+        # Remove memory from logs to make them more compact.
+        if hasattr(step, "memory"):
+            step.memory = None
+        if isinstance(step, ActionStep):
+            step.agent_memory = None
+    return trace
 
 
 for step in clean_reasoning_trace(agent.logs):
@@ -141,36 +147,46 @@ We encourage to first get a good performing agent on this smaller dev split of t
 Once we are confident with our agent, we can try to create a submission to the leaderboard using the complete dataset of tasks
 """
 
+
 def run_benchmark(dataset: datasets.Dataset, agent: CodeAgent) -> list[dict]:
-  agent_answers = []
-  for task in dataset:
-    tid = task['task_id']
+    agent_answers = []
+    for task in dataset:
+        tid = task["task_id"]
 
-    prompt = PROMPT.format(
-      context_files=CONTEXT_FILENAMES,
-      question=task['question'],
-      guidelines=task['guidelines']
-    )
+        prompt = PROMPT.format(
+            context_files=CONTEXT_FILENAMES,
+            question=task["question"],
+            guidelines=task["guidelines"],
+        )
 
-    answer = agent.run(prompt)
+        answer = agent.run(prompt)
 
-    task_answer = {
-        "task_id": str(tid),
-        "agent_answer": str(answer),
-        "reasoning_trace": str(clean_reasoning_trace(agent.logs))
-    }
+        task_answer = {
+            "task_id": str(tid),
+            "agent_answer": str(answer),
+            "reasoning_trace": str(clean_reasoning_trace(agent.logs)),
+        }
 
-    agent_answers.append(task_answer)
+        agent_answers.append(task_answer)
 
-  return agent_answers
+    return agent_answers
+
 
 MAX_STEPS = 7
 MODEL_ID = "Qwen/Qwen2.5-Coder-32B-Instruct"
 
 agent = CodeAgent(
-    tools=[], # evaluating zero-shot capabilities of the model when writing code
+    tools=[],  # evaluating zero-shot capabilities of the model when writing code
     model=HfApiModel(MODEL_ID),
-    additional_authorized_imports=["numpy", "pandas", "json", "csv", "os", "glob", "markdown"],
+    additional_authorized_imports=[
+        "numpy",
+        "pandas",
+        "json",
+        "csv",
+        "os",
+        "glob",
+        "markdown",
+    ],
     max_steps=MAX_STEPS,
 )
 
@@ -191,12 +207,14 @@ Here are the guidelines you must follow when answering the question above:
 """
 
 SPLIT = "dev"
-MAX_TASKS = 3 # It takes ~20 min to run the agent on all the dev set, so lets start just with the 2 first tasks
+MAX_TASKS = 3  # It takes ~20 min to run the agent on all the dev set, so lets start just with the 2 first tasks
 RUN_ID = int(time.time())
 
 
 # load dataset from Hub
-dev_task_dataset = datasets.load_dataset("adyen/DABstep", name="tasks", split=f"{SPLIT}[:{MAX_TASKS}]")
+dev_task_dataset = datasets.load_dataset(
+    "adyen/DABstep", name="tasks", split=f"{SPLIT}[:{MAX_TASKS}]"
+)
 # %time agent_answers = run_benchmark(dataset=dev_task_dataset, agent=agent)
 
 """### Evaluation"""
@@ -227,6 +245,7 @@ from pathlib import Path
 RUNS_DIR = Path().resolve() / "runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
+
 def write_jsonl(data: list[dict], filepath: Path) -> None:
     """Write a list of dictionaries to a JSONL file."""
     # Ensure the directory exists
@@ -235,6 +254,7 @@ def write_jsonl(data: list[dict], filepath: Path) -> None:
     with open(filepath, "w") as file:
         for entry in data:
             file.write(json.dumps(entry) + "\n")
+
 
 # Commented out IPython magic to ensure Python compatibility.
 PROMPT = """You are an expert data analyst and you will answer factoid questions by loading and referencing the files/documents listed below.
@@ -254,7 +274,9 @@ RUN_ID = int(time.time())
 
 
 # load dataset from Hub
-benchmark_task_dataset = datasets.load_dataset("adyen/DABstep", name="tasks", split=SPLIT)
+benchmark_task_dataset = datasets.load_dataset(
+    "adyen/DABstep", name="tasks", split=SPLIT
+)
 # %time agent_answers = run_benchmark(dataset=benchmark_task_dataset, agent=agent)
 
 write_jsonl(agent_answers, RUNS_DIR / f"{RUN_ID}.jsonl")
@@ -275,15 +297,25 @@ The leaderboard is here: https://huggingface.co/spaces/adyen/DABstep
 Once you have made a submission you can inspect the scores of your submission like these. Task scores are more granular task-level scores.
 """
 
-submissions_dataset = datasets.load_dataset("adyen/DABstep", name="submissions", split="default")
-task_scores_dataset = datasets.load_dataset("adyen/DABstep", name="task_scores", split="default")
+submissions_dataset = datasets.load_dataset(
+    "adyen/DABstep", name="submissions", split="default"
+)
+task_scores_dataset = datasets.load_dataset(
+    "adyen/DABstep", name="task_scores", split="default"
+)
 
-AGENT_NAME = "Claude 3.5 Sonnet ReACT Baseline" # the agent name given in the submission form
-ORGANISATION = "Adyen" # the organization name given in the submission form
+AGENT_NAME = (
+    "Claude 3.5 Sonnet ReACT Baseline"  # the agent name given in the submission form
+)
+ORGANISATION = "Adyen"  # the organization name given in the submission form
 SUBMISSION_ID = f"{ORGANISATION}-{AGENT_NAME}"
 
-submissions_dataset_df = submissions_dataset.filter(lambda row: row["submission_id"] == SUBMISSION_ID).to_pandas()
-task_scores_dataset_df = task_scores_dataset.filter(lambda row: row["submission_id"] == SUBMISSION_ID).to_pandas()
+submissions_dataset_df = submissions_dataset.filter(
+    lambda row: row["submission_id"] == SUBMISSION_ID
+).to_pandas()
+task_scores_dataset_df = task_scores_dataset.filter(
+    lambda row: row["submission_id"] == SUBMISSION_ID
+).to_pandas()
 
 submissions_dataset_df
 

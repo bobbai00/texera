@@ -10,6 +10,7 @@ dependencies = [
     "smolagents==1.6.0",
     "requests>=2.31.0",
     "pandas>=2.0.0",
+    "huggingface-hub>=0.20.0",
 ]
 
 [tool.uv.sources]

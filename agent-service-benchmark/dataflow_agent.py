@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 # Texera Backend Configuration
 TEXERA_API_ENDPOINT = "http://localhost:8080"
+TEXERA_COMPUTING_UNIT_ENDPOINT = "http://localhost:8888"
 TEXERA_AGENT_SERVICE_ENDPOINT = "http://localhost:3001"
 
 # Authentication Configuration
@@ -26,8 +27,9 @@ TEXERA_USERNAME = "bob@test.com"
 TEXERA_PASSWORD = "123456"
 
 # Agent Settings (matches agent-service AgentSettingsApi)
-AGENT_MODEL_TYPE = "claude-sonnet-4-20250514"
-AGENT_MAX_STEPS = 10
+# Available models: claude-haiku-4.5, claude-sonnet-4-5, gpt-5-mini, llama-local
+AGENT_MODEL_TYPE = "claude-haiku-4.5"
+AGENT_MAX_STEPS = 50
 AGENT_MAX_OPERATOR_RESULT_TOKEN_LIMIT = 1000
 AGENT_TOOL_TIMEOUT_SECONDS = 120
 AGENT_EXECUTION_TIMEOUT_MINUTES = 10
@@ -41,9 +43,11 @@ DEFAULT_WORKFLOW_NAME = "Benchmark Workflow"
 # Data Classes
 # ============================================================================
 
+
 @dataclass
 class AgentSettings:
     """Agent settings for API requests."""
+
     max_steps: int = AGENT_MAX_STEPS
     max_operator_result_token_limit: int = AGENT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
     tool_timeout_seconds: int = AGENT_TOOL_TIMEOUT_SECONDS
@@ -64,6 +68,7 @@ class AgentSettings:
 @dataclass
 class AgentInfo:
     """Agent information returned from API."""
+
     id: str
     name: str
     model_type: str
@@ -76,6 +81,7 @@ class AgentInfo:
 @dataclass
 class MessageResult:
     """Result from sending a message to the agent."""
+
     response: str
     usage: dict
     stats: dict
@@ -87,10 +93,11 @@ class MessageResult:
 # Texera API Functions
 # ============================================================================
 
+
 def login(
     username: str = TEXERA_USERNAME,
     password: str = TEXERA_PASSWORD,
-    api_endpoint: str = TEXERA_API_ENDPOINT
+    api_endpoint: str = TEXERA_API_ENDPOINT,
 ) -> str:
     """
     Login to Texera and get an access token.
@@ -119,7 +126,7 @@ def login(
 def create_workflow(
     token: str,
     name: str = DEFAULT_WORKFLOW_NAME,
-    api_endpoint: str = TEXERA_API_ENDPOINT
+    api_endpoint: str = TEXERA_API_ENDPOINT,
 ) -> int:
     """
     Create a new workflow in Texera.
@@ -136,20 +143,35 @@ def create_workflow(
         requests.HTTPError: If workflow creation fails
     """
     url = f"{api_endpoint}/api/workflow/create"
-    headers = {"Authorization": f"Bearer {token}"}
-    payload = {"name": name}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    # Empty workflow content structure
+    empty_content = {
+        "operators": [],
+        "operatorPositions": {},
+        "links": [],
+        "commentBoxes": [],
+        "settings": {},
+    }
+
+    payload = {
+        "name": name,
+        "content": json.dumps(empty_content),  # Content must be JSON stringified
+    }
 
     response = requests.post(url, json=payload, headers=headers)
     response.raise_for_status()
 
     data = response.json()
-    return data["wid"]
+    # The response contains a workflow object with wid
+    return data.get("workflow", {}).get("wid") or data.get("wid")
 
 
 def delete_workflow(
-    token: str,
-    workflow_id: int,
-    api_endpoint: str = TEXERA_API_ENDPOINT
+    token: str, workflow_id: int, api_endpoint: str = TEXERA_API_ENDPOINT
 ) -> bool:
     """
     Delete a workflow from Texera.
@@ -165,57 +187,57 @@ def delete_workflow(
     Raises:
         requests.HTTPError: If workflow deletion fails
     """
-    url = f"{api_endpoint}/api/workflow/{workflow_id}"
-    headers = {"Authorization": f"Bearer {token}"}
+    url = f"{api_endpoint}/api/workflow/delete"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    payload = {"wids": [workflow_id]}
 
-    response = requests.delete(url, headers=headers)
+    response = requests.post(url, json=payload, headers=headers)
     response.raise_for_status()
     return True
 
 
 def get_or_create_computing_unit(
-    token: str,
-    api_endpoint: str = TEXERA_API_ENDPOINT
-) -> int:
+    token: str, computing_unit_endpoint: str = TEXERA_COMPUTING_UNIT_ENDPOINT
+) -> Optional[int]:
     """
-    Get an existing computing unit or create one if none exists.
+    Get an existing computing unit or return None if not available.
+
+    The computing unit is optional for basic agent operations.
 
     Args:
         token: JWT access token
-        api_endpoint: Texera API endpoint URL
+        computing_unit_endpoint: Computing unit service endpoint URL (default: port 8888)
 
     Returns:
-        Computing unit ID (cuid)
-
-    Raises:
-        requests.HTTPError: If API call fails
+        Computing unit ID (cuid) or None if not available
     """
     headers = {"Authorization": f"Bearer {token}"}
 
-    # First try to list existing computing units
-    list_url = f"{api_endpoint}/api/computing-unit/list"
-    response = requests.get(list_url, headers=headers)
-    response.raise_for_status()
-
-    units = response.json()
-    if units and len(units) > 0:
-        # Return the first available computing unit
-        return units[0]["cuid"]
-
-    # No computing units exist, create one
-    create_url = f"{api_endpoint}/api/computing-unit/create"
-    payload = {"name": "Benchmark Computing Unit"}
-
-    response = requests.post(create_url, json=payload, headers=headers)
-    response.raise_for_status()
-
-    data = response.json()
-    return data["cuid"]
+    # Try to list existing computing units from the computing-unit service
+    list_url = f"{computing_unit_endpoint}/api/computing-unit"
+    try:
+        response = requests.get(list_url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            units = response.json()
+            if units and len(units) > 0:
+                # Return the first available computing unit
+                return units[0].get("computingUnit", {}).get("cuid") or units[0].get(
+                    "cuid"
+                )
+        return None
+    except Exception as e:
+        # Computing unit service may not be available, which is OK
+        print(f"[DataflowAgent] Computing unit service not available: {e}")
+        return None
 
 
 # ============================================================================
 # Agent Service Functions
 # ============================================================================
+
 
 def create_agent(
     model_type: str,
@@ -224,7 +246,7 @@ def create_agent(
     computing_unit_id: int,
     settings: Optional[AgentSettings] = None,
     name: Optional[str] = None,
-    agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
+    agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT,
 ) -> AgentInfo:
     """
     Create a new agent in the agent service.
@@ -275,8 +297,7 @@ def create_agent(
 
 
 def delete_agent(
-    agent_id: str,
-    agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
+    agent_id: str, agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
 ) -> bool:
     """
     Delete an agent from the agent service.
@@ -298,9 +319,7 @@ def delete_agent(
 
 
 def send_message(
-    agent_id: str,
-    message: str,
-    agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
+    agent_id: str, message: str, agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
 ) -> MessageResult:
     """
     Send a message to an agent and get the response.
@@ -333,8 +352,7 @@ def send_message(
 
 
 def get_react_steps(
-    agent_id: str,
-    agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
+    agent_id: str, agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
 ) -> list[dict]:
     """
     Get ReAct steps from an agent.
@@ -358,8 +376,7 @@ def get_react_steps(
 
 
 def clear_agent_history(
-    agent_id: str,
-    agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
+    agent_id: str, agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
 ) -> bool:
     """
     Clear an agent's conversation history.
@@ -381,8 +398,7 @@ def clear_agent_history(
 
 
 def reset_agent(
-    agent_id: str,
-    agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
+    agent_id: str, agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
 ) -> bool:
     """
     Reset an agent (clear history and workflow).
@@ -406,6 +422,7 @@ def reset_agent(
 # ============================================================================
 # DataflowAgent Class
 # ============================================================================
+
 
 class DataflowAgent:
     """
@@ -441,6 +458,7 @@ class DataflowAgent:
         execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES,
         disabled_tools: Optional[list[str]] = None,
         texera_api_endpoint: str = TEXERA_API_ENDPOINT,
+        computing_unit_endpoint: str = TEXERA_COMPUTING_UNIT_ENDPOINT,
         agent_service_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT,
         username: str = TEXERA_USERNAME,
         password: str = TEXERA_PASSWORD,
@@ -473,6 +491,7 @@ class DataflowAgent:
             disabled_tools=disabled_tools or [],
         )
         self.texera_api_endpoint = texera_api_endpoint
+        self.computing_unit_endpoint = computing_unit_endpoint
         self.agent_service_endpoint = agent_service_endpoint
         self.username = username
         self.password = password
@@ -528,7 +547,7 @@ class DataflowAgent:
         self._log("Getting computing unit...")
         self._computing_unit_id = get_or_create_computing_unit(
             token=self._token,
-            api_endpoint=self.texera_api_endpoint,
+            computing_unit_endpoint=self.computing_unit_endpoint,
         )
         self._log(f"Using computing unit: {self._computing_unit_id}")
 
@@ -564,7 +583,7 @@ class DataflowAgent:
             prompt: The prompt/question to send to the agent
 
         Returns:
-            The agent's final response text
+            The agent's final response text (last response content from react steps)
 
         Raises:
             RuntimeError: If agent is not set up
@@ -592,7 +611,35 @@ class DataflowAgent:
         if result.error:
             self._log(f"Error: {result.error}", level=0)
 
-        return result.response
+        # Return the last response content from react steps
+        return self.get_last_response_content()
+
+    def get_last_response_content(self) -> str:
+        """
+        Extract the last response content from the agent's reasoning trace.
+
+        This method finds the last agent/assistant message in the react steps
+        and returns its content as the final answer.
+
+        Returns:
+            The content of the last agent response, or empty string if none found
+        """
+        if not self._logs:
+            return ""
+
+        # Iterate through logs in reverse to find the last agent/assistant response
+        for step in reversed(self._logs):
+            role = step.get("role", "")
+            content = step.get("content", "")
+
+            # Look for agent or assistant role with non-empty content
+            if role in ("agent", "assistant") and content:
+                self._log(f"Last response content: {content[:100]}...", level=2)
+                return content
+
+        # Fallback: return empty string if no agent response found
+        self._log("No agent response found in logs", level=1)
+        return ""
 
     def clear_history(self):
         """Clear the agent's conversation history."""
@@ -662,6 +709,7 @@ class DataflowAgent:
 # Benchmark Helper Functions
 # ============================================================================
 
+
 def clean_reasoning_trace(trace: list[dict]) -> list[dict]:
     """
     Clean up reasoning trace for more compact representation.
@@ -687,7 +735,9 @@ def clean_reasoning_trace(trace: list[dict]) -> list[dict]:
             cleaned_step["toolResultsSummary"] = [
                 {
                     "toolCallId": tr.get("toolCallId"),
-                    "success": tr.get("output", {}).get("success") if isinstance(tr.get("output"), dict) else None,
+                    "success": tr.get("output", {}).get("success")
+                    if isinstance(tr.get("output"), dict)
+                    else None,
                 }
                 for tr in step["toolResults"]
             ]
@@ -746,4 +796,6 @@ if __name__ == "__main__":
         # Show reasoning trace
         print(f"\nReasoning steps: {len(agent.logs)}")
         for step in agent.logs:
-            print(f"  Step {step.get('stepId')}: {step.get('role')} - {step.get('content', '')[:100]}...")
+            print(
+                f"  Step {step.get('stepId')}: {step.get('role')} - {step.get('content', '')[:100]}..."
+            )
