@@ -28,9 +28,10 @@ import org.apache.amber.core.storage.model.VirtualDocument
 import org.apache.amber.core.tuple.Tuple
 import org.apache.amber.core.virtualidentity.{ExecutionIdentity, OperatorIdentity, WorkflowIdentity}
 import org.apache.amber.core.workflow.{PortIdentity, WorkflowSettings}
-import org.apache.amber.engine.architecture.rpc.controlcommands.ConsoleMessage
+import org.apache.amber.engine.architecture.rpc.controlcommands.{ConsoleMessage, ConsoleMessageType}
 import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
+import org.apache.texera.web.model.websocket.event.python.ConsoleUpdateEvent
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
@@ -139,6 +140,9 @@ class SyncExecutionResource extends LazyLogging {
       @volatile var finalState: WorkflowAggregatedState = UNINITIALIZED
       @volatile var operatorStates: Map[String, (String, Long, Long)] =
         Map.empty // opId -> (state, input, output)
+      @volatile var consoleErrorDetected: Boolean = false
+      val collectedConsoleLogs: mutable.Map[String, mutable.ListBuffer[ConsoleMessageInfo]] =
+        mutable.Map.empty
 
       // Shutdown any previous execution's client before starting a new one.
       // This ensures clean state when executing workflows multiple times.
@@ -165,6 +169,32 @@ class SyncExecutionResource extends LazyLogging {
             operatorStates = stats.map {
               case (opId, s) =>
                 opId -> (s.operatorState, s.aggregatedInputRowCount, s.aggregatedOutputRowCount)
+            }
+          case ConsoleUpdateEvent(opId, messages) =>
+            // Collect console messages and detect errors
+            val opLogs = collectedConsoleLogs.getOrElseUpdate(opId, mutable.ListBuffer.empty)
+            var hasError = false
+            messages.foreach { msg =>
+              opLogs += ConsoleMessageInfo(msg.msgType.name, msg.title)
+              if (msg.msgType == ConsoleMessageType.ERROR) {
+                hasError = true
+              }
+            }
+            // If error detected and not already triggered, kill execution
+            if (hasError && !consoleErrorDetected) {
+              consoleErrorDetected = true
+              logger.warn(s"Console error detected in operator $opId, killing execution")
+              try {
+                val es = workflowService.executionService.getValue
+                if (es != null && es.client != null) {
+                  es.client.shutdown()
+                }
+              } catch {
+                case e: Exception =>
+                  logger.warn(s"Error shutting down execution after console error: ${e.getMessage}")
+              }
+              finalState = KILLED
+              completionLatch.countDown()
             }
           case _ =>
         }
@@ -206,7 +236,8 @@ class SyncExecutionResource extends LazyLogging {
         val targetOps = if (request.targetOperatorIds.nonEmpty) {
           request.targetOperatorIds
         } else {
-          operatorStates.keys.toList
+          // Include operators from states and any that have console logs
+          (operatorStates.keys ++ collectedConsoleLogs.keys).toList.distinct
         }
 
         logger.info(
@@ -221,8 +252,17 @@ class SyncExecutionResource extends LazyLogging {
           val (resultMode, result, totalRowCount, displayedRows, truncated) =
             collectOperatorResult(executionId, opId, maxResultRows)
 
-          // Get console logs
-          val consoleLogs = collectConsoleLogs(executionId, opId)
+          // Get console logs - prefer real-time collected logs, fall back to database
+          val consoleLogs = collectedConsoleLogs.get(opId) match {
+            case Some(logs) if logs.nonEmpty => Some(logs.toList)
+            case _                           => collectConsoleLogs(executionId, opId)
+          }
+
+          // Check for error in this operator's console logs
+          val hasConsoleError = consoleLogs.exists(_.exists(_.msgType == "ERROR"))
+          val errorMsg = if (hasConsoleError) {
+            consoleLogs.flatMap(_.find(_.msgType == "ERROR").map(_.message))
+          } else None
 
           operatorInfos(opId) = OperatorInfo(
             state = state,
@@ -234,17 +274,17 @@ class SyncExecutionResource extends LazyLogging {
             displayedRows = displayedRows,
             truncated = truncated,
             consoleLogs = consoleLogs,
-            error = None
+            error = errorMsg
           )
         }
 
-        // Collect errors
+        // Collect fatal errors (console errors are already in operator consoleLogs)
         val fatalErrors = executionService.executionStateStore.metadataStore.getState.fatalErrors
           .map(err => s"${err.`type`}: ${err.message}")
           .toList
 
         SyncExecutionResult(
-          success = finalState == COMPLETED,
+          success = finalState == COMPLETED && !consoleErrorDetected,
           state = stateToString(finalState),
           operators = operatorInfos.toMap,
           compilationErrors = None,
