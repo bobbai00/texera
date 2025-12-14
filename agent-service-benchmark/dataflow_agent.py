@@ -53,6 +53,7 @@ class AgentSettings:
     tool_timeout_seconds: int = AGENT_TOOL_TIMEOUT_SECONDS
     execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES
     disabled_tools: list[str] = field(default_factory=list)
+    only_use_relational_operators: bool = False
 
     def to_api_dict(self) -> dict[str, Any]:
         """Convert to API request format."""
@@ -62,6 +63,7 @@ class AgentSettings:
             "toolTimeoutSeconds": self.tool_timeout_seconds,
             "executionTimeoutMinutes": self.execution_timeout_minutes,
             "disabledTools": self.disabled_tools,
+            "onlyUseRelationalOperators": self.only_use_relational_operators,
         }
 
 
@@ -516,6 +518,7 @@ class DataflowAgent:
         tool_timeout_seconds: int = AGENT_TOOL_TIMEOUT_SECONDS,
         execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES,
         disabled_tools: Optional[list[str]] = None,
+        only_use_relational_operators: bool = False,
         texera_api_endpoint: str = TEXERA_API_ENDPOINT,
         computing_unit_endpoint: str = TEXERA_COMPUTING_UNIT_ENDPOINT,
         agent_service_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT,
@@ -535,6 +538,7 @@ class DataflowAgent:
             tool_timeout_seconds: Tool execution timeout in seconds
             execution_timeout_minutes: Workflow execution timeout in minutes
             disabled_tools: List of tool names to disable
+            only_use_relational_operators: Only allow relational operators
             texera_api_endpoint: Texera backend API endpoint
             agent_service_endpoint: Agent service endpoint
             username: Texera username for authentication
@@ -550,6 +554,7 @@ class DataflowAgent:
             tool_timeout_seconds=tool_timeout_seconds,
             execution_timeout_minutes=execution_timeout_minutes,
             disabled_tools=disabled_tools or [],
+            only_use_relational_operators=only_use_relational_operators,
         )
         self.texera_api_endpoint = texera_api_endpoint
         self.computing_unit_endpoint = computing_unit_endpoint

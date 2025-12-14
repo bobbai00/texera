@@ -180,6 +180,7 @@ def run_single_task(
     max_steps: int = AGENT_MAX_STEPS,
     verbosity_level: int = 1,
     retain: bool = False,
+    relational_only: bool = False,
 ) -> dict:
     """
     Run a single benchmark task with a fresh agent and workflow.
@@ -197,6 +198,7 @@ def run_single_task(
         max_steps: Maximum agent steps
         verbosity_level: Logging verbosity
         retain: If True, do not delete the agent and workflow after task
+        relational_only: If True, only allow relational operators
 
     Returns:
         Dictionary with task results
@@ -226,6 +228,7 @@ def run_single_task(
         verbosity_level=verbosity_level,
         workflow_name=f"Benchmark Task {task_id}",
         agent_name=f"task-{task_id}",
+        only_use_relational_operators=relational_only,
     )
 
     start_time = time.time()
@@ -348,6 +351,7 @@ def run_benchmark(
     max_steps: int = AGENT_MAX_STEPS,
     verbosity_level: int = 1,
     retain: bool = False,
+    relational_only: bool = False,
 ) -> list[dict]:
     """
     Run the full benchmark.
@@ -365,6 +369,7 @@ def run_benchmark(
         max_steps: Maximum agent steps per task
         verbosity_level: Logging verbosity
         retain: If True, do not delete agents and workflows after tasks
+        relational_only: If True, only allow relational operators
 
     Returns:
         List of task results
@@ -391,6 +396,7 @@ def run_benchmark(
             max_steps=max_steps,
             verbosity_level=verbosity_level,
             retain=retain,
+            relational_only=relational_only,
         )
         results.append(result)
 
@@ -548,6 +554,11 @@ def main():
         action="store_true",
         help="Skip initial cleanup of existing agents",
     )
+    parser.add_argument(
+        "--relational-only",
+        action="store_true",
+        help="Only allow relational operators (Aggregate, Projection, Join, etc.)",
+    )
 
     args = parser.parse_args()
 
@@ -560,6 +571,7 @@ def main():
     print(f"Max steps: {args.max_steps}")
     print(f"Data dir: {args.data_dir}")
     print(f"Retain mode: {args.retain}")
+    print(f"Relational only: {args.relational_only}")
     print("=" * 60)
 
     # Step 0: Cleanup existing agents (unless --no-cleanup is specified)
@@ -602,6 +614,7 @@ def main():
         max_steps=args.max_steps,
         verbosity_level=args.verbosity,
         retain=args.retain,
+        relational_only=args.relational_only,
     )
 
     # Step 5: Print summary
