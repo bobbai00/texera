@@ -79,6 +79,7 @@ export const ALLOWED_OPERATOR_TYPES = [
   "Intersect",
   "CartesianProduct",
   "CSVFileScan",
+  "FileScan"
 ] as const;
 
 // ============================================================================
@@ -382,15 +383,29 @@ export function formatValidationErrors(validation: Validation): string {
 
 /**
  * Create tool to list all available operator types with descriptions.
+ * @param metadataStore - The operator metadata store
+ * @param onlyUseRelationalOperators - If true, only return operators from ALLOWED_OPERATOR_TYPES list
  */
-export function createListAllAvailableOperatorTypesTool(metadataStore: OperatorMetadataStore) {
+export function createListAllAvailableOperatorTypesTool(
+  metadataStore: OperatorMetadataStore,
+  onlyUseRelationalOperators: boolean = false
+) {
   return tool({
     description:
       "List all available operator types in Texera with their descriptions. " +
       "Use this to discover what operators are available before adding them to a workflow.",
     inputSchema: z.object({}),
     execute: async () => {
-      const operators = metadataStore.getAllOperatorTypes();
+      let operators = metadataStore.getAllOperatorTypes();
+
+      // Filter to only allowed relational operators if setting is enabled
+      if (onlyUseRelationalOperators) {
+        const allowedSet = new Set<string>(ALLOWED_OPERATOR_TYPES);
+        operators = Object.fromEntries(
+          Object.entries(operators).filter(([type]) => allowedSet.has(type))
+        );
+      }
+
       const count = Object.keys(operators).length;
       if (count === 0) {
         return createErrorResult("No operator types registered.");

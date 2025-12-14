@@ -106,6 +106,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
   public settingsToolTimeoutSeconds = 120; // 2 minutes default
   public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
   public settingsMaxSteps = 10; // Default max steps per message
+  public settingsOnlyUseRelationalOperators = false; // Restrict to relational operators only
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -330,6 +331,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
         this.settingsToolTimeoutSeconds = settings.toolTimeoutSeconds ?? 120;
         this.settingsExecutionTimeoutMinutes = settings.executionTimeoutMinutes ?? 10;
         this.settingsMaxSteps = settings.maxSteps ?? 10;
+        this.settingsOnlyUseRelationalOperators = settings.onlyUseRelationalOperators ?? false;
       });
 
     // Also load agent internal state
@@ -1015,6 +1017,24 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
       .pipe(untilDestroyed(this))
       .subscribe({
         next: () => this.notificationService.success("Max steps saved"),
+        error: () => {}, // Error already handled by service
+      });
+  }
+
+  /**
+   * Save the only use relational operators setting.
+   */
+  public saveOnlyUseRelationalOperators(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        onlyUseRelationalOperators: this.settingsOnlyUseRelationalOperators,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsOnlyUseRelationalOperators ? "Relational operators only mode enabled" : "All operators enabled"
+          ),
         error: () => {}, // Error already handled by service
       });
   }

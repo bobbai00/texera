@@ -56,6 +56,8 @@ export interface AgentSettingsApi {
   disabledTools?: string[];
   /** Maximum number of steps per message */
   maxSteps?: number;
+  /** Only allow relational operators (from ALLOWED_OPERATOR_TYPES list) */
+  onlyUseRelationalOperators?: boolean;
 }
 
 /**
@@ -1007,6 +1009,7 @@ export class TexeraCopilotManagerService {
           executionTimeoutMinutes: 10,
           disabledTools: [],
           maxSteps: 10,
+          onlyUseRelationalOperators: false,
         })
       )
     );

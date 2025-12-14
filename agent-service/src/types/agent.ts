@@ -173,6 +173,8 @@ export interface AgentSettings {
   executionTimeoutMs: number;
   /** Maximum number of steps per message */
   maxSteps: number;
+  /** Only allow relational operators (from ALLOWED_OPERATOR_TYPES list) */
+  onlyUseRelationalOperators: boolean;
 }
 
 /**
@@ -184,6 +186,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   toolTimeoutMs: 120000, // 2 minutes
   executionTimeoutMs: 600000, // 10 minutes
   maxSteps: 10,
+  onlyUseRelationalOperators: false,
 };
 
 // ============================================================================
@@ -230,6 +233,8 @@ export interface AgentSettingsApi {
   disabledTools?: string[];
   /** Maximum number of steps per message */
   maxSteps?: number;
+  /** Only allow relational operators (from ALLOWED_OPERATOR_TYPES list) */
+  onlyUseRelationalOperators?: boolean;
 }
 
 /**
@@ -277,4 +282,6 @@ export interface UpdateAgentSettingsRequest {
   disabledTools?: string[];
   /** Maximum number of steps per message */
   maxSteps?: number;
+  /** Only allow relational operators (from ALLOWED_OPERATOR_TYPES list) */
+  onlyUseRelationalOperators?: boolean;
 }

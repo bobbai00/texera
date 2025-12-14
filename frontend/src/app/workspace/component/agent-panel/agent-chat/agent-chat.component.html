@@ -662,6 +662,25 @@
               <span class="settings-param-hint">Maximum reasoning/tool steps per message (1-50)</span>
             </div>
           </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">Only Use Relational Operators</label>
+            <div class="settings-param-input">
+              <nz-switch
+                [(ngModel)]="settingsOnlyUseRelationalOperators"
+                nzSize="small"></nz-switch>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveOnlyUseRelationalOperators()">
+                Save
+              </button>
+              <span class="settings-param-hint"
+                >Restrict agent to relational operators only (Aggregate, Projection, Join, etc.)</span
+              >
+            </div>
+          </div>
         </div>
       </nz-tab>
 

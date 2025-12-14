@@ -71,8 +71,6 @@ export interface TexeraAgentConfig {
   agentName?: string;
   /** Custom system prompt (optional, defaults to COPILOT_SYSTEM_PROMPT) */
   systemPrompt?: string;
-  /** Maximum number of steps per message */
-  maxSteps?: number;
   /** Pre-initialized metadata store (optional, uses global singleton if not provided) */
   metadataStore?: OperatorMetadataStore;
 }
@@ -161,11 +159,10 @@ export class TexeraAgent {
     // Initialize agent action manager
     this.agentActionManager = new AgentActionManager();
 
-    // Initialize settings (maxSteps from config or default)
+    // Initialize settings with defaults
     this.settings = {
       ...DEFAULT_AGENT_SETTINGS,
       systemPrompt: this.systemPrompt,
-      maxSteps: config.maxSteps || DEFAULT_AGENT_SETTINGS.maxSteps,
     };
 
     // Initialize tools - will have operator schemas if metadata store is already initialized
@@ -231,7 +228,10 @@ export class TexeraAgent {
       [TOOL_NAME_ADD_LINK]: createAddLinkTool(this.workflowState, context),
       [TOOL_NAME_MODIFY_OPERATOR]: createModifyOperatorTool(this.workflowState, context),
       [TOOL_NAME_DELETE_FROM_WORKFLOW]: createDeleteFromWorkflowTool(this.workflowState, context),
-      [TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: createListAllAvailableOperatorTypesTool(this.metadataStore),
+      [TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: createListAllAvailableOperatorTypesTool(
+        this.metadataStore,
+        this.settings.onlyUseRelationalOperators
+      ),
       [TOOL_NAME_GET_OPERATOR_SCHEMA]: createGetOperatorSchemaTool(this.metadataStore),
     };
 
@@ -349,6 +349,7 @@ export class TexeraAgent {
     executionTimeoutMs?: number;
     disabledTools?: Set<string>;
     maxSteps?: number;
+    onlyUseRelationalOperators?: boolean;
   }): void {
     if (updates.maxOperatorResultTokenLimit !== undefined) {
       this.settings.maxOperatorResultTokenLimit = updates.maxOperatorResultTokenLimit;
@@ -364,6 +365,9 @@ export class TexeraAgent {
     }
     if (updates.maxSteps !== undefined) {
       this.settings.maxSteps = updates.maxSteps;
+    }
+    if (updates.onlyUseRelationalOperators !== undefined) {
+      this.settings.onlyUseRelationalOperators = updates.onlyUseRelationalOperators;
     }
 
     // Rebuild tools with updated settings
