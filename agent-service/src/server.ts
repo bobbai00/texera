@@ -320,7 +320,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 
       const result = await stored.agent.sendMessage(message);
 
-      console.log(`[Server] Agent ${id} completed with ${result.steps.length} steps`);
+      console.log(`[Server] Agent ${id} completed with ${result.messages.length} messages`);
 
       return {
         response: result.response,
@@ -598,7 +598,7 @@ const app = new Elysia()
             state: stored.agent.getState(),
           });
 
-          console.log(`[WS] Agent ${agentId} completed with ${result.steps.length} steps`);
+          console.log(`[WS] Agent ${agentId} completed with ${result.messages.length} steps`);
         } catch (error: any) {
           stored.agent.setStepCallback(null);
           broadcastToAgent(agentId, { type: "error", error: error.message });

@@ -83,6 +83,7 @@ class MessageResult:
     """Result from sending a message to the agent."""
 
     response: str
+    messages: list[dict]  # Full conversation messages from this interaction
     usage: dict
     stats: dict
     stopped: bool
@@ -344,35 +345,12 @@ def send_message(
     data = response.json()
     return MessageResult(
         response=data["response"],
+        messages=data.get("messages", []),
         usage=data.get("usage", {}),
         stats=data.get("stats", {}),
         stopped=data.get("stopped", False),
         error=data.get("error"),
     )
-
-
-def get_react_steps(
-    agent_id: str, agent_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT
-) -> list[dict]:
-    """
-    Get ReAct steps from an agent.
-
-    Args:
-        agent_id: Agent ID
-        agent_endpoint: Agent service endpoint URL
-
-    Returns:
-        List of ReAct steps
-
-    Raises:
-        requests.HTTPError: If API call fails
-    """
-    url = f"{agent_endpoint}/api/agents/{agent_id}/react-steps"
-    response = requests.get(url)
-    response.raise_for_status()
-
-    data = response.json()
-    return data.get("steps", [])
 
 
 def get_agent_workflow(
@@ -587,12 +565,12 @@ class DataflowAgent:
         self._workflow_id: Optional[int] = None
         self._computing_unit_id: Optional[int] = None
         self._agent_info: Optional[AgentInfo] = None
-        self._logs: list[dict] = []
+        self._last_result: Optional[MessageResult] = None
 
     @property
-    def logs(self) -> list[dict]:
-        """Get the reasoning trace logs from the last run."""
-        return self._logs
+    def last_result(self) -> Optional[MessageResult]:
+        """Get the last message result."""
+        return self._last_result
 
     @property
     def agent_id(self) -> Optional[str]:
@@ -659,9 +637,9 @@ class DataflowAgent:
 
         return self
 
-    def run(self, prompt: str) -> str:
+    def run(self, prompt: str) -> MessageResult:
         """
-        Run the agent with a prompt and return the response.
+        Run the agent with a prompt and return the full message result.
 
         This is the main method for interacting with the agent, similar to
         smolagents.CodeAgent.run().
@@ -670,7 +648,7 @@ class DataflowAgent:
             prompt: The prompt/question to send to the agent
 
         Returns:
-            The agent's final response text (last response content from react steps)
+            MessageResult containing response, usage, stats, stopped, and error
 
         Raises:
             RuntimeError: If agent is not set up
@@ -687,46 +665,15 @@ class DataflowAgent:
             agent_endpoint=self.agent_service_endpoint,
         )
 
-        # Fetch reasoning trace
-        self._logs = get_react_steps(
-            agent_id=self._agent_info.id,
-            agent_endpoint=self.agent_service_endpoint,
-        )
+        # Store the result for later access
+        self._last_result = result
 
-        self._log(f"Response received. Steps: {len(self._logs)}", level=2)
+        self._log(f"Response received.", level=2)
 
         if result.error:
             self._log(f"Error: {result.error}", level=0)
 
-        # Return the last response content from react steps
-        return self.get_last_response_content()
-
-    def get_last_response_content(self) -> str:
-        """
-        Extract the last response content from the agent's reasoning trace.
-
-        This method finds the last agent/assistant message in the react steps
-        and returns its content as the final answer.
-
-        Returns:
-            The content of the last agent response, or empty string if none found
-        """
-        if not self._logs:
-            return ""
-
-        # Iterate through logs in reverse to find the last agent/assistant response
-        for step in reversed(self._logs):
-            role = step.get("role", "")
-            content = step.get("content", "")
-
-            # Look for agent or assistant role with non-empty content
-            if role in ("agent", "assistant") and content:
-                self._log(f"Last response content: {content[:100]}...", level=2)
-                return content
-
-        # Fallback: return empty string if no agent response found
-        self._log("No agent response found in logs", level=1)
-        return ""
+        return result
 
     def clear_history(self):
         """Clear the agent's conversation history."""
@@ -735,7 +682,7 @@ class DataflowAgent:
                 agent_id=self._agent_info.id,
                 agent_endpoint=self.agent_service_endpoint,
             )
-            self._logs = []
+            self._last_result = None
             self._log("History cleared")
 
     def reset(self):
@@ -745,7 +692,7 @@ class DataflowAgent:
                 agent_id=self._agent_info.id,
                 agent_endpoint=self.agent_service_endpoint,
             )
-            self._logs = []
+            self._last_result = None
             self._log("Agent reset")
 
     def cleanup(self):
@@ -779,7 +726,7 @@ class DataflowAgent:
 
         self._token = None
         self._computing_unit_id = None
-        self._logs = []
+        self._last_result = None
         self._log("Cleanup complete")
 
     def __enter__(self) -> "DataflowAgent":
@@ -790,75 +737,6 @@ class DataflowAgent:
         """Context manager exit - cleanup resources."""
         self.cleanup()
         return False
-
-
-# ============================================================================
-# Benchmark Helper Functions
-# ============================================================================
-
-
-def clean_reasoning_trace(trace: list[dict]) -> list[dict]:
-    """
-    Clean up reasoning trace for more compact representation.
-    Similar to the smolagents clean_reasoning_trace function.
-
-    Args:
-        trace: List of ReAct step dictionaries
-
-    Returns:
-        Cleaned trace list
-    """
-    cleaned = []
-    for step in trace:
-        cleaned_step = {
-            "stepId": step.get("stepId"),
-            "role": step.get("role"),
-            "content": step.get("content", "")[:500],  # Truncate long content
-            "toolCalls": step.get("toolCalls"),
-            "isEnd": step.get("isEnd"),
-        }
-        if step.get("toolResults"):
-            # Summarize tool results
-            cleaned_step["toolResultsSummary"] = [
-                {
-                    "toolCallId": tr.get("toolCallId"),
-                    "success": tr.get("output", {}).get("success")
-                    if isinstance(tr.get("output"), dict)
-                    else None,
-                }
-                for tr in step["toolResults"]
-            ]
-        cleaned.append(cleaned_step)
-    return cleaned
-
-
-def run_benchmark_task(agent: DataflowAgent, task: dict, prompt_template: str) -> dict:
-    """
-    Run a single benchmark task with the agent.
-
-    Args:
-        agent: DataflowAgent instance
-        task: Task dictionary with 'task_id', 'question', 'guidelines'
-        prompt_template: Prompt template with {question} and {guidelines} placeholders
-
-    Returns:
-        Dictionary with task_id, agent_answer, and reasoning_trace
-    """
-    prompt = prompt_template.format(
-        question=task["question"],
-        guidelines=task["guidelines"],
-    )
-
-    # Clear history before each task for clean state
-    agent.clear_history()
-
-    answer = agent.run(prompt)
-
-    return {
-        "task_id": str(task["task_id"]),
-        "agent_answer": str(answer),
-        "reasoning_trace": str(clean_reasoning_trace(agent.logs)),
-    }
 
 
 # ============================================================================
@@ -877,12 +755,7 @@ if __name__ == "__main__":
         verbosity_level=2,
     ) as agent:
         # Test with a simple question
-        response = agent.run("What operators are available for data processing?")
-        print(f"\nResponse: {response}")
-
-        # Show reasoning trace
-        print(f"\nReasoning steps: {len(agent.logs)}")
-        for step in agent.logs:
-            print(
-                f"  Step {step.get('stepId')}: {step.get('role')} - {step.get('content', '')[:100]}..."
-            )
+        result = agent.run("What operators are available for data processing?")
+        print(f"\nResponse: {result.response}")
+        print(f"Usage: {result.usage}")
+        print(f"Stats: {result.stats}")

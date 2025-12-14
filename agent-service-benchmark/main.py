@@ -30,7 +30,7 @@ from huggingface_hub import hf_hub_download
 
 from dataflow_agent import (
     DataflowAgent,
-    clean_reasoning_trace,
+    MessageResult,
     delete_all_agents,
     list_all_agents,
     get_agent_workflow,
@@ -69,54 +69,16 @@ RUNS_DIR = Path(__file__).parent / "runs"
 # Prompt template for the dataflow agent
 # This is different from the smolagents prompt - it instructs the agent to build
 # workflows to answer questions rather than writing Python code directly.
-DATAFLOW_PROMPT = """You are an expert data analyst working with the Texera dataflow platform.
-You will answer factoid questions by building and executing dataflow workflows.
-
-## Available Context Files
-The following files contain the data you need to analyze:
+PROMPT = """You are an expert data analyst and you will answer factoid questions by loading and referencing the files/documents listed below.
+You have these files available:
 {context_files}
+Don't forget to reference any documentation in the data dir before answering a question.
 
-## File Descriptions
-- payments.csv: Transaction payment records with fields like merchant, amount, currency, etc.
-- acquirer_countries.csv: Mapping of acquirer codes to country names
-- merchant_category_codes.csv: Mapping of MCC codes to category descriptions
-- fees.json: Fee structure and pricing rules
-- merchant_data.json: Merchant profile information
-- manual.md: Documentation about the payment system
-- payments-readme.md: Description of the payments.csv schema
+Here is the question you need to answer:
+{question}
 
-## Instructions
-1. First, understand what data you need by examining the relevant files
-2. Build a workflow using CSVFileScan to load the required CSV files
-3. Use PythonUDFV2 operators to process and analyze the data
-4. Execute the workflow to get results
-5. Provide a clear, concise answer based on the results
-
-## Your Task
-Question: {question}
-
-Guidelines: {guidelines}
-
-Please build a workflow to answer this question and provide your final answer.
-"""
-
-# Alternative simpler prompt that focuses on direct Python analysis
-SIMPLE_PROMPT = """You are an expert data analyst. You will answer factoid questions by analyzing data files.
-
-Available files in {data_dir}:
-{context_files}
-
-The key files are:
-- payments.csv: Payment transaction records
-- fees.json: Fee structure rules
-- merchant_data.json: Merchant information
-- manual.md & payments-readme.md: Documentation
-
-Question: {question}
-
-Guidelines: {guidelines}
-
-Analyze the data and provide your answer. Be concise and follow the guidelines exactly.
+Here are the guidelines you must follow when answering the question above:
+{guidelines}
 """
 
 
@@ -211,7 +173,8 @@ def load_benchmark_dataset(
 def run_single_task(
     task: dict,
     context_files: list[str],
-    run_dir: Path,
+    base_run_dir: Path,
+    timestamp: str,
     data_dir: str = DATA_DIR,
     model_type: str = AGENT_MODEL_TYPE,
     max_steps: int = AGENT_MAX_STEPS,
@@ -227,7 +190,8 @@ def run_single_task(
     Args:
         task: Task dictionary with task_id, question, guidelines
         context_files: List of context file paths
-        run_dir: Directory to save task results
+        base_run_dir: Base directory for runs
+        timestamp: Timestamp string for folder naming
         data_dir: Directory containing context files
         model_type: LLM model type to use
         max_steps: Maximum agent steps
@@ -235,7 +199,7 @@ def run_single_task(
         retain: If True, do not delete the agent and workflow after task
 
     Returns:
-        Dictionary with task_id, agent_answer, reasoning_trace, workflow_id, agent_id
+        Dictionary with task results
     """
     task_id = task["task_id"]
     question = task["question"]
@@ -243,17 +207,19 @@ def run_single_task(
 
     print(f"\n[Task {task_id}] {question[:80]}...")
 
-    # Format the prompt
+    # Create task-specific folder: {timestamp}_task{task_id}
+    task_dir = base_run_dir / f"{timestamp}_task{task_id}"
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    # Format the prompt using PROMPT template
     context_files_str = "\n".join(f"  - {f}" for f in context_files)
-    prompt = SIMPLE_PROMPT.format(
-        data_dir=data_dir,
+    prompt = PROMPT.format(
         context_files=context_files_str,
         question=question,
         guidelines=guidelines,
     )
 
     # Create a new agent with fresh workflow for this task
-    # Use task_id as the agent name for easy identification
     agent = DataflowAgent(
         model_type=model_type,
         max_steps=max_steps,
@@ -263,11 +229,11 @@ def run_single_task(
     )
 
     start_time = time.time()
-    answer = ""
-    logs = []
+    message_result: Optional[MessageResult] = None
     workflow_id = None
     agent_id = None
     workflow_content = None
+    elapsed = 0.0
 
     try:
         # Setup agent (creates new workflow)
@@ -276,23 +242,22 @@ def run_single_task(
         agent_id = agent.agent_id
         print(f"[Task {task_id}] Created agent: {agent_id}, workflow: {workflow_id}")
 
-        # Run the agent
-        answer = agent.run(prompt)
-        logs = agent.logs
+        # Run the agent - returns MessageResult
+        message_result = agent.run(prompt)
         elapsed = time.time() - start_time
+
+        # The answer is the response text from MessageResult
+        answer = message_result.response
         print(f"[Task {task_id}] Completed in {elapsed:.1f}s")
-        print(f"[Task {task_id}] Answer: {str(answer)[:200]}...")
+        print(f"[Task {task_id}] Answer: {answer[:200]}...")
 
         # Fetch the workflow after running
         try:
             workflow_content = get_agent_workflow(agent_id)
-            # Workflow can be nested under "workflow" key or at top level
             workflow_data = workflow_content.get("workflow", workflow_content)
             num_operators = len(workflow_data.get("operators", []))
             num_links = len(workflow_data.get("links", []))
-            print(
-                f"[Task {task_id}] Fetched workflow with {num_operators} operators, {num_links} links"
-            )
+            print(f"[Task {task_id}] Fetched workflow with {num_operators} operators, {num_links} links")
         except Exception as e:
             print(f"[Task {task_id}] Failed to fetch workflow: {e}")
             workflow_content = None
@@ -300,46 +265,84 @@ def run_single_task(
     except Exception as e:
         elapsed = time.time() - start_time
         answer = f"ERROR: {e}"
-        logs = agent.logs if agent else []
         print(f"[Task {task_id}] Failed after {elapsed:.1f}s: {e}")
     finally:
         # Only cleanup if retain is False
         if not retain:
             agent.cleanup()
         else:
-            print(
-                f"[Task {task_id}] Retaining agent: {agent_id}, workflow: {workflow_id}"
-            )
+            print(f"[Task {task_id}] Retaining agent: {agent_id}, workflow: {workflow_id}")
 
-    result = {
+    # Save files to task directory
+
+    # 1. workflow.json - the workflow structure
+    if workflow_content:
+        workflow_file = task_dir / "workflow.json"
+        with open(workflow_file, "w") as f:
+            json.dump(workflow_content, f, indent=2)
+        print(f"[Task {task_id}] Saved workflow.json")
+
+    # 2. answer.txt - the final answer text
+    answer_file = task_dir / "answer.txt"
+    with open(answer_file, "w") as f:
+        f.write(message_result.response if message_result else answer)
+    print(f"[Task {task_id}] Saved answer.txt")
+
+    # 3. parameter.csv - usage and stats from MessageResult
+    if message_result:
+        param_data = {
+            "response_length": len(message_result.response),
+            "stopped": message_result.stopped,
+            "error": message_result.error or "",
+            "elapsed_seconds": elapsed,
+            "workflow_id": workflow_id,
+            "agent_id": agent_id,
+        }
+        # Add usage fields
+        for key, value in message_result.usage.items():
+            param_data[f"usage_{key}"] = value
+        # Add stats fields
+        for key, value in message_result.stats.items():
+            param_data[f"stats_{key}"] = value
+
+        param_df = pd.DataFrame([param_data])
+        param_file = task_dir / "parameter.csv"
+        param_df.to_csv(param_file, index=False)
+        print(f"[Task {task_id}] Saved parameter.csv")
+
+    # 4. trace.json - the full messages array as trace
+    if message_result:
+        trace_data = {
+            "response": message_result.response,
+            "messages": message_result.messages,  # Full conversation messages
+            "usage": message_result.usage,
+            "stats": message_result.stats,
+            "stopped": message_result.stopped,
+            "error": message_result.error,
+        }
+        trace_file = task_dir / "trace.json"
+        with open(trace_file, "w") as f:
+            json.dump(trace_data, f, indent=2)
+        print(f"[Task {task_id}] Saved trace.json")
+
+    print(f"[Task {task_id}] All files saved to {task_dir}")
+
+    return {
         "task_id": str(task_id),
-        "agent_answer": str(answer),
-        "reasoning_trace": clean_reasoning_trace(logs),
+        "task_dir": str(task_dir),
+        "answer": message_result.response if message_result else answer,
         "workflow_id": workflow_id,
         "agent_id": agent_id,
         "elapsed_seconds": elapsed,
+        "error": message_result.error if message_result else None,
     }
-
-    # Save individual task result to run_dir/{task_id}.json
-    task_file = run_dir / f"{task_id}.json"
-    with open(task_file, "w") as f:
-        json.dump(result, f, indent=2)
-    print(f"[Task {task_id}] Saved to {task_file}")
-
-    # Save workflow to run_dir/{task_id}_workflow.json
-    if workflow_content:
-        workflow_file = run_dir / f"{task_id}_workflow.json"
-        with open(workflow_file, "w") as f:
-            json.dump(workflow_content, f, indent=2)
-        print(f"[Task {task_id}] Workflow saved to {workflow_file}")
-
-    return result
 
 
 def run_benchmark(
     dataset: datasets.Dataset,
     context_files: list[str],
-    run_dir: Path,
+    base_run_dir: Path,
+    timestamp: str,
     data_dir: str = DATA_DIR,
     model_type: str = AGENT_MODEL_TYPE,
     max_steps: int = AGENT_MAX_STEPS,
@@ -350,11 +353,13 @@ def run_benchmark(
     Run the full benchmark.
 
     Each task creates a fresh workflow and agent for proper isolation.
+    Each task is saved to its own folder: {timestamp}_task{task_id}
 
     Args:
         dataset: HuggingFace Dataset with tasks
         context_files: List of context file paths
-        run_dir: Directory to save task results
+        base_run_dir: Base directory for runs
+        timestamp: Timestamp string for folder naming
         data_dir: Directory containing context files
         model_type: LLM model type to use
         max_steps: Maximum agent steps per task
@@ -369,6 +374,7 @@ def run_benchmark(
 
     print(f"\n[Benchmark] Running {total_tasks} tasks...")
     print(f"[Benchmark] Each task will create a new workflow and agent")
+    print(f"[Benchmark] Output format: {timestamp}_task{{task_id}}/")
     if retain:
         print(f"[Benchmark] RETAIN MODE: Agents and workflows will NOT be deleted")
     print("=" * 60)
@@ -378,7 +384,8 @@ def run_benchmark(
         result = run_single_task(
             task=task,
             context_files=context_files,
-            run_dir=run_dir,
+            base_run_dir=base_run_dir,
+            timestamp=timestamp,
             data_dir=data_dir,
             model_type=model_type,
             max_steps=max_steps,
@@ -464,23 +471,15 @@ def cleanup_existing_agents() -> int:
         return 0
 
 
-def create_run_directory() -> tuple[Path, str]:
+def get_timestamp() -> str:
     """
-    Create a new run directory with timestamp.
+    Get a timestamp string for folder naming.
 
     Returns:
-        Tuple of (run_dir Path, run_id string)
+        Timestamp string in format YYYYMMDD_HHMMSS
     """
     from datetime import datetime
-
-    # Create timestamp-based run ID
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = RUNS_DIR / run_id
-
-    # Create the directory
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    return run_dir, run_id
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 def main():
@@ -583,18 +582,21 @@ def main():
         max_tasks=args.max_tasks,
     )
 
-    # Step 3: Create run directory with timestamp
-    run_dir, run_id = create_run_directory()
-    print(f"\n[Benchmark] Run directory: {run_dir}")
+    # Step 3: Get timestamp for folder naming
+    timestamp = get_timestamp()
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"\n[Benchmark] Output directory: {RUNS_DIR}")
+    print(f"[Benchmark] Timestamp: {timestamp}")
 
     # Step 4: Run benchmark (each task creates its own agent and workflow)
     print("\n[Benchmark] Starting benchmark...")
     print(f"[Benchmark] Model: {args.model}, Max steps: {args.max_steps}")
 
-    agent_answers = run_benchmark(
+    results = run_benchmark(
         dataset=dataset,
         context_files=context_files,
-        run_dir=run_dir,
+        base_run_dir=RUNS_DIR,
+        timestamp=timestamp,
         data_dir=args.data_dir,
         model_type=args.model,
         max_steps=args.max_steps,
@@ -602,52 +604,13 @@ def main():
         retain=args.retain,
     )
 
-    # Step 5: Save combined results to run directory
-    results_file = run_dir / "results.jsonl"
-    write_jsonl(agent_answers, results_file)
-
-    # Also save as DataFrame for inspection
-    # Convert reasoning_trace back to string for CSV
-    results_for_csv = []
-    for r in agent_answers:
-        r_copy = r.copy()
-        r_copy["reasoning_trace"] = str(r_copy["reasoning_trace"])
-        results_for_csv.append(r_copy)
-    results_df = pd.DataFrame(results_for_csv)
-    csv_file = run_dir / "results.csv"
-    results_df.to_csv(csv_file, index=False)
-    print(f"[Benchmark] Results also saved to {csv_file}")
-
-    # Save run metadata
-    metadata = {
-        "run_id": run_id,
-        "split": args.split,
-        "max_tasks": args.max_tasks,
-        "model": args.model,
-        "max_steps": args.max_steps,
-        "data_dir": args.data_dir,
-        "retain": args.retain,
-        "total_tasks": len(agent_answers),
-        "timestamp": run_id,
-    }
-    metadata_file = run_dir / "metadata.json"
-    with open(metadata_file, "w") as f:
-        json.dump(metadata, f, indent=2)
-    print(f"[Benchmark] Metadata saved to {metadata_file}")
-
-    # Step 6: Evaluate (optional)
-    if args.evaluate:
-        tasks_df = dataset.to_pandas()
-        scores = evaluate_results(results_df, tasks_df)
-        if scores is not None:
-            scores_file = run_dir / "scores.csv"
-            scores.to_csv(scores_file, index=False)
-            print(f"[Benchmark] Scores saved to {scores_file}")
-
+    # Step 5: Print summary
     print("\n[Benchmark] Complete!")
-    print(f"Run ID: {run_id}")
-    print(f"Run directory: {run_dir}")
-    print(f"Results: {results_file}")
+    print(f"Timestamp: {timestamp}")
+    print(f"Total tasks: {len(results)}")
+    print(f"\nTask folders created:")
+    for r in results:
+        print(f"  - {r['task_dir']}")
 
 
 if __name__ == "__main__":

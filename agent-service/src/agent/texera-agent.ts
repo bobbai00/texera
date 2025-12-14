@@ -84,8 +84,8 @@ export interface TexeraAgentConfig {
 export interface AgentMessageResult {
   /** Final response text */
   response: string;
-  /** All steps taken during message processing */
-  steps: ReActStep[];
+  /** Full conversation messages from this interaction */
+  messages: ModelMessage[];
   /** Token usage statistics */
   usage: TokenUsage;
   /** Message statistics */
@@ -603,13 +603,7 @@ export class TexeraAgent {
         }
       }
 
-      // Add assistant response to history
-      this.messages.push({
-        role: "assistant",
-        content: result.text,
-      });
-
-      // TODO: add the whole message history into the history by doing:
+      // Add the response messages to history
       this.messages.push(...result.response.messages);
 
       // Update final stats
@@ -622,12 +616,9 @@ export class TexeraAgent {
         stats.totalTokens = result.usage.totalTokens || 0;
       }
 
-      // Return steps for this message only
-      const messageSteps = this.reActSteps.filter(s => s.messageId === messageId);
-
       return {
         response: result.text,
-        steps: messageSteps,
+        messages: result.response.messages,
         usage: {
           inputTokens: stats.totalInputTokens,
           outputTokens: stats.totalOutputTokens,
@@ -656,11 +647,9 @@ export class TexeraAgent {
       stats.status = "error";
       stats.errorMessage = error.message || String(error);
 
-      const messageSteps = this.reActSteps.filter(s => s.messageId === messageId);
-
       return {
         response: "",
-        steps: messageSteps,
+        messages: [],
         usage: {
           inputTokens: stats.totalInputTokens,
           outputTokens: stats.totalOutputTokens,
