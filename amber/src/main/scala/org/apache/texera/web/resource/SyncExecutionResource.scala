@@ -38,6 +38,7 @@ import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
 import org.apache.texera.web.model.websocket.request.{LogicalPlanPojo, WorkflowExecuteRequest}
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.{ExecutionResultService, WorkflowService}
+import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
 import java.net.URI
 import java.util.concurrent.{CountDownLatch, TimeUnit}
@@ -141,6 +142,7 @@ class SyncExecutionResource extends LazyLogging {
       @volatile var operatorStates: Map[String, (String, Long, Long)] =
         Map.empty // opId -> (state, input, output)
       @volatile var consoleErrorDetected: Boolean = false
+      @volatile var executionStarted: Boolean = false // Flag to ignore stale events
       val collectedConsoleLogs: mutable.Map[String, mutable.ListBuffer[ConsoleMessageInfo]] =
         mutable.Map.empty
 
@@ -158,45 +160,59 @@ class SyncExecutionResource extends LazyLogging {
       }
 
       val stateDisposable = workflowService.connectToExecution { event =>
-        event match {
-          case org.apache.texera.web.model.websocket.event.WorkflowStateEvent(state) =>
-            val parsedState = parseState(state)
-            if (isTerminalState(parsedState)) {
-              finalState = parsedState
-              completionLatch.countDown()
-            }
-          case org.apache.texera.web.model.websocket.event.OperatorStatisticsUpdateEvent(stats) =>
-            operatorStates = stats.map {
-              case (opId, s) =>
-                opId -> (s.operatorState, s.aggregatedInputRowCount, s.aggregatedOutputRowCount)
-            }
-          case ConsoleUpdateEvent(opId, messages) =>
-            // Collect console messages and detect errors
-            val opLogs = collectedConsoleLogs.getOrElseUpdate(opId, mutable.ListBuffer.empty)
-            var hasError = false
-            messages.foreach { msg =>
-              opLogs += ConsoleMessageInfo(msg.msgType.name, msg.title)
-              if (msg.msgType == ConsoleMessageType.ERROR) {
-                hasError = true
+        // Only process events after execution has actually started
+        if (executionStarted) {
+          event match {
+            case org.apache.texera.web.model.websocket.event.WorkflowStateEvent(state) =>
+              val parsedState = parseState(state)
+              if (isTerminalState(parsedState)) {
+                finalState = parsedState
+                completionLatch.countDown()
               }
-            }
-            // If error detected and not already triggered, kill execution
-            if (hasError && !consoleErrorDetected) {
-              consoleErrorDetected = true
-              logger.warn(s"Console error detected in operator $opId, killing execution")
-              try {
-                val es = workflowService.executionService.getValue
-                if (es != null && es.client != null) {
-                  es.client.shutdown()
+            case org.apache.texera.web.model.websocket.event.OperatorStatisticsUpdateEvent(stats) =>
+              operatorStates = stats.map {
+                case (opId, s) =>
+                  opId -> (s.operatorState, s.aggregatedInputRowCount, s.aggregatedOutputRowCount)
+              }
+            case ConsoleUpdateEvent(opId, messages) =>
+              // Collect console messages and detect errors
+              val opLogs = collectedConsoleLogs.getOrElseUpdate(opId, mutable.ListBuffer.empty)
+              var hasError = false
+              messages.foreach { msg =>
+                opLogs += ConsoleMessageInfo(msg.msgType.name, msg.title)
+                if (msg.msgType == ConsoleMessageType.ERROR) {
+                  hasError = true
                 }
-              } catch {
-                case e: Exception =>
-                  logger.warn(s"Error shutting down execution after console error: ${e.getMessage}")
               }
-              finalState = KILLED
-              completionLatch.countDown()
-            }
-          case _ =>
+              // If error detected and not already triggered, kill execution
+              if (hasError && !consoleErrorDetected) {
+                consoleErrorDetected = true
+                logger.warn(s"Console error detected in operator $opId, killing execution")
+                try {
+                  val es = workflowService.executionService.getValue
+                  if (es != null) {
+                    // Properly kill execution: shutdown client and update state stores
+                    if (es.client != null) {
+                      es.client.shutdown()
+                    }
+                    es.executionStateStore.statsStore.updateState(stats =>
+                      stats.withEndTimeStamp(System.currentTimeMillis())
+                    )
+                    es.executionStateStore.metadataStore.updateState(metadataStore =>
+                      updateWorkflowState(KILLED, metadataStore)
+                    )
+                  }
+                } catch {
+                  case e: Exception =>
+                    logger.warn(
+                      s"Error shutting down execution after console error: ${e.getMessage}"
+                    )
+                }
+                finalState = KILLED
+                completionLatch.countDown()
+              }
+            case _ =>
+          }
         }
       }
 
@@ -207,17 +223,31 @@ class SyncExecutionResource extends LazyLogging {
           new URI(s"sync-execution://$workflowId")
         )
 
+        // Mark execution as started - events before this point are ignored
+        executionStarted = true
+
         val completed = completionLatch.await(timeoutSeconds, TimeUnit.SECONDS)
 
         if (!completed) {
+          // Properly kill execution on timeout: shutdown client and update state stores
           try {
             val es = workflowService.executionService.getValue
-            if (es != null && es.client != null) es.client.shutdown()
+            if (es != null) {
+              if (es.client != null) {
+                es.client.shutdown()
+              }
+              es.executionStateStore.statsStore.updateState(stats =>
+                stats.withEndTimeStamp(System.currentTimeMillis())
+              )
+              es.executionStateStore.metadataStore.updateState(metadataStore =>
+                updateWorkflowState(KILLED, metadataStore)
+              )
+            }
           } catch { case _: Exception => }
 
           return SyncExecutionResult(
             success = false,
-            state = "Timeout",
+            state = "Killed",
             operators = Map.empty,
             compilationErrors = None,
             errors = Some(List(s"Timeout after $timeoutSeconds seconds"))
