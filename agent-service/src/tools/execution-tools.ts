@@ -29,6 +29,7 @@ import type { WorkflowState } from "../workflow/workflow-state";
 import { getBackendConfig } from "../api/backend-api";
 import type { LogicalPlan, LogicalLink } from "../api/execution-api";
 import type { SyncExecutionResult, OperatorInfo, ConsoleMessage } from "../types/execution";
+import { OperatorMetadataStore } from "./metadata-tools";
 
 // ============================================================================
 // Tool Name Constants
@@ -55,6 +56,147 @@ export interface ExecutionConfig {
 
 const DEFAULT_TIMEOUT_SECONDS = 300;
 const DEFAULT_MAX_RESULT_ROWS = 200;
+
+// ============================================================================
+// Workflow Validation
+// ============================================================================
+
+export interface WorkflowValidationResult {
+  isValid: boolean;
+  errors: Record<string, Record<string, string>>; // operatorId -> { field -> message }
+}
+
+interface OperatorValidation {
+  isValid: boolean;
+  messages: Record<string, string>;
+}
+
+/**
+ * Validate operator's JSON schema (properties).
+ */
+function validateOperatorSchema(
+  operatorType: string,
+  operatorProperties: Record<string, any>
+): OperatorValidation {
+  const metadataStore = OperatorMetadataStore.getInstance();
+  const validation = metadataStore.validateOperatorProperties(operatorType, operatorProperties);
+  return validation.isValid
+    ? { isValid: true, messages: {} }
+    : { isValid: false, messages: validation.messages };
+}
+
+/**
+ * Validate operator connections (input ports are properly connected).
+ * Mimics frontend ValidationWorkflowService.validateOperatorConnection()
+ */
+function validateOperatorConnection(
+  operatorId: string,
+  workflowState: WorkflowState
+): OperatorValidation {
+  const operator = workflowState.getOperator(operatorId);
+  if (!operator) {
+    return { isValid: false, messages: { error: `Operator ${operatorId} not found` } };
+  }
+
+  // Count input links by port
+  const numInputLinksByPort = new Map<string, number>();
+  const allLinks = workflowState.getAllLinks();
+
+  for (const link of allLinks) {
+    if (link.target.operatorID === operatorId) {
+      const portID = link.target.portID;
+      const num = numInputLinksByPort.get(portID) ?? 0;
+      numInputLinksByPort.set(portID, num + 1);
+    }
+  }
+
+  // Check each input port satisfies its requirements
+  let satisfyInput = true;
+  let inputPortsViolationMessage = "";
+
+  for (const port of operator.inputPorts) {
+    const portNumInputs = numInputLinksByPort.get(port.portID) ?? 0;
+
+    if (port.allowMultiInputs) {
+      if (portNumInputs < 1) {
+        satisfyInput = false;
+        inputPortsViolationMessage += `${port.displayName ?? port.portID} requires at least 1 input, has ${portNumInputs}. `;
+      }
+    } else {
+      if (portNumInputs !== 1) {
+        satisfyInput = false;
+        inputPortsViolationMessage += `${port.displayName ?? port.portID} requires 1 input, has ${portNumInputs}. `;
+      }
+    }
+  }
+
+  if (satisfyInput) {
+    return { isValid: true, messages: {} };
+  } else {
+    return { isValid: false, messages: { inputs: inputPortsViolationMessage.trim() } };
+  }
+}
+
+/**
+ * Combine multiple validation results.
+ */
+function combineValidations(...validations: OperatorValidation[]): OperatorValidation {
+  let isValid = true;
+  let messages: Record<string, string> = {};
+
+  for (const validation of validations) {
+    if (!validation.isValid) {
+      isValid = false;
+      messages = { ...messages, ...validation.messages };
+    }
+  }
+
+  return { isValid, messages };
+}
+
+/**
+ * Validate all operators in the workflow against their schemas and connection requirements.
+ * Returns validation errors for each operator that fails validation.
+ */
+export function validateWorkflow(workflowState: WorkflowState): WorkflowValidationResult {
+  const errors: Record<string, Record<string, string>> = {};
+
+  for (const operator of workflowState.getAllEnabledOperators()) {
+    // Validate JSON schema
+    const schemaValidation = validateOperatorSchema(operator.operatorType, operator.operatorProperties);
+
+    // Validate connections
+    const connectionValidation = validateOperatorConnection(operator.operatorID, workflowState);
+
+    // Combine validations
+    const combined = combineValidations(schemaValidation, connectionValidation);
+
+    if (!combined.isValid) {
+      errors[operator.operatorID] = combined.messages;
+    }
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+  };
+}
+
+/**
+ * Format workflow validation errors into a readable message.
+ */
+function formatWorkflowValidationErrors(validationResult: WorkflowValidationResult): string {
+  if (validationResult.isValid) return "";
+
+  const lines: string[] = ["Workflow validation failed:"];
+  for (const [operatorId, fieldErrors] of Object.entries(validationResult.errors)) {
+    lines.push(`  Operator ${operatorId}:`);
+    for (const [field, message] of Object.entries(fieldErrors)) {
+      lines.push(`    - ${field}: ${message}`);
+    }
+  }
+  return lines.join("\n");
+}
 
 // ============================================================================
 // Logical Plan Builder
@@ -207,6 +349,13 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
 
         if (logicalPlan.operators.length === 0) {
           return createErrorResult("Cannot execute: workflow has no operators.");
+        }
+
+        // Validate workflow before execution
+        const validationResult = validateWorkflow(workflowState);
+        if (!validationResult.isValid) {
+          const errorMessage = formatWorkflowValidationErrors(validationResult);
+          return createErrorResult(errorMessage);
         }
 
         // Execute via HTTP
