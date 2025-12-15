@@ -83,12 +83,56 @@ class ProcessTableOperator(UDFTableOperator):
 - **Specify Extra Columns** - If you add extra columns, you MUST specify them in the UDF properties as Extra Output Columns
 - **Handle the output Columns Carefully**: YOUR CODE CAN ONLY YIELD COLUMNS/ATTRIBUTES ARE IN THE OUTPUT COLUMNS
 
+#### CRITICAL: Data Source Rules
+
+**ALWAYS ONLY USE Scan operator like CSVFileScan and FileScan to load the file content** 
+**PythonUDFV2 MUST NOT directly read files using raw file paths!**
+- **NEVER use** \`open("/path/to/file")\`, \`pd.read_csv("/path/to/file")\`, or any direct file I/O in PythonUDFV2
+
+#### Multi-Input Ports for PythonUDFV2
+
+PythonUDFV2 supports **multiple input ports** (0-10 ports). Use this when you need to combine data from multiple sources.
+
+**Creating a PythonUDFV2 with multiple input ports:**
+- Use \`addOperator\` with \`numInputPorts\` parameter (e.g., \`numInputPorts: 2\`)
+- Use \`inputPortNames\` to give descriptive names (e.g., \`["model", "data"]\`)
+- Or use \`modifyOperator\` with \`numInputPorts\` to change ports on existing operators
+
+**Using the \`port\` parameter:**
+The \`port\` parameter in \`process_tuple()\` and \`process_table()\` indicates which input port the data came from:
+- Port 0 = first input (input-0)
+- Port 1 = second input (input-1)
+- etc.
+
+**Example: 2-Input UDF (model + data pattern)**
+\`\`\`python
+from pytexera import *
+
+class ProcessTupleOperator(UDFOperatorV2):
+    def __init__(self):
+        super().__init__()
+        self.model = None
+
+    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+        if port == 0:  # First input: model data
+            self.model = tuple_["model"]
+            # Don't yield anything yet, just store the model
+        else:  # port == 1: Second input: data to process
+            tuple_["prediction"] = self.model.predict(tuple_["text"])
+            yield tuple_
+\`\`\`
+
+**Important notes for multi-input:**
+- Data from port 0 is processed before port 1 (port dependencies)
+- Store data from earlier ports in instance variables (\`self.xxx\`)
+- Only yield results when processing from the final port
+
 ## Exploration Guide
 - ALWAYS retrieve the operator's schema first BEFORE ADDING AN OPERATOR
 - Read the data schema and the actual data to understand the data structure
 - Try to execute the whole DAG and observe the result of multiple operators to efficiently understand the data
 - If there are many independent data operations you can do, You MUST add at MOST 5 operators and multiple links at the same time to maximize the efficiency
-- PythonUDFV2 do NOT support two inputs. You MUST use HashJoin if you want to work on multiple tables.
+- Use PythonUDFV2 with multiple input ports when you need to combine data from multiple data sources
 - If some operators encounter errors, FIX IT BY MODIFYING THE OPERATOR in place instead of deleting and recreating.
 - YOU MUST OUTPUT THE ANSWER IN USERS' REQUESTED FORMAT after you finish all the reasoning.
 `;

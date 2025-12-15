@@ -217,13 +217,36 @@ export function createAddOperatorTool(
   return tool({
     description:
       "Add a new operator to the workflow. Specify the operator type and its properties. " +
-      "Use getOperatorSchema first to understand what properties are required.",
+      "Use getOperatorSchema first to understand what properties are required. " +
+      "For PythonUDFV2 operators, you can specify numInputPorts to create multiple input ports (default is 1).",
     inputSchema: z.object({
       operatorType: z.string().describe("The type of operator to add (e.g., 'PythonUDFV2', 'Aggregate')"),
       properties: z.record(z.any()).optional().describe("Properties to set on the operator"),
       customDisplayName: z.string().optional().describe("Optional custom display name for the operator"),
+      numInputPorts: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe(
+          "Number of input ports for PythonUDFV2 operators (0-10). Only applicable to PythonUDFV2. " +
+            "Use multiple input ports when you need to combine data from multiple sources in Python code."
+        ),
+      inputPortNames: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Optional display names for each input port (e.g., ['model', 'data']). Only applicable to PythonUDFV2."
+        ),
     }),
-    execute: async (args: { operatorType: string; properties?: Record<string, any>; customDisplayName?: string }) => {
+    execute: async (args: {
+      operatorType: string;
+      properties?: Record<string, any>;
+      customDisplayName?: string;
+      numInputPorts?: number;
+      inputPortNames?: string[];
+    }) => {
       try {
         // Check if operator type exists
         const schemaEntry = operatorSchemas.get(args.operatorType);
@@ -266,6 +289,20 @@ export function createAddOperatorTool(
         }
 
         workflowState.addOperator(operator);
+
+        // Handle numInputPorts for PythonUDFV2
+        if (args.numInputPorts !== undefined) {
+          if (args.operatorType !== "PythonUDFV2") {
+            return createErrorResult(
+              `numInputPorts is only supported for PythonUDFV2 operators. ` +
+                `Operator type "${args.operatorType}" does not support dynamic input ports.`
+            );
+          }
+          if (args.numInputPorts < 0 || args.numInputPorts > 10) {
+            return createErrorResult(`numInputPorts must be between 0 and 10, got ${args.numInputPorts}`);
+          }
+          workflowState.updateOperatorInputPorts(operator.operatorID, args.numInputPorts, args.inputPortNames);
+        }
 
         // Compile workflow to get the new operator's schemas
         const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);
@@ -419,13 +456,36 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
   return tool({
     description:
       "Modify properties of an existing operator in the workflow. " +
-      "Use getCurrentWorkflow first to see current operator properties.",
+      "Use getCurrentWorkflow first to see current operator properties. " +
+      "For PythonUDFV2 operators, you can also change the number of input ports.",
     inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to modify"),
       properties: z.record(z.any()).describe("Properties to update (merged with existing)"),
       summary: z.string().optional().describe("Optional brief summary of what this modification accomplishes"),
+      numInputPorts: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe(
+          "Number of input ports for PythonUDFV2 operators (0-10). Only applicable to PythonUDFV2. " +
+            "Use this to add or remove input ports for combining multiple data sources."
+        ),
+      inputPortNames: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Optional display names for each input port (e.g., ['model', 'data']). Only applicable to PythonUDFV2."
+        ),
     }),
-    execute: async (args: { operatorId: string; properties: Record<string, any>; summary?: string }) => {
+    execute: async (args: {
+      operatorId: string;
+      properties: Record<string, any>;
+      summary?: string;
+      numInputPorts?: number;
+      inputPortNames?: string[];
+    }) => {
       try {
         const operator = workflowState.getOperator(args.operatorId);
         if (!operator) {
@@ -446,10 +506,28 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
           }
         }
 
+        // Handle numInputPorts for PythonUDFV2
+        if (args.numInputPorts !== undefined) {
+          if (operator.operatorType !== "PythonUDFV2") {
+            return createErrorResult(
+              `numInputPorts is only supported for PythonUDFV2 operators. ` +
+                `Operator "${args.operatorId}" is of type "${operator.operatorType}" which does not support dynamic input ports.`
+            );
+          }
+          if (args.numInputPorts < 0 || args.numInputPorts > 10) {
+            return createErrorResult(`numInputPorts must be between 0 and 10, got ${args.numInputPorts}`);
+          }
+        }
+
         // Capture before state
         const beforeContent = workflowState.getWorkflowContent();
 
         workflowState.updateOperatorProperties(args.operatorId, args.properties);
+
+        // Update input ports if specified (only for PythonUDFV2)
+        if (args.numInputPorts !== undefined) {
+          workflowState.updateOperatorInputPorts(args.operatorId, args.numInputPorts, args.inputPortNames);
+        }
 
         // Compile workflow to get the updated operator's schemas
         const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);

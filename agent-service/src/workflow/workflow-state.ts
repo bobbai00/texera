@@ -214,6 +214,42 @@ export class WorkflowState {
     return true;
   }
 
+  /**
+   * Update the input ports of an operator (for dynamic input port operators like PythonUDFV2).
+   * This creates the specified number of input ports with names like "input-0", "input-1", etc.
+   * @param operatorId The operator ID to update
+   * @param numInputPorts The desired number of input ports
+   * @param portDisplayNames Optional array of display names for each port
+   * @returns true if successful, false if operator not found
+   */
+  updateOperatorInputPorts(
+    operatorId: string,
+    numInputPorts: number,
+    portDisplayNames?: string[]
+  ): boolean {
+    const operator = this.operators.get(operatorId);
+    if (!operator) return false;
+
+    // Create the new input ports array
+    const newInputPorts: import("../types/workflow").PortDescription[] = [];
+    for (let i = 0; i < numInputPorts; i++) {
+      newInputPorts.push({
+        portID: `input-${i}`,
+        displayName: portDisplayNames?.[i] ?? `Input ${i}`,
+        allowMultiInputs: false,
+        isDynamicPort: i > 0, // First port is not dynamic, subsequent ports are
+      });
+    }
+
+    const updatedOperator: OperatorPredicate = {
+      ...operator,
+      inputPorts: newInputPorts,
+    };
+    this.operators.set(operatorId, updatedOperator);
+    this.operatorPropertyChangeSubject.next({ operator: updatedOperator });
+    return true;
+  }
+
   // ============================================================================
   // Link Operations
   // ============================================================================
