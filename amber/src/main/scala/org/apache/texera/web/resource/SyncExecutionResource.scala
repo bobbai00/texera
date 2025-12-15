@@ -223,6 +223,46 @@ class SyncExecutionResource extends LazyLogging {
           new URI(s"sync-execution://$workflowId")
         )
 
+        // Check if workflow already failed during initialization (e.g., compilation errors)
+        // This handles cases where errors occur before the workflow actually starts running
+        val es = workflowService.executionService.getValue
+        if (es != null) {
+          val currentState = es.executionStateStore.metadataStore.getState.state
+          if (isTerminalState(currentState)) {
+            // Workflow already failed during initialization - return immediately
+            val fatalErrors = es.executionStateStore.metadataStore.getState.fatalErrors
+              .map(err => s"${err.`type`}: ${err.message}")
+              .toList
+
+            // Include console logs if available
+            val consoleLogs = collectedConsoleLogs.toMap.map {
+              case (opId, logs) => opId -> logs.toList
+            }
+
+            return SyncExecutionResult(
+              success = false,
+              state = stateToString(currentState),
+              operators = consoleLogs.map {
+                case (opId, logs) =>
+                  opId -> OperatorInfo(
+                    state = "Failed",
+                    inputTuples = 0L,
+                    outputTuples = 0L,
+                    resultMode = "table",
+                    result = None,
+                    totalRowCount = None,
+                    displayedRows = None,
+                    truncated = None,
+                    consoleLogs = Some(logs),
+                    error = logs.find(_.msgType == "ERROR").map(_.message)
+                  )
+              },
+              compilationErrors = None,
+              errors = if (fatalErrors.nonEmpty) Some(fatalErrors) else None
+            )
+          }
+        }
+
         // Mark execution as started - events before this point are ignored
         executionStarted = true
 
