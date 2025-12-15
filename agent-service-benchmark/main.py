@@ -28,6 +28,15 @@ import datasets
 import pandas as pd
 from huggingface_hub import hf_hub_download
 
+# Import evaluation function - optional, will gracefully degrade if not installed
+try:
+    from dabstep_benchmark.utils import evaluate
+    EVALUATION_AVAILABLE = True
+except ImportError:
+    EVALUATION_AVAILABLE = False
+    print("[Warning] dabstep_benchmark not installed, evaluation will be skipped")
+    print("  Install with: pip install git+https://git@hf.co/spaces/adyen/DABstep.git@main")
+
 from dataflow_agent import (
     DataflowAgent,
     MessageResult,
@@ -328,12 +337,76 @@ def run_single_task(
             json.dump(trace_data, f, indent=2)
         print(f"[Task {task_id}] Saved trace.json")
 
+    # 5. question.txt - the question text
+    question_file = task_dir / "question.txt"
+    with open(question_file, "w") as f:
+        f.write(question)
+    print(f"[Task {task_id}] Saved question.txt")
+
+    # 6. correct_answer.txt - the ground truth answer
+    correct_answer = task.get("answer", "")
+    correct_answer_file = task_dir / "correct_answer.txt"
+    with open(correct_answer_file, "w") as f:
+        f.write(str(correct_answer))
+    print(f"[Task {task_id}] Saved correct_answer.txt")
+
+    # 7. Evaluate and save score.txt
+    score = None
+    if EVALUATION_AVAILABLE:
+        try:
+            agent_answer = message_result.response if message_result else answer
+            # Create single-row DataFrames for evaluation
+            agent_answers_df = pd.DataFrame([{
+                "task_id": str(task_id),
+                "agent_answer": str(agent_answer),
+            }])
+            # Include all required columns for evaluation (especially 'level')
+            task_df = pd.DataFrame([{
+                "task_id": task_id,
+                "question": question,
+                "guidelines": guidelines,
+                "answer": correct_answer,
+                "level": task.get("level", "unknown"),
+            }])
+            # Run evaluation
+            task_scores = evaluate(agent_answers=agent_answers_df, tasks_with_gt=task_df)
+            if task_scores and len(task_scores) > 0:
+                score = task_scores[0].get("score", 0)
+            else:
+                score = 0
+
+            # Save score.txt
+            score_file = task_dir / "score.txt"
+            with open(score_file, "w") as f:
+                f.write(str(score))
+            print(f"[Task {task_id}] Saved score.txt (score={score})")
+
+            # Also save evaluation result as JSON for more details
+            eval_file = task_dir / "evaluation.json"
+            with open(eval_file, "w") as f:
+                json.dump({
+                    "task_id": str(task_id),
+                    "score": score,
+                    "agent_answer": str(agent_answer),
+                    "correct_answer": str(correct_answer),
+                    "question": question,
+                }, f, indent=2)
+            print(f"[Task {task_id}] Saved evaluation.json")
+
+        except Exception as e:
+            print(f"[Task {task_id}] Evaluation failed: {e}")
+            score = None
+    else:
+        print(f"[Task {task_id}] Skipping evaluation (dabstep_benchmark not installed)")
+
     print(f"[Task {task_id}] All files saved to {task_dir}")
 
     return {
         "task_id": str(task_id),
         "task_dir": str(task_dir),
         "answer": message_result.response if message_result else answer,
+        "correct_answer": correct_answer,
+        "score": score,
         "workflow_id": workflow_id,
         "agent_id": agent_id,
         "elapsed_seconds": elapsed,
@@ -402,6 +475,15 @@ def run_benchmark(
 
     print("\n" + "=" * 60)
     print(f"[Benchmark] Completed {len(results)} tasks")
+
+    # Print accuracy summary if evaluation was run
+    scores = [r.get("score") for r in results if r.get("score") is not None]
+    if scores:
+        accuracy = sum(scores) / len(scores)
+        correct_count = sum(1 for s in scores if s == 1)
+        print(f"[Benchmark] Accuracy: {accuracy:.2%} ({correct_count}/{len(scores)} correct)")
+    else:
+        print("[Benchmark] No scores available (evaluation skipped or failed)")
 
     return results
 
@@ -621,9 +703,21 @@ def main():
     print("\n[Benchmark] Complete!")
     print(f"Timestamp: {timestamp}")
     print(f"Total tasks: {len(results)}")
-    print(f"\nTask folders created:")
+
+    # Print detailed results with scores
+    print(f"\nTask results:")
     for r in results:
-        print(f"  - {r['task_dir']}")
+        score_str = f"score={r.get('score', 'N/A')}" if r.get('score') is not None else "score=N/A"
+        error_str = f" (ERROR: {r.get('error')})" if r.get('error') else ""
+        print(f"  - Task {r['task_id']}: {score_str}{error_str}")
+        print(f"      {r['task_dir']}")
+
+    # Print final accuracy
+    scores = [r.get("score") for r in results if r.get("score") is not None]
+    if scores:
+        accuracy = sum(scores) / len(scores)
+        correct_count = sum(1 for s in scores if s == 1)
+        print(f"\n[Benchmark] Final Accuracy: {accuracy:.2%} ({correct_count}/{len(scores)} correct)")
 
 
 if __name__ == "__main__":
