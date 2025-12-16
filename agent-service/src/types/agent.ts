@@ -158,6 +158,16 @@ export interface AgentMessageStats {
 // ============================================================================
 
 /**
+ * Serialization mode for operator results
+ */
+export enum OperatorResultSerializationMode {
+  /** JSON array of objects (default) */
+  JSON = "json",
+  /** CSV format: header\nrow\nrow\n (more compact) */
+  CSV = "csv",
+}
+
+/**
  * Configurable settings for an agent instance
  */
 export interface AgentSettings {
@@ -169,6 +179,8 @@ export interface AgentSettings {
   maxOperatorResultTokenLimit: number;
   /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
   maxOperatorResultCellTokenLimit: number;
+  /** Serialization mode for operator results (json or csv) */
+  operatorResultSerializationMode: OperatorResultSerializationMode;
   /** Tool execution timeout in milliseconds */
   toolTimeoutMs: number;
   /** Workflow execution timeout in milliseconds */
@@ -186,6 +198,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   disabledTools: new Set(),
   maxOperatorResultTokenLimit: 1000,
   maxOperatorResultCellTokenLimit: 200,
+  operatorResultSerializationMode: OperatorResultSerializationMode.JSON,
   toolTimeoutMs: 120000, // 2 minutes
   executionTimeoutMs: 600000, // 10 minutes
   maxSteps: 10,
@@ -230,6 +243,8 @@ export interface AgentSettingsApi {
   maxOperatorResultTokenLimit?: number;
   /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
   maxOperatorResultCellTokenLimit?: number;
+  /** Serialization mode for operator results: "json" or "csv" */
+  operatorResultSerializationMode?: "json" | "csv";
   /** Tool execution timeout in seconds */
   toolTimeoutSeconds?: number;
   /** Workflow execution timeout in minutes */
@@ -281,6 +296,8 @@ export interface UpdateAgentSettingsRequest {
   maxOperatorResultTokenLimit?: number;
   /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
   maxOperatorResultCellTokenLimit?: number;
+  /** Serialization mode for operator results: "json" or "csv" */
+  operatorResultSerializationMode?: "json" | "csv";
   /** Tool execution timeout in seconds */
   toolTimeoutSeconds?: number;
   /** Workflow execution timeout in minutes */

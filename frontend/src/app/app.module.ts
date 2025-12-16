@@ -108,6 +108,7 @@ import { ReActStepListComponent } from "./workspace/component/agent-panel/react-
 import { InputAutoCompleteComponent } from "./workspace/component/input-autocomplete/input-autocomplete.component";
 import { CollabWrapperComponent } from "./common/formly/collab-wrapper/collab-wrapper/collab-wrapper.component";
 import { NzSwitchModule } from "ng-zorro-antd/switch";
+import { NzRadioModule } from "ng-zorro-antd/radio";
 import { AboutComponent } from "./hub/component/about/about.component";
 import { NzLayoutModule } from "ng-zorro-antd/layout";
 import { AuthGuardService } from "./common/service/user/auth-guard.service";
@@ -334,6 +335,7 @@ registerLocaleData(en);
     NzCommentModule,
     ColorPickerModule,
     NzSwitchModule,
+    NzRadioModule,
     NzLayoutModule,
     NzSliderModule,
     MarkdownModule.forRoot(),

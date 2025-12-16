@@ -57,7 +57,8 @@ case class SyncExecutionRequest(
     targetOperatorIds: List[String],
     timeoutSeconds: Option[Int],
     maxResultRows: Option[Int],
-    maxCellTokens: Option[Int]
+    maxCellTokens: Option[Int],
+    serializationMode: Option[String] // "json" (default) or "csv"
 )
 
 /**
@@ -69,6 +70,14 @@ case class ConsoleMessageInfo(
 )
 
 /**
+  * Structured CSV result format for compact representation.
+  */
+case class CsvResult(
+    header: List[String],
+    rows: List[List[String]]
+)
+
+/**
   * Per-operator result info - contains everything about one operator.
   */
 case class OperatorInfo(
@@ -76,7 +85,8 @@ case class OperatorInfo(
     inputTuples: Long,
     outputTuples: Long,
     resultMode: String, // "table" or "visualization"
-    result: Option[List[ObjectNode]],
+    resultFormat: Option[String], // "json" or "csv"
+    result: Option[Any], // JSON array (List[ObjectNode]) or CSV structure (CsvResult)
     totalRowCount: Option[Int],
     displayedRows: Option[Int],
     truncated: Option[Boolean],
@@ -119,6 +129,7 @@ class SyncExecutionResource extends LazyLogging {
     val timeoutSeconds = request.timeoutSeconds.getOrElse(DEFAULT_TIMEOUT_SECONDS)
     val maxResultRows = request.maxResultRows.getOrElse(DEFAULT_MAX_RESULT_ROWS)
     val maxCellTokens = request.maxCellTokens.getOrElse(DEFAULT_MAX_CELL_TOKENS)
+    val serializationMode = request.serializationMode.getOrElse("json")
 
     logger.info(s"Starting sync execution for workflow $workflowId")
 
@@ -252,6 +263,7 @@ class SyncExecutionResource extends LazyLogging {
                     inputTuples = 0L,
                     outputTuples = 0L,
                     resultMode = "table",
+                    resultFormat = None,
                     result = None,
                     totalRowCount = None,
                     displayedRows = None,
@@ -322,8 +334,8 @@ class SyncExecutionResource extends LazyLogging {
             operatorStates.getOrElse(opId, ("Unknown", 0L, 0L))
 
           // Get result
-          val (resultMode, result, totalRowCount, displayedRows, truncated) =
-            collectOperatorResult(executionId, opId, maxResultRows, maxCellTokens)
+          val (resultMode, resultFormat, result, totalRowCount, displayedRows, truncated) =
+            collectOperatorResult(executionId, opId, maxResultRows, maxCellTokens, serializationMode)
 
           // Get console logs - prefer real-time collected logs, fall back to database
           val consoleLogs = collectedConsoleLogs.get(opId) match {
@@ -342,6 +354,7 @@ class SyncExecutionResource extends LazyLogging {
             inputTuples = inputTuples,
             outputTuples = outputTuples,
             resultMode = resultMode,
+            resultFormat = resultFormat,
             result = result,
             totalRowCount = totalRowCount,
             displayedRows = displayedRows,
@@ -404,14 +417,15 @@ class SyncExecutionResource extends LazyLogging {
 
   /**
     * Collect result for a single operator.
-    * Returns (mode, result, totalRowCount, displayedRows, truncated).
+    * Returns (mode, resultFormat, result, totalRowCount, displayedRows, truncated).
     */
   private def collectOperatorResult(
       executionId: ExecutionIdentity,
       opId: String,
       maxRows: Int,
-      maxCellTokens: Int
-  ): (String, Option[List[ObjectNode]], Option[Int], Option[Int], Option[Boolean]) = {
+      maxCellTokens: Int,
+      serializationMode: String
+  ): (String, Option[String], Option[Any], Option[Int], Option[Int], Option[Boolean]) = {
     try {
       logger.debug(s"Collecting result for operator $opId, execution ${executionId.id}")
 
@@ -437,30 +451,39 @@ class SyncExecutionResource extends LazyLogging {
           val truncated = displayedRows < totalCount
 
           if (tuples.size == 1 && isVisualizationTuple(tuples.head)) {
-            // It's a visualization - extract the JSON content
+            // It's a visualization - extract the JSON content (always JSON format)
             val jsonResults =
               ExecutionResultService.convertTuplesToJson(tuples, isVisualization = true)
             (
               "visualization",
+              Some("json"),
               Some(jsonResults),
               Some(totalCount),
               Some(displayedRows),
               Some(truncated)
             )
           } else {
-            // Regular table result - truncate cells based on token limit
+            // Regular table result
             val jsonResults = ExecutionResultService.convertTuplesToJson(tuples)
             val truncatedResults = truncateCellsByTokens(jsonResults, maxCellTokens)
-            ("table", Some(truncatedResults), Some(totalCount), Some(displayedRows), Some(truncated))
+
+            if (serializationMode == "csv") {
+              // CSV mode: structured format with header and rows
+              val csvResult = jsonToCsv(truncatedResults, maxCellTokens)
+              ("table", Some("csv"), Some(csvResult), Some(totalCount), Some(displayedRows), Some(truncated))
+            } else {
+              // JSON mode (default)
+              ("table", Some("json"), Some(truncatedResults), Some(totalCount), Some(displayedRows), Some(truncated))
+            }
           }
 
         case None =>
-          ("table", None, None, None, None)
+          ("table", None, None, None, None, None)
       }
     } catch {
       case e: Exception =>
         logger.warn(s"Error collecting result for $opId: ${e.getMessage}")
-        ("table", None, None, None, None)
+        ("table", None, None, None, None, None)
     }
   }
 
@@ -497,6 +520,47 @@ class SyncExecutionResource extends LazyLogging {
       }
       truncatedTuple
     }
+  }
+
+  /**
+    * Convert JSON tuples to structured CSV format.
+    * Returns CsvResult with header array and rows array.
+    */
+  private def jsonToCsv(tuples: List[ObjectNode], maxCellTokens: Int): CsvResult = {
+    if (tuples.isEmpty) return CsvResult(List.empty, List.empty)
+
+    val maxChars = maxCellTokens * 4
+
+    // Get headers from first tuple
+    val headers = scala.collection.mutable.ArrayBuffer[String]()
+    val fieldNames = tuples.head.fieldNames()
+    while (fieldNames.hasNext) {
+      headers += fieldNames.next()
+    }
+
+    // Build data rows
+    val rows = tuples.map { tuple =>
+      headers.map { header =>
+        val fieldValue = tuple.get(header)
+        if (fieldValue == null || fieldValue.isNull) {
+          ""
+        } else {
+          val text = if (fieldValue.isTextual) {
+            fieldValue.asText()
+          } else {
+            fieldValue.toString
+          }
+          // Truncate if needed
+          if (text.length > maxChars) {
+            text.substring(0, maxChars) + "...[truncated]"
+          } else {
+            text
+          }
+        }
+      }.toList
+    }
+
+    CsvResult(headers.toList, rows)
   }
 
   /**

@@ -50,6 +50,8 @@ export interface ExecutionConfig {
   computingUnitId?: number;
   /** Maximum tokens per cell (truncates individual cell values beyond this limit) */
   maxCellTokens?: number;
+  /** Serialization mode for operator results: "json" (default) or "csv" */
+  serializationMode?: "json" | "csv";
 }
 
 // ============================================================================
@@ -257,6 +259,7 @@ async function executeWorkflowHttp(
     timeoutSeconds?: number;
     maxResultRows?: number;
     maxCellTokens?: number;
+    serializationMode?: "json" | "csv";
   } = {}
 ): Promise<SyncExecutionResult> {
   const backendConfig = getBackendConfig();
@@ -280,6 +283,7 @@ async function executeWorkflowHttp(
     timeoutSeconds: options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
     maxResultRows: options.maxResultRows ?? DEFAULT_MAX_RESULT_ROWS,
     maxCellTokens: options.maxCellTokens ?? DEFAULT_MAX_CELL_TOKENS,
+    serializationMode: options.serializationMode ?? "json",
   };
 
   console.log(`[ExecutionTools] Executing workflow via HTTP: ${url}`);
@@ -369,6 +373,7 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
           timeoutSeconds: args.timeoutSeconds,
           maxResultRows: args.maxResultRows,
           maxCellTokens: executionConfig.maxCellTokens,
+          serializationMode: executionConfig.serializationMode,
         });
 
         // Format operator info for readability
@@ -425,8 +430,9 @@ interface FormattedOperatorInfo {
   inputTuples: string;
   outputTuples: string;
   resultMode: string;
+  resultFormat?: string;
   resultSummary: string;
-  result?: Record<string, any>[];
+  result?: any; // JSON array or CSV structure
   consoleLogs?: ConsoleMessage[];
   error?: string;
 }
@@ -440,10 +446,11 @@ function formatOperatorInfo(operators: Record<string, OperatorInfo>): Record<str
   for (const [operatorId, opInfo] of Object.entries(operators)) {
     let resultSummary = "No result";
     if (opInfo.result) {
-      const displayedRows = opInfo.displayedRows ?? opInfo.result.length;
+      const displayedRows = opInfo.displayedRows ?? 0;
       const totalRows = opInfo.totalRowCount ?? displayedRows;
       const truncatedStr = opInfo.truncated ? " (truncated)" : "";
-      resultSummary = `${displayedRows}/${totalRows} rows${truncatedStr}`;
+      const formatStr = opInfo.resultFormat === "csv" ? " [CSV]" : "";
+      resultSummary = `${displayedRows}/${totalRows} rows${truncatedStr}${formatStr}`;
     }
 
     formatted[operatorId] = {
@@ -451,6 +458,7 @@ function formatOperatorInfo(operators: Record<string, OperatorInfo>): Record<str
       inputTuples: `${opInfo.inputTuples} rows`,
       outputTuples: `${opInfo.outputTuples} rows`,
       resultMode: opInfo.resultMode,
+      resultFormat: opInfo.resultFormat,
       resultSummary,
       result: opInfo.result,
       consoleLogs: opInfo.consoleLogs,

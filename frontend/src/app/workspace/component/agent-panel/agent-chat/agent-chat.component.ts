@@ -104,6 +104,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
   public editingSystemPrompt = "";
   public settingsMaxTokenLimit = 1000;
   public settingsMaxCellTokenLimit = 200; // Default max tokens per cell
+  public settingsSerializationMode: "json" | "csv" = "json"; // Serialization mode for results
   public settingsToolTimeoutSeconds = 120; // 2 minutes default
   public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
   public settingsMaxSteps = 10; // Default max steps per message
@@ -337,6 +338,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
       .subscribe(settings => {
         this.settingsMaxTokenLimit = settings.maxOperatorResultTokenLimit ?? 1000;
         this.settingsMaxCellTokenLimit = settings.maxOperatorResultCellTokenLimit ?? 200;
+        this.settingsSerializationMode = settings.operatorResultSerializationMode ?? "json";
         this.settingsToolTimeoutSeconds = settings.toolTimeoutSeconds ?? 120;
         this.settingsExecutionTimeoutMinutes = settings.executionTimeoutMinutes ?? 10;
         this.settingsMaxSteps = settings.maxSteps ?? 10;
@@ -996,6 +998,24 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
       .pipe(untilDestroyed(this))
       .subscribe({
         next: () => this.notificationService.success("Max cell token limit saved"),
+        error: () => {}, // Error already handled by service
+      });
+  }
+
+  /**
+   * Save the serialization mode.
+   */
+  public saveSerializationMode(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        operatorResultSerializationMode: this.settingsSerializationMode,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            `Result serialization mode set to ${this.settingsSerializationMode.toUpperCase()}`
+          ),
         error: () => {}, // Error already handled by service
       });
   }

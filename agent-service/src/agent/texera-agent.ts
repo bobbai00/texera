@@ -28,7 +28,7 @@ import { WorkflowState } from "../workflow/workflow-state";
 import { OperatorMetadataStore } from "../tools/metadata-tools";
 import { AgentActionManager } from "./agent-action-manager";
 import type { AgentSettings, ReActStep, AgentMessageStats, TokenUsage, AgentAction } from "../types/agent";
-import { AgentState as AgentStateEnum, DEFAULT_AGENT_SETTINGS } from "../types/agent";
+import { AgentState as AgentStateEnum, DEFAULT_AGENT_SETTINGS, OperatorResultSerializationMode } from "../types/agent";
 import { COPILOT_SYSTEM_PROMPT } from "./prompts";
 import {
   createGetCurrentWorkflowTool,
@@ -242,6 +242,7 @@ export class TexeraAgent {
         workflowId: this.delegateConfig.workflowId,
         computingUnitId: this.delegateConfig.computingUnitId,
         maxCellTokens: this.settings.maxOperatorResultCellTokenLimit,
+        serializationMode: this.settings.operatorResultSerializationMode,
       };
       tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, executionConfig);
     }
@@ -347,6 +348,7 @@ export class TexeraAgent {
   updateSettings(updates: {
     maxOperatorResultTokenLimit?: number;
     maxOperatorResultCellTokenLimit?: number;
+    operatorResultSerializationMode?: OperatorResultSerializationMode;
     toolTimeoutMs?: number;
     executionTimeoutMs?: number;
     disabledTools?: Set<string>;
@@ -358,6 +360,9 @@ export class TexeraAgent {
     }
     if (updates.maxOperatorResultCellTokenLimit !== undefined) {
       this.settings.maxOperatorResultCellTokenLimit = updates.maxOperatorResultCellTokenLimit;
+    }
+    if (updates.operatorResultSerializationMode !== undefined) {
+      this.settings.operatorResultSerializationMode = updates.operatorResultSerializationMode;
     }
     if (updates.toolTimeoutMs !== undefined) {
       this.settings.toolTimeoutMs = updates.toolTimeoutMs;

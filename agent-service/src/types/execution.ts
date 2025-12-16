@@ -39,6 +39,14 @@ export interface ConsoleMessage {
 // ============================================================================
 
 /**
+ * Structured CSV result format for compact representation.
+ */
+export interface CsvResult {
+  header: string[]; // Column names
+  rows: string[][]; // Array of rows, each row is an array of cell values
+}
+
+/**
  * Per-operator execution info returned by the sync API.
  */
 export interface OperatorInfo {
@@ -46,7 +54,8 @@ export interface OperatorInfo {
   inputTuples: number;
   outputTuples: number;
   resultMode: string; // "table" or "visualization"
-  result?: Record<string, any>[];
+  resultFormat?: string; // "json" or "csv"
+  result?: Record<string, any>[] | CsvResult; // JSON array or CSV structure
   totalRowCount?: number;
   displayedRows?: number;
   truncated?: boolean;
