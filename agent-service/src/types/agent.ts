@@ -167,6 +167,8 @@ export interface AgentSettings {
   disabledTools: Set<string>;
   /** Maximum token limit for operator results */
   maxOperatorResultTokenLimit: number;
+  /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
+  maxOperatorResultCellTokenLimit: number;
   /** Tool execution timeout in milliseconds */
   toolTimeoutMs: number;
   /** Workflow execution timeout in milliseconds */
@@ -183,6 +185,7 @@ export interface AgentSettings {
 export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   disabledTools: new Set(),
   maxOperatorResultTokenLimit: 1000,
+  maxOperatorResultCellTokenLimit: 200,
   toolTimeoutMs: 120000, // 2 minutes
   executionTimeoutMs: 600000, // 10 minutes
   maxSteps: 10,
@@ -225,6 +228,8 @@ export interface AgentDelegateConfig {
 export interface AgentSettingsApi {
   /** Maximum token limit for operator results */
   maxOperatorResultTokenLimit?: number;
+  /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
+  maxOperatorResultCellTokenLimit?: number;
   /** Tool execution timeout in seconds */
   toolTimeoutSeconds?: number;
   /** Workflow execution timeout in minutes */
@@ -274,6 +279,8 @@ export interface CreateAgentRequest {
 export interface UpdateAgentSettingsRequest {
   /** Maximum token limit for operator results */
   maxOperatorResultTokenLimit?: number;
+  /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
+  maxOperatorResultCellTokenLimit?: number;
   /** Tool execution timeout in seconds */
   toolTimeoutSeconds?: number;
   /** Workflow execution timeout in minutes */

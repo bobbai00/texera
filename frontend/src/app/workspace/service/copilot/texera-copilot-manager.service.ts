@@ -48,6 +48,8 @@ import { ComputingUnitStatusService } from "../computing-unit-status/computing-u
 export interface AgentSettingsApi {
   /** Maximum token limit for operator results */
   maxOperatorResultTokenLimit?: number;
+  /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
+  maxOperatorResultCellTokenLimit?: number;
   /** Tool execution timeout in seconds */
   toolTimeoutSeconds?: number;
   /** Workflow execution timeout in minutes */

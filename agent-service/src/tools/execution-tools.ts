@@ -48,6 +48,8 @@ export interface ExecutionConfig {
   workflowId: number;
   /** Optional computing unit ID (defaults to 0) */
   computingUnitId?: number;
+  /** Maximum tokens per cell (truncates individual cell values beyond this limit) */
+  maxCellTokens?: number;
 }
 
 // ============================================================================
@@ -56,6 +58,7 @@ export interface ExecutionConfig {
 
 const DEFAULT_TIMEOUT_SECONDS = 300;
 const DEFAULT_MAX_RESULT_ROWS = 200;
+const DEFAULT_MAX_CELL_TOKENS = 200;
 
 // ============================================================================
 // Workflow Validation
@@ -253,6 +256,7 @@ async function executeWorkflowHttp(
     executionName?: string;
     timeoutSeconds?: number;
     maxResultRows?: number;
+    maxCellTokens?: number;
   } = {}
 ): Promise<SyncExecutionResult> {
   const backendConfig = getBackendConfig();
@@ -275,6 +279,7 @@ async function executeWorkflowHttp(
     targetOperatorIds: logicalPlan.opsToViewResult || [],
     timeoutSeconds: options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
     maxResultRows: options.maxResultRows ?? DEFAULT_MAX_RESULT_ROWS,
+    maxCellTokens: options.maxCellTokens ?? DEFAULT_MAX_CELL_TOKENS,
   };
 
   console.log(`[ExecutionTools] Executing workflow via HTTP: ${url}`);
@@ -363,6 +368,7 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
           executionName: args.executionName,
           timeoutSeconds: args.timeoutSeconds,
           maxResultRows: args.maxResultRows,
+          maxCellTokens: executionConfig.maxCellTokens,
         });
 
         // Format operator info for readability

@@ -601,6 +601,27 @@
           </div>
 
           <div class="settings-param-item">
+            <label class="settings-param-label">Max Cell Token Limit</label>
+            <div class="settings-param-input">
+              <nz-input-number
+                [(ngModel)]="settingsMaxCellTokenLimit"
+                [nzMin]="10"
+                [nzMax]="2000"
+                [nzStep]="10"
+                nzSize="small"
+                style="width: 120px"></nz-input-number>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveMaxCellTokenLimit()">
+                Save
+              </button>
+              <span class="settings-param-hint">Max tokens per cell - truncates large cell values (10-2000)</span>
+            </div>
+          </div>
+
+          <div class="settings-param-item">
             <label class="settings-param-label">Tool Execution Timeout (seconds)</label>
             <div class="settings-param-input">
               <nz-input-number

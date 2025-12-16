@@ -103,6 +103,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
   public isEditingSystemPrompt = false;
   public editingSystemPrompt = "";
   public settingsMaxTokenLimit = 1000;
+  public settingsMaxCellTokenLimit = 200; // Default max tokens per cell
   public settingsToolTimeoutSeconds = 120; // 2 minutes default
   public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
   public settingsMaxSteps = 10; // Default max steps per message
@@ -335,6 +336,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
       .pipe(untilDestroyed(this))
       .subscribe(settings => {
         this.settingsMaxTokenLimit = settings.maxOperatorResultTokenLimit ?? 1000;
+        this.settingsMaxCellTokenLimit = settings.maxOperatorResultCellTokenLimit ?? 200;
         this.settingsToolTimeoutSeconds = settings.toolTimeoutSeconds ?? 120;
         this.settingsExecutionTimeoutMinutes = settings.executionTimeoutMinutes ?? 10;
         this.settingsMaxSteps = settings.maxSteps ?? 10;
@@ -979,6 +981,21 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
       .pipe(untilDestroyed(this))
       .subscribe({
         next: () => this.notificationService.success("Max token limit saved"),
+        error: () => {}, // Error already handled by service
+      });
+  }
+
+  /**
+   * Save the max cell token limit.
+   */
+  public saveMaxCellTokenLimit(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        maxOperatorResultCellTokenLimit: this.settingsMaxCellTokenLimit,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () => this.notificationService.success("Max cell token limit saved"),
         error: () => {}, // Error already handled by service
       });
   }

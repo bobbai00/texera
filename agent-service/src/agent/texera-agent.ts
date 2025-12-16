@@ -241,6 +241,7 @@ export class TexeraAgent {
         userToken: this.delegateConfig.userToken,
         workflowId: this.delegateConfig.workflowId,
         computingUnitId: this.delegateConfig.computingUnitId,
+        maxCellTokens: this.settings.maxOperatorResultCellTokenLimit,
       };
       tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, executionConfig);
     }
@@ -345,6 +346,7 @@ export class TexeraAgent {
    */
   updateSettings(updates: {
     maxOperatorResultTokenLimit?: number;
+    maxOperatorResultCellTokenLimit?: number;
     toolTimeoutMs?: number;
     executionTimeoutMs?: number;
     disabledTools?: Set<string>;
@@ -353,6 +355,9 @@ export class TexeraAgent {
   }): void {
     if (updates.maxOperatorResultTokenLimit !== undefined) {
       this.settings.maxOperatorResultTokenLimit = updates.maxOperatorResultTokenLimit;
+    }
+    if (updates.maxOperatorResultCellTokenLimit !== undefined) {
+      this.settings.maxOperatorResultCellTokenLimit = updates.maxOperatorResultCellTokenLimit;
     }
     if (updates.toolTimeoutMs !== undefined) {
       this.settings.toolTimeoutMs = updates.toolTimeoutMs;

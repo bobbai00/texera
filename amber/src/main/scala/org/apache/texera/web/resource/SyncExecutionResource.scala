@@ -56,7 +56,8 @@ case class SyncExecutionRequest(
     workflowSettings: Option[WorkflowSettings],
     targetOperatorIds: List[String],
     timeoutSeconds: Option[Int],
-    maxResultRows: Option[Int]
+    maxResultRows: Option[Int],
+    maxCellTokens: Option[Int]
 )
 
 /**
@@ -104,6 +105,7 @@ class SyncExecutionResource extends LazyLogging {
 
   private val DEFAULT_TIMEOUT_SECONDS = 300
   private val DEFAULT_MAX_RESULT_ROWS = 200
+  private val DEFAULT_MAX_CELL_TOKENS = 200
 
   @POST
   @Path("/{wid}/{cuid}/run")
@@ -116,6 +118,7 @@ class SyncExecutionResource extends LazyLogging {
   ): SyncExecutionResult = {
     val timeoutSeconds = request.timeoutSeconds.getOrElse(DEFAULT_TIMEOUT_SECONDS)
     val maxResultRows = request.maxResultRows.getOrElse(DEFAULT_MAX_RESULT_ROWS)
+    val maxCellTokens = request.maxCellTokens.getOrElse(DEFAULT_MAX_CELL_TOKENS)
 
     logger.info(s"Starting sync execution for workflow $workflowId")
 
@@ -320,7 +323,7 @@ class SyncExecutionResource extends LazyLogging {
 
           // Get result
           val (resultMode, result, totalRowCount, displayedRows, truncated) =
-            collectOperatorResult(executionId, opId, maxResultRows)
+            collectOperatorResult(executionId, opId, maxResultRows, maxCellTokens)
 
           // Get console logs - prefer real-time collected logs, fall back to database
           val consoleLogs = collectedConsoleLogs.get(opId) match {
@@ -406,7 +409,8 @@ class SyncExecutionResource extends LazyLogging {
   private def collectOperatorResult(
       executionId: ExecutionIdentity,
       opId: String,
-      maxRows: Int
+      maxRows: Int,
+      maxCellTokens: Int
   ): (String, Option[List[ObjectNode]], Option[Int], Option[Int], Option[Boolean]) = {
     try {
       logger.debug(s"Collecting result for operator $opId, execution ${executionId.id}")
@@ -444,9 +448,10 @@ class SyncExecutionResource extends LazyLogging {
               Some(truncated)
             )
           } else {
-            // Regular table result
+            // Regular table result - truncate cells based on token limit
             val jsonResults = ExecutionResultService.convertTuplesToJson(tuples)
-            ("table", Some(jsonResults), Some(totalCount), Some(displayedRows), Some(truncated))
+            val truncatedResults = truncateCellsByTokens(jsonResults, maxCellTokens)
+            ("table", Some(truncatedResults), Some(totalCount), Some(displayedRows), Some(truncated))
           }
 
         case None =>
@@ -456,6 +461,41 @@ class SyncExecutionResource extends LazyLogging {
       case e: Exception =>
         logger.warn(s"Error collecting result for $opId: ${e.getMessage}")
         ("table", None, None, None, None)
+    }
+  }
+
+  /**
+    * Truncate individual cells (fields) based on estimated token count.
+    * Uses approximate 4 characters per token heuristic.
+    */
+  private def truncateCellsByTokens(
+      tuples: List[ObjectNode],
+      maxCellTokens: Int
+  ): List[ObjectNode] = {
+    import com.fasterxml.jackson.databind.ObjectMapper
+    import com.fasterxml.jackson.databind.node.TextNode
+
+    val mapper = new ObjectMapper()
+    val maxChars = maxCellTokens * 4 // Approximate 4 chars per token
+
+    tuples.map { tuple =>
+      val truncatedTuple = mapper.createObjectNode()
+      val fieldNames = tuple.fieldNames()
+      while (fieldNames.hasNext) {
+        val fieldName = fieldNames.next()
+        val fieldValue = tuple.get(fieldName)
+        if (fieldValue.isTextual) {
+          val text = fieldValue.asText()
+          if (text.length > maxChars) {
+            truncatedTuple.set(fieldName, new TextNode(text.substring(0, maxChars) + "...[truncated]"))
+          } else {
+            truncatedTuple.set(fieldName, fieldValue)
+          }
+        } else {
+          truncatedTuple.set(fieldName, fieldValue)
+        }
+      }
+      truncatedTuple
     }
   }
 

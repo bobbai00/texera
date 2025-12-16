@@ -169,6 +169,7 @@ function getAgentInfo(agentId: string, stored: StoredAgent): AgentInfo {
   const agentSettings = stored.agent.getSettings();
   const settingsApi: AgentSettingsApi = {
     maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
+    maxOperatorResultCellTokenLimit: agentSettings.maxOperatorResultCellTokenLimit,
     toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
     executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
     disabledTools: Array.from(agentSettings.disabledTools),
@@ -248,6 +249,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       if (settings) {
         stored.agent.updateSettings({
           maxOperatorResultTokenLimit: settings.maxOperatorResultTokenLimit,
+          maxOperatorResultCellTokenLimit: settings.maxOperatorResultCellTokenLimit,
           toolTimeoutMs: settings.toolTimeoutSeconds ? settings.toolTimeoutSeconds * 1000 : undefined,
           executionTimeoutMs: settings.executionTimeoutMinutes ? settings.executionTimeoutMinutes * 60000 : undefined,
           disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
@@ -268,6 +270,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         settings: t.Optional(
           t.Object({
             maxOperatorResultTokenLimit: t.Optional(t.Number()),
+            maxOperatorResultCellTokenLimit: t.Optional(t.Number()),
             toolTimeoutSeconds: t.Optional(t.Number()),
             executionTimeoutMinutes: t.Optional(t.Number()),
             disabledTools: t.Optional(t.Array(t.String())),
@@ -420,6 +423,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     const agentSettings = stored.agent.getSettings();
     return {
       maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
+      maxOperatorResultCellTokenLimit: agentSettings.maxOperatorResultCellTokenLimit,
       toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
       executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
       disabledTools: Array.from(agentSettings.disabledTools),
@@ -437,6 +441,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 
       stored.agent.updateSettings({
         maxOperatorResultTokenLimit: settings.maxOperatorResultTokenLimit,
+        maxOperatorResultCellTokenLimit: settings.maxOperatorResultCellTokenLimit,
         toolTimeoutMs: settings.toolTimeoutSeconds !== undefined ? settings.toolTimeoutSeconds * 1000 : undefined,
         executionTimeoutMs:
           settings.executionTimeoutMinutes !== undefined ? settings.executionTimeoutMinutes * 60000 : undefined,
@@ -449,6 +454,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       const agentSettings = stored.agent.getSettings();
       return {
         maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
+        maxOperatorResultCellTokenLimit: agentSettings.maxOperatorResultCellTokenLimit,
         toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
         executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
         disabledTools: Array.from(agentSettings.disabledTools),
@@ -459,6 +465,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     {
       body: t.Object({
         maxOperatorResultTokenLimit: t.Optional(t.Number()),
+        maxOperatorResultCellTokenLimit: t.Optional(t.Number()),
         toolTimeoutSeconds: t.Optional(t.Number()),
         executionTimeoutMinutes: t.Optional(t.Number()),
         maxSteps: t.Optional(t.Number()),
