@@ -88,6 +88,8 @@ Here is the question you need to answer:
 
 Here are the guidelines you must follow when answering the question above:
 {guidelines}
+
+You MUST follow the guideline to format your answer and your last message MUST be the EXACT answer format
 """
 
 

@@ -346,7 +346,8 @@ export class TexeraCopilotManagerService {
   }
 
   /**
-   * Get or create state tracking for an agent
+   * Get or create state tracking for an agent.
+   * If tracking exists but doesn't have workflowId and one is provided, updates it and starts workflow polling.
    */
   private getOrCreateStateTracking(agentId: string, workflowId?: number): AgentStateTracking {
     let tracking = this.agentStateTracking.get(agentId);
@@ -369,8 +370,34 @@ export class TexeraCopilotManagerService {
 
       // Start polling for state updates
       this.startStatePolling(agentId, tracking);
+    } else if (workflowId && !tracking.workflowId) {
+      // Tracking exists but doesn't have workflowId - update and start workflow polling
+      tracking.workflowId = workflowId;
+      this.startWorkflowPolling(tracking);
     }
     return tracking;
+  }
+
+  /**
+   * Start workflow polling for an existing tracking.
+   * Polls workflow content from backend database every second.
+   */
+  private startWorkflowPolling(tracking: AgentStateTracking): void {
+    if (!tracking.workflowId) return;
+
+    const wid = tracking.workflowId;
+    interval(1000)
+      .pipe(
+        switchMap(() => this.workflowPersistService.retrieveWorkflow(wid).pipe(catchError(() => of(null)))),
+        takeUntil(tracking.stopPolling$)
+      )
+      .subscribe(workflow => {
+        if (workflow) {
+          this.ngZone.run(() => {
+            tracking.workflowSubject.next(workflow);
+          });
+        }
+      });
   }
 
   /**
@@ -419,22 +446,8 @@ export class TexeraCopilotManagerService {
       }
     };
 
-    // Poll workflow content from backend database if workflowId is set
-    if (tracking.workflowId) {
-      const wid = tracking.workflowId;
-      interval(1000)
-        .pipe(
-          switchMap(() => this.workflowPersistService.retrieveWorkflow(wid).pipe(catchError(() => of(null)))),
-          takeUntil(tracking.stopPolling$)
-        )
-        .subscribe(workflow => {
-          if (workflow) {
-            this.ngZone.run(() => {
-              tracking.workflowSubject.next(workflow);
-            });
-          }
-        });
-    }
+    // Start workflow polling if workflowId is set
+    this.startWorkflowPolling(tracking);
   }
 
   /**
@@ -633,6 +646,14 @@ export class TexeraCopilotManagerService {
             isBaselineMode: false,
             createdAt: new Date(response.createdAt),
             state: this.mapStateToCopilotState(response.state),
+            delegate: response.delegate
+              ? {
+                  userInfo: response.delegate.userInfo,
+                  workflowId: response.delegate.workflowId,
+                  workflowName: response.delegate.workflowName,
+                }
+              : undefined,
+            settings: response.settings,
           };
           this.agents.set(response.id, agentInfo);
           return agentInfo;
@@ -655,6 +676,14 @@ export class TexeraCopilotManagerService {
           isBaselineMode: false,
           createdAt: new Date(a.createdAt),
           state: this.mapStateToCopilotState(a.state),
+          delegate: a.delegate
+            ? {
+                userInfo: a.delegate.userInfo,
+                workflowId: a.delegate.workflowId,
+                workflowName: a.delegate.workflowName,
+              }
+            : undefined,
+          settings: a.settings,
         }));
 
         // Update local cache
@@ -995,6 +1024,14 @@ export class TexeraCopilotManagerService {
       return tracking.workflowSubject.asObservable();
     }
     return of(null);
+  }
+
+  /**
+   * Ensure workflow polling is started for an agent.
+   * Call this when you have the workflowId but tracking may have been created without it.
+   */
+  public ensureWorkflowPolling(agentId: string, workflowId: number): void {
+    this.getOrCreateStateTracking(agentId, workflowId);
   }
 
   /**

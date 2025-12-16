@@ -131,6 +131,13 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
       return;
     }
 
+    // Ensure workflow polling is started if we have a workflowId
+    // This handles agents created via API that weren't created through the UI
+    const workflowId = this.agentInfo.delegate?.workflowId;
+    if (workflowId) {
+      this.copilotManagerService.ensureWorkflowPolling(this.agentInfo.id, workflowId);
+    }
+
     // Get the current state from manager service
     this.copilotManagerService
       .getAgentState(this.agentInfo.id)
