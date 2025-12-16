@@ -67,6 +67,7 @@ const TOOL_NAME_ADD_OPERATOR = "addOperator";
 const TOOL_NAME_ADD_LINK = "addLink";
 const TOOL_NAME_MODIFY_OPERATOR = "modifyOperator";
 const TOOL_NAME_DELETE_FROM_WORKFLOW = "deleteFromWorkflow";
+const TOOL_NAME_EXECUTE_WORKFLOW = "executeWorkflow";
 
 // Mapping of tool names to their groups
 export const TOOL_NAME_TO_GROUP: Record<string, ToolGroup> = {
@@ -76,6 +77,9 @@ export const TOOL_NAME_TO_GROUP: Record<string, ToolGroup> = {
 
   // Observe group - workflow inspection tools
   [TOOL_NAME_GET_CURRENT_WORKFLOW]: ToolGroup.OBSERVE,
+
+  // Execute group - workflow execution tools
+  [TOOL_NAME_EXECUTE_WORKFLOW]: ToolGroup.EXECUTE,
 
   // Modify group - operator tools
   [TOOL_NAME_ADD_OPERATOR]: ToolGroup.MODIFY,
