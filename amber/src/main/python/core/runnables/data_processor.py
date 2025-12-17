@@ -322,6 +322,12 @@ class DataProcessor(Runnable, Stoppable):
             # Update the output port's schema to the inferred one
             self._context.output_manager.get_port().set_schema(inferred_schema)
 
+            # Recreate the port storage writers with the new schema
+            for port_id in self._context.output_manager.get_port_ids():
+                self._context.output_manager.recreate_port_storage_writer(
+                    port_id, inferred_schema
+                )
+
             logger.warning(
                 f"Schema mismatch detected. Updated output schema from "
                 f"{declared_schema} to {inferred_schema}"

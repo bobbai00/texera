@@ -63,20 +63,21 @@ class DocumentFactory:
             if resource_type in {VFSResourceType.RESULT}:
                 storage_key = DocumentFactory.sanitize_uri_path(parsed_uri)
 
-                iceberg_schema = Schema.as_arrow_schema(schema)
+                arrow_schema = Schema.as_arrow_schema(schema)
 
-                create_table(
+                table = create_table(
                     IcebergCatalogInstance.get_instance(),
                     StorageConfig.ICEBERG_TABLE_RESULT_NAMESPACE,
                     storage_key,
-                    iceberg_schema,
+                    arrow_schema,
                     override_if_exists=True,
                 )
 
+                # Use the Iceberg schema from the created table, not the PyArrow schema
                 return IcebergDocument[Tuple](
                     StorageConfig.ICEBERG_TABLE_RESULT_NAMESPACE,
                     storage_key,
-                    iceberg_schema,
+                    table.schema(),
                     amber_tuples_to_arrow_table,
                     arrow_table_to_amber_tuples,
                 )

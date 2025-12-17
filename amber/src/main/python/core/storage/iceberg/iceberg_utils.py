@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import os
 import pyarrow as pa
 import pyiceberg.table
 from pyiceberg.catalog import Catalog
@@ -50,11 +51,13 @@ def create_postgres_catalog(
     :param password: the password of the postgres database.
     :return: a SQLCatalog instance.
     """
+    # Ensure warehouse_path is absolute to avoid invalid URIs like file://./path
+    absolute_warehouse_path = os.path.abspath(warehouse_path)
     return SqlCatalog(
         catalog_name,
         **{
             "uri": f"postgresql+pg8000://{username}:{password}@{uri_without_scheme}",
-            "warehouse": f"file://{warehouse_path}",
+            "warehouse": f"file://{absolute_warehouse_path}",
         },
     )
 

@@ -72,10 +72,12 @@ object IcebergUtil {
   ): HadoopCatalog = {
     val catalog = new HadoopCatalog()
     catalog.setConf(new Configuration) // Empty configuration, defaults to `file:/`
+    // Ensure warehouse path is absolute to avoid invalid URIs like file://./path
+    val absoluteWarehouse = warehouse.toAbsolutePath.toString
     catalog.initialize(
       catalogName,
       Map(
-        "warehouse" -> warehouse.toString,
+        "warehouse" -> absoluteWarehouse,
         CatalogProperties.FILE_IO_IMPL -> classOf[HadoopFileIO].getName
       ).asJava
     )
@@ -104,10 +106,12 @@ object IcebergUtil {
       warehouse: Path
   ): RESTCatalog = {
     val catalog = new RESTCatalog()
+    // Ensure warehouse path is absolute to avoid invalid URIs like file://./path
+    val absoluteWarehouse = warehouse.toAbsolutePath.toString
     catalog.initialize(
       catalogName,
       Map(
-        "warehouse" -> warehouse.toString,
+        "warehouse" -> absoluteWarehouse,
         CatalogProperties.URI -> StorageConfig.icebergRESTCatalogUri,
         CatalogProperties.FILE_IO_IMPL -> classOf[HadoopFileIO].getName
       ).asJava
@@ -123,13 +127,13 @@ object IcebergUtil {
     // Explicitly load the JDBC driver to avoid flaky CI failures.
     Class.forName("org.postgresql.Driver")
     val catalog = new JdbcCatalog()
+    // Ensure warehouse path is absolute to avoid invalid URIs like file://./path
+    // Also handle Windows paths: C:/xxx/xxx -> C/xxx/xxx for PyArrow compatibility
+    val absoluteWarehouse = warehouse.toAbsolutePath.toString.replace(":", "")
     catalog.initialize(
       catalogName,
       Map(
-        "warehouse" -> warehouse.toString.replace(
-          ":",
-          ""
-        ), //warehouse path is C:/xxx/xxx in Windows, but PyArrow on the Python side cannot parse it. The acceptable format for PyArrow is C/xxx/xxx.
+        "warehouse" -> absoluteWarehouse,
         CatalogProperties.FILE_IO_IMPL -> classOf[HadoopFileIO].getName,
         CatalogProperties.URI -> s"jdbc:postgresql://${StorageConfig.icebergPostgresCatalogUriWithoutScheme}",
         JdbcCatalog.PROPERTY_PREFIX + "user" -> StorageConfig.icebergPostgresCatalogUsername,

@@ -86,6 +86,7 @@ class OutputManager:
         self._port_storage_writers: typing.Dict[
             PortIdentity, typing.Tuple[Queue, PortStorageWriter, Thread]
         ] = dict()
+        self._port_storage_uris: typing.Dict[PortIdentity, str] = dict()
 
     def is_missing_output_ports(self):
         """
@@ -126,6 +127,9 @@ class OutputManager:
         Create a separate thread for saving output tuples of a port
         to storage in batch.
         """
+        # Store the URI for potential recreation later
+        self._port_storage_uris[port_id] = storage_uri
+
         document, _ = DocumentFactory.open_document(storage_uri)
         buffered_item_writer = document.writer(str(get_worker_index(self.worker_id)))
         writer_queue = Queue()
@@ -143,6 +147,59 @@ class OutputManager:
             port_storage_writer,
             writer_thread,
         )
+
+    def recreate_port_storage_writer(
+        self, port_id: PortIdentity, new_schema: Schema
+    ) -> None:
+        """
+        Recreate the port storage writer with a new schema.
+        This is called when schema inference detects a mismatch between
+        the declared schema and the actual output schema.
+
+        :param port_id: The port ID to recreate the storage writer for
+        :param new_schema: The new schema to use for the storage
+        """
+        if port_id not in self._port_storage_writers:
+            # No storage writer exists for this port, nothing to recreate
+            return
+
+        storage_uri = self._port_storage_uris.get(port_id)
+        if storage_uri is None:
+            logger.warning(
+                f"Cannot recreate port storage writer for {port_id}: no storage URI"
+            )
+            return
+
+        # Stop the current writer and wait for it to finish
+        writer_queue, writer, writer_thread = self._port_storage_writers[port_id]
+        writer.stop()
+        writer_thread.join()
+
+        # Create a new document with the new schema
+        # This will override the existing table with the new schema
+        document = DocumentFactory.create_document(storage_uri, new_schema)
+        buffered_item_writer = document.writer(str(get_worker_index(self.worker_id)))
+
+        # Create new writer and thread
+        new_writer_queue = Queue()
+        new_port_storage_writer = PortStorageWriter(
+            buffered_item_writer=buffered_item_writer, queue=new_writer_queue
+        )
+        new_writer_thread = threading.Thread(
+            target=new_port_storage_writer.run,
+            daemon=True,
+            name=f"port_storage_writer_thread_{port_id}",
+        )
+        new_writer_thread.start()
+
+        # Update the mapping
+        self._port_storage_writers[port_id] = (
+            new_writer_queue,
+            new_port_storage_writer,
+            new_writer_thread,
+        )
+
+        logger.info(f"Recreated port storage writer for {port_id} with new schema")
 
     def get_port(self, port_id=None) -> WorkerPort:
         return list(self._ports.values())[0]
