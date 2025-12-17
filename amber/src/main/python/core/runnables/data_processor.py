@@ -292,7 +292,7 @@ class DataProcessor(Runnable, Stoppable):
                 timestamp=current_time_in_local_timezone(),
                 msg_type=ConsoleMessageType.PRINT,
                 source="SchemaInference",
-                title="Schema inferred from output",
+                title="Different output schema detected from output tuples. Please adjust the operator's output schema",
                 message=message,
             )
         )

@@ -143,7 +143,8 @@ class SyncExecutionResource extends LazyLogging {
       )
 
       // Compute sub-DAG if there's exactly 1 target operator (Execute To behavior)
-      val effectiveLogicalPlan = computeSubDAGIfNeeded(request.logicalPlan, request.targetOperatorIds)
+      val effectiveLogicalPlan =
+        computeSubDAGIfNeeded(request.logicalPlan, request.targetOperatorIds)
 
       val executeRequest = WorkflowExecuteRequest(
         executionName = request.executionName,

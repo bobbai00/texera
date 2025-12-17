@@ -26,6 +26,8 @@ public class CommonOpDescAnnotation {
     // allowed JSON schema values for the key autoCompleteType
     public final static String attributeName = "attributeName";
     public final static String attributeNameList = "attributeNameList";
+    // For auto-populating array of Attribute objects from input schema
+    public final static String attributeList = "attributeList";
 
     // JSON schema key to indicate which port
     public final static String autofillAttributeOnPort = "autofillAttributeOnPort";

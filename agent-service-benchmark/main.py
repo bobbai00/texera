@@ -79,10 +79,10 @@ RUNS_DIR = Path(__file__).parent / "runs"
 # Prompt template for the dataflow agent
 # This is different from the smolagents prompt - it instructs the agent to build
 # workflows to answer questions rather than writing Python code directly.
-PROMPT = """You are an expert data analyst and you will answer factoid questions by loading and referencing the files/documents listed below.
+PROMPT = """
 You have these files available:
 {context_files}
-Don't forget to reference any documentation in the data dir before answering a question.
+You will answer factoid questions by loading and referencing. Don't forget to reference any documentation in the data dir before answering a question.
 
 Here is the question you need to answer:
 {question}

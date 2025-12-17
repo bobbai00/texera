@@ -27,7 +27,18 @@ import org.apache.amber.core.tuple.{Attribute, Schema}
 import org.apache.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.amber.core.workflow._
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
-import org.apache.amber.operator.{LogicalOp, PortDescription, PythonCodeValidator, StateTransferFunc}
+import org.apache.amber.operator.{
+  LogicalOp,
+  PortDescription,
+  PythonCodeValidator,
+  StateTransferFunc
+}
+import org.apache.amber.operator.metadata.annotations.CommonOpDescAnnotation
+import com.kjetland.jackson.jsonSchema.annotations.{
+  JsonSchemaInject,
+  JsonSchemaString,
+  JsonSchemaInt
+}
 
 import scala.util.{Success, Try}
 
@@ -67,15 +78,18 @@ class PythonUDFOpDescV2 extends LogicalOp {
   @JsonPropertyDescription("Specify how many parallel workers to launch")
   var workers: Int = Int.box(1)
 
-  @JsonProperty(required = true, defaultValue = "true")
-  @JsonSchemaTitle("Retain input columns")
-  @JsonPropertyDescription("Keep the original input columns?")
-  var retainInputColumns: Boolean = Boolean.box(false)
-
   @JsonProperty
-  @JsonSchemaTitle("Extra output column(s)")
+  @JsonSchemaTitle("Output column(s)")
   @JsonPropertyDescription(
-    "Name of the newly added output columns that the UDF will produce, if any"
+    "The output schema of the UDF. When connected, defaults to the input schema."
+  )
+  @JsonSchemaInject(
+    strings = Array(
+      new JsonSchemaString(path = CommonOpDescAnnotation.autofill, value = "attributeList")
+    ),
+    ints = Array(
+      new JsonSchemaInt(path = CommonOpDescAnnotation.autofillAttributeOnPort, value = 0)
+    )
   )
   var outputColumns: List[Attribute] = List()
 
@@ -102,21 +116,11 @@ class PythonUDFOpDescV2 extends LogicalOp {
       }
 
     val propagateSchema = (inputSchemas: Map[PortIdentity, Schema]) => {
-      val inputSchema = inputSchemas(operatorInfo.inputPorts.head.id)
-      var outputSchema = if (retainInputColumns) inputSchema else Schema()
-
-      // Add custom output columns if defined
-      if (outputColumns != null) {
-        if (retainInputColumns) {
-          // Check for duplicate column names
-          for (column <- outputColumns) {
-            if (inputSchema.containsAttribute(column.getName)) {
-              throw new RuntimeException(s"Column name ${column.getName} already exists!")
-            }
-          }
-        }
-        // Add output columns to the schema
-        outputSchema = outputSchema.add(outputColumns)
+      // outputColumns is the source of truth for the output schema
+      val outputSchema = if (outputColumns != null && outputColumns.nonEmpty) {
+        Schema().add(outputColumns)
+      } else {
+        Schema()
       }
 
       Map(operatorInfo.outputPorts.head.id -> outputSchema)
