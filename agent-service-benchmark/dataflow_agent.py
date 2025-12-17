@@ -53,7 +53,7 @@ class AgentSettings:
     tool_timeout_seconds: int = AGENT_TOOL_TIMEOUT_SECONDS
     execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES
     disabled_tools: list[str] = field(default_factory=list)
-    only_use_relational_operators: bool = False
+    only_use_relational_operators: bool = True  # Default to True to match agent-service
 
     def to_api_dict(self) -> dict[str, Any]:
         """Convert to API request format."""
@@ -518,7 +518,7 @@ class DataflowAgent:
         tool_timeout_seconds: int = AGENT_TOOL_TIMEOUT_SECONDS,
         execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES,
         disabled_tools: Optional[list[str]] = None,
-        only_use_relational_operators: bool = False,
+        only_use_relational_operators: bool = True,
         texera_api_endpoint: str = TEXERA_API_ENDPOINT,
         computing_unit_endpoint: str = TEXERA_COMPUTING_UNIT_ENDPOINT,
         agent_service_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT,

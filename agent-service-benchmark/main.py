@@ -24,6 +24,8 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 import datasets
 import pandas as pd
@@ -191,7 +193,7 @@ def run_single_task(
     max_steps: int = AGENT_MAX_STEPS,
     verbosity_level: int = 1,
     retain: bool = False,
-    relational_only: bool = False,
+    relational_only: bool = True,
 ) -> dict:
     """
     Run a single benchmark task with a fresh agent and workflow.
@@ -367,13 +369,13 @@ def run_benchmark(
     max_steps: int = AGENT_MAX_STEPS,
     verbosity_level: int = 1,
     retain: bool = False,
-    relational_only: bool = False,
+    relational_only: bool = True,
 ) -> list[dict]:
-    """Run the full benchmark. Each task creates a fresh workflow and agent."""
+    """Run the full benchmark sequentially. Each task creates a fresh workflow and agent."""
     results = []
     total = len(dataset)
 
-    print(f"\n[Benchmark] Running {total} tasks (model={model_type}, max_steps={max_steps})")
+    print(f"\n[Benchmark] Running {total} tasks sequentially (model={model_type}, max_steps={max_steps})")
     if retain:
         print("[Benchmark] RETAIN MODE: Agents and workflows will NOT be deleted")
 
@@ -394,6 +396,143 @@ def run_benchmark(
 
     # Print summary
     scores = [r["score"] for r in results if r.get("score") is not None]
+    if scores:
+        accuracy = sum(scores) / len(scores)
+        print(f"\n[Benchmark] Accuracy: {accuracy:.2%} ({sum(1 for s in scores if s == 1)}/{len(scores)} correct)")
+
+    return results
+
+
+# Thread-safe print lock for parallel execution
+_print_lock = threading.Lock()
+
+
+def _thread_safe_print(message: str) -> None:
+    """Print a message in a thread-safe manner."""
+    with _print_lock:
+        print(message)
+
+
+def _run_task_in_thread(
+    task_index: int,
+    total: int,
+    task: dict,
+    context_files: list[str],
+    base_run_dir: Path,
+    timestamp: str,
+    model_type: str,
+    max_steps: int,
+    verbosity_level: int,
+    retain: bool,
+    relational_only: bool,
+) -> dict:
+    """
+    Run a single task in a thread. Handles the complete lifecycle including
+    task launching and data persistence.
+    """
+    task_id = task["task_id"]
+    _thread_safe_print(f"\n[Thread] Starting task {task_index + 1}/{total} (task_id={task_id})")
+
+    try:
+        result = run_single_task(
+            task=task,
+            context_files=context_files,
+            base_run_dir=base_run_dir,
+            timestamp=timestamp,
+            model_type=model_type,
+            max_steps=max_steps,
+            verbosity_level=verbosity_level,
+            retain=retain,
+            relational_only=relational_only,
+        )
+        _thread_safe_print(
+            f"[Thread] Completed task {task_index + 1}/{total} (task_id={task_id}) - "
+            f"score={result.get('score', 'N/A')}"
+        )
+        return result
+    except Exception as e:
+        _thread_safe_print(f"[Thread] Failed task {task_index + 1}/{total} (task_id={task_id}): {e}")
+        return {
+            "task_id": str(task_id),
+            "task_dir": str(base_run_dir / f"{timestamp}_task{task_id}"),
+            "answer": f"ERROR: {e}",
+            "correct_answer": task.get("answer", ""),
+            "score": None,
+            "workflow_id": None,
+            "agent_id": None,
+            "elapsed_seconds": 0,
+            "error": str(e),
+        }
+
+
+def run_benchmark_parallel(
+    dataset: datasets.Dataset,
+    context_files: list[str],
+    base_run_dir: Path,
+    timestamp: str,
+    model_type: str = AGENT_MODEL_TYPE,
+    max_steps: int = AGENT_MAX_STEPS,
+    verbosity_level: int = 1,
+    retain: bool = False,
+    relational_only: bool = True,
+    max_workers: int = 4,
+) -> list[dict]:
+    """
+    Run the full benchmark in parallel using threads.
+    Each task creates a fresh workflow and agent in its own thread.
+    """
+    total = len(dataset)
+
+    print(f"\n[Benchmark] Running {total} tasks in PARALLEL (model={model_type}, max_steps={max_steps}, workers={max_workers})")
+    if retain:
+        print("[Benchmark] RETAIN MODE: Agents and workflows will NOT be deleted")
+
+    # Convert dataset to list for indexing
+    tasks_list = list(dataset)
+
+    # Use ThreadPoolExecutor for parallel execution
+    results = [None] * total  # Pre-allocate results list to maintain order
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        future_to_index = {}
+        for i, task in enumerate(tasks_list):
+            future = executor.submit(
+                _run_task_in_thread,
+                task_index=i,
+                total=total,
+                task=task,
+                context_files=context_files,
+                base_run_dir=base_run_dir,
+                timestamp=timestamp,
+                model_type=model_type,
+                max_steps=max_steps,
+                verbosity_level=verbosity_level,
+                retain=retain,
+                relational_only=relational_only,
+            )
+            future_to_index[future] = i
+
+        # Collect results as they complete
+        completed = 0
+        for future in as_completed(future_to_index):
+            index = future_to_index[future]
+            try:
+                result = future.result()
+                results[index] = result
+            except Exception as e:
+                _thread_safe_print(f"[Benchmark] Unexpected error for task index {index}: {e}")
+                results[index] = {
+                    "task_id": str(tasks_list[index]["task_id"]),
+                    "answer": f"ERROR: {e}",
+                    "score": None,
+                    "error": str(e),
+                }
+            completed += 1
+            _thread_safe_print(f"[Benchmark] Progress: {completed}/{total} tasks completed")
+
+    # Print summary
+    scores = [r["score"] for r in results if r and r.get("score") is not None]
     if scores:
         accuracy = sum(scores) / len(scores)
         print(f"\n[Benchmark] Accuracy: {accuracy:.2%} ({sum(1 for s in scores if s == 1)}/{len(scores)} correct)")
@@ -447,8 +586,8 @@ def main():
     parser.add_argument(
         "--max-tasks",
         type=int,
-        default=3,
-        help="Maximum number of tasks to run (default: 3)",
+        default=None,
+        help="Maximum number of tasks to run (default: all tasks in split)",
     )
     parser.add_argument(
         "--model",
@@ -501,23 +640,40 @@ def main():
         help="Skip initial cleanup of existing agents",
     )
     parser.add_argument(
-        "--relational-only",
+        "--allow-all-operators",
         action="store_true",
-        help="Only allow relational operators (Aggregate, Projection, Join, etc.)",
+        help="Allow all operator types (default: only relational operators)",
+    )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Run tasks in parallel using threads",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=4,
+        help="Maximum number of parallel workers (default: 4, only used with --parallel)",
     )
 
     args = parser.parse_args()
+
+    # Compute relational_only from the inverted flag
+    relational_only = not args.allow_all_operators
 
     print("=" * 60)
     print("DABstep Benchmark - Texera Agent Service")
     print("=" * 60)
     print(f"Split: {args.split}")
-    print(f"Max tasks: {args.max_tasks}")
+    print(f"Max tasks: {args.max_tasks or 'all'}")
     print(f"Model: {args.model}")
     print(f"Max steps: {args.max_steps}")
     print(f"Data dir: {args.data_dir}")
     print(f"Retain mode: {args.retain}")
-    print(f"Relational only: {args.relational_only}")
+    print(f"Relational only: {relational_only}")
+    print(f"Parallel: {args.parallel}")
+    if args.parallel:
+        print(f"Max workers: {args.max_workers}")
     print("=" * 60)
 
     # Step 0: Cleanup existing agents (unless --no-cleanup is specified)
@@ -544,17 +700,31 @@ def main():
     timestamp = get_timestamp()
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
-    results = run_benchmark(
-        dataset=dataset,
-        context_files=context_files,
-        base_run_dir=RUNS_DIR,
-        timestamp=timestamp,
-        model_type=args.model,
-        max_steps=args.max_steps,
-        verbosity_level=args.verbosity,
-        retain=args.retain,
-        relational_only=args.relational_only,
-    )
+    if args.parallel:
+        results = run_benchmark_parallel(
+            dataset=dataset,
+            context_files=context_files,
+            base_run_dir=RUNS_DIR,
+            timestamp=timestamp,
+            model_type=args.model,
+            max_steps=args.max_steps,
+            verbosity_level=args.verbosity,
+            retain=args.retain,
+            relational_only=relational_only,
+            max_workers=args.max_workers,
+        )
+    else:
+        results = run_benchmark(
+            dataset=dataset,
+            context_files=context_files,
+            base_run_dir=RUNS_DIR,
+            timestamp=timestamp,
+            model_type=args.model,
+            max_steps=args.max_steps,
+            verbosity_level=args.verbosity,
+            retain=args.retain,
+            relational_only=relational_only,
+        )
 
     # Print summary
     print(f"\n[Benchmark] Complete! {len(results)} tasks, timestamp: {timestamp}")
