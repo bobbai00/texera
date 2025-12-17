@@ -362,10 +362,10 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     return { agentActions: stored.agent.getAgentActions() };
   })
 
-  // Get workflow
+  // Get workflow (returns workflow content directly, not wrapped)
   .get("/:id/workflow", ({ params: { id } }) => {
     const stored = getStoredAgent(id);
-    return { workflow: stored.agent.getWorkflowState().getWorkflowContent() };
+    return stored.agent.getWorkflowState().getWorkflowContent();
   })
 
   // Get agent internal state (workflow state as JSON for debugging)

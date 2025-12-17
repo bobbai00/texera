@@ -196,13 +196,13 @@ export interface AgentSettings {
  */
 export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   disabledTools: new Set(),
-  maxOperatorResultTokenLimit: 1000,
-  maxOperatorResultCellTokenLimit: 200,
-  operatorResultSerializationMode: OperatorResultSerializationMode.JSON,
-  toolTimeoutMs: 120000, // 2 minutes
-  executionTimeoutMs: 600000, // 10 minutes
-  maxSteps: 10,
-  onlyUseRelationalOperators: false,
+  maxOperatorResultTokenLimit: 20000,
+  maxOperatorResultCellTokenLimit: 10000,
+  operatorResultSerializationMode: OperatorResultSerializationMode.CSV,
+  toolTimeoutMs: 240000, // 2 minutes
+  executionTimeoutMs: 240000, // 10 minutes
+  maxSteps: 100,
+  onlyUseRelationalOperators: true,
 };
 
 // ============================================================================

@@ -366,7 +366,7 @@ def get_agent_workflow(
         agent_endpoint: Agent service endpoint URL
 
     Returns:
-        Workflow dictionary with operators, links, etc.
+        Workflow content directly (operators, links, operatorPositions, etc.)
 
     Raises:
         requests.HTTPError: If API call fails

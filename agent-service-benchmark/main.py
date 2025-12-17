@@ -21,6 +21,7 @@ import os
 import time
 import json
 import argparse
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -186,7 +187,6 @@ def run_single_task(
     context_files: list[str],
     base_run_dir: Path,
     timestamp: str,
-    data_dir: str = DATA_DIR,
     model_type: str = AGENT_MODEL_TYPE,
     max_steps: int = AGENT_MAX_STEPS,
     verbosity_level: int = 1,
@@ -195,36 +195,19 @@ def run_single_task(
 ) -> dict:
     """
     Run a single benchmark task with a fresh agent and workflow.
-
-    Each task creates a new workflow and agent to ensure clean state
-    and proper isolation between test cases.
-
-    Args:
-        task: Task dictionary with task_id, question, guidelines
-        context_files: List of context file paths
-        base_run_dir: Base directory for runs
-        timestamp: Timestamp string for folder naming
-        data_dir: Directory containing context files
-        model_type: LLM model type to use
-        max_steps: Maximum agent steps
-        verbosity_level: Logging verbosity
-        retain: If True, do not delete the agent and workflow after task
-        relational_only: If True, only allow relational operators
-
-    Returns:
-        Dictionary with task results
     """
     task_id = task["task_id"]
     question = task["question"]
     guidelines = task["guidelines"]
+    correct_answer = task.get("answer", "")
 
     print(f"\n[Task {task_id}] {question[:80]}...")
 
-    # Create task-specific folder: {timestamp}_task{task_id}
+    # Create task-specific folder
     task_dir = base_run_dir / f"{timestamp}_task{task_id}"
     task_dir.mkdir(parents=True, exist_ok=True)
 
-    # Format the prompt using PROMPT template
+    # Format prompt
     context_files_str = "\n".join(f"  - {f}" for f in context_files)
     prompt = PROMPT.format(
         context_files=context_files_str,
@@ -232,7 +215,7 @@ def run_single_task(
         guidelines=guidelines,
     )
 
-    # Create a new agent with fresh workflow for this task
+    # Create agent
     agent = DataflowAgent(
         model_type=model_type,
         max_steps=max_steps,
@@ -244,176 +227,135 @@ def run_single_task(
 
     start_time = time.time()
     message_result: Optional[MessageResult] = None
-    workflow_id = None
-    agent_id = None
     workflow_content = None
+    answer = ""
     elapsed = 0.0
+    error = None
 
     try:
-        # Setup agent (creates new workflow)
         agent.setup()
-        workflow_id = agent._workflow_id
-        agent_id = agent.agent_id
-        print(f"[Task {task_id}] Created agent: {agent_id}, workflow: {workflow_id}")
+        print(f"[Task {task_id}] Created agent: {agent.agent_id}, workflow: {agent._workflow_id}")
 
-        # Run the agent - returns MessageResult
         message_result = agent.run(prompt)
         elapsed = time.time() - start_time
-
-        # The answer is the response text from MessageResult
-        answer = message_result.response
+        answer = agent_response_to_answer(message_result.response)
+        error = message_result.error
         print(f"[Task {task_id}] Completed in {elapsed:.1f}s")
-        print(f"[Task {task_id}] Answer: {answer[:200]}...")
 
-        # Fetch the workflow after running
+        # Fetch workflow (API now returns content directly)
         try:
-            workflow_content = get_agent_workflow(agent_id)
-            workflow_data = workflow_content.get("workflow", workflow_content)
-            num_operators = len(workflow_data.get("operators", []))
-            num_links = len(workflow_data.get("links", []))
-            print(f"[Task {task_id}] Fetched workflow with {num_operators} operators, {num_links} links")
+            workflow_content = get_agent_workflow(agent.agent_id)
+            print(f"[Task {task_id}] Workflow: {len(workflow_content.get('operators', []))} operators")
         except Exception as e:
             print(f"[Task {task_id}] Failed to fetch workflow: {e}")
-            workflow_content = None
 
     except Exception as e:
         elapsed = time.time() - start_time
         answer = f"ERROR: {e}"
+        error = str(e)
         print(f"[Task {task_id}] Failed after {elapsed:.1f}s: {e}")
     finally:
-        # Only cleanup if retain is False
         if not retain:
             agent.cleanup()
-        else:
-            print(f"[Task {task_id}] Retaining agent: {agent_id}, workflow: {workflow_id}")
 
-    # Save files to task directory
+    # Save files
+    _save_file(task_dir / "prompt.txt", prompt)
+    _save_file(task_dir / "question.txt", question)
+    _save_file(task_dir / "answer.txt", answer)
+    _save_file(task_dir / "correct_answer.txt", str(correct_answer))
 
-    # 1. workflow.json - the workflow structure
     if workflow_content:
-        workflow_file = task_dir / "workflow.json"
-        with open(workflow_file, "w") as f:
-            json.dump(workflow_content, f, indent=2)
-        print(f"[Task {task_id}] Saved workflow.json")
+        _save_json(task_dir / "workflow.json", workflow_content)
 
-    # 2. answer.txt - the final answer text
-    answer_file = task_dir / "answer.txt"
-    with open(answer_file, "w") as f:
-        f.write(message_result.response if message_result else answer)
-    print(f"[Task {task_id}] Saved answer.txt")
-
-    # 3. parameter.csv - usage and stats from MessageResult
     if message_result:
-        param_data = {
-            "response_length": len(message_result.response),
-            "stopped": message_result.stopped,
-            "error": message_result.error or "",
-            "elapsed_seconds": elapsed,
-            "workflow_id": workflow_id,
-            "agent_id": agent_id,
-        }
-        # Add usage fields
-        for key, value in message_result.usage.items():
-            param_data[f"usage_{key}"] = value
-        # Add stats fields
-        for key, value in message_result.stats.items():
-            param_data[f"stats_{key}"] = value
-
-        param_df = pd.DataFrame([param_data])
-        param_file = task_dir / "parameter.csv"
-        param_df.to_csv(param_file, index=False)
-        print(f"[Task {task_id}] Saved parameter.csv")
-
-    # 4. trace.json - the full messages array as trace
-    if message_result:
-        trace_data = {
+        _save_json(task_dir / "trace.json", {
             "response": message_result.response,
-            "messages": message_result.messages,  # Full conversation messages
+            "messages": message_result.messages,
             "usage": message_result.usage,
             "stats": message_result.stats,
             "stopped": message_result.stopped,
             "error": message_result.error,
-        }
-        trace_file = task_dir / "trace.json"
-        with open(trace_file, "w") as f:
-            json.dump(trace_data, f, indent=2)
-        print(f"[Task {task_id}] Saved trace.json")
+        })
 
-    # 5. question.txt - the question text
-    question_file = task_dir / "question.txt"
-    with open(question_file, "w") as f:
-        f.write(question)
-    print(f"[Task {task_id}] Saved question.txt")
-
-    # 6. correct_answer.txt - the ground truth answer
-    correct_answer = task.get("answer", "")
-    correct_answer_file = task_dir / "correct_answer.txt"
-    with open(correct_answer_file, "w") as f:
-        f.write(str(correct_answer))
-    print(f"[Task {task_id}] Saved correct_answer.txt")
-
-    # 7. Evaluate and save score.txt
-    score = None
-    if EVALUATION_AVAILABLE:
-        try:
-            agent_answer = message_result.response if message_result else answer
-            # Create single-row DataFrames for evaluation
-            agent_answers_df = pd.DataFrame([{
-                "task_id": str(task_id),
-                "agent_answer": str(agent_answer),
-            }])
-            # Include all required columns for evaluation (especially 'level')
-            task_df = pd.DataFrame([{
-                "task_id": task_id,
-                "question": question,
-                "guidelines": guidelines,
-                "answer": correct_answer,
-                "level": task.get("level", "unknown"),
-            }])
-            # Run evaluation
-            task_scores = evaluate(agent_answers=agent_answers_df, tasks_with_gt=task_df)
-            if task_scores and len(task_scores) > 0:
-                score = task_scores[0].get("score", 0)
-            else:
-                score = 0
-
-            # Save score.txt
-            score_file = task_dir / "score.txt"
-            with open(score_file, "w") as f:
-                f.write(str(score))
-            print(f"[Task {task_id}] Saved score.txt (score={score})")
-
-            # Also save evaluation result as JSON for more details
-            eval_file = task_dir / "evaluation.json"
-            with open(eval_file, "w") as f:
-                json.dump({
-                    "task_id": str(task_id),
-                    "score": score,
-                    "agent_answer": str(agent_answer),
-                    "correct_answer": str(correct_answer),
-                    "question": question,
-                }, f, indent=2)
-            print(f"[Task {task_id}] Saved evaluation.json")
-
-        except Exception as e:
-            print(f"[Task {task_id}] Evaluation failed: {e}")
-            score = None
-    else:
-        print(f"[Task {task_id}] Skipping evaluation (dabstep_benchmark not installed)")
-
-    print(f"[Task {task_id}] All files saved to {task_dir}")
+    # Evaluate
+    score = _evaluate_task(task_id, answer, correct_answer, question, guidelines, task, task_dir)
 
     return {
         "task_id": str(task_id),
         "task_dir": str(task_dir),
-        "answer": message_result.response if message_result else answer,
+        "answer": answer,
         "correct_answer": correct_answer,
         "score": score,
-        "workflow_id": workflow_id,
-        "agent_id": agent_id,
+        "workflow_id": agent._workflow_id,
+        "agent_id": agent.agent_id,
         "elapsed_seconds": elapsed,
-        "error": message_result.error if message_result else None,
+        "error": error,
     }
+
+
+def agent_response_to_answer(response: str) -> str:
+    """Extract the answer from agent response (last non-empty line)."""
+    lines = response.strip().split("\n")
+    # Find last non-empty line
+    for line in reversed(lines):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return response.strip()
+
+
+def _save_file(path: Path, content: str) -> None:
+    """Save text content to a file."""
+    with open(path, "w") as f:
+        f.write(content)
+
+
+def _save_json(path: Path, data: dict) -> None:
+    """Save JSON data to a file."""
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def _evaluate_task(
+    task_id: str,
+    agent_answer: str,
+    correct_answer: str,
+    question: str,
+    guidelines: str,
+    task: dict,
+    task_dir: Path,
+) -> Optional[float]:
+    """Evaluate a task and save score."""
+    if not EVALUATION_AVAILABLE:
+        return None
+
+    try:
+        agent_answers_df = pd.DataFrame([{
+            "task_id": str(task_id),
+            "agent_answer": str(agent_answer),
+        }])
+        task_df = pd.DataFrame([{
+            "task_id": task_id,
+            "question": question,
+            "guidelines": guidelines,
+            "answer": correct_answer,
+            "level": task.get("level", "unknown"),
+        }])
+        task_scores = evaluate(agent_answers=agent_answers_df, tasks_with_gt=task_df)
+        score = task_scores[0].get("score", 0) if task_scores else 0
+
+        _save_file(task_dir / "score.txt", str(score))
+        _save_json(task_dir / "evaluation.json", {
+            "task_id": str(task_id),
+            "score": score,
+            "agent_answer": str(agent_answer),
+            "correct_answer": str(correct_answer),
+        })
+        print(f"[Task {task_id}] Score: {score}")
+        return score
+    except Exception as e:
+        print(f"[Task {task_id}] Evaluation failed: {e}")
+        return None
 
 
 def run_benchmark(
@@ -421,52 +363,27 @@ def run_benchmark(
     context_files: list[str],
     base_run_dir: Path,
     timestamp: str,
-    data_dir: str = DATA_DIR,
     model_type: str = AGENT_MODEL_TYPE,
     max_steps: int = AGENT_MAX_STEPS,
     verbosity_level: int = 1,
     retain: bool = False,
     relational_only: bool = False,
 ) -> list[dict]:
-    """
-    Run the full benchmark.
-
-    Each task creates a fresh workflow and agent for proper isolation.
-    Each task is saved to its own folder: {timestamp}_task{task_id}
-
-    Args:
-        dataset: HuggingFace Dataset with tasks
-        context_files: List of context file paths
-        base_run_dir: Base directory for runs
-        timestamp: Timestamp string for folder naming
-        data_dir: Directory containing context files
-        model_type: LLM model type to use
-        max_steps: Maximum agent steps per task
-        verbosity_level: Logging verbosity
-        retain: If True, do not delete agents and workflows after tasks
-        relational_only: If True, only allow relational operators
-
-    Returns:
-        List of task results
-    """
+    """Run the full benchmark. Each task creates a fresh workflow and agent."""
     results = []
-    total_tasks = len(dataset)
+    total = len(dataset)
 
-    print(f"\n[Benchmark] Running {total_tasks} tasks...")
-    print(f"[Benchmark] Each task will create a new workflow and agent")
-    print(f"[Benchmark] Output format: {timestamp}_task{{task_id}}/")
+    print(f"\n[Benchmark] Running {total} tasks (model={model_type}, max_steps={max_steps})")
     if retain:
-        print(f"[Benchmark] RETAIN MODE: Agents and workflows will NOT be deleted")
-    print("=" * 60)
+        print("[Benchmark] RETAIN MODE: Agents and workflows will NOT be deleted")
 
     for i, task in enumerate(dataset):
-        print(f"\n--- Task {i + 1}/{total_tasks} ---")
+        print(f"\n--- Task {i + 1}/{total} ---")
         result = run_single_task(
             task=task,
             context_files=context_files,
             base_run_dir=base_run_dir,
             timestamp=timestamp,
-            data_dir=data_dir,
             model_type=model_type,
             max_steps=max_steps,
             verbosity_level=verbosity_level,
@@ -475,62 +392,13 @@ def run_benchmark(
         )
         results.append(result)
 
-    print("\n" + "=" * 60)
-    print(f"[Benchmark] Completed {len(results)} tasks")
-
-    # Print accuracy summary if evaluation was run
-    scores = [r.get("score") for r in results if r.get("score") is not None]
+    # Print summary
+    scores = [r["score"] for r in results if r.get("score") is not None]
     if scores:
         accuracy = sum(scores) / len(scores)
-        correct_count = sum(1 for s in scores if s == 1)
-        print(f"[Benchmark] Accuracy: {accuracy:.2%} ({correct_count}/{len(scores)} correct)")
-    else:
-        print("[Benchmark] No scores available (evaluation skipped or failed)")
+        print(f"\n[Benchmark] Accuracy: {accuracy:.2%} ({sum(1 for s in scores if s == 1)}/{len(scores)} correct)")
 
     return results
-
-
-# ============================================================================
-# Evaluation (Optional - requires dabstep_benchmark package)
-# ============================================================================
-
-
-def evaluate_results(
-    agent_answers: pd.DataFrame, tasks_df: pd.DataFrame
-) -> Optional[pd.DataFrame]:
-    """
-    Evaluate benchmark results if dabstep_benchmark package is available.
-
-    Args:
-        agent_answers: DataFrame with task_id and agent_answer columns
-        tasks_df: DataFrame with ground truth answers
-
-    Returns:
-        DataFrame with scores, or None if evaluation package not available
-    """
-    try:
-        from dabstep_benchmark.utils import evaluate
-
-        print("\n[Benchmark] Evaluating results...")
-        task_scores = evaluate(agent_answers=agent_answers, tasks_with_gt=tasks_df)
-        scores_df = pd.DataFrame(task_scores)
-        scores_df["correct_answer"] = tasks_df["answer"].values
-        scores_df["question"] = tasks_df["question"].values
-
-        # Print summary
-        accuracy = scores_df["score"].mean() if "score" in scores_df.columns else 0
-        print(f"[Benchmark] Accuracy: {accuracy:.2%}")
-
-        return scores_df
-
-    except ImportError:
-        print(
-            "\n[Benchmark] dabstep_benchmark package not installed, skipping evaluation"
-        )
-        print(
-            "  Install with: pip install git+https://git@hf.co/spaces/adyen/DABstep.git@main"
-        )
-        return None
 
 
 # ============================================================================
@@ -562,13 +430,7 @@ def cleanup_existing_agents() -> int:
 
 
 def get_timestamp() -> str:
-    """
-    Get a timestamp string for folder naming.
-
-    Returns:
-        Timestamp string in format YYYYMMDD_HHMMSS
-    """
-    from datetime import datetime
+    """Get a timestamp string in format YYYYMMDD_HHMMSS."""
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
@@ -678,22 +540,15 @@ def main():
         max_tasks=args.max_tasks,
     )
 
-    # Step 3: Get timestamp for folder naming
+    # Run benchmark
     timestamp = get_timestamp()
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"\n[Benchmark] Output directory: {RUNS_DIR}")
-    print(f"[Benchmark] Timestamp: {timestamp}")
-
-    # Step 4: Run benchmark (each task creates its own agent and workflow)
-    print("\n[Benchmark] Starting benchmark...")
-    print(f"[Benchmark] Model: {args.model}, Max steps: {args.max_steps}")
 
     results = run_benchmark(
         dataset=dataset,
         context_files=context_files,
         base_run_dir=RUNS_DIR,
         timestamp=timestamp,
-        data_dir=args.data_dir,
         model_type=args.model,
         max_steps=args.max_steps,
         verbosity_level=args.verbosity,
@@ -701,21 +556,14 @@ def main():
         relational_only=args.relational_only,
     )
 
-    # Step 5: Print summary
-    print("\n[Benchmark] Complete!")
-    print(f"Timestamp: {timestamp}")
-    print(f"Total tasks: {len(results)}")
-
-    # Print detailed results with scores
-    print(f"\nTask results:")
+    # Print summary
+    print(f"\n[Benchmark] Complete! {len(results)} tasks, timestamp: {timestamp}")
     for r in results:
-        score_str = f"score={r.get('score', 'N/A')}" if r.get('score') is not None else "score=N/A"
-        error_str = f" (ERROR: {r.get('error')})" if r.get('error') else ""
-        print(f"  - Task {r['task_id']}: {score_str}{error_str}")
-        print(f"      {r['task_dir']}")
+        score = r.get("score", "N/A")
+        err = f" ERROR: {r['error']}" if r.get("error") else ""
+        print(f"  Task {r['task_id']}: score={score}{err}")
 
-    # Print final accuracy
-    scores = [r.get("score") for r in results if r.get("score") is not None]
+    scores = [r["score"] for r in results if r.get("score") is not None]
     if scores:
         accuracy = sum(scores) / len(scores)
         correct_count = sum(1 for s in scores if s == 1)
