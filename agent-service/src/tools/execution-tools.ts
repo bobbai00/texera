@@ -209,36 +209,79 @@ function formatWorkflowValidationErrors(validationResult: WorkflowValidationResu
 
 /**
  * Converts WorkflowState to LogicalPlan for execution.
+ *
+ * Execute To behavior:
+ * - If opsToViewResult has exactly 1 operator ID: execute only the sub-DAG up to that operator
+ * - If opsToViewResult is empty or has 2+ IDs: execute the full DAG and collect results from specified operators
  */
 export function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?: string[]): LogicalPlan {
-  const operators = workflowState.getAllEnabledOperators().map(op => ({
-    operatorID: op.operatorID,
-    operatorType: op.operatorType,
-    ...op.operatorProperties,
-  }));
+  // Determine if we should use sub-DAG (Execute To single operator)
+  const useSubDAG = opsToViewResult && opsToViewResult.length === 1;
+  const targetOperatorId = useSubDAG ? opsToViewResult[0] : undefined;
 
-  const links: LogicalLink[] = workflowState.getAllLinks().map(link => ({
-    fromOpId: link.source.operatorID,
-    fromPortId: {
-      id: parseInt(link.source.portID.replace(/\D/g, "") || "0", 10),
-      internal: false,
-    },
-    toOpId: link.target.operatorID,
-    toPortId: {
-      id: parseInt(link.target.portID.replace(/\D/g, "") || "0", 10),
-      internal: false,
-    },
-  }));
+  let operatorsList: { operatorID: string; operatorType: string; [key: string]: any }[];
+  let linksList: LogicalLink[];
 
-  // If no specific operators requested, find sink operators (no outgoing links)
-  const allOpsToView =
-    opsToViewResult && opsToViewResult.length > 0
-      ? opsToViewResult
-      : operators.filter(op => !links.some(link => link.fromOpId === op.operatorID)).map(op => op.operatorID);
+  if (targetOperatorId) {
+    // Execute To: Get sub-DAG up to the target operator
+    const subDAG = workflowState.getSubDAG(targetOperatorId);
+
+    operatorsList = subDAG.operators.map(op => ({
+      operatorID: op.operatorID,
+      operatorType: op.operatorType,
+      ...op.operatorProperties,
+    }));
+
+    linksList = subDAG.links.map(link => ({
+      fromOpId: link.source.operatorID,
+      fromPortId: {
+        id: parseInt(link.source.portID.replace(/\D/g, "") || "0", 10),
+        internal: false,
+      },
+      toOpId: link.target.operatorID,
+      toPortId: {
+        id: parseInt(link.target.portID.replace(/\D/g, "") || "0", 10),
+        internal: false,
+      },
+    }));
+  } else {
+    // Full DAG execution
+    operatorsList = workflowState.getAllEnabledOperators().map(op => ({
+      operatorID: op.operatorID,
+      operatorType: op.operatorType,
+      ...op.operatorProperties,
+    }));
+
+    linksList = workflowState.getAllLinks().map(link => ({
+      fromOpId: link.source.operatorID,
+      fromPortId: {
+        id: parseInt(link.source.portID.replace(/\D/g, "") || "0", 10),
+        internal: false,
+      },
+      toOpId: link.target.operatorID,
+      toPortId: {
+        id: parseInt(link.target.portID.replace(/\D/g, "") || "0", 10),
+        internal: false,
+      },
+    }));
+  }
+
+  // Determine which operators to collect results from
+  let allOpsToView: string[];
+  if (opsToViewResult && opsToViewResult.length > 0) {
+    // Use the specified operators (filter to only those in our operator list)
+    const operatorIds = new Set(operatorsList.map(op => op.operatorID));
+    allOpsToView = opsToViewResult.filter(id => operatorIds.has(id));
+  } else {
+    // Find sink operators (no outgoing links)
+    allOpsToView = operatorsList
+      .filter(op => !linksList.some(link => link.fromOpId === op.operatorID))
+      .map(op => op.operatorID);
+  }
 
   return {
-    operators,
-    links,
+    operators: operatorsList,
+    links: linksList,
     opsToViewResult: allOpsToView,
   };
 }

@@ -284,6 +284,47 @@ export class WorkflowState {
     );
   }
 
+  /**
+   * Retrieves a subgraph (subDAG) from the workflow graph.
+   * This performs a depth-first search (DFS) starting from the specified target operator
+   * and traverses backwards through incoming links to construct the subDAG.
+   *
+   * @param targetOperatorId - The unique identifier of the operator from which to start the DFS.
+   * @returns An object containing two arrays: `operators` and `links`.
+   */
+  getSubDAG(targetOperatorId: string): { operators: OperatorPredicate[]; links: OperatorLink[] } {
+    const visited = new Set<string>();
+    const subDagOperators: OperatorPredicate[] = [];
+    const subDagLinks: OperatorLink[] = [];
+
+    const dfs = (currentOperatorId: string) => {
+      if (visited.has(currentOperatorId)) {
+        return;
+      }
+
+      visited.add(currentOperatorId);
+
+      const currentOperator = this.getOperator(currentOperatorId);
+      if (currentOperator && !currentOperator.isDisabled) {
+        subDagOperators.push(currentOperator);
+
+        // Find links connected to the current operator as target (incoming links)
+        const connectedLinks = this.getAllLinks().filter(
+          link => link.target.operatorID === currentOperatorId && !this.getOperator(link.source.operatorID)?.isDisabled
+        );
+
+        connectedLinks.forEach(link => {
+          subDagLinks.push(link);
+          dfs(link.source.operatorID);
+        });
+      }
+    };
+
+    dfs(targetOperatorId);
+
+    return { operators: subDagOperators, links: subDagLinks };
+  }
+
   // ============================================================================
   // Validation State
   // ============================================================================

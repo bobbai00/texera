@@ -24,6 +24,7 @@ import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.auth.Auth
 import org.apache.amber.config.ApplicationConfig
 import org.apache.amber.core.storage.DocumentFactory
+import org.apache.amber.operator.LogicalOp
 import org.apache.amber.core.storage.model.VirtualDocument
 import org.apache.amber.core.tuple.Tuple
 import org.apache.amber.core.virtualidentity.{ExecutionIdentity, OperatorIdentity, WorkflowIdentity}
@@ -36,6 +37,7 @@ import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
 import org.apache.texera.web.model.websocket.request.{LogicalPlanPojo, WorkflowExecuteRequest}
+import org.apache.texera.workflow.LogicalLink
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.{ExecutionResultService, WorkflowService}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
@@ -45,6 +47,7 @@ import java.util.concurrent.{CountDownLatch, TimeUnit}
 import javax.annotation.security.RolesAllowed
 import javax.ws.rs._
 import javax.ws.rs.core.MediaType
+import scala.annotation.tailrec
 import scala.collection.mutable
 
 /**
@@ -139,10 +142,13 @@ class SyncExecutionResource extends LazyLogging {
         computingUnitId
       )
 
+      // Compute sub-DAG if there's exactly 1 target operator (Execute To behavior)
+      val effectiveLogicalPlan = computeSubDAGIfNeeded(request.logicalPlan, request.targetOperatorIds)
+
       val executeRequest = WorkflowExecuteRequest(
         executionName = request.executionName,
         engineVersion = "1.0",
-        logicalPlan = request.logicalPlan,
+        logicalPlan = effectiveLogicalPlan,
         replayFromExecution = None,
         workflowSettings = request.workflowSettings.getOrElse(
           WorkflowSettings(dataTransferBatchSize = ApplicationConfig.defaultDataTransferBatchSize)
@@ -691,6 +697,73 @@ class SyncExecutionResource extends LazyLogging {
       case TERMINATED    => "Terminated"
       case _             => "Unknown"
     }
+  }
+
+  /**
+    * Compute a sub-DAG from the logical plan by starting from the target operator
+    * and traversing backwards through incoming links.
+    *
+    * Execute To behavior:
+    * - If targetOperatorIds has exactly 1 operator: execute only the sub-DAG up to that operator
+    * - Otherwise: execute the full DAG and collect results from specified operators
+    *
+    * @param logicalPlan The original logical plan
+    * @param targetOperatorIds The list of target operator IDs
+    * @return Modified LogicalPlanPojo with sub-DAG if applicable
+    */
+  private def computeSubDAGIfNeeded(
+      logicalPlan: LogicalPlanPojo,
+      targetOperatorIds: List[String]
+  ): LogicalPlanPojo = {
+    // Only compute sub-DAG when there's exactly 1 target operator
+    if (targetOperatorIds.length != 1) {
+      return logicalPlan
+    }
+
+    val targetOpId = targetOperatorIds.head
+
+    // Build operator ID to operator mapping
+    val operatorMap: Map[String, LogicalOp] =
+      logicalPlan.operators.map(op => op.operatorIdentifier.id -> op).toMap
+
+    // Check if target operator exists
+    if (!operatorMap.contains(targetOpId)) {
+      logger.warn(s"Target operator $targetOpId not found in logical plan, using full DAG")
+      return logicalPlan
+    }
+
+    // Build adjacency list for reverse traversal (incoming links per operator)
+    val incomingLinks: Map[String, List[LogicalLink]] =
+      logicalPlan.links.groupBy(_.toOpId.id)
+
+    // DFS to collect all operators in the sub-DAG
+    val visited = mutable.Set[String]()
+    val subDagOperators = mutable.ListBuffer[LogicalOp]()
+    val subDagLinks = mutable.ListBuffer[LogicalLink]()
+
+    def dfs(currentOpId: String): Unit = {
+      if (visited.contains(currentOpId)) return
+      visited.add(currentOpId)
+
+      operatorMap.get(currentOpId).foreach { op =>
+        subDagOperators += op
+
+        // Find incoming links to this operator
+        incomingLinks.getOrElse(currentOpId, List.empty).foreach { link =>
+          subDagLinks += link
+          dfs(link.fromOpId.id)
+        }
+      }
+    }
+
+    dfs(targetOpId)
+
+    LogicalPlanPojo(
+      operators = subDagOperators.toList,
+      links = subDagLinks.toList,
+      opsToViewResult = targetOperatorIds.filter(id => visited.contains(id)),
+      opsToReuseResult = logicalPlan.opsToReuseResult.filter(id => visited.contains(id))
+    )
   }
 
   @GET
