@@ -20,10 +20,11 @@ import sys
 import traceback
 from loguru import logger
 from threading import Event
-from typing import Iterator, Optional
+from typing import Iterator, List, Optional
 
 from core.architecture.managers import Context
-from core.models import ExceptionInfo, State, TupleLike, InternalMarker
+from core.data_processing_config import DataProcessingConfig
+from core.models import ExceptionInfo, State, TupleLike, InternalMarker, Tuple
 from core.models.internal_marker import StartChannel, EndChannel
 from core.models.table import all_output_to_tuple
 from core.util import Stoppable
@@ -139,20 +140,43 @@ class DataProcessor(Runnable, Stoppable):
     def _set_output_tuple(self, output_iterator: Iterator[Optional[TupleLike]]) -> None:
         """
         Set the output tuple after processing by the executor.
+
+        Uses batched context switching to reduce overhead:
+        - When batch_size=1: Original behavior (context switch per tuple)
+        - When batch_size>1: Accumulate tuples before switching to reduce overhead
         """
+        batch_size = DataProcessingConfig.output_batch_size
+        schema = self._context.output_manager.get_port().get_schema()
+        output_batch: List[Optional[Tuple]] = []
+
         for output in output_iterator:
             # output could be a None, a TupleLike, or a TableLike.
             for output_tuple in all_output_to_tuple(output):
                 if output_tuple is not None:
-                    output_tuple.finalize(
-                        self._context.output_manager.get_port().get_schema()
-                    )
-                self._switch_context()
-                self._context.tuple_processing_manager.current_output_tuple = (
-                    output_tuple
-                )
-                self._switch_context()
+                    output_tuple.finalize(schema)
+                output_batch.append(output_tuple)
+
+                # Flush batch when it reaches the configured size
+                if len(output_batch) >= batch_size:
+                    self._flush_output_batch(output_batch)
+                    output_batch = []
+
+        # Flush any remaining tuples in the batch
+        if output_batch:
+            self._flush_output_batch(output_batch)
+
         self._context.tuple_processing_manager.finished_current.set()
+
+    def _flush_output_batch(self, output_batch: List[Optional[Tuple]]) -> None:
+        """
+        Flush a batch of output tuples to MainLoop with context switching.
+
+        :param output_batch: List of output tuples to flush
+        """
+        for output_tuple in output_batch:
+            self._switch_context()
+            self._context.tuple_processing_manager.current_output_tuple = output_tuple
+            self._switch_context()
 
     def _set_output_state(self, output_state: State) -> None:
         """

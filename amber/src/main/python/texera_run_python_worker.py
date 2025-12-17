@@ -53,6 +53,7 @@ if __name__ == "__main__":
         iceberg_file_storage_directory_path,
         iceberg_table_commit_batch_size,
         disable_control_message_checking,
+        output_batch_size,
     ) = sys.argv
     init_loguru_logger(logger_level)
     StorageConfig.initialize(
@@ -65,7 +66,8 @@ if __name__ == "__main__":
     )
     DataProcessingConfig.initialize(
         disable_control_message_checking=disable_control_message_checking.lower()
-        == "true"
+        == "true",
+        output_batch_size=int(output_batch_size),
     )
 
     # Setting R_HOME environment variable for R-UDF usage

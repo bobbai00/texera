@@ -23,13 +23,20 @@ class DataProcessingConfig:
     """
 
     disable_control_message_checking: bool = False
+    output_batch_size: int = 1
 
     @classmethod
-    def initialize(cls, disable_control_message_checking: bool) -> None:
+    def initialize(
+        cls, disable_control_message_checking: bool, output_batch_size: int = 1
+    ) -> None:
         """
         Initialize the data processing configuration.
 
         :param disable_control_message_checking: When True, skips control message
             checking during tuple processing for better throughput.
+        :param output_batch_size: Number of output tuples to batch before context
+            switching. Higher values reduce context switch overhead but increase
+            latency. Default is 1 (original behavior).
         """
         cls.disable_control_message_checking = disable_control_message_checking
+        cls.output_batch_size = max(1, output_batch_size)

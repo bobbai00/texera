@@ -184,7 +184,8 @@ class PythonWorkflowWorker(
         StorageConfig.icebergTableResultNamespace,
         StorageConfig.fileStorageDirectoryPath.toString,
         StorageConfig.icebergTableCommitBatchSize.toString,
-        ApplicationConfig.disableControlMessageChecking.toString
+        ApplicationConfig.disableControlMessageChecking.toString,
+        ApplicationConfig.pythonOutputBatchSize.toString
       )
     ).run(BasicIO.standard(false))
   }

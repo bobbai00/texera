@@ -115,4 +115,6 @@ object ApplicationConfig {
   // Data processing
   val disableControlMessageChecking: Boolean =
     getConfSource.getBoolean("data-processing.disable-control-message-checking")
+  val pythonOutputBatchSize: Int =
+    getConfSource.getInt("data-processing.python-output-batch-size")
 }
