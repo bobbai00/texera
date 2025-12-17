@@ -35,9 +35,9 @@ import org.apache.amber.operator.source.scan.FileAttributeType
   * and strings that are in SingleTuple mode will always read the entire input, so limit / offset are disabled in these cases
   */
 trait TextSourceOpDesc {
-  @JsonProperty(defaultValue = "string", required = true)
+  @JsonProperty(defaultValue = "single string", required = true)
   @JsonSchemaTitle("Attribute Type")
-  var attributeType: FileAttributeType = FileAttributeType.STRING
+  var attributeType: FileAttributeType = FileAttributeType.SINGLE_STRING
 
   @JsonProperty(defaultValue = "line", required = true)
   @JsonSchemaTitle("Attribute Name")
