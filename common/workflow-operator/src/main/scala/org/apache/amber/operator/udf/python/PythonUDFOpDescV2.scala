@@ -27,7 +27,7 @@ import org.apache.amber.core.tuple.{Attribute, Schema}
 import org.apache.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.amber.core.workflow._
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
-import org.apache.amber.operator.{LogicalOp, PortDescription, StateTransferFunc}
+import org.apache.amber.operator.{LogicalOp, PortDescription, PythonCodeValidator, StateTransferFunc}
 
 import scala.util.{Success, Try}
 
@@ -91,6 +91,16 @@ class PythonUDFOpDescV2 extends LogicalOp {
       opInfo.inputPorts.map(_ => None)
     }
 
+    // Validate code for file I/O operations
+    val validatedCode =
+      try {
+        PythonCodeValidator.validateNoFileIO(code)
+        code
+      } catch {
+        case ex: Throwable =>
+          PythonCodeValidator.generatePythonCodeForRaisingException(ex)
+      }
+
     val propagateSchema = (inputSchemas: Map[PortIdentity, Schema]) => {
       val inputSchema = inputSchemas(operatorInfo.inputPorts.head.id)
       var outputSchema = if (retainInputColumns) inputSchema else Schema()
@@ -118,7 +128,7 @@ class PythonUDFOpDescV2 extends LogicalOp {
           workflowId,
           executionId,
           operatorIdentifier,
-          OpExecWithCode(code, "python")
+          OpExecWithCode(validatedCode, "python")
         )
         .withParallelizable(true)
         .withSuggestedWorkerNum(workers)
@@ -128,7 +138,7 @@ class PythonUDFOpDescV2 extends LogicalOp {
           workflowId,
           executionId,
           operatorIdentifier,
-          OpExecWithCode(code, "python")
+          OpExecWithCode(validatedCode, "python")
         )
         .withParallelizable(false)
     }

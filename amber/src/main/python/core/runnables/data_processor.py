@@ -24,8 +24,9 @@ from typing import Iterator, List, Optional
 
 from core.architecture.managers import Context
 from core.data_processing_config import DataProcessingConfig
-from core.models import ExceptionInfo, State, TupleLike, InternalMarker, Tuple
+from core.models import ExceptionInfo, State, TupleLike, InternalMarker, Tuple, Schema
 from core.models.internal_marker import StartChannel, EndChannel
+from core.models.schema.attribute_type import AttributeType, FROM_PYOBJECT_MAPPING
 from core.models.table import all_output_to_tuple
 from core.util import Stoppable
 from core.util.console_message.replace_print import replace_print
@@ -41,6 +42,7 @@ class DataProcessor(Runnable, Stoppable):
     def __init__(self, context: Context):
         self._running = Event()
         self._context = context
+        self._schema_inferred = False  # Track if schema inference has been done
 
     def run(self) -> None:
         """
@@ -144,15 +146,22 @@ class DataProcessor(Runnable, Stoppable):
         Uses batched context switching to reduce overhead:
         - When batch_size=1: Original behavior (context switch per tuple)
         - When batch_size>1: Accumulate tuples before switching to reduce overhead
+
+        On the first non-None output tuple, performs schema inference to detect
+        mismatches between declared and actual output schema.
         """
         batch_size = DataProcessingConfig.output_batch_size
-        schema = self._context.output_manager.get_port().get_schema()
         output_batch: List[Optional[Tuple]] = []
 
         for output in output_iterator:
             # output could be a None, a TupleLike, or a TableLike.
             for output_tuple in all_output_to_tuple(output):
                 if output_tuple is not None:
+                    # For the first non-None tuple, check and potentially update schema
+                    if not self._schema_inferred:
+                        schema = self._check_and_update_schema(output_tuple)
+                    else:
+                        schema = self._context.output_manager.get_port().get_schema()
                     output_tuple.finalize(schema)
                 output_batch.append(output_tuple)
 
@@ -205,6 +214,122 @@ class DataProcessor(Runnable, Stoppable):
 
     def _post_switch_context_checks(self):
         self._check_and_process_debug_command()
+
+    def _infer_schema_from_tuple(self, tuple_like: TupleLike) -> Schema:
+        """
+        Infer schema from a TupleLike object by examining the types of its values.
+
+        :param tuple_like: A TupleLike object (dict-like with field names and values)
+        :return: Inferred Schema
+        """
+        inferred_schema = Schema()
+
+        # Get field names and values
+        if isinstance(tuple_like, Tuple):
+            field_names = tuple_like.get_field_names()
+            for name in field_names:
+                value = tuple_like[name]
+                attr_type = self._infer_attribute_type(value)
+                inferred_schema.add(name, attr_type)
+        elif isinstance(tuple_like, dict):
+            for name, value in tuple_like.items():
+                attr_type = self._infer_attribute_type(value)
+                inferred_schema.add(name, attr_type)
+        else:
+            # For other TupleLike objects, try to iterate
+            for name in tuple_like:
+                value = tuple_like[name]
+                attr_type = self._infer_attribute_type(value)
+                inferred_schema.add(name, attr_type)
+
+        return inferred_schema
+
+    def _infer_attribute_type(self, value) -> AttributeType:
+        """
+        Infer AttributeType from a Python value.
+
+        :param value: Python value to infer type from
+        :return: Inferred AttributeType
+        """
+        if value is None:
+            # Default to STRING for None values
+            return AttributeType.STRING
+
+        value_type = type(value)
+        if value_type in FROM_PYOBJECT_MAPPING:
+            return FROM_PYOBJECT_MAPPING[value_type]
+        else:
+            # Default to BINARY for unknown types (will be pickled)
+            return AttributeType.BINARY
+
+    def _schemas_are_equal(self, schema1: Schema, schema2: Schema) -> bool:
+        """
+        Compare two schemas for equality.
+
+        :param schema1: First schema
+        :param schema2: Second schema
+        :return: True if schemas are equal, False otherwise
+        """
+        return schema1 == schema2
+
+    def _emit_schema_info(
+        self, declared_schema: Schema, inferred_schema: Schema
+    ) -> None:
+        """
+        Emit an INFO console message about schema inference.
+
+        :param declared_schema: The schema declared by the user
+        :param inferred_schema: The schema inferred from the actual tuple
+        """
+        message = (
+            f"Actual schema is: {inferred_schema}\n"
+            f"Current schema is: {declared_schema}"
+        )
+
+        self._context.console_message_manager.put_message(
+            ConsoleMessage(
+                worker_id=self._context.worker_id,
+                timestamp=current_time_in_local_timezone(),
+                msg_type=ConsoleMessageType.PRINT,
+                source="SchemaInference",
+                title="Schema inferred from output",
+                message=message,
+            )
+        )
+
+    def _check_and_update_schema(self, first_tuple: TupleLike) -> Schema:
+        """
+        Check if the first output tuple's schema matches the declared schema.
+        If not, update the output port's schema and emit a warning.
+
+        :param first_tuple: The first tuple produced by the operator
+        :return: The schema to use for finalization
+        """
+        if self._schema_inferred:
+            # Already inferred, just return current schema
+            return self._context.output_manager.get_port().get_schema()
+
+        self._schema_inferred = True
+
+        declared_schema = self._context.output_manager.get_port().get_schema()
+        inferred_schema = self._infer_schema_from_tuple(first_tuple)
+
+        # Check if schemas match
+        if not self._schemas_are_equal(declared_schema, inferred_schema):
+            # Emit info about schema inference
+            self._emit_schema_info(declared_schema, inferred_schema)
+
+            # Update the output port's schema to the inferred one
+            self._context.output_manager.get_port().set_schema(inferred_schema)
+
+            logger.warning(
+                f"Schema mismatch detected. Updated output schema from "
+                f"{declared_schema} to {inferred_schema}"
+            )
+
+            return inferred_schema
+
+        return declared_schema
 
     def _report_exception(self, exc_info: ExceptionInfo):
         tb = traceback.extract_tb(exc_info[2])

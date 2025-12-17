@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import ast
 import fs
 import importlib
 import inspect
@@ -26,6 +27,44 @@ from pathlib import Path
 from typing import Tuple, Optional
 
 from core.models import Operator, SourceOperator
+
+
+class PythonSyntaxError(Exception):
+    """Custom exception for Python syntax errors with detailed information."""
+
+    def __init__(self, original_error: SyntaxError, code: str):
+        self.line_number = original_error.lineno
+        self.offset = original_error.offset
+        self.msg = original_error.msg
+        self.text = original_error.text
+
+        # Build a detailed error message
+        lines = code.split("\n")
+        context_lines = []
+
+        # Show a few lines around the error for context
+        start_line = max(0, self.line_number - 3)
+        end_line = min(len(lines), self.line_number + 2)
+
+        for i in range(start_line, end_line):
+            line_num = i + 1
+            prefix = ">>> " if line_num == self.line_number else "    "
+            context_lines.append(f"{prefix}{line_num:4d} | {lines[i]}")
+
+        # Add caret pointing to the error position
+        if self.offset is not None and self.line_number <= len(lines):
+            caret_line = "    " + " " * 7 + " " * (self.offset - 1) + "^"
+            # Insert caret after the error line
+            insert_pos = self.line_number - start_line
+            if 0 <= insert_pos < len(context_lines):
+                context_lines.insert(insert_pos + 1, caret_line)
+
+        context_str = "\n".join(context_lines)
+        self.detailed_message = (
+            f"Python syntax error at line {self.line_number}: {self.msg}\n\n"
+            f"{context_str}"
+        )
+        super().__init__(self.detailed_message)
 
 
 class ExecutorManager:
@@ -68,6 +107,20 @@ class ExecutorManager:
         file_name = f"{module_name}.py"
         return module_name, file_name
 
+    @staticmethod
+    def validate_python_syntax(code: str) -> None:
+        """
+        Validate Python code syntax using ast.parse().
+        Raises PythonSyntaxError with detailed information if syntax is invalid.
+
+        :param code: Python code string to validate
+        :raises PythonSyntaxError: If the code has syntax errors
+        """
+        try:
+            ast.parse(code)
+        except SyntaxError as e:
+            raise PythonSyntaxError(e, code) from e
+
     def load_executor_definition(self, code: str) -> type(Operator):
         """
         Load the given executor code in string into a class definition
@@ -75,6 +128,9 @@ class ExecutorManager:
                 and only one Executor definition.
         :return: an Operator sub-class definition
         """
+        # Validate Python syntax before attempting to import
+        self.validate_python_syntax(code)
+
         module_name, file_name = self.gen_module_file_name()
 
         with self.fs.open(file_name, "w") as file:
