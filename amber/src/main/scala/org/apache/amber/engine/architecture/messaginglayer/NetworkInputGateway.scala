@@ -19,6 +19,7 @@
 
 package org.apache.amber.engine.architecture.messaginglayer
 
+import org.apache.amber.config.ApplicationConfig
 import org.apache.amber.core.virtualidentity.{ActorVirtualIdentity, ChannelIdentity}
 import org.apache.amber.engine.architecture.logreplay.OrderEnforcer
 import org.apache.amber.engine.common.AmberLogging
@@ -50,17 +51,29 @@ class NetworkInputGateway(val actorId: ActorVirtualIdentity)
   }
 
   def tryPickChannel: Option[AmberFIFOChannel] = {
-    val control = tryPickControlChannel
-    val ret = if (control.isDefined) {
-      control
-    } else {
+    // When control message checking is disabled, pick any channel without prioritization
+    // Control messages will still be processed, just not prioritized over data
+    val ret = if (ApplicationConfig.disableControlMessageChecking) {
       inputChannels
         .find({
           case (cid, channel) =>
-            !cid.isControl && channel.isEnabled && channel.hasMessage && enforcers
+            channel.isEnabled && channel.hasMessage && enforcers
               .forall(enforcer => enforcer.isCompleted || enforcer.canProceed(cid))
         })
         .map(_._2)
+    } else {
+      val control = tryPickControlChannel
+      if (control.isDefined) {
+        control
+      } else {
+        inputChannels
+          .find({
+            case (cid, channel) =>
+              !cid.isControl && channel.isEnabled && channel.hasMessage && enforcers
+                .forall(enforcer => enforcer.isCompleted || enforcer.canProceed(cid))
+          })
+          .map(_._2)
+      }
     }
     enforcers.filter(enforcer => enforcer.isCompleted).foreach(enforcer => enforcers -= enforcer)
     ret

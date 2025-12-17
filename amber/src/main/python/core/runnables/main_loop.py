@@ -27,6 +27,7 @@ from core.architecture.managers.context import Context
 from core.architecture.managers.pause_manager import PauseType
 from core.architecture.rpc.async_rpc_client import AsyncRPCClient
 from core.architecture.rpc.async_rpc_server import AsyncRPCServer
+from core.data_processing_config import DataProcessingConfig
 from core.models import (
     InternalQueue,
     Tuple,
@@ -112,7 +113,12 @@ class MainLoop(StoppableQueueBlockingRunnable):
         ControlElement, and will be invoked many times during a DataElement's
         processing lifecycle. Thus, this method's invocation could appear in any
         stage while processing a DataElement.
+
+        When disable_control_message_checking is enabled, this method returns
+        immediately to improve throughput by eliminating context switch overhead.
         """
+        if DataProcessingConfig.disable_control_message_checking:
+            return
         while (
             not self._input_queue.is_control_empty()
             or not self._input_queue.is_data_enabled()

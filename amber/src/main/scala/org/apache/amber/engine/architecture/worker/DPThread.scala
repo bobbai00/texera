@@ -19,6 +19,7 @@
 
 package org.apache.amber.engine.architecture.worker
 
+import org.apache.amber.config.ApplicationConfig
 import org.apache.amber.core.virtualidentity.{ActorVirtualIdentity, ChannelIdentity}
 import org.apache.amber.engine.architecture.logreplay.ReplayLogManager
 import org.apache.amber.engine.architecture.rpc.controlcommands.EmbeddedControlMessage
@@ -156,7 +157,16 @@ class DPThread(
       if (
         dp.inputManager.hasUnfinishedInput || dp.outputManager.hasUnfinishedOutput || dp.pauseManager.isPaused
       ) {
-        dp.inputGateway.tryPickControlChannel match {
+        // When control message checking is disabled AND we have active data processing
+        // (not paused), skip tryPickControlChannel and continue data processing.
+        // When paused or backpressured, we must still check control messages to receive
+        // Resume commands.
+        val skipControlCheck = ApplicationConfig.disableControlMessageChecking &&
+          !dp.pauseManager.isPaused && !backpressureStatus
+        val controlChannel =
+          if (skipControlCheck) None
+          else dp.inputGateway.tryPickControlChannel
+        controlChannel match {
           case Some(channel) =>
             channelId = channel.channelId
             msgOpt = Some(channel.take)
@@ -170,11 +180,16 @@ class DPThread(
         }
       } else {
         // take from input port
-        if (backpressureStatus) {
-          dp.inputGateway.tryPickControlChannel
-        } else {
-          dp.inputGateway.tryPickChannel
-        } match {
+        // When control message checking is disabled, use tryPickChannel which picks
+        // any channel without prioritizing control. When backpressured, still prioritize
+        // control to receive flow control messages.
+        val channelOpt =
+          if (backpressureStatus) {
+            dp.inputGateway.tryPickControlChannel
+          } else {
+            dp.inputGateway.tryPickChannel
+          }
+        channelOpt match {
           case Some(channel) =>
             channelId = channel.channelId
             msgOpt = Some(channel.take)

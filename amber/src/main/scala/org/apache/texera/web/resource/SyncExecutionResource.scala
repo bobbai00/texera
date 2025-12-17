@@ -335,7 +335,13 @@ class SyncExecutionResource extends LazyLogging {
 
           // Get result
           val (resultMode, resultFormat, result, totalRowCount, displayedRows, truncated) =
-            collectOperatorResult(executionId, opId, maxResultRows, maxCellTokens, serializationMode)
+            collectOperatorResult(
+              executionId,
+              opId,
+              maxResultRows,
+              maxCellTokens,
+              serializationMode
+            )
 
           // Get console logs - prefer real-time collected logs, fall back to database
           val consoleLogs = collectedConsoleLogs.get(opId) match {
@@ -470,10 +476,24 @@ class SyncExecutionResource extends LazyLogging {
             if (serializationMode == "csv") {
               // CSV mode: structured format with header and rows
               val csvResult = jsonToCsv(truncatedResults, maxCellTokens)
-              ("table", Some("csv"), Some(csvResult), Some(totalCount), Some(displayedRows), Some(truncated))
+              (
+                "table",
+                Some("csv"),
+                Some(csvResult),
+                Some(totalCount),
+                Some(displayedRows),
+                Some(truncated)
+              )
             } else {
               // JSON mode (default)
-              ("table", Some("json"), Some(truncatedResults), Some(totalCount), Some(displayedRows), Some(truncated))
+              (
+                "table",
+                Some("json"),
+                Some(truncatedResults),
+                Some(totalCount),
+                Some(displayedRows),
+                Some(truncated)
+              )
             }
           }
 
@@ -510,7 +530,10 @@ class SyncExecutionResource extends LazyLogging {
         if (fieldValue.isTextual) {
           val text = fieldValue.asText()
           if (text.length > maxChars) {
-            truncatedTuple.set(fieldName, new TextNode(text.substring(0, maxChars) + "...[truncated]"))
+            truncatedTuple.set(
+              fieldName,
+              new TextNode(text.substring(0, maxChars) + "...[truncated]")
+            )
           } else {
             truncatedTuple.set(fieldName, fieldValue)
           }

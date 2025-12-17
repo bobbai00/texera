@@ -18,6 +18,7 @@
 import sys
 from loguru import logger
 
+from core.data_processing_config import DataProcessingConfig
 from core.python_worker import PythonWorker
 from core.storage.storage_config import StorageConfig
 
@@ -51,6 +52,7 @@ if __name__ == "__main__":
         iceberg_table_namespace,
         iceberg_file_storage_directory_path,
         iceberg_table_commit_batch_size,
+        disable_control_message_checking,
     ) = sys.argv
     init_loguru_logger(logger_level)
     StorageConfig.initialize(
@@ -60,6 +62,10 @@ if __name__ == "__main__":
         iceberg_table_namespace,
         iceberg_file_storage_directory_path,
         iceberg_table_commit_batch_size,
+    )
+    DataProcessingConfig.initialize(
+        disable_control_message_checking=disable_control_message_checking.lower()
+        == "true"
     )
 
     # Setting R_HOME environment variable for R-UDF usage

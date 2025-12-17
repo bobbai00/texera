@@ -21,7 +21,7 @@ package org.apache.amber.engine.architecture.pythonworker
 
 import org.apache.pekko.actor.Props
 import com.twitter.util.Promise
-import org.apache.amber.config.{StorageConfig, UdfConfig}
+import org.apache.amber.config.{ApplicationConfig, StorageConfig, UdfConfig}
 import org.apache.amber.core.virtualidentity.ChannelIdentity
 import org.apache.amber.engine.architecture.common.WorkflowActor
 import org.apache.amber.engine.architecture.common.WorkflowActor.NetworkAck
@@ -183,7 +183,8 @@ class PythonWorkflowWorker(
         StorageConfig.icebergPostgresCatalogPassword,
         StorageConfig.icebergTableResultNamespace,
         StorageConfig.fileStorageDirectoryPath.toString,
-        StorageConfig.icebergTableCommitBatchSize.toString
+        StorageConfig.icebergTableCommitBatchSize.toString,
+        ApplicationConfig.disableControlMessageChecking.toString
       )
     ).run(BasicIO.standard(false))
   }
