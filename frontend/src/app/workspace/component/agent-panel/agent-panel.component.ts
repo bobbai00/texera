@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { Component, HostListener, OnDestroy, OnInit } from "@angular/core";
+import { Component, HostListener, Input, OnDestroy, OnInit, OnChanges, SimpleChanges } from "@angular/core";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { NzResizeEvent } from "ng-zorro-antd/resizable";
 import { TexeraCopilotManagerService, AgentInfo } from "../../service/copilot/texera-copilot-manager.service";
@@ -31,10 +31,17 @@ import { calculateTotalTranslate3d } from "../../../common/util/panel-dock";
   templateUrl: "agent-panel.component.html",
   styleUrls: ["agent-panel.component.scss"],
 })
-export class AgentPanelComponent implements OnInit, OnDestroy {
+export class AgentPanelComponent implements OnInit, OnDestroy, OnChanges {
   protected readonly window = window;
   private static readonly MIN_PANEL_WIDTH = 400;
   private static readonly MIN_PANEL_HEIGHT = 450;
+
+  /**
+   * Optional agent ID to activate when the panel loads.
+   * When provided (from agent dashboard), the panel will open
+   * and switch to this agent's tab automatically.
+   */
+  @Input() agentIdToActivate?: string;
 
   // Panel dimensions and position
   width: number = 0; // Start with 0 to show docked button
@@ -67,6 +74,8 @@ export class AgentPanelComponent implements OnInit, OnDestroy {
         .pipe(untilDestroyed(this))
         .subscribe(agents => {
           this.agents = agents;
+          // Try to activate the agent if agentIdToActivate is set
+          this.tryActivateAgentFromInput();
         });
     });
 
@@ -76,7 +85,51 @@ export class AgentPanelComponent implements OnInit, OnDestroy {
       .pipe(untilDestroyed(this))
       .subscribe(agents => {
         this.agents = agents;
+        // Try to activate the agent if agentIdToActivate is set
+        this.tryActivateAgentFromInput();
       });
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes["agentIdToActivate"] && this.agentIdToActivate) {
+      this.tryActivateAgentFromInput();
+    }
+  }
+
+  /**
+   * Try to activate the agent specified by agentIdToActivate input.
+   * Opens the panel and switches to the agent's tab.
+   */
+  private tryActivateAgentFromInput(): void {
+    if (!this.agentIdToActivate || this.agents.length === 0) {
+      return;
+    }
+
+    const agentIndex = this.agents.findIndex(agent => agent.id === this.agentIdToActivate);
+    if (agentIndex === -1) {
+      return;
+    }
+
+    // Open the panel if it's closed
+    if (this.width === 0) {
+      this.width = AgentPanelComponent.MIN_PANEL_WIDTH;
+    }
+
+    // Switch to the agent's tab and activate it
+    const agent = this.agents[agentIndex];
+
+    // Deactivate previous agent if any
+    if (this.activeAgentId) {
+      this.copilotManagerService.deactivateAgent(this.activeAgentId);
+    }
+
+    // Activate the specified agent
+    this.activeAgentId = agent.id;
+    this.copilotManagerService.activateAgent(agent.id);
+    this.selectedTabIndex = agentIndex + 1; // +1 because tab 0 is registration
+
+    // Clear the input so we don't re-activate on every change
+    this.agentIdToActivate = undefined;
   }
 
   @HostListener("window:beforeunload")

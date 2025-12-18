@@ -18,7 +18,16 @@
  */
 
 import { Location } from "@angular/common";
-import { AfterViewInit, Component, HostListener, OnDestroy, OnInit, ViewChild, ViewContainerRef } from "@angular/core";
+import {
+  AfterViewInit,
+  Component,
+  HostListener,
+  Input,
+  OnDestroy,
+  OnInit,
+  ViewChild,
+  ViewContainerRef,
+} from "@angular/core";
 import { ActivatedRoute, Router } from "@angular/router";
 import { UserService } from "../../common/service/user/user.service";
 import { WorkflowPersistService } from "../../common/service/workflow-persist/workflow-persist.service";
@@ -61,6 +70,13 @@ export class WorkspaceComponent implements AfterViewInit, OnInit, OnDestroy {
   public writeAccess: boolean = false;
   public isLoading: boolean = false;
   @ViewChild("codeEditor", { read: ViewContainerRef }) codeEditorViewRef!: ViewContainerRef;
+
+  /**
+   * Optional agent ID to activate when the workspace loads.
+   * When provided (from agent dashboard), the agent panel will open
+   * and connect to this agent automatically.
+   */
+  @Input() agentIdToActivate?: string;
 
   /**
    * Flag to ensure auto persist is registered only once.  This prevents multiple
