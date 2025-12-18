@@ -32,7 +32,11 @@ import org.apache.amber.core.workflow.{PortIdentity, WorkflowSettings}
 import org.apache.amber.engine.architecture.rpc.controlcommands.{ConsoleMessage, ConsoleMessageType}
 import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
-import org.apache.texera.web.model.websocket.event.python.ConsoleUpdateEvent
+import org.apache.amber.engine.common.executionruntimestate.{
+  ExecutionConsoleStore,
+  ExecutionMetadataStore
+}
+import io.reactivex.rxjava3.core.Observable
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
@@ -43,7 +47,7 @@ import org.apache.texera.web.service.{ExecutionResultService, WorkflowService}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
 import java.net.URI
-import java.util.concurrent.{CountDownLatch, TimeUnit}
+import java.util.concurrent.TimeUnit
 import javax.annotation.security.RolesAllowed
 import javax.ws.rs._
 import javax.ws.rs.core.MediaType
@@ -110,7 +114,15 @@ case class SyncExecutionResult(
 )
 
 /**
+  * Sealed trait representing the reason for execution termination.
+  */
+sealed trait TerminationReason
+case class TerminalStateReached(state: ExecutionMetadataStore) extends TerminationReason
+case class ConsoleErrorDetected(consoleState: ExecutionConsoleStore) extends TerminationReason
+
+/**
   * REST API resource for synchronous (blocking) workflow execution.
+  * Uses Observable-based approach to wait for execution completion.
   */
 @Path("/execution")
 @Consumes(Array(MediaType.APPLICATION_JSON))
@@ -143,6 +155,9 @@ class SyncExecutionResource extends LazyLogging {
         computingUnitId
       )
 
+      // Shutdown any previous execution's client
+      shutdownPreviousExecution(workflowService)
+
       // Compute sub-DAG if there's exactly 1 target operator (Execute To behavior)
       val effectiveLogicalPlan =
         computeSubDAGIfNeeded(request.logicalPlan, request.targetOperatorIds)
@@ -159,285 +174,247 @@ class SyncExecutionResource extends LazyLogging {
         computingUnitId = computingUnitId
       )
 
-      val completionLatch = new CountDownLatch(1)
-      @volatile var finalState: WorkflowAggregatedState = UNINITIALIZED
-      @volatile var operatorStates: Map[String, (String, Long, Long)] =
-        Map.empty // opId -> (state, input, output)
-      @volatile var consoleErrorDetected: Boolean = false
-      @volatile var executionStarted: Boolean = false // Flag to ignore stale events
-      val collectedConsoleLogs: mutable.Map[String, mutable.ListBuffer[ConsoleMessageInfo]] =
-        mutable.Map.empty
+      // Initialize and start execution
+      workflowService.initExecutionService(
+        executeRequest,
+        Some(user.getUser),
+        new URI(s"sync-execution://$workflowId")
+      )
 
-      // Shutdown any previous execution's client before starting a new one.
-      // This ensures clean state when executing workflows multiple times.
-      try {
-        val previousEs = workflowService.executionService.getValue
-        if (previousEs != null && previousEs.client != null) {
-          logger.info(s"Shutting down previous execution client for workflow $workflowId")
-          previousEs.client.shutdown()
-        }
-      } catch {
-        case e: Exception =>
-          logger.warn(s"Error shutting down previous execution client: ${e.getMessage}")
-      }
-
-      val stateDisposable = workflowService.connectToExecution { event =>
-        // Only process events after execution has actually started
-        if (executionStarted) {
-          event match {
-            case org.apache.texera.web.model.websocket.event.WorkflowStateEvent(state) =>
-              val parsedState = parseState(state)
-              if (isTerminalState(parsedState)) {
-                finalState = parsedState
-                completionLatch.countDown()
-              }
-            case org.apache.texera.web.model.websocket.event.OperatorStatisticsUpdateEvent(stats) =>
-              operatorStates = stats.map {
-                case (opId, s) =>
-                  opId -> (s.operatorState, s.aggregatedInputRowCount, s.aggregatedOutputRowCount)
-              }
-            case ConsoleUpdateEvent(opId, messages) =>
-              // Collect console messages and detect errors
-              val opLogs = collectedConsoleLogs.getOrElseUpdate(opId, mutable.ListBuffer.empty)
-              var hasError = false
-              messages.foreach { msg =>
-                opLogs += ConsoleMessageInfo(msg.msgType.name, msg.title, msg.message)
-                if (msg.msgType == ConsoleMessageType.ERROR) {
-                  hasError = true
-                }
-              }
-              // If error detected and not already triggered, kill execution
-              if (hasError && !consoleErrorDetected) {
-                consoleErrorDetected = true
-                logger.warn(s"Console error detected in operator $opId, killing execution")
-                try {
-                  val es = workflowService.executionService.getValue
-                  if (es != null) {
-                    // Properly kill execution: shutdown client and update state stores
-                    if (es.client != null) {
-                      es.client.shutdown()
-                    }
-                    es.executionStateStore.statsStore.updateState(stats =>
-                      stats.withEndTimeStamp(System.currentTimeMillis())
-                    )
-                    es.executionStateStore.metadataStore.updateState(metadataStore =>
-                      updateWorkflowState(KILLED, metadataStore)
-                    )
-                  }
-                } catch {
-                  case e: Exception =>
-                    logger.warn(
-                      s"Error shutting down execution after console error: ${e.getMessage}"
-                    )
-                }
-                finalState = KILLED
-                completionLatch.countDown()
-              }
-            case _ =>
-          }
-        }
-      }
-
-      try {
-        workflowService.initExecutionService(
-          executeRequest,
-          Some(user.getUser),
-          new URI(s"sync-execution://$workflowId")
+      val executionService = workflowService.executionService.getValue
+      if (executionService == null) {
+        return SyncExecutionResult(
+          success = false,
+          state = "Error",
+          operators = Map.empty,
+          compilationErrors = None,
+          errors = Some(List("Failed to initialize execution service"))
         )
+      }
 
-        // Check if workflow already failed during initialization (e.g., compilation errors)
-        // This handles cases where errors occur before the workflow actually starts running
-        val es = workflowService.executionService.getValue
-        if (es != null) {
-          val currentState = es.executionStateStore.metadataStore.getState.state
-          if (isTerminalState(currentState)) {
-            // Workflow already failed during initialization - return immediately
-            val fatalErrors = es.executionStateStore.metadataStore.getState.fatalErrors
-              .map(err => s"${err.`type`}: ${err.message}")
-              .toList
+      // Create two termination conditions:
+      // 1. Terminal state (COMPLETED, FAILED, KILLED, TERMINATED)
+      // 2. Console ERROR message (any operator logs an error)
 
-            // Include console logs if available
-            val consoleLogs = collectedConsoleLogs.toMap.map {
-              case (opId, logs) => opId -> logs.toList
-            }
+      // Observable for terminal state
+      val terminalStateObservable: Observable[TerminationReason] =
+        executionService.executionStateStore.metadataStore.getStateObservable
+          .filter((state: ExecutionMetadataStore) => isTerminalState(state.state))
+          .map[TerminationReason](state => TerminalStateReached(state))
 
+      // Observable for console ERROR messages
+      val consoleErrorObservable: Observable[TerminationReason] =
+        executionService.executionStateStore.consoleStore.getStateObservable
+          .filter((consoleState: ExecutionConsoleStore) => hasConsoleError(consoleState))
+          .map[TerminationReason](consoleState => ConsoleErrorDetected(consoleState))
+
+      // Race between the two conditions - whichever fires first wins
+      val terminationReason =
+        try {
+          Observable
+            .amb(java.util.Arrays.asList(terminalStateObservable, consoleErrorObservable))
+            .firstOrError()
+            .timeout(timeoutSeconds.toLong, TimeUnit.SECONDS)
+            .blockingGet()
+        } catch {
+          case _: java.util.concurrent.TimeoutException =>
+            // Timeout - kill the execution
+            killExecution(executionService)
             return SyncExecutionResult(
               success = false,
-              state = stateToString(currentState),
-              operators = consoleLogs.map {
-                case (opId, logs) =>
-                  opId -> OperatorInfo(
-                    state = "Failed",
-                    inputTuples = 0L,
-                    outputTuples = 0L,
-                    resultMode = "table",
-                    resultFormat = None,
-                    result = None,
-                    totalRowCount = None,
-                    displayedRows = None,
-                    truncated = None,
-                    consoleLogs = Some(logs),
-                    error = logs
-                      .find(_.msgType == "ERROR")
-                      .map(e => if (e.message.nonEmpty) s"${e.title}: ${e.message}" else e.title)
-                  )
-              },
+              state = "Killed",
+              operators = Map.empty,
               compilationErrors = None,
-              errors = if (fatalErrors.nonEmpty) Some(fatalErrors) else None
+              errors = Some(List(s"Timeout after $timeoutSeconds seconds"))
             )
-          }
-        }
-
-        // Mark execution as started - events before this point are ignored
-        executionStarted = true
-
-        val completed = completionLatch.await(timeoutSeconds, TimeUnit.SECONDS)
-
-        if (!completed) {
-          // Properly kill execution on timeout: shutdown client and update state stores
-          try {
-            val es = workflowService.executionService.getValue
-            if (es != null) {
-              if (es.client != null) {
-                es.client.shutdown()
-              }
-              es.executionStateStore.statsStore.updateState(stats =>
-                stats.withEndTimeStamp(System.currentTimeMillis())
-              )
-              es.executionStateStore.metadataStore.updateState(metadataStore =>
-                updateWorkflowState(KILLED, metadataStore)
-              )
-            }
-          } catch { case _: Exception => }
-
-          return SyncExecutionResult(
-            success = false,
-            state = "Killed",
-            operators = Map.empty,
-            compilationErrors = None,
-            errors = Some(List(s"Timeout after $timeoutSeconds seconds"))
-          )
-        }
-
-        val executionService = workflowService.executionService.getValue
-        val executionId = executionService.workflowContext.executionId
-
-        // Wait a bit for results to be persisted to the database
-        // TODO: remove this delay after fixing the issue of reporting "completed" status too early
-        Thread.sleep(1000)
-
-        // Build per-operator info
-        val operatorInfos = mutable.Map[String, OperatorInfo]()
-        val targetOps = if (request.targetOperatorIds.nonEmpty) {
-          request.targetOperatorIds
-        } else {
-          // Include operators from states and any that have console logs
-          (operatorStates.keys ++ collectedConsoleLogs.keys).toList.distinct
-        }
-
-        logger.info(
-          s"Target operators: $targetOps, operatorStates keys: ${operatorStates.keys.toList}"
-        )
-
-        for (opId <- targetOps) {
-          val (state, inputTuples, outputTuples) =
-            operatorStates.getOrElse(opId, ("Unknown", 0L, 0L))
-
-          // Get result
-          val (resultMode, resultFormat, result, totalRowCount, displayedRows, truncated) =
-            collectOperatorResult(
-              executionId,
-              opId,
-              maxResultRows,
-              maxCellTokens,
-              serializationMode
+          case e: Exception =>
+            logger.error(s"Error waiting for execution: ${e.getMessage}", e)
+            return SyncExecutionResult(
+              success = false,
+              state = "Error",
+              operators = Map.empty,
+              compilationErrors = None,
+              errors = Some(List(e.getMessage))
             )
-
-          // Get console logs - prefer real-time collected logs, fall back to database
-          val consoleLogs = collectedConsoleLogs.get(opId) match {
-            case Some(logs) if logs.nonEmpty => Some(logs.toList)
-            case _                           => collectConsoleLogs(executionId, opId)
-          }
-
-          // Check for error in this operator's console logs
-          val hasConsoleError = consoleLogs.exists(_.exists(_.msgType == "ERROR"))
-          val errorMsg = if (hasConsoleError) {
-            consoleLogs.flatMap(
-              _.find(_.msgType == "ERROR").map(e =>
-                if (e.message.nonEmpty) s"${e.title}: ${e.message}" else e.title
-              )
-            )
-          } else None
-
-          operatorInfos(opId) = OperatorInfo(
-            state = state,
-            inputTuples = inputTuples,
-            outputTuples = outputTuples,
-            resultMode = resultMode,
-            resultFormat = resultFormat,
-            result = result,
-            totalRowCount = totalRowCount,
-            displayedRows = displayedRows,
-            truncated = truncated,
-            consoleLogs = consoleLogs,
-            error = errorMsg
-          )
         }
 
-        // Collect fatal errors (console errors are already in operator consoleLogs)
-        val fatalErrors = executionService.executionStateStore.metadataStore.getState.fatalErrors
-          .map(err => s"${err.`type`}: ${err.message}")
-          .toList
-
-        SyncExecutionResult(
-          success = finalState == COMPLETED && !consoleErrorDetected,
-          state = stateToString(finalState),
-          operators = operatorInfos.toMap,
-          compilationErrors = None,
-          errors = if (fatalErrors.nonEmpty) Some(fatalErrors) else None
-        )
-
-      } finally {
-        stateDisposable.dispose()
-        workflowService.disconnect()
+      // Handle termination based on reason
+      val (finalState, terminatedByConsoleError) = terminationReason match {
+        case TerminalStateReached(state) =>
+          (state, false)
+        case ConsoleErrorDetected(_) =>
+          // Console error detected - kill the workflow and get current state
+          killExecution(executionService)
+          (executionService.executionStateStore.metadataStore.getState, true)
       }
+
+      // Small delay to ensure results are persisted
+      Thread.sleep(500)
+
+      // Collect results
+      val executionId = executionService.workflowContext.executionId
+      val operatorInfos = collectOperatorInfos(
+        executionId,
+        executionService,
+        request.targetOperatorIds,
+        maxResultRows,
+        maxCellTokens,
+        serializationMode
+      )
+
+      // Collect fatal errors
+      val fatalErrors = finalState.fatalErrors
+        .map(err => s"${err.`type`}: ${err.message}")
+        .toList
+
+      // Check for console errors in operator results
+      val hasOperatorConsoleError = operatorInfos.values.exists(_.error.isDefined)
+
+      // Determine state string - if terminated by console error, show as "Failed"
+      val stateString =
+        if (terminatedByConsoleError) "Failed" else stateToString(finalState.state)
+
+      SyncExecutionResult(
+        success =
+          finalState.state == COMPLETED && !hasOperatorConsoleError && !terminatedByConsoleError,
+        state = stateString,
+        operators = operatorInfos,
+        compilationErrors = None,
+        errors = if (fatalErrors.nonEmpty) Some(fatalErrors) else None
+      )
 
     } catch {
       case e: Exception =>
         logger.error(s"Sync execution error: ${e.getMessage}", e)
+        handleExecutionError(e)
+    }
+  }
 
-        // Check if this is a compilation error
-        val errorMsg = e.getMessage
-        val isCompilationError = errorMsg != null && (
-          errorMsg.contains("compilation") ||
-            errorMsg.contains("Compilation") ||
-            errorMsg.contains("operator") ||
-            errorMsg.contains("schema")
+  private def shutdownPreviousExecution(workflowService: WorkflowService): Unit = {
+    try {
+      val previousEs = workflowService.executionService.getValue
+      if (previousEs != null && previousEs.client != null) {
+        logger.info(s"Shutting down previous execution client")
+        previousEs.client.shutdown()
+      }
+    } catch {
+      case e: Exception =>
+        logger.warn(s"Error shutting down previous execution client: ${e.getMessage}")
+    }
+  }
+
+  private def killExecution(
+      executionService: org.apache.texera.web.service.WorkflowExecutionService
+  ): Unit = {
+    try {
+      if (executionService.client != null) {
+        executionService.client.shutdown()
+      }
+      executionService.executionStateStore.statsStore.updateState(stats =>
+        stats.withEndTimeStamp(System.currentTimeMillis())
+      )
+      executionService.executionStateStore.metadataStore.updateState(metadataStore =>
+        updateWorkflowState(KILLED, metadataStore)
+      )
+    } catch {
+      case e: Exception =>
+        logger.warn(s"Error killing execution: ${e.getMessage}")
+    }
+  }
+
+  private def collectOperatorInfos(
+      executionId: ExecutionIdentity,
+      executionService: org.apache.texera.web.service.WorkflowExecutionService,
+      targetOperatorIds: List[String],
+      maxResultRows: Int,
+      maxCellTokens: Int,
+      serializationMode: String
+  ): Map[String, OperatorInfo] = {
+    val operatorInfos = mutable.Map[String, OperatorInfo]()
+
+    // Get operator stats from the state store
+    val statsState = executionService.executionStateStore.statsStore.getState
+    val operatorStats = statsState.operatorInfo
+
+    // Determine which operators to collect
+    val targetOps = if (targetOperatorIds.nonEmpty) {
+      targetOperatorIds
+    } else {
+      operatorStats.keys.toList
+    }
+
+    for (opId <- targetOps) {
+      val stats = operatorStats.get(opId)
+      val (state, inputTuples, outputTuples): (String, Long, Long) = stats match {
+        case Some(s) =>
+          val inputCount = s.operatorStatistics.inputMetrics.map(_.tupleMetrics.count).sum
+          val outputCount = s.operatorStatistics.outputMetrics.map(_.tupleMetrics.count).sum
+          (stateToString(s.operatorState), inputCount, outputCount)
+        case None => ("Unknown", 0L, 0L)
+      }
+
+      // Get result
+      val (resultMode, resultFormat, result, totalRowCount, displayedRows, truncated) =
+        collectOperatorResult(executionId, opId, maxResultRows, maxCellTokens, serializationMode)
+
+      // Get console logs
+      val consoleLogs = collectConsoleLogs(executionId, opId)
+
+      // Check for error in console logs
+      val errorMsg = consoleLogs.flatMap(
+        _.find(_.msgType == "ERROR").map(e =>
+          if (e.message.nonEmpty) s"${e.title}: ${e.message}" else e.title
         )
+      )
 
-        if (isCompilationError) {
-          SyncExecutionResult(
-            success = false,
-            state = "CompilationFailed",
-            operators = Map.empty,
-            compilationErrors = Some(Map("error" -> errorMsg)),
-            errors = Some(List(errorMsg))
-          )
-        } else {
-          SyncExecutionResult(
-            success = false,
-            state = "Error",
-            operators = Map.empty,
-            compilationErrors = None,
-            errors = Some(List(e.getMessage))
-          )
-        }
+      operatorInfos(opId) = OperatorInfo(
+        state = state,
+        inputTuples = inputTuples,
+        outputTuples = outputTuples,
+        resultMode = resultMode,
+        resultFormat = resultFormat,
+        result = result,
+        totalRowCount = totalRowCount,
+        displayedRows = displayedRows,
+        truncated = truncated,
+        consoleLogs = consoleLogs,
+        error = errorMsg
+      )
+    }
+
+    operatorInfos.toMap
+  }
+
+  private def handleExecutionError(e: Exception): SyncExecutionResult = {
+    val errorMsg = e.getMessage
+    val isCompilationError = errorMsg != null && (
+      errorMsg.contains("compilation") ||
+        errorMsg.contains("Compilation") ||
+        errorMsg.contains("operator") ||
+        errorMsg.contains("schema")
+    )
+
+    if (isCompilationError) {
+      SyncExecutionResult(
+        success = false,
+        state = "CompilationFailed",
+        operators = Map.empty,
+        compilationErrors = Some(Map("error" -> errorMsg)),
+        errors = Some(List(errorMsg))
+      )
+    } else {
+      SyncExecutionResult(
+        success = false,
+        state = "Error",
+        operators = Map.empty,
+        compilationErrors = None,
+        errors = Some(List(Option(e.getMessage).getOrElse("Unknown error")))
+      )
     }
   }
 
   /**
     * Collect result for a single operator.
-    * Returns (mode, resultFormat, result, totalRowCount, displayedRows, truncated).
     */
   private def collectOperatorResult(
       executionId: ExecutionIdentity,
@@ -447,15 +424,11 @@ class SyncExecutionResource extends LazyLogging {
       serializationMode: String
   ): (String, Option[String], Option[Any], Option[Int], Option[Int], Option[Boolean]) = {
     try {
-      logger.debug(s"Collecting result for operator $opId, execution ${executionId.id}")
-
       val storageUriOption = WorkflowExecutionsResource.getResultUriByLogicalPortId(
         executionId,
         OperatorIdentity(opId),
         PortIdentity()
       )
-
-      logger.debug(s"Storage URI for $opId: $storageUriOption")
 
       storageUriOption match {
         case Some(storageUri) =>
@@ -471,7 +444,6 @@ class SyncExecutionResource extends LazyLogging {
           val truncated = displayedRows < totalCount
 
           if (tuples.size == 1 && isVisualizationTuple(tuples.head)) {
-            // It's a visualization - extract the JSON content (always JSON format)
             val jsonResults =
               ExecutionResultService.convertTuplesToJson(tuples, isVisualization = true)
             (
@@ -483,12 +455,10 @@ class SyncExecutionResource extends LazyLogging {
               Some(truncated)
             )
           } else {
-            // Regular table result
             val jsonResults = ExecutionResultService.convertTuplesToJson(tuples)
             val truncatedResults = truncateCellsByTokens(jsonResults, maxCellTokens)
 
             if (serializationMode == "csv") {
-              // CSV mode: structured format with header and rows
               val csvResult = jsonToCsv(truncatedResults, maxCellTokens)
               (
                 "table",
@@ -499,7 +469,6 @@ class SyncExecutionResource extends LazyLogging {
                 Some(truncated)
               )
             } else {
-              // JSON mode (default)
               (
                 "table",
                 Some("json"),
@@ -521,10 +490,6 @@ class SyncExecutionResource extends LazyLogging {
     }
   }
 
-  /**
-    * Truncate individual cells (fields) based on estimated token count.
-    * Uses approximate 4 characters per token heuristic.
-    */
   private def truncateCellsByTokens(
       tuples: List[ObjectNode],
       maxCellTokens: Int
@@ -533,7 +498,7 @@ class SyncExecutionResource extends LazyLogging {
     import com.fasterxml.jackson.databind.node.TextNode
 
     val mapper = new ObjectMapper()
-    val maxChars = maxCellTokens * 4 // Approximate 4 chars per token
+    val maxChars = maxCellTokens * 4
 
     tuples.map { tuple =>
       val truncatedTuple = mapper.createObjectNode()
@@ -559,23 +524,16 @@ class SyncExecutionResource extends LazyLogging {
     }
   }
 
-  /**
-    * Convert JSON tuples to structured CSV format.
-    * Returns CsvResult with header as comma-separated string and rows as list of comma-separated strings.
-    */
   private def jsonToCsv(tuples: List[ObjectNode], maxCellTokens: Int): CsvResult = {
     if (tuples.isEmpty) return CsvResult("", List.empty)
 
     val maxChars = maxCellTokens * 4
-
-    // Get headers from first tuple
     val headers = scala.collection.mutable.ArrayBuffer[String]()
     val fieldNames = tuples.head.fieldNames()
     while (fieldNames.hasNext) {
       headers += fieldNames.next()
     }
 
-    // Build data rows - each row is a single comma-separated string
     val rows = tuples.map { tuple =>
       headers
         .map { header =>
@@ -583,19 +541,9 @@ class SyncExecutionResource extends LazyLogging {
           val cellValue = if (fieldValue == null || fieldValue.isNull) {
             ""
           } else {
-            val text = if (fieldValue.isTextual) {
-              fieldValue.asText()
-            } else {
-              fieldValue.toString
-            }
-            // Truncate if needed
-            if (text.length > maxChars) {
-              text.substring(0, maxChars) + "...[truncated]"
-            } else {
-              text
-            }
+            val text = if (fieldValue.isTextual) fieldValue.asText() else fieldValue.toString
+            if (text.length > maxChars) text.substring(0, maxChars) + "...[truncated]" else text
           }
-          // Escape CSV: wrap in quotes if contains comma, newline, or quote; escape internal quotes
           escapeCsvCell(cellValue)
         }
         .mkString(",")
@@ -604,10 +552,6 @@ class SyncExecutionResource extends LazyLogging {
     CsvResult(headers.map(escapeCsvCell).mkString(","), rows)
   }
 
-  /**
-    * Escape a cell value for CSV format.
-    * Wraps in quotes if contains comma, newline, or quote; doubles internal quotes.
-    */
   private def escapeCsvCell(value: String): String = {
     if (
       value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")
@@ -618,9 +562,6 @@ class SyncExecutionResource extends LazyLogging {
     }
   }
 
-  /**
-    * Check if a tuple is a visualization result (contains html-content or json-content).
-    */
   private def isVisualizationTuple(tuple: Tuple): Boolean = {
     try {
       val schema = tuple.getSchema
@@ -631,9 +572,6 @@ class SyncExecutionResource extends LazyLogging {
     }
   }
 
-  /**
-    * Collect console logs for an operator.
-    */
   private def collectConsoleLogs(
       executionId: ExecutionIdentity,
       opId: String
@@ -686,27 +624,19 @@ class SyncExecutionResource extends LazyLogging {
       .map(s => URI.create(s))
   }
 
-  private def parseState(stateStr: String): WorkflowAggregatedState = {
-    stateStr.toUpperCase match {
-      case "UNINITIALIZED" => UNINITIALIZED
-      case "READY"         => READY
-      case "RUNNING"       => RUNNING
-      case "PAUSING"       => PAUSING
-      case "PAUSED"        => PAUSED
-      case "RESUMING"      => RESUMING
-      case "RECOVERING"    => RUNNING
-      case "COMPLETED"     => COMPLETED
-      case "FAILED"        => FAILED
-      case "KILLED"        => KILLED
-      case "TERMINATED"    => TERMINATED
-      case _               => UNINITIALIZED
-    }
-  }
-
   private def isTerminalState(state: WorkflowAggregatedState): Boolean = {
     state match {
       case COMPLETED | FAILED | KILLED | TERMINATED => true
       case _                                        => false
+    }
+  }
+
+  /**
+    * Check if any operator has logged an ERROR console message.
+    */
+  private def hasConsoleError(consoleState: ExecutionConsoleStore): Boolean = {
+    consoleState.operatorConsole.values.exists { opConsole =>
+      opConsole.consoleMessages.exists(_.msgType == ConsoleMessageType.ERROR)
     }
   }
 
@@ -726,44 +656,26 @@ class SyncExecutionResource extends LazyLogging {
     }
   }
 
-  /**
-    * Compute a sub-DAG from the logical plan by starting from the target operator
-    * and traversing backwards through incoming links.
-    *
-    * Execute To behavior:
-    * - If targetOperatorIds has exactly 1 operator: execute only the sub-DAG up to that operator
-    * - Otherwise: execute the full DAG and collect results from specified operators
-    *
-    * @param logicalPlan The original logical plan
-    * @param targetOperatorIds The list of target operator IDs
-    * @return Modified LogicalPlanPojo with sub-DAG if applicable
-    */
   private def computeSubDAGIfNeeded(
       logicalPlan: LogicalPlanPojo,
       targetOperatorIds: List[String]
   ): LogicalPlanPojo = {
-    // Only compute sub-DAG when there's exactly 1 target operator
     if (targetOperatorIds.length != 1) {
       return logicalPlan
     }
 
     val targetOpId = targetOperatorIds.head
-
-    // Build operator ID to operator mapping
     val operatorMap: Map[String, LogicalOp] =
       logicalPlan.operators.map(op => op.operatorIdentifier.id -> op).toMap
 
-    // Check if target operator exists
     if (!operatorMap.contains(targetOpId)) {
       logger.warn(s"Target operator $targetOpId not found in logical plan, using full DAG")
       return logicalPlan
     }
 
-    // Build adjacency list for reverse traversal (incoming links per operator)
     val incomingLinks: Map[String, List[LogicalLink]] =
       logicalPlan.links.groupBy(_.toOpId.id)
 
-    // DFS to collect all operators in the sub-DAG
     val visited = mutable.Set[String]()
     val subDagOperators = mutable.ListBuffer[LogicalOp]()
     val subDagLinks = mutable.ListBuffer[LogicalLink]()
@@ -774,8 +686,6 @@ class SyncExecutionResource extends LazyLogging {
 
       operatorMap.get(currentOpId).foreach { op =>
         subDagOperators += op
-
-        // Find incoming links to this operator
         incomingLinks.getOrElse(currentOpId, List.empty).foreach { link =>
           subDagLinks += link
           dfs(link.fromOpId.id)

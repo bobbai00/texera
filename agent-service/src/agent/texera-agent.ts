@@ -140,8 +140,8 @@ export class TexeraAgent {
   // Tools
   private tools: Record<string, any>;
 
-  // Stop flag
-  private shouldStop = false;
+  // Abort controller for stopping the agent
+  private abortController: AbortController | null = null;
 
   // RxJS subscriptions for workflow change handling (persistence + compilation)
   private workflowChangeSubscription: Subscription | null = null;
@@ -505,8 +505,8 @@ export class TexeraAgent {
       status: "running",
     };
 
-    // Reset stop flag
-    this.shouldStop = false;
+    // Create new abort controller for this message
+    this.abortController = new AbortController();
 
     // Set state to generating
     this.state = AgentStateEnum.GENERATING;
@@ -539,12 +539,8 @@ export class TexeraAgent {
         messages: this.messages,
         tools: this.tools,
         stopWhen: stepCountIs(this.settings.maxSteps),
+        abortSignal: this.abortController?.signal,
         onStepFinish: async ({ text, toolCalls, toolResults, usage }) => {
-          // Check for stop
-          if (this.shouldStop) {
-            return;
-          }
-
           stepIndex++; // Increment first since user message is step 0
 
           // Build tool calls array in the format expected by frontend
@@ -623,7 +619,7 @@ export class TexeraAgent {
       // Update final stats
       stats.endTime = Date.now();
       stats.stepCount = stepIndex;
-      stats.status = this.shouldStop ? "stopped" : "completed";
+      stats.status = "completed";
       if (result.usage) {
         stats.totalInputTokens = result.usage.inputTokens || 0;
         stats.totalOutputTokens = result.usage.outputTokens || 0;
@@ -639,10 +635,44 @@ export class TexeraAgent {
           totalTokens: stats.totalTokens,
         },
         stats,
-        stopped: this.shouldStop,
+        stopped: false,
       };
     } catch (error: any) {
-      // Handle error - add error step
+      // Check if this was an abort (user requested stop)
+      const isAborted = error.name === "AbortError" || this.abortController?.signal.aborted;
+
+      if (isAborted) {
+        // Handle stop gracefully
+        stepIndex++;
+        const stoppedStep: ReActStep = {
+          messageId,
+          stepId: stepIndex,
+          timestamp: Date.now(),
+          role: "agent",
+          content: "Generation stopped by user.",
+          isBegin: false,
+          isEnd: true,
+        };
+        this.addStep(stoppedStep);
+
+        stats.endTime = Date.now();
+        stats.stepCount = stepIndex;
+        stats.status = "stopped";
+
+        return {
+          response: "",
+          messages: [],
+          usage: {
+            inputTokens: stats.totalInputTokens,
+            outputTokens: stats.totalOutputTokens,
+            totalTokens: stats.totalTokens,
+          },
+          stats,
+          stopped: true,
+        };
+      }
+
+      // Handle actual error - add error step
       stepIndex++;
       const errorStep: ReActStep = {
         messageId,
@@ -670,20 +700,24 @@ export class TexeraAgent {
           totalTokens: stats.totalTokens,
         },
         stats,
-        stopped: this.shouldStop,
+        stopped: false,
         error: stats.errorMessage,
       };
     } finally {
+      this.abortController = null;
       this.state = AgentStateEnum.AVAILABLE;
     }
   }
 
   /**
-   * Stop the current message processing.
+   * Stop the current message processing immediately.
+   * This aborts any ongoing LLM calls and tool executions.
    */
   stop(): void {
-    this.shouldStop = true;
     this.state = AgentStateEnum.STOPPING;
+    if (this.abortController) {
+      this.abortController.abort();
+    }
   }
 
   /**

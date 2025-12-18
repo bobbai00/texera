@@ -293,6 +293,7 @@ export function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?:
 /**
  * Execute a workflow via HTTP REST API.
  * This is a stateless call that blocks until execution completes.
+ * Supports abort signal for immediate cancellation.
  */
 async function executeWorkflowHttp(
   config: ExecutionConfig,
@@ -303,6 +304,7 @@ async function executeWorkflowHttp(
     maxResultRows?: number;
     maxCellTokens?: number;
     serializationMode?: "json" | "csv";
+    abortSignal?: AbortSignal;
   } = {}
 ): Promise<SyncExecutionResult> {
   const backendConfig = getBackendConfig();
@@ -339,6 +341,7 @@ async function executeWorkflowHttp(
         Authorization: `Bearer ${config.userToken}`,
       },
       body: JSON.stringify(request),
+      signal: options.abortSignal,
     });
 
     if (!response.ok) {
@@ -349,6 +352,10 @@ async function executeWorkflowHttp(
     const result: SyncExecutionResult = await response.json();
     return result;
   } catch (error) {
+    // Re-throw abort errors so they propagate up
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
     console.error("[ExecutionTools] Execution failed:", error);
     return {
       success: false,
@@ -389,12 +396,15 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
         .optional()
         .describe(`Optional maximum result rows to return per operator (default: ${DEFAULT_MAX_RESULT_ROWS}).`),
     }),
-    execute: async (args: {
-      operatorIdsToView?: string[];
-      executionName?: string;
-      timeoutSeconds?: number;
-      maxResultRows?: number;
-    }) => {
+    execute: async (
+      args: {
+        operatorIdsToView?: string[];
+        executionName?: string;
+        timeoutSeconds?: number;
+        maxResultRows?: number;
+      },
+      options: { abortSignal?: AbortSignal }
+    ) => {
       try {
         // Build logical plan from current workflow state
         const logicalPlan = buildLogicalPlan(workflowState, args.operatorIdsToView);
@@ -410,13 +420,14 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
           return createErrorResult(errorMessage);
         }
 
-        // Execute via HTTP
+        // Execute via HTTP with abort signal for cancellation support
         const result = await executeWorkflowHttp(executionConfig, logicalPlan, {
           executionName: args.executionName,
           timeoutSeconds: args.timeoutSeconds,
           maxResultRows: args.maxResultRows,
           maxCellTokens: executionConfig.maxCellTokens,
           serializationMode: executionConfig.serializationMode,
+          abortSignal: options.abortSignal,
         });
 
         // Format operator info for readability
@@ -458,6 +469,10 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
           []
         );
       } catch (error: any) {
+        // Re-throw abort errors so they propagate up to the agent
+        if (error.name === "AbortError") {
+          throw error;
+        }
         return createErrorResult(`Execution failed: ${error.message || String(error)}`);
       }
     },
