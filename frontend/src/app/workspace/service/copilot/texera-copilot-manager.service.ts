@@ -162,6 +162,8 @@ interface AgentStateTracking {
   stopPolling$: Subject<void>;
   /** WebSocket connection for real-time updates */
   websocket?: WebSocket;
+  /** Whether this agent is currently active (tab selected) */
+  isActive: boolean;
 }
 
 /**
@@ -351,7 +353,8 @@ export class TexeraCopilotManagerService {
 
   /**
    * Get or create state tracking for an agent.
-   * If tracking exists but doesn't have workflowId and one is provided, updates it and starts workflow polling.
+   * If tracking exists but doesn't have workflowId and one is provided, updates it.
+   * Note: WebSocket connection is NOT started automatically - call activateAgent() to connect.
    */
   private getOrCreateStateTracking(agentId: string, workflowId?: number): AgentStateTracking {
     let tracking = this.agentStateTracking.get(agentId);
@@ -369,15 +372,13 @@ export class TexeraCopilotManagerService {
         workflowSubject: new BehaviorSubject<Workflow | null>(null),
         workflowId,
         stopPolling$: new Subject<void>(),
+        isActive: false,
       };
       this.agentStateTracking.set(agentId, tracking);
-
-      // Start polling for state updates
-      this.startStatePolling(agentId, tracking);
+      // Note: WebSocket connection is NOT started here - lazy initialization via activateAgent()
     } else if (workflowId && !tracking.workflowId) {
-      // Tracking exists but doesn't have workflowId - update and start workflow polling
+      // Tracking exists but doesn't have workflowId - update it
       tracking.workflowId = workflowId;
-      this.startWorkflowPolling(tracking);
     }
     return tracking;
   }
@@ -541,7 +542,7 @@ export class TexeraCopilotManagerService {
   }
 
   /**
-   * Stop WebSocket connection and polling for an agent
+   * Stop WebSocket connection and polling for an agent (internal cleanup)
    */
   private stopStatePolling(agentId: string): void {
     const tracking = this.agentStateTracking.get(agentId);
@@ -555,6 +556,86 @@ export class TexeraCopilotManagerService {
       tracking.stopPolling$.complete();
       this.agentStateTracking.delete(agentId);
     }
+  }
+
+  /**
+   * Activate an agent - starts WebSocket connection and workflow polling.
+   * Call this when the user selects an agent's tab.
+   * @param agentId The agent to activate
+   * @returns true if activation succeeded, false otherwise
+   */
+  public activateAgent(agentId: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      console.warn(`[CopilotManager] Cannot activate unknown agent: ${agentId}`);
+      return false;
+    }
+
+    const tracking = this.getOrCreateStateTracking(agentId, agent.delegate?.workflowId);
+
+    // Already active - nothing to do
+    if (tracking.isActive && tracking.websocket) {
+      console.log(`[CopilotManager] Agent ${agentId} already active`);
+      return true;
+    }
+
+    tracking.isActive = true;
+
+    // Start WebSocket connection if not already connected
+    if (!tracking.websocket || tracking.websocket.readyState !== WebSocket.OPEN) {
+      this.startStatePolling(agentId, tracking);
+    }
+
+    console.log(`[CopilotManager] Activated agent: ${agentId}`);
+    return true;
+  }
+
+  /**
+   * Deactivate an agent - closes WebSocket connection and stops workflow polling.
+   * Call this when the user switches away from an agent's tab.
+   * @param agentId The agent to deactivate
+   */
+  public deactivateAgent(agentId: string): void {
+    const tracking = this.agentStateTracking.get(agentId);
+    if (!tracking) {
+      return;
+    }
+
+    // Already inactive
+    if (!tracking.isActive) {
+      return;
+    }
+
+    tracking.isActive = false;
+
+    // Close WebSocket connection
+    if (tracking.websocket) {
+      tracking.websocket.close();
+      tracking.websocket = undefined;
+    }
+
+    // Stop workflow polling
+    tracking.stopPolling$.next();
+    // Recreate stopPolling$ for future use
+    tracking.stopPolling$ = new Subject<void>();
+
+    console.log(`[CopilotManager] Deactivated agent: ${agentId}`);
+  }
+
+  /**
+   * Check if an agent is currently active (has WebSocket connection).
+   */
+  public isAgentActivelyConnected(agentId: string): boolean {
+    const tracking = this.agentStateTracking.get(agentId);
+    return tracking?.isActive === true && tracking?.websocket?.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Get the workflow ID associated with an agent.
+   */
+  public getAgentWorkflowId(agentId: string): number | undefined {
+    const agent = this.agents.get(agentId);
+    return agent?.delegate?.workflowId;
   }
 
   /**

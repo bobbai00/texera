@@ -26,9 +26,12 @@ import {
   AfterViewChecked,
   ChangeDetectorRef,
   OnDestroy,
+  OnChanges,
+  SimpleChanges,
 } from "@angular/core";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
-import { distinctUntilChanged, filter, pairwise, startWith } from "rxjs/operators";
+import { Subject } from "rxjs";
+import { distinctUntilChanged, filter, pairwise, startWith, takeUntil } from "rxjs/operators";
 import { CopilotState, ReActStep, CopilotMessageStats } from "../../../service/copilot/copilot-types";
 import { AgentInfo, TexeraCopilotManagerService } from "../../../service/copilot/texera-copilot-manager.service";
 import {
@@ -68,8 +71,9 @@ export interface TimelineNode {
   templateUrl: "agent-chat.component.html",
   styleUrls: ["agent-chat.component.scss"],
 })
-export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
+export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, OnChanges {
   @Input() agentInfo!: AgentInfo;
+  @Input() isActive: boolean = false;
   @ViewChild("messageContainer", { static: false }) messageContainer?: ElementRef;
   @ViewChild("messageInput", { static: false }) messageInput?: ElementRef;
   @ViewChild("timelineContainer", { static: false }) timelineContainer?: ElementRef;
@@ -117,6 +121,9 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
 
   // Track if we disabled auto-persist so we can re-enable it on destroy
   private disabledAutoPersist = false;
+
+  // Subject to control workflow subscription lifecycle
+  private stopWorkflowSubscription$ = new Subject<void>();
 
   constructor(
     private agentActionService: AgentActionService,
@@ -251,8 +258,37 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
         }
       });
 
-    // Subscribe to workflow changes from agent and reload the workspace
-    // This polls the workflow from backend database and updates the workspace display
+    // Note: Workflow subscription is started/stopped via ngOnChanges based on isActive
+    // This prevents automatic workflow switching when multiple agents are running
+
+    // Start workflow subscription if already active
+    if (this.isActive) {
+      this.startWorkflowSubscription();
+    }
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes["isActive"]) {
+      if (this.isActive) {
+        this.startWorkflowSubscription();
+      } else {
+        this.stopWorkflowSubscription();
+      }
+    }
+  }
+
+  /**
+   * Start subscribing to workflow changes from the agent.
+   * Only called when this agent tab is active.
+   */
+  private startWorkflowSubscription(): void {
+    if (!this.agentInfo) {
+      return;
+    }
+
+    // Stop any existing subscription first
+    this.stopWorkflowSubscription$.next();
+
     this.copilotManagerService
       .getWorkflowObservable(this.agentInfo.id)
       .pipe(
@@ -262,19 +298,35 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy {
           if (!prev || !curr) return false;
           return JSON.stringify(prev.content) === JSON.stringify(curr.content);
         }),
+        takeUntil(this.stopWorkflowSubscription$),
         untilDestroyed(this)
       )
       .subscribe(workflow => {
         if (workflow) {
           // Reload the workflow in the workspace with preserveViewport=true
           // to keep the user's current view position
-          console.log("[AgentChat] Reloading workflow from backend");
+          console.log("[AgentChat] Reloading workflow from backend (active agent)");
           this.workflowActionService.reloadWorkflow(workflow, false, true);
         }
       });
+
+    console.log(`[AgentChat] Started workflow subscription for agent ${this.agentInfo.id}`);
+  }
+
+  /**
+   * Stop subscribing to workflow changes.
+   * Called when switching away from this agent tab.
+   */
+  private stopWorkflowSubscription(): void {
+    this.stopWorkflowSubscription$.next();
+    console.log(`[AgentChat] Stopped workflow subscription for agent ${this.agentInfo?.id}`);
   }
 
   ngOnDestroy(): void {
+    // Stop workflow subscription
+    this.stopWorkflowSubscription$.next();
+    this.stopWorkflowSubscription$.complete();
+
     // Re-enable auto-persist if we disabled it
     if (this.disabledAutoPersist) {
       this.workflowPersistService.setWorkflowPersistFlag(true);
