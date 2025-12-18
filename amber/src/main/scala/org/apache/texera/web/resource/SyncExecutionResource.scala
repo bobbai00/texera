@@ -47,7 +47,6 @@ import java.util.concurrent.{CountDownLatch, TimeUnit}
 import javax.annotation.security.RolesAllowed
 import javax.ws.rs._
 import javax.ws.rs.core.MediaType
-import scala.annotation.tailrec
 import scala.collection.mutable
 
 /**
@@ -65,19 +64,21 @@ case class SyncExecutionRequest(
 )
 
 /**
-  * Console message in a simplified format - just message and type.
+  * Console message in a simplified format - contains type, title, and details.
   */
 case class ConsoleMessageInfo(
     msgType: String,
+    title: String,
     message: String
 )
 
 /**
   * Structured CSV result format for compact representation.
+  * Each row is a single comma-separated string.
   */
 case class CsvResult(
-    header: List[String],
-    rows: List[List[String]]
+    header: String,
+    rows: List[String]
 )
 
 /**
@@ -200,7 +201,7 @@ class SyncExecutionResource extends LazyLogging {
               val opLogs = collectedConsoleLogs.getOrElseUpdate(opId, mutable.ListBuffer.empty)
               var hasError = false
               messages.foreach { msg =>
-                opLogs += ConsoleMessageInfo(msg.msgType.name, msg.title)
+                opLogs += ConsoleMessageInfo(msg.msgType.name, msg.title, msg.message)
                 if (msg.msgType == ConsoleMessageType.ERROR) {
                   hasError = true
                 }
@@ -276,7 +277,9 @@ class SyncExecutionResource extends LazyLogging {
                     displayedRows = None,
                     truncated = None,
                     consoleLogs = Some(logs),
-                    error = logs.find(_.msgType == "ERROR").map(_.message)
+                    error = logs
+                      .find(_.msgType == "ERROR")
+                      .map(e => if (e.message.nonEmpty) s"${e.title}: ${e.message}" else e.title)
                   )
               },
               compilationErrors = None,
@@ -359,7 +362,11 @@ class SyncExecutionResource extends LazyLogging {
           // Check for error in this operator's console logs
           val hasConsoleError = consoleLogs.exists(_.exists(_.msgType == "ERROR"))
           val errorMsg = if (hasConsoleError) {
-            consoleLogs.flatMap(_.find(_.msgType == "ERROR").map(_.message))
+            consoleLogs.flatMap(
+              _.find(_.msgType == "ERROR").map(e =>
+                if (e.message.nonEmpty) s"${e.title}: ${e.message}" else e.title
+              )
+            )
           } else None
 
           operatorInfos(opId) = OperatorInfo(
@@ -554,10 +561,10 @@ class SyncExecutionResource extends LazyLogging {
 
   /**
     * Convert JSON tuples to structured CSV format.
-    * Returns CsvResult with header array and rows array.
+    * Returns CsvResult with header as comma-separated string and rows as list of comma-separated strings.
     */
   private def jsonToCsv(tuples: List[ObjectNode], maxCellTokens: Int): CsvResult = {
-    if (tuples.isEmpty) return CsvResult(List.empty, List.empty)
+    if (tuples.isEmpty) return CsvResult("", List.empty)
 
     val maxChars = maxCellTokens * 4
 
@@ -568,29 +575,47 @@ class SyncExecutionResource extends LazyLogging {
       headers += fieldNames.next()
     }
 
-    // Build data rows
+    // Build data rows - each row is a single comma-separated string
     val rows = tuples.map { tuple =>
-      headers.map { header =>
-        val fieldValue = tuple.get(header)
-        if (fieldValue == null || fieldValue.isNull) {
-          ""
-        } else {
-          val text = if (fieldValue.isTextual) {
-            fieldValue.asText()
+      headers
+        .map { header =>
+          val fieldValue = tuple.get(header)
+          val cellValue = if (fieldValue == null || fieldValue.isNull) {
+            ""
           } else {
-            fieldValue.toString
+            val text = if (fieldValue.isTextual) {
+              fieldValue.asText()
+            } else {
+              fieldValue.toString
+            }
+            // Truncate if needed
+            if (text.length > maxChars) {
+              text.substring(0, maxChars) + "...[truncated]"
+            } else {
+              text
+            }
           }
-          // Truncate if needed
-          if (text.length > maxChars) {
-            text.substring(0, maxChars) + "...[truncated]"
-          } else {
-            text
-          }
+          // Escape CSV: wrap in quotes if contains comma, newline, or quote; escape internal quotes
+          escapeCsvCell(cellValue)
         }
-      }.toList
+        .mkString(",")
     }
 
-    CsvResult(headers.toList, rows)
+    CsvResult(headers.map(escapeCsvCell).mkString(","), rows)
+  }
+
+  /**
+    * Escape a cell value for CSV format.
+    * Wraps in quotes if contains comma, newline, or quote; doubles internal quotes.
+    */
+  private def escapeCsvCell(value: String): String = {
+    if (
+      value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")
+    ) {
+      "\"" + value.replace("\"", "\"\"") + "\""
+    } else {
+      value
+    }
   }
 
   /**
@@ -629,7 +654,8 @@ class SyncExecutionResource extends LazyLogging {
             Some(
               ConsoleMessageInfo(
                 msgType = msg.msgType.name,
-                message = msg.title // title contains the actual print output
+                title = msg.title,
+                message = msg.message
               )
             )
           } catch {
