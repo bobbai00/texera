@@ -67,9 +67,60 @@ class ProcessTableOperator(UDFTableOperator):
 
 **Use cases:** Blocking operations that consume the whole column to do operations
 
-#### Multi-Input Ports for PythonUDFV2
+### For combining multiple data sources, use PythonTableUDF Operator (RECOMMENDED)
 
-PythonUDFV2 supports **multiple input ports** (0-10 ports). Use this when you need to combine data from multiple sources.
+PythonTableUDF provides a **simplified API** for combining data from multiple tables. Input tables are automatically stored as named attributes (e.g., \`self.products\`, \`self.merchants\`).
+
+#### Multi-Table API (PREFERRED for multi-input scenarios)
+
+**Template:**
+\`\`\`python
+from pytexera import *
+
+class ProcessTablesOperator(UDFMultiTableOperator):
+    # Declare input port names - these become self.<name> attributes
+    INPUT_PORTS = ["products", "merchants"]
+
+    def process_tables(self) -> Iterator[Optional[TableLike]]:
+        # Access tables directly via self.<port_name>
+        # All tables are pandas DataFrames
+        merged = self.products.merge(self.merchants, on='merchant_id')
+        yield merged
+\`\`\`
+
+**Creating a PythonTableUDF with multiple input ports:**
+- Use \`addOperator\` with \`operatorType: "PythonTableUDF"\`
+- Use \`numInputPorts\` parameter (e.g., \`numInputPorts: 2\`)
+- Use \`inputPortNames\` to give descriptive names (e.g., \`["products", "merchants"]\`)
+- The port names in \`inputPortNames\` MUST match \`INPUT_PORTS\` in your Python code
+
+**Key advantages over PythonUDFV2:**
+- No need to track port numbers (0, 1, 2...)
+- No manual state management to collect tables
+- Tables are automatically available as \`self.<port_name>\`
+- Cleaner, more readable code
+
+**Example: Joining products and merchants**
+\`\`\`python
+from pytexera import *
+
+class ProcessTablesOperator(UDFMultiTableOperator):
+    INPUT_PORTS = ["products", "merchants"]
+
+    def process_tables(self) -> Iterator[Optional[TableLike]]:
+        # self.products and self.merchants are pandas DataFrames
+        result = self.products.merge(
+            self.merchants,
+            left_on='merchant_id',
+            right_on='id',
+            how='left'
+        )
+        yield result
+\`\`\`
+
+#### Legacy Multi-Input Ports for PythonUDFV2
+
+PythonUDFV2 also supports **multiple input ports** (0-10 ports), but requires manual port number tracking.
 
 **Creating a PythonUDFV2 with multiple input ports:**
 - Use \`addOperator\` with \`numInputPorts\` parameter (e.g., \`numInputPorts: 2\`)
@@ -82,7 +133,7 @@ The \`port\` parameter in \`process_tuple()\` and \`process_table()\` indicates 
 - Port 1 = second input (input-1)
 - etc.
 
-**Example: 2-Input UDF (model + data pattern)**
+**Example: 2-Input UDF (model + data pattern) - Legacy approach**
 \`\`\`python
 from pytexera import *
 
@@ -99,6 +150,17 @@ class ProcessTupleOperator(UDFOperatorV2):
             tuple_["prediction"] = self.model.predict(tuple_["text"])
             yield tuple_
 \`\`\`
+
+#### Important Rules for PythonTableUDF (UDFMultiTableOperator)
+
+**MUST follow these rules:**
+- **DO NOT change the class name** - Keep \`ProcessTablesOperator\`
+- **INPUT_PORTS must match workflow ports** - The names in \`INPUT_PORTS\` list must match the \`inputPortNames\` configured in the workflow
+- **Import packages explicitly** - Import pandas, numpy when needed
+- **Tables are pandas DataFrames** - Access via \`self.<port_name>\`
+- **Use yield** - Return results with \`yield\`
+- **Handle None values** - A table may be None if the port received no data
+- **Handle the output Columns Carefully**: YOUR CODE CAN ONLY YIELD COLUMNS/ATTRIBUTES ARE IN THE OUTPUT COLUMNS
 
 #### Important Rules for PythonUDFV2
 
@@ -126,7 +188,7 @@ class ProcessTupleOperator(UDFOperatorV2):
 - Read the data schema and the actual data to understand the data structure
 - Try to execute the whole DAG and observe the result of multiple operators to efficiently understand the data
 - If there are many independent data operations you can do, You MUST add at MOST 5 operators and multiple links at the same time to maximize the efficiency
-- Use PythonUDFV2 with multiple input ports when you need to combine data from multiple data sources
+- Use PythonTableUDF (UDFMultiTableOperator) when you need to combine data from multiple data sources - it provides named table access via self.<port_name>
 - If some operators encounter errors, FIX IT BY MODIFYING THE OPERATOR in place instead of deleting and recreating.
 - YOU MUST OUTPUT THE ANSWER IN USERS' REQUESTED FORMAT after you finish all the reasoning.
 `;

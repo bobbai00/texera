@@ -128,7 +128,8 @@ export class CodeEditorComponent implements AfterViewInit, SafeStyle, OnDestroy 
     } else if (
       operatorType === "PythonUDFV2" ||
       operatorType === "PythonUDFSourceV2" ||
-      operatorType === "DualInputPortsPythonUDFV2"
+      operatorType === "DualInputPortsPythonUDFV2" ||
+      operatorType === "PythonTableUDF"
     ) {
       this.setLanguage("python");
     } else {

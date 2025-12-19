@@ -74,6 +74,7 @@ type OperatorPropertiesType = Readonly<{ [key: string]: any }>;
 export const PYTHON_UDF_V2_OP_TYPE = "PythonUDFV2";
 export const PYTHON_UDF_SOURCE_V2_OP_TYPE = "PythonUDFSourceV2";
 export const DUAL_INPUT_PORTS_PYTHON_UDF_V2_OP_TYPE = "DualInputPortsPythonUDFV2";
+export const PYTHON_TABLE_UDF_OP_TYPE = "PythonTableUDF";
 export const VIEW_RESULT_OP_TYPE = "SimpleSink";
 export const VIEW_RESULT_OP_NAME = "View Results";
 
@@ -82,9 +83,12 @@ export function isSink(operator: OperatorPredicate): boolean {
 }
 
 export function isPythonUdf(operator: OperatorPredicate): boolean {
-  return [PYTHON_UDF_V2_OP_TYPE, PYTHON_UDF_SOURCE_V2_OP_TYPE, DUAL_INPUT_PORTS_PYTHON_UDF_V2_OP_TYPE].includes(
-    operator.operatorType
-  );
+  return [
+    PYTHON_UDF_V2_OP_TYPE,
+    PYTHON_UDF_SOURCE_V2_OP_TYPE,
+    DUAL_INPUT_PORTS_PYTHON_UDF_V2_OP_TYPE,
+    PYTHON_TABLE_UDF_OP_TYPE,
+  ].includes(operator.operatorType);
 }
 
 /**
