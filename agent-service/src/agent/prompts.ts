@@ -69,7 +69,7 @@ class ProcessTableOperator(UDFTableOperator):
 
 ### For combining multiple data sources, use PythonTableUDF Operator (RECOMMENDED)
 
-PythonTableUDF provides a **simplified API** for combining data from multiple tables. Input tables are automatically stored as named attributes (e.g., \`self.products\`, \`self.merchants\`).
+PythonTableUDF provides a **simplified API** for combining data from multiple tables. Input tables are automatically stored as named attributes (e.g., \`self.products\`, \`self.merchants\`) based on the port names configured in the workflow.
 
 #### Multi-Table API (PREFERRED for multi-input scenarios)
 
@@ -78,11 +78,10 @@ PythonTableUDF provides a **simplified API** for combining data from multiple ta
 from pytexera import *
 
 class ProcessTablesOperator(UDFMultiTableOperator):
-    # Declare input port names - these become self.<name> attributes
-    INPUT_PORTS = ["products", "merchants"]
 
     def process_tables(self) -> Iterator[Optional[TableLike]]:
-        # Access tables directly via self.<port_name>
+        # Access tables via self.<port_name>
+        # Port names come from the workflow's port display names
         # All tables are pandas DataFrames
         merged = self.products.merge(self.merchants, on='merchant_id')
         yield merged
@@ -92,23 +91,23 @@ class ProcessTablesOperator(UDFMultiTableOperator):
 - Use \`addOperator\` with \`operatorType: "PythonTableUDF"\`
 - Use \`numInputPorts\` parameter (e.g., \`numInputPorts: 2\`)
 - Use \`inputPortNames\` to give descriptive names (e.g., \`["products", "merchants"]\`)
-- The port names in \`inputPortNames\` MUST match \`INPUT_PORTS\` in your Python code
+- The port names become accessible as \`self.<port_name>\` in Python code automatically
 
 **Key advantages over PythonUDFV2:**
 - No need to track port numbers (0, 1, 2...)
 - No manual state management to collect tables
-- Tables are automatically available as \`self.<port_name>\`
-- Cleaner, more readable code
+- Tables are automatically available as \`self.<port_name>\` based on workflow port names
+- Cleaner, more readable code - single source of truth for port names
 
 **Example: Joining products and merchants**
 \`\`\`python
 from pytexera import *
 
 class ProcessTablesOperator(UDFMultiTableOperator):
-    INPUT_PORTS = ["products", "merchants"]
 
     def process_tables(self) -> Iterator[Optional[TableLike]]:
         # self.products and self.merchants are pandas DataFrames
+        # Port names come from workflow configuration (inputPortNames)
         result = self.products.merge(
             self.merchants,
             left_on='merchant_id',
@@ -155,7 +154,7 @@ class ProcessTupleOperator(UDFOperatorV2):
 
 **MUST follow these rules:**
 - **DO NOT change the class name** - Keep \`ProcessTablesOperator\`
-- **INPUT_PORTS must match workflow ports** - The names in \`INPUT_PORTS\` list must match the \`inputPortNames\` configured in the workflow
+- **Port names come from workflow** - Access tables via \`self.<port_name>\` where port names are the \`inputPortNames\` configured in the workflow
 - **Import packages explicitly** - Import pandas, numpy when needed
 - **Tables are pandas DataFrames** - Access via \`self.<port_name>\`
 - **Use yield** - Return results with \`yield\`

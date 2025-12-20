@@ -34,6 +34,8 @@ class AssignPortHandler(ControlHandler):
                 Schema(raw_schema=req.schema),
                 req.storage_uris,
                 req.partitionings,
+                req.display_name,
+                req.total_input_ports,
             )
             for uri in req.storage_uris:
                 to_actor_id = ActorVirtualIdentity(self.context.worker_id)
@@ -44,6 +46,13 @@ class AssignPortHandler(ControlHandler):
                 self.context.input_manager.register_input(
                     channel_id=channel_id, port_id=req.port_id
                 )
+
+            # Update executor's port names if it supports it
+            # This is called after each port is assigned to handle multi-phase execution
+            executor = self.context.executor_manager.executor
+            if executor is not None and hasattr(executor, "_set_input_port_names"):
+                port_names = self.context.input_manager.get_input_port_display_names()
+                executor._set_input_port_names(port_names)
         else:
             storage_uri = None
             if len(req.storage_uris) > 0 and req.storage_uris[0]:

@@ -46,17 +46,18 @@ import scala.util.{Success, Try}
   * PythonTableUDF operator for processing multiple input tables together.
   *
   * This operator provides a simplified API for combining data from multiple sources.
-  * Input tables are automatically stored as named attributes (e.g., self.products, self.merchants)
-  * based on the configured input port names.
+  * Input tables are automatically stored as named attributes based on the port display names
+  * configured in the workflow (e.g., self.products, self.merchants).
   *
   * Example usage in Python:
   * {{{
   * from pytexera import *
   *
   * class ProcessTablesOperator(UDFMultiTableOperator):
-  *     INPUT_PORTS = ["products", "merchants"]
   *
   *     def process_tables(self) -> Iterator[Optional[TableLike]]:
+  *         # Access input tables via self.<port_name>
+  *         # Port names come from the workflow's port display names
   *         merged = self.products.merge(self.merchants, on='id')
   *         yield merged
   * }}}
@@ -67,12 +68,10 @@ class PythonTableUDFOpDescV2 extends LogicalOp {
     defaultValue =
       "from pytexera import *\n\n" +
         "class ProcessTablesOperator(UDFMultiTableOperator):\n" +
-        "    # Declare input port names - these become self.<name> attributes\n" +
-        "    INPUT_PORTS = [\"input_0\"]  # Update with your port names\n" +
         "\n" +
         "    def process_tables(self) -> Iterator[Optional[TableLike]]:\n" +
-        "        # Access tables via self.<port_name>, e.g.:\n" +
-        "        # - self.input_0 for port 0\n" +
+        "        # Access tables via self.<port_name>\n" +
+        "        # Port names come from the workflow's port display names\n" +
         "        # All tables are pandas DataFrames\n" +
         "        yield self.input_0\n"
   )
@@ -159,15 +158,21 @@ class PythonTableUDFOpDescV2 extends LogicalOp {
           // For PythonTableUDF, each port depends on ALL previous ports.
           // This ensures all tables are fully collected before process_tables() is called.
           val previousPortDependencies = (0 until idx).map(PortIdentity(_)).toList
+          // Use displayName if provided and non-empty, otherwise use default "input_N"
+          val effectiveDisplayName =
+            if (portDesc.displayName != null && portDesc.displayName.nonEmpty)
+              portDesc.displayName
+            else
+              s"input_$idx"
           InputPort(
             PortIdentity(idx),
-            displayName = portDesc.displayName,
+            displayName = effectiveDisplayName,
             allowMultiLinks = portDesc.allowMultiInputs,
             dependencies = previousPortDependencies
           )
       }
     } else {
-      List(InputPort(PortIdentity(), allowMultiLinks = true))
+      List(InputPort(PortIdentity(), displayName = "input_0", allowMultiLinks = true))
     }
     val outputPortInfo = if (outputPorts != null) {
       outputPorts.zipWithIndex.map {

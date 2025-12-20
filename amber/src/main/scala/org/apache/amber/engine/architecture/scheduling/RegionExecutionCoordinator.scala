@@ -379,6 +379,9 @@ class RegionExecutionCoordinator(
     Future.collect(
       region.getOperators
         .flatMap { physicalOp: PhysicalOp =>
+          // Total number of input ports for this operator (used by multi-table operators)
+          val totalInputPorts = physicalOp.inputPorts.size
+
           // assign input ports
           val inputPortMapping = physicalOp.inputPorts
             .filter {
@@ -387,7 +390,7 @@ class RegionExecutionCoordinator(
                 isDependeePhase == physicalOp.dependeeInputs.contains(portId)
             }
             .flatMap {
-              case (inputPortId, (_, _, Right(schema))) =>
+              case (inputPortId, (inputPort, _, Right(schema))) =>
                 val globalInputPortId = GlobalPortIdentity(physicalOp.id, inputPortId, input = true)
                 val (storageURIs, partitionings) =
                   resourceConfig.portConfigs.get(globalInputPortId) match {
@@ -395,7 +398,10 @@ class RegionExecutionCoordinator(
                       (cfg.storagePairs.map(_._1.toString), cfg.storagePairs.map(_._2))
                     case _ => (List.empty[String], List.empty[Partitioning])
                   }
-                Some(globalInputPortId -> (storageURIs, partitionings, schema))
+                Some(
+                  globalInputPortId ->
+                    (storageURIs, partitionings, schema, inputPort.displayName, totalInputPorts)
+                )
               case _ => None
             }
 
@@ -415,7 +421,7 @@ class RegionExecutionCoordinator(
                     region.getPorts.contains(globalInputPortId)
                 }
                 .flatMap {
-                  case (outputPortId, (_, _, Right(schema))) =>
+                  case (outputPortId, (outputPort, _, Right(schema))) =>
                     val storageURI = resourceConfig.portConfigs
                       .collectFirst {
                         case (gid, cfg: OutputPortConfig)
@@ -427,9 +433,8 @@ class RegionExecutionCoordinator(
                       }
                       .getOrElse("")
                     Some(
-                      GlobalPortIdentity(physicalOp.id, outputPortId) -> (List(
-                        storageURI
-                      ), List.empty, schema)
+                      GlobalPortIdentity(physicalOp.id, outputPortId) ->
+                        (List(storageURI), List.empty, schema, outputPort.displayName, 0)
                     )
                   case _ => None
                 }
@@ -439,7 +444,7 @@ class RegionExecutionCoordinator(
         }
         // Issue AssignPort control messages to each worker.
         .flatMap {
-          case (globalPortId, (storageUris, partitionings, schema)) =>
+          case (globalPortId, (storageUris, partitionings, schema, displayName, totalInputPorts)) =>
             resourceConfig.operatorConfigs(globalPortId.opId).workerConfigs.map(_.workerId).map {
               workerId =>
                 asyncRPCClient.workerInterface.assignPort(
@@ -448,7 +453,9 @@ class RegionExecutionCoordinator(
                     globalPortId.input,
                     schema.toRawSchema,
                     storageUris,
-                    partitionings
+                    partitionings,
+                    displayName,
+                    totalInputPorts
                   ),
                   asyncRPCClient.mkContext(workerId)
                 )
