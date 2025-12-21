@@ -116,14 +116,9 @@ object ArrowUtils extends LazyLogging {
   @throws[AttributeTypeException]
   def toAttributeType(srcType: ArrowType): AttributeType = {
     srcType match {
-      case int: ArrowType.Int =>
-        int.getBitWidth match {
-          case 16 | 32 =>
-            AttributeType.INTEGER
-
-          case 64 | _ =>
-            AttributeType.LONG
-        }
+      // Use LONG for all integer types to avoid overflow for large values
+      case _: ArrowType.Int =>
+        AttributeType.LONG
       case _: ArrowType.Bool =>
         AttributeType.BOOLEAN
 
@@ -252,8 +247,9 @@ object ArrowUtils extends LazyLogging {
   @throws[AttributeTypeException]
   def fromAttributeType(srcType: AttributeType): PrimitiveType = {
     srcType match {
+      // Use 64-bit for INTEGER to avoid overflow for large integer values
       case AttributeType.INTEGER =>
-        new ArrowType.Int(32, true)
+        new ArrowType.Int(64, true)
 
       case AttributeType.LONG =>
         new ArrowType.Int(64, true)

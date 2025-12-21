@@ -79,25 +79,17 @@ interface OperatorValidation {
 /**
  * Validate operator's JSON schema (properties).
  */
-function validateOperatorSchema(
-  operatorType: string,
-  operatorProperties: Record<string, any>
-): OperatorValidation {
+function validateOperatorSchema(operatorType: string, operatorProperties: Record<string, any>): OperatorValidation {
   const metadataStore = OperatorMetadataStore.getInstance();
   const validation = metadataStore.validateOperatorProperties(operatorType, operatorProperties);
-  return validation.isValid
-    ? { isValid: true, messages: {} }
-    : { isValid: false, messages: validation.messages };
+  return validation.isValid ? { isValid: true, messages: {} } : { isValid: false, messages: validation.messages };
 }
 
 /**
  * Validate operator connections (input ports are properly connected).
  * Mimics frontend ValidationWorkflowService.validateOperatorConnection()
  */
-function validateOperatorConnection(
-  operatorId: string,
-  workflowState: WorkflowState
-): OperatorValidation {
+function validateOperatorConnection(operatorId: string, workflowState: WorkflowState): OperatorValidation {
   const operator = workflowState.getOperator(operatorId);
   if (!operator) {
     return { isValid: false, messages: { error: `Operator ${operatorId} not found` } };

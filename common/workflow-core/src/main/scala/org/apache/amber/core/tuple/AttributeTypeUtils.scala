@@ -318,16 +318,8 @@ object AttributeTypeUtils extends Serializable {
     * @return inferred AttributeType
     */
   def inferField(fieldValue: Any): AttributeType = {
-    tryParseInteger(fieldValue)
-  }
-
-  private def tryParseInteger(fieldValue: Any): AttributeType = {
-    if (fieldValue == null)
-      return AttributeType.INTEGER
-    allCatch opt parseInteger(fieldValue) match {
-      case Some(_) => AttributeType.INTEGER
-      case None    => tryParseLong(fieldValue)
-    }
+    // Start with LONG to avoid overflow for large integer values
+    tryParseLong(fieldValue)
   }
 
   private def tryParseLong(fieldValue: Any): AttributeType = {
@@ -382,7 +374,8 @@ object AttributeTypeUtils extends Serializable {
       case AttributeType.BOOLEAN   => tryParseBoolean(fieldValue)
       case AttributeType.DOUBLE    => tryParseDouble(fieldValue)
       case AttributeType.LONG      => tryParseLong(fieldValue)
-      case AttributeType.INTEGER   => tryParseInteger(fieldValue)
+      // Treat INTEGER as LONG to avoid overflow for large integer values
+      case AttributeType.INTEGER   => tryParseLong(fieldValue)
       case AttributeType.TIMESTAMP => tryParseTimestamp(fieldValue)
       case AttributeType.BINARY    => tryParseString()
       case AttributeType.BIG_OBJECT =>
