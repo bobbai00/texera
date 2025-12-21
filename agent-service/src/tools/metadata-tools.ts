@@ -70,7 +70,7 @@ export interface CompactOperatorSchema {
 // ============================================================================
 
 export const ALLOWED_OPERATOR_TYPES = [
-  "PythonUDFV2",
+  "PythonTableUDF",
   "Aggregate",
   "Projection",
   "HashJoin",
@@ -79,7 +79,7 @@ export const ALLOWED_OPERATOR_TYPES = [
   "Intersect",
   "CartesianProduct",
   "CSVFileScan",
-  "FileScan"
+  "FileScan",
 ] as const;
 
 // ============================================================================

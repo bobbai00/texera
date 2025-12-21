@@ -215,8 +215,8 @@ export class WorkflowState {
   }
 
   /**
-   * Update the input ports of an operator (for dynamic input port operators like PythonUDFV2).
-   * This creates the specified number of input ports with names like "input-0", "input-1", etc.
+   * Update the input ports of an operator (for dynamic input port operators like PythonTableUDF).
+   * This creates the specified number of input ports with the given display names.
    * @param operatorId The operator ID to update
    * @param numInputPorts The desired number of input ports
    * @param portDisplayNames Optional array of display names for each port

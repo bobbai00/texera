@@ -63,9 +63,9 @@ export { COPILOT_SYSTEM_PROMPT, BASELINE_SYSTEM_PROMPT } from "./agent/prompts";
  *
  * // Register some operator schemas
  * agent.getMetadataStore().registerOperator(
- *   "PythonUDFV2",
+ *   "PythonTableUDF",
  *   { properties: { code: { type: "string" } }, required: ["code"] },
- *   "Python UDF for custom data processing"
+ *   "Python UDF for multi-table data processing"
  * );
  *
  * // Send a message
