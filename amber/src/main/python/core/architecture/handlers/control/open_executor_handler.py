@@ -22,21 +22,5 @@ from proto.org.apache.amber.engine.architecture.rpc import EmptyReturn, EmptyReq
 class OpenExecutorHandler(ControlHandler):
 
     async def open_executor(self, req: EmptyRequest) -> EmptyReturn:
-        executor = self.context.executor_manager.executor
-
-        # Inject input port names for operators that support it
-        # (e.g., UDFMultiTableOperator)
-        if hasattr(executor, "_set_input_port_names"):
-            port_names = self.context.input_manager.get_input_port_display_names()
-            executor._set_input_port_names(port_names)
-
-        # Inject a completion checker for operators that need to wait for all ports
-        # This uses input_manager.all_ports_completed() which is accurate even
-        # in multi-phase execution
-        if hasattr(executor, "_set_all_ports_completed_checker"):
-            executor._set_all_ports_completed_checker(
-                self.context.input_manager.all_ports_completed
-            )
-
-        executor.open()
+        self.context.executor_manager.executor.open()
         return EmptyReturn()

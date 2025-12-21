@@ -245,8 +245,6 @@ message AssignPortRequest {
   map<string, string> schema = 3;
   repeated string storageUris = 4;
   repeated sendsemantics.Partitioning partitionings = 5;
-  string displayName = 6;
-  int32 totalInputPorts = 7;
 }
 
 message FinalizeCheckpointRequest {

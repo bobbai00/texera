@@ -42,11 +42,10 @@ class Channel:
 
 
 class WorkerPort:
-    def __init__(self, schema: Schema, display_name: str = ""):
+    def __init__(self, schema: Schema):
         self._schema = schema
         self._channels: Set[ChannelIdentity] = set()
         self.completed = False
-        self._display_name = display_name
 
     def add_channel(self, channel: ChannelIdentity) -> None:
         self._channels.add(channel)
@@ -64,9 +63,6 @@ class WorkerPort:
         """
         self._schema = schema
 
-    def get_display_name(self) -> str:
-        return self._display_name
-
 
 class InputManager:
     SOURCE_STARTER = ActorVirtualIdentity("SOURCE_STARTER")
@@ -80,19 +76,12 @@ class InputManager:
         self._input_port_mat_reader_runnables: Dict[
             PortIdentity, List[InputPortMaterializationReaderRunnable]
         ] = dict()  # TODO: Merge this into WorkerPort
-        # Expected total number of input ports (set when first port is assigned)
-        self._expected_total_input_ports: int = 0
 
     def complete_current_port(self, channel_id: ChannelIdentity) -> None:
         channel = self._channels[channel_id]
         self._ports[channel.port_id].completed = True
 
     def all_ports_completed(self) -> bool:
-        # If we know the expected total, check that we have all ports and they're completed
-        if self._expected_total_input_ports > 0:
-            completed_count = sum(1 for port in self._ports.values() if port.completed)
-            return completed_count >= self._expected_total_input_ports
-        # Fallback: check all currently known ports are completed
         return all(port.completed for port in self._ports.values())
 
     def set_up_input_port_mat_reader_threads(
@@ -141,21 +130,15 @@ class InputManager:
         schema: Schema,
         storage_uris: List[str],
         partitionings: List[Partitioning],
-        display_name: str = "",
-        total_input_ports: int = 0,
     ) -> None:
         if port_id.id is None:
             port_id.id = 0
         if port_id.internal is None:
             port_id.internal = False
 
-        # Store the expected total if provided (used for multi-phase execution)
-        if total_input_ports > 0:
-            self._expected_total_input_ports = total_input_ports
-
         # each port can only be added and initialized once.
         if port_id not in self._ports:
-            self._ports[port_id] = WorkerPort(schema, display_name)
+            self._ports[port_id] = WorkerPort(schema)
 
         self.set_up_input_port_mat_reader_threads(port_id, storage_uris, partitionings)
 
@@ -198,20 +181,3 @@ class InputManager:
             yield Tuple(
                 {name: field_accessor for name in table.column_names}, schema=schema
             )
-
-    def get_input_port_display_names(self) -> Dict[int, str]:
-        """
-        Returns a dictionary mapping port index (0, 1, 2, ...) to display name.
-        Only includes non-internal ports.
-        If a port has no display name, uses a default name "input_N".
-        """
-        result = {}
-        for port_id, worker_port in self._ports.items():
-            if not port_id.internal:
-                display_name = worker_port.get_display_name()
-                # Use display name if set, otherwise use default "input_N"
-                if display_name:
-                    result[port_id.id] = display_name
-                else:
-                    result[port_id.id] = f"input_{port_id.id}"
-        return result

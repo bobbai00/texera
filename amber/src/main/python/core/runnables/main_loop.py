@@ -251,31 +251,18 @@ class MainLoop(StoppableQueueBlockingRunnable):
         self._check_and_process_control()
 
     def _process_start_channel(self) -> None:
-        # Update current_input_port_id from the channel that sent this ECM
-        # This is necessary because ECM processing doesn't go through _process_data_element
-        self.context.tuple_processing_manager.current_input_port_id = (
-            self.context.input_manager.get_port_id(
-                self.context.current_input_channel_id
-            )
-        )
         self._send_ecm_to_data_channels(
             "StartChannel", EmbeddedControlMessageType.NO_ALIGNMENT
         )
         self.process_input_state()
 
     def _process_end_channel(self) -> None:
-        # Update current_input_port_id from the channel that sent this ECM
-        # This is necessary because ECM processing doesn't go through _process_data_element
-        # Without this, on_finish would be called with the wrong port ID
-        self.context.tuple_processing_manager.current_input_port_id = (
-            self.context.input_manager.get_port_id(
-                self.context.current_input_channel_id
-            )
-        )
         self.process_input_state()
         self.process_input_tuple()
 
-        input_port_id = self.context.tuple_processing_manager.current_input_port_id
+        input_port_id = self.context.input_manager.get_port_id(
+            self.context.current_input_channel_id
+        )
 
         if input_port_id is not None:
             self._async_rpc_client.controller_stub().port_completed(

@@ -363,8 +363,6 @@ class AssignPortRequest(betterproto.Message):
     )
     storage_uris: List[str] = betterproto.string_field(4)
     partitionings: List["_sendsemantics__.Partitioning"] = betterproto.message_field(5)
-    display_name: str = betterproto.string_field(6)
-    total_input_ports: int = betterproto.int32_field(7)
 
 
 @dataclass(eq=False, repr=False)
