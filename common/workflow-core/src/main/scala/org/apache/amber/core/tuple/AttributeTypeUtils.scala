@@ -304,7 +304,8 @@ object AttributeTypeUtils extends Serializable {
 
     for (fields <- fieldsIterator) {
       if (attributeTypes.isEmpty) {
-        attributeTypes = Array.fill[AttributeType](fields.length)(AttributeType.INTEGER)
+        // Use LONG as default to avoid integer overflow for large values (e.g., >2^31)
+        attributeTypes = Array.fill[AttributeType](fields.length)(AttributeType.LONG)
       }
       inferRow(attributeTypes, fields)
     }
