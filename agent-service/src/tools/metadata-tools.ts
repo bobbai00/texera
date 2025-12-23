@@ -71,6 +71,7 @@ export interface CompactOperatorSchema {
 
 export const ALLOWED_OPERATOR_TYPES = [
   "PythonTableUDF",
+  "Filter",
   "Aggregate",
   "Projection",
   "HashJoin",
@@ -401,9 +402,7 @@ export function createListAllAvailableOperatorTypesTool(
       // Filter to only allowed relational operators if setting is enabled
       if (onlyUseRelationalOperators) {
         const allowedSet = new Set<string>(ALLOWED_OPERATOR_TYPES);
-        operators = Object.fromEntries(
-          Object.entries(operators).filter(([type]) => allowedSet.has(type))
-        );
+        operators = Object.fromEntries(Object.entries(operators).filter(([type]) => allowedSet.has(type)));
       }
 
       const count = Object.keys(operators).length;

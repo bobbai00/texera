@@ -214,45 +214,64 @@ export function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?:
   let operatorsList: { operatorID: string; operatorType: string; [key: string]: any }[];
   let linksList: LogicalLink[];
 
+  // Helper to get port ordinal by looking up in the operator's port list
+  const getInputPortOrdinal = (operatorID: string, inputPortID: string): number => {
+    const op = workflowState.getOperator(operatorID);
+    if (!op) return 0;
+    const idx = op.inputPorts.findIndex(port => port.portID === inputPortID);
+    return idx >= 0 ? idx : 0;
+  };
+
+  const getOutputPortOrdinal = (operatorID: string, outputPortID: string): number => {
+    const op = workflowState.getOperator(operatorID);
+    if (!op) return 0;
+    const idx = op.outputPorts.findIndex(port => port.portID === outputPortID);
+    return idx >= 0 ? idx : 0;
+  };
+
   if (targetOperatorId) {
     // Execute To: Get sub-DAG up to the target operator
     const subDAG = workflowState.getSubDAG(targetOperatorId);
 
     operatorsList = subDAG.operators.map(op => ({
+      ...op.operatorProperties,
       operatorID: op.operatorID,
       operatorType: op.operatorType,
-      ...op.operatorProperties,
+      inputPorts: op.inputPorts,
+      outputPorts: op.outputPorts,
     }));
 
     linksList = subDAG.links.map(link => ({
       fromOpId: link.source.operatorID,
       fromPortId: {
-        id: parseInt(link.source.portID.replace(/\D/g, "") || "0", 10),
+        id: getOutputPortOrdinal(link.source.operatorID, link.source.portID),
         internal: false,
       },
       toOpId: link.target.operatorID,
       toPortId: {
-        id: parseInt(link.target.portID.replace(/\D/g, "") || "0", 10),
+        id: getInputPortOrdinal(link.target.operatorID, link.target.portID),
         internal: false,
       },
     }));
   } else {
     // Full DAG execution
     operatorsList = workflowState.getAllEnabledOperators().map(op => ({
+      ...op.operatorProperties,
       operatorID: op.operatorID,
       operatorType: op.operatorType,
-      ...op.operatorProperties,
+      inputPorts: op.inputPorts,
+      outputPorts: op.outputPorts,
     }));
 
     linksList = workflowState.getAllLinks().map(link => ({
       fromOpId: link.source.operatorID,
       fromPortId: {
-        id: parseInt(link.source.portID.replace(/\D/g, "") || "0", 10),
+        id: getOutputPortOrdinal(link.source.operatorID, link.source.portID),
         internal: false,
       },
       toOpId: link.target.operatorID,
       toPortId: {
-        id: parseInt(link.target.portID.replace(/\D/g, "") || "0", 10),
+        id: getInputPortOrdinal(link.target.operatorID, link.target.portID),
         internal: false,
       },
     }));

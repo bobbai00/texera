@@ -115,53 +115,21 @@ export const TOOL_NAME_DELETE_FROM_WORKFLOW = "deleteFromWorkflow";
 const MULTI_INPUT_OPERATOR_TYPE = "PythonTableUDF";
 
 // ============================================================================
-// Port Name Validation
+// Port Validation
 // ============================================================================
 
 /**
- * Check if a string is a valid variable name (valid Python/JS identifier).
- * Must start with letter or underscore, contain only alphanumeric and underscores.
- */
-function isValidVariableName(name: string): boolean {
-  return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
-}
-
-/**
- * Validate an array of port names.
+ * Validate number of input ports.
  * Returns error message if invalid, null if valid.
  */
-function validatePortNames(portNames: string[]): string | null {
-  if (portNames.length === 0) {
-    return "At least one port name is required";
+function validateNumInputPorts(numPorts: number): string | null {
+  if (numPorts < 1) {
+    return "At least 1 input port is required";
   }
-  if (portNames.length > 10) {
+  if (numPorts > 10) {
     return "Maximum 10 input ports allowed";
   }
-  const seen = new Set<string>();
-  for (const name of portNames) {
-    if (!isValidVariableName(name)) {
-      return `Invalid port name "${name}": must be a valid identifier (start with letter/underscore, contain only alphanumeric/underscore)`;
-    }
-    if (seen.has(name)) {
-      return `Duplicate port name "${name}"`;
-    }
-    seen.add(name);
-  }
   return null;
-}
-
-/**
- * Find port ID by display name on an operator.
- * Returns the portID if found, null otherwise.
- */
-function findPortIdByName(
-  operator: OperatorPredicate,
-  portName: string,
-  isInput: boolean
-): string | null {
-  const ports = isInput ? operator.inputPorts : operator.outputPorts;
-  const port = ports.find(p => p.displayName === portName);
-  return port ? port.portID : null;
 }
 
 // ============================================================================
@@ -204,6 +172,8 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
                 operatorId: operator.operatorID,
                 operatorType: operator.operatorType,
                 operatorProperties: operator.operatorProperties,
+                inputPorts: operator.inputPorts,
+                outputPorts: operator.outputPorts,
                 inputSchema: inputSchemas.get(operatorId) || {},
                 outputSchema: outputSchemas.get(operatorId) || {},
               };
@@ -219,6 +189,8 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
               operatorId: operator.operatorID,
               operatorType: operator.operatorType,
               operatorProperties: operator.operatorProperties,
+              inputPorts: operator.inputPorts,
+              outputPorts: operator.outputPorts,
               inputSchema: inputSchemas.get(operator.operatorID) || {},
               outputSchema: outputSchemas.get(operator.operatorID) || {},
             };
@@ -269,24 +241,24 @@ export function createAddOperatorTool(
   return tool({
     description:
       "Add a new operator to the workflow. Use getOperatorSchema first to understand required properties. " +
-      `For ${MULTI_INPUT_OPERATOR_TYPE}, specify inputPortNames to create named input ports.`,
+      `For ${MULTI_INPUT_OPERATOR_TYPE}, specify numInputPorts to create multiple input ports.`,
     inputSchema: z.object({
       operatorType: z.string().describe(`The operator type (e.g., '${MULTI_INPUT_OPERATOR_TYPE}', 'Aggregate')`),
       properties: z.record(z.any()).optional().describe("Properties to set on the operator"),
       customDisplayName: z.string().optional().describe("Optional display name for the operator"),
-      inputPortNames: z
-        .array(z.string())
+      numInputPorts: z
+        .number()
         .optional()
         .describe(
-          `Required for ${MULTI_INPUT_OPERATOR_TYPE}: array of port names (e.g., ['products', 'merchants']). ` +
-            "Each name must be a valid identifier (letters, numbers, underscores; start with letter/underscore)."
+          `Number of input ports for ${MULTI_INPUT_OPERATOR_TYPE} (default: 1). ` +
+            "Use INPUT_PORTS in Python code to define port names that become self.<name> attributes."
         ),
     }),
     execute: async (args: {
       operatorType: string;
       properties?: Record<string, any>;
       customDisplayName?: string;
-      inputPortNames?: string[];
+      numInputPorts?: number;
     }) => {
       try {
         const schemaEntry = operatorSchemas.get(args.operatorType);
@@ -296,15 +268,15 @@ export function createAddOperatorTool(
           );
         }
 
-        // Validate inputPortNames if provided
-        if (args.inputPortNames) {
+        // Validate numInputPorts if provided
+        if (args.numInputPorts !== undefined) {
           if (args.operatorType !== MULTI_INPUT_OPERATOR_TYPE) {
             return createErrorResult(
-              `inputPortNames is only supported for ${MULTI_INPUT_OPERATOR_TYPE}. ` +
+              `numInputPorts is only supported for ${MULTI_INPUT_OPERATOR_TYPE}. ` +
                 `Operator type "${args.operatorType}" does not support dynamic input ports.`
             );
           }
-          const portError = validatePortNames(args.inputPortNames);
+          const portError = validateNumInputPorts(args.numInputPorts);
           if (portError) {
             return createErrorResult(portError);
           }
@@ -338,13 +310,16 @@ export function createAddOperatorTool(
         workflowState.addOperator(operator);
 
         // Set up input ports for PythonTableUDF
-        if (args.inputPortNames && args.inputPortNames.length > 0) {
-          workflowState.updateOperatorInputPorts(operator.operatorID, args.inputPortNames.length, args.inputPortNames);
+        if (args.numInputPorts !== undefined && args.numInputPorts > 1) {
+          workflowState.updateOperatorInputPorts(operator.operatorID, args.numInputPorts);
         }
 
         const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);
         const inputSchema = inputSchemas.get(operator.operatorID) || {};
         const outputSchema = outputSchemas.get(operator.operatorID) || {};
+
+        // Get the updated operator (may have modified ports)
+        const updatedOperator = workflowState.getOperator(operator.operatorID);
 
         const afterContent = workflowState.getWorkflowContent();
         let agentActionId: string | undefined;
@@ -366,6 +341,8 @@ export function createAddOperatorTool(
           {
             operatorId: operator.operatorID,
             operatorType: args.operatorType,
+            inputPorts: updatedOperator?.inputPorts || operator.inputPorts,
+            outputPorts: updatedOperator?.outputPorts || operator.outputPorts,
             inputSchema,
             outputSchema,
             agentActionId,
@@ -392,24 +369,24 @@ export function createAddOperatorTool(
 export function createAddLinkTool(workflowState: WorkflowState, context?: ToolContext) {
   return tool({
     description:
-      "Add a link connecting two operators. Use targetPortName for named ports on PythonTableUDF operators.",
+      "Add a link connecting two operators. Use targetPortIndex for PythonTableUDF with multiple input ports.",
     inputSchema: z.object({
       sourceOperatorId: z.string().describe("ID of the source operator"),
       sourcePortId: z.string().optional().describe("Source port ID (default: 'output-0')"),
       targetOperatorId: z.string().describe("ID of the target operator"),
-      targetPortName: z
-        .string()
+      targetPortIndex: z
+        .number()
         .optional()
         .describe(
-          "Name of the target port (e.g., 'products'). Required for PythonTableUDF with named ports. " +
-            "For other operators, defaults to their first input port."
+          "Target port index (0-based). For PythonTableUDF with multiple inputs, specify which port to connect to. " +
+            "The index corresponds to INPUT_PORTS order in Python code. Defaults to 0."
         ),
     }),
     execute: async (args: {
       sourceOperatorId: string;
       sourcePortId?: string;
       targetOperatorId: string;
-      targetPortName?: string;
+      targetPortIndex?: number;
     }) => {
       try {
         const sourceOp = workflowState.getOperator(args.sourceOperatorId);
@@ -422,20 +399,18 @@ export function createAddLinkTool(workflowState: WorkflowState, context?: ToolCo
           return createErrorResult(`Target operator ${args.targetOperatorId} not found`);
         }
 
-        // Resolve target port ID from name or default
+        // Resolve target port ID from index or default
+        const portIndex = args.targetPortIndex ?? 0;
         let targetPortId: string;
-        if (args.targetPortName) {
-          const foundPortId = findPortIdByName(targetOp, args.targetPortName, true);
-          if (!foundPortId) {
-            const availablePorts = targetOp.inputPorts.map(p => p.displayName || p.portID).join(", ");
-            return createErrorResult(
-              `Port "${args.targetPortName}" not found on target operator. Available ports: [${availablePorts}]`
-            );
-          }
-          targetPortId = foundPortId;
+        if (portIndex >= 0 && portIndex < targetOp.inputPorts.length) {
+          targetPortId = targetOp.inputPorts[portIndex].portID;
+        } else if (portIndex === 0) {
+          // Default to input-0 if no ports defined yet
+          targetPortId = "input-0";
         } else {
-          // Default to first input port
-          targetPortId = targetOp.inputPorts.length > 0 ? targetOp.inputPorts[0].portID : "input-0";
+          return createErrorResult(
+            `Port index ${portIndex} out of range. Target operator has ${targetOp.inputPorts.length} input port(s).`
+          );
         }
 
         const beforeContent = workflowState.getWorkflowContent();
@@ -500,24 +475,24 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
   return tool({
     description:
       "Modify properties of an existing operator. Use getCurrentWorkflow first to see current properties. " +
-      `For ${MULTI_INPUT_OPERATOR_TYPE}, you can also update input port names.`,
+      `For ${MULTI_INPUT_OPERATOR_TYPE}, you can also update the number of input ports.`,
     inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to modify"),
       properties: z.record(z.any()).describe("Properties to update (merged with existing)"),
       summary: z.string().optional().describe("Brief summary of what this modification accomplishes"),
-      inputPortNames: z
-        .array(z.string())
+      numInputPorts: z
+        .number()
         .optional()
         .describe(
-          `New input port names for ${MULTI_INPUT_OPERATOR_TYPE} (e.g., ['products', 'merchants']). ` +
-            "Each name must be a valid identifier."
+          `New number of input ports for ${MULTI_INPUT_OPERATOR_TYPE}. ` +
+            "Use INPUT_PORTS in Python code to define port names."
         ),
     }),
     execute: async (args: {
       operatorId: string;
       properties: Record<string, any>;
       summary?: string;
-      inputPortNames?: string[];
+      numInputPorts?: number;
     }) => {
       try {
         const operator = workflowState.getOperator(args.operatorId);
@@ -537,15 +512,15 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
           }
         }
 
-        // Validate inputPortNames if provided
-        if (args.inputPortNames) {
+        // Validate numInputPorts if provided
+        if (args.numInputPorts !== undefined) {
           if (operator.operatorType !== MULTI_INPUT_OPERATOR_TYPE) {
             return createErrorResult(
-              `inputPortNames is only supported for ${MULTI_INPUT_OPERATOR_TYPE}. ` +
+              `numInputPorts is only supported for ${MULTI_INPUT_OPERATOR_TYPE}. ` +
                 `Operator "${args.operatorId}" is of type "${operator.operatorType}".`
             );
           }
-          const portError = validatePortNames(args.inputPortNames);
+          const portError = validateNumInputPorts(args.numInputPorts);
           if (portError) {
             return createErrorResult(portError);
           }
@@ -555,13 +530,16 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
 
         workflowState.updateOperatorProperties(args.operatorId, args.properties);
 
-        if (args.inputPortNames && args.inputPortNames.length > 0) {
-          workflowState.updateOperatorInputPorts(args.operatorId, args.inputPortNames.length, args.inputPortNames);
+        if (args.numInputPorts !== undefined && args.numInputPorts > 0) {
+          workflowState.updateOperatorInputPorts(args.operatorId, args.numInputPorts);
         }
 
         const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);
         const inputSchema = inputSchemas.get(args.operatorId) || {};
         const outputSchema = outputSchemas.get(args.operatorId) || {};
+
+        // Get the updated operator (may have modified ports)
+        const updatedOperator = workflowState.getOperator(args.operatorId);
 
         const afterContent = workflowState.getWorkflowContent();
         let agentActionId: string | undefined;
@@ -582,6 +560,8 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
         return createSuccessResult(
           {
             operatorId: args.operatorId,
+            inputPorts: updatedOperator?.inputPorts || operator.inputPorts,
+            outputPorts: updatedOperator?.outputPorts || operator.outputPorts,
             inputSchema,
             outputSchema,
             agentActionId,

@@ -28,7 +28,7 @@ import org.apache.amber.operator.LogicalOp
 import org.apache.amber.core.storage.model.VirtualDocument
 import org.apache.amber.core.tuple.Tuple
 import org.apache.amber.core.virtualidentity.{ExecutionIdentity, OperatorIdentity, WorkflowIdentity}
-import org.apache.amber.core.workflow.{PortIdentity, WorkflowSettings}
+import org.apache.amber.core.workflow.{PortIdentity, WorkflowContext, WorkflowSettings}
 import org.apache.amber.engine.architecture.rpc.controlcommands.{ConsoleMessage, ConsoleMessageType}
 import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
@@ -41,7 +41,7 @@ import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
 import org.apache.texera.web.model.websocket.request.{LogicalPlanPojo, WorkflowExecuteRequest}
-import org.apache.texera.workflow.LogicalLink
+import org.apache.texera.workflow.{LogicalLink, WorkflowCompiler}
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.{ExecutionResultService, WorkflowService}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
@@ -161,6 +161,18 @@ class SyncExecutionResource extends LazyLogging {
       // Compute sub-DAG if there's exactly 1 target operator (Execute To behavior)
       val effectiveLogicalPlan =
         computeSubDAGIfNeeded(request.logicalPlan, request.targetOperatorIds)
+
+      // Pre-compile the workflow to catch errors early
+      val compilationErrors = validateWorkflow(workflowId, effectiveLogicalPlan)
+      if (compilationErrors.nonEmpty) {
+        return SyncExecutionResult(
+          success = false,
+          state = "CompilationFailed",
+          operators = Map.empty,
+          compilationErrors = Some(compilationErrors),
+          errors = Some(compilationErrors.values.toList)
+        )
+      }
 
       val executeRequest = WorkflowExecuteRequest(
         executionName = request.executionName,
@@ -701,6 +713,33 @@ class SyncExecutionResource extends LazyLogging {
       opsToViewResult = targetOperatorIds.filter(id => visited.contains(id)),
       opsToReuseResult = logicalPlan.opsToReuseResult.filter(id => visited.contains(id))
     )
+  }
+
+  /**
+    * Validate workflow by attempting to compile it.
+    * Returns a map of operator ID -> error message if there are compilation errors,
+    * or an empty map if compilation succeeds.
+    */
+  private def validateWorkflow(
+      workflowId: Long,
+      logicalPlan: LogicalPlanPojo
+  ): Map[String, String] = {
+    try {
+      val tempContext = new WorkflowContext(WorkflowIdentity(workflowId))
+      val compiler = new WorkflowCompiler(tempContext)
+      compiler.compile(logicalPlan)
+      Map.empty // Compilation succeeded
+    } catch {
+      case e: Exception =>
+        // Extract operator ID from error message if possible
+        val errorMsg = Option(e.getMessage).getOrElse("Compilation failed")
+        // Try to extract operator ID from the error
+        val operatorIdPattern = """operator[- ]?(\S+)""".r
+        val operatorId = operatorIdPattern.findFirstMatchIn(errorMsg.toLowerCase)
+          .map(_.group(1))
+          .getOrElse("workflow")
+        Map(operatorId -> errorMsg)
+    }
   }
 
   @GET

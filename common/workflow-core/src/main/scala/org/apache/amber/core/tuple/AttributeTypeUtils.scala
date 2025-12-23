@@ -370,10 +370,10 @@ object AttributeTypeUtils extends Serializable {
     */
   def inferField(attributeType: AttributeType, fieldValue: Any): AttributeType = {
     attributeType match {
-      case AttributeType.STRING    => tryParseString()
-      case AttributeType.BOOLEAN   => tryParseBoolean(fieldValue)
-      case AttributeType.DOUBLE    => tryParseDouble(fieldValue)
-      case AttributeType.LONG      => tryParseLong(fieldValue)
+      case AttributeType.STRING  => tryParseString()
+      case AttributeType.BOOLEAN => tryParseBoolean(fieldValue)
+      case AttributeType.DOUBLE  => tryParseDouble(fieldValue)
+      case AttributeType.LONG    => tryParseLong(fieldValue)
       // Treat INTEGER as LONG to avoid overflow for large integer values
       case AttributeType.INTEGER   => tryParseLong(fieldValue)
       case AttributeType.TIMESTAMP => tryParseTimestamp(fieldValue)

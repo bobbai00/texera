@@ -231,7 +231,7 @@ object IcebergUtil {
     */
   def toIcebergType(attributeType: AttributeType): PrimitiveType = {
     attributeType match {
-      case AttributeType.STRING    => Types.StringType.get()
+      case AttributeType.STRING => Types.StringType.get()
       // Use LongType for INTEGER to avoid overflow for large integer values
       case AttributeType.INTEGER   => Types.LongType.get()
       case AttributeType.LONG      => Types.LongType.get()

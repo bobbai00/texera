@@ -216,26 +216,22 @@ export class WorkflowState {
 
   /**
    * Update the input ports of an operator (for dynamic input port operators like PythonTableUDF).
-   * This creates the specified number of input ports with the given display names.
+   * This creates the specified number of input ports with generic names (Input 0, Input 1, etc.).
+   * Port naming is handled in Python code via the INPUT_PORTS class variable.
    * @param operatorId The operator ID to update
    * @param numInputPorts The desired number of input ports
-   * @param portDisplayNames Optional array of display names for each port
    * @returns true if successful, false if operator not found
    */
-  updateOperatorInputPorts(
-    operatorId: string,
-    numInputPorts: number,
-    portDisplayNames?: string[]
-  ): boolean {
+  updateOperatorInputPorts(operatorId: string, numInputPorts: number): boolean {
     const operator = this.operators.get(operatorId);
     if (!operator) return false;
 
-    // Create the new input ports array
+    // Create the new input ports array with generic names
     const newInputPorts: import("../types/workflow").PortDescription[] = [];
     for (let i = 0; i < numInputPorts; i++) {
       newInputPorts.push({
         portID: `input-${i}`,
-        displayName: portDisplayNames?.[i] ?? `Input ${i}`,
+        displayName: `Input ${i}`,
         allowMultiInputs: false,
         isDynamicPort: i > 0, // First port is not dynamic, subsequent ports are
       });
