@@ -204,50 +204,63 @@ class SyncExecutionResource extends LazyLogging {
         )
       }
 
-      // Create two termination conditions:
-      // 1. Terminal state (COMPLETED, FAILED, KILLED, TERMINATED)
-      // 2. Console ERROR message (any operator logs an error)
+      // Check if workflow already completed (for very fast executions)
+      // This handles the race condition where execution finishes before Observable subscription
+      val currentState = executionService.executionStateStore.metadataStore.getState
+      val currentConsoleState = executionService.executionStateStore.consoleStore.getState
 
-      // Observable for terminal state
-      val terminalStateObservable: Observable[TerminationReason] =
-        executionService.executionStateStore.metadataStore.getStateObservable
-          .filter((state: ExecutionMetadataStore) => isTerminalState(state.state))
-          .map[TerminationReason](state => TerminalStateReached(state))
+      val terminationReason: TerminationReason =
+        if (isTerminalState(currentState.state)) {
+          // Already in terminal state
+          TerminalStateReached(currentState)
+        } else if (hasConsoleError(currentConsoleState)) {
+          // Already has console error
+          ConsoleErrorDetected(currentConsoleState)
+        } else {
+          // Create two termination conditions:
+          // 1. Terminal state (COMPLETED, FAILED, KILLED, TERMINATED)
+          // 2. Console ERROR message (any operator logs an error)
 
-      // Observable for console ERROR messages
-      val consoleErrorObservable: Observable[TerminationReason] =
-        executionService.executionStateStore.consoleStore.getStateObservable
-          .filter((consoleState: ExecutionConsoleStore) => hasConsoleError(consoleState))
-          .map[TerminationReason](consoleState => ConsoleErrorDetected(consoleState))
+          // Observable for terminal state
+          val terminalStateObservable: Observable[TerminationReason] =
+            executionService.executionStateStore.metadataStore.getStateObservable
+              .filter((state: ExecutionMetadataStore) => isTerminalState(state.state))
+              .map[TerminationReason](state => TerminalStateReached(state))
 
-      // Race between the two conditions - whichever fires first wins
-      val terminationReason =
-        try {
-          Observable
-            .amb(java.util.Arrays.asList(terminalStateObservable, consoleErrorObservable))
-            .firstOrError()
-            .timeout(timeoutSeconds.toLong, TimeUnit.SECONDS)
-            .blockingGet()
-        } catch {
-          case _: java.util.concurrent.TimeoutException =>
-            // Timeout - kill the execution
-            killExecution(executionService)
-            return SyncExecutionResult(
-              success = false,
-              state = "Killed",
-              operators = Map.empty,
-              compilationErrors = None,
-              errors = Some(List(s"Timeout after $timeoutSeconds seconds"))
-            )
-          case e: Exception =>
-            logger.error(s"Error waiting for execution: ${e.getMessage}", e)
-            return SyncExecutionResult(
-              success = false,
-              state = "Error",
-              operators = Map.empty,
-              compilationErrors = None,
-              errors = Some(List(e.getMessage))
-            )
+          // Observable for console ERROR messages
+          val consoleErrorObservable: Observable[TerminationReason] =
+            executionService.executionStateStore.consoleStore.getStateObservable
+              .filter((consoleState: ExecutionConsoleStore) => hasConsoleError(consoleState))
+              .map[TerminationReason](consoleState => ConsoleErrorDetected(consoleState))
+
+          // Race between the two conditions - whichever fires first wins
+          try {
+            Observable
+              .amb(java.util.Arrays.asList(terminalStateObservable, consoleErrorObservable))
+              .firstOrError()
+              .timeout(timeoutSeconds.toLong, TimeUnit.SECONDS)
+              .blockingGet()
+          } catch {
+            case _: java.util.concurrent.TimeoutException =>
+              // Timeout - kill the execution
+              killExecution(executionService)
+              return SyncExecutionResult(
+                success = false,
+                state = "Killed",
+                operators = Map.empty,
+                compilationErrors = None,
+                errors = Some(List(s"Timeout after $timeoutSeconds seconds"))
+              )
+            case e: Exception =>
+              logger.error(s"Error waiting for execution: ${e.getMessage}", e)
+              return SyncExecutionResult(
+                success = false,
+                state = "Error",
+                operators = Map.empty,
+                compilationErrors = None,
+                errors = Some(List(e.getMessage))
+              )
+          }
         }
 
       // Handle termination based on reason
