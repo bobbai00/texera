@@ -92,6 +92,7 @@ Here is the question you need to answer:
 Here are the guidelines you must follow when answering the question above:
 {guidelines}
 
+You MUST identify key concepts from the question, and find the EXACT definition of each concept in the given context files. 
 You MUST follow the guideline to format your answer and your last message MUST be the EXACT answer format
 """
 

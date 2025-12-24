@@ -33,12 +33,6 @@ import org.apache.amber.operator.{
   StateTransferFunc
 }
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
-import org.apache.amber.operator.metadata.annotations.CommonOpDescAnnotation
-import com.kjetland.jackson.jsonSchema.annotations.{
-  JsonSchemaInject,
-  JsonSchemaString,
-  JsonSchemaInt
-}
 
 import scala.util.{Success, Try}
 
@@ -77,11 +71,12 @@ class PythonTableUDFOpDescV2 extends LogicalOp {
         "        # All tables are equivalent to pandas DataFrames\n" +
         "        # You may add print() to the code to debug\n" +
         "        # The code logic should focus on the incoming tables; the logic should be atomic and small\n" +
-        "        # NEVER do any file IO in the code\n"+
+        "        # NEVER do any file IO in the code\n" +
+        "        # outputColumns should be the same as the columns of the result dataframe\n" +
         "        yield self.input_0\n"
   )
   @JsonSchemaTitle("Python script")
-  @JsonPropertyDescription("Input your code here")
+  @JsonPropertyDescription("input your code here")
   var code: String = ""
 
   @JsonProperty(required = true, defaultValue = "1")
@@ -92,15 +87,7 @@ class PythonTableUDFOpDescV2 extends LogicalOp {
   @JsonProperty
   @JsonSchemaTitle("Output column(s)")
   @JsonPropertyDescription(
-    "The output schema of the UDF. When connected, defaults to the input schema."
-  )
-  @JsonSchemaInject(
-    strings = Array(
-      new JsonSchemaString(path = CommonOpDescAnnotation.autofill, value = "attributeList")
-    ),
-    ints = Array(
-      new JsonSchemaInt(path = CommonOpDescAnnotation.autofillAttributeOnPort, value = 0)
-    )
+    "The output schema of the UDF. It should be the same as the columns of the dataframe being yielded in the code"
   )
   var outputColumns: List[Attribute] = List()
 

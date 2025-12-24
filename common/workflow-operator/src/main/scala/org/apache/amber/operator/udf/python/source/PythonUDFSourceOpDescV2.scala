@@ -32,16 +32,27 @@ class PythonUDFSourceOpDescV2 extends SourceOperatorDescriptor {
 
   @JsonProperty(
     required = true,
-    defaultValue = "# from pytexera import *\n" +
-      "# class GenerateOperator(UDFSourceOperator):\n" +
-      "# \n" +
-      "#     @overrides\n" +
-      "#     \n" +
-      "#     def produce(self) -> Iterator[Union[TupleLike, TableLike, None]]:\n" +
-      "#         yield\n"
+    defaultValue =
+      "from pytexera import *\n" +
+        "import pandas as pd\n\n" +
+        "class GenerateOperator(UDFSourceOperator):\n" +
+        "    # This operator can read files and generate output tuples/dataframes\n" +
+        "    # File IO is allowed in this source operator\n\n" +
+        "    @overrides\n" +
+        "    def produce(self) -> Iterator[Union[TupleLike, TableLike, None]]:\n" +
+        "        # Example 1: Read a CSV file and yield as dataframe\n" +
+        "        # df = pd.read_csv('/path/to/file.csv')\n" +
+        "        # yield df\n\n" +
+        "        # Example 2: Read a JSON file and yield as dataframe\n" +
+        "        # df = pd.read_json('/path/to/file.json')\n" +
+        "        # yield df\n\n" +
+        "        # Example 3: Yield individual tuples\n" +
+        "        # yield {'column1': 'value1', 'column2': 'value2'}\n\n" +
+        "        # Make sure 'columns' property matches your output schema\n" +
+        "        yield\n"
   )
   @JsonSchemaTitle("Python script")
-  @JsonPropertyDescription("Input your code here")
+  @JsonPropertyDescription("input your code here")
   var code: String = _
 
   @JsonProperty(required = true, defaultValue = "1")

@@ -256,7 +256,11 @@ class DataProcessor(Runnable, Stoppable):
             return AttributeType.STRING
 
         value_type = type(value)
-        if value_type in FROM_PYOBJECT_MAPPING:
+        # Use LONG for integers to avoid overflow with large values
+        # Python 3 unifies int and long, so always use 64-bit
+        if value_type == int:
+            return AttributeType.LONG
+        elif value_type in FROM_PYOBJECT_MAPPING:
             return FROM_PYOBJECT_MAPPING[value_type]
         else:
             # Default to BINARY for unknown types (will be pickled)

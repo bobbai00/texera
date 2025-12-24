@@ -70,17 +70,8 @@ export interface CompactOperatorSchema {
 // ============================================================================
 
 export const ALLOWED_OPERATOR_TYPES = [
-  "PythonTableUDF",
-  "Filter",
-  "Aggregate",
-  "Projection",
-  "HashJoin",
-  "Sort",
-  "Union",
-  "Intersect",
-  "CartesianProduct",
-  "CSVFileScan",
-  "FileScan",
+  "PythonTableUDF", // Table UDF for processing data (file IO blocked)
+  "PythonUDFSourceV2", // Source operator for reading files (file IO allowed)
 ] as const;
 
 // ============================================================================
