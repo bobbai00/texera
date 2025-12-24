@@ -449,7 +449,15 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
         if (result.success) {
           statusMessage = "Workflow execution completed successfully.";
         } else if (result.state === "Failed") {
-          const errorMsgs = result.errors?.join("; ") || "Unknown error";
+          // Try to get error from result.errors first, then from operator console logs
+          let errorMsgs = result.errors?.join("; ");
+          if (!errorMsgs) {
+            // Extract error from operator console logs
+            const operatorErrors = Object.entries(result.operators)
+              .filter(([_, op]) => op.error)
+              .map(([opId, op]) => `${opId}: ${op.error}`);
+            errorMsgs = operatorErrors.length > 0 ? operatorErrors.join("; ") : "Unknown error";
+          }
           statusMessage = `Workflow execution failed: ${errorMsgs}`;
         } else if (result.state === "Killed") {
           statusMessage = "Workflow execution was killed.";

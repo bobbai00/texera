@@ -276,6 +276,12 @@ class SyncExecutionResource extends LazyLogging {
       // Small delay to ensure results are persisted
       Thread.sleep(500)
 
+      // Get in-memory console state for error extraction (may not be persisted to DB yet)
+      val inMemoryConsoleState = terminationReason match {
+        case ConsoleErrorDetected(consoleState) => Some(consoleState)
+        case _                                  => None
+      }
+
       // Collect results
       val executionId = executionService.workflowContext.executionId
       val operatorInfos = collectOperatorInfos(
@@ -284,7 +290,8 @@ class SyncExecutionResource extends LazyLogging {
         request.targetOperatorIds,
         maxResultRows,
         maxCellTokens,
-        serializationMode
+        serializationMode,
+        inMemoryConsoleState
       )
 
       // Collect fatal errors
@@ -353,7 +360,8 @@ class SyncExecutionResource extends LazyLogging {
       targetOperatorIds: List[String],
       maxResultRows: Int,
       maxCellTokens: Int,
-      serializationMode: String
+      serializationMode: String,
+      inMemoryConsoleState: Option[ExecutionConsoleStore] = None
   ): Map[String, OperatorInfo] = {
     val operatorInfos = mutable.Map[String, OperatorInfo]()
 
@@ -361,12 +369,21 @@ class SyncExecutionResource extends LazyLogging {
     val statsState = executionService.executionStateStore.statsStore.getState
     val operatorStats = statsState.operatorInfo
 
-    // Determine which operators to collect
-    val targetOps = if (targetOperatorIds.nonEmpty) {
+    // Determine which operators to collect - include both target operators and any with console errors
+    val baseTargetOps = if (targetOperatorIds.nonEmpty) {
       targetOperatorIds
     } else {
       operatorStats.keys.toList
     }
+
+    // Also include operators from in-memory console state that have errors
+    val consoleErrorOps = inMemoryConsoleState
+      .map { consoleState =>
+        consoleState.operatorConsole.keys.toList
+      }
+      .getOrElse(List.empty)
+
+    val targetOps = (baseTargetOps ++ consoleErrorOps).distinct
 
     for (opId <- targetOps) {
       val stats = operatorStats.get(opId)
@@ -382,8 +399,25 @@ class SyncExecutionResource extends LazyLogging {
       val (resultMode, resultFormat, result, totalRowCount, displayedRows, truncated) =
         collectOperatorResult(executionId, opId, maxResultRows, maxCellTokens, serializationMode)
 
-      // Get console logs
-      val consoleLogs = collectConsoleLogs(executionId, opId)
+      // Get console logs - first try database, then fallback to in-memory state
+      val dbConsoleLogs = collectConsoleLogs(executionId, opId)
+      val consoleLogs = dbConsoleLogs.orElse {
+        // Fallback to in-memory console state if database logs not available
+        inMemoryConsoleState.flatMap { consoleState =>
+          consoleState.operatorConsole
+            .get(opId)
+            .map { opConsole =>
+              opConsole.consoleMessages.map { msg =>
+                ConsoleMessageInfo(
+                  msgType = msg.msgType.name,
+                  title = msg.title,
+                  message = msg.message
+                )
+              }.toList
+            }
+            .filter(_.nonEmpty)
+        }
+      }
 
       // Check for error in console logs
       val errorMsg = consoleLogs.flatMap(
