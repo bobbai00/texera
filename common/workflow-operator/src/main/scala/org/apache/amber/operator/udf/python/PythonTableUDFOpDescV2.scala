@@ -67,13 +67,16 @@ class PythonTableUDFOpDescV2 extends LogicalOp {
     defaultValue =
       "from pytexera import *\n\n" +
         "class ProcessTablesOperator(UDFMultiTableOperator):\n" +
+        "    # Never change the class name above\n" +
         "    # Declare input port names - these become self.<name> attributes\n" +
         "    INPUT_PORTS = [\"input_0\"]  # Update with your port names\n" +
         "\n" +
         "    def process_tables(self) -> Iterator[Optional[TableLike]]:\n" +
         "        # Access tables via self.<port_name>, e.g.:\n" +
         "        # - self.input_0 for port 0\n" +
-        "        # All tables are pandas DataFrames\n" +
+        "        # All tables are equivalent to pandas DataFrames\n" +
+        "        # You may add print() to the code to debug\n" +
+        "        # Keep the logic in the UDF atomic and small\n" +
         "        yield self.input_0\n"
   )
   @JsonSchemaTitle("Python script")
