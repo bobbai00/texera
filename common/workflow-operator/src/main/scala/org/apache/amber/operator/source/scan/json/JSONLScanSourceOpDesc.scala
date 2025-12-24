@@ -69,7 +69,11 @@ class JSONLScanSourceOpDesc extends ScanSourceOpDesc {
 
   override def sourceSchema(): Schema = {
     if (!fileResolved()) {
-      return null
+      throw new RuntimeException(
+        s"File path is not resolved for operator ${operatorIdentifier.id}. " +
+          s"fileName=${fileName.getOrElse("not set")}. " +
+          "Ensure the file exists and is accessible."
+      )
     }
     val stream = DocumentFactory.openReadonlyDocument(new URI(fileName.get)).asInputStream()
     val reader = new BufferedReader(new InputStreamReader(stream, fileEncoding.getCharset))

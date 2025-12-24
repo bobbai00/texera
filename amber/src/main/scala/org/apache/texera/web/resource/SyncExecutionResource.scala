@@ -748,7 +748,8 @@ class SyncExecutionResource extends LazyLogging {
         val errorMsg = Option(e.getMessage).getOrElse("Compilation failed")
         // Try to extract operator ID from the error
         val operatorIdPattern = """operator[- ]?(\S+)""".r
-        val operatorId = operatorIdPattern.findFirstMatchIn(errorMsg.toLowerCase)
+        val operatorId = operatorIdPattern
+          .findFirstMatchIn(errorMsg.toLowerCase)
           .map(_.group(1))
           .getOrElse("workflow")
         Map(operatorId -> errorMsg)

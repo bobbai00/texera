@@ -530,10 +530,24 @@ class RegionExecutionCoordinator(
       case (outputPortId, portConfig) =>
         val storageUriToAdd = portConfig.storageURI
         val (_, eid, _, _) = decodeURI(storageUriToAdd)
-        val schemaOptional =
+        val schemaEither =
           region.getOperator(outputPortId.opId).outputPorts(outputPortId.portId)._3
-        val schema =
-          schemaOptional.getOrElse(throw new IllegalStateException("Schema is missing"))
+        val schema = schemaEither match {
+          case Right(s) =>
+            if (s == null) {
+              throw new IllegalStateException(
+                s"Schema is null for operator ${outputPortId.opId} port ${outputPortId.portId}. " +
+                  "This usually means the source operator could not infer schema (e.g., file not resolved or not accessible)."
+              )
+            }
+            s
+          case Left(exception) =>
+            throw new IllegalStateException(
+              s"Schema propagation failed for operator ${outputPortId.opId} port ${outputPortId.portId}: " +
+                s"${exception.getClass.getSimpleName}: ${exception.getMessage}",
+              exception
+            )
+        }
         DocumentFactory.createDocument(storageUriToAdd, schema)
         WorkflowExecutionsResource.insertOperatorPortResultUri(
           eid = eid,

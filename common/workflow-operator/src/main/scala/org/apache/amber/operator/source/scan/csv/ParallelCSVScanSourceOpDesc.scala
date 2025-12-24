@@ -55,11 +55,6 @@ class ParallelCSVScanSourceOpDesc extends ScanSourceOpDesc {
       workflowId: WorkflowIdentity,
       executionId: ExecutionIdentity
   ): PhysicalOp = {
-    // fill in default values
-    if (customDelimiter.get.isEmpty) {
-      customDelimiter = Option(",")
-    }
-
     PhysicalOp
       .sourcePhysicalOp(
         workflowId,
@@ -79,13 +74,17 @@ class ParallelCSVScanSourceOpDesc extends ScanSourceOpDesc {
   }
 
   override def sourceSchema(): Schema = {
-    if (customDelimiter.isEmpty || !fileResolved()) {
-      return null
+    if (!fileResolved()) {
+      throw new RuntimeException(
+        s"File path is not resolved for operator ${operatorIdentifier.id}. " +
+          s"fileName=${fileName.getOrElse("not set")}. " +
+          "Ensure the file exists and is accessible."
+      )
     }
+    val delimiterChar = customDelimiter.filterNot(_.isEmpty).getOrElse(",").charAt(0)
     val file = DocumentFactory.openReadonlyDocument(new URI(fileName.get)).asFile()
     implicit object CustomFormat extends DefaultCSVFormat {
-      override val delimiter: Char = customDelimiter.get.charAt(0)
-
+      override val delimiter: Char = delimiterChar
     }
     var reader: CSVReader = CSVReader.open(file)(CustomFormat)
     val firstRow: Array[String] = reader.iterator.next().toArray

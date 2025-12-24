@@ -85,9 +85,11 @@ class AggregateOpDesc extends LogicalOp {
 
     val finalInputPort = InputPort(PortIdentity(0, internal = true))
     val finalOutputPort = OutputPort(PortIdentity(0), blocking = true)
-    // change aggregations to final
+    // change aggregations to final for serialization only - restore afterwards to keep method idempotent
+    val originalAggregations = aggregations
     aggregations = aggregations.map(aggr => aggr.getFinal)
     val finalDesc = objectMapper.writeValueAsString(this)
+    aggregations = originalAggregations // restore to avoid side effects on repeated calls
 
     val finalPhysicalOp = PhysicalOp
       .oneToOnePhysicalOp(

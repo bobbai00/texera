@@ -54,11 +54,6 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc {
       workflowId: WorkflowIdentity,
       executionId: ExecutionIdentity
   ): PhysicalOp = {
-    // fill in default values
-    if (customDelimiter.isEmpty || customDelimiter.get.isEmpty) {
-      customDelimiter = Option(",")
-    }
-
     PhysicalOp
       .sourcePhysicalOp(
         workflowId,
@@ -77,15 +72,20 @@ class CSVScanSourceOpDesc extends ScanSourceOpDesc {
   }
 
   override def sourceSchema(): Schema = {
-    if (customDelimiter.isEmpty || !fileResolved()) {
-      return null
+    if (!fileResolved()) {
+      throw new RuntimeException(
+        s"File path is not resolved for operator ${operatorIdentifier.id}. " +
+          s"fileName=${fileName.getOrElse("not set")}. " +
+          "Ensure the file exists and is accessible."
+      )
     }
+    val delimiter = customDelimiter.filterNot(_.isEmpty).getOrElse(",")
     val stream = DocumentFactory.openReadonlyDocument(new URI(fileName.get)).asInputStream()
     val inputReader =
       new InputStreamReader(stream, fileEncoding.getCharset)
 
     val csvFormat = new CsvFormat()
-    csvFormat.setDelimiter(customDelimiter.get.charAt(0))
+    csvFormat.setDelimiter(delimiter.charAt(0))
     csvFormat.setLineSeparator("\n")
     val csvSetting = new CsvParserSettings()
     csvSetting.setMaxCharsPerColumn(-1)
