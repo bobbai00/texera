@@ -19,47 +19,15 @@
 
 package org.apache.amber.operator.source.scan
 
-import com.fasterxml.jackson.annotation.{JsonIgnoreProperties, JsonProperty}
-import com.kjetland.jackson.jsonSchema.annotations.{
-  JsonSchemaInject,
-  JsonSchemaString,
-  JsonSchemaTitle
-}
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import org.apache.amber.core.executor.OpExecWithClassName
 import org.apache.amber.core.tuple.{AttributeType, Schema}
 import org.apache.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.amber.core.workflow.{PhysicalOp, SchemaPropagationFunc}
-import org.apache.amber.operator.metadata.annotations.HideAnnotation
-import org.apache.amber.operator.source.scan.text.TextSourceOpDesc
 import org.apache.amber.util.JSONUtils.objectMapper
 
 @JsonIgnoreProperties(value = Array("limit", "offset", "fileEncoding"))
-class FileScanSourceOpDesc extends ScanSourceOpDesc with TextSourceOpDesc {
-  @JsonProperty(defaultValue = "UTF_8", required = true)
-  @JsonSchemaTitle("Encoding")
-  @JsonSchemaInject(
-    strings = Array(
-      new JsonSchemaString(path = HideAnnotation.hideTarget, value = "attributeType"),
-      new JsonSchemaString(path = HideAnnotation.hideType, value = HideAnnotation.Type.equals),
-      new JsonSchemaString(path = HideAnnotation.hideExpectedValue, value = "binary")
-    )
-  )
-  private val encoding: FileDecodingMethod = FileDecodingMethod.UTF_8
-
-  @JsonProperty(defaultValue = "false")
-  @JsonSchemaTitle("Extract")
-  val extract: Boolean = false
-
-  @JsonProperty(defaultValue = "false")
-  @JsonSchemaTitle("Include Filename")
-  @JsonSchemaInject(
-    strings = Array(
-      new JsonSchemaString(path = HideAnnotation.hideTarget, value = "extract"),
-      new JsonSchemaString(path = HideAnnotation.hideType, value = HideAnnotation.Type.equals),
-      new JsonSchemaString(path = HideAnnotation.hideExpectedValue, value = "false")
-    )
-  )
-  val outputFileName: Boolean = false
+class FileScanSourceOpDesc extends ScanSourceOpDesc {
 
   fileTypeName = Option("")
 
@@ -85,10 +53,6 @@ class FileScanSourceOpDesc extends ScanSourceOpDesc with TextSourceOpDesc {
   }
 
   override def sourceSchema(): Schema = {
-    var schema = Schema()
-    if (outputFileName) {
-      schema = schema.add("filename", AttributeType.STRING)
-    }
-    schema.add(attributeName, attributeType.getType)
+    Schema().add("content", AttributeType.STRING)
   }
 }

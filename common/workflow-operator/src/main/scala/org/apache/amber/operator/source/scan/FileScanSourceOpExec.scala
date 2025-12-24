@@ -21,18 +21,13 @@ package org.apache.amber.operator.source.scan
 
 import org.apache.amber.core.executor.SourceOperatorExecutor
 import org.apache.amber.core.storage.DocumentFactory
-import org.apache.amber.core.tuple.AttributeTypeUtils.parseField
-import org.apache.amber.core.tuple.{BigObject, TupleLike}
+import org.apache.amber.core.tuple.TupleLike
 import org.apache.amber.util.JSONUtils.objectMapper
-import org.apache.texera.service.util.BigObjectOutputStream
-import org.apache.commons.compress.archivers.ArchiveStreamFactory
-import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream
-import org.apache.commons.io.IOUtils.toByteArray
+import org.apache.commons.io.IOUtils
 
 import java.io._
 import java.net.URI
-import scala.collection.mutable
-import scala.jdk.CollectionConverters.IteratorHasAsScala
+import java.nio.charset.StandardCharsets
 
 class FileScanSourceOpExec private[scan] (
     descString: String
@@ -42,87 +37,14 @@ class FileScanSourceOpExec private[scan] (
 
   @throws[IOException]
   override def produceTuple(): Iterator[TupleLike] = {
-    val is: InputStream =
+    val inputStream: InputStream =
       DocumentFactory.openReadonlyDocument(new URI(desc.fileName.get)).asInputStream()
 
-    val closeables = mutable.ArrayBuffer.empty[AutoCloseable]
-    var zipIn: ZipArchiveInputStream = null
-    var archiveStream: InputStream = null
-    if (desc.extract) {
-      zipIn = new ArchiveStreamFactory()
-        .createArchiveInputStream(new BufferedInputStream(is))
-        .asInstanceOf[ZipArchiveInputStream]
-      archiveStream = zipIn
-      closeables += zipIn
-    } else {
-      archiveStream = is
-      closeables += is
+    try {
+      val content = IOUtils.toString(inputStream, StandardCharsets.UTF_8)
+      Iterator.single(TupleLike(content))
+    } finally {
+      inputStream.close()
     }
-
-    var filenameIt: Iterator[String] = Iterator.empty
-    val fileEntries: Iterator[InputStream] = {
-      if (desc.extract) {
-        val (it1, it2) = Iterator
-          .continually(zipIn.getNextEntry)
-          .takeWhile(_ != null)
-          .filterNot(_.getName.startsWith("__MACOSX"))
-          .duplicate
-        filenameIt = it1.map(_.getName)
-        it2.map(_ => zipIn)
-      } else {
-        Iterator(archiveStream)
-      }
-    }
-
-    val rawIterator: Iterator[TupleLike] =
-      if (desc.attributeType.isSingle) {
-        fileEntries.zipAll(filenameIt, null, null).map {
-          case (entry, fileName) =>
-            val fields: mutable.ListBuffer[Any] = mutable.ListBuffer()
-            if (desc.outputFileName) {
-              fields.addOne(fileName)
-            }
-            fields.addOne(desc.attributeType match {
-              case FileAttributeType.SINGLE_STRING =>
-                new String(toByteArray(entry), desc.fileEncoding.getCharset)
-              case FileAttributeType.BIG_OBJECT =>
-                // For big objects, create reference and upload via streaming
-                val bigObject = new BigObject()
-                val out = new BigObjectOutputStream(bigObject)
-                try {
-                  val buffer = new Array[Byte](8192)
-                  var bytesRead = entry.read(buffer)
-                  while (bytesRead != -1) {
-                    out.write(buffer, 0, bytesRead)
-                    bytesRead = entry.read(buffer)
-                  }
-                } finally {
-                  out.close()
-                }
-                bigObject
-              case _ => parseField(toByteArray(entry), desc.attributeType.getType)
-            })
-            TupleLike(fields.toSeq: _*)
-        }
-      } else {
-        fileEntries.flatMap(entry =>
-          new BufferedReader(new InputStreamReader(entry, desc.fileEncoding.getCharset))
-            .lines()
-            .iterator()
-            .asScala
-            .slice(
-              desc.fileScanOffset.getOrElse(0),
-              desc.fileScanOffset.getOrElse(0) + desc.fileScanLimit.getOrElse(Int.MaxValue)
-            )
-            .map(line => {
-              TupleLike(desc.attributeType match {
-                case FileAttributeType.SINGLE_STRING => line
-                case _                               => parseField(line, desc.attributeType.getType)
-              })
-            })
-        )
-      }
-
-    new AutoClosingIterator(rawIterator, () => closeables.foreach(_.close()))
   }
 }
