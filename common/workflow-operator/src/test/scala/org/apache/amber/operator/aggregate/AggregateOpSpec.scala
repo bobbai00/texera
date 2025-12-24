@@ -53,12 +53,12 @@ class AggregateOpSpec extends AnyFunSuite {
     assert(attr.getType == AttributeType.DOUBLE)
   }
 
-  test("getAggregationAttribute maps COUNT result to INTEGER regardless of input type") {
+  test("getAggregationAttribute maps COUNT result to LONG regardless of input type") {
     val operation = makeAggregationOp(AggregationFunction.COUNT, "quantity", "row_count")
     val attr = operation.getAggregationAttribute(AttributeType.LONG)
 
     assert(attr.getName == "row_count")
-    assert(attr.getType == AttributeType.INTEGER)
+    assert(attr.getType == AttributeType.LONG)
   }
 
   test("getAggregationAttribute maps CONCAT result type to STRING") {

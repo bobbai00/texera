@@ -32,8 +32,8 @@ object ResultSchema {
     new Attribute("dataProcessingTime", AttributeType.LONG),
     new Attribute("controlProcessingTime", AttributeType.LONG),
     new Attribute("idleTime", AttributeType.LONG),
-    new Attribute("numWorkers", AttributeType.INTEGER),
-    new Attribute("status", AttributeType.INTEGER)
+    new Attribute("numWorkers", AttributeType.LONG),
+    new Attribute("status", AttributeType.LONG)
   )
 
   val consoleMessagesSchema: Schema = new Schema(

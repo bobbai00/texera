@@ -263,7 +263,10 @@ object IcebergUtil {
           case ts: Timestamp        => ts.toInstant.atZone(ZoneId.systemDefault()).toLocalDateTime
           case bytes: Array[Byte]   => ByteBuffer.wrap(bytes)
           case bigObjPtr: BigObject => bigObjPtr.getUri
-          case other                => other
+          // Convert Integer to Long since Iceberg uses LongType for INTEGER to avoid overflow
+          case int: java.lang.Integer if attribute.getType == AttributeType.INTEGER =>
+            java.lang.Long.valueOf(int.longValue())
+          case other => other
         }
         record.setField(fieldName, value)
     }

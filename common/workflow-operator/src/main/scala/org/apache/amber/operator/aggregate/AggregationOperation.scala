@@ -78,7 +78,7 @@ class AggregationOperation {
   def getAggregationAttribute(attrType: AttributeType): Attribute = {
     val resultAttrType = this.aggFunction match {
       case AggregationFunction.SUM     => attrType
-      case AggregationFunction.COUNT   => AttributeType.INTEGER
+      case AggregationFunction.COUNT   => AttributeType.LONG
       case AggregationFunction.AVERAGE => AttributeType.DOUBLE
       case AggregationFunction.MIN     => attrType
       case AggregationFunction.MAX     => attrType
@@ -138,14 +138,14 @@ class AggregationOperation {
     )
   }
 
-  private def countAgg(): DistributedAggregation[Integer] = {
-    new DistributedAggregation[Integer](
-      () => 0,
+  private def countAgg(): DistributedAggregation[java.lang.Long] = {
+    new DistributedAggregation[java.lang.Long](
+      () => 0L,
       (partial, tuple) => {
         val inc =
-          if (attribute == null) 1
-          else if (tuple.getField(attribute) != null) 1
-          else 0
+          if (attribute == null) 1L
+          else if (tuple.getField(attribute) != null) 1L
+          else 0L
         partial + inc
       },
       (partial1, partial2) => partial1 + partial2,

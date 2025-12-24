@@ -255,8 +255,8 @@ class ExecutionStatsService(
               stat.operatorStatistics.dataProcessingTime,
               stat.operatorStatistics.controlProcessingTime,
               stat.operatorStatistics.idleTime,
-              stat.operatorStatistics.numWorkers,
-              maptoStatusCode(stat.operatorState).toInt
+              stat.operatorStatistics.numWorkers.toLong,
+              maptoStatusCode(stat.operatorState).toLong
             )
           )
           runtimeStatsWriter.putOne(runtimeStats)
