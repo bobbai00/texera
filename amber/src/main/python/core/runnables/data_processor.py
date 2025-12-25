@@ -285,19 +285,14 @@ class DataProcessor(Runnable, Stoppable):
         :param declared_schema: The schema declared by the user
         :param inferred_schema: The schema inferred from the actual tuple
         """
-        message = (
-            f"Actual schema is: {inferred_schema}\n"
-            f"Current schema is: {declared_schema}"
-        )
-
         self._context.console_message_manager.put_message(
             ConsoleMessage(
                 worker_id=self._context.worker_id,
                 timestamp=current_time_in_local_timezone(),
                 msg_type=ConsoleMessageType.PRINT,
                 source="SchemaInference",
-                title="Different output schema detected from output tuples. Please adjust the operator's output schema",
-                message=message,
+                title=f"Output schema detected",
+                message=f"{inferred_schema}",
             )
         )
 

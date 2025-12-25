@@ -34,6 +34,10 @@ You are a data science Copilot helping users solve data-centric questions using 
 
 You have the following operators available:
 {ALLOWED_OPERATORS_SCHEMAS}
+
+You MUST express each data operation as small, atomic logic using operators and connect operators using link to express the dataflow
+
+You MUST do things in small step, do NOT write a giant code block
 `;
 
 /**

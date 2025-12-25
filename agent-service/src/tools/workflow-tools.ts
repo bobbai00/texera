@@ -25,12 +25,11 @@ import { z } from "zod";
 import { tool } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
 import { generateLinkId } from "../workflow/workflow-state";
-import { WorkflowUtilService, extractOperatorInputPortSchemaMap } from "../workflow/workflow-util";
-import type { OperatorLink, OperatorDetail, OperatorPortSchemaMap, OperatorPredicate } from "../types/workflow";
+import { WorkflowUtilService } from "../workflow/workflow-util";
+import type { OperatorLink, OperatorDetail, OperatorPredicate } from "../types/workflow";
 import { createSuccessResult, createErrorResult } from "./tools-utility";
 import { type OperatorMetadataStore, formatValidationErrors } from "./metadata-tools";
 import type { AgentActionManager } from "../agent/agent-action-manager";
-import { compileWorkflowAsync, type WorkflowCompilationResponse } from "../api/compile-api";
 
 // ============================================================================
 // Types for tool context
@@ -51,54 +50,6 @@ export interface ToolContext {
     /** Workflow execution timeout in milliseconds */
     executionTimeoutMs?: number;
   };
-}
-
-// ============================================================================
-// Helper: Compile workflow and extract schemas
-// ============================================================================
-
-/**
- * Compile the workflow and return operator schemas.
- * Returns maps of operatorId -> inputSchema and operatorId -> outputSchema.
- */
-async function compileAndGetSchemas(workflowState: WorkflowState): Promise<{
-  inputSchemas: Map<string, OperatorPortSchemaMap>;
-  outputSchemas: Map<string, OperatorPortSchemaMap>;
-  compilationResponse: WorkflowCompilationResponse | null;
-}> {
-  const inputSchemas = new Map<string, OperatorPortSchemaMap>();
-  const outputSchemas = new Map<string, OperatorPortSchemaMap>();
-
-  const logicalPlan = workflowState.toLogicalPlan();
-  if (logicalPlan.operators.length === 0) {
-    return { inputSchemas, outputSchemas, compilationResponse: null };
-  }
-
-  const response = await compileWorkflowAsync(logicalPlan);
-  if (!response || !response.operatorOutputSchemas) {
-    return { inputSchemas, outputSchemas, compilationResponse: response };
-  }
-
-  // Store output schemas
-  for (const [operatorId, portSchemaMap] of Object.entries(response.operatorOutputSchemas)) {
-    outputSchemas.set(operatorId, portSchemaMap);
-  }
-
-  // Derive input schemas from output schemas based on links
-  const links = workflowState.getAllLinks();
-  for (const operator of workflowState.getAllOperators()) {
-    const inputSchema = extractOperatorInputPortSchemaMap(
-      operator.operatorID,
-      operator,
-      response.operatorOutputSchemas,
-      links
-    );
-    if (inputSchema) {
-      inputSchemas.set(operator.operatorID, inputSchema);
-    }
-  }
-
-  return { inputSchemas, outputSchemas, compilationResponse: response };
 }
 
 // ============================================================================
@@ -156,9 +107,6 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
     }),
     execute: async (args: { operatorIds?: string[] }) => {
       try {
-        // Compile workflow to get fresh schemas
-        const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);
-
         const links = workflowState.getAllLinks();
         let operatorsToReturn: OperatorDetail[];
 
@@ -174,8 +122,6 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
                 operatorProperties: operator.operatorProperties,
                 inputPorts: operator.inputPorts,
                 outputPorts: operator.outputPorts,
-                inputSchema: inputSchemas.get(operatorId) || {},
-                outputSchema: outputSchemas.get(operatorId) || {},
               };
               if (operator.customDisplayName) {
                 detail.customDisplayName = operator.customDisplayName;
@@ -191,8 +137,6 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
               operatorProperties: operator.operatorProperties,
               inputPorts: operator.inputPorts,
               outputPorts: operator.outputPorts,
-              inputSchema: inputSchemas.get(operator.operatorID) || {},
-              outputSchema: outputSchemas.get(operator.operatorID) || {},
             };
             if (operator.customDisplayName) {
               detail.customDisplayName = operator.customDisplayName;
@@ -314,10 +258,6 @@ export function createAddOperatorTool(
           workflowState.updateOperatorInputPorts(operator.operatorID, args.numInputPorts);
         }
 
-        const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);
-        const inputSchema = inputSchemas.get(operator.operatorID) || {};
-        const outputSchema = outputSchemas.get(operator.operatorID) || {};
-
         // Get the updated operator (may have modified ports)
         const updatedOperator = workflowState.getOperator(operator.operatorID);
 
@@ -343,8 +283,6 @@ export function createAddOperatorTool(
             operatorType: args.operatorType,
             inputPorts: updatedOperator?.inputPorts || operator.inputPorts,
             outputPorts: updatedOperator?.outputPorts || operator.outputPorts,
-            inputSchema,
-            outputSchema,
             agentActionId,
             message: `Added operator ${operator.operatorID} of type ${args.operatorType}`,
           },
@@ -424,10 +362,6 @@ export function createAddLinkTool(workflowState: WorkflowState, context?: ToolCo
 
         workflowState.addLink(link);
 
-        const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);
-        const targetInputSchema = inputSchemas.get(args.targetOperatorId) || {};
-        const targetOutputSchema = outputSchemas.get(args.targetOperatorId) || {};
-
         const afterContent = workflowState.getWorkflowContent();
         let agentActionId: string | undefined;
 
@@ -450,7 +384,6 @@ export function createAddLinkTool(workflowState: WorkflowState, context?: ToolCo
             agentActionId,
             source: link.source,
             target: link.target,
-            targetOperatorSchema: { inputSchema: targetInputSchema, outputSchema: targetOutputSchema },
             message: `Added link from ${args.sourceOperatorId} to ${args.targetOperatorId} (port: ${targetPortId})`,
           },
           [args.sourceOperatorId, args.targetOperatorId],
@@ -534,10 +467,6 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
           workflowState.updateOperatorInputPorts(args.operatorId, args.numInputPorts);
         }
 
-        const { inputSchemas, outputSchemas } = await compileAndGetSchemas(workflowState);
-        const inputSchema = inputSchemas.get(args.operatorId) || {};
-        const outputSchema = outputSchemas.get(args.operatorId) || {};
-
         // Get the updated operator (may have modified ports)
         const updatedOperator = workflowState.getOperator(args.operatorId);
 
@@ -562,8 +491,6 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
             operatorId: args.operatorId,
             inputPorts: updatedOperator?.inputPorts || operator.inputPorts,
             outputPorts: updatedOperator?.outputPorts || operator.outputPorts,
-            inputSchema,
-            outputSchema,
             agentActionId,
             updatedProperties: args.properties,
             message: `Modified operator ${args.operatorId}`,

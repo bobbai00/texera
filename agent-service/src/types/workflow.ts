@@ -209,7 +209,7 @@ export type OperatorPortSchemaMap = Record<string, PortSchema | undefined>;
 // ============================================================================
 
 /**
- * Operator detail information including properties, schemas, and ports
+ * Operator detail information including properties and ports
  */
 export interface OperatorDetail {
   operatorId: string;
@@ -218,6 +218,4 @@ export interface OperatorDetail {
   operatorProperties: Record<string, any>;
   inputPorts: PortDescription[];
   outputPorts: PortDescription[];
-  inputSchema: Record<string, any>;
-  outputSchema: Record<string, any>;
 }

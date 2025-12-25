@@ -19,11 +19,10 @@
 
 package org.apache.amber.operator.udf.python
 
-import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
-import com.google.common.base.Preconditions
+import com.fasterxml.jackson.annotation.{JsonIgnoreProperties, JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.amber.core.executor.OpExecWithCode
-import org.apache.amber.core.tuple.{Attribute, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.amber.core.workflow._
 import org.apache.amber.operator.{
@@ -72,30 +71,16 @@ class PythonTableUDFOpDescV2 extends LogicalOp {
         "        # You may add print() to the code to debug\n" +
         "        # The code logic should focus on the incoming tables; the logic should be atomic and small\n" +
         "        # NEVER do any file IO in the code\n" +
-        "        # outputColumns should be the same as the columns of the result dataframe\n" +
         "        yield self.input_0\n"
   )
   @JsonSchemaTitle("Python script")
   @JsonPropertyDescription("input your code here")
   var code: String = ""
 
-  @JsonProperty(required = true, defaultValue = "1")
-  @JsonSchemaTitle("Worker count")
-  @JsonPropertyDescription("Specify how many parallel workers to launch")
-  var workers: Int = Int.box(1)
-
-  @JsonProperty
-  @JsonSchemaTitle("Output column(s)")
-  @JsonPropertyDescription(
-    "The output schema of the UDF. It should be the same as the columns of the dataframe being yielded in the code"
-  )
-  var outputColumns: List[Attribute] = List()
-
   override def getPhysicalOp(
       workflowId: WorkflowIdentity,
       executionId: ExecutionIdentity
   ): PhysicalOp = {
-    Preconditions.checkArgument(workers >= 1, "Need at least 1 worker.", Array())
     val opInfo = this.operatorInfo
     val partitionRequirement: List[Option[PartitionInfo]] = if (inputPorts != null) {
       inputPorts.map(p => Option(p.partitionRequirement))
@@ -113,15 +98,9 @@ class PythonTableUDFOpDescV2 extends LogicalOp {
           PythonCodeValidator.generatePythonCodeForRaisingException(ex)
       }
 
-    val propagateSchema = (inputSchemas: Map[PortIdentity, Schema]) => {
-      // outputColumns is the source of truth for the output schema
-      val outputSchema = if (outputColumns != null && outputColumns.nonEmpty) {
-        Schema().add(outputColumns)
-      } else {
-        Schema()
-      }
-
-      Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    // Schema is always empty - runtime inference handles actual schema
+    val propagateSchema = (_: Map[PortIdentity, Schema]) => {
+      Map(operatorInfo.outputPorts.head.id -> Schema())
     }
 
     // PythonTableUDF always uses manyToOne since it needs to collect all data
@@ -170,7 +149,7 @@ class PythonTableUDFOpDescV2 extends LogicalOp {
 
     OperatorInfo(
       "Python Table UDF",
-      "Process multiple input tables together with named port access",
+      "Process 1 or more input tables together with certain logic",
       OperatorGroupConstants.PYTHON_GROUP,
       inputPortInfo,
       outputPortInfo,

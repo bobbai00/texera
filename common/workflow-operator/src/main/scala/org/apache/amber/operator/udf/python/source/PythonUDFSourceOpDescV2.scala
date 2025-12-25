@@ -19,10 +19,10 @@
 
 package org.apache.amber.operator.udf.python.source
 
-import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
+import com.fasterxml.jackson.annotation.{JsonIgnoreProperties, JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.amber.core.executor.OpExecWithCode
-import org.apache.amber.core.tuple.{Attribute, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.amber.core.workflow.{OutputPort, PhysicalOp, SchemaPropagationFunc}
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
@@ -48,51 +48,33 @@ class PythonUDFSourceOpDescV2 extends SourceOperatorDescriptor {
         "        # yield df\n\n" +
         "        # Example 3: Yield individual tuples\n" +
         "        # yield {'column1': 'value1', 'column2': 'value2'}\n\n" +
-        "        # Make sure 'columns' property matches your output schema\n" +
         "        yield\n"
   )
   @JsonSchemaTitle("Python script")
   @JsonPropertyDescription("input your code here")
   var code: String = _
 
-  @JsonProperty(required = true, defaultValue = "1")
-  @JsonSchemaTitle("Worker count")
-  @JsonPropertyDescription("Specify how many parallel workers to launch")
-  var workers: Int = 1
-
-  @JsonProperty()
-  @JsonSchemaTitle("Columns")
-  @JsonPropertyDescription("The columns of the source")
-  var columns: List[Attribute] = List.empty
-
   override def getPhysicalOp(
       workflowId: WorkflowIdentity,
       executionId: ExecutionIdentity
   ): PhysicalOp = {
-    require(workers >= 1, "Need at least 1 worker.")
-    val physicalOp = PhysicalOp
+    // Always use single worker, schema is empty - runtime inference handles actual schema
+    PhysicalOp
       .sourcePhysicalOp(workflowId, executionId, operatorIdentifier, OpExecWithCode(code, "python"))
       .withInputPorts(operatorInfo.inputPorts)
       .withOutputPorts(operatorInfo.outputPorts)
       .withIsOneToManyOp(true)
       .withPropagateSchema(
-        SchemaPropagationFunc(_ => Map(operatorInfo.outputPorts.head.id -> sourceSchema()))
+        SchemaPropagationFunc(_ => Map(operatorInfo.outputPorts.head.id -> Schema()))
       )
       .withLocationPreference(Option.empty)
-
-    if (workers > 1) {
-      physicalOp
-        .withParallelizable(true)
-        .withSuggestedWorkerNum(workers)
-    } else {
-      physicalOp.withParallelizable(false)
-    }
+      .withParallelizable(false)
   }
 
   override def operatorInfo: OperatorInfo = {
     OperatorInfo(
       "1-out Python UDF",
-      "User-defined function operator in Python script",
+      "Load the source data file as a single table to be processed by the downstream",
       OperatorGroupConstants.PYTHON_GROUP,
       List.empty, // No input ports for a source operator
       List(OutputPort()),
@@ -100,11 +82,5 @@ class PythonUDFSourceOpDescV2 extends SourceOperatorDescriptor {
     )
   }
 
-  override def sourceSchema(): Schema = {
-    if (columns != null && columns.nonEmpty) {
-      Schema().add(columns)
-    } else {
-      Schema()
-    }
-  }
+  override def sourceSchema(): Schema = Schema()
 }
