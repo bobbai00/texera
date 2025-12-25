@@ -163,8 +163,8 @@ export interface AgentMessageStats {
 export enum OperatorResultSerializationMode {
   /** JSON array of objects (default) */
   JSON = "json",
-  /** CSV format: header\nrow\nrow\n (more compact) */
-  CSV = "csv",
+  /** Table format: header\nrow\nrow\n (more compact) */
+  TABLE = "table",
 }
 
 /**
@@ -179,7 +179,7 @@ export interface AgentSettings {
   maxOperatorResultTokenLimit: number;
   /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
   maxOperatorResultCellTokenLimit: number;
-  /** Serialization mode for operator results (json or csv) */
+  /** Serialization mode for operator results (json or table) */
   operatorResultSerializationMode: OperatorResultSerializationMode;
   /** Tool execution timeout in milliseconds */
   toolTimeoutMs: number;
@@ -198,7 +198,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   disabledTools: new Set(),
   maxOperatorResultTokenLimit: 20000,
   maxOperatorResultCellTokenLimit: 10000,
-  operatorResultSerializationMode: OperatorResultSerializationMode.CSV,
+  operatorResultSerializationMode: OperatorResultSerializationMode.TABLE,
   toolTimeoutMs: 240000, // 2 minutes
   executionTimeoutMs: 240000, // 10 minutes
   maxSteps: 100,
@@ -243,8 +243,8 @@ export interface AgentSettingsApi {
   maxOperatorResultTokenLimit?: number;
   /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
   maxOperatorResultCellTokenLimit?: number;
-  /** Serialization mode for operator results: "json" or "csv" */
-  operatorResultSerializationMode?: "json" | "csv";
+  /** Serialization mode for operator results: "json" or "table" */
+  operatorResultSerializationMode?: "json" | "table";
   /** Tool execution timeout in seconds */
   toolTimeoutSeconds?: number;
   /** Workflow execution timeout in minutes */
@@ -296,8 +296,8 @@ export interface UpdateAgentSettingsRequest {
   maxOperatorResultTokenLimit?: number;
   /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
   maxOperatorResultCellTokenLimit?: number;
-  /** Serialization mode for operator results: "json" or "csv" */
-  operatorResultSerializationMode?: "json" | "csv";
+  /** Serialization mode for operator results: "json" or "table" */
+  operatorResultSerializationMode?: "json" | "table";
   /** Tool execution timeout in seconds */
   toolTimeoutSeconds?: number;
   /** Workflow execution timeout in minutes */

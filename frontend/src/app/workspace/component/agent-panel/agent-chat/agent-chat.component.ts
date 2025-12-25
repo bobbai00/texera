@@ -108,7 +108,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public editingSystemPrompt = "";
   public settingsMaxTokenLimit = 1000;
   public settingsMaxCellTokenLimit = 200; // Default max tokens per cell
-  public settingsSerializationMode: "json" | "csv" = "json"; // Serialization mode for results
+  public settingsSerializationMode: "json" | "table" = "table"; // Serialization mode for results
   public settingsToolTimeoutSeconds = 120; // 2 minutes default
   public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
   public settingsMaxSteps = 10; // Default max steps per message
@@ -390,7 +390,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       .subscribe(settings => {
         this.settingsMaxTokenLimit = settings.maxOperatorResultTokenLimit ?? 1000;
         this.settingsMaxCellTokenLimit = settings.maxOperatorResultCellTokenLimit ?? 200;
-        this.settingsSerializationMode = settings.operatorResultSerializationMode ?? "json";
+        this.settingsSerializationMode = settings.operatorResultSerializationMode ?? "table";
         this.settingsToolTimeoutSeconds = settings.toolTimeoutSeconds ?? 120;
         this.settingsExecutionTimeoutMinutes = settings.executionTimeoutMinutes ?? 10;
         this.settingsMaxSteps = settings.maxSteps ?? 10;

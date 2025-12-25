@@ -50,8 +50,8 @@ export interface ExecutionConfig {
   computingUnitId?: number;
   /** Maximum tokens per cell (truncates individual cell values beyond this limit) */
   maxCellTokens?: number;
-  /** Serialization mode for operator results: "json" (default) or "csv" */
-  serializationMode?: "json" | "csv";
+  /** Serialization mode for operator results: "json" (default) or "table" */
+  serializationMode?: "json" | "table";
 }
 
 // ============================================================================
@@ -314,7 +314,7 @@ async function executeWorkflowHttp(
     timeoutSeconds?: number;
     maxResultRows?: number;
     maxCellTokens?: number;
-    serializationMode?: "json" | "csv";
+    serializationMode?: "json" | "table";
     abortSignal?: AbortSignal;
   } = {}
 ): Promise<SyncExecutionResult> {
@@ -507,9 +507,8 @@ interface FormattedOperatorInfo {
   inputTuples: string;
   outputTuples: string;
   resultMode: string;
-  resultFormat?: string;
   resultSummary: string;
-  result?: any; // JSON array or CSV structure
+  result?: any; // JSON array or Table structure
   consoleLogs?: ConsoleMessage[];
   error?: string;
 }
@@ -526,8 +525,7 @@ function formatOperatorInfo(operators: Record<string, OperatorInfo>): Record<str
       const displayedRows = opInfo.displayedRows ?? 0;
       const totalRows = opInfo.totalRowCount ?? displayedRows;
       const truncatedStr = opInfo.truncated ? " (truncated)" : "";
-      const formatStr = opInfo.resultFormat === "csv" ? " [CSV]" : "";
-      resultSummary = `${displayedRows}/${totalRows} rows${truncatedStr}${formatStr}`;
+      resultSummary = `${displayedRows}/${totalRows} rows${truncatedStr}`;
     }
 
     formatted[operatorId] = {
@@ -535,7 +533,6 @@ function formatOperatorInfo(operators: Record<string, OperatorInfo>): Record<str
       inputTuples: `${opInfo.inputTuples} rows`,
       outputTuples: `${opInfo.outputTuples} rows`,
       resultMode: opInfo.resultMode,
-      resultFormat: opInfo.resultFormat,
       resultSummary,
       result: opInfo.result,
       consoleLogs: opInfo.consoleLogs,

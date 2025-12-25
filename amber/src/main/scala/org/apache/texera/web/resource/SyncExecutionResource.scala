@@ -64,7 +64,7 @@ case class SyncExecutionRequest(
     timeoutSeconds: Option[Int],
     maxResultRows: Option[Int],
     maxCellTokens: Option[Int],
-    serializationMode: Option[String] // "json" (default) or "csv"
+    serializationMode: Option[String] // "json" (default) or "table"
 )
 
 /**
@@ -77,10 +77,10 @@ case class ConsoleMessageInfo(
 )
 
 /**
-  * Structured CSV result format for compact representation.
+  * Structured table result format for compact representation.
   * Each row is a single comma-separated string.
   */
-case class CsvResult(
+case class TableResult(
     header: String,
     rows: List[String]
 )
@@ -93,8 +93,8 @@ case class OperatorInfo(
     inputTuples: Long,
     outputTuples: Long,
     resultMode: String, // "table" or "visualization"
-    resultFormat: Option[String], // "json" or "csv"
-    result: Option[Any], // JSON array (List[ObjectNode]) or CSV structure (CsvResult)
+    resultFormat: Option[String], // "json" or "table"
+    result: Option[Any], // JSON array (List[ObjectNode]) or Table structure (TableResult)
     totalRowCount: Option[Int],
     displayedRows: Option[Int],
     truncated: Option[Boolean],
@@ -145,7 +145,7 @@ class SyncExecutionResource extends LazyLogging {
     val timeoutSeconds = request.timeoutSeconds.getOrElse(DEFAULT_TIMEOUT_SECONDS)
     val maxResultRows = request.maxResultRows.getOrElse(DEFAULT_MAX_RESULT_ROWS)
     val maxCellTokens = request.maxCellTokens.getOrElse(DEFAULT_MAX_CELL_TOKENS)
-    val serializationMode = request.serializationMode.getOrElse("json")
+    val serializationMode = request.serializationMode.getOrElse("table")
 
     logger.info(s"Starting sync execution for workflow $workflowId")
 
@@ -517,12 +517,12 @@ class SyncExecutionResource extends LazyLogging {
             val jsonResults = ExecutionResultService.convertTuplesToJson(tuples)
             val truncatedResults = truncateCellsByTokens(jsonResults, maxCellTokens)
 
-            if (serializationMode == "csv") {
-              val csvResult = jsonToCsv(truncatedResults, maxCellTokens)
+            if (serializationMode == "table") {
+              val tableResult = jsonToTable(truncatedResults, maxCellTokens)
               (
                 "table",
-                Some("csv"),
-                Some(csvResult),
+                Some("table"),
+                Some(tableResult),
                 Some(totalCount),
                 Some(displayedRows),
                 Some(truncated)
@@ -583,8 +583,8 @@ class SyncExecutionResource extends LazyLogging {
     }
   }
 
-  private def jsonToCsv(tuples: List[ObjectNode], maxCellTokens: Int): CsvResult = {
-    if (tuples.isEmpty) return CsvResult("", List.empty)
+  private def jsonToTable(tuples: List[ObjectNode], maxCellTokens: Int): TableResult = {
+    if (tuples.isEmpty) return TableResult("", List.empty)
 
     val maxChars = maxCellTokens * 4
     val headers = scala.collection.mutable.ArrayBuffer[String]()
@@ -603,15 +603,15 @@ class SyncExecutionResource extends LazyLogging {
             val text = if (fieldValue.isTextual) fieldValue.asText() else fieldValue.toString
             if (text.length > maxChars) text.substring(0, maxChars) + "...[truncated]" else text
           }
-          escapeCsvCell(cellValue)
+          escapeTableCell(cellValue)
         }
         .mkString(",")
     }
 
-    CsvResult(headers.map(escapeCsvCell).mkString(","), rows)
+    TableResult(headers.map(escapeTableCell).mkString(","), rows)
   }
 
-  private def escapeCsvCell(value: String): String = {
+  private def escapeTableCell(value: String): String = {
     if (
       value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")
     ) {

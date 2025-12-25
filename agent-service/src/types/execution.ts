@@ -39,9 +39,9 @@ export interface ConsoleMessage {
 // ============================================================================
 
 /**
- * Structured CSV result format for compact representation.
+ * Structured table result format for compact representation.
  */
-export interface CsvResult {
+export interface TableResult {
   header: string[]; // Column names
   rows: string[][]; // Array of rows, each row is an array of cell values
 }
@@ -54,8 +54,8 @@ export interface OperatorInfo {
   inputTuples: number;
   outputTuples: number;
   resultMode: string; // "table" or "visualization"
-  resultFormat?: string; // "json" or "csv"
-  result?: Record<string, any>[] | CsvResult; // JSON array or CSV structure
+  resultFormat?: string; // "json" or "table"
+  result?: Record<string, any>[] | TableResult; // JSON array or Table structure
   totalRowCount?: number;
   displayedRows?: number;
   truncated?: boolean;
