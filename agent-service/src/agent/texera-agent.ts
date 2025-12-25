@@ -29,7 +29,7 @@ import { OperatorMetadataStore } from "../tools/metadata-tools";
 import { AgentActionManager } from "./agent-action-manager";
 import type { AgentSettings, ReActStep, AgentMessageStats, TokenUsage, AgentAction } from "../types/agent";
 import { AgentState as AgentStateEnum, DEFAULT_AGENT_SETTINGS, OperatorResultSerializationMode } from "../types/agent";
-import { COPILOT_SYSTEM_PROMPT } from "./prompts";
+import { COPILOT_SYSTEM_PROMPT, buildCopilotSystemPrompt } from "./prompts";
 import {
   createGetCurrentWorkflowTool,
   createAddOperatorTool,
@@ -172,7 +172,7 @@ export class TexeraAgent {
   /**
    * Initialize the agent by loading operator metadata from the backend.
    * If the metadata store is already initialized (e.g., global singleton),
-   * this just rebuilds the tools with the existing metadata.
+   * this just rebuilds the tools and system prompt with the existing metadata.
    */
   async initialize(): Promise<void> {
     try {
@@ -180,6 +180,11 @@ export class TexeraAgent {
       if (!this.metadataStore.isInitialized()) {
         await this.metadataStore.initializeFromBackend();
       }
+
+      // Rebuild system prompt with operator schemas from metadata store
+      this.systemPrompt = buildCopilotSystemPrompt(this.metadataStore);
+      this.settings.systemPrompt = this.systemPrompt;
+
       // Rebuild tools with loaded metadata
       this.tools = this.createTools();
       console.log(`[TexeraAgent ${this.agentId}] Initialized with ${this.metadataStore.getOperatorCount()} operators`);
@@ -228,11 +233,11 @@ export class TexeraAgent {
       [TOOL_NAME_ADD_LINK]: createAddLinkTool(this.workflowState, context),
       [TOOL_NAME_MODIFY_OPERATOR]: createModifyOperatorTool(this.workflowState, context),
       [TOOL_NAME_DELETE_FROM_WORKFLOW]: createDeleteFromWorkflowTool(this.workflowState, context),
-      [TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: createListAllAvailableOperatorTypesTool(
-        this.metadataStore,
-        this.settings.onlyUseRelationalOperators
-      ),
-      [TOOL_NAME_GET_OPERATOR_SCHEMA]: createGetOperatorSchemaTool(this.metadataStore),
+      // [TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: createListAllAvailableOperatorTypesTool(
+      //   this.metadataStore,
+      //   this.settings.onlyUseRelationalOperators
+      // ),
+      // [TOOL_NAME_GET_OPERATOR_SCHEMA]: createGetOperatorSchemaTool(this.metadataStore),
     };
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)

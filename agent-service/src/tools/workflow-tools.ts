@@ -474,7 +474,7 @@ export function createAddLinkTool(workflowState: WorkflowState, context?: ToolCo
 export function createModifyOperatorTool(workflowState: WorkflowState, context?: ToolContext) {
   return tool({
     description:
-      "Modify properties of an existing operator. Use getCurrentWorkflow first to see current properties. " +
+      "Modify properties of an existing operator. If operator has error during its execution or needs logic change, please use this method to modify the operator" +
       `For ${MULTI_INPUT_OPERATOR_TYPE}, you can also update the number of input ports.`,
     inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to modify"),

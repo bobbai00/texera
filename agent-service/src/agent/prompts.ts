@@ -21,12 +21,60 @@
  * System prompts for Texera Agent Service.
  */
 
+import { OperatorMetadataStore, ALLOWED_OPERATOR_TYPES } from "../tools/metadata-tools";
+
+/** Placeholder for operator schemas in system prompt */
+const ALLOWED_OPERATORS_SCHEMAS_PLACEHOLDER = "{ALLOWED_OPERATORS_SCHEMAS}";
+
 /**
- * Base system prompt for the Texera Copilot agent.
+ * Base system prompt template for the Texera Copilot agent.
  */
-export const COPILOT_SYSTEM_PROMPT = `# Texera Copilot
+const COPILOT_SYSTEM_PROMPT_TEMPLATE = `# Texera Copilot
 You are a data science Copilot helping users solve data-centric questions using workflows.
+
+You have the following operators available:
+{ALLOWED_OPERATORS_SCHEMAS}
 `;
+
+/**
+ * Build the operator schemas string for allowed operators.
+ * @param metadataStore - The operator metadata store
+ * @returns Formatted string of operator schemas
+ */
+export function buildAllowedOperatorSchemas(metadataStore: OperatorMetadataStore): string {
+  const schemas: string[] = [];
+
+  for (const operatorType of ALLOWED_OPERATOR_TYPES) {
+    const compactSchema = metadataStore.getCompactSchema(operatorType);
+    const description = metadataStore.getDescription(operatorType);
+
+    if (compactSchema) {
+      schemas.push(
+        `## ${operatorType}\n` +
+          (description ? `Description: ${description}\n` : "") +
+          `Schema:\n\`\`\`json\n${JSON.stringify(compactSchema, null, 2)}\n\`\`\``
+      );
+    }
+  }
+
+  return schemas.length > 0 ? schemas.join("\n\n") : "No operators available.";
+}
+
+/**
+ * Build the complete Copilot system prompt with operator schemas.
+ * @param metadataStore - The operator metadata store
+ * @returns Complete system prompt with operator schemas embedded
+ */
+export function buildCopilotSystemPrompt(metadataStore: OperatorMetadataStore): string {
+  const operatorSchemas = buildAllowedOperatorSchemas(metadataStore);
+  return COPILOT_SYSTEM_PROMPT_TEMPLATE.replace(ALLOWED_OPERATORS_SCHEMAS_PLACEHOLDER, operatorSchemas);
+}
+
+/**
+ * Default system prompt (without operator schemas).
+ * Use buildCopilotSystemPrompt() to get the complete prompt with schemas.
+ */
+export const COPILOT_SYSTEM_PROMPT = COPILOT_SYSTEM_PROMPT_TEMPLATE;
 
 /**
  * System prompt for Baseline Mode (Python-only).
