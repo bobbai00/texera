@@ -55,13 +55,86 @@ import org.apache.texera.web.service.ExecutionResultService.convertTuplesToJson
 import org.apache.texera.web.service.WorkflowExecutionService.getLatestExecutionId
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 
-import java.util.UUID
+import java.io.ByteArrayOutputStream
+import java.util.{Base64, UUID}
 import scala.collection.mutable
 import scala.concurrent.duration.DurationInt
+import scala.util.Try
 
 object ExecutionResultService {
 
   private val defaultPageSize: Int = 5
+
+  /**
+    * Pickle prefix used by Python Tuple.cast_to_schema().
+    * Format: b"pickle    " (6 bytes "pickle" + 4 spaces)
+    */
+  private val PICKLE_PREFIX: Array[Byte] = "pickle    ".getBytes("UTF-8")
+
+  /**
+    * Check if a byte array contains pickled Python data.
+    */
+  private def isPickledData(byteArray: Array[Byte]): Boolean = {
+    byteArray.length > PICKLE_PREFIX.length &&
+    byteArray.take(PICKLE_PREFIX.length).sameElements(PICKLE_PREFIX)
+  }
+
+  /**
+    * Convert pickled Python data to a readable string representation.
+    * Uses Python subprocess to deserialize and get repr() of the object.
+    *
+    * @param byteArray The full byte array including the pickle prefix
+    * @return A readable string representation of the Python object
+    */
+  private def unpickleToString(byteArray: Array[Byte]): String = {
+    Try {
+      // Skip the pickle prefix (10 bytes)
+      val pickledData = byteArray.drop(PICKLE_PREFIX.length)
+      val base64Data = Base64.getEncoder.encodeToString(pickledData)
+
+      // Call Python to unpickle and return repr()
+      val pythonCode =
+        s"""import pickle, base64, sys
+           |try:
+           |    data = base64.b64decode('$base64Data')
+           |    obj = pickle.loads(data)
+           |    # Use repr for a readable representation
+           |    result = repr(obj)
+           |    # Limit output to prevent huge strings
+           |    if len(result) > 10000:
+           |        result = result[:10000] + '...[truncated]'
+           |    print(result, end='')
+           |except Exception as e:
+           |    print(f'[unpickle error: {e}]', end='')
+           |""".stripMargin
+
+      val processBuilder = new ProcessBuilder("python3", "-c", pythonCode)
+      processBuilder.redirectErrorStream(true)
+      val process = processBuilder.start()
+
+      val output = new ByteArrayOutputStream()
+      val inputStream = process.getInputStream
+      val buffer = new Array[Byte](1024)
+      var bytesRead = inputStream.read(buffer)
+      while (bytesRead != -1) {
+        output.write(buffer, 0, bytesRead)
+        bytesRead = inputStream.read(buffer)
+      }
+
+      val exitCode = process.waitFor()
+      val result = output.toString("UTF-8")
+
+      if (exitCode == 0 && result.nonEmpty) {
+        result
+      } else {
+        // Fallback to indicating it's a Python object
+        s"[Python object (${byteArray.length - PICKLE_PREFIX.length} bytes)]"
+      }
+    }.getOrElse {
+      // If Python call fails, return a descriptive placeholder
+      s"[Python object (${byteArray.length - PICKLE_PREFIX.length} bytes)]"
+    }
+  }
 
   /**
     * Converts a collection of Tuples to a list of JSON ObjectNodes.
@@ -94,18 +167,25 @@ object ExecutionResultService {
                   case AttributeType.BINARY =>
                     value match {
                       case byteArray: Array[Byte] =>
-                        val totalSize = byteArray.length
-                        val hexString = byteArrayToHexString(byteArray)
-
-                        // 39 = 30 (leading bytes) + 9 (trailing bytes)
-                        // 30 bytes = space for 10 hex values (each hex value takes 2 chars + 1 space)
-                        // 9 bytes = space for 3 hex values at the end (2 chars each + 1 space)
-                        if (hexString.length < 39) {
-                          s"bytes'$hexString' (length: $totalSize)"
+                        // Check if this is pickled Python data (list, dict, tuple, etc.)
+                        if (isPickledData(byteArray)) {
+                          // Deserialize and return readable string representation
+                          unpickleToString(byteArray)
                         } else {
-                          val leadingBytes = hexString.take(30)
-                          val trailingBytes = hexString.takeRight(9)
-                          s"bytes'$leadingBytes...$trailingBytes' (length: $totalSize)"
+                          // Raw binary data - show hex representation
+                          val totalSize = byteArray.length
+                          val hexString = byteArrayToHexString(byteArray)
+
+                          // 39 = 30 (leading bytes) + 9 (trailing bytes)
+                          // 30 bytes = space for 10 hex values (each hex value takes 2 chars + 1 space)
+                          // 9 bytes = space for 3 hex values at the end (2 chars each + 1 space)
+                          if (hexString.length < 39) {
+                            s"bytes'$hexString' (length: $totalSize)"
+                          } else {
+                            val leadingBytes = hexString.take(30)
+                            val trailingBytes = hexString.takeRight(9)
+                            s"bytes'$leadingBytes...$trailingBytes' (length: $totalSize)"
+                          }
                         }
 
                       case _ =>

@@ -393,9 +393,8 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
     inputSchema: z.object({
       operatorIdsToView: z
         .array(z.string())
-        .optional()
         .describe(
-          "Optional list of operator IDs to view results for. If not specified, results from all sink operators will be collected."
+          "List of operator IDs to view results for."
         ),
       executionName: z.string().optional().describe("Optional name for this execution run."),
       timeoutSeconds: z
@@ -524,7 +523,7 @@ function formatOperatorInfo(operators: Record<string, OperatorInfo>): Record<str
     if (opInfo.result) {
       const displayedRows = opInfo.displayedRows ?? 0;
       const totalRows = opInfo.totalRowCount ?? displayedRows;
-      const truncatedStr = opInfo.truncated ? " (truncated)" : "";
+      const truncatedStr = opInfo.truncated ? " (only partial data is displayed due to token limit)" : "";
       resultSummary = `${displayedRows}/${totalRows} rows${truncatedStr}`;
     }
 

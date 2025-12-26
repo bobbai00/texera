@@ -82,9 +82,9 @@ RUNS_DIR = Path(__file__).parent / "runs"
 # This is different from the smolagents prompt - it instructs the agent to build
 # workflows to answer questions rather than writing Python code directly.
 PROMPT = """
+You will answer factoid questions by loading and referencing. Don't forget to reference any documentation in the data dir before answering a question.
 You have these files available:
 {context_files}
-You will answer factoid questions by loading and referencing. Don't forget to reference any documentation in the data dir before answering a question.
 
 Here is the question you need to answer:
 {question}
@@ -92,7 +92,7 @@ Here is the question you need to answer:
 Here are the guidelines you must follow when answering the question above:
 {guidelines}
 
-You MUST identify key concepts from the question, and find the EXACT definition of each concept in the given context files. 
+To answer the question, you MUST read ALL relevant documentation files and locate the EXACT definition of each keyword in the question.
 You MUST follow the guideline to format your answer and your last message MUST be the EXACT answer format
 """
 
