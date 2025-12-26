@@ -106,6 +106,19 @@ case class WorkflowExecution() {
   def getAllRegionExecutions: Iterable[RegionExecution] = regionExecutions.values
 
   /**
+    * Checks if there is any `OperatorExecution` associated with the specified physical operatorId.
+    *
+    * This method is useful for checking if an operator was scheduled and executed, as opposed to
+    * being skipped due to cache hits or other optimizations.
+    *
+    * @param physicalOpId The unique identifier of the physical operator to check.
+    * @return true if an `OperatorExecution` exists for this operator, false otherwise.
+    */
+  def hasOperatorExecution(physicalOpId: PhysicalOpIdentity): Boolean = {
+    regionExecutions.values.exists(_.hasOperatorExecution(physicalOpId))
+  }
+
+  /**
     * Retrieves the latest `OperatorExecution` associated with the specified physical operatorId.
     *
     * This method searches through all `RegionExecutions` in reverse creation order to find the most recent

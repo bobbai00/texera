@@ -19,7 +19,11 @@
 
 package org.apache.amber.operator.udf.python.source
 
-import com.fasterxml.jackson.annotation.{JsonIgnoreProperties, JsonProperty, JsonPropertyDescription}
+import com.fasterxml.jackson.annotation.{
+  JsonIgnoreProperties,
+  JsonProperty,
+  JsonPropertyDescription
+}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.amber.core.executor.OpExecWithCode
 import org.apache.amber.core.tuple.Schema

@@ -88,13 +88,16 @@ import scala.concurrent.duration.Duration
   *
   * 3. `Completed`
   */
+import org.apache.amber.core.virtualidentity.ExecutionIdentity
+
 class RegionExecutionCoordinator(
     region: Region,
     workflowExecution: WorkflowExecution,
     asyncRPCClient: AsyncRPCClient,
     controllerConfig: ControllerConfig,
     actorService: AkkaActorService,
-    actorRefService: AkkaActorRefMappingService
+    actorRefService: AkkaActorRefMappingService,
+    executionId: ExecutionIdentity
 ) extends AmberLogging {
 
   initRegionExecution()
@@ -138,8 +141,29 @@ class RegionExecutionCoordinator(
     // WorkflowExecutionCoordinator.
     setPhase(Completed)
 
+    // Store output port results in the cache for future reuse
+    cacheOutputResults()
+
     // Terminate all the workers in this region.
     terminateWorkers(regionExecution)
+  }
+
+  /**
+    * Store the output port results from this region in the cache.
+    * This enables result reuse in future executions.
+    */
+  private def cacheOutputResults(): Unit = {
+    region.resourceConfig.foreach { resourceConfig =>
+      resourceConfig.portConfigs.foreach {
+        case (globalPortId, outputConfig: OutputPortConfig) if !globalPortId.input =>
+          // Look up the cache key for this output port
+          PortResultCache.getCacheKeyForPort(executionId, globalPortId).foreach { cacheKey =>
+            // Store the URI in the cache
+            PortResultCache.store(cacheKey, outputConfig.storageURI)
+          }
+        case _ => // Skip input port configs
+      }
+    }
   }
 
   private def terminateWorkers(regionExecution: RegionExecution) = {

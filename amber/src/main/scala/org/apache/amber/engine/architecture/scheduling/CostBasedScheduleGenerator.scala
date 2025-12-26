@@ -44,6 +44,23 @@ import scala.jdk.CollectionConverters._
 import scala.util.control.Breaks.{break, breakable}
 import scala.util.{Failure, Success, Try}
 
+/**
+  * Result of cache analysis for a physical plan.
+  *
+  * @param cachedOutputPorts Map of output ports with cache hits to their cached URIs
+  * @param linksToMaterialize Links whose output ports have cache hits (should be treated as materialized)
+  * @param cacheKeys Map of all output ports to their cache keys (for storing after execution)
+  * @param fullyCachedOperators Operators where all output ports are cached and can be skipped
+  * @param cachedViewResultPorts Cached output ports that need to be displayed (view result ports)
+  */
+case class CacheAnalysisResult(
+    cachedOutputPorts: Map[GlobalPortIdentity, URI],
+    linksToMaterialize: Set[PhysicalLink],
+    cacheKeys: Map[GlobalPortIdentity, String],
+    fullyCachedOperators: Set[PhysicalOpIdentity],
+    cachedViewResultPorts: Map[GlobalPortIdentity, URI]
+)
+
 class CostBasedScheduleGenerator(
     workflowContext: WorkflowContext,
     initialPhysicalPlan: PhysicalPlan,
@@ -80,7 +97,96 @@ class CostBasedScheduleGenerator(
       : mutable.Map[CostEstimatorMemoKey, (ResourceConfig, Double)] =
     new mutable.HashMap()
 
+  // Cache analysis result, computed once and stored for use during region creation
+  private var cacheAnalysisResult: Option[CacheAnalysisResult] = None
+
+  /**
+    * Analyze the physical plan for cache hits.
+    * This computes cache keys for all output ports and looks up cached URIs.
+    *
+    * @return CacheAnalysisResult containing cached ports, links to materialize, and fully cached operators
+    */
+  private def analyzeCacheHits(): CacheAnalysisResult = {
+    val cacheKeys = PortResultCache.computeAllCacheKeys(physicalPlan)
+    val cachedOutputPorts = cacheKeys.flatMap {
+      case (portId, cacheKey) =>
+        PortResultCache.lookup(cacheKey).map(uri => portId -> uri)
+    }
+
+    // Find links whose output ports have cache hits
+    // These links should be treated as materialized
+    val linksToMaterialize = physicalPlan.links.filter { link =>
+      val outputPortId = GlobalPortIdentity(link.fromOpId, link.fromPortId)
+      cachedOutputPorts.contains(outputPortId)
+    }
+
+    // Find operators that are fully cached (all output ports are cached)
+    // These operators can be completely skipped during execution
+    val fullyCachedOperators: Set[PhysicalOpIdentity] = physicalPlan.operators
+      .filter { op =>
+        val outputPortIds = op.outputPorts.keys.map(portId => GlobalPortIdentity(op.id, portId))
+        // An operator is fully cached if:
+        // 1. It has at least one output port, AND
+        // 2. All of its output ports are cached
+        outputPortIds.nonEmpty && outputPortIds.forall(cachedOutputPorts.contains)
+      }
+      .map(_.id)
+      .toSet
+
+    // Find cached output ports that need to be displayed (view result ports)
+    // These cached URIs need to be registered with WorkflowExecutionsResource
+    val outputPortsNeedingStorage = workflowContext.workflowSettings.outputPortsNeedingStorage
+    val cachedViewResultPorts: Map[GlobalPortIdentity, URI] = cachedOutputPorts.filter {
+      case (portId, _) => outputPortsNeedingStorage.contains(portId)
+    }
+
+    if (cachedOutputPorts.nonEmpty) {
+      logger.info(
+        s"WID: ${workflowContext.workflowId.id}, EID: ${workflowContext.executionId.id}, " +
+          s"cache hits: ${cachedOutputPorts.size} output ports, ${linksToMaterialize.size} links to skip, " +
+          s"${fullyCachedOperators.size} operators fully cached, ${cachedViewResultPorts.size} cached view-result ports"
+      )
+    }
+
+    CacheAnalysisResult(
+      cachedOutputPorts,
+      linksToMaterialize,
+      cacheKeys,
+      fullyCachedOperators,
+      cachedViewResultPorts
+    )
+  }
+
+  /**
+    * Get the cache keys computed during this schedule generation.
+    * This is used by RegionExecutionCoordinator to store results after execution.
+    *
+    * @return Map of output port identities to their cache keys
+    */
+  def getCacheKeys: Map[GlobalPortIdentity, String] = {
+    cacheAnalysisResult.map(_.cacheKeys).getOrElse(Map.empty)
+  }
+
+  /**
+    * Get cached view-result ports that need to be registered with WorkflowExecutionsResource.
+    *
+    * @return Map of output port identities to their cached URIs
+    */
+  def getCachedViewResultPorts: Map[GlobalPortIdentity, URI] = {
+    cacheAnalysisResult.map(_.cachedViewResultPorts).getOrElse(Map.empty)
+  }
+
   def generate(): (Schedule, PhysicalPlan) = {
+    // Analyze cache hits before schedule generation
+    val analysisResult = analyzeCacheHits()
+    cacheAnalysisResult = Some(analysisResult)
+
+    // Store cache keys for this execution so RegionExecutionCoordinator can access them
+    PortResultCache.storeCacheKeysForExecution(
+      workflowContext.executionId,
+      analysisResult.cacheKeys
+    )
+
     val startTime = System.nanoTime()
     val regionDAG = createRegionDAG()
     val totalRPGTime = System.nanoTime() - startTime
@@ -132,9 +238,22 @@ class CostBasedScheduleGenerator(
       matEdges: Set[PhysicalLink]
   ): Set[Region] = {
 
+    // Get cached output ports from cache analysis
+    val cachedOutputPorts: Map[GlobalPortIdentity, URI] =
+      cacheAnalysisResult.map(_.cachedOutputPorts).getOrElse(Map.empty)
+
+    // Include cached links in the materialization edges
+    val cachedLinks: Set[PhysicalLink] =
+      cacheAnalysisResult.map(_.linksToMaterialize).getOrElse(Set.empty)
+    val allMatEdges = matEdges ++ cachedLinks
+
+    // Get fully cached operators that should be skipped
+    val fullyCachedOperators: Set[PhysicalOpIdentity] =
+      cacheAnalysisResult.map(_.fullyCachedOperators).getOrElse(Set.empty)
+
     // Pass 0 – remove materialized edges and create connected components
 
-    val matEdgesRemovedDAG: PhysicalPlan = matEdges.foldLeft(physicalPlan)(_.removeLink(_))
+    val matEdgesRemovedDAG: PhysicalPlan = allMatEdges.foldLeft(physicalPlan)(_.removeLink(_))
 
     val connectedComponents: Set[Graph[PhysicalOpIdentity, PhysicalLink]] =
       new BiconnectivityInspector[PhysicalOpIdentity, PhysicalLink](
@@ -142,65 +261,32 @@ class CostBasedScheduleGenerator(
       ).getConnectedComponents.asScala.toSet
 
     // Pass 1 – build Regions only output-port storage URIs
+    // Filter out fully cached operators from each region
 
-    val regionsWithOnlyOutputPortURIs: Set[Region] = connectedComponents.zipWithIndex.map {
+    val regionsWithOnlyOutputPortURIs: Set[Region] = connectedComponents.zipWithIndex.flatMap {
       case (connectedSubDAG, idx) =>
         // Operators and intra‑region pipelined links
+        // Exclude fully cached operators from the region
 
-        val operators: Set[PhysicalOpIdentity] = connectedSubDAG.vertexSet().asScala.toSet
+        val allOperatorsInComponent: Set[PhysicalOpIdentity] =
+          connectedSubDAG.vertexSet().asScala.toSet
+        val operators: Set[PhysicalOpIdentity] = allOperatorsInComponent.diff(fullyCachedOperators)
 
-        val links: Set[PhysicalLink] = operators
-          .flatMap { opId =>
-            physicalPlan.getUpstreamPhysicalLinks(opId) ++
-              physicalPlan.getDownstreamPhysicalLinks(opId)
-          }
-          .filter(link => operators.contains(link.fromOpId))
-          .diff(matEdges) // keep only pipelined edges
-
-        val physicalOps: Set[PhysicalOp] = operators.map(physicalPlan.getOperator)
-
-        // Frontend-specified ports that need to be materailized (output ports of "eye-icon" physicalOps)
-        val outputPortIdsToViewResult: Set[GlobalPortIdentity] =
-          workflowContext.workflowSettings.outputPortsNeedingStorage
-            .filter(pid => operators.contains(pid.opId))
-
-        // Contains both frontend-specified and scheduler-decided ports that require materailizations.
-        val outputPortIdsNeedingStorage: Set[GlobalPortIdentity] =
-          matEdges
-            .filter(e => operators.contains(e.fromOpId))
-            .map(e => GlobalPortIdentity(e.fromOpId, e.fromPortId)) ++
-            outputPortIdsToViewResult
-
-        // Allocate an URI for each of these output ports
-        val outputPortConfigs: Map[GlobalPortIdentity, OutputPortConfig] =
-          outputPortIdsNeedingStorage.map { gpid =>
-            val outputWriterURI = createResultURI(
-              workflowId = workflowContext.workflowId,
-              executionId = workflowContext.executionId,
-              globalPortId = gpid
+        // Skip this region if all operators are cached
+        if (operators.isEmpty) {
+          None
+        } else {
+          Some(
+            createRegionFromOperators(
+              operators,
+              allOperatorsInComponent,
+              physicalPlan,
+              allMatEdges,
+              cachedOutputPorts,
+              idx
             )
-            gpid -> OutputPortConfig(outputWriterURI)
-          }.toMap
-
-        val resourceConfig = ResourceConfig(portConfigs = outputPortConfigs)
-
-        // Enumerate all ports belonging to the Region
-        val ports: Set[GlobalPortIdentity] = physicalOps.flatMap { op =>
-          op.inputPorts.keys
-            .map(inputPortId => GlobalPortIdentity(op.id, inputPortId, input = true))
-            .toSet ++ op.outputPorts.keys
-            .map(outputPortId => GlobalPortIdentity(op.id, outputPortId))
-            .toSet
+          )
         }
-
-        // Build the Region skeleton (no input‑port URIs yet)
-        Region(
-          id = RegionIdentity(idx),
-          physicalOps = physicalOps,
-          physicalLinks = links,
-          ports = ports,
-          resourceConfig = Some(resourceConfig)
-        )
     }
 
     // Collect writer‑side configs so we can look them up in Pass 2
@@ -215,51 +301,139 @@ class CostBasedScheduleGenerator(
     // Pass 2 – add input‑port storage configs (reader URIs)
 
     regionsWithOnlyOutputPortURIs.map { existingRegion =>
-      // MatEdges that originally connected to the input ports of this region.
-      val relevantMatEdges: Set[PhysicalLink] = matEdges.filter { matEdge =>
-        existingRegion.getOperators.exists(_.id == matEdge.toOpId)
-      }
-
-      // Assign storage URIs to input ports of each materialized edge (each input port could have more than one URI)
-      val inputPortConfigs: Map[GlobalPortIdentity, IntermediateInputPortConfig] =
-        relevantMatEdges
-          .foldLeft(Map.empty[GlobalPortIdentity, List[URI]]) { (acc, link) =>
-            val globalOutputPortId = GlobalPortIdentity(link.fromOpId, link.fromPortId)
-            val globalInputPortId = GlobalPortIdentity(link.toOpId, link.toPortId, input = true)
-
-            // Writer‑side URI that must already exist thanks to Pass 1
-            val inputReaderURI = allOutputPortConfigs
-              .getOrElse(
-                globalOutputPortId,
-                throw new IllegalStateException(
-                  s"Materialization edge $link: attempting to assign a materialization " +
-                    s"reader URI for input port $globalInputPortId when " +
-                    s"the outout port $globalOutputPortId has not been assigned a URI yet."
-                )
-              )
-              .storageURI
-
-            // Group all available URIs of this input port together
-            acc.updated(
-              globalInputPortId,
-              acc.getOrElse(globalInputPortId, List.empty[URI]) :+ inputReaderURI
-            )
-          }
-          .map {
-            case (inputPortId, uris) =>
-              inputPortId -> IntermediateInputPortConfig(uris)
-          }
-
-      val newResourceConfig: Option[ResourceConfig] = existingRegion.resourceConfig match {
-        case Some(existingConfig) =>
-          Some(ResourceConfig(portConfigs = existingConfig.portConfigs ++ inputPortConfigs))
-        case None =>
-          if (inputPortConfigs.nonEmpty) Some(ResourceConfig(portConfigs = inputPortConfigs))
-          else None
-      }
-
-      existingRegion.copy(resourceConfig = newResourceConfig)
+      addInputPortConfigs(existingRegion, allMatEdges, cachedOutputPorts, allOutputPortConfigs)
     }
+  }
+
+  /**
+    * Creates a Region from a set of operators.
+    * Helper method extracted from createRegions to handle region creation logic.
+    */
+  private def createRegionFromOperators(
+      operators: Set[PhysicalOpIdentity],
+      allOperatorsInComponent: Set[PhysicalOpIdentity],
+      physicalPlan: PhysicalPlan,
+      allMatEdges: Set[PhysicalLink],
+      cachedOutputPorts: Map[GlobalPortIdentity, URI],
+      regionIdx: Int
+  ): Region = {
+    val links: Set[PhysicalLink] = operators
+      .flatMap { opId =>
+        physicalPlan.getUpstreamPhysicalLinks(opId) ++
+          physicalPlan.getDownstreamPhysicalLinks(opId)
+      }
+      .filter(link => operators.contains(link.fromOpId) && operators.contains(link.toOpId))
+      .diff(allMatEdges) // keep only pipelined edges
+
+    val physicalOps: Set[PhysicalOp] = operators.map(physicalPlan.getOperator)
+
+    // Frontend-specified ports that need to be materialized (output ports of "eye-icon" physicalOps)
+    val outputPortIdsToViewResult: Set[GlobalPortIdentity] =
+      workflowContext.workflowSettings.outputPortsNeedingStorage
+        .filter(pid => operators.contains(pid.opId))
+
+    // Contains both frontend-specified and scheduler-decided ports that require materializations.
+    // Exclude cached output ports - they already have data, no need to write
+    val outputPortIdsNeedingStorage: Set[GlobalPortIdentity] =
+      (allMatEdges
+        .filter(e => operators.contains(e.fromOpId))
+        .map(e => GlobalPortIdentity(e.fromOpId, e.fromPortId)) ++
+        outputPortIdsToViewResult)
+        .filterNot(cachedOutputPorts.contains) // Skip cached ports
+
+    // Allocate an URI for each of these output ports (only non-cached ones)
+    val outputPortConfigs: Map[GlobalPortIdentity, OutputPortConfig] =
+      outputPortIdsNeedingStorage.map { gpid =>
+        val outputWriterURI = createResultURI(
+          workflowId = workflowContext.workflowId,
+          executionId = workflowContext.executionId,
+          globalPortId = gpid
+        )
+        gpid -> OutputPortConfig(outputWriterURI)
+      }.toMap
+
+    val resourceConfig = ResourceConfig(portConfigs = outputPortConfigs)
+
+    // Enumerate all ports belonging to the Region
+    val ports: Set[GlobalPortIdentity] = physicalOps.flatMap { op =>
+      op.inputPorts.keys
+        .map(inputPortId => GlobalPortIdentity(op.id, inputPortId, input = true))
+        .toSet ++ op.outputPorts.keys
+        .map(outputPortId => GlobalPortIdentity(op.id, outputPortId))
+        .toSet
+    }
+
+    // Build the Region skeleton (no input‑port URIs yet)
+    Region(
+      id = RegionIdentity(regionIdx),
+      physicalOps = physicalOps,
+      physicalLinks = links,
+      ports = ports,
+      resourceConfig = Some(resourceConfig)
+    )
+  }
+
+  /**
+    * Adds input port configs to an existing region.
+    * Helper method extracted from createRegions for Pass 2.
+    */
+  private def addInputPortConfigs(
+      existingRegion: Region,
+      allMatEdges: Set[PhysicalLink],
+      cachedOutputPorts: Map[GlobalPortIdentity, URI],
+      allOutputPortConfigs: Map[GlobalPortIdentity, OutputPortConfig]
+  ): Region = {
+    // MatEdges that originally connected to the input ports of this region.
+    val relevantMatEdges: Set[PhysicalLink] = allMatEdges.filter { matEdge =>
+      existingRegion.getOperators.exists(_.id == matEdge.toOpId)
+    }
+
+    // Assign storage URIs to input ports of each materialized edge
+    val inputPortConfigs: Map[GlobalPortIdentity, IntermediateInputPortConfig] =
+      relevantMatEdges
+        .foldLeft(Map.empty[GlobalPortIdentity, List[URI]]) { (acc, link) =>
+          val globalOutputPortId = GlobalPortIdentity(link.fromOpId, link.fromPortId)
+          val globalInputPortId = GlobalPortIdentity(link.toOpId, link.toPortId, input = true)
+
+          // First check if this output port is cached
+          val inputReaderURI = cachedOutputPorts.get(globalOutputPortId) match {
+            case Some(cachedUri) =>
+              // Use cached URI
+              cachedUri
+            case None =>
+              // Fall back to writer-side URI from Pass 1
+              allOutputPortConfigs
+                .getOrElse(
+                  globalOutputPortId,
+                  throw new IllegalStateException(
+                    s"Materialization edge $link: attempting to assign a materialization " +
+                      s"reader URI for input port $globalInputPortId when " +
+                      s"the output port $globalOutputPortId has not been assigned a URI yet."
+                  )
+                )
+                .storageURI
+          }
+
+          // Group all available URIs of this input port together
+          acc.updated(
+            globalInputPortId,
+            acc.getOrElse(globalInputPortId, List.empty[URI]) :+ inputReaderURI
+          )
+        }
+        .map {
+          case (inputPortId, uris) =>
+            inputPortId -> IntermediateInputPortConfig(uris)
+        }
+
+    val newResourceConfig: Option[ResourceConfig] = existingRegion.resourceConfig match {
+      case Some(existingConfig) =>
+        Some(ResourceConfig(portConfigs = existingConfig.portConfigs ++ inputPortConfigs))
+      case None =>
+        if (inputPortConfigs.nonEmpty) Some(ResourceConfig(portConfigs = inputPortConfigs))
+        else None
+    }
+
+    existingRegion.copy(resourceConfig = newResourceConfig)
   }
 
   /**
@@ -282,14 +456,23 @@ class CostBasedScheduleGenerator(
     })
     var isAcyclic = true
     matEdges.foreach(matEdge => {
-      val fromRegion = opToRegionMap(matEdge.fromOpId)
-      val toRegion = opToRegionMap(matEdge.toOpId)
-      regionGraph.addEdge(fromRegion, toRegion, RegionLink(fromRegion.id, toRegion.id))
-      try {
-        regionDAG.addEdge(fromRegion, toRegion, RegionLink(fromRegion.id, toRegion.id))
-      } catch {
-        case _: IllegalArgumentException =>
-          isAcyclic = false
+      // Skip matEdges where either endpoint is a fully cached operator (not in any region)
+      val fromRegionOpt = opToRegionMap.get(matEdge.fromOpId)
+      val toRegionOpt = opToRegionMap.get(matEdge.toOpId)
+
+      (fromRegionOpt, toRegionOpt) match {
+        case (Some(fromRegion), Some(toRegion)) =>
+          regionGraph.addEdge(fromRegion, toRegion, RegionLink(fromRegion.id, toRegion.id))
+          try {
+            regionDAG.addEdge(fromRegion, toRegion, RegionLink(fromRegion.id, toRegion.id))
+          } catch {
+            case _: IllegalArgumentException =>
+              isAcyclic = false
+          }
+        case _ =>
+          // One or both operators are fully cached and excluded from regions
+          // No region link needed - the downstream region will read from cache
+          ()
       }
     })
     if (isAcyclic) Left(regionDAG)

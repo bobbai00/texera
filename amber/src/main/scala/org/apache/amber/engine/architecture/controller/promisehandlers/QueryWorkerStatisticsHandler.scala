@@ -101,6 +101,9 @@ trait QueryWorkerStatisticsHandler {
             // Skip operators not included in the filtered subset (if any)
             if (opFilter.nonEmpty && !opFilter.contains(opId)) {
               Seq.empty
+            } else if (!cp.workflowExecution.hasOperatorExecution(opId)) {
+              // Skip operators that were not scheduled (e.g., due to cache hits)
+              Seq.empty
             } else {
               val exec = cp.workflowExecution.getLatestOperatorExecution(opId)
               // Skip completed operators

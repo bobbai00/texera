@@ -320,8 +320,10 @@ class WorkflowService(
     // Remove references from registry first
     WorkflowExecutionsResource.deleteConsoleMessageAndExecutionResultUris(eid)
 
-    // Clean up all result and console message documents
-    (resultUris ++ consoleMessagesUris).foreach { uri =>
+    // Clean up console message documents only
+    // Note: Result URIs are NOT cleaned up here - they are managed by PortResultCache LRU eviction
+    // This allows cached results to be reused across executions
+    consoleMessagesUris.foreach { uri =>
       try DocumentFactory.openDocument(uri)._1.clear()
       catch {
         case error: Throwable =>

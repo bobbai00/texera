@@ -23,7 +23,10 @@ import com.twitter.util.Future
 import org.apache.amber.engine.architecture.controller.ControllerAsyncRPCHandlerInitializer
 import org.apache.amber.engine.architecture.rpc.controlcommands.{AsyncRPCContext, EmptyRequest}
 import org.apache.amber.engine.architecture.rpc.controlreturns.StartWorkflowResponse
-import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.RUNNING
+import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
+  COMPLETED,
+  RUNNING
+}
 
 /** start the workflow by starting the source workers
   * note that this SHOULD only be called once per workflow
@@ -38,12 +41,21 @@ trait StartWorkflowHandler {
       ctx: AsyncRPCContext
   ): Future[StartWorkflowResponse] = {
     if (cp.workflowExecution.getState.isUninitialized) {
-      cp.workflowExecutionCoordinator
-        .coordinateRegionExecutors(cp.actorService)
-        .map(_ => {
-          cp.controllerTimerService.enableStatusUpdate()
-          StartWorkflowResponse(RUNNING)
-        })
+      // Check if the schedule is empty (all operators are cached)
+      if (cp.workflowScheduler.isScheduleEmpty) {
+        // All operators are cached - workflow is already complete
+        // The cached URIs have been registered in updateSchedule()
+        logger.info("All operators are cached. Workflow completes immediately.")
+        cp.controllerTimerService.enableStatusUpdate()
+        Future.value(StartWorkflowResponse(COMPLETED))
+      } else {
+        cp.workflowExecutionCoordinator
+          .coordinateRegionExecutors(cp.actorService)
+          .map(_ => {
+            cp.controllerTimerService.enableStatusUpdate()
+            StartWorkflowResponse(RUNNING)
+          })
+      }
     } else {
       StartWorkflowResponse(cp.workflowExecution.getState)
     }

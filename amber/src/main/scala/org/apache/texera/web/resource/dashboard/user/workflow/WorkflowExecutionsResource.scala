@@ -21,6 +21,7 @@ package org.apache.texera.web.resource.dashboard.user.workflow
 
 import io.dropwizard.auth.Auth
 import org.apache.amber.core.storage.{DocumentFactory, FileResolver, VFSResourceType, VFSURIFactory}
+import org.apache.amber.engine.architecture.scheduling.PortResultCache
 import org.apache.amber.core.tuple.Tuple
 import org.apache.amber.core.virtualidentity._
 import org.apache.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
@@ -389,10 +390,12 @@ object WorkflowExecutionsResource {
       .where(WORKFLOW_EXECUTIONS.EID.in(eIdsList))
       .execute()
 
-    // Clear corresponding Iceberg documents
+    // Clear corresponding Iceberg documents, but skip URIs that are cached for result reuse
     uris.foreach { uri =>
       try {
-        DocumentFactory.openDocument(uri)._1.clear()
+        if (!PortResultCache.isUriCached(uri)) {
+          DocumentFactory.openDocument(uri)._1.clear()
+        }
       } catch {
         case _: Throwable =>
         // Document already deleted – safe to ignore
