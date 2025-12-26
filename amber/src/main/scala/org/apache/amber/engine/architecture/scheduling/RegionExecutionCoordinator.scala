@@ -21,10 +21,10 @@ package org.apache.amber.engine.architecture.scheduling
 
 import org.apache.pekko.pattern.gracefulStop
 import com.twitter.util.{Future, Return, Throw}
-import org.apache.amber.core.storage.DocumentFactory
+import org.apache.amber.core.storage.{DocumentFactory, VFSURIFactory}
 import org.apache.amber.core.storage.VFSURIFactory.decodeURI
-import org.apache.amber.core.virtualidentity.ActorVirtualIdentity
-import org.apache.amber.core.workflow.{GlobalPortIdentity, PhysicalLink, PhysicalOp}
+import org.apache.amber.core.virtualidentity.{ActorVirtualIdentity, OperatorIdentity}
+import org.apache.amber.core.workflow.{GlobalPortIdentity, PhysicalLink, PhysicalOp, PortIdentity}
 import org.apache.amber.engine.architecture.common.{
   AkkaActorRefMappingService,
   AkkaActorService,
@@ -88,7 +88,7 @@ import scala.concurrent.duration.Duration
   *
   * 3. `Completed`
   */
-import org.apache.amber.core.virtualidentity.ExecutionIdentity
+import org.apache.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 
 class RegionExecutionCoordinator(
     region: Region,
@@ -97,6 +97,7 @@ class RegionExecutionCoordinator(
     controllerConfig: ControllerConfig,
     actorService: AkkaActorService,
     actorRefService: AkkaActorRefMappingService,
+    workflowId: WorkflowIdentity,
     executionId: ExecutionIdentity
 ) extends AmberLogging {
 
@@ -151,9 +152,11 @@ class RegionExecutionCoordinator(
   /**
     * Store the output port results from this region in the cache.
     * This enables result reuse in future executions.
+    * Also caches operator metrics (tuple counts) and console messages URIs.
     */
   private def cacheOutputResults(): Unit = {
     region.resourceConfig.foreach { resourceConfig =>
+      // First, store output port URIs in the cache
       resourceConfig.portConfigs.foreach {
         case (globalPortId, outputConfig: OutputPortConfig) if !globalPortId.input =>
           // Look up the cache key for this output port
@@ -163,6 +166,89 @@ class RegionExecutionCoordinator(
           }
         case _ => // Skip input port configs
       }
+
+      // Now, cache operator metrics and console messages URIs
+      cacheOperatorData(resourceConfig)
+    }
+  }
+
+  /**
+    * Cache operator data including metrics and console messages URIs for each operator.
+    * This is used to display stats for cached operators in future executions.
+    */
+  private def cacheOperatorData(resourceConfig: ResourceConfig): Unit = {
+    val regionExecution = workflowExecution.getRegionExecution(region.id)
+
+    region.getOperators.foreach { physicalOp =>
+      val opId = physicalOp.id
+      val operatorExecution = regionExecution.getOperatorExecution(opId)
+
+      // Collect output port cache keys for this operator
+      val outputPortCacheKeys = physicalOp.outputPorts.keys.flatMap { portId =>
+        val globalPortId = GlobalPortIdentity(opId, portId)
+        PortResultCache.getCacheKeyForPort(executionId, globalPortId)
+      }.toSeq
+
+      if (outputPortCacheKeys.nonEmpty) {
+        // Compute operator cache key from output port keys
+        val operatorCacheKey = PortResultCache.computeOperatorCacheKey(outputPortCacheKeys)
+
+        // Collect output port metrics from storage
+        val outputPortMetrics: Map[PortIdentity, CachedPortMetrics] =
+          physicalOp.outputPorts.keys.flatMap { portId =>
+            val globalPortId = GlobalPortIdentity(opId, portId)
+            resourceConfig.portConfigs.get(globalPortId) match {
+              case Some(outputConfig: OutputPortConfig) =>
+                val tupleCount = getTupleCountFromStorage(outputConfig.storageURI)
+                Some(portId -> CachedPortMetrics(tupleCount))
+              case _ => None
+            }
+          }.toMap
+
+        // Collect input port metrics by aggregating worker statistics
+        val inputPortMetrics: Map[PortIdentity, CachedPortMetrics] =
+          physicalOp.inputPorts.keys.map { portId =>
+            val totalCount = operatorExecution.getWorkerIds.map { workerId =>
+              val workerExec = operatorExecution.getWorkerExecution(workerId)
+              workerExec.getStats.inputTupleMetrics
+                .find(_.portId == portId)
+                .map(_.tupleMetrics.count)
+                .getOrElse(0L)
+            }.sum
+            portId -> CachedPortMetrics(totalCount)
+          }.toMap
+
+        // Get console messages URI for this operator
+        val consoleMessagesUri = Some(
+          VFSURIFactory.createConsoleMessagesURI(
+            workflowId,
+            executionId,
+            OperatorIdentity(opId.logicalOpId.id)
+          )
+        )
+
+        // Store the cached operator data
+        val cachedData = CachedOperatorData(
+          inputPortMetrics = inputPortMetrics,
+          outputPortMetrics = outputPortMetrics,
+          consoleMessagesUri = consoleMessagesUri
+        )
+        PortResultCache.storeOperatorData(operatorCacheKey, cachedData)
+      }
+    }
+  }
+
+  /**
+    * Get the tuple count from a storage URI by opening the document and counting.
+    */
+  private def getTupleCountFromStorage(uri: java.net.URI): Long = {
+    try {
+      val (document, _) = DocumentFactory.openDocument(uri)
+      document.getCount
+    } catch {
+      case e: Exception =>
+        logger.warn(s"Failed to get tuple count from $uri: ${e.getMessage}")
+        0L
     }
   }
 

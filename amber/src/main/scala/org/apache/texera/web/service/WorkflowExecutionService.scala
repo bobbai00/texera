@@ -135,6 +135,9 @@ class WorkflowExecutionService(
     executionConsoleService =
       new ExecutionConsoleService(client, executionStateStore, wsInput, workflow.context)
 
+    // Load cached console messages for operators that were skipped due to cache hits
+    executionConsoleService.loadCachedConsoleMessages()
+
     logger.info("Starting the workflow execution.")
     resultService.attachToExecution(
       workflow.context.executionId,

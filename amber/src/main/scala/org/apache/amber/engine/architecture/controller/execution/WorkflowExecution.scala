@@ -19,16 +19,17 @@
 
 package org.apache.amber.engine.architecture.controller.execution
 
-import org.apache.amber.core.virtualidentity.PhysicalOpIdentity
+import org.apache.amber.core.virtualidentity.{ExecutionIdentity, PhysicalOpIdentity}
 import org.apache.amber.engine.architecture.controller.execution.ExecutionUtils.aggregateMetrics
 import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
-import org.apache.amber.engine.architecture.scheduling.{Region, RegionIdentity}
-import org.apache.amber.engine.common.executionruntimestate.OperatorMetrics
+import org.apache.amber.engine.architecture.scheduling.{PortResultCache, Region, RegionIdentity}
+import org.apache.amber.engine.architecture.worker.statistics.{PortTupleMetricsMapping, TupleMetrics}
+import org.apache.amber.engine.common.executionruntimestate.{OperatorMetrics, OperatorStatistics}
 
 import scala.collection.mutable
 
-case class WorkflowExecution() {
+case class WorkflowExecution(executionId: Option[ExecutionIdentity] = None) {
 
   // region executions are stored with LinkedHashMap to maintain their creation order.
   private val regionExecutions: mutable.LinkedHashMap[RegionIdentity, RegionExecution] =
@@ -88,12 +89,58 @@ case class WorkflowExecution() {
         }
     }.toMap
 
+    // Add stats from cached operators (operators that were skipped due to cache hits)
+    val cachedStats: Map[PhysicalOpIdentity, OperatorMetrics] = getCachedOperatorStats
+
+    // Merge running stats with cached stats
+    val allStats = statsMap ++ cachedStats
+
     val aggregatedStats: Map[String, OperatorMetrics] =
-      statsMap.groupBy(_._1.logicalOpId.id).map {
+      allStats.groupBy(_._1.logicalOpId.id).map {
         case (logicalOpId, stats) =>
           (logicalOpId, aggregateMetrics(stats.values))
       }
     aggregatedStats
+  }
+
+  /**
+    * Get stats for cached operators (operators that were skipped because all outputs were cached).
+    */
+  private def getCachedOperatorStats: Map[PhysicalOpIdentity, OperatorMetrics] = {
+    executionId match {
+      case Some(eid) =>
+        val cachedOperators = PortResultCache.getCachedOperatorsForExecution(eid)
+        cachedOperators.map {
+          case (opId, cachedData) =>
+            // Create input metrics from cached data
+            val inputMetrics: Seq[PortTupleMetricsMapping] = cachedData.inputPortMetrics.map {
+              case (portId, metrics) =>
+                PortTupleMetricsMapping(portId, TupleMetrics(metrics.tupleCount, 0L))
+            }.toSeq
+
+            // Create output metrics from cached data
+            val outputMetrics: Seq[PortTupleMetricsMapping] = cachedData.outputPortMetrics.map {
+              case (portId, metrics) =>
+                PortTupleMetricsMapping(portId, TupleMetrics(metrics.tupleCount, 0L))
+            }.toSeq
+
+            // Create OperatorMetrics for the cached operator
+            val metrics = OperatorMetrics(
+              operatorState = WorkflowAggregatedState.COMPLETED,
+              operatorStatistics = OperatorStatistics(
+                inputMetrics = inputMetrics,
+                outputMetrics = outputMetrics,
+                numWorkers = 0, // Cached operators have no workers
+                dataProcessingTime = 0L,
+                controlProcessingTime = 0L,
+                idleTime = 0L
+              )
+            )
+            opId -> metrics
+        }
+      case None =>
+        Map.empty
+    }
   }
 
   /**

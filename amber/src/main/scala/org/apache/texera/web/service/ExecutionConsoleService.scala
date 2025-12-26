@@ -49,6 +49,7 @@ import org.apache.amber.engine.common.executionruntimestate.{
   ExecutionConsoleStore,
   OperatorConsole
 }
+import org.apache.amber.engine.architecture.scheduling.PortResultCache
 import org.apache.amber.util.VirtualIdentityUtils
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.model.websocket.event.python.ConsoleUpdateEvent
@@ -65,6 +66,7 @@ import org.apache.texera.web.{SubscriptionManager, WebsocketInput}
 import java.time.Instant
 import java.util.concurrent.{ExecutorService, Executors}
 import scala.collection.mutable
+import scala.util.Try
 
 /**
   * Utility object for processing console messages
@@ -328,5 +330,40 @@ class ExecutionConsoleService(
     client.controllerInterface.debugCommand(AmberDebugCommandRequest(req.workerId, req.cmd), ())
 
   }))
+
+  /**
+    * Load cached console messages for fully cached operators.
+    * This should be called after schedule generation to display console messages
+    * from previous executions for operators that were skipped due to cache hits.
+    */
+  def loadCachedConsoleMessages(): Unit = {
+    val cachedOperators = PortResultCache.getCachedOperatorsForExecution(workflowContext.executionId)
+
+    cachedOperators.foreach {
+      case (opId, cachedData) =>
+        cachedData.consoleMessagesUri.foreach { uri =>
+          Try {
+            val (document, _) = DocumentFactory.openDocument(uri)
+            val messages = document.get().asInstanceOf[Iterator[Tuple]]
+            messages.foreach { tuple =>
+              val messageStr = tuple.getField[String](0)
+              Try {
+                val consoleMessage = ConsoleMessage.fromAscii(messageStr)
+                stateStore.consoleStore.updateState { consoleStore =>
+                  val processedMessage = processConsoleMessage(consoleMessage)
+                  addMessageToOperatorConsole(consoleStore, opId.logicalOpId.id, processedMessage)
+                }
+              }.recover {
+                case e: Exception =>
+                  logger.warn(s"Failed to parse cached console message for operator ${opId.logicalOpId.id}: ${e.getMessage}")
+              }
+            }
+          }.recover {
+            case e: Exception =>
+              logger.debug(s"No cached console messages found for operator ${opId.logicalOpId.id}: ${e.getMessage}")
+          }
+        }
+    }
+  }
 
 }

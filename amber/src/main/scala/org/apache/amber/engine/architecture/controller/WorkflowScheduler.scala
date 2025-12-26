@@ -23,6 +23,7 @@ import org.apache.amber.core.virtualidentity.ActorVirtualIdentity
 import org.apache.amber.core.workflow.{GlobalPortIdentity, PhysicalPlan, WorkflowContext}
 import org.apache.amber.engine.architecture.scheduling.{
   CostBasedScheduleGenerator,
+  PortResultCache,
   Region,
   Schedule
 }
@@ -66,6 +67,15 @@ class WorkflowScheduler(
           portId,
           uri
         )
+    }
+
+    // Store fully cached operators with their data for stats display
+    val fullyCachedOperators = scheduleGenerator.getFullyCachedOperatorsWithData
+    if (fullyCachedOperators.nonEmpty) {
+      PortResultCache.storeCachedOperatorsForExecution(
+        workflowContext.executionId,
+        fullyCachedOperators
+      )
     }
   }
 

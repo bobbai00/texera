@@ -23,7 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.amber.core.executor.{OpExecSource, OpExecWithClassName, OpExecWithCode}
-import org.apache.amber.core.virtualidentity.ExecutionIdentity
+import org.apache.amber.core.virtualidentity.{ExecutionIdentity, PhysicalOpIdentity}
 import org.apache.amber.core.workflow.{GlobalPortIdentity, PhysicalOp, PhysicalPlan, PortIdentity}
 
 import java.net.URI
@@ -31,6 +31,26 @@ import java.security.MessageDigest
 import java.util
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
+
+/**
+  * Cached metrics for an operator's port.
+  *
+  * @param tupleCount Number of tuples that flowed through this port
+  */
+case class CachedPortMetrics(tupleCount: Long)
+
+/**
+  * Cached data for an operator including metrics and console messages.
+  *
+  * @param inputPortMetrics  Map of input port ID to its cached metrics
+  * @param outputPortMetrics Map of output port ID to its cached metrics
+  * @param consoleMessagesUri Optional URI to the cached console messages
+  */
+case class CachedOperatorData(
+    inputPortMetrics: Map[PortIdentity, CachedPortMetrics],
+    outputPortMetrics: Map[PortIdentity, CachedPortMetrics],
+    consoleMessagesUri: Option[URI]
+)
 
 /**
   * Cache entry storing the URI and eviction status.
@@ -137,6 +157,8 @@ object PortResultCache extends LazyLogging {
     synchronized {
       cache.clear()
       executionCacheKeys.clear()
+      operatorDataCache.clear()
+      executionCachedOperators.clear()
       logger.info("Cache cleared")
     }
 
@@ -182,8 +204,84 @@ object PortResultCache extends LazyLogging {
   def removeCacheKeysForExecution(executionId: ExecutionIdentity): Unit =
     synchronized {
       executionCacheKeys.remove(executionId)
+      executionCachedOperators.remove(executionId)
       logger.debug(s"Removed cache keys for execution ${executionId.id}")
     }
+
+  // Storage for cached operator data (metrics + console logs) - keyed by operator's cache key
+  // This maps a unique operator cache key to its cached data (metrics and console messages URI)
+  private val operatorDataCache: mutable.Map[String, CachedOperatorData] = mutable.Map.empty
+
+  // Storage for fully cached operators per execution - used for stats display
+  private val executionCachedOperators
+      : mutable.Map[ExecutionIdentity, Map[PhysicalOpIdentity, CachedOperatorData]] =
+    mutable.Map.empty
+
+  /**
+    * Store cached operator data (metrics and console messages URI).
+    * This is called after an operator completes execution.
+    *
+    * @param operatorCacheKey A unique key identifying the operator's computation
+    * @param data The cached data including metrics and console messages URI
+    */
+  def storeOperatorData(operatorCacheKey: String, data: CachedOperatorData): Unit =
+    synchronized {
+      operatorDataCache(operatorCacheKey) = data
+      logger.debug(s"Stored operator data for key ${operatorCacheKey.take(16)}...")
+    }
+
+  /**
+    * Look up cached operator data by its cache key.
+    *
+    * @param operatorCacheKey The operator's cache key
+    * @return The cached data if available
+    */
+  def lookupOperatorData(operatorCacheKey: String): Option[CachedOperatorData] =
+    synchronized {
+      operatorDataCache.get(operatorCacheKey)
+    }
+
+  /**
+    * Store fully cached operators for an execution.
+    * These are operators that were skipped because all their outputs were cached.
+    *
+    * @param executionId      The execution identifier
+    * @param cachedOperators  Map of operator ID to its cached data
+    */
+  def storeCachedOperatorsForExecution(
+      executionId: ExecutionIdentity,
+      cachedOperators: Map[PhysicalOpIdentity, CachedOperatorData]
+  ): Unit =
+    synchronized {
+      executionCachedOperators(executionId) = cachedOperators
+      logger.debug(
+        s"Stored ${cachedOperators.size} fully cached operators for execution ${executionId.id}"
+      )
+    }
+
+  /**
+    * Get fully cached operators for an execution.
+    *
+    * @param executionId The execution identifier
+    * @return Map of operator ID to its cached data
+    */
+  def getCachedOperatorsForExecution(
+      executionId: ExecutionIdentity
+  ): Map[PhysicalOpIdentity, CachedOperatorData] =
+    synchronized {
+      executionCachedOperators.getOrElse(executionId, Map.empty)
+    }
+
+  /**
+    * Compute a cache key for an operator based on its output port cache keys.
+    * This combines all output port cache keys to create a unique operator identifier.
+    *
+    * @param outputPortCacheKeys The cache keys for all output ports of the operator
+    * @return A unique cache key for the operator
+    */
+  def computeOperatorCacheKey(outputPortCacheKeys: Seq[String]): String = {
+    sha256Hash(outputPortCacheKeys.sorted.mkString("|"))
+  }
 
   /**
     * Compute a content-addressable cache key for a physical operator's output port.

@@ -176,6 +176,37 @@ class CostBasedScheduleGenerator(
     cacheAnalysisResult.map(_.cachedViewResultPorts).getOrElse(Map.empty)
   }
 
+  /**
+    * Get fully cached operators with their cached data (metrics and console messages URIs).
+    * This is used by WorkflowScheduler to store cached operators for stats display.
+    *
+    * @return Map of operator ID to its cached data
+    */
+  def getFullyCachedOperatorsWithData: Map[PhysicalOpIdentity, CachedOperatorData] = {
+    cacheAnalysisResult.map { analysis =>
+      analysis.fullyCachedOperators.flatMap { opId =>
+        val op = physicalPlan.getOperator(opId)
+
+        // Compute operator cache key from output port cache keys
+        val outputPortCacheKeys = op.outputPorts.keys.flatMap { portId =>
+          val globalPortId = GlobalPortIdentity(opId, portId)
+          analysis.cacheKeys.get(globalPortId)
+        }.toSeq
+
+        if (outputPortCacheKeys.nonEmpty) {
+          val operatorCacheKey = PortResultCache.computeOperatorCacheKey(outputPortCacheKeys)
+
+          // Look up cached operator data
+          PortResultCache.lookupOperatorData(operatorCacheKey).map { cachedData =>
+            opId -> cachedData
+          }
+        } else {
+          None
+        }
+      }.toMap
+    }.getOrElse(Map.empty)
+  }
+
   def generate(): (Schedule, PhysicalPlan) = {
     // Analyze cache hits before schedule generation
     val analysisResult = analyzeCacheHits()

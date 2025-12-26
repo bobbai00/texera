@@ -29,13 +29,14 @@ import org.apache.amber.engine.common.rpc.AsyncRPCClient
 
 import scala.collection.mutable
 
-import org.apache.amber.core.virtualidentity.ExecutionIdentity
+import org.apache.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 
 class WorkflowExecutionCoordinator(
     getNextRegions: () => Set[Region],
     workflowExecution: WorkflowExecution,
     controllerConfig: ControllerConfig,
     asyncRPCClient: AsyncRPCClient,
+    workflowId: WorkflowIdentity,
     executionId: ExecutionIdentity
 ) extends LazyLogging {
 
@@ -93,6 +94,7 @@ class WorkflowExecutionCoordinator(
               controllerConfig,
               actorService,
               actorRefService,
+              workflowId,
               executionId
             )
             regionExecutionCoordinators(region.id)

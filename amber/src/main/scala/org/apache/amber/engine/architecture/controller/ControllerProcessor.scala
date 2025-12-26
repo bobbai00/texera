@@ -40,7 +40,7 @@ class ControllerProcessor(
     outputHandler: Either[MainThreadDelegateMessage, WorkflowFIFOMessage] => Unit
 ) extends AmberProcessor(actorId, outputHandler) {
 
-  val workflowExecution: WorkflowExecution = WorkflowExecution()
+  val workflowExecution: WorkflowExecution = WorkflowExecution(Some(workflowContext.executionId))
   val workflowScheduler: WorkflowScheduler =
     new WorkflowScheduler(workflowContext, actorId)
   val workflowExecutionCoordinator: WorkflowExecutionCoordinator = new WorkflowExecutionCoordinator(
@@ -48,6 +48,7 @@ class ControllerProcessor(
     workflowExecution,
     controllerConfig,
     asyncRPCClient,
+    workflowContext.workflowId,
     workflowContext.executionId
   )
 
