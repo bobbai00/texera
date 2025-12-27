@@ -257,12 +257,22 @@ class MainLoop(StoppableQueueBlockingRunnable):
         self.process_input_state()
 
     def _process_end_channel(self) -> None:
+        # Set current_input_port_id from the channel BEFORE any context switch.
+        # This is critical because process_input_state() does context switches,
+        # and DataProcessor may process the EndChannel marker during those switches.
+        # Without setting port_id first, DataProcessor would use a stale port_id
+        # from the last data frame, causing on_finish() to be called with the wrong port.
+        channel_id = self.context.current_input_channel_id
+        port_id = self.context.input_manager.get_port_id(channel_id)
+        logger.info(
+            f"_process_end_channel: channel_id={channel_id}, port_id={port_id}"
+        )
+        self.context.tuple_processing_manager.current_input_port_id = port_id
+
         self.process_input_state()
         self.process_input_tuple()
 
-        input_port_id = self.context.input_manager.get_port_id(
-            self.context.current_input_channel_id
-        )
+        input_port_id = self.context.tuple_processing_manager.current_input_port_id
 
         if input_port_id is not None:
             self._async_rpc_client.controller_stub().port_completed(
@@ -272,7 +282,21 @@ class MainLoop(StoppableQueueBlockingRunnable):
                 )
             )
 
-        if self.context.input_manager.all_ports_completed():
+        all_completed = self.context.input_manager.all_ports_completed()
+        is_missing_output = self.context.output_manager.is_missing_output_ports()
+        # Get list of configured ports and their completion status
+        configured_ports = list(self.context.input_manager._ports.keys())
+        port_status = {
+            str(p): self.context.input_manager._ports[p].completed
+            for p in configured_ports
+        }
+        logger.info(
+            f"_process_end_channel completed: input_port_id={input_port_id}, "
+            f"all_ports_completed={all_completed}, is_missing_output_ports={is_missing_output}, "
+            f"configured_ports={configured_ports}, port_status={port_status}"
+        )
+
+        if all_completed:
             # Special case for the hack of input port dependency.
             # See documentation of is_missing_output_ports
             if self.context.output_manager.is_missing_output_ports():
@@ -301,8 +325,15 @@ class MainLoop(StoppableQueueBlockingRunnable):
         ecm = ecm_element.payload
         command = ecm.command_mapping.get(self.context.worker_id)
         channel_id = self.context.current_input_channel_id
+        # Get port_id for this channel if available
+        try:
+            port_id = self.context.input_manager.get_port_id(channel_id)
+            port_info = f"port_id={port_id}"
+        except KeyError:
+            port_info = "port_id=UNKNOWN (channel not registered)"
         logger.info(
-            f"receive channel ECM from {channel_id}," f" id = {ecm.id}, cmd = {command}"
+            f"receive channel ECM from {channel_id}, {port_info},"
+            f" id = {ecm.id}, cmd = {command}"
         )
         if ecm.ecm_type != EmbeddedControlMessageType.NO_ALIGNMENT:
             self.context.pause_manager.pause_input_channel(
