@@ -343,15 +343,17 @@ class DataProcessor(Runnable, Stoppable):
         base_name = os.path.basename(filename)
         module_name, _ = os.path.splitext(base_name)
         formatted_exception = traceback.format_exception(*exc_info)
-        title: str = formatted_exception[-1].strip()
-        message: str = "\n".join(formatted_exception)
+
+        source = f"{module_name}:{func_name}:{line_number}"
+        title: str = formatted_exception[-1].strip()[:300] + f" ({source})"
+        message: str = "\n".join(formatted_exception)[:300]
 
         self._context.console_message_manager.put_message(
             ConsoleMessage(
                 worker_id=self._context.worker_id,
                 timestamp=current_time_in_local_timezone(),
                 msg_type=ConsoleMessageType.ERROR,
-                source=f"{module_name}:{func_name}:{line_number}",
+                source=source,
                 title=title,
                 message=message,
             )
