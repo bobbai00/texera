@@ -52,6 +52,10 @@ export interface ExecutionConfig {
   maxCellTokens?: number;
   /** Serialization mode for operator results: "json" (default) or "table" */
   serializationMode?: "json" | "table";
+  /** Whether to restrict operator result token limits (if false, no truncation applied) */
+  restrictOperatorResultToken?: boolean;
+  /** Whether to disable print statements in Python UDFs (validation at compile time) */
+  disablePrint?: boolean;
 }
 
 // ============================================================================
@@ -315,6 +319,8 @@ async function executeWorkflowHttp(
     maxResultRows?: number;
     maxCellTokens?: number;
     serializationMode?: "json" | "table";
+    restrictOperatorResultToken?: boolean;
+    disablePrint?: boolean;
     abortSignal?: AbortSignal;
   } = {}
 ): Promise<SyncExecutionResult> {
@@ -340,6 +346,8 @@ async function executeWorkflowHttp(
     maxResultRows: options.maxResultRows ?? DEFAULT_MAX_RESULT_ROWS,
     maxCellTokens: options.maxCellTokens ?? DEFAULT_MAX_CELL_TOKENS,
     serializationMode: options.serializationMode ?? "json",
+    restrictOperatorResultToken: options.restrictOperatorResultToken ?? false,
+    disablePrint: options.disablePrint ?? true,
   };
 
   console.log(`[ExecutionTools] Executing workflow via HTTP: ${url}`);
@@ -437,6 +445,8 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
           maxResultRows: args.maxResultRows,
           maxCellTokens: executionConfig.maxCellTokens,
           serializationMode: executionConfig.serializationMode,
+          restrictOperatorResultToken: executionConfig.restrictOperatorResultToken,
+          disablePrint: executionConfig.disablePrint,
           abortSignal: options.abortSignal,
         });
 

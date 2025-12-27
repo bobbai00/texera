@@ -189,6 +189,10 @@ export interface AgentSettings {
   maxSteps: number;
   /** Only allow relational operators (from ALLOWED_OPERATOR_TYPES list) */
   onlyUseRelationalOperators: boolean;
+  /** Whether to restrict operator result token limits (if false, no truncation applied) */
+  restrictOperatorResultToken: boolean;
+  /** Whether to disable print statements in Python UDFs (validation at compile time) */
+  disablePrint: boolean;
 }
 
 /**
@@ -199,10 +203,12 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   maxOperatorResultTokenLimit: 2000,
   maxOperatorResultCellTokenLimit: 10000,
   operatorResultSerializationMode: OperatorResultSerializationMode.TABLE,
-  toolTimeoutMs: 240000, // 2 minutes
-  executionTimeoutMs: 240000, // 10 minutes
+  toolTimeoutMs: 240000, // 4 minutes
+  executionTimeoutMs: 240000, // 4 minutes
   maxSteps: 100,
   onlyUseRelationalOperators: true,
+  restrictOperatorResultToken: false, // If false, no token limit applied to results
+  disablePrint: true, // If true, print statements are not allowed in Python UDFs
 };
 
 // ============================================================================
@@ -255,6 +261,10 @@ export interface AgentSettingsApi {
   maxSteps?: number;
   /** Only allow relational operators (from ALLOWED_OPERATOR_TYPES list) */
   onlyUseRelationalOperators?: boolean;
+  /** Whether to restrict operator result token limits (if false, no truncation applied) */
+  restrictOperatorResultToken?: boolean;
+  /** Whether to disable print statements in Python UDFs (validation at compile time) */
+  disablePrint?: boolean;
 }
 
 /**
@@ -308,4 +318,8 @@ export interface UpdateAgentSettingsRequest {
   maxSteps?: number;
   /** Only allow relational operators (from ALLOWED_OPERATOR_TYPES list) */
   onlyUseRelationalOperators?: boolean;
+  /** Whether to restrict operator result token limits (if false, no truncation applied) */
+  restrictOperatorResultToken?: boolean;
+  /** Whether to disable print statements in Python UDFs (validation at compile time) */
+  disablePrint?: boolean;
 }

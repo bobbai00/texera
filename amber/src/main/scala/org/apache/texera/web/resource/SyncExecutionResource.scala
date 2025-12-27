@@ -64,7 +64,9 @@ case class SyncExecutionRequest(
     timeoutSeconds: Option[Int],
     maxResultRows: Option[Int],
     maxCellTokens: Option[Int],
-    serializationMode: Option[String] // "json" (default) or "table"
+    serializationMode: Option[String], // "json" (default) or "table"
+    restrictOperatorResultToken: Option[Boolean], // If false, no token limit applied
+    disablePrint: Option[Boolean] // If true, validate Python UDFs have no print statements
 )
 
 /**
@@ -144,10 +146,18 @@ class SyncExecutionResource extends LazyLogging {
   ): SyncExecutionResult = {
     val timeoutSeconds = request.timeoutSeconds.getOrElse(DEFAULT_TIMEOUT_SECONDS)
     val maxResultRows = request.maxResultRows.getOrElse(DEFAULT_MAX_RESULT_ROWS)
-    val maxCellTokens = request.maxCellTokens.getOrElse(DEFAULT_MAX_CELL_TOKENS)
+    val restrictTokens = request.restrictOperatorResultToken.getOrElse(false)
+    val disablePrint = request.disablePrint.getOrElse(true)
+
+    // If restrictOperatorResultToken is false, don't apply token limits
+    val maxCellTokens = if (restrictTokens) {
+      request.maxCellTokens.getOrElse(DEFAULT_MAX_CELL_TOKENS)
+    } else {
+      Int.MaxValue // No limit
+    }
     val serializationMode = request.serializationMode.getOrElse("table")
 
-    logger.info(s"Starting sync execution for workflow $workflowId")
+    logger.info(s"Starting sync execution for workflow $workflowId (restrictTokens=$restrictTokens, disablePrint=$disablePrint)")
 
     try {
       val workflowService = WorkflowService.getOrCreate(
@@ -161,6 +171,20 @@ class SyncExecutionResource extends LazyLogging {
       // Compute sub-DAG if there's exactly 1 target operator (Execute To behavior)
       val effectiveLogicalPlan =
         computeSubDAGIfNeeded(request.logicalPlan, request.targetOperatorIds)
+
+      // Validate Python UDFs for print statements if disablePrint is true
+      if (disablePrint) {
+        val printErrors = validateNoPrintStatements(effectiveLogicalPlan)
+        if (printErrors.nonEmpty) {
+          return SyncExecutionResult(
+            success = false,
+            state = "ValidationFailed",
+            operators = Map.empty,
+            compilationErrors = Some(printErrors),
+            errors = Some(printErrors.values.toList)
+          )
+        }
+      }
 
       // Pre-compile the workflow to catch errors early
       val compilationErrors = validateWorkflow(workflowId, effectiveLogicalPlan)
@@ -515,10 +539,14 @@ class SyncExecutionResource extends LazyLogging {
             )
           } else {
             val jsonResults = ExecutionResultService.convertTuplesToJson(tuples)
-            val truncatedResults = truncateCellsByTokens(jsonResults, maxCellTokens)
+            // Only truncate if maxCellTokens is reasonable (avoid integer overflow)
+            val shouldTruncate = maxCellTokens < Int.MaxValue / 4
+            val finalResults =
+              if (shouldTruncate) truncateCellsByTokens(jsonResults, maxCellTokens)
+              else jsonResults
 
             if (serializationMode == "table") {
-              val tableResult = jsonToTable(truncatedResults, maxCellTokens)
+              val tableResult = jsonToTable(finalResults, shouldTruncate, maxCellTokens)
               (
                 "table",
                 Some("table"),
@@ -531,7 +559,7 @@ class SyncExecutionResource extends LazyLogging {
               (
                 "table",
                 Some("json"),
-                Some(truncatedResults),
+                Some(finalResults),
                 Some(totalCount),
                 Some(displayedRows),
                 Some(truncated)
@@ -544,7 +572,7 @@ class SyncExecutionResource extends LazyLogging {
       }
     } catch {
       case e: Exception =>
-        logger.warn(s"Error collecting result for $opId: ${e.getMessage}")
+        logger.warn(s"Error collecting result for operator $opId: ${e.getMessage}", e)
         ("table", None, None, None, None, None)
     }
   }
@@ -570,7 +598,7 @@ class SyncExecutionResource extends LazyLogging {
           if (text.length > maxChars) {
             truncatedTuple.set(
               fieldName,
-              new TextNode(text.substring(0, maxChars) + "...[truncated]")
+              new TextNode(text.substring(0, maxChars) + "...(cut off due to the token limit)")
             )
           } else {
             truncatedTuple.set(fieldName, fieldValue)
@@ -583,7 +611,11 @@ class SyncExecutionResource extends LazyLogging {
     }
   }
 
-  private def jsonToTable(tuples: List[ObjectNode], maxCellTokens: Int): TableResult = {
+  private def jsonToTable(
+      tuples: List[ObjectNode],
+      shouldTruncate: Boolean,
+      maxCellTokens: Int
+  ): TableResult = {
     if (tuples.isEmpty) return TableResult("", List.empty)
 
     val maxChars = maxCellTokens * 4
@@ -601,7 +633,11 @@ class SyncExecutionResource extends LazyLogging {
             ""
           } else {
             val text = if (fieldValue.isTextual) fieldValue.asText() else fieldValue.toString
-            if (text.length > maxChars) text.substring(0, maxChars) + "...[truncated]" else text
+            if (shouldTruncate && text.length > maxChars) {
+              text.substring(0, maxChars) + "...(cut off due to the token limit)"
+            } else {
+              text
+            }
           }
           escapeTableCell(cellValue)
         }
@@ -760,6 +796,42 @@ class SyncExecutionResource extends LazyLogging {
       opsToViewResult = targetOperatorIds.filter(id => visited.contains(id)),
       opsToReuseResult = logicalPlan.opsToReuseResult.filter(id => visited.contains(id))
     )
+  }
+
+  /**
+    * Validate Python UDF operators for print statements.
+    * Returns a map of operator ID -> error message if print statements are found,
+    * or an empty map if no print statements are found.
+    */
+  private def validateNoPrintStatements(logicalPlan: LogicalPlanPojo): Map[String, String] = {
+    import org.apache.amber.operator.PythonCodeValidator
+    import org.apache.amber.operator.udf.python.PythonTableUDFOpDescV2
+    import org.apache.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
+
+    val errors = mutable.Map[String, String]()
+
+    for (op <- logicalPlan.operators) {
+      // Check PythonTableUDFOpDescV2
+      op match {
+        case pythonTableUdf: PythonTableUDFOpDescV2 =>
+          try {
+            PythonCodeValidator.validateNoPrint(pythonTableUdf.code)
+          } catch {
+            case e: RuntimeException =>
+              errors(op.operatorIdentifier.id) = e.getMessage
+          }
+        case pythonSource: PythonUDFSourceOpDescV2 =>
+          try {
+            PythonCodeValidator.validateNoPrint(pythonSource.code)
+          } catch {
+            case e: RuntimeException =>
+              errors(op.operatorIdentifier.id) = e.getMessage
+          }
+        case _ => // Not a Python UDF, skip
+      }
+    }
+
+    errors.toMap
   }
 
   /**

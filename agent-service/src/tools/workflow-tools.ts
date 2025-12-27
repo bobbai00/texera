@@ -188,14 +188,13 @@ export function createAddOperatorTool(
       `For ${MULTI_INPUT_OPERATOR_TYPE}, specify numInputPorts to create multiple input ports.`,
     inputSchema: z.object({
       operatorType: z.string().describe(`The operator type (e.g., '${MULTI_INPUT_OPERATOR_TYPE}', 'Aggregate')`),
-      properties: z.record(z.any()).optional().describe("Properties to set on the operator"),
-      customDisplayName: z.string().optional().describe("Optional display name for the operator"),
+      properties: z.record(z.any()).describe("Properties to set on the operator"),
+      customDisplayName: z.string().describe("Optional display name for the operator"),
       numInputPorts: z
         .number()
         .optional()
         .describe(
-          `Number of input ports for ${MULTI_INPUT_OPERATOR_TYPE} (default: 1). ` +
-            "Use INPUT_PORTS in Python code to define port names that become self.<name> attributes."
+          `Number of input ports for ${MULTI_INPUT_OPERATOR_TYPE} (default: 1). `
         ),
     }),
     execute: async (args: {
@@ -417,8 +416,7 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
         .number()
         .optional()
         .describe(
-          `New number of input ports for ${MULTI_INPUT_OPERATOR_TYPE}. ` +
-            "Use INPUT_PORTS in Python code to define port names."
+          `New number of input ports for ${MULTI_INPUT_OPERATOR_TYPE}. `
         ),
     }),
     execute: async (args: {

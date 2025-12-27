@@ -89,6 +89,44 @@ object PythonCodeValidator {
   }
 
   /**
+    * Validates Python code for print statements.
+    * Throws an exception if print statements are detected.
+    *
+    * @param code The Python code to validate
+    * @throws RuntimeException if print statements are detected
+    */
+  def validateNoPrint(code: String): Unit = {
+    // Patterns that indicate print statements
+    val printPatterns = Seq(
+      // Standard print function call
+      ("""(?<![.\w])print\s*\(""".r, "print() function")
+    )
+
+    // Remove comments and strings to avoid false positives
+    val codeWithoutComments = code
+      .replaceAll("""#.*$""", "") // Remove single-line comments
+      .replaceAll("""'''[\s\S]*?'''""", "\"\"") // Remove triple single-quoted strings
+      .replaceAll("\"\"\"[\\s\\S]*?\"\"\"", "\"\"") // Remove triple double-quoted strings
+
+    val detectedPatterns = printPatterns.flatMap {
+      case (pattern, description) =>
+        if (pattern.findFirstIn(codeWithoutComments).isDefined) {
+          Some(description)
+        } else {
+          None
+        }
+    }
+
+    if (detectedPatterns.nonEmpty) {
+      throw new RuntimeException(
+        s"Print statements are not allowed in Python UDF. " +
+          s"Detected: ${detectedPatterns.mkString(", ")}. " +
+          s"Please remove print statements or use logging instead"
+      )
+    }
+  }
+
+  /**
     * Generates Python code that will raise an exception with the given error message.
     * This is used to embed compilation errors in the code so they can be detected later.
     *

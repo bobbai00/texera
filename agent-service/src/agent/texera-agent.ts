@@ -248,6 +248,8 @@ export class TexeraAgent {
         computingUnitId: this.delegateConfig.computingUnitId,
         maxCellTokens: this.settings.maxOperatorResultCellTokenLimit,
         serializationMode: this.settings.operatorResultSerializationMode,
+        restrictOperatorResultToken: this.settings.restrictOperatorResultToken,
+        disablePrint: this.settings.disablePrint,
       };
       tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, executionConfig);
     }
@@ -359,6 +361,8 @@ export class TexeraAgent {
     disabledTools?: Set<string>;
     maxSteps?: number;
     onlyUseRelationalOperators?: boolean;
+    restrictOperatorResultToken?: boolean;
+    disablePrint?: boolean;
   }): void {
     if (updates.maxOperatorResultTokenLimit !== undefined) {
       this.settings.maxOperatorResultTokenLimit = updates.maxOperatorResultTokenLimit;
@@ -383,6 +387,12 @@ export class TexeraAgent {
     }
     if (updates.onlyUseRelationalOperators !== undefined) {
       this.settings.onlyUseRelationalOperators = updates.onlyUseRelationalOperators;
+    }
+    if (updates.restrictOperatorResultToken !== undefined) {
+      this.settings.restrictOperatorResultToken = updates.restrictOperatorResultToken;
+    }
+    if (updates.disablePrint !== undefined) {
+      this.settings.disablePrint = updates.disablePrint;
     }
 
     // Rebuild tools with updated settings

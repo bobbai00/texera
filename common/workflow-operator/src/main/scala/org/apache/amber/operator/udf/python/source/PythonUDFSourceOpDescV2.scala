@@ -40,15 +40,12 @@ class PythonUDFSourceOpDescV2 extends SourceOperatorDescriptor {
       "from pytexera import *\n" +
         "import pandas as pd\n\n" +
         "class GenerateOperator(UDFSourceOperator):\n" +
-        "    # This operator should read files and generate output tuples/dataframes for downstream to process\n" +
-        "    # This operator should NOT do any data processing\n" +
+        "    # This operator should do file IO and generate the dataframe to reveal meta information or for downstream to process\n" +
         "    # File IO is allowed in this source operator\n\n" +
         "    @overrides\n" +
         "    def produce(self) -> Iterator[Union[TupleLike, TableLike, None]]:\n" +
-        "        # Example 1: Read a file and yield as dataframe\n" +
-        "        # df = pd.read_csv('/path/to/file.csv')\n" +
-        "        # yield df\n\n" +
-        "        # ONLY the tuple or dataframe with the same schema should be yield\n"+
+        "        # There should be only one yield\n"+
+        "        # you MUST yield either tuple or dataframe\n"+
         "        yield\n"
   )
   @JsonSchemaTitle("Python script")
@@ -75,7 +72,28 @@ class PythonUDFSourceOpDescV2 extends SourceOperatorDescriptor {
   override def operatorInfo: OperatorInfo = {
     OperatorInfo(
       "1-out Python UDF",
-      "Load the source data file as a single table to be processed by the downstream",
+      """Load the source data file as a single table to be processed by the downstream.
+        |
+        |Example 1 - Load CSV with row limit:
+        |  from pytexera import *
+        |  import pandas as pd
+        |
+        |  class GenerateOperator(UDFSourceOperator):
+        |      @overrides
+        |      def produce(self) -> Iterator[Union[TupleLike, TableLike, None]]:
+        |          df = pd.read_csv("/path/to/data.csv", nrows=100)
+        |          yield df
+        |
+        |Example 2 - Load JSON and yield metadata:
+        |  from pytexera import *
+        |  import pandas as pd
+        |
+        |  class GenerateOperator(UDFSourceOperator):
+        |      @overrides
+        |      def produce(self) -> Iterator[Union[TupleLike, TableLike, None]]:
+        |          df = pd.read_json("/path/to/data.json")
+        |          yield {"columns": list(df.columns), "row_count": len(df)}
+        |""".stripMargin,
       OperatorGroupConstants.PYTHON_GROUP,
       List.empty, // No input ports for a source operator
       List(OutputPort()),

@@ -72,9 +72,8 @@ class PythonTableUDFOpDescV2 extends LogicalOp {
         "        # Access tables via self.<port_name>, e.g.:\n" +
         "        # - self.input_0 for port 0\n" +
         "        # All tables are equivalent to pandas DataFrames\n" +
-        "        # The code logic should focus on the incoming tables; the logic should be atomic and small\n" +
         "        # NEVER do any file IO\n" +
-        "        # Use yield to get the information you want to know, or produce data for downstream operators to process" +
+        "        # Use yield to get the information you want to know, or produce data for downstream operators to process\n" +
         "        yield self.input_0\n"
   )
   @JsonSchemaTitle("Python script")
@@ -153,7 +152,26 @@ class PythonTableUDFOpDescV2 extends LogicalOp {
 
     OperatorInfo(
       "Python Table UDF",
-      "Process 1 or more input tables together with certain logic",
+      """Process 1 or more input tables together with certain logic.
+        |
+        |Example 1 - Filter and select columns:
+        |  from pytexera import *
+        |
+        |  class ProcessTablesOperator(UDFMultiTableOperator):
+        |      INPUT_PORTS = ["input_0"]
+        |      def process_tables(self) -> Iterator[Union[TupleLike, TableLike, None]]:
+        |          df = self.input_0[self.input_0["age"] > 18]
+        |          yield df[["name", "age", "city"]]
+        |
+        |Example 2 - Join two tables:
+        |  from pytexera import *
+        |
+        |  class ProcessTablesOperator(UDFMultiTableOperator):
+        |      INPUT_PORTS = ["orders", "customers"]
+        |      def process_tables(self) -> Iterator[Union[TupleLike, TableLike, None]]:
+        |          merged = self.orders.merge(self.customers, on="customer_id", how="left")
+        |          yield merged[["order_id", "customer_name", "total"]]
+        |""".stripMargin,
       OperatorGroupConstants.PYTHON_GROUP,
       inputPortInfo,
       outputPortInfo,
