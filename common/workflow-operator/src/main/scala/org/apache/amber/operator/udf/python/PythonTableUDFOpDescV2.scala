@@ -72,9 +72,9 @@ class PythonTableUDFOpDescV2 extends LogicalOp {
         "        # Access tables via self.<port_name>, e.g.:\n" +
         "        # - self.input_0 for port 0\n" +
         "        # All tables are equivalent to pandas DataFrames\n" +
-        "        # You may add print() to the code to debug\n" +
         "        # The code logic should focus on the incoming tables; the logic should be atomic and small\n" +
-        "        # NEVER do any file IO in the code\n" +
+        "        # NEVER do any file IO\n" +
+        "        # Use yield to get the information you want to know, or produce data for downstream operators to process" +
         "        yield self.input_0\n"
   )
   @JsonSchemaTitle("Python script")

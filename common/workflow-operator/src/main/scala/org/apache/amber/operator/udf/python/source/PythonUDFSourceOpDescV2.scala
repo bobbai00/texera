@@ -40,18 +40,15 @@ class PythonUDFSourceOpDescV2 extends SourceOperatorDescriptor {
       "from pytexera import *\n" +
         "import pandas as pd\n\n" +
         "class GenerateOperator(UDFSourceOperator):\n" +
-        "    # This operator can read files and generate output tuples/dataframes\n" +
+        "    # This operator should read files and generate output tuples/dataframes for downstream to process\n" +
+        "    # This operator should NOT do any data processing\n" +
         "    # File IO is allowed in this source operator\n\n" +
         "    @overrides\n" +
         "    def produce(self) -> Iterator[Union[TupleLike, TableLike, None]]:\n" +
-        "        # Example 1: Read a CSV file and yield as dataframe\n" +
+        "        # Example 1: Read a file and yield as dataframe\n" +
         "        # df = pd.read_csv('/path/to/file.csv')\n" +
         "        # yield df\n\n" +
-        "        # Example 2: Read a JSON file and yield as dataframe\n" +
-        "        # df = pd.read_json('/path/to/file.json')\n" +
-        "        # yield df\n\n" +
-        "        # Example 3: Yield individual tuples\n" +
-        "        # yield {'column1': 'value1', 'column2': 'value2'}\n\n" +
+        "        # ONLY the tuple or dataframe with the same schema should be yield\n"+
         "        yield\n"
   )
   @JsonSchemaTitle("Python script")

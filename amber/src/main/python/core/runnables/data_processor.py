@@ -285,16 +285,17 @@ class DataProcessor(Runnable, Stoppable):
         :param declared_schema: The schema declared by the user
         :param inferred_schema: The schema inferred from the actual tuple
         """
-        self._context.console_message_manager.put_message(
-            ConsoleMessage(
-                worker_id=self._context.worker_id,
-                timestamp=current_time_in_local_timezone(),
-                msg_type=ConsoleMessageType.PRINT,
-                source="SchemaInference",
-                title=f"Output schema detected",
-                message=f"{inferred_schema}",
-            )
-        )
+        # self._context.console_message_manager.put_message(
+        #     ConsoleMessage(
+        #         worker_id=self._context.worker_id,
+        #         timestamp=current_time_in_local_timezone(),
+        #         msg_type=ConsoleMessageType.PRINT,
+        #         source="SchemaInference",
+        #         title=f"Output schema detected",
+        #         message=f"{inferred_schema}",
+        #     )
+        # )
+        return
 
     def _check_and_update_schema(self, first_tuple: TupleLike) -> Schema:
         """
