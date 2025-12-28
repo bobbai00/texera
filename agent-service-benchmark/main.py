@@ -51,6 +51,13 @@ from dataflow_agent import (
     TEXERA_AGENT_SERVICE_ENDPOINT,
 )
 
+from code_agent import (
+    CodeAgentWrapper,
+    CodeAgentResult,
+    CODE_AGENT_MODEL_TYPE,
+    CODE_AGENT_MAX_STEPS,
+)
+
 
 # ============================================================================
 # Configuration
@@ -85,6 +92,23 @@ PROMPT = """
 You will answer factoid questions by loading and referencing. Don't forget to reference any documentation in the data dir before answering a question.
 You have these files available:
 {context_files}
+
+Here is the question you need to answer:
+{question}
+
+Here are the guidelines you must follow when answering the question above:
+{guidelines}
+
+To answer the question, you MUST read ALL relevant documentation files and locate the EXACT definition of each keyword in the question.
+You MUST follow the guideline to format your answer and your last message MUST be the EXACT answer format
+"""
+
+# Prompt template for the baseline code agent (smolagents)
+# This is from the DABstep quickstart - uses Python code execution
+BASELINE_PROMPT = """You are an expert data analyst and you will answer factoid questions by loading and referencing the files/documents listed below.
+You have these files available:
+{context_files}
+Don't forget to reference any documentation in the data dir before answering a question.
 
 Here is the question you need to answer:
 {question}
@@ -542,6 +566,153 @@ def run_benchmark_parallel(
 
 
 # ============================================================================
+# Baseline Code Agent Benchmark
+# ============================================================================
+
+
+def run_baseline_single_task(
+    task: dict,
+    context_files: list[str],
+    base_run_dir: Path,
+    timestamp: str,
+    model_type: str = CODE_AGENT_MODEL_TYPE,
+    max_steps: int = CODE_AGENT_MAX_STEPS,
+    verbosity_level: int = 1,
+) -> dict:
+    """
+    Run a single benchmark task with the baseline code agent.
+    """
+    task_id = task["task_id"]
+    question = task["question"]
+    guidelines = task["guidelines"]
+    correct_answer = task.get("answer", "")
+
+    print(f"\n[Baseline Task {task_id}] {question[:80]}...")
+
+    # Create task-specific folder
+    task_dir = base_run_dir / f"{timestamp}_task{task_id}"
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    # Format prompt
+    context_files_str = "\n".join(f"  - {f}" for f in context_files)
+    prompt = BASELINE_PROMPT.format(
+        context_files=context_files_str,
+        question=question,
+        guidelines=guidelines,
+    )
+
+    # Create agent
+    agent = CodeAgentWrapper(
+        model_type=model_type,
+        max_steps=max_steps,
+        verbosity_level=verbosity_level,
+        agent_name=f"baseline-task-{task_id}",
+    )
+
+    start_time = time.time()
+    result: Optional[CodeAgentResult] = None
+    answer = ""
+    elapsed = 0.0
+    error = None
+
+    try:
+        agent.setup()
+        print(f"[Baseline Task {task_id}] Created code agent: {agent.agent_id}")
+
+        result = agent.run(prompt)
+        elapsed = time.time() - start_time
+        answer = _baseline_response_to_answer(result.response)
+        error = result.error
+        print(f"[Baseline Task {task_id}] Completed in {elapsed:.1f}s")
+
+    except Exception as e:
+        elapsed = time.time() - start_time
+        answer = f"ERROR: {e}"
+        error = str(e)
+        print(f"[Baseline Task {task_id}] Failed after {elapsed:.1f}s: {e}")
+    finally:
+        agent.cleanup()
+
+    # Save files
+    _save_file(task_dir / "prompt.txt", prompt)
+    _save_file(task_dir / "question.txt", question)
+    _save_file(task_dir / "answer.txt", answer)
+    _save_file(task_dir / "correct_answer.txt", str(correct_answer))
+
+    if result:
+        _save_json(task_dir / "trace.json", {
+            "response": result.response,
+            "reasoning_trace": result.reasoning_trace,
+            "elapsed_seconds": result.elapsed_seconds,
+            "error": result.error,
+        })
+
+    # Evaluate
+    score = _evaluate_task(task_id, answer, correct_answer, question, guidelines, task, task_dir)
+
+    return {
+        "task_id": str(task_id),
+        "task_dir": str(task_dir),
+        "answer": answer,
+        "correct_answer": correct_answer,
+        "score": score,
+        "agent_id": agent.agent_id,
+        "elapsed_seconds": elapsed,
+        "error": error,
+    }
+
+
+def _baseline_response_to_answer(response: str) -> str:
+    """Extract the answer from baseline agent response (last non-empty line)."""
+    if not response:
+        return ""
+    lines = response.strip().split("\n")
+    # Find last non-empty line
+    for line in reversed(lines):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return response.strip()
+
+
+def run_baseline_benchmark(
+    dataset: datasets.Dataset,
+    context_files: list[str],
+    base_run_dir: Path,
+    timestamp: str,
+    model_type: str = CODE_AGENT_MODEL_TYPE,
+    max_steps: int = CODE_AGENT_MAX_STEPS,
+    verbosity_level: int = 1,
+) -> list[dict]:
+    """Run the baseline code agent benchmark sequentially."""
+    results = []
+    total = len(dataset)
+
+    print(f"\n[Baseline] Running {total} tasks sequentially (model={model_type}, max_steps={max_steps})")
+
+    for i, task in enumerate(dataset):
+        print(f"\n--- Baseline Task {i + 1}/{total} ---")
+        result = run_baseline_single_task(
+            task=task,
+            context_files=context_files,
+            base_run_dir=base_run_dir,
+            timestamp=timestamp,
+            model_type=model_type,
+            max_steps=max_steps,
+            verbosity_level=verbosity_level,
+        )
+        results.append(result)
+
+    # Print summary
+    scores = [r["score"] for r in results if r.get("score") is not None]
+    if scores:
+        accuracy = sum(scores) / len(scores)
+        print(f"\n[Baseline] Accuracy: {accuracy:.2%} ({sum(1 for s in scores if s == 1)}/{len(scores)} correct)")
+
+    return results
+
+
+# ============================================================================
 # Main Entry Point
 # ============================================================================
 
@@ -656,6 +827,11 @@ def main():
         default=4,
         help="Maximum number of parallel workers (default: 4, only used with --parallel)",
     )
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="Run baseline code agent instead of dataflow agent (uses smolagents)",
+    )
 
     args = parser.parse_args()
 
@@ -663,22 +839,27 @@ def main():
     relational_only = not args.allow_all_operators
 
     print("=" * 60)
-    print("DABstep Benchmark - Texera Agent Service")
+    if args.baseline:
+        print("DABstep Benchmark - Baseline Code Agent (smolagents)")
+    else:
+        print("DABstep Benchmark - Texera Agent Service")
     print("=" * 60)
+    print(f"Mode: {'Baseline' if args.baseline else 'Dataflow'}")
     print(f"Split: {args.split}")
     print(f"Max tasks: {args.max_tasks or 'all'}")
     print(f"Model: {args.model}")
     print(f"Max steps: {args.max_steps}")
     print(f"Data dir: {args.data_dir}")
-    print(f"Retain mode: {args.retain}")
-    print(f"Relational only: {relational_only}")
-    print(f"Parallel: {args.parallel}")
-    if args.parallel:
-        print(f"Max workers: {args.max_workers}")
+    if not args.baseline:
+        print(f"Retain mode: {args.retain}")
+        print(f"Relational only: {relational_only}")
+        print(f"Parallel: {args.parallel}")
+        if args.parallel:
+            print(f"Max workers: {args.max_workers}")
     print("=" * 60)
 
-    # Step 0: Cleanup existing agents (unless --no-cleanup is specified)
-    if not args.no_cleanup:
+    # Step 0: Cleanup existing agents (unless --no-cleanup is specified or baseline mode)
+    if not args.no_cleanup and not args.baseline:
         cleanup_existing_agents()
 
     # Step 1: Download context files
@@ -699,13 +880,30 @@ def main():
 
     # Run benchmark
     timestamp = get_timestamp()
-    RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
-    if args.parallel:
+    # Use different output directories for baseline vs dataflow
+    if args.baseline:
+        run_dir = RUNS_DIR / "baseline"
+    else:
+        run_dir = RUNS_DIR
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.baseline:
+        # Run baseline code agent benchmark
+        results = run_baseline_benchmark(
+            dataset=dataset,
+            context_files=context_files,
+            base_run_dir=run_dir,
+            timestamp=timestamp,
+            model_type=args.model,
+            max_steps=args.max_steps,
+            verbosity_level=args.verbosity,
+        )
+    elif args.parallel:
         results = run_benchmark_parallel(
             dataset=dataset,
             context_files=context_files,
-            base_run_dir=RUNS_DIR,
+            base_run_dir=run_dir,
             timestamp=timestamp,
             model_type=args.model,
             max_steps=args.max_steps,
@@ -718,7 +916,7 @@ def main():
         results = run_benchmark(
             dataset=dataset,
             context_files=context_files,
-            base_run_dir=RUNS_DIR,
+            base_run_dir=run_dir,
             timestamp=timestamp,
             model_type=args.model,
             max_steps=args.max_steps,

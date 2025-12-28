@@ -54,6 +54,8 @@ class AgentSettings:
     execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES
     disabled_tools: list[str] = field(default_factory=list)
     only_use_relational_operators: bool = True  # Default to True to match agent-service
+    restrict_operator_result_token: bool = False  # If False, no token limit applied to results
+    disable_print: bool = True  # If True, print statements are not allowed in Python UDFs
 
     def to_api_dict(self) -> dict[str, Any]:
         """Convert to API request format."""
@@ -64,6 +66,8 @@ class AgentSettings:
             "executionTimeoutMinutes": self.execution_timeout_minutes,
             "disabledTools": self.disabled_tools,
             "onlyUseRelationalOperators": self.only_use_relational_operators,
+            "restrictOperatorResultToken": self.restrict_operator_result_token,
+            "disablePrint": self.disable_print,
         }
 
 
@@ -519,6 +523,8 @@ class DataflowAgent:
         execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES,
         disabled_tools: Optional[list[str]] = None,
         only_use_relational_operators: bool = True,
+        restrict_operator_result_token: bool = False,
+        disable_print: bool = True,
         texera_api_endpoint: str = TEXERA_API_ENDPOINT,
         computing_unit_endpoint: str = TEXERA_COMPUTING_UNIT_ENDPOINT,
         agent_service_endpoint: str = TEXERA_AGENT_SERVICE_ENDPOINT,
@@ -539,6 +545,8 @@ class DataflowAgent:
             execution_timeout_minutes: Workflow execution timeout in minutes
             disabled_tools: List of tool names to disable
             only_use_relational_operators: Only allow relational operators
+            restrict_operator_result_token: If False, no token limit applied to results
+            disable_print: If True, print statements are not allowed in Python UDFs
             texera_api_endpoint: Texera backend API endpoint
             agent_service_endpoint: Agent service endpoint
             username: Texera username for authentication
@@ -555,6 +563,8 @@ class DataflowAgent:
             execution_timeout_minutes=execution_timeout_minutes,
             disabled_tools=disabled_tools or [],
             only_use_relational_operators=only_use_relational_operators,
+            restrict_operator_result_token=restrict_operator_result_token,
+            disable_print=disable_print,
         )
         self.texera_api_endpoint = texera_api_endpoint
         self.computing_unit_endpoint = computing_unit_endpoint

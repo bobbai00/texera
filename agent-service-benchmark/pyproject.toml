@@ -7,7 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "dabstep-benchmark",
     "datasets==3.2.0",
-    "smolagents==1.6.0",
+    "smolagents[litellm]==1.6.0",
     "requests>=2.31.0",
     "pandas>=2.0.0",
     "huggingface-hub>=0.20.0",
