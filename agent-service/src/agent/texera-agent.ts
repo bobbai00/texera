@@ -246,7 +246,8 @@ export class TexeraAgent {
         userToken: this.delegateConfig.userToken,
         workflowId: this.delegateConfig.workflowId,
         computingUnitId: this.delegateConfig.computingUnitId,
-        maxCellTokens: this.settings.maxOperatorResultCellTokenLimit,
+        maxOperatorResultTokenLimit: this.settings.maxOperatorResultTokenLimit,
+        maxOperatorResultCellTokenLimit: this.settings.maxOperatorResultCellTokenLimit,
         serializationMode: this.settings.operatorResultSerializationMode,
         restrictOperatorResultToken: this.settings.restrictOperatorResultToken,
         disablePrint: this.settings.disablePrint,
@@ -558,36 +559,21 @@ export class TexeraAgent {
         onStepFinish: async ({ text, toolCalls, toolResults, usage }) => {
           stepIndex++; // Increment first since user message is step 0
 
-          // Build tool calls array in the format expected by frontend
+          // Build tool calls array
           const formattedToolCalls = toolCalls?.map(tc => ({
             toolName: tc.toolName,
             toolCallId: tc.toolCallId,
             input: tc.input,
           }));
 
-          // Build tool results array in the format expected by frontend
+          // Build tool results array - check for error field to determine if it's an error
           const formattedToolResults = toolResults?.map(tr => ({
             toolCallId: tr.toolCallId,
             output: tr.output,
-            isError: !(tr.output as any)?.success,
+            isError: !!(tr.output as any)?.error,
           }));
 
-          // Build operator access map from tool results
-          const operatorAccess: Record<number, any> = {};
-          if (toolResults) {
-            toolResults.forEach((tr, index) => {
-              const output = tr.output as any;
-              if (output && (output.viewedOperatorIds || output.addedOperatorIds || output.modifiedOperatorIds)) {
-                operatorAccess[index] = {
-                  viewedOperatorIds: output.viewedOperatorIds || [],
-                  addedOperatorIds: output.addedOperatorIds || [],
-                  modifiedOperatorIds: output.modifiedOperatorIds || [],
-                };
-              }
-            });
-          }
-
-          // Create agent step with all info combined
+          // Create agent step
           const agentStep: ReActStep = {
             messageId,
             stepId: stepIndex,
@@ -595,7 +581,7 @@ export class TexeraAgent {
             role: "agent",
             content: text || "",
             isBegin: isFirstStep,
-            isEnd: false, // Will be updated in the final step
+            isEnd: false,
             toolCalls: formattedToolCalls,
             toolResults: formattedToolResults,
             usage: usage
@@ -605,7 +591,6 @@ export class TexeraAgent {
                   totalTokens: usage.totalTokens,
                 }
               : undefined,
-            operatorAccess: Object.keys(operatorAccess).length > 0 ? operatorAccess : undefined,
           };
           this.addStep(agentStep);
 

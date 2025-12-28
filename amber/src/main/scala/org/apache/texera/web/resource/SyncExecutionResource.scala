@@ -62,8 +62,8 @@ case class SyncExecutionRequest(
     workflowSettings: Option[WorkflowSettings],
     targetOperatorIds: List[String],
     timeoutSeconds: Option[Int],
-    maxResultRows: Option[Int],
-    maxCellTokens: Option[Int],
+    maxOperatorResultTokenLimit: Option[Int], // Max tokens for operator results (total)
+    maxCellTokens: Option[Int], // Max tokens per cell
     serializationMode: Option[String], // "json" (default) or "table"
     restrictOperatorResultToken: Option[Boolean], // If false, no token limit applied
     disablePrint: Option[Boolean] // If true, validate Python UDFs have no print statements
@@ -132,8 +132,11 @@ case class ConsoleErrorDetected(consoleState: ExecutionConsoleStore) extends Ter
 class SyncExecutionResource extends LazyLogging {
 
   private val DEFAULT_TIMEOUT_SECONDS = 300
-  private val DEFAULT_MAX_RESULT_ROWS = 200
-  private val DEFAULT_MAX_CELL_TOKENS = 200
+  private val DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT = 2000
+  private val DEFAULT_MAX_CELL_TOKENS = 10000
+  // Ultimate caps - always applied regardless of restrictOperatorResultToken flag
+  private val MAX_OPERATOR_RESULT_TOKEN = 10000
+  private val MAX_CELL_TOKEN = 10000
 
   @POST
   @Path("/{wid}/{cuid}/run")
@@ -145,19 +148,27 @@ class SyncExecutionResource extends LazyLogging {
       @Auth user: SessionUser
   ): SyncExecutionResult = {
     val timeoutSeconds = request.timeoutSeconds.getOrElse(DEFAULT_TIMEOUT_SECONDS)
-    val maxResultRows = request.maxResultRows.getOrElse(DEFAULT_MAX_RESULT_ROWS)
     val restrictTokens = request.restrictOperatorResultToken.getOrElse(false)
     val disablePrint = request.disablePrint.getOrElse(true)
 
-    // If restrictOperatorResultToken is false, don't apply token limits
-    val maxCellTokens = if (restrictTokens) {
-      request.maxCellTokens.getOrElse(DEFAULT_MAX_CELL_TOKENS)
+    // Calculate token limits: use user-provided values if restrictTokens is true,
+    // otherwise use ultimate caps. Always cap at MAX values.
+    val (maxOperatorResultTokenLimit, maxCellTokens) = if (restrictTokens) {
+      (
+        Math.min(
+          request.maxOperatorResultTokenLimit.getOrElse(DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT),
+          MAX_OPERATOR_RESULT_TOKEN
+        ),
+        Math.min(request.maxCellTokens.getOrElse(DEFAULT_MAX_CELL_TOKENS), MAX_CELL_TOKEN)
+      )
     } else {
-      Int.MaxValue // No limit
+      (MAX_OPERATOR_RESULT_TOKEN, MAX_CELL_TOKEN)
     }
     val serializationMode = request.serializationMode.getOrElse("table")
 
-    logger.info(s"Starting sync execution for workflow $workflowId (restrictTokens=$restrictTokens, disablePrint=$disablePrint)")
+    logger.info(
+      s"Starting sync execution for workflow $workflowId (restrictTokens=$restrictTokens, disablePrint=$disablePrint)"
+    )
 
     try {
       val workflowService = WorkflowService.getOrCreate(
@@ -312,7 +323,7 @@ class SyncExecutionResource extends LazyLogging {
         executionId,
         executionService,
         request.targetOperatorIds,
-        maxResultRows,
+        maxOperatorResultTokenLimit,
         maxCellTokens,
         serializationMode,
         inMemoryConsoleState
@@ -382,7 +393,7 @@ class SyncExecutionResource extends LazyLogging {
       executionId: ExecutionIdentity,
       executionService: org.apache.texera.web.service.WorkflowExecutionService,
       targetOperatorIds: List[String],
-      maxResultRows: Int,
+      maxOperatorResultTokenLimit: Int,
       maxCellTokens: Int,
       serializationMode: String,
       inMemoryConsoleState: Option[ExecutionConsoleStore] = None
@@ -421,7 +432,13 @@ class SyncExecutionResource extends LazyLogging {
 
       // Get result
       val (resultMode, resultFormat, result, totalRowCount, displayedRows, truncated) =
-        collectOperatorResult(executionId, opId, maxResultRows, maxCellTokens, serializationMode)
+        collectOperatorResult(
+          executionId,
+          opId,
+          maxOperatorResultTokenLimit,
+          maxCellTokens,
+          serializationMode
+        )
 
       // Get console logs - first try database, then fallback to in-memory state
       val dbConsoleLogs = collectConsoleLogs(executionId, opId)
@@ -498,11 +515,13 @@ class SyncExecutionResource extends LazyLogging {
 
   /**
     * Collect result for a single operator.
+    * Uses token-based limiting: iterates through all rows using get() iterator
+    * and stops when token limit is reached.
     */
   private def collectOperatorResult(
       executionId: ExecutionIdentity,
       opId: String,
-      maxRows: Int,
+      maxOperatorResultTokenLimit: Int,
       maxCellTokens: Int,
       serializationMode: String
   ): (String, Option[String], Option[Any], Option[Int], Option[Int], Option[Boolean]) = {
@@ -521,10 +540,18 @@ class SyncExecutionResource extends LazyLogging {
             .asInstanceOf[VirtualDocument[Tuple]]
 
           val totalCount = document.getCount.toInt
-          val fetchCount = Math.min(maxRows, totalCount)
-          val tuples = document.getRange(0, fetchCount).toList
-          val displayedRows = tuples.size
-          val truncated = displayedRows < totalCount
+
+          // Check if limits are reasonable (avoid integer overflow)
+          val shouldTruncateCells = maxCellTokens < Int.MaxValue / 4
+          val shouldLimitByTokens = maxOperatorResultTokenLimit < Int.MaxValue / 4
+
+          // Use iterator to fetch tuples with token-based limiting
+          val (tuples, truncatedByTokens) = collectTuplesWithTokenLimit(
+            document.get(),
+            maxOperatorResultTokenLimit,
+            maxCellTokens,
+            shouldLimitByTokens
+          )
 
           if (tuples.size == 1 && isVisualizationTuple(tuples.head)) {
             val jsonResults =
@@ -534,19 +561,23 @@ class SyncExecutionResource extends LazyLogging {
               Some("json"),
               Some(jsonResults),
               Some(totalCount),
-              Some(displayedRows),
-              Some(truncated)
+              Some(1),
+              Some(false)
             )
           } else {
             val jsonResults = ExecutionResultService.convertTuplesToJson(tuples)
-            // Only truncate if maxCellTokens is reasonable (avoid integer overflow)
-            val shouldTruncate = maxCellTokens < Int.MaxValue / 4
-            val finalResults =
-              if (shouldTruncate) truncateCellsByTokens(jsonResults, maxCellTokens)
+
+            // Apply cell truncation if needed
+            val cellTruncatedResults =
+              if (shouldTruncateCells) truncateCellsByTokens(jsonResults, maxCellTokens)
               else jsonResults
 
+            val displayedRows = cellTruncatedResults.size
+            val truncated = displayedRows < totalCount || truncatedByTokens
+
             if (serializationMode == "table") {
-              val tableResult = jsonToTable(finalResults, shouldTruncate, maxCellTokens)
+              val tableResult =
+                jsonToTable(cellTruncatedResults, shouldTruncateCells, maxCellTokens)
               (
                 "table",
                 Some("table"),
@@ -559,7 +590,7 @@ class SyncExecutionResource extends LazyLogging {
               (
                 "table",
                 Some("json"),
-                Some(finalResults),
+                Some(cellTruncatedResults),
                 Some(totalCount),
                 Some(displayedRows),
                 Some(truncated)
@@ -575,6 +606,61 @@ class SyncExecutionResource extends LazyLogging {
         logger.warn(s"Error collecting result for operator $opId: ${e.getMessage}", e)
         ("table", None, None, None, None, None)
     }
+  }
+
+  /**
+    * Collect tuples from iterator with token-based limiting.
+    * Estimates tokens as characters / 4.
+    * Returns (collected tuples, whether truncation occurred due to token limit).
+    */
+  private def collectTuplesWithTokenLimit(
+      iterator: Iterator[Tuple],
+      maxTokens: Int,
+      maxCellTokens: Int,
+      shouldLimit: Boolean
+  ): (List[Tuple], Boolean) = {
+    if (!shouldLimit) {
+      // No limit - collect all tuples
+      return (iterator.toList, false)
+    }
+
+    val result = scala.collection.mutable.ListBuffer[Tuple]()
+    var totalTokens = 0
+    val maxCellChars = maxCellTokens * 4
+
+    while (iterator.hasNext) {
+      val tuple = iterator.next()
+
+      // Estimate tokens for this tuple by converting to string representation
+      val tupleTokens = estimateTupleTokens(tuple, maxCellChars)
+
+      if (totalTokens + tupleTokens > maxTokens && result.nonEmpty) {
+        // Token limit reached - stop collecting
+        return (result.toList, true)
+      }
+
+      result += tuple
+      totalTokens += tupleTokens
+    }
+
+    (result.toList, false)
+  }
+
+  /**
+    * Estimate token count for a tuple.
+    * Approximates tokens as characters / 4.
+    */
+  private def estimateTupleTokens(tuple: Tuple, maxCellChars: Int): Int = {
+    var totalChars = 0
+    val schema = tuple.getSchema
+    for (i <- 0 until schema.getAttributes.size) {
+      val fieldValue = tuple.getField[Any](i)
+      val valueStr = if (fieldValue == null) "" else fieldValue.toString
+      // Apply cell truncation in estimation
+      val effectiveLength = Math.min(valueStr.length, maxCellChars)
+      totalChars += effectiveLength + 10 // Add overhead for field name and formatting
+    }
+    Math.ceil(totalChars / 4.0).toInt
   }
 
   private def truncateCellsByTokens(

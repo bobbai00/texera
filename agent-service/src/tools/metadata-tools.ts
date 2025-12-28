@@ -24,7 +24,7 @@
 import { z } from "zod";
 import { tool } from "ai";
 import Ajv from "ajv";
-import { createSuccessResult, createErrorResult } from "./tools-utility";
+import { createToolResult, createErrorResult } from "./tools-utility";
 import { fetchOperatorMetadata, type OperatorSchema, type OperatorMetadata } from "../api/backend-api";
 
 // ============================================================================
@@ -400,7 +400,7 @@ export function createListAllAvailableOperatorTypesTool(
       if (count === 0) {
         return createErrorResult("No operator types registered.");
       }
-      return createSuccessResult({ operators, count }, [], [], []);
+      return createToolResult(`Found ${count} available operator type(s).`, { operators });
     },
   });
 }
@@ -422,7 +422,10 @@ export function createGetOperatorSchemaTool(metadataStore: OperatorMetadataStore
       if (!compactSchema) {
         return createErrorResult(`Operator type "${args.operatorType}" not found.`);
       }
-      return createSuccessResult({ operatorType: args.operatorType, schema: compactSchema }, [], [], []);
+      return createToolResult(`Schema for operator type "${args.operatorType}".`, {
+        operatorType: args.operatorType,
+        schema: compactSchema,
+      });
     },
   });
 }

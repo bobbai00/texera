@@ -41,20 +41,13 @@ export const DEFAULT_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
 // ============================================================================
 
 /**
- * Creates a successful tool result with default values for required fields.
+ * Creates a successful tool result with the given data and message.
+ * The message is used as feedback to the agent.
  */
-export function createSuccessResult<T extends Record<string, any>>(
-  data: T,
-  viewedOperatorIds: string[] = [],
-  addedOperatorIds: string[] = [],
-  modifiedOperatorIds: string[] = []
-): BaseToolResult & T {
+export function createToolResult<T extends Record<string, any>>(message: string, data?: T): BaseToolResult & T {
   return {
-    success: true,
-    viewedOperatorIds,
-    addedOperatorIds,
-    modifiedOperatorIds,
-    ...data,
+    message,
+    ...((data || {}) as T),
   };
 }
 
@@ -63,11 +56,8 @@ export function createSuccessResult<T extends Record<string, any>>(
  */
 export function createErrorResult(error: string): BaseToolResult {
   return {
-    success: false,
+    message: error,
     error,
-    viewedOperatorIds: [],
-    addedOperatorIds: [],
-    modifiedOperatorIds: [],
   };
 }
 

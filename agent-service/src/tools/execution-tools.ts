@@ -24,12 +24,13 @@
 
 import { z } from "zod";
 import { tool } from "ai";
-import { createSuccessResult, createErrorResult } from "./tools-utility";
+import { createToolResult, createErrorResult } from "./tools-utility";
 import type { WorkflowState } from "../workflow/workflow-state";
 import { getBackendConfig } from "../api/backend-api";
 import type { LogicalPlan, LogicalLink } from "../api/execution-api";
-import type { SyncExecutionResult, OperatorInfo, ConsoleMessage } from "../types/execution";
+import type { SyncExecutionResult, OperatorInfo } from "../types/execution";
 import { OperatorMetadataStore } from "./metadata-tools";
+import { OperatorResultSerializationMode } from "../types/agent";
 
 // ============================================================================
 // Tool Name Constants
@@ -42,19 +43,20 @@ export const TOOL_NAME_EXECUTE_WORKFLOW = "executeWorkflow";
 // ============================================================================
 
 export interface ExecutionConfig {
-  /** User JWT token for authentication */
   userToken: string;
-  /** Workflow ID */
   workflowId: number;
-  /** Optional computing unit ID (defaults to 0) */
   computingUnitId?: number;
-  /** Maximum tokens per cell (truncates individual cell values beyond this limit) */
-  maxCellTokens?: number;
-  /** Serialization mode for operator results: "json" (default) or "table" */
-  serializationMode?: "json" | "table";
-  /** Whether to restrict operator result token limits (if false, no truncation applied) */
+  /** Serialization mode for operator results: "json" or "table" */
+  serializationMode?: OperatorResultSerializationMode;
+  /** Whether to restrict operator result token limits */
   restrictOperatorResultToken?: boolean;
-  /** Whether to disable print statements in Python UDFs (validation at compile time) */
+  /** Maximum tokens for operator results (total) - only used if restrictOperatorResultToken is true */
+  maxOperatorResultTokenLimit?: number;
+  /** Maximum tokens per cell - only used if restrictOperatorResultToken is true */
+  maxOperatorResultCellTokenLimit?: number;
+  /** Execution timeout in milliseconds */
+  executionTimeoutMs?: number;
+  /** Whether to disable print statements in Python UDFs */
   disablePrint?: boolean;
 }
 
@@ -63,8 +65,8 @@ export interface ExecutionConfig {
 // ============================================================================
 
 const DEFAULT_TIMEOUT_SECONDS = 300;
-const DEFAULT_MAX_RESULT_ROWS = 200;
-const DEFAULT_MAX_CELL_TOKENS = 200;
+const DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT = 2000;
+const DEFAULT_MAX_CELL_TOKEN_LIMIT = 10000;
 
 // ============================================================================
 // Workflow Validation
@@ -72,7 +74,7 @@ const DEFAULT_MAX_CELL_TOKENS = 200;
 
 export interface WorkflowValidationResult {
   isValid: boolean;
-  errors: Record<string, Record<string, string>>; // operatorId -> { field -> message }
+  errors: Record<string, Record<string, string>>;
 }
 
 interface OperatorValidation {
@@ -80,40 +82,30 @@ interface OperatorValidation {
   messages: Record<string, string>;
 }
 
-/**
- * Validate operator's JSON schema (properties).
- */
 function validateOperatorSchema(operatorType: string, operatorProperties: Record<string, any>): OperatorValidation {
   const metadataStore = OperatorMetadataStore.getInstance();
   const validation = metadataStore.validateOperatorProperties(operatorType, operatorProperties);
   return validation.isValid ? { isValid: true, messages: {} } : { isValid: false, messages: validation.messages };
 }
 
-/**
- * Validate operator connections (input ports are properly connected).
- * Mimics frontend ValidationWorkflowService.validateOperatorConnection()
- */
 function validateOperatorConnection(operatorId: string, workflowState: WorkflowState): OperatorValidation {
   const operator = workflowState.getOperator(operatorId);
   if (!operator) {
     return { isValid: false, messages: { error: `Operator ${operatorId} not found` } };
   }
 
-  // Count input links by port
   const numInputLinksByPort = new Map<string, number>();
   const allLinks = workflowState.getAllLinks();
 
   for (const link of allLinks) {
     if (link.target.operatorID === operatorId) {
       const portID = link.target.portID;
-      const num = numInputLinksByPort.get(portID) ?? 0;
-      numInputLinksByPort.set(portID, num + 1);
+      numInputLinksByPort.set(portID, (numInputLinksByPort.get(portID) ?? 0) + 1);
     }
   }
 
-  // Check each input port satisfies its requirements
   let satisfyInput = true;
-  let inputPortsViolationMessage = "";
+  let violationMessage = "";
 
   for (const port of operator.inputPorts) {
     const portNumInputs = numInputLinksByPort.get(port.portID) ?? 0;
@@ -121,26 +113,21 @@ function validateOperatorConnection(operatorId: string, workflowState: WorkflowS
     if (port.allowMultiInputs) {
       if (portNumInputs < 1) {
         satisfyInput = false;
-        inputPortsViolationMessage += `${port.displayName ?? port.portID} requires at least 1 input, has ${portNumInputs}. `;
+        violationMessage += `${port.displayName ?? port.portID} requires at least 1 input, has ${portNumInputs}. `;
       }
     } else {
       if (portNumInputs !== 1) {
         satisfyInput = false;
-        inputPortsViolationMessage += `${port.displayName ?? port.portID} requires 1 input, has ${portNumInputs}. `;
+        violationMessage += `${port.displayName ?? port.portID} requires 1 input, has ${portNumInputs}. `;
       }
     }
   }
 
-  if (satisfyInput) {
-    return { isValid: true, messages: {} };
-  } else {
-    return { isValid: false, messages: { inputs: inputPortsViolationMessage.trim() } };
-  }
+  return satisfyInput
+    ? { isValid: true, messages: {} }
+    : { isValid: false, messages: { inputs: violationMessage.trim() } };
 }
 
-/**
- * Combine multiple validation results.
- */
 function combineValidations(...validations: OperatorValidation[]): OperatorValidation {
   let isValid = true;
   let messages: Record<string, string> = {};
@@ -155,21 +142,12 @@ function combineValidations(...validations: OperatorValidation[]): OperatorValid
   return { isValid, messages };
 }
 
-/**
- * Validate all operators in the workflow against their schemas and connection requirements.
- * Returns validation errors for each operator that fails validation.
- */
 export function validateWorkflow(workflowState: WorkflowState): WorkflowValidationResult {
   const errors: Record<string, Record<string, string>> = {};
 
   for (const operator of workflowState.getAllEnabledOperators()) {
-    // Validate JSON schema
     const schemaValidation = validateOperatorSchema(operator.operatorType, operator.operatorProperties);
-
-    // Validate connections
     const connectionValidation = validateOperatorConnection(operator.operatorID, workflowState);
-
-    // Combine validations
     const combined = combineValidations(schemaValidation, connectionValidation);
 
     if (!combined.isValid) {
@@ -183,9 +161,6 @@ export function validateWorkflow(workflowState: WorkflowState): WorkflowValidati
   };
 }
 
-/**
- * Format workflow validation errors into a readable message.
- */
 function formatWorkflowValidationErrors(validationResult: WorkflowValidationResult): string {
   if (validationResult.isValid) return "";
 
@@ -203,22 +178,13 @@ function formatWorkflowValidationErrors(validationResult: WorkflowValidationResu
 // Logical Plan Builder
 // ============================================================================
 
-/**
- * Converts WorkflowState to LogicalPlan for execution.
- *
- * Execute To behavior:
- * - If opsToViewResult has exactly 1 operator ID: execute only the sub-DAG up to that operator
- * - If opsToViewResult is empty or has 2+ IDs: execute the full DAG and collect results from specified operators
- */
 export function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?: string[]): LogicalPlan {
-  // Determine if we should use sub-DAG (Execute To single operator)
   const useSubDAG = opsToViewResult && opsToViewResult.length === 1;
   const targetOperatorId = useSubDAG ? opsToViewResult[0] : undefined;
 
   let operatorsList: { operatorID: string; operatorType: string; [key: string]: any }[];
   let linksList: LogicalLink[];
 
-  // Helper to get port ordinal by looking up in the operator's port list
   const getInputPortOrdinal = (operatorID: string, inputPortID: string): number => {
     const op = workflowState.getOperator(operatorID);
     if (!op) return 0;
@@ -234,7 +200,6 @@ export function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?:
   };
 
   if (targetOperatorId) {
-    // Execute To: Get sub-DAG up to the target operator
     const subDAG = workflowState.getSubDAG(targetOperatorId);
 
     operatorsList = subDAG.operators.map(op => ({
@@ -247,18 +212,11 @@ export function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?:
 
     linksList = subDAG.links.map(link => ({
       fromOpId: link.source.operatorID,
-      fromPortId: {
-        id: getOutputPortOrdinal(link.source.operatorID, link.source.portID),
-        internal: false,
-      },
+      fromPortId: { id: getOutputPortOrdinal(link.source.operatorID, link.source.portID), internal: false },
       toOpId: link.target.operatorID,
-      toPortId: {
-        id: getInputPortOrdinal(link.target.operatorID, link.target.portID),
-        internal: false,
-      },
+      toPortId: { id: getInputPortOrdinal(link.target.operatorID, link.target.portID), internal: false },
     }));
   } else {
-    // Full DAG execution
     operatorsList = workflowState.getAllEnabledOperators().map(op => ({
       ...op.operatorProperties,
       operatorID: op.operatorID,
@@ -269,26 +227,17 @@ export function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?:
 
     linksList = workflowState.getAllLinks().map(link => ({
       fromOpId: link.source.operatorID,
-      fromPortId: {
-        id: getOutputPortOrdinal(link.source.operatorID, link.source.portID),
-        internal: false,
-      },
+      fromPortId: { id: getOutputPortOrdinal(link.source.operatorID, link.source.portID), internal: false },
       toOpId: link.target.operatorID,
-      toPortId: {
-        id: getInputPortOrdinal(link.target.operatorID, link.target.portID),
-        internal: false,
-      },
+      toPortId: { id: getInputPortOrdinal(link.target.operatorID, link.target.portID), internal: false },
     }));
   }
 
-  // Determine which operators to collect results from
   let allOpsToView: string[];
   if (opsToViewResult && opsToViewResult.length > 0) {
-    // Use the specified operators (filter to only those in our operator list)
     const operatorIds = new Set(operatorsList.map(op => op.operatorID));
     allOpsToView = opsToViewResult.filter(id => operatorIds.has(id));
   } else {
-    // Find sink operators (no outgoing links)
     allOpsToView = operatorsList
       .filter(op => !linksList.some(link => link.fromOpId === op.operatorID))
       .map(op => op.operatorID);
@@ -305,24 +254,10 @@ export function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?:
 // HTTP Execution Function
 // ============================================================================
 
-/**
- * Execute a workflow via HTTP REST API.
- * This is a stateless call that blocks until execution completes.
- * Supports abort signal for immediate cancellation.
- */
 async function executeWorkflowHttp(
   config: ExecutionConfig,
   logicalPlan: LogicalPlan,
-  options: {
-    executionName?: string;
-    timeoutSeconds?: number;
-    maxResultRows?: number;
-    maxCellTokens?: number;
-    serializationMode?: "json" | "table";
-    restrictOperatorResultToken?: boolean;
-    disablePrint?: boolean;
-    abortSignal?: AbortSignal;
-  } = {}
+  options: { abortSignal?: AbortSignal } = {}
 ): Promise<SyncExecutionResult> {
   const backendConfig = getBackendConfig();
   const executionEndpoint = backendConfig.executionEndpoint || "http://localhost:8085";
@@ -332,9 +267,13 @@ async function executeWorkflowHttp(
 
   const url = `${executionEndpoint}/api/execution/${workflowId}/${computingUnitId}/run`;
 
-  // Build request matching backend SyncExecutionRequest
+  const timeoutSeconds = config.executionTimeoutMs
+    ? Math.ceil(config.executionTimeoutMs / 1000)
+    : DEFAULT_TIMEOUT_SECONDS;
+
+  // Always request JSON format from backend - we'll convert in agent-service if needed
   const request = {
-    executionName: options.executionName || `agent-execution-${Date.now()}`,
+    executionName: "agent-execution",
     logicalPlan: {
       operators: logicalPlan.operators,
       links: logicalPlan.links,
@@ -342,12 +281,12 @@ async function executeWorkflowHttp(
       opsToReuseResult: [],
     },
     targetOperatorIds: logicalPlan.opsToViewResult || [],
-    timeoutSeconds: options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
-    maxResultRows: options.maxResultRows ?? DEFAULT_MAX_RESULT_ROWS,
-    maxCellTokens: options.maxCellTokens ?? DEFAULT_MAX_CELL_TOKENS,
-    serializationMode: options.serializationMode ?? "json",
-    restrictOperatorResultToken: options.restrictOperatorResultToken ?? false,
-    disablePrint: options.disablePrint ?? true,
+    timeoutSeconds,
+    serializationMode: "json", // Always request JSON from backend
+    restrictOperatorResultToken: config.restrictOperatorResultToken ?? false,
+    maxOperatorResultTokenLimit: config.maxOperatorResultTokenLimit ?? DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
+    maxCellTokens: config.maxOperatorResultCellTokenLimit ?? DEFAULT_MAX_CELL_TOKEN_LIMIT,
+    disablePrint: config.disablePrint ?? true,
   };
 
   console.log(`[ExecutionTools] Executing workflow via HTTP: ${url}`);
@@ -368,10 +307,8 @@ async function executeWorkflowHttp(
       throw new Error(`Execution request failed: ${response.status} ${response.statusText} - ${errorText}`);
     }
 
-    const result: SyncExecutionResult = await response.json();
-    return result;
+    return await response.json();
   } catch (error) {
-    // Re-throw abort errors so they propagate up
     if (error instanceof Error && error.name === "AbortError") {
       throw error;
     }
@@ -386,118 +323,153 @@ async function executeWorkflowHttp(
 }
 
 // ============================================================================
+// Result Formatting (agent-service side)
+// ============================================================================
+
+interface FormattedOperatorResult {
+  state: string;
+  rows: string; // e.g., "10/100 rows (truncated)"
+  result?: any;
+  error?: string;
+}
+
+/**
+ * Convert JSON result to table format (CSV-like string).
+ * This is done in agent-service rather than backend.
+ */
+function jsonToTableFormat(jsonResult: Record<string, any>[]): string {
+  if (!jsonResult || jsonResult.length === 0) return "";
+
+  const headers = Object.keys(jsonResult[0]);
+  const headerLine = headers.join(",");
+
+  const rows = jsonResult.map(row =>
+    headers
+      .map(h => {
+        const val = row[h];
+        if (val === null || val === undefined) return "";
+        const str = typeof val === "string" ? val : JSON.stringify(val);
+        // Escape CSV: wrap in quotes if contains comma, quote, or newline
+        if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      })
+      .join(",")
+  );
+
+  return [headerLine, ...rows].join("\n");
+}
+
+/**
+ * Format operator results for agent consumption.
+ * Simplifies the response and applies serialization mode.
+ */
+function formatOperatorResults(
+  operators: Record<string, OperatorInfo>,
+  serializationMode: OperatorResultSerializationMode
+): Record<string, FormattedOperatorResult> {
+  const formatted: Record<string, FormattedOperatorResult> = {};
+
+  for (const [operatorId, opInfo] of Object.entries(operators)) {
+    const displayedRows = opInfo.displayedRows ?? 0;
+    const totalRows = opInfo.totalRowCount ?? displayedRows;
+    const truncatedStr = opInfo.truncated ? " (truncated)" : "";
+    const rowsSummary = `${displayedRows}/${totalRows} rows${truncatedStr}`;
+
+    let result: any = undefined;
+    if (opInfo.result) {
+      if (serializationMode === OperatorResultSerializationMode.TABLE && Array.isArray(opInfo.result)) {
+        result = jsonToTableFormat(opInfo.result as Record<string, any>[]);
+      } else {
+        result = opInfo.result;
+      }
+    }
+
+    formatted[operatorId] = {
+      state: opInfo.state,
+      rows: rowsSummary,
+      ...(result !== undefined ? { result } : {}),
+      ...(opInfo.error ? { error: opInfo.error } : {}),
+    };
+  }
+
+  return formatted;
+}
+
+// ============================================================================
 // Tool Creator
 // ============================================================================
 
-/**
- * Create tool to execute the current workflow.
- */
-export function createExecuteWorkflowTool(workflowState: WorkflowState, executionConfig: ExecutionConfig) {
+export function createExecuteWorkflowTool(workflowState: WorkflowState, config: ExecutionConfig) {
   return tool({
     description:
       "Execute the current workflow and retrieve results. " +
-      "This will run all operators in the workflow and collect output from sink operators. " +
+      "Runs all operators and collects output from sink operators. " +
       "Optionally specify which operator IDs to view results for.",
     inputSchema: z.object({
-      operatorIdsToView: z
-        .array(z.string())
-        .describe(
-          "List of operator IDs to view results for."
-        ),
-      executionName: z.string().optional().describe("Optional name for this execution run."),
-      timeoutSeconds: z
-        .number()
-        .optional()
-        .describe(`Optional timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS}).`),
-      maxResultRows: z
-        .number()
-        .optional()
-        .describe(`Optional maximum result rows to return per operator (default: ${DEFAULT_MAX_RESULT_ROWS}).`),
+      operatorIdsToView: z.array(z.string()).describe("List of operator IDs to view results for."),
     }),
-    execute: async (
-      args: {
-        operatorIdsToView?: string[];
-        executionName?: string;
-        timeoutSeconds?: number;
-        maxResultRows?: number;
-      },
-      options: { abortSignal?: AbortSignal }
-    ) => {
+    execute: async (args: { operatorIdsToView?: string[] }, options: { abortSignal?: AbortSignal }) => {
       try {
-        // Build logical plan from current workflow state
         const logicalPlan = buildLogicalPlan(workflowState, args.operatorIdsToView);
 
         if (logicalPlan.operators.length === 0) {
           return createErrorResult("Cannot execute: workflow has no operators.");
         }
 
-        // Validate workflow before execution
         const validationResult = validateWorkflow(workflowState);
         if (!validationResult.isValid) {
-          const errorMessage = formatWorkflowValidationErrors(validationResult);
-          return createErrorResult(errorMessage);
+          return createErrorResult(formatWorkflowValidationErrors(validationResult));
         }
 
-        // Execute via HTTP with abort signal for cancellation support
-        const result = await executeWorkflowHttp(executionConfig, logicalPlan, {
-          executionName: args.executionName,
-          timeoutSeconds: args.timeoutSeconds,
-          maxResultRows: args.maxResultRows,
-          maxCellTokens: executionConfig.maxCellTokens,
-          serializationMode: executionConfig.serializationMode,
-          restrictOperatorResultToken: executionConfig.restrictOperatorResultToken,
-          disablePrint: executionConfig.disablePrint,
+        const result = await executeWorkflowHttp(config, logicalPlan, {
           abortSignal: options.abortSignal,
         });
 
-        // Format operator info for readability
-        const formattedOperators = formatOperatorInfo(result.operators);
+        // Format results using configured serialization mode
+        const serializationMode = config.serializationMode ?? OperatorResultSerializationMode.TABLE;
+        const formattedResults = formatOperatorResults(result.operators, serializationMode);
 
-        // Determine execution status message
+        // Build simplified response
+        const response: Record<string, any> = { results: formattedResults };
+
+        // Only include errors if present
+        if (result.compilationErrors && Object.keys(result.compilationErrors).length > 0) {
+          response.compilationErrors = result.compilationErrors;
+        }
+        if (result.errors && result.errors.length > 0) {
+          response.errors = result.errors;
+        }
+
+        // Build status message
         let statusMessage: string;
         if (result.success) {
           statusMessage = "Workflow execution completed successfully.";
         } else if (result.state === "Failed") {
-          // Try to get error from result.errors first, then from operator console logs
-          let errorMsgs = result.errors?.join("; ");
-          if (!errorMsgs) {
-            // Extract error from operator console logs
-            const operatorErrors = Object.entries(result.operators)
+          const errorMsgs =
+            result.errors?.join("; ") ||
+            Object.entries(result.operators)
               .filter(([_, op]) => op.error)
-              .map(([opId, op]) => `${opId}: ${op.error}`);
-            errorMsgs = operatorErrors.length > 0 ? operatorErrors.join("; ") : "Unknown error";
-          }
+              .map(([opId, op]) => `${opId}: ${op.error}`)
+              .join("; ") ||
+            "Unknown error";
           statusMessage = `Workflow execution failed: ${errorMsgs}`;
         } else if (result.state === "Killed") {
-          statusMessage = "Workflow execution was killed.";
-        } else if (result.state === "CompilationFailed") {
+          statusMessage = "Workflow execution was killed (timeout).";
+        } else if (result.state === "CompilationFailed" || result.state === "ValidationFailed") {
           const compilationMsgs = result.compilationErrors
             ? Object.entries(result.compilationErrors)
                 .map(([k, v]) => `${k}: ${v}`)
                 .join("; ")
             : "Unknown compilation error";
           statusMessage = `Workflow compilation failed: ${compilationMsgs}`;
-        } else if (result.state === "Timeout") {
-          statusMessage = `Workflow execution timed out after ${args.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS} seconds.`;
         } else {
           statusMessage = `Workflow execution ended with state: ${result.state}`;
         }
 
-        return createSuccessResult(
-          {
-            success: result.success,
-            executionState: result.state,
-            operators: formattedOperators,
-            compilationErrors: result.compilationErrors,
-            errors: result.errors,
-            message: statusMessage,
-          },
-          Object.keys(result.operators),
-          [],
-          []
-        );
+        return createToolResult(statusMessage, response);
       } catch (error: any) {
-        // Re-throw abort errors so they propagate up to the agent
         if (error.name === "AbortError") {
           throw error;
         }
@@ -505,49 +477,4 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, executio
       }
     },
   });
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-interface FormattedOperatorInfo {
-  state: string;
-  inputTuples: string;
-  outputTuples: string;
-  resultMode: string;
-  resultSummary: string;
-  result?: any; // JSON array or Table structure
-  consoleLogs?: ConsoleMessage[];
-  error?: string;
-}
-
-/**
- * Format operator info with units for readability.
- */
-function formatOperatorInfo(operators: Record<string, OperatorInfo>): Record<string, FormattedOperatorInfo> {
-  const formatted: Record<string, FormattedOperatorInfo> = {};
-
-  for (const [operatorId, opInfo] of Object.entries(operators)) {
-    let resultSummary = "No result";
-    if (opInfo.result) {
-      const displayedRows = opInfo.displayedRows ?? 0;
-      const totalRows = opInfo.totalRowCount ?? displayedRows;
-      const truncatedStr = opInfo.truncated ? " (only partial data is displayed due to token limit)" : "";
-      resultSummary = `${displayedRows}/${totalRows} rows${truncatedStr}`;
-    }
-
-    formatted[operatorId] = {
-      state: opInfo.state,
-      inputTuples: `${opInfo.inputTuples} rows`,
-      outputTuples: `${opInfo.outputTuples} rows`,
-      resultMode: opInfo.resultMode,
-      resultSummary,
-      result: opInfo.result,
-      consoleLogs: opInfo.consoleLogs,
-      error: opInfo.error,
-    };
-  }
-
-  return formatted;
 }

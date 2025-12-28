@@ -42,23 +42,15 @@ export enum AgentState {
 // ============================================================================
 
 /**
- * Base interface for all tool execution results
+ * Base interface for all tool execution results.
+ * Tools return either a success result with a message, or an error.
+ * The message field provides human-readable feedback to the agent.
  */
 export interface BaseToolResult {
-  success: boolean;
+  /** Human-readable message describing what happened */
+  message: string;
+  /** Error message if the tool failed (presence indicates failure) */
   error?: string;
-  viewedOperatorIds: string[];
-  addedOperatorIds: string[];
-  modifiedOperatorIds: string[];
-}
-
-/**
- * Operator access tracking from tool execution
- */
-export interface ToolOperatorAccess {
-  viewedOperatorIds: string[];
-  addedOperatorIds: string[];
-  modifiedOperatorIds: string[];
 }
 
 // ============================================================================
@@ -111,12 +103,11 @@ export interface TokenUsage {
 /**
  * ReActStep - Represents a single reasoning and acting step in the agent's response.
  * Each step contains the agent's reasoning text, tool calls, results, and metadata.
- * This format is aligned with the frontend's ReActStep interface.
  */
 export interface ReActStep {
   messageId: string;
   stepId: number;
-  timestamp: number; // Unix timestamp in milliseconds
+  timestamp: number;
   role: "user" | "agent";
   content: string;
   isBegin: boolean;
@@ -132,8 +123,6 @@ export interface ReActStep {
     isError?: boolean;
   }>;
   usage?: TokenUsage;
-  // Map from tool call index to operator access information (serialized as object for JSON)
-  operatorAccess?: Record<number, ToolOperatorAccess>;
 }
 
 /**
