@@ -80,41 +80,62 @@ object ExecutionResultService {
   }
 
   /**
-    * Convert pickled Python data to a readable string representation.
-    * Uses Python subprocess to deserialize and get repr() of the object.
+    * Batch unpickle multiple Python objects in a single subprocess call.
+    * This is much more efficient than spawning a process for each object.
     *
-    * @param byteArray The full byte array including the pickle prefix
-    * @return A readable string representation of the Python object
+    * @param pickledDataList List of (index, pickled byte array) pairs
+    * @return Map from index to deserialized string representation
     */
-  private def unpickleToString(byteArray: Array[Byte]): String = {
-    Try {
-      // Skip the pickle prefix (10 bytes)
-      val pickledData = byteArray.drop(PICKLE_PREFIX.length)
-      val base64Data = Base64.getEncoder.encodeToString(pickledData)
+  private def batchUnpickle(pickledDataList: List[(Int, Array[Byte])]): Map[Int, String] = {
+    if (pickledDataList.isEmpty) {
+      return Map.empty
+    }
 
-      // Call Python to unpickle and return repr()
+    Try {
+      import com.fasterxml.jackson.databind.ObjectMapper
+      val mapper = new ObjectMapper()
+
+      // Prepare input: list of base64-encoded pickle data
+      val base64List = pickledDataList.map {
+        case (idx, byteArray) =>
+          val pickledData = byteArray.drop(PICKLE_PREFIX.length)
+          Base64.getEncoder.encodeToString(pickledData)
+      }
+      val inputJson = mapper.writeValueAsString(base64List.toArray)
+
+      // Python script that processes all pickled data in one call
       val pythonCode =
-        s"""import pickle, base64, sys
-           |try:
-           |    data = base64.b64decode('$base64Data')
-           |    obj = pickle.loads(data)
-           |    # Use repr for a readable representation
-           |    result = repr(obj)
-           |    # Limit output to prevent huge strings
-           |    if len(result) > 10000:
-           |        result = result[:10000] + '...[truncated]'
-           |    print(result, end='')
-           |except Exception as e:
-           |    print(f'[unpickle error: {e}]', end='')
-           |""".stripMargin
+        """import pickle, base64, json, sys
+          |
+          |# Read input from stdin
+          |input_data = sys.stdin.read()
+          |base64_list = json.loads(input_data)
+          |
+          |results = []
+          |for b64_data in base64_list:
+          |    try:
+          |        data = base64.b64decode(b64_data)
+          |        obj = pickle.loads(data)
+          |        results.append(repr(obj))
+          |    except Exception as e:
+          |        results.append(f'[unpickle error: {e}]')
+          |
+          |print(json.dumps(results))
+          |""".stripMargin
 
       val processBuilder = new ProcessBuilder("python3", "-c", pythonCode)
       processBuilder.redirectErrorStream(true)
       val process = processBuilder.start()
 
+      // Write input to stdin
+      val outputStream = process.getOutputStream
+      outputStream.write(inputJson.getBytes("UTF-8"))
+      outputStream.close()
+
+      // Read output
       val output = new ByteArrayOutputStream()
       val inputStream = process.getInputStream
-      val buffer = new Array[Byte](1024)
+      val buffer = new Array[Byte](8192)
       var bytesRead = inputStream.read(buffer)
       while (bytesRead != -1) {
         output.write(buffer, 0, bytesRead)
@@ -122,17 +143,24 @@ object ExecutionResultService {
       }
 
       val exitCode = process.waitFor()
-      val result = output.toString("UTF-8")
+      val resultStr = output.toString("UTF-8")
 
-      if (exitCode == 0 && result.nonEmpty) {
-        result
+      if (exitCode == 0 && resultStr.nonEmpty) {
+        val resultsArray = mapper.readValue(resultStr, classOf[Array[String]])
+        pickledDataList.map(_._1).zip(resultsArray).toMap
       } else {
-        // Fallback to indicating it's a Python object
-        s"[Python object (${byteArray.length - PICKLE_PREFIX.length} bytes)]"
+        // Fallback: return error message for all
+        pickledDataList.map {
+          case (idx, byteArray) =>
+            idx -> s"[Python object (${byteArray.length - PICKLE_PREFIX.length} bytes)]"
+        }.toMap
       }
     }.getOrElse {
-      // If Python call fails, return a descriptive placeholder
-      s"[Python object (${byteArray.length - PICKLE_PREFIX.length} bytes)]"
+      // If Python call fails, return placeholders
+      pickledDataList.map {
+        case (idx, byteArray) =>
+          idx -> s"[Python object (${byteArray.length - PICKLE_PREFIX.length} bytes)]"
+      }.toMap
     }
   }
 
@@ -140,8 +168,8 @@ object ExecutionResultService {
     * Converts a collection of Tuples to a list of JSON ObjectNodes.
     *
     * This function takes a collection of Tuples and converts each tuple into a JSON ObjectNode.
-    * For binary data, it formats the bytes into a readable hex string representation with length info.
-    * For string values longer than maxStringLength (100), it truncates them.
+    * For binary data containing pickled Python objects, it deserializes them in batch for efficiency.
+    * For raw binary data, it formats the bytes into a readable hex string representation.
     * NULL values are converted to the string "NULL".
     *
     * @param tuples The collection of Tuples to convert
@@ -153,60 +181,80 @@ object ExecutionResultService {
       isVisualization: Boolean = false
   ): List[ObjectNode] = {
     val maxStringLength = 100000
+    val tuplesList = tuples.toList
 
-    tuples.map { tuple =>
-      val processedFields = tuple.schema.getAttributes.zipWithIndex
-        .map {
-          case (attr, idx) =>
-            val fieldValue = tuple.getField[AnyRef](idx)
+    // First pass: collect all pickled data with their global indices
+    // Index format: tupleIdx * 1000000 + fieldIdx (supports up to 1M fields per tuple)
+    val pickledDataList = mutable.ListBuffer[(Int, Array[Byte])]()
 
-            Option(fieldValue) match {
-              case None => "NULL"
-              case Some(value) =>
-                attr.getType match {
-                  case AttributeType.BINARY =>
-                    value match {
-                      case byteArray: Array[Byte] =>
-                        // Check if this is pickled Python data (list, dict, tuple, etc.)
-                        if (isPickledData(byteArray)) {
-                          // Deserialize and return readable string representation
-                          unpickleToString(byteArray)
-                        } else {
-                          // Raw binary data - show hex representation
-                          val totalSize = byteArray.length
-                          val hexString = byteArrayToHexString(byteArray)
-
-                          // 39 = 30 (leading bytes) + 9 (trailing bytes)
-                          // 30 bytes = space for 10 hex values (each hex value takes 2 chars + 1 space)
-                          // 9 bytes = space for 3 hex values at the end (2 chars each + 1 space)
-                          if (hexString.length < 39) {
-                            s"bytes'$hexString' (length: $totalSize)"
-                          } else {
-                            val leadingBytes = hexString.take(30)
-                            val trailingBytes = hexString.takeRight(9)
-                            s"bytes'$leadingBytes...$trailingBytes' (length: $totalSize)"
-                          }
-                        }
-
-                      case _ =>
-                        throw new RuntimeException(
-                          s"Expected byte array for binary type field, but got: ${value.getClass.getName}"
-                        )
-                    }
-                  case AttributeType.STRING =>
-                    val stringValue = value.asInstanceOf[String]
-                    if (stringValue.length > maxStringLength && !isVisualization)
-                      stringValue.take(maxStringLength) + "..."
-                    else
-                      stringValue
-                  case _ => value
-                }
+    tuplesList.zipWithIndex.foreach {
+      case (tuple, tupleIdx) =>
+        tuple.schema.getAttributes.zipWithIndex.foreach {
+          case (attr, fieldIdx) =>
+            if (attr.getType == AttributeType.BINARY) {
+              val fieldValue = tuple.getField[AnyRef](fieldIdx)
+              fieldValue match {
+                case byteArray: Array[Byte] if isPickledData(byteArray) =>
+                  val globalIdx = tupleIdx * 1000000 + fieldIdx
+                  pickledDataList += ((globalIdx, byteArray))
+                case _ => // Not pickled data, skip
+              }
             }
         }
-        .toArray[Any]
+    }
 
-      TupleUtils.tuple2json(tuple.schema, processedFields)
-    }.toList
+    // Batch deserialize all pickled data in a single Python call
+    val unpickledMap = batchUnpickle(pickledDataList.toList)
+
+    // Second pass: build JSON with deserialized values
+    tuplesList.zipWithIndex.map {
+      case (tuple, tupleIdx) =>
+        val processedFields = tuple.schema.getAttributes.zipWithIndex
+          .map {
+            case (attr, fieldIdx) =>
+              val fieldValue = tuple.getField[AnyRef](fieldIdx)
+
+              Option(fieldValue) match {
+                case None => "NULL"
+                case Some(value) =>
+                  attr.getType match {
+                    case AttributeType.BINARY =>
+                      value match {
+                        case byteArray: Array[Byte] =>
+                          val globalIdx = tupleIdx * 1000000 + fieldIdx
+                          unpickledMap.get(globalIdx) match {
+                            case Some(unpickled) => unpickled
+                            case None =>
+                              // Raw binary data - show hex representation
+                              val totalSize = byteArray.length
+                              val hexString = byteArrayToHexString(byteArray)
+                              if (hexString.length < 39) {
+                                s"bytes'$hexString' (length: $totalSize)"
+                              } else {
+                                val leadingBytes = hexString.take(30)
+                                val trailingBytes = hexString.takeRight(9)
+                                s"bytes'$leadingBytes...$trailingBytes' (length: $totalSize)"
+                              }
+                          }
+                        case _ =>
+                          throw new RuntimeException(
+                            s"Expected byte array for binary type field, but got: ${value.getClass.getName}"
+                          )
+                      }
+                    case AttributeType.STRING =>
+                      val stringValue = value.asInstanceOf[String]
+                      if (stringValue.length > maxStringLength && !isVisualization)
+                        stringValue.take(maxStringLength) + "..."
+                      else
+                        stringValue
+                    case _ => value
+                  }
+              }
+          }
+          .toArray[Any]
+
+        TupleUtils.tuple2json(tuple.schema, processedFields)
+    }
   }
 
   /**
