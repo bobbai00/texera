@@ -24,7 +24,10 @@ import org.apache.amber.engine.architecture.controller.execution.ExecutionUtils.
 import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
 import org.apache.amber.engine.architecture.scheduling.{PortResultCache, Region, RegionIdentity}
-import org.apache.amber.engine.architecture.worker.statistics.{PortTupleMetricsMapping, TupleMetrics}
+import org.apache.amber.engine.architecture.worker.statistics.{
+  PortTupleMetricsMapping,
+  TupleMetrics
+}
 import org.apache.amber.engine.common.executionruntimestate.{OperatorMetrics, OperatorStatistics}
 
 import scala.collection.mutable

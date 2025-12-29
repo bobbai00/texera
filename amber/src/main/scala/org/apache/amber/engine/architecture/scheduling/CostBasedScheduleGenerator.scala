@@ -183,28 +183,30 @@ class CostBasedScheduleGenerator(
     * @return Map of operator ID to its cached data
     */
   def getFullyCachedOperatorsWithData: Map[PhysicalOpIdentity, CachedOperatorData] = {
-    cacheAnalysisResult.map { analysis =>
-      analysis.fullyCachedOperators.flatMap { opId =>
-        val op = physicalPlan.getOperator(opId)
+    cacheAnalysisResult
+      .map { analysis =>
+        analysis.fullyCachedOperators.flatMap { opId =>
+          val op = physicalPlan.getOperator(opId)
 
-        // Compute operator cache key from output port cache keys
-        val outputPortCacheKeys = op.outputPorts.keys.flatMap { portId =>
-          val globalPortId = GlobalPortIdentity(opId, portId)
-          analysis.cacheKeys.get(globalPortId)
-        }.toSeq
+          // Compute operator cache key from output port cache keys
+          val outputPortCacheKeys = op.outputPorts.keys.flatMap { portId =>
+            val globalPortId = GlobalPortIdentity(opId, portId)
+            analysis.cacheKeys.get(globalPortId)
+          }.toSeq
 
-        if (outputPortCacheKeys.nonEmpty) {
-          val operatorCacheKey = PortResultCache.computeOperatorCacheKey(outputPortCacheKeys)
+          if (outputPortCacheKeys.nonEmpty) {
+            val operatorCacheKey = PortResultCache.computeOperatorCacheKey(outputPortCacheKeys)
 
-          // Look up cached operator data
-          PortResultCache.lookupOperatorData(operatorCacheKey).map { cachedData =>
-            opId -> cachedData
+            // Look up cached operator data
+            PortResultCache.lookupOperatorData(operatorCacheKey).map { cachedData =>
+              opId -> cachedData
+            }
+          } else {
+            None
           }
-        } else {
-          None
-        }
-      }.toMap
-    }.getOrElse(Map.empty)
+        }.toMap
+      }
+      .getOrElse(Map.empty)
   }
 
   def generate(): (Schedule, PhysicalPlan) = {

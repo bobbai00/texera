@@ -44,8 +44,8 @@ class PythonUDFSourceOpDescV2 extends SourceOperatorDescriptor {
         "    # File IO is allowed in this source operator\n\n" +
         "    @overrides\n" +
         "    def produce(self) -> Iterator[Union[TupleLike, TableLike, None]]:\n" +
-        "        # There should be only one yield\n"+
-        "        # you MUST yield either tuple or dataframe\n"+
+        "        # There should be only one yield\n" +
+        "        # you MUST yield either tuple or dataframe\n" +
         "        yield\n"
   )
   @JsonSchemaTitle("Python script")

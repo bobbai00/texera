@@ -25,7 +25,12 @@ import org.apache.amber.core.executor.OpExecWithCode
 import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.amber.core.workflow._
-import org.apache.amber.operator.{LogicalOp, PortDescription, PythonCodeValidator, StateTransferFunc}
+import org.apache.amber.operator.{
+  LogicalOp,
+  PortDescription,
+  PythonCodeValidator,
+  StateTransferFunc
+}
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 
 import scala.util.{Success, Try}

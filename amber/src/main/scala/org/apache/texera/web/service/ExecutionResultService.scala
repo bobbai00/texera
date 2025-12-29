@@ -224,7 +224,7 @@ object ExecutionResultService {
                           val globalIdx = tupleIdx * 1000000 + fieldIdx
                           unpickledMap.get(globalIdx) match {
                             case Some(unpickled) => unpickled
-                            case None =>
+                            case None            =>
                               // Raw binary data - show hex representation
                               val totalSize = byteArray.length
                               val hexString = byteArrayToHexString(byteArray)

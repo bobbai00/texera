@@ -337,7 +337,8 @@ class ExecutionConsoleService(
     * from previous executions for operators that were skipped due to cache hits.
     */
   def loadCachedConsoleMessages(): Unit = {
-    val cachedOperators = PortResultCache.getCachedOperatorsForExecution(workflowContext.executionId)
+    val cachedOperators =
+      PortResultCache.getCachedOperatorsForExecution(workflowContext.executionId)
 
     cachedOperators.foreach {
       case (opId, cachedData) =>
@@ -355,12 +356,16 @@ class ExecutionConsoleService(
                 }
               }.recover {
                 case e: Exception =>
-                  logger.warn(s"Failed to parse cached console message for operator ${opId.logicalOpId.id}: ${e.getMessage}")
+                  logger.warn(
+                    s"Failed to parse cached console message for operator ${opId.logicalOpId.id}: ${e.getMessage}"
+                  )
               }
             }
           }.recover {
             case e: Exception =>
-              logger.debug(s"No cached console messages found for operator ${opId.logicalOpId.id}: ${e.getMessage}")
+              logger.debug(
+                s"No cached console messages found for operator ${opId.logicalOpId.id}: ${e.getMessage}"
+              )
           }
         }
     }
