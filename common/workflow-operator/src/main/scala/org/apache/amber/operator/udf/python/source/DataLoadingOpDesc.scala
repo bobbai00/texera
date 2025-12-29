@@ -27,6 +27,7 @@ import org.apache.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentit
 import org.apache.amber.core.workflow.{OutputPort, PhysicalOp, SchemaPropagationFunc}
 import org.apache.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.amber.operator.source.SourceOperatorDescriptor
+import org.apache.amber.operator.PythonCodeValidator
 
 import scala.util.matching.Regex
 
@@ -68,7 +69,7 @@ class DataLoadingOpDesc extends SourceOperatorDescriptor {
         "    return pd.DataFrame()\n"
   )
   @JsonSchemaTitle("Python function")
-  @JsonPropertyDescription("Define a function that loads and returns data")
+  @JsonPropertyDescription("input your code here")
   var code: String = _
 
   /**
@@ -107,12 +108,22 @@ class DataLoadingOpDesc extends SourceOperatorDescriptor {
   ): PhysicalOp = {
     val fullCode = generateFullCode()
 
+    // Validate code for print statements (file I/O is allowed in source operators)
+    val validatedCode =
+      try {
+        PythonCodeValidator.validateNoPrint(fullCode)
+        fullCode
+      } catch {
+        case ex: Throwable =>
+          PythonCodeValidator.generatePythonCodeForRaisingException(ex)
+      }
+
     PhysicalOp
       .sourcePhysicalOp(
         workflowId,
         executionId,
         operatorIdentifier,
-        OpExecWithCode(fullCode, "python")
+        OpExecWithCode(validatedCode, "python")
       )
       .withInputPorts(operatorInfo.inputPorts)
       .withOutputPorts(operatorInfo.outputPorts)
@@ -127,7 +138,7 @@ class DataLoadingOpDesc extends SourceOperatorDescriptor {
   override def operatorInfo: OperatorInfo = {
     OperatorInfo(
       "Data Loading",
-      """Load data from files or external sources with a Python function.
+      """Load data from files or external sources with a Python function. Do NOT use print statement
         |
         |Write a simple function - the operator handles the class boilerplate.
         |File I/O is allowed in this source operator.

@@ -77,7 +77,7 @@ class DataProcessingOpDesc extends LogicalOp {
         "    return input_0\n"
   )
   @JsonSchemaTitle("Python function")
-  @JsonPropertyDescription("Define a function that processes input tables")
+  @JsonPropertyDescription("input your code here")
   var code: String = ""
 
   /**
@@ -115,6 +115,7 @@ class DataProcessingOpDesc extends LogicalOp {
     val selfParams = params.map(p => s"self.$p").mkString(", ")
 
     s"""from pytexera import *
+       |import pandas as pd
        |
        |class ProcessTablesOperator(UDFMultiTableOperator):
        |    INPUT_PORTS = [$inputPorts]
@@ -139,10 +140,11 @@ class DataProcessingOpDesc extends LogicalOp {
 
     val fullCode = generateFullCode()
 
-    // Validate code for file I/O operations
+    // Validate code for file I/O operations and print statements
     val validatedCode =
       try {
         PythonCodeValidator.validateNoFileIO(fullCode)
+        PythonCodeValidator.validateNoPrint(fullCode)
         fullCode
       } catch {
         case ex: Throwable =>
@@ -210,10 +212,8 @@ class DataProcessingOpDesc extends LogicalOp {
 
     OperatorInfo(
       "Data Processing",
-      """Process input tables with a Python function.
+      """Process input tables from input ports with a Python function. Do NOT use print statement
         |
-        |Write a simple function - the operator handles the class boilerplate.
-        |Function parameters become input port names automatically.
         |
         |Example 1 - Filter and transform:
         |  def process(users) -> pd.DataFrame:
