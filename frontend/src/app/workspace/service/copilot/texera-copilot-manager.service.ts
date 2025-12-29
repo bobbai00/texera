@@ -443,15 +443,20 @@ export class TexeraCopilotManagerService {
 
     ws.onclose = event => {
       console.log(`[CopilotManager] WebSocket closed for agent ${agentId}, code: ${event.code}`);
-      tracking.websocket = undefined;
 
-      // If the connection was closed abnormally (e.g., backend restarted),
-      // clean up the agent from local cache
-      if (event.code !== 1000) {
-        // 1000 is normal closure
-        console.log(`[CopilotManager] Abnormal WebSocket close for agent ${agentId}, cleaning up local state`);
-        // Set state to unavailable
-        tracking.stateSubject.next(CopilotState.UNAVAILABLE);
+      // Only clean up if this is still the current websocket
+      // This prevents race conditions when rapidly deactivating/reactivating
+      if (tracking.websocket === ws) {
+        tracking.websocket = undefined;
+
+        // If the connection was closed abnormally (e.g., backend restarted),
+        // clean up the agent from local cache
+        if (event.code !== 1000) {
+          // 1000 is normal closure
+          console.log(`[CopilotManager] Abnormal WebSocket close for agent ${agentId}, cleaning up local state`);
+          // Set state to unavailable
+          tracking.stateSubject.next(CopilotState.UNAVAILABLE);
+        }
       }
     };
 

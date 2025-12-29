@@ -157,21 +157,30 @@ export class AgentPanelComponent implements OnInit, OnDestroy, OnChanges {
    * Handle agent creation - activates and switches to the new agent
    */
   public onAgentCreated(agentId: string): void {
-    // The agent is already added to the agents array by the manager service
-    // Find the index of the newly created agent and switch to that tab
-    // Tab index 0 is registration, so agent tabs start at index 1
+    // Deactivate previous agent if any
+    if (this.activeAgentId) {
+      this.copilotManagerService.deactivateAgent(this.activeAgentId);
+    }
+
+    // Set the new agent as active immediately
+    // The service's internal Map is already populated, so activation will work
+    this.activeAgentId = agentId;
+    this.copilotManagerService.activateAgent(agentId);
+
+    // Find the agent in the array to switch to the correct tab
+    // Note: Due to async getAllAgents(), the agent might not be in the array yet
     const agentIndex = this.agents.findIndex(agent => agent.id === agentId);
     if (agentIndex !== -1) {
-      // Deactivate previous agent if any
-      if (this.activeAgentId) {
-        this.copilotManagerService.deactivateAgent(this.activeAgentId);
-      }
-
-      // Activate the new agent
-      this.activeAgentId = agentId;
-      this.copilotManagerService.activateAgent(agentId);
-
       this.selectedTabIndex = agentIndex + 1; // +1 because tab 0 is registration
+    } else {
+      // Agent not in array yet - subscribe to agentChange$ to switch tab when available
+      const subscription = this.copilotManagerService.agentChange$.pipe(untilDestroyed(this)).subscribe(() => {
+        const index = this.agents.findIndex(agent => agent.id === agentId);
+        if (index !== -1) {
+          this.selectedTabIndex = index + 1;
+          subscription.unsubscribe();
+        }
+      });
     }
   }
 
@@ -216,8 +225,15 @@ export class AgentPanelComponent implements OnInit, OnDestroy, OnChanges {
    * Switch to a specific agent tab
    */
   private switchToAgent(agentId: string, tabIndex: number): void {
-    // Deactivate previous agent
-    this.deactivateCurrentAgent();
+    // Skip if already on this agent and tab
+    if (this.activeAgentId === agentId && this.selectedTabIndex === tabIndex) {
+      return;
+    }
+
+    // Deactivate previous agent only if switching to a different agent
+    if (this.activeAgentId !== agentId) {
+      this.deactivateCurrentAgent();
+    }
 
     // Activate new agent
     this.activeAgentId = agentId;
