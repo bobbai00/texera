@@ -84,7 +84,7 @@ import org.apache.amber.operator.symmetricDifference.SymmetricDifferenceOpDesc
 import org.apache.amber.operator.typecasting.TypeCastingOpDesc
 import org.apache.amber.operator.udf.java.JavaUDFOpDesc
 import org.apache.amber.operator.udf.python._
-import org.apache.amber.operator.udf.python.source.PythonUDFSourceOpDescV2
+import org.apache.amber.operator.udf.python.source.{DataLoadingOpDesc, PythonUDFSourceOpDescV2}
 import org.apache.amber.operator.udf.r.{RUDFOpDesc, RUDFSourceOpDesc}
 import org.apache.amber.operator.union.UnionOpDesc
 import org.apache.amber.operator.unneststring.UnnestStringOpDesc
@@ -211,6 +211,8 @@ trait StateTransferFunc
     new Type(value = classOf[RedditSearchSourceOpDesc], name = "RedditSearch"),
     new Type(value = classOf[PythonLambdaFunctionOpDesc], name = "PythonLambdaFunction"),
     new Type(value = classOf[PythonTableReducerOpDesc], name = "PythonTableReducer"),
+    new Type(value = classOf[DataProcessingOpDesc], name = "DataProcessing"),
+    new Type(value = classOf[DataLoadingOpDesc], name = "DataLoading"),
     new Type(value = classOf[URLFetcherOpDesc], name = "URLFetcher"),
     new Type(value = classOf[VolcanoPlotOpDesc], name = "VolcanoPlot"),
     new Type(value = classOf[CartesianProductOpDesc], name = "CartesianProduct"),

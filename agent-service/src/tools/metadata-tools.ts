@@ -70,8 +70,9 @@ export interface CompactOperatorSchema {
 // ============================================================================
 
 export const ALLOWED_OPERATOR_TYPES = [
-  "PythonTableUDF", // Table UDF for processing data (file IO blocked)
-  "PythonUDFSourceV2", // Source operator for reading files (file IO allowed)
+  "DataProcessing", // Simple function for processing data (file IO blocked)
+  "DataLoading", // Simple function for loading data from files (file IO allowed)
+  "PythonTableUDF", // Table UDF for processing data with full class syntax (file IO blocked)
 ] as const;
 
 // ============================================================================

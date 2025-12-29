@@ -141,7 +141,9 @@ export class InlineCodePanelComponent implements AfterViewInit, OnDestroy, OnCha
       operatorType === "PythonUDFV2" ||
       operatorType === "PythonUDFSourceV2" ||
       operatorType === "DualInputPortsPythonUDFV2" ||
-      operatorType === "PythonTableUDF"
+      operatorType === "PythonTableUDF" ||
+      operatorType === "DataProcessing" ||
+      operatorType === "DataLoading"
     ) {
       return "python";
     } else {
