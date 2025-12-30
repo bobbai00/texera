@@ -59,7 +59,7 @@ export const TOOL_NAME_MODIFY_OPERATOR = "modifyOperator";
 export const TOOL_NAME_DELETE_FROM_WORKFLOW = "deleteFromWorkflow";
 
 // Operator type that supports dynamic input ports
-const MULTI_INPUT_OPERATOR_TYPE = "PythonTableUDF";
+const MULTI_INPUT_OPERATOR_TYPE = "DataProcessing";
 
 // ============================================================================
 // Port Validation
@@ -251,7 +251,7 @@ export function createAddOperatorTool(
 export function createAddLinkTool(workflowState: WorkflowState, context?: ToolContext) {
   return tool({
     description:
-      "Add a link connecting two operators. Use targetPortIndex for PythonTableUDF with multiple input ports.",
+      "Add a link connecting two operators's ports",
     inputSchema: z.object({
       sourceOperatorId: z.string().describe("ID of the source operator"),
       sourcePortIndex: z.number().default(0).describe("Source port index (0-based). Defaults to 0."),
