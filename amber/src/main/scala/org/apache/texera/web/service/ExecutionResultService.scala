@@ -296,6 +296,11 @@ object ExecutionResultService {
       oldTupleCount: Int,
       newTupleCount: Int
   ): WebResultUpdate = {
+    // Handle empty physicalOps early to avoid head-of-empty-list errors
+    if (physicalOps.isEmpty) {
+      return WebPaginationUpdate(PaginationMode(), 0, List.empty)
+    }
+
     val outputMode = physicalOps
       .flatMap(op => op.outputPorts)
       .filter({
