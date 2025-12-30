@@ -152,19 +152,12 @@ class DataLoadingOpDesc extends SourceOperatorDescriptor {
         |      df = pd.read_json("/path/to/data.json")
         |      return df[df["status"] == "active"]
         |
-        |Example 3 - Load from database:
+        |Example 3 - Load text file as single row:
         |  def load() -> pd.DataFrame:
-        |      import sqlite3
-        |      conn = sqlite3.connect("/path/to/db.sqlite")
-        |      return pd.read_sql("SELECT * FROM users", conn)
+        |      with open("/path/to/readme.md", "r") as f:
+        |          content = f.read()
+        |      return pd.DataFrame([{"filename": "readme.md", "content": content}])
         |
-        |Example 4 - Generate synthetic data:
-        |  def load() -> pd.DataFrame:
-        |      import numpy as np
-        |      return pd.DataFrame({
-        |          "x": np.random.randn(100),
-        |          "y": np.random.randn(100)
-        |      })
         |""".stripMargin,
       OperatorGroupConstants.PYTHON_GROUP,
       List.empty, // No input ports for a source operator
