@@ -50,8 +50,8 @@ export interface AgentSettingsApi {
   maxOperatorResultTokenLimit?: number;
   /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
   maxOperatorResultCellTokenLimit?: number;
-  /** Serialization mode for operator results: "json" or "table" */
-  operatorResultSerializationMode?: "json" | "table";
+  /** Serialization mode for operator results: "json", "table", or "toon" */
+  operatorResultSerializationMode?: "json" | "table" | "toon";
   /** Tool execution timeout in seconds */
   toolTimeoutSeconds?: number;
   /** Workflow execution timeout in minutes */
