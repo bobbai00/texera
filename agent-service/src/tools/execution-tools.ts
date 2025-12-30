@@ -367,6 +367,70 @@ async function executeWorkflowHttp(
 // ============================================================================
 
 /**
+ * Meta info for execution result formatting.
+ */
+interface ResultMeta {
+  mode: string;
+  displayedRows: number;
+  totalRows: number;
+  columns: number;
+  truncated: boolean;
+}
+
+/**
+ * Formats the meta info line for execution results.
+ * For table/toon: "table (rows: 10/100 truncated due to token limit, columns: 5)"
+ * For json: "json (items: 10/100 truncated due to token limit)"
+ */
+function formatResultMeta(meta: ResultMeta): string {
+  if (meta.mode === "json") {
+    const itemInfo = meta.truncated
+      ? `${meta.displayedRows}/${meta.totalRows} truncated due to token limit`
+      : `${meta.displayedRows}`;
+    return `${meta.mode} (items: ${itemInfo})`;
+  }
+
+  const rowInfo = meta.truncated
+    ? `${meta.displayedRows}/${meta.totalRows} truncated due to token limit`
+    : `${meta.displayedRows}`;
+  return `${meta.mode} (rows: ${rowInfo}, columns: ${meta.columns})`;
+}
+
+/**
+ * Formats execution error with structured sections.
+ */
+function formatExecutionError(
+  compilationErrors?: Record<string, string>,
+  operatorErrors?: Array<{ operatorId: string; error: string }>,
+  generalErrors?: string[]
+): string {
+  const lines: string[] = ["Execution failed due to the following error:"];
+
+  if (compilationErrors && Object.keys(compilationErrors).length > 0) {
+    lines.push("Compilation error:");
+    for (const [key, value] of Object.entries(compilationErrors)) {
+      lines.push(`  ${key}: ${value}`);
+    }
+  }
+
+  if (operatorErrors && operatorErrors.length > 0) {
+    lines.push("Execution error:");
+    for (const { operatorId, error } of operatorErrors) {
+      lines.push(`  ${operatorId}: ${error}`);
+    }
+  }
+
+  if (generalErrors && generalErrors.length > 0) {
+    lines.push("Error:");
+    for (const error of generalErrors) {
+      lines.push(`  ${error}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/**
  * Convert JSON result to table format (CSV-like string).
  * This is done in agent-service rather than backend.
  */
@@ -447,72 +511,78 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, config: 
           abortSignal: options.abortSignal,
         });
 
-        // Handle execution failure - return detailed error info
+        // Handle execution failure
         if (!result.success) {
-          let errorMessage: string;
-          if (result.state === "Failed") {
-            const errorMsgs =
-              result.errors?.join("; ") ||
-              Object.entries(result.operators)
-                .filter(([_, op]) => op.error)
-                .map(([opId, op]) => `${opId}: ${op.error}`)
-                .join("; ") ||
-              "Unknown error";
-            errorMessage = `Workflow execution failed: ${errorMsgs}`;
-          } else if (result.state === "Killed") {
-            errorMessage = "Workflow execution was killed (timeout).";
-          } else if (result.state === "CompilationFailed" || result.state === "ValidationFailed") {
-            const compilationMsgs = result.compilationErrors
-              ? Object.entries(result.compilationErrors)
-                  .map(([k, v]) => `${k}: ${v}`)
-                  .join("; ")
-              : "Unknown compilation error";
-            errorMessage = `Workflow compilation failed: ${compilationMsgs}`;
-          } else {
-            errorMessage = `Workflow execution ended with state: ${result.state}`;
-          }
-          return createErrorResult(errorMessage);
+          const compilationErrors =
+            result.state === "CompilationFailed" || result.state === "ValidationFailed"
+              ? result.compilationErrors
+              : undefined;
+
+          const operatorErrors =
+            result.state === "Failed"
+              ? Object.entries(result.operators)
+                  .filter(([_, op]) => op.error)
+                  .map(([opId, op]) => ({ operatorId: opId, error: op.error! }))
+              : undefined;
+
+          const generalErrors =
+            result.state === "Killed"
+              ? ["Workflow execution was killed (timeout)."]
+              : result.errors;
+
+          return createErrorResult(formatExecutionError(compilationErrors, operatorErrors, generalErrors));
         }
 
-        // Execution succeeded - return ONLY the operator's result as string
-        const serializationMode = config.serializationMode ?? OperatorResultSerializationMode.TABLE;
+        // Check operator result
         const opInfo = result.operators[operatorId];
-
         if (!opInfo) {
-          return createErrorResult(`No result found for operator: ${operatorId}`);
+          return createErrorResult(formatExecutionError(undefined, undefined, [`No result found for operator: ${operatorId}`]));
         }
 
         if (opInfo.error) {
-          return createErrorResult(`Operator error: ${opInfo.error}`);
+          return createErrorResult(formatExecutionError(undefined, [{ operatorId, error: opInfo.error }]));
         }
 
         // Format the result based on serialization mode
-        let resultString: string;
-        if (opInfo.result) {
-          if (Array.isArray(opInfo.result)) {
-            const jsonArray = opInfo.result as Record<string, any>[];
-            switch (serializationMode) {
-              case OperatorResultSerializationMode.TABLE:
-                resultString = jsonToTableFormat(jsonArray);
-                break;
-              case OperatorResultSerializationMode.TOON:
-                resultString = jsonToToonFormat(jsonArray);
-                break;
-              case OperatorResultSerializationMode.JSON:
-              default:
-                resultString = JSON.stringify(jsonArray);
-                break;
-            }
-          } else {
-            // Non-array result (e.g., visualization)
-            resultString = typeof opInfo.result === "string" ? opInfo.result : JSON.stringify(opInfo.result);
-          }
-        } else {
-          resultString = "(no result data)";
+        const serializationMode = config.serializationMode ?? OperatorResultSerializationMode.TABLE;
+
+        if (!opInfo.result) {
+          return "(no result data)";
         }
 
-        // Return only the raw result string - no wrapper object
-        return resultString;
+        if (!Array.isArray(opInfo.result)) {
+          // Non-array result (e.g., visualization)
+          return JSON.stringify(opInfo.result);
+        }
+
+        // Array result - format with meta info
+        const jsonArray = opInfo.result as Record<string, any>[];
+        const columns = jsonArray.length > 0 ? Object.keys(jsonArray[0]).length : 0;
+        const displayedRows = opInfo.displayedRows ?? jsonArray.length;
+        const totalRows = opInfo.totalRowCount ?? jsonArray.length;
+        const truncated = opInfo.truncated ?? displayedRows < totalRows;
+
+        let dataString: string;
+        let modeLabel: string;
+
+        switch (serializationMode) {
+          case OperatorResultSerializationMode.TABLE:
+            dataString = jsonToTableFormat(jsonArray);
+            modeLabel = "table";
+            break;
+          case OperatorResultSerializationMode.TOON:
+            dataString = jsonToToonFormat(jsonArray);
+            modeLabel = "toon";
+            break;
+          case OperatorResultSerializationMode.JSON:
+          default:
+            dataString = JSON.stringify(jsonArray);
+            modeLabel = "json";
+            break;
+        }
+
+        const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
+        return `${meta}\n${dataString}`;
       } catch (error: any) {
         if (error.name === "AbortError") {
           throw error;
