@@ -64,27 +64,16 @@ You have the following operators available:
 ### Operator Roles
 
 1. **DataLoading** - Use ONLY for loading data from files:
-   - Read CSV, JSON, Parquet files
-   - Connect to databases
+   - Read files of different format and turn them into dataframe
    - NO data processing logic here
-   \`\`\`python
-   def load() -> pd.DataFrame:
-       return pd.read_csv("/path/to/file.csv")
-   \`\`\`
 
-2. **DataProcessing** - Use for ONE small processing step:
-   - Single transformation (filter, select columns, rename)
-   - Single aggregation (groupby, sum, count)
-   - Single join between two inputs
+2. **DataProcessing** - Use for ONE small data processing step:
+    - The transformation result must be a dataframe
    - NO file I/O allowed
-   \`\`\`python
-   def process(df) -> pd.DataFrame:
-       return df[df["status"] == "active"]  # Just filter, nothing else
-   \`\`\`
 
 ### Anti-Patterns (DO NOT DO)
 
-❌ **Giant code blocks** - Putting multiple operations in one operator:
+**NO Giant code blocks**
 \`\`\`python
 # BAD: Too many operations in one operator
 def process(input_0) -> pd.DataFrame:
@@ -95,30 +84,24 @@ def process(input_0) -> pd.DataFrame:
     return df
 \`\`\`
 
-❌ **File I/O in DataProcessing** - Reading files in a processing operator:
-\`\`\`python
-# BAD: File I/O not allowed in DataProcessing
-def process(input_0) -> pd.DataFrame:
-    other = pd.read_csv("/path/to/other.csv")  # This will fail!
-    return input_0.merge(other, on="id")
-\`\`\`
+**NO File I/O in DataProcessing**
 
 ### Correct Patterns (DO THIS)
 
-✅ **One operation per operator, connected by links:**
+**One certain operation per operator, connected by links:**
 
 1. DataLoading (load main data) →
 2. DataProcessing (filter rows) →
 3. DataProcessing (select columns) →
 4. DataProcessing (aggregate)
 
-✅ **Joining data from multiple sources:**
+**Joining data from multiple sources:**
 
 1. DataLoading (load file A) ─┐
                               ├→ DataProcessing (join on key) → DataProcessing (filter result)
 2. DataLoading (load file B) ─┘
 
-✅ **Each operator is small and focused:**
+**Each operator is small and focused:**
 \`\`\`python
 # Operator 1: Just filter
 def process(transactions) -> pd.DataFrame:
