@@ -638,6 +638,11 @@
                   nzValue="table"
                   >TABLE</label
                 >
+                <label
+                  nz-radio
+                  nzValue="toon"
+                  >TOON</label
+                >
               </nz-radio-group>
               <button
                 nz-button
@@ -646,7 +651,7 @@
                 (click)="saveSerializationMode()">
                 Save
               </button>
-              <span class="settings-param-hint">JSON: array of objects, TABLE: header + rows (more compact)</span>
+              <span class="settings-param-hint">JSON: array of objects, TABLE: CSV-like, TOON: Token-Oriented Object Notation (most compact for LLMs)</span>
             </div>
           </div>
 

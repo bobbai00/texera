@@ -108,7 +108,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public editingSystemPrompt = "";
   public settingsMaxTokenLimit = 1000;
   public settingsMaxCellTokenLimit = 200; // Default max tokens per cell
-  public settingsSerializationMode: "json" | "table" = "table"; // Serialization mode for results
+  public settingsSerializationMode: "json" | "table" | "toon" = "table"; // Serialization mode for results
   public settingsToolTimeoutSeconds = 120; // 2 minutes default
   public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
   public settingsMaxSteps = 10; // Default max steps per message

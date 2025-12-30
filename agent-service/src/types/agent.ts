@@ -150,10 +150,12 @@ export interface AgentMessageStats {
  * Serialization mode for operator results
  */
 export enum OperatorResultSerializationMode {
-  /** JSON array of objects (default) */
+  /** JSON array of objects */
   JSON = "json",
-  /** Table format: header\nrow\nrow\n (more compact) */
+  /** Table format: header\nrow\nrow\n (CSV-like) */
   TABLE = "table",
+  /** TOON format: Token-Oriented Object Notation (most compact for LLMs) */
+  TOON = "toon",
 }
 
 /**
@@ -168,7 +170,7 @@ export interface AgentSettings {
   maxOperatorResultTokenLimit: number;
   /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
   maxOperatorResultCellTokenLimit: number;
-  /** Serialization mode for operator results (json or table) */
+  /** Serialization mode for operator results (json, table, or toon) */
   operatorResultSerializationMode: OperatorResultSerializationMode;
   /** Tool execution timeout in milliseconds */
   toolTimeoutMs: number;
@@ -238,8 +240,8 @@ export interface AgentSettingsApi {
   maxOperatorResultTokenLimit?: number;
   /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
   maxOperatorResultCellTokenLimit?: number;
-  /** Serialization mode for operator results: "json" or "table" */
-  operatorResultSerializationMode?: "json" | "table";
+  /** Serialization mode for operator results: "json", "table", or "toon" */
+  operatorResultSerializationMode?: "json" | "table" | "toon";
   /** Tool execution timeout in seconds */
   toolTimeoutSeconds?: number;
   /** Workflow execution timeout in minutes */
@@ -295,8 +297,8 @@ export interface UpdateAgentSettingsRequest {
   maxOperatorResultTokenLimit?: number;
   /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
   maxOperatorResultCellTokenLimit?: number;
-  /** Serialization mode for operator results: "json" or "table" */
-  operatorResultSerializationMode?: "json" | "table";
+  /** Serialization mode for operator results: "json", "table", or "toon" */
+  operatorResultSerializationMode?: "json" | "table" | "toon";
   /** Tool execution timeout in seconds */
   toolTimeoutSeconds?: number;
   /** Workflow execution timeout in minutes */
