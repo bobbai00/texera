@@ -40,6 +40,18 @@ export class ReActStepDetailModalComponent {
     this.visibleChange.emit(false);
   }
 
+  /**
+   * Format data for display.
+   * If the data is a string, return it as-is (with newlines preserved).
+   * If it's an object, JSON.stringify it with formatting.
+   */
+  public formatResult(data: any): string {
+    if (typeof data === "string") {
+      return data;
+    }
+    return JSON.stringify(data, null, 2);
+  }
+
   public formatJson(data: any): string {
     return JSON.stringify(data, null, 2);
   }

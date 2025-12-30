@@ -105,27 +105,30 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
             ? allOperators.filter(op => args.operatorIds!.includes(op.operatorID))
             : allOperators;
 
-        // Build simplified operator list
-        const operatorList = operators.map(op => ({
-          operatorId: op.operatorID,
-          operatorType: op.operatorType,
-          operatorProperties: op.operatorProperties,
-          inputPorts: extractPortIds(op.inputPorts),
-          outputPorts: extractPortIds(op.outputPorts),
-          ...(op.customDisplayName ? { customDisplayName: op.customDisplayName } : {}),
-        }));
+        // Format as a readable string
+        const lines: string[] = [`Retrieved ${operators.length} operator(s) and ${links.length} link(s).`];
+        lines.push("");
 
-        // Build simplified link list
-        const linkList = links.map(link => ({
-          linkId: link.linkID,
-          from: `${link.source.operatorID}:${link.source.portID}`,
-          to: `${link.target.operatorID}:${link.target.portID}`,
-        }));
+        if (operators.length > 0) {
+          lines.push("Operators:");
+          for (const op of operators) {
+            const name = op.customDisplayName ? ` (${op.customDisplayName})` : "";
+            lines.push(`  - ${op.operatorID}${name}: ${op.operatorType}`);
+            lines.push(`    inputPorts: [${extractPortIds(op.inputPorts).join(", ")}]`);
+            lines.push(`    outputPorts: [${extractPortIds(op.outputPorts).join(", ")}]`);
+            lines.push(`    properties: ${JSON.stringify(op.operatorProperties)}`);
+          }
+        }
 
-        return createToolResult(`Retrieved ${operatorList.length} operator(s) and ${linkList.length} link(s).`, {
-          operators: operatorList,
-          links: linkList,
-        });
+        if (links.length > 0) {
+          lines.push("");
+          lines.push("Links:");
+          for (const link of links) {
+            lines.push(`  - ${link.linkID}: ${link.source.operatorID}:${link.source.portID} -> ${link.target.operatorID}:${link.target.portID}`);
+          }
+        }
+
+        return createToolResult(lines.join("\n"));
       } catch (error: any) {
         return createErrorResult(error.message || String(error));
       }
@@ -231,12 +234,16 @@ export function createAddOperatorTool(
           );
         }
 
-        return createToolResult(`Added operator ${operator.operatorID} of type ${args.operatorType}`, {
-          operatorId: operator.operatorID,
-          operatorType: args.operatorType,
-          inputPorts: extractPortIds(updatedOperator?.inputPorts || operator.inputPorts),
-          outputPorts: extractPortIds(updatedOperator?.outputPorts || operator.outputPorts),
-        });
+        const inputPorts = extractPortIds(updatedOperator?.inputPorts || operator.inputPorts);
+        const outputPorts = extractPortIds(updatedOperator?.outputPorts || operator.outputPorts);
+
+        const lines = [
+          `Added operator ${operator.operatorID} of type ${args.operatorType}`,
+          `  inputPorts: [${inputPorts.join(", ")}]`,
+          `  outputPorts: [${outputPorts.join(", ")}]`,
+        ];
+
+        return createToolResult(lines.join("\n"));
       } catch (error: any) {
         return createErrorResult(error.message || String(error));
       }
@@ -323,7 +330,7 @@ export function createAddLinkTool(workflowState: WorkflowState, context?: ToolCo
           );
         }
 
-        return createToolResult(`Added link ${args.sourceOperatorId} -> ${args.targetOperatorId}`, { linkId });
+        return createToolResult(`Added link: ${args.sourceOperatorId}:${sourcePortId} -> ${args.targetOperatorId}:${targetPortId} (linkId: ${linkId})`);
       } catch (error: any) {
         return createErrorResult(error.message || String(error));
       }
@@ -404,7 +411,7 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
           );
         }
 
-        return createToolResult(`Modified operator ${args.operatorId}`, { operatorId: args.operatorId });
+        return createToolResult(`Modified operator ${args.operatorId} (${operator.operatorType})`);
       } catch (error: any) {
         return createErrorResult(error.message || String(error));
       }
@@ -468,10 +475,15 @@ export function createDeleteFromWorkflowTool(workflowState: WorkflowState, conte
           );
         }
 
-        return createToolResult(
-          `Deleted ${deletedOperatorIds.length} operator(s) and ${deletedLinkIds.length} link(s)`,
-          { deletedOperatorIds, deletedLinkIds }
-        );
+        const lines = [`Deleted ${deletedOperatorIds.length} operator(s) and ${deletedLinkIds.length} link(s).`];
+        if (deletedOperatorIds.length > 0) {
+          lines.push(`  operators: [${deletedOperatorIds.join(", ")}]`);
+        }
+        if (deletedLinkIds.length > 0) {
+          lines.push(`  links: [${deletedLinkIds.join(", ")}]`);
+        }
+
+        return createToolResult(lines.join("\n"));
       } catch (error: any) {
         return createErrorResult(error.message || String(error));
       }

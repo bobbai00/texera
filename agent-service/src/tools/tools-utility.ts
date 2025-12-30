@@ -21,8 +21,6 @@
  * Tool utilities for Texera Agent Service.
  */
 
-import type { BaseToolResult } from "../types/agent";
-
 // ============================================================================
 // Constants
 // ============================================================================
@@ -41,24 +39,18 @@ export const DEFAULT_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
 // ============================================================================
 
 /**
- * Creates a successful tool result with the given data and message.
- * The message is used as feedback to the agent.
+ * Creates a successful tool result as a plain string.
+ * All tool results are now plain strings for consistency and token efficiency.
  */
-export function createToolResult<T extends Record<string, any>>(message: string, data?: T): BaseToolResult & T {
-  return {
-    message,
-    ...((data || {}) as T),
-  };
+export function createToolResult(message: string): string {
+  return message;
 }
 
 /**
- * Creates a failed tool result with an error message.
+ * Creates a failed tool result as a plain string with [ERROR] prefix.
  */
-export function createErrorResult(error: string): BaseToolResult {
-  return {
-    message: error,
-    error,
-  };
+export function createErrorResult(error: string): string {
+  return `[ERROR] ${error}`;
 }
 
 // ============================================================================
@@ -151,9 +143,9 @@ export function extractEssentialPlotlyData(fullPlotlyJson: any): EssentialPlotly
 export function withTimeout<TArgs, TResult>(
   execute: (args: TArgs) => Promise<TResult>,
   timeoutMs: number = DEFAULT_TOOL_TIMEOUT_MS
-): (args: TArgs) => Promise<TResult | BaseToolResult> {
+): (args: TArgs) => Promise<TResult | string> {
   return async (args: TArgs) => {
-    const timeoutPromise = new Promise<BaseToolResult>((_, reject) => {
+    const timeoutPromise = new Promise<string>((_, reject) => {
       setTimeout(() => {
         reject(new Error("timeout"));
       }, timeoutMs);

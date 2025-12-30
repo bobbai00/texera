@@ -400,7 +400,13 @@ export function createListAllAvailableOperatorTypesTool(
       if (count === 0) {
         return createErrorResult("No operator types registered.");
       }
-      return createToolResult(`Found ${count} available operator type(s).`, { operators });
+
+      const lines = [`Found ${count} available operator type(s):`];
+      for (const [type, description] of Object.entries(operators)) {
+        lines.push(`  - ${type}: ${description}`);
+      }
+
+      return createToolResult(lines.join("\n"));
     },
   });
 }
@@ -422,10 +428,15 @@ export function createGetOperatorSchemaTool(metadataStore: OperatorMetadataStore
       if (!compactSchema) {
         return createErrorResult(`Operator type "${args.operatorType}" not found.`);
       }
-      return createToolResult(`Schema for operator type "${args.operatorType}".`, {
-        operatorType: args.operatorType,
-        schema: compactSchema,
-      });
+
+      const lines = [
+        `Schema for operator type "${args.operatorType}":`,
+        `required: [${compactSchema.required.join(", ")}]`,
+        `properties:`,
+        JSON.stringify(compactSchema.properties, null, 2),
+      ];
+
+      return createToolResult(lines.join("\n"));
     },
   });
 }
