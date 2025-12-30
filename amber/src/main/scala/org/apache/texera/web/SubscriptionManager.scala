@@ -26,14 +26,21 @@ import scala.collection.mutable
 trait SubscriptionManager {
 
   private val subscriptions = mutable.ArrayBuffer[Disposable]()
+  private val subscriptionsLock = new Object()
 
   def addSubscription(sub: Disposable): Unit = {
-    subscriptions.append(sub)
+    subscriptionsLock.synchronized {
+      subscriptions.append(sub)
+    }
   }
 
   def unsubscribeAll(): Unit = {
-    subscriptions.foreach(_.dispose())
-    subscriptions.clear()
+    subscriptionsLock.synchronized {
+      // Create a copy to iterate over to avoid ConcurrentModificationException
+      val toDispose = subscriptions.toList
+      subscriptions.clear()
+      toDispose.foreach(_.dispose())
+    }
   }
 
 }
