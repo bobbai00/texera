@@ -214,6 +214,19 @@ export class WorkflowState {
     return true;
   }
 
+  updateOperatorDisplayName(operatorId: string, displayName: string): boolean {
+    const operator = this.operators.get(operatorId);
+    if (!operator) return false;
+
+    const updatedOperator: OperatorPredicate = {
+      ...operator,
+      customDisplayName: displayName,
+    };
+    this.operators.set(operatorId, updatedOperator);
+    this.operatorPropertyChangeSubject.next({ operator: updatedOperator });
+    return true;
+  }
+
   /**
    * Update the input ports of an operator (for dynamic input port operators like PythonTableUDF).
    * This creates the specified number of input ports with generic names (Input 0, Input 1, etc.).

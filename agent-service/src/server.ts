@@ -49,7 +49,7 @@ import type {
   ReActStep,
   AgentAction,
 } from "./types/agent";
-import { OperatorResultSerializationMode } from "./types/agent";
+import { OperatorResultSerializationMode, AgentMode } from "./types/agent";
 
 // ============================================================================
 // Configuration
@@ -176,7 +176,7 @@ function getAgentInfo(agentId: string, stored: StoredAgent): AgentInfo {
     executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
     disabledTools: Array.from(agentSettings.disabledTools),
     maxSteps: agentSettings.maxSteps,
-    onlyUseRelationalOperators: agentSettings.onlyUseRelationalOperators,
+    agentMode: agentSettings.agentMode,
     restrictOperatorResultToken: agentSettings.restrictOperatorResultToken,
     disablePrint: agentSettings.disablePrint,
   };
@@ -261,7 +261,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           executionTimeoutMs: settings.executionTimeoutMinutes ? settings.executionTimeoutMinutes * 60000 : undefined,
           disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
           maxSteps: settings.maxSteps,
-          onlyUseRelationalOperators: settings.onlyUseRelationalOperators,
+          agentMode: settings.agentMode ? (settings.agentMode as AgentMode) : undefined,
           restrictOperatorResultToken: settings.restrictOperatorResultToken,
           disablePrint: settings.disablePrint,
         });
@@ -285,7 +285,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             executionTimeoutMinutes: t.Optional(t.Number()),
             disabledTools: t.Optional(t.Array(t.String())),
             maxSteps: t.Optional(t.Number()),
-            onlyUseRelationalOperators: t.Optional(t.Boolean()),
+            agentMode: t.Optional(t.Union([t.Literal("code"), t.Literal("general")])),
             restrictOperatorResultToken: t.Optional(t.Boolean()),
             disablePrint: t.Optional(t.Boolean()),
           })
@@ -441,7 +441,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
       disabledTools: Array.from(agentSettings.disabledTools),
       maxSteps: agentSettings.maxSteps,
-      onlyUseRelationalOperators: agentSettings.onlyUseRelationalOperators,
+      agentMode: agentSettings.agentMode,
       restrictOperatorResultToken: agentSettings.restrictOperatorResultToken,
       disablePrint: agentSettings.disablePrint,
     };
@@ -465,7 +465,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           settings.executionTimeoutMinutes !== undefined ? settings.executionTimeoutMinutes * 60000 : undefined,
         disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
         maxSteps: settings.maxSteps,
-        onlyUseRelationalOperators: settings.onlyUseRelationalOperators,
+        agentMode: settings.agentMode ? (settings.agentMode as AgentMode) : undefined,
         restrictOperatorResultToken: settings.restrictOperatorResultToken,
         disablePrint: settings.disablePrint,
       });
@@ -480,7 +480,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
         disabledTools: Array.from(agentSettings.disabledTools),
         maxSteps: agentSettings.maxSteps,
-        onlyUseRelationalOperators: agentSettings.onlyUseRelationalOperators,
+        agentMode: agentSettings.agentMode,
         restrictOperatorResultToken: agentSettings.restrictOperatorResultToken,
         disablePrint: agentSettings.disablePrint,
       };
@@ -494,7 +494,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         executionTimeoutMinutes: t.Optional(t.Number()),
         maxSteps: t.Optional(t.Number()),
         disabledTools: t.Optional(t.Array(t.String())),
-        onlyUseRelationalOperators: t.Optional(t.Boolean()),
+        agentMode: t.Optional(t.Union([t.Literal("code"), t.Literal("general")])),
         restrictOperatorResultToken: t.Optional(t.Boolean()),
         disablePrint: t.Optional(t.Boolean()),
       }),

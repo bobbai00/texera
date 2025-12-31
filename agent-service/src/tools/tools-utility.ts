@@ -190,3 +190,71 @@ export function filterByTokenLimit<T>(
     truncated: limited.length < rows.length,
   };
 }
+
+// ============================================================================
+// Workflow Tool Result Formatters
+// ============================================================================
+
+import type { OperatorPredicate, OperatorLink } from "../types/workflow";
+
+/**
+ * Formats a single operator for display in workflow results.
+ */
+export function formatOperator(op: OperatorPredicate): string {
+  const lines = [
+    `\tOperatorId: ${op.operatorID}`,
+    `\tOperatorType: ${op.operatorType}`,
+    `\tNumber of input ports: ${op.inputPorts.length}, Number of output ports: ${op.outputPorts.length}`,
+    `\tProperties: ${JSON.stringify(op.operatorProperties)}`,
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * Formats a single link for display in workflow results.
+ */
+export function formatLink(link: OperatorLink): string {
+  return `From ${link.source.operatorID}, port ${link.source.portID} To ${link.target.operatorID}, port ${link.target.portID}`;
+}
+
+/**
+ * Formats the result for addOperator tool.
+ */
+export function formatAddOperatorResult(operatorId: string, numInputPorts: number, numOutputPorts: number): string {
+  return `Added operator ${operatorId}, number of input ports: ${numInputPorts}, number of output ports: ${numOutputPorts}`;
+}
+
+/**
+ * Formats the result for addLink tool.
+ */
+export function formatAddLinkResult(linkId: string): string {
+  return `Link ${linkId} added`;
+}
+
+/**
+ * Formats the result for modifyOperator tool.
+ */
+export function formatModifyOperatorResult(operatorId: string): string {
+  return `Operator ${operatorId} modified`;
+}
+
+/**
+ * Formats an error with operator context.
+ */
+export function formatOperatorError(operatorId: string, error: string): string {
+  return `Error on operator ${operatorId}: ${error}`;
+}
+
+/**
+ * Formats the result for deleteFromWorkflow tool.
+ */
+export function formatDeleteResult(deletedOperatorIds: string[], deletedLinkIds: string[]): string {
+  const parts: string[] = [];
+  if (deletedOperatorIds.length > 0) {
+    parts.push(`Deleted operators: ${deletedOperatorIds.join(", ")}`);
+  }
+  if (deletedLinkIds.length > 0) {
+    parts.push(`Deleted links: ${deletedLinkIds.join(", ")}`);
+  }
+  return parts.length > 0 ? parts.join("\n") : "Nothing deleted";
+}

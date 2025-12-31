@@ -60,8 +60,8 @@ export interface AgentSettingsApi {
   disabledTools?: string[];
   /** Maximum number of steps per message */
   maxSteps?: number;
-  /** Only allow relational operators (from ALLOWED_OPERATOR_TYPES list) */
-  onlyUseRelationalOperators?: boolean;
+  /** Agent mode: "code" for Python code operators, "general" for all operators with schema hints */
+  agentMode?: "code" | "general";
   /** Whether to restrict operator result token limits (if false, no truncation applied) */
   restrictOperatorResultToken?: boolean;
   /** Whether to disable print statements in Python UDFs (validation at compile time) */
@@ -1140,7 +1140,7 @@ export class TexeraCopilotManagerService {
           executionTimeoutMinutes: 10,
           disabledTools: [],
           maxSteps: 10,
-          onlyUseRelationalOperators: false,
+          agentMode: "code" as const,
           restrictOperatorResultToken: false,
           disablePrint: true,
         })

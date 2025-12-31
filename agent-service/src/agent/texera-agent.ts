@@ -28,21 +28,31 @@ import { WorkflowState } from "../workflow/workflow-state";
 import { OperatorMetadataStore } from "../tools/metadata-tools";
 import { AgentActionManager } from "./agent-action-manager";
 import type { AgentSettings, ReActStep, AgentMessageStats, TokenUsage, AgentAction } from "../types/agent";
-import { AgentState as AgentStateEnum, DEFAULT_AGENT_SETTINGS, OperatorResultSerializationMode } from "../types/agent";
-import { COPILOT_SYSTEM_PROMPT, buildCopilotSystemPrompt } from "./prompts";
+import { AgentState as AgentStateEnum, DEFAULT_AGENT_SETTINGS, OperatorResultSerializationMode, AgentMode } from "../types/agent";
+import { COPILOT_SYSTEM_PROMPT, CODE_MODE_SYSTEM_PROMPT, buildCopilotSystemPrompt } from "./prompts";
 import {
   createGetCurrentWorkflowTool,
-  createAddOperatorTool,
   createAddLinkTool,
-  createModifyOperatorTool,
-  createDeleteFromWorkflowTool,
+  createDeleteLinkTool,
+  createDeleteOperatorTool,
   TOOL_NAME_GET_CURRENT_WORKFLOW,
-  TOOL_NAME_ADD_OPERATOR,
   TOOL_NAME_ADD_LINK,
-  TOOL_NAME_MODIFY_OPERATOR,
-  TOOL_NAME_DELETE_FROM_WORKFLOW,
+  TOOL_NAME_DELETE_LINK,
+  TOOL_NAME_DELETE_OPERATOR,
   type ToolContext,
 } from "../tools/workflow-tools";
+import {
+  createAddOperatorTool,
+  createModifyOperatorTool,
+  TOOL_NAME_ADD_OPERATOR,
+  TOOL_NAME_MODIFY_OPERATOR,
+} from "../tools/general-op-tools";
+import {
+  createAddCodeOperatorTool,
+  createModifyCodeOperatorTool,
+  TOOL_NAME_ADD_CODE_OPERATOR,
+  TOOL_NAME_MODIFY_CODE_OPERATOR,
+} from "../tools/code-op-tools";
 import {
   createListAllAvailableOperatorTypesTool,
   createGetOperatorSchemaTool,
@@ -181,17 +191,34 @@ export class TexeraAgent {
         await this.metadataStore.initializeFromBackend();
       }
 
-      // Rebuild system prompt with operator schemas from metadata store
-      this.systemPrompt = buildCopilotSystemPrompt(this.metadataStore);
-      this.settings.systemPrompt = this.systemPrompt;
+      // Rebuild system prompt based on agent mode
+      this.rebuildSystemPrompt();
 
       // Rebuild tools with loaded metadata
       this.tools = this.createTools();
-      console.log(`[TexeraAgent ${this.agentId}] Initialized with ${this.metadataStore.getOperatorCount()} operators`);
+      console.log(
+        `[TexeraAgent ${this.agentId}] Initialized in ${this.settings.agentMode} mode with ${this.metadataStore.getOperatorCount()} operators`
+      );
     } catch (error) {
       console.error(`[TexeraAgent ${this.agentId}] Failed to initialize metadata:`, error);
       // Continue with empty metadata - tools will still work but addOperator will fail
     }
+  }
+
+  /**
+   * Rebuild system prompt based on current agent mode.
+   * GENERAL mode: includes operator schemas in the prompt
+   * CODE mode: uses a simpler prompt without operator schemas
+   */
+  private rebuildSystemPrompt(): void {
+    if (this.settings.agentMode === AgentMode.GENERAL) {
+      // GENERAL mode: include operator schemas in prompt
+      this.systemPrompt = buildCopilotSystemPrompt(this.metadataStore);
+    } else {
+      // CODE mode: use simpler prompt without operator schemas
+      this.systemPrompt = CODE_MODE_SYSTEM_PROMPT;
+    }
+    this.settings.systemPrompt = this.systemPrompt;
   }
 
   // ============================================================================
@@ -226,19 +253,26 @@ export class TexeraAgent {
       },
     };
 
-    // Workflow and metadata tools
+    // Common tools for both modes
     const tools: Record<string, any> = {
       [TOOL_NAME_GET_CURRENT_WORKFLOW]: createGetCurrentWorkflowTool(this.workflowState),
-      [TOOL_NAME_ADD_OPERATOR]: createAddOperatorTool(this.workflowState, operatorSchemas, context),
       [TOOL_NAME_ADD_LINK]: createAddLinkTool(this.workflowState, context),
-      [TOOL_NAME_MODIFY_OPERATOR]: createModifyOperatorTool(this.workflowState, context),
-      [TOOL_NAME_DELETE_FROM_WORKFLOW]: createDeleteFromWorkflowTool(this.workflowState, context),
-      // [TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: createListAllAvailableOperatorTypesTool(
-      //   this.metadataStore,
-      //   this.settings.onlyUseRelationalOperators
-      // ),
-      // [TOOL_NAME_GET_OPERATOR_SCHEMA]: createGetOperatorSchemaTool(this.metadataStore),
+      [TOOL_NAME_DELETE_LINK]: createDeleteLinkTool(this.workflowState, context),
+      [TOOL_NAME_DELETE_OPERATOR]: createDeleteOperatorTool(this.workflowState, context),
     };
+
+    // Mode-specific tools
+    if (this.settings.agentMode === AgentMode.CODE) {
+      // CODE mode: Use code operator tools (addCodeOperator, modifyCodeOperator)
+      tools[TOOL_NAME_ADD_CODE_OPERATOR] = createAddCodeOperatorTool(this.workflowState, operatorSchemas, context);
+      tools[TOOL_NAME_MODIFY_CODE_OPERATOR] = createModifyCodeOperatorTool(this.workflowState, context);
+    } else {
+      // GENERAL mode: Use workflow tools (addOperator, modifyOperator) + metadata tools
+      tools[TOOL_NAME_ADD_OPERATOR] = createAddOperatorTool(this.workflowState, operatorSchemas, context);
+      tools[TOOL_NAME_MODIFY_OPERATOR] = createModifyOperatorTool(this.workflowState, context);
+      tools[TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES] = createListAllAvailableOperatorTypesTool(this.metadataStore);
+      tools[TOOL_NAME_GET_OPERATOR_SCHEMA] = createGetOperatorSchemaTool(this.metadataStore);
+    }
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
     if (this.delegateConfig) {
@@ -361,10 +395,12 @@ export class TexeraAgent {
     executionTimeoutMs?: number;
     disabledTools?: Set<string>;
     maxSteps?: number;
-    onlyUseRelationalOperators?: boolean;
+    agentMode?: AgentMode;
     restrictOperatorResultToken?: boolean;
     disablePrint?: boolean;
   }): void {
+    let modeChanged = false;
+
     if (updates.maxOperatorResultTokenLimit !== undefined) {
       this.settings.maxOperatorResultTokenLimit = updates.maxOperatorResultTokenLimit;
     }
@@ -386,8 +422,9 @@ export class TexeraAgent {
     if (updates.maxSteps !== undefined) {
       this.settings.maxSteps = updates.maxSteps;
     }
-    if (updates.onlyUseRelationalOperators !== undefined) {
-      this.settings.onlyUseRelationalOperators = updates.onlyUseRelationalOperators;
+    if (updates.agentMode !== undefined && updates.agentMode !== this.settings.agentMode) {
+      this.settings.agentMode = updates.agentMode;
+      modeChanged = true;
     }
     if (updates.restrictOperatorResultToken !== undefined) {
       this.settings.restrictOperatorResultToken = updates.restrictOperatorResultToken;
@@ -396,9 +433,14 @@ export class TexeraAgent {
       this.settings.disablePrint = updates.disablePrint;
     }
 
+    // If mode changed, rebuild system prompt
+    if (modeChanged) {
+      this.rebuildSystemPrompt();
+    }
+
     // Rebuild tools with updated settings
     this.tools = this.createTools();
-    console.log(`[TexeraAgent ${this.agentId}] Settings updated`);
+    console.log(`[TexeraAgent ${this.agentId}] Settings updated (mode: ${this.settings.agentMode})`);
   }
 
   // ============================================================================

@@ -18,17 +18,23 @@
  */
 
 /**
- * Workflow manipulation tools for Texera Agent Service.
+ * Common workflow tools for Texera Agent Service.
+ * These tools are shared across both CODE and GENERAL agent modes.
  */
 
 import { z } from "zod";
 import { tool } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
 import { generateLinkId } from "../workflow/workflow-state";
-import { WorkflowUtilService } from "../workflow/workflow-util";
-import type { OperatorLink, OperatorPredicate } from "../types/workflow";
-import { createToolResult, createErrorResult } from "./tools-utility";
-import { type OperatorMetadataStore, formatValidationErrors } from "./metadata-tools";
+import type { OperatorLink } from "../types/workflow";
+import {
+  createToolResult,
+  createErrorResult,
+  formatOperator,
+  formatLink,
+  formatAddLinkResult,
+} from "./tools-utility";
+import type { OperatorMetadataStore } from "./metadata-tools";
 import type { AgentActionManager } from "../agent/agent-action-manager";
 
 // ============================================================================
@@ -53,89 +59,9 @@ export interface ToolContext {
 // ============================================================================
 
 export const TOOL_NAME_GET_CURRENT_WORKFLOW = "getCurrentWorkflow";
-export const TOOL_NAME_ADD_OPERATOR = "addOperator";
 export const TOOL_NAME_ADD_LINK = "addLink";
-export const TOOL_NAME_MODIFY_OPERATOR = "modifyOperator";
-export const TOOL_NAME_DELETE_FROM_WORKFLOW = "deleteFromWorkflow";
-
-// Operator type that supports dynamic input ports
-const MULTI_INPUT_OPERATOR_TYPE = "DataProcessing";
-
-// ============================================================================
-// Result Message Formatters
-// ============================================================================
-
-/**
- * Formats a single operator for display in workflow results.
- */
-function formatOperator(op: OperatorPredicate): string {
-  const lines = [
-    `\tOperatorId: ${op.operatorID}`,
-    `\tOperatorType: ${op.operatorType}`,
-    `\tNumber of input ports: ${op.inputPorts.length}, Number of output ports: ${op.outputPorts.length}`,
-    `\tProperties: ${JSON.stringify(op.operatorProperties)}`,
-  ];
-  return lines.join("\n");
-}
-
-/**
- * Formats a single link for display in workflow results.
- */
-function formatLink(link: OperatorLink): string {
-  return `From ${link.source.operatorID}, port ${link.source.portID} To ${link.target.operatorID}, port ${link.target.portID}`;
-}
-
-/**
- * Formats the result for addOperator tool.
- */
-function formatAddOperatorResult(operatorId: string, numInputPorts: number, numOutputPorts: number): string {
-  return `Added operator ${operatorId}, number of input ports: ${numInputPorts}, number of output ports: ${numOutputPorts}`;
-}
-
-/**
- * Formats the result for addLink tool.
- */
-function formatAddLinkResult(linkId: string): string {
-  return `Link ${linkId} added`;
-}
-
-/**
- * Formats the result for modifyOperator tool.
- */
-function formatModifyOperatorResult(operatorId: string): string {
-  return `Operator ${operatorId} modified`;
-}
-
-/**
- * Formats an error with operator context.
- */
-function formatOperatorError(operatorId: string, error: string): string {
-  return `Error on operator ${operatorId}: ${error}`;
-}
-
-/**
- * Formats the result for deleteFromWorkflow tool.
- */
-function formatDeleteResult(deletedOperatorIds: string[], deletedLinkIds: string[]): string {
-  const parts: string[] = [];
-  if (deletedOperatorIds.length > 0) {
-    parts.push(`Deleted operators: ${deletedOperatorIds.join(", ")}`);
-  }
-  if (deletedLinkIds.length > 0) {
-    parts.push(`Deleted links: ${deletedLinkIds.join(", ")}`);
-  }
-  return parts.length > 0 ? parts.join("\n") : "Nothing deleted";
-}
-
-// ============================================================================
-// Port Validation
-// ============================================================================
-
-function validateNumInputPorts(numPorts: number): string | null {
-  if (numPorts < 1) return "At least 1 input port is required";
-  if (numPorts > 10) return "Maximum 10 input ports allowed";
-  return null;
-}
+export const TOOL_NAME_DELETE_LINK = "deleteLink";
+export const TOOL_NAME_DELETE_OPERATOR = "deleteOperator";
 
 // ============================================================================
 // Get Current Workflow Tool
@@ -196,123 +122,12 @@ export function createGetCurrentWorkflowTool(workflowState: WorkflowState) {
 }
 
 // ============================================================================
-// Add Operator Tool
-// ============================================================================
-
-export function createAddOperatorTool(
-  workflowState: WorkflowState,
-  operatorSchemas: Map<string, any>,
-  context?: ToolContext
-) {
-  const workflowUtil = context?.metadataStore ? new WorkflowUtilService(context.metadataStore) : null;
-
-  return tool({
-    description:
-      "Add a new operator to the workflow. Use getOperatorSchema first to understand required properties. " +
-      `For ${MULTI_INPUT_OPERATOR_TYPE}, specify numInputPorts to create multiple input ports.`,
-    inputSchema: z.object({
-      operatorType: z.string().describe(`The operator type (e.g., '${MULTI_INPUT_OPERATOR_TYPE}', 'Aggregate')`),
-      properties: z.record(z.any()).describe("Properties to set on the operator"),
-      customDisplayName: z.string().describe("Optional display name for the operator"),
-      numInputPorts: z
-        .number()
-        .optional()
-        .describe(`Number of input ports for ${MULTI_INPUT_OPERATOR_TYPE} (default: 1).`),
-    }),
-    execute: async (args: {
-      operatorType: string;
-      properties?: Record<string, any>;
-      customDisplayName?: string;
-      numInputPorts?: number;
-    }) => {
-      try {
-        const schemaEntry = operatorSchemas.get(args.operatorType);
-        if (!schemaEntry) {
-          return createErrorResult(
-            `Unknown operator type: ${args.operatorType}. Use listAllAvailableOperatorTypes to see available operators.`
-          );
-        }
-
-        // Validate numInputPorts if provided
-        if (args.numInputPorts !== undefined) {
-          if (args.operatorType !== MULTI_INPUT_OPERATOR_TYPE) {
-            return createErrorResult(
-              `numInputPorts is only supported for ${MULTI_INPUT_OPERATOR_TYPE}. ` +
-                `Operator type "${args.operatorType}" does not support dynamic input ports.`
-            );
-          }
-          const portError = validateNumInputPorts(args.numInputPorts);
-          if (portError) return createErrorResult(portError);
-        }
-
-        // Validate properties
-        if (context?.metadataStore && args.properties) {
-          const validation = context.metadataStore.validateOperatorProperties(args.operatorType, args.properties);
-          if (!validation.isValid) {
-            return createErrorResult(
-              `Invalid operator properties for "${args.operatorType}". ${formatValidationErrors(validation)}\n` +
-                `Use getOperatorSchema("${args.operatorType}") to see the required property format.`
-            );
-          }
-        }
-
-        if (!workflowUtil) {
-          return createErrorResult("Metadata store not available for operator creation");
-        }
-
-        const beforeContent = workflowState.getWorkflowContent();
-
-        let operator = workflowUtil.getNewOperatorPredicate(args.operatorType, args.customDisplayName);
-        if (args.properties) {
-          operator = {
-            ...operator,
-            operatorProperties: { ...operator.operatorProperties, ...args.properties },
-          };
-        }
-
-        workflowState.addOperator(operator);
-
-        // Set up input ports for PythonTableUDF
-        if (args.numInputPorts !== undefined && args.numInputPorts > 1) {
-          workflowState.updateOperatorInputPorts(operator.operatorID, args.numInputPorts);
-        }
-
-        const updatedOperator = workflowState.getOperator(operator.operatorID);
-        const afterContent = workflowState.getWorkflowContent();
-
-        // Create agent action for tracking
-        if (context?.agentActionManager && context.agentId) {
-          context.agentActionManager.createAgentAction(
-            context.agentId,
-            context.agentName || `Agent-${context.agentId}`,
-            args.customDisplayName || `Added ${args.operatorType}`,
-            { add: { operatorIds: [operator.operatorID], linkIds: [] } },
-            context.workflowMetadata || {},
-            beforeContent,
-            afterContent
-          );
-        }
-
-        const finalOperator = updatedOperator || operator;
-        const numInputPorts = finalOperator.inputPorts.length;
-        const numOutputPorts = finalOperator.outputPorts.length;
-
-        return createToolResult(formatAddOperatorResult(operator.operatorID, numInputPorts, numOutputPorts));
-      } catch (error: any) {
-        return createErrorResult(error.message || String(error));
-      }
-    },
-  });
-}
-
-// ============================================================================
 // Add Link Tool
 // ============================================================================
 
 export function createAddLinkTool(workflowState: WorkflowState, context?: ToolContext) {
   return tool({
-    description:
-      "Add a link connecting two operators's ports",
+    description: "Add a link connecting two operators's ports",
     inputSchema: z.object({
       sourceOperatorId: z.string().describe("ID of the source operator"),
       sourcePortIndex: z.number().default(0).describe("Source port index (0-based). Defaults to 0."),
@@ -393,61 +208,23 @@ export function createAddLinkTool(workflowState: WorkflowState, context?: ToolCo
 }
 
 // ============================================================================
-// Modify Operator Tool
+// Delete Link Tool
 // ============================================================================
 
-export function createModifyOperatorTool(workflowState: WorkflowState, context?: ToolContext) {
+export function createDeleteLinkTool(workflowState: WorkflowState, context?: ToolContext) {
   return tool({
-    description:
-      "Modify properties of an existing operator. Use this to fix errors or change operator logic. " +
-      `For ${MULTI_INPUT_OPERATOR_TYPE}, you can also update the number of input ports.`,
+    description: "Delete a link from the workflow.",
     inputSchema: z.object({
-      operatorId: z.string().describe("ID of the operator to modify"),
-      properties: z.record(z.any()).describe("Properties to update (merged with existing)"),
-      summary: z.string().optional().describe("Brief summary of what this modification accomplishes"),
-      numInputPorts: z.number().optional().describe(`New number of input ports for ${MULTI_INPUT_OPERATOR_TYPE}.`),
+      linkId: z.string().describe("ID of the link to delete"),
+      summary: z.string().optional().describe("Brief summary of what this deletion accomplishes"),
     }),
-    execute: async (args: {
-      operatorId: string;
-      properties: Record<string, any>;
-      summary?: string;
-      numInputPorts?: number;
-    }) => {
+    execute: async (args: { linkId: string; summary?: string }) => {
       try {
-        const operator = workflowState.getOperator(args.operatorId);
-        if (!operator) return createErrorResult(`Operator ${args.operatorId} not found`);
-
-        const mergedProperties = { ...operator.operatorProperties, ...args.properties };
-
-        // Validate properties
-        if (context?.metadataStore) {
-          const validation = context.metadataStore.validateOperatorProperties(operator.operatorType, mergedProperties);
-          if (!validation.isValid) {
-            return createErrorResult(
-              `Invalid operator properties for "${operator.operatorType}". ${formatValidationErrors(validation)}\n` +
-                `Use getOperatorSchema("${operator.operatorType}") to see the required property format.`
-            );
-          }
-        }
-
-        // Validate numInputPorts if provided
-        if (args.numInputPorts !== undefined) {
-          if (operator.operatorType !== MULTI_INPUT_OPERATOR_TYPE) {
-            return createErrorResult(
-              `numInputPorts is only supported for ${MULTI_INPUT_OPERATOR_TYPE}. ` +
-                `Operator "${args.operatorId}" is of type "${operator.operatorType}".`
-            );
-          }
-          const portError = validateNumInputPorts(args.numInputPorts);
-          if (portError) return createErrorResult(portError);
-        }
-
         const beforeContent = workflowState.getWorkflowContent();
 
-        workflowState.updateOperatorProperties(args.operatorId, args.properties);
-
-        if (args.numInputPorts !== undefined && args.numInputPorts > 0) {
-          workflowState.updateOperatorInputPorts(args.operatorId, args.numInputPorts);
+        const deleted = workflowState.deleteLink(args.linkId);
+        if (!deleted) {
+          return createErrorResult(`Link ${args.linkId} not found`);
         }
 
         const afterContent = workflowState.getWorkflowContent();
@@ -457,79 +234,58 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
           context.agentActionManager.createAgentAction(
             context.agentId,
             context.agentName || `Agent-${context.agentId}`,
-            args.summary || `Modified ${operator.customDisplayName || operator.operatorType}`,
-            { modify: { operatorIds: [args.operatorId] } },
+            args.summary || `Deleted link ${args.linkId}`,
+            { delete: { operatorIds: [], linkIds: [args.linkId] } },
             context.workflowMetadata || {},
             beforeContent,
             afterContent
           );
         }
 
-        return createToolResult(formatModifyOperatorResult(args.operatorId));
+        return createToolResult(`Deleted link: ${args.linkId}`);
       } catch (error: any) {
-        return createErrorResult(formatOperatorError(args.operatorId, error.message || String(error)));
+        return createErrorResult(error.message || String(error));
       }
     },
   });
 }
 
 // ============================================================================
-// Delete From Workflow Tool
+// Delete Operator Tool
 // ============================================================================
 
-export function createDeleteFromWorkflowTool(workflowState: WorkflowState, context?: ToolContext) {
+export function createDeleteOperatorTool(workflowState: WorkflowState, context?: ToolContext) {
   return tool({
-    description: "Delete operators and/or links from the workflow.",
+    description: "Delete an operator from the workflow. This also deletes all connected links.",
     inputSchema: z.object({
-      operatorIds: z.array(z.string()).optional().describe("List of operator IDs to delete"),
-      linkIds: z.array(z.string()).optional().describe("List of link IDs to delete"),
+      operatorId: z.string().describe("ID of the operator to delete"),
       summary: z.string().optional().describe("Brief summary of what this deletion accomplishes"),
     }),
-    execute: async (args: { operatorIds?: string[]; linkIds?: string[]; summary?: string }) => {
+    execute: async (args: { operatorId: string; summary?: string }) => {
       try {
         const beforeContent = workflowState.getWorkflowContent();
 
-        const deletedOperatorIds: string[] = [];
-        const deletedLinkIds: string[] = [];
-
-        // Delete operators (also deletes connected links)
-        if (args.operatorIds) {
-          for (const operatorId of args.operatorIds) {
-            if (workflowState.deleteOperator(operatorId)) {
-              deletedOperatorIds.push(operatorId);
-            }
-          }
-        }
-
-        // Delete specific links
-        if (args.linkIds) {
-          for (const linkId of args.linkIds) {
-            if (workflowState.deleteLink(linkId)) {
-              deletedLinkIds.push(linkId);
-            }
-          }
+        const deleted = workflowState.deleteOperator(args.operatorId);
+        if (!deleted) {
+          return createErrorResult(`Operator ${args.operatorId} not found`);
         }
 
         const afterContent = workflowState.getWorkflowContent();
 
         // Create agent action for tracking
-        if (
-          context?.agentActionManager &&
-          context.agentId &&
-          (deletedOperatorIds.length > 0 || deletedLinkIds.length > 0)
-        ) {
+        if (context?.agentActionManager && context.agentId) {
           context.agentActionManager.createAgentAction(
             context.agentId,
             context.agentName || `Agent-${context.agentId}`,
-            args.summary || `Deleted ${deletedOperatorIds.length} operator(s) and ${deletedLinkIds.length} link(s)`,
-            { delete: { operatorIds: deletedOperatorIds, linkIds: deletedLinkIds } },
+            args.summary || `Deleted operator ${args.operatorId}`,
+            { delete: { operatorIds: [args.operatorId], linkIds: [] } },
             context.workflowMetadata || {},
             beforeContent,
             afterContent
           );
         }
 
-        return createToolResult(formatDeleteResult(deletedOperatorIds, deletedLinkIds));
+        return createToolResult(`Deleted operator: ${args.operatorId}`);
       } catch (error: any) {
         return createErrorResult(error.message || String(error));
       }

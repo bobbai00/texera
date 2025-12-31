@@ -159,6 +159,16 @@ export enum OperatorResultSerializationMode {
 }
 
 /**
+ * Agent operating mode - determines which tools and prompts are used
+ */
+export enum AgentMode {
+  /** Code mode: Uses code operator tools (addCodeOperator, modifyCodeOperator), no operator schemas in prompt */
+  CODE = "code",
+  /** General mode: Uses workflow tools (addOperator, modifyOperator), includes operator schemas in prompt */
+  GENERAL = "general",
+}
+
+/**
  * Configurable settings for an agent instance
  */
 export interface AgentSettings {
@@ -178,8 +188,8 @@ export interface AgentSettings {
   executionTimeoutMs: number;
   /** Maximum number of steps per message */
   maxSteps: number;
-  /** Only allow relational operators (from ALLOWED_OPERATOR_TYPES list) */
-  onlyUseRelationalOperators: boolean;
+  /** Agent operating mode (code or general) */
+  agentMode: AgentMode;
   /** Whether to restrict operator result token limits (if false, no truncation applied) */
   restrictOperatorResultToken: boolean;
   /** Whether to disable print statements in Python UDFs (validation at compile time) */
@@ -197,7 +207,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   toolTimeoutMs: 240000, // 4 minutes
   executionTimeoutMs: 240000, // 4 minutes
   maxSteps: 100,
-  onlyUseRelationalOperators: true,
+  agentMode: AgentMode.CODE, // Default to CODE mode
   restrictOperatorResultToken: false, // If false, no token limit applied to results
   disablePrint: true, // If true, print statements are not allowed in Python UDFs
 };
@@ -250,8 +260,8 @@ export interface AgentSettingsApi {
   disabledTools?: string[];
   /** Maximum number of steps per message */
   maxSteps?: number;
-  /** Only allow relational operators (from ALLOWED_OPERATOR_TYPES list) */
-  onlyUseRelationalOperators?: boolean;
+  /** Agent operating mode: "code" or "general" */
+  agentMode?: "code" | "general";
   /** Whether to restrict operator result token limits (if false, no truncation applied) */
   restrictOperatorResultToken?: boolean;
   /** Whether to disable print statements in Python UDFs (validation at compile time) */
@@ -307,8 +317,8 @@ export interface UpdateAgentSettingsRequest {
   disabledTools?: string[];
   /** Maximum number of steps per message */
   maxSteps?: number;
-  /** Only allow relational operators (from ALLOWED_OPERATOR_TYPES list) */
-  onlyUseRelationalOperators?: boolean;
+  /** Agent operating mode: "code" or "general" */
+  agentMode?: "code" | "general";
   /** Whether to restrict operator result token limits (if false, no truncation applied) */
   restrictOperatorResultToken?: boolean;
   /** Whether to disable print statements in Python UDFs (validation at compile time) */

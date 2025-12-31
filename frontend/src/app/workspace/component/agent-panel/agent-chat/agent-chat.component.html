@@ -719,20 +719,32 @@
           </div>
 
           <div class="settings-param-item">
-            <label class="settings-param-label">Only Use Relational Operators</label>
+            <label class="settings-param-label">Agent Mode</label>
             <div class="settings-param-input">
-              <nz-switch
-                [(ngModel)]="settingsOnlyUseRelationalOperators"
-                nzSize="small"></nz-switch>
+              <nz-radio-group
+                [(ngModel)]="settingsAgentMode"
+                nzSize="small"
+                style="display: inline-flex; gap: 16px; margin-right: 12px">
+                <label
+                  nz-radio
+                  nzValue="code"
+                  >CODE</label
+                >
+                <label
+                  nz-radio
+                  nzValue="general"
+                  >GENERAL</label
+                >
+              </nz-radio-group>
               <button
                 nz-button
                 nzType="primary"
                 nzSize="small"
-                (click)="saveOnlyUseRelationalOperators()">
+                (click)="saveAgentMode()">
                 Save
               </button>
               <span class="settings-param-hint"
-                >Restrict agent to relational operators only (Aggregate, Projection, Join, etc.)</span
+                >CODE: Python code operators only. GENERAL: All operators with schema hints.</span
               >
             </div>
           </div>

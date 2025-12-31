@@ -112,7 +112,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsToolTimeoutSeconds = 120; // 2 minutes default
   public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
   public settingsMaxSteps = 10; // Default max steps per message
-  public settingsOnlyUseRelationalOperators = false; // Restrict to relational operators only
+  public settingsAgentMode: "code" | "general" = "code"; // Agent operating mode
   public settingsRestrictOperatorResultToken = false; // If false, no token limit applied
   public settingsDisablePrint = true; // If true, print statements not allowed in Python UDFs
   public agentInternalState: object | null = null;
@@ -396,7 +396,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsToolTimeoutSeconds = settings.toolTimeoutSeconds ?? 120;
         this.settingsExecutionTimeoutMinutes = settings.executionTimeoutMinutes ?? 10;
         this.settingsMaxSteps = settings.maxSteps ?? 10;
-        this.settingsOnlyUseRelationalOperators = settings.onlyUseRelationalOperators ?? false;
+        this.settingsAgentMode = settings.agentMode ?? "code";
         this.settingsRestrictOperatorResultToken = settings.restrictOperatorResultToken ?? false;
         this.settingsDisablePrint = settings.disablePrint ?? true;
       });
@@ -1122,18 +1122,18 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   }
 
   /**
-   * Save the only use relational operators setting.
+   * Save the agent mode setting.
    */
-  public saveOnlyUseRelationalOperators(): void {
+  public saveAgentMode(): void {
     this.copilotManagerService
       .updateAgentSettings(this.agentInfo.id, {
-        onlyUseRelationalOperators: this.settingsOnlyUseRelationalOperators,
+        agentMode: this.settingsAgentMode,
       })
       .pipe(untilDestroyed(this))
       .subscribe({
         next: () =>
           this.notificationService.success(
-            this.settingsOnlyUseRelationalOperators ? "Relational operators only mode enabled" : "All operators enabled"
+            this.settingsAgentMode === "code" ? "Code mode enabled" : "General mode enabled"
           ),
         error: () => {}, // Error already handled by service
       });
