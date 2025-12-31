@@ -20,7 +20,7 @@
 package org.apache.texera.web.resource.dashboard.user.workflow
 
 import io.dropwizard.auth.Auth
-import org.apache.amber.core.storage.{DocumentFactory, FileResolver, VFSResourceType, VFSURIFactory}
+import org.apache.amber.core.storage.{DocumentFactory, FileResolver}
 import org.apache.amber.engine.architecture.scheduling.PortResultCache
 import org.apache.amber.core.tuple.Tuple
 import org.apache.amber.core.virtualidentity._
@@ -29,6 +29,7 @@ import org.apache.amber.engine.architecture.logreplay.{ReplayDestination, Replay
 import org.apache.amber.engine.common.Utils.{maptoStatusCode, stringToAggregatedState}
 import org.apache.amber.engine.common.storage.SequentialRecordStorage
 import org.apache.amber.util.JSONUtils.objectMapper
+import org.apache.amber.util.serde.GlobalPortIdentitySerde
 import org.apache.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtParser, SessionUser}
 import org.apache.texera.dao.SqlServer
@@ -483,27 +484,28 @@ object WorkflowExecutionsResource {
       opId: OperatorIdentity,
       portId: PortIdentity
   ): Option[URI] = {
-    def isMatchingExternalPortURI(uri: URI): Boolean = {
-      val (_, _, globalPortIdOption, resourceType) = VFSURIFactory.decodeURI(uri)
-      globalPortIdOption.exists { globalPortId =>
-        !globalPortId.portId.internal &&
-        globalPortId.opId.logicalOpId == opId &&
-        globalPortId.portId == portId &&
-        resourceType == VFSResourceType.RESULT
-      }
-    }
-
-    val urisOfEid: List[URI] =
+    // Query both GLOBAL_PORT_ID and RESULT_URI from the database.
+    // GLOBAL_PORT_ID contains the current execution's GlobalPortIdentity (correct for cache hits),
+    // while RESULT_URI may contain a different execution's GlobalPortIdentity (from cached result).
+    val results: List[(String, String)] =
       context
-        .select(OPERATOR_PORT_EXECUTIONS.RESULT_URI)
+        .select(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID, OPERATOR_PORT_EXECUTIONS.RESULT_URI)
         .from(OPERATOR_PORT_EXECUTIONS)
         .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
-        .fetchInto(classOf[String])
+        .fetch()
         .asScala
         .toList
-        .map(URI.create)
+        .map(r => (r.value1(), r.value2()))
 
-    urisOfEid.find(isMatchingExternalPortURI)
+    results
+      .find {
+        case (globalPortIdStr, _) =>
+          val globalPortId = GlobalPortIdentitySerde.deserializeFromString(globalPortIdStr)
+          !globalPortId.portId.internal &&
+          globalPortId.opId.logicalOpId == opId &&
+          globalPortId.portId == portId
+      }
+      .map { case (_, uriStr) => URI.create(uriStr) }
   }
 
   case class WorkflowExecutionEntry(

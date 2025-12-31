@@ -104,8 +104,20 @@ object ExecutionResultService {
       val inputJson = mapper.writeValueAsString(base64List.toArray)
 
       // Python script that processes all pickled data in one call
+      // Import common data science packages to handle pickled objects that may reference them
       val pythonCode =
         """import pickle, base64, json, sys
+          |
+          |# Try to import packages that may be needed for unpickling
+          |# These are optional - unpickling will still work for objects that don't need them
+          |try:
+          |    import pandas
+          |except ImportError:
+          |    pass
+          |try:
+          |    import numpy
+          |except ImportError:
+          |    pass
           |
           |# Read input from stdin
           |input_data = sys.stdin.read()

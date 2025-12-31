@@ -338,6 +338,12 @@ class SyncExecutionResource extends LazyLogging {
             (executionService.executionStateStore.metadataStore.getState, true, false)
           case TargetResultsReady(_) =>
             // All target operators have results - kill the workflow and mark as completed
+            // Wait briefly to allow caching of upstream operator results to complete.
+            // The caching happens asynchronously in RegionExecutionCoordinator after operators complete,
+            // so we need to give it time before shutting down the client.
+            // TODO: A better solution would be to make caching synchronous or signal completion
+            // from the engine, avoiding this fixed delay.
+            Thread.sleep(500)
             killExecution(executionService)
             // Update state to COMPLETED since we got all the results we need
             executionService.executionStateStore.metadataStore.updateState(metadataStore =>
