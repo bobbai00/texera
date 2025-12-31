@@ -188,16 +188,17 @@ IMPORTANT: The function name MUST be exactly "load" or "process" following the b
 
 ## def load() -> pd.DataFrame
 Purpose: Load data from files or external sources. No input ports.
-- Use when: Reading CSV, JSON, text files, or any external data source
+- Use when: Reading the metadata of the files from the disk
 - File I/O is allowed
 - Do NOT do data processing in this operator, ONLY do data loading
 - Do NOT use print statements
-- Since the file can potentially be very big, Please load the meta information or sample about the file first
-
+- Do NOT load the entire large data files directly, load its metadata and samples for understanding; Only load the entire file during processing time
 Examples:
+  # Load entire CSV file for downstream processing
   def load() -> pd.DataFrame:
       return pd.read_csv('/path/to/data.csv')
-
+  
+  # Load md file and emit the dataframe
   def load() -> pd.DataFrame:
       with open('/path/to/readme.md', 'r') as f:
           content = f.read()
@@ -213,7 +214,7 @@ Examples:
           'file': path,
           'size_bytes': file_size,
           'columns': list(sample.columns),
-          'sample_rows': sample.to_dict('records')
+          'sample_rows': sample.to_dict()
       }])
 
 ## def process(input1, input2, ...) -> pd.DataFrame
@@ -224,10 +225,12 @@ Purpose: Transform input data. Each parameter becomes an input port and represen
 - Do NOT use print statements
 
 Examples:
+  # process a single input dataframe
   def process(users) -> pd.DataFrame:
       filtered = users[users['age'] > 18]
       return filtered[['name', 'age', 'city']]
-
+  
+  # process two input dataframes from two input ports
   def process(orders, customers) -> pd.DataFrame:
       return orders.merge(customers, on='customer_id')`,
     inputSchema: z.object({
