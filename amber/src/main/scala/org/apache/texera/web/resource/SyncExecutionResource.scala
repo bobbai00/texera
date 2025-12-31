@@ -34,7 +34,8 @@ import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregate
 import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
 import org.apache.amber.engine.common.executionruntimestate.{
   ExecutionConsoleStore,
-  ExecutionMetadataStore
+  ExecutionMetadataStore,
+  ExecutionStatsStore
 }
 import io.reactivex.rxjava3.core.Observable
 import org.apache.texera.auth.SessionUser
@@ -121,6 +122,7 @@ case class SyncExecutionResult(
 sealed trait TerminationReason
 case class TerminalStateReached(state: ExecutionMetadataStore) extends TerminationReason
 case class ConsoleErrorDetected(consoleState: ExecutionConsoleStore) extends TerminationReason
+case class TargetResultsReady(statsState: ExecutionStatsStore) extends TerminationReason
 
 /**
   * REST API resource for synchronous (blocking) workflow execution.
@@ -243,6 +245,17 @@ class SyncExecutionResource extends LazyLogging {
       // This handles the race condition where execution finishes before Observable subscription
       val currentState = executionService.executionStateStore.metadataStore.getState
       val currentConsoleState = executionService.executionStateStore.consoleStore.getState
+      val currentStatsState = executionService.executionStateStore.statsStore.getState
+
+      // Helper to check if all target operators have completed (not just produced output).
+      // This ensures upstream operators have finished sending data before we terminate.
+      def allTargetsCompleted(stats: ExecutionStatsStore): Boolean = {
+        request.targetOperatorIds.nonEmpty && request.targetOperatorIds.forall { opId =>
+          stats.operatorInfo.get(opId).exists { metrics =>
+            metrics.operatorState == COMPLETED
+          }
+        }
+      }
 
       val terminationReason: TerminationReason =
         if (isTerminalState(currentState.state)) {
@@ -251,10 +264,14 @@ class SyncExecutionResource extends LazyLogging {
         } else if (hasConsoleError(currentConsoleState)) {
           // Already has console error
           ConsoleErrorDetected(currentConsoleState)
+        } else if (allTargetsCompleted(currentStatsState)) {
+          // All target operators already completed
+          TargetResultsReady(currentStatsState)
         } else {
-          // Create two termination conditions:
+          // Create three termination conditions:
           // 1. Terminal state (COMPLETED, FAILED, KILLED, TERMINATED)
           // 2. Console ERROR message (any operator logs an error)
+          // 3. All target operators have produced results
 
           // Observable for terminal state
           val terminalStateObservable: Observable[TerminationReason] =
@@ -268,10 +285,22 @@ class SyncExecutionResource extends LazyLogging {
               .filter((consoleState: ExecutionConsoleStore) => hasConsoleError(consoleState))
               .map[TerminationReason](consoleState => ConsoleErrorDetected(consoleState))
 
-          // Race between the two conditions - whichever fires first wins
+          // Observable for all target operators being completed
+          val targetResultsObservable: Observable[TerminationReason] =
+            executionService.executionStateStore.statsStore.getStateObservable
+              .filter((stats: ExecutionStatsStore) => allTargetsCompleted(stats))
+              .map[TerminationReason](stats => TargetResultsReady(stats))
+
+          // Race between all conditions - whichever fires first wins
           try {
             Observable
-              .amb(java.util.Arrays.asList(terminalStateObservable, consoleErrorObservable))
+              .amb(
+                java.util.Arrays.asList(
+                  terminalStateObservable,
+                  consoleErrorObservable,
+                  targetResultsObservable
+                )
+              )
               .firstOrError()
               .timeout(timeoutSeconds.toLong, TimeUnit.SECONDS)
               .blockingGet()
@@ -299,14 +328,23 @@ class SyncExecutionResource extends LazyLogging {
         }
 
       // Handle termination based on reason
-      val (finalState, terminatedByConsoleError) = terminationReason match {
-        case TerminalStateReached(state) =>
-          (state, false)
-        case ConsoleErrorDetected(_) =>
-          // Console error detected - kill the workflow and get current state
-          killExecution(executionService)
-          (executionService.executionStateStore.metadataStore.getState, true)
-      }
+      val (finalState, terminatedByConsoleError, terminatedByTargetResults) =
+        terminationReason match {
+          case TerminalStateReached(state) =>
+            (state, false, false)
+          case ConsoleErrorDetected(_) =>
+            // Console error detected - kill the workflow and get current state
+            killExecution(executionService)
+            (executionService.executionStateStore.metadataStore.getState, true, false)
+          case TargetResultsReady(_) =>
+            // All target operators have results - kill the workflow and mark as completed
+            killExecution(executionService)
+            // Update state to COMPLETED since we got all the results we need
+            executionService.executionStateStore.metadataStore.updateState(metadataStore =>
+              updateWorkflowState(COMPLETED, metadataStore)
+            )
+            (executionService.executionStateStore.metadataStore.getState, false, true)
+        }
 
       // Small delay to ensure results are persisted
       Thread.sleep(500)
@@ -337,13 +375,18 @@ class SyncExecutionResource extends LazyLogging {
       // Check for console errors in operator results
       val hasOperatorConsoleError = operatorInfos.values.exists(_.error.isDefined)
 
-      // Determine state string - if terminated by console error, show as "Failed"
+      // Determine state string based on termination reason
       val stateString =
-        if (terminatedByConsoleError) "Failed" else stateToString(finalState.state)
+        if (terminatedByConsoleError) "Failed"
+        else if (terminatedByTargetResults) "Completed"
+        else stateToString(finalState.state)
+
+      // Success if: completed normally OR all target results ready, with no errors
+      val isSuccess = (finalState.state == COMPLETED || terminatedByTargetResults) &&
+        !hasOperatorConsoleError && !terminatedByConsoleError
 
       SyncExecutionResult(
-        success =
-          finalState.state == COMPLETED && !hasOperatorConsoleError && !terminatedByConsoleError,
+        success = isSuccess,
         state = stateString,
         operators = operatorInfos,
         compilationErrors = None,
