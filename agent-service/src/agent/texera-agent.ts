@@ -29,7 +29,7 @@ import { OperatorMetadataStore } from "../tools/metadata-tools";
 import { AgentActionManager } from "./agent-action-manager";
 import type { AgentSettings, ReActStep, AgentMessageStats, TokenUsage, AgentAction } from "../types/agent";
 import { AgentState as AgentStateEnum, DEFAULT_AGENT_SETTINGS, OperatorResultSerializationMode, AgentMode } from "../types/agent";
-import { COPILOT_SYSTEM_PROMPT, CODE_MODE_SYSTEM_PROMPT, buildCopilotSystemPrompt } from "./prompts";
+import { BASE_SYSTEM_PROMPT, buildGeneralModeSystemPrompt } from "./prompts";
 import {
   createGetCurrentWorkflowTool,
   createAddLinkTool,
@@ -79,7 +79,7 @@ export interface TexeraAgentConfig {
   agentId: string;
   /** Agent display name */
   agentName?: string;
-  /** Custom system prompt (optional, defaults to COPILOT_SYSTEM_PROMPT) */
+  /** Custom system prompt (optional, defaults to BASE_SYSTEM_PROMPT) */
   systemPrompt?: string;
   /** Pre-initialized metadata store (optional, uses global singleton if not provided) */
   metadataStore?: OperatorMetadataStore;
@@ -160,7 +160,7 @@ export class TexeraAgent {
     this.agentId = config.agentId;
     this.agentName = config.agentName || `Agent-${config.agentId}`;
     this.model = config.model;
-    this.systemPrompt = config.systemPrompt || COPILOT_SYSTEM_PROMPT;
+    this.systemPrompt = config.systemPrompt || BASE_SYSTEM_PROMPT;
 
     // Initialize state
     this.workflowState = new WorkflowState();
@@ -213,10 +213,10 @@ export class TexeraAgent {
   private rebuildSystemPrompt(): void {
     if (this.settings.agentMode === AgentMode.GENERAL) {
       // GENERAL mode: include operator schemas in prompt
-      this.systemPrompt = buildCopilotSystemPrompt(this.metadataStore);
+      this.systemPrompt = buildGeneralModeSystemPrompt(this.metadataStore);
     } else {
-      // CODE mode: use simpler prompt without operator schemas
-      this.systemPrompt = CODE_MODE_SYSTEM_PROMPT;
+      // CODE mode: use base prompt without operator schemas
+      this.systemPrompt = BASE_SYSTEM_PROMPT;
     }
     this.settings.systemPrompt = this.systemPrompt;
   }

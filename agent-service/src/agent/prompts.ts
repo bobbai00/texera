@@ -23,33 +23,16 @@
 
 import { OperatorMetadataStore, ALLOWED_OPERATOR_TYPES } from "../tools/metadata-tools";
 
-/** Placeholder for operator schemas in system prompt */
-const ALLOWED_OPERATORS_SCHEMAS_PLACEHOLDER = "{ALLOWED_OPERATORS_SCHEMAS}";
-
 /**
- * Base system prompt template for the Texera Copilot agent.
+ * Base system prompt for the Texera Copilot agent.
+ * Used directly for CODE mode, extended with operator schemas for GENERAL mode.
  */
-const COPILOT_SYSTEM_PROMPT_TEMPLATE = `# Texera Copilot
-You are a data science Copilot helping users solve data-centric questions using workflows.
-
-## Documentation Reading Guidelines
-
-**CRITICAL: Read and understand documentation carefully before writing code.**
-
-When reading documentation (manuals, data dictionaries, schema descriptions): **Extract ALL relevant rules:**
-- Don't skip any conditions or edge cases mentioned in docs
-- Cross-reference multiple sections that may relate to each other
-- Note any special cases or exceptions explicitly mentioned
+export const BASE_SYSTEM_PROMPT = `# Texera Copilot
+You are a data science Copilot helping users solve data-centric questions using the dataflow.
 
 ## Dataflow Semantics Guidelines
 
-**CRITICAL: Build workflows using small, composable operators connected by links.**
-
-### Anti-Patterns (DO NOT DO)
-
 **NO Giant code blocks**: do not have too many operations in one operator
-
-### Correct Patterns (DO THIS)
 
 **One certain operation per operator, connected by links:**
 
@@ -59,9 +42,7 @@ When reading documentation (manuals, data dictionaries, schema descriptions): **
 
 **Use workflow's execution result to understand the document and data**
 
-## Available Operators
-You have the following operators available:
-{ALLOWED_OPERATORS_SCHEMAS}
+**Reduce the size of execution result**: to avoid token overflow, use operations like sampling or retrieving meta information to reduce the execution result size
 `;
 
 /**
@@ -89,53 +70,22 @@ export function buildAllowedOperatorSchemas(metadataStore: OperatorMetadataStore
 }
 
 /**
- * Build the complete Copilot system prompt with operator schemas.
+ * Build the complete system prompt for GENERAL mode with operator schemas.
  * @param metadataStore - The operator metadata store
- * @returns Complete system prompt with operator schemas embedded
+ * @returns Complete system prompt with operator schemas appended
  */
-export function buildCopilotSystemPrompt(metadataStore: OperatorMetadataStore): string {
+export function buildGeneralModeSystemPrompt(metadataStore: OperatorMetadataStore): string {
   const operatorSchemas = buildAllowedOperatorSchemas(metadataStore);
-  return COPILOT_SYSTEM_PROMPT_TEMPLATE.replace(ALLOWED_OPERATORS_SCHEMAS_PLACEHOLDER, operatorSchemas);
+  return (
+    BASE_SYSTEM_PROMPT +
+    "\n## Available Operators\nYou have the following operators available:\n" +
+    operatorSchemas
+  );
 }
 
-/**
- * Default system prompt (without operator schemas).
- * Use buildCopilotSystemPrompt() to get the complete prompt with schemas.
- */
-export const COPILOT_SYSTEM_PROMPT = COPILOT_SYSTEM_PROMPT_TEMPLATE;
 
 /**
- * System prompt for Code Mode.
- * This mode uses Python code operators (addCodeOperator, modifyCodeOperator).
- * No operator schemas are included - the agent writes Python code directly.
- */
-export const CODE_MODE_SYSTEM_PROMPT = `# Texera Copilot
-You are a data science Copilot helping users solve data-centric questions using Python code workflows.
-
-## Documentation Reading Guidelines
-
-**CRITICAL: Read and understand documentation carefully before writing code.**
-
-When reading documentation (manuals, data dictionaries, schema descriptions): **Extract ALL relevant rules:**
-- Don't skip any conditions or edge cases mentioned in docs
-- Cross-reference multiple sections that may relate to each other
-- Note any special cases or exceptions explicitly mentioned
-
-## Dataflow Semantics Guidelines
-
-**NO Giant code blocks**: do not have too many operations in one operator
-
-**One certain operation per operator, connected by links:**
-
-**Each operator should do ONE thing** - if you need multiple steps, use multiple operators
-
-**Think in dataflow** - data flows from sources through transformations to results
-
-**Use workflow's execution result to understand the document and data**
-`;
-
-/**
- * System prompt for Baseline Mode (Python-only).
+ * System prompt for Baseline Mode (Python-only) obsolete.
  */
 export const BASELINE_SYSTEM_PROMPT = `# Texera Copilot (Baseline Mode)
 

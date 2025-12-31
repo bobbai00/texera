@@ -36,7 +36,7 @@ export * from "./tools";
 
 // Export agent
 export { TexeraAgent, type TexeraAgentConfig, type AgentMessageResult } from "./agent/texera-agent";
-export { COPILOT_SYSTEM_PROMPT, BASELINE_SYSTEM_PROMPT } from "./agent/prompts";
+export { BASE_SYSTEM_PROMPT, buildGeneralModeSystemPrompt } from "./agent/prompts";
 
 // ============================================================================
 // Simple Example Usage

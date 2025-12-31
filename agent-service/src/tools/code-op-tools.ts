@@ -190,7 +190,9 @@ IMPORTANT: The function name MUST be exactly "load" or "process" following the b
 Purpose: Load data from files or external sources. No input ports.
 - Use when: Reading CSV, JSON, text files, or any external data source
 - File I/O is allowed
+- Do NOT do data processing in this operator, ONLY do data loading
 - Do NOT use print statements
+- Since the file can potentially be very big, Please load the meta information or sample about the file first
 
 Examples:
   def load() -> pd.DataFrame:
@@ -201,10 +203,24 @@ Examples:
           content = f.read()
       return pd.DataFrame([{'filename': 'readme.md', 'content': content}])
 
+  # Load sample and metadata for a large CSV file
+  def load() -> pd.DataFrame:
+      import os
+      path = '/path/to/large_data.csv'
+      file_size = os.path.getsize(path)
+      sample = pd.read_csv(path, nrows=5)
+      return pd.DataFrame([{
+          'file': path,
+          'size_bytes': file_size,
+          'columns': list(sample.columns),
+          'sample_rows': sample.to_dict('records')
+      }])
+
 ## def process(input1, input2, ...) -> pd.DataFrame
 Purpose: Transform input data. Each parameter becomes an input port and represents the dataframe from that input port.
 - Use when: Filtering, joining, aggregating, or transforming data from upstream operators
 - File IO is FORBIDDEN
+- Do NOT do File IO in this function, ONLY focus on data processing
 - Do NOT use print statements
 
 Examples:
