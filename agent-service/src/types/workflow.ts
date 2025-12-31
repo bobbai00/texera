@@ -219,3 +219,20 @@ export interface OperatorDetail {
   inputPorts: PortDescription[];
   outputPorts: PortDescription[];
 }
+
+// ============================================================================
+// Validation Types (matching frontend ValidationWorkflowService)
+// ============================================================================
+
+/**
+ * Validation error with messages
+ */
+export type ValidationError = {
+  isValid: false;
+  messages: Record<string, string>;
+};
+
+/**
+ * Validation result (either valid or error)
+ */
+export type Validation = { isValid: true } | ValidationError;

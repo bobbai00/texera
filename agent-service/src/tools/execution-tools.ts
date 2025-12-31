@@ -31,7 +31,7 @@ import { getBackendConfig } from "../api/backend-api";
 import type { LogicalPlan, LogicalLink } from "../api/execution-api";
 import type { SyncExecutionResult } from "../types/execution";
 import { OperatorMetadataStore } from "./metadata-tools";
-import { OperatorResultSerializationMode } from "../types/agent";
+import { OperatorResultSerializationMode, DEFAULT_AGENT_SETTINGS } from "../types/agent";
 
 // ============================================================================
 // Tool Name Constants
@@ -60,14 +60,6 @@ export interface ExecutionConfig {
   /** Whether to disable print statements in Python UDFs */
   disablePrint?: boolean;
 }
-
-// ============================================================================
-// Default Values
-// ============================================================================
-
-const DEFAULT_TIMEOUT_SECONDS = 300;
-const DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT = 2000;
-const DEFAULT_MAX_CELL_TOKEN_LIMIT = 10000;
 
 // ============================================================================
 // Execution Mutex
@@ -309,7 +301,7 @@ async function executeWorkflowHttp(
 
   const timeoutSeconds = config.executionTimeoutMs
     ? Math.ceil(config.executionTimeoutMs / 1000)
-    : DEFAULT_TIMEOUT_SECONDS;
+    : Math.ceil(DEFAULT_AGENT_SETTINGS.executionTimeoutMs / 1000);
 
   // Always request JSON format from backend - we'll convert in agent-service if needed
   const request = {
@@ -323,10 +315,10 @@ async function executeWorkflowHttp(
     targetOperatorIds: logicalPlan.opsToViewResult || [],
     timeoutSeconds,
     serializationMode: "json", // Always request JSON from backend
-    restrictOperatorResultToken: config.restrictOperatorResultToken ?? false,
-    maxOperatorResultTokenLimit: config.maxOperatorResultTokenLimit ?? DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
-    maxCellTokens: config.maxOperatorResultCellTokenLimit ?? DEFAULT_MAX_CELL_TOKEN_LIMIT,
-    disablePrint: config.disablePrint ?? true,
+    restrictOperatorResultToken: config.restrictOperatorResultToken ?? DEFAULT_AGENT_SETTINGS.restrictOperatorResultToken,
+    maxOperatorResultTokenLimit: config.maxOperatorResultTokenLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultTokenLimit,
+    maxCellTokens: config.maxOperatorResultCellTokenLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCellTokenLimit,
+    disablePrint: config.disablePrint ?? DEFAULT_AGENT_SETTINGS.disablePrint,
   };
 
   console.log(`[ExecutionTools] Executing workflow via HTTP: ${url}`);

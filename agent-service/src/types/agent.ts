@@ -233,7 +233,7 @@ export interface AgentDelegateConfig {
   /** JWT token for authenticated API calls */
   userToken: string;
   /** User information extracted from token */
-  userInfo: UserInfo;
+  userInfo?: UserInfo;
   /** Associated workflow ID (wid) */
   workflowId?: number;
   /** Workflow name */

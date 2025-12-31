@@ -33,17 +33,15 @@ import type {
   Point,
   CommentBox,
   WorkflowSettings,
+  ValidationError,
 } from "../types/workflow";
 
-// ============================================================================
-// Validation Types (matching frontend ValidationWorkflowService)
-// ============================================================================
+// Re-export validation types for backwards compatibility
+export type { ValidationError, Validation } from "../types/workflow";
 
-export type ValidationError = {
-  isValid: false;
-  messages: Record<string, string>;
-};
-export type Validation = { isValid: true } | ValidationError;
+// ============================================================================
+// Validation Output Type
+// ============================================================================
 
 export interface ValidationOutput {
   errors: Record<string, ValidationError>;

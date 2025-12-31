@@ -27,7 +27,7 @@ import { debounceTime } from "rxjs/operators";
 import { WorkflowState } from "../workflow/workflow-state";
 import { OperatorMetadataStore } from "../tools/metadata-tools";
 import { AgentActionManager } from "./agent-action-manager";
-import type { AgentSettings, ReActStep, AgentMessageStats, TokenUsage, AgentAction } from "../types/agent";
+import type { AgentSettings, ReActStep, AgentMessageStats, TokenUsage, AgentAction, UserInfo } from "../types/agent";
 import { AgentState as AgentStateEnum, DEFAULT_AGENT_SETTINGS, OperatorResultSerializationMode, AgentMode } from "../types/agent";
 import { BASE_SYSTEM_PROMPT, buildGeneralModeSystemPrompt } from "./prompts";
 import {
@@ -75,14 +75,14 @@ const PERSIST_DEBOUNCE_MS = 500;
 export interface TexeraAgentConfig {
   /** Language model to use */
   model: LanguageModel;
+  /** Model type identifier (e.g., "gpt-4-turbo") */
+  modelType: string;
   /** Agent ID */
   agentId: string;
   /** Agent display name */
   agentName?: string;
   /** Custom system prompt (optional, defaults to BASE_SYSTEM_PROMPT) */
   systemPrompt?: string;
-  /** Pre-initialized metadata store (optional, uses global singleton if not provided) */
-  metadataStore?: OperatorMetadataStore;
 }
 
 // ============================================================================
@@ -118,6 +118,8 @@ export type ReActStepCallback = (step: ReActStep) => void;
 export class TexeraAgent {
   readonly agentId: string;
   readonly agentName: string;
+  readonly modelType: string;
+  readonly createdAt: Date;
 
   // State
   private state: AgentStateEnum = AgentStateEnum.AVAILABLE;
@@ -126,6 +128,12 @@ export class TexeraAgent {
   private metadataStore: OperatorMetadataStore;
   // Agent action manager for tracking workflow modifications
   private agentActionManager: AgentActionManager;
+
+  // Server-managed state (for HTTP/WebSocket handling)
+  /** RxJS subscription for agent action streaming */
+  private agentActionSubscription: Subscription | null = null;
+  /** Active WebSocket connections for this agent */
+  private websockets: Set<any> = new Set();
 
   // Configuration
   private model: LanguageModel;
@@ -139,7 +147,13 @@ export class TexeraAgent {
   private reActSteps: ReActStep[] = [];
 
   // Delegate configuration for backend operations
-  private delegateConfig?: { userToken: string; workflowId: number; workflowName?: string; computingUnitId?: number };
+  private delegateConfig?: {
+    userToken: string;
+    userInfo?: UserInfo;
+    workflowId: number;
+    workflowName?: string;
+    computingUnitId?: number;
+  };
 
   // Callback for streaming ReActSteps
   private stepCallback: ReActStepCallback | null = null;
@@ -159,13 +173,15 @@ export class TexeraAgent {
   constructor(config: TexeraAgentConfig) {
     this.agentId = config.agentId;
     this.agentName = config.agentName || `Agent-${config.agentId}`;
+    this.modelType = config.modelType;
+    this.createdAt = new Date();
     this.model = config.model;
     this.systemPrompt = config.systemPrompt || BASE_SYSTEM_PROMPT;
 
     // Initialize state
     this.workflowState = new WorkflowState();
-    // Use provided metadata store or global singleton
-    this.metadataStore = config.metadataStore || OperatorMetadataStore.getInstance();
+    // Always use global singleton metadata store
+    this.metadataStore = OperatorMetadataStore.getInstance();
     // Initialize agent action manager
     this.agentActionManager = new AgentActionManager();
 
@@ -317,6 +333,49 @@ export class TexeraAgent {
    */
   getAgentActions(): AgentAction[] {
     return this.agentActionManager.getAllAgentActions();
+  }
+
+  // ============================================================================
+  // WebSocket Management (for server use)
+  // ============================================================================
+
+  /**
+   * Get all active WebSocket connections for this agent.
+   */
+  getWebsockets(): Set<any> {
+    return this.websockets;
+  }
+
+  /**
+   * Add a WebSocket connection to this agent.
+   */
+  addWebsocket(ws: any): void {
+    this.websockets.add(ws);
+  }
+
+  /**
+   * Remove a WebSocket connection from this agent.
+   */
+  removeWebsocket(ws: any): void {
+    this.websockets.delete(ws);
+  }
+
+  // ============================================================================
+  // Agent Action Subscription Management (for server use)
+  // ============================================================================
+
+  /**
+   * Set the agent action subscription for streaming.
+   */
+  setAgentActionSubscription(subscription: Subscription | null): void {
+    this.agentActionSubscription = subscription;
+  }
+
+  /**
+   * Get the agent action subscription.
+   */
+  getAgentActionSubscription(): Subscription | null {
+    return this.agentActionSubscription;
   }
 
   getMessages(): ModelMessage[] {
@@ -473,6 +532,7 @@ export class TexeraAgent {
    */
   setDelegateConfig(config: {
     userToken: string;
+    userInfo?: UserInfo;
     workflowId: number;
     workflowName?: string;
     computingUnitId?: number;
@@ -490,7 +550,7 @@ export class TexeraAgent {
    * Get the delegate configuration.
    */
   getDelegateConfig():
-    | { userToken: string; workflowId: number; workflowName?: string; computingUnitId?: number }
+    | { userToken: string; userInfo?: UserInfo; workflowId: number; workflowName?: string; computingUnitId?: number }
     | undefined {
     return this.delegateConfig;
   }
@@ -784,6 +844,12 @@ export class TexeraAgent {
    * This properly cleans up RxJS subscriptions via workflowState.destroy().
    */
   destroy(): void {
+    // Cleanup agent action subscription
+    if (this.agentActionSubscription) {
+      this.agentActionSubscription.unsubscribe();
+      this.agentActionSubscription = null;
+    }
+
     // Cleanup workflow change subscription
     if (this.workflowChangeSubscription) {
       this.workflowChangeSubscription.unsubscribe();
@@ -795,6 +861,9 @@ export class TexeraAgent {
 
     // Cleanup agent action manager
     this.agentActionManager.destroy();
+
+    // Clear websocket connections
+    this.websockets.clear();
 
     // Clear conversation history
     this.messages = [];

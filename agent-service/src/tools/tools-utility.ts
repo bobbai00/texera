@@ -21,18 +21,20 @@
  * Tool utilities for Texera Agent Service.
  */
 
+import { DEFAULT_AGENT_SETTINGS } from "../types/agent";
+
 // ============================================================================
-// Constants
+// Constants (derived from DEFAULT_AGENT_SETTINGS for consistency)
 // ============================================================================
 
-/** Default tool execution timeout in milliseconds (2 minutes) */
-export const DEFAULT_TOOL_TIMEOUT_MS = 120000;
+/** Default tool execution timeout in milliseconds */
+export const DEFAULT_TOOL_TIMEOUT_MS = DEFAULT_AGENT_SETTINGS.toolTimeoutMs;
 
 /** Default maximum token limit for operator result data */
-export const DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT = 1000;
+export const DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT = DEFAULT_AGENT_SETTINGS.maxOperatorResultTokenLimit;
 
-/** Default execution timeout for workflow execution in milliseconds (10 minutes) */
-export const DEFAULT_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
+/** Default execution timeout for workflow execution in milliseconds */
+export const DEFAULT_EXECUTION_TIMEOUT_MS = DEFAULT_AGENT_SETTINGS.executionTimeoutMs;
 
 // ============================================================================
 // Result Creators

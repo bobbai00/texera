@@ -23,6 +23,10 @@
  */
 
 import { getBackendConfig } from "./backend-api";
+import type { UserInfo } from "../types/agent";
+
+// Re-export UserInfo for backwards compatibility
+export type { UserInfo } from "../types/agent";
 
 // ============================================================================
 // Types
@@ -30,13 +34,6 @@ import { getBackendConfig } from "./backend-api";
 
 export interface LoginResponse {
   accessToken: string;
-}
-
-export interface UserInfo {
-  uid: number;
-  name: string;
-  email: string;
-  role: string;
 }
 
 export interface AuthResult {

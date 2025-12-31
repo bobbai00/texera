@@ -64,20 +64,8 @@ const MODEL = process.env.MODEL || "gpt-4-turbo";
 // Agent Management
 // ============================================================================
 
-// Extended agent store with delegate configuration
-interface StoredAgent {
-  agent: TexeraAgent;
-  modelType: string;
-  createdAt: Date;
-  delegate?: AgentDelegateConfig;
-  /** RxJS subscription for agent action streaming */
-  agentActionSubscription?: Subscription;
-  /** Active WebSocket connections for this agent */
-  websockets: Set<any>;
-}
-
-// Store for active agents
-const agentStore = new Map<string, StoredAgent>();
+// Store for active agents (TexeraAgent now contains all necessary state)
+const agentStore = new Map<string, TexeraAgent>();
 let agentCounter = 0;
 
 /**
@@ -89,7 +77,7 @@ async function createAgentInstance(
   modelType: string,
   customName?: string,
   delegateConfig?: AgentDelegateConfig
-): Promise<{ agentId: string; stored: StoredAgent }> {
+): Promise<{ agentId: string; agent: TexeraAgent }> {
   const agentId = `agent-${++agentCounter}`;
   const config = getBackendConfig();
 
@@ -101,20 +89,13 @@ async function createAgentInstance(
 
   const agent = new TexeraAgent({
     model: openai.chat(modelType || MODEL),
+    modelType: modelType || MODEL,
     agentId,
     agentName: customName || `Agent-${agentId}`,
   });
 
   // Initialize agent (loads operator metadata from backend and rebuilds tools)
   await agent.initialize();
-
-  const stored: StoredAgent = {
-    agent,
-    modelType,
-    createdAt: new Date(),
-    delegate: delegateConfig,
-    websockets: new Set(),
-  };
 
   // If in delegate mode with workflowId, load workflow and setup delegate config
   if (delegateConfig?.workflowId && delegateConfig.userToken) {
@@ -129,6 +110,7 @@ async function createAgentInstance(
       // Set delegate config on agent (this sets up workflow change handlers internally)
       agent.setDelegateConfig({
         userToken: delegateConfig.userToken,
+        userInfo: delegateConfig.userInfo,
         workflowId: delegateConfig.workflowId,
         workflowName: delegateConfig.workflowName,
         computingUnitId: delegateConfig.computingUnitId,
@@ -141,19 +123,20 @@ async function createAgentInstance(
   }
 
   // Setup agent action streaming subscription
-  stored.agentActionSubscription = setupAgentActionStreaming(agentId, stored);
+  const subscription = setupAgentActionStreaming(agentId, agent);
+  agent.setAgentActionSubscription(subscription);
 
-  agentStore.set(agentId, stored);
+  agentStore.set(agentId, agent);
   console.log(`[Server] Created new agent: ${agentId} (delegate: ${!!delegateConfig})`);
 
-  return { agentId, stored };
+  return { agentId, agent };
 }
 
 /**
  * Setup RxJS subscription for streaming agent actions to WebSocket clients.
  */
-function setupAgentActionStreaming(agentId: string, stored: StoredAgent): Subscription {
-  const agentActionManager = stored.agent.getAgentActionManager();
+function setupAgentActionStreaming(agentId: string, agent: TexeraAgent): Subscription {
+  const agentActionManager = agent.getAgentActionManager();
   const agentActionStream$ = agentActionManager.getAgentActionStream();
 
   return agentActionStream$.subscribe((agentAction: AgentAction) => {
@@ -165,9 +148,9 @@ function setupAgentActionStreaming(agentId: string, stored: StoredAgent): Subscr
 /**
  * Get agent info for API response
  */
-function getAgentInfo(agentId: string, stored: StoredAgent): AgentInfo {
+function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
   // Get settings from agent and convert to API format
-  const agentSettings = stored.agent.getSettings();
+  const agentSettings = agent.getSettings();
   const settingsApi: AgentSettingsApi = {
     maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
     maxOperatorResultCellTokenLimit: agentSettings.maxOperatorResultCellTokenLimit,
@@ -181,18 +164,20 @@ function getAgentInfo(agentId: string, stored: StoredAgent): AgentInfo {
     disablePrint: agentSettings.disablePrint,
   };
 
+  const delegateConfig = agent.getDelegateConfig();
+
   return {
     id: agentId,
-    name: stored.agent.agentName,
-    modelType: stored.modelType,
-    state: stored.agent.getState(),
-    createdAt: stored.createdAt,
-    delegate: stored.delegate
+    name: agent.agentName,
+    modelType: agent.modelType,
+    state: agent.getState(),
+    createdAt: agent.createdAt,
+    delegate: delegateConfig
       ? {
           userToken: "***", // Don't expose token
-          userInfo: stored.delegate.userInfo,
-          workflowId: stored.delegate.workflowId,
-          workflowName: stored.delegate.workflowName,
+          userInfo: delegateConfig.userInfo,
+          workflowId: delegateConfig.workflowId,
+          workflowName: delegateConfig.workflowName,
         }
       : undefined,
     settings: settingsApi,
@@ -200,14 +185,14 @@ function getAgentInfo(agentId: string, stored: StoredAgent): AgentInfo {
 }
 
 /**
- * Get stored agent by ID or throw error
+ * Get agent by ID or throw error
  */
-function getStoredAgent(agentId: string): StoredAgent {
-  const stored = agentStore.get(agentId);
-  if (!stored) {
+function getAgent(agentId: string): TexeraAgent {
+  const agent = agentStore.get(agentId);
+  if (!agent) {
     throw new Error("Agent not found");
   }
-  return stored;
+  return agent;
 }
 
 // ============================================================================
@@ -217,7 +202,7 @@ function getStoredAgent(agentId: string): StoredAgent {
 const agentsRouter = new Elysia({ prefix: "/agents" })
   // List all agents
   .get("/", () => {
-    const agentList = Array.from(agentStore.entries()).map(([id, stored]) => getAgentInfo(id, stored));
+    const agentList = Array.from(agentStore.entries()).map(([id, agent]) => getAgentInfo(id, agent));
     return { agents: agentList };
   })
 
@@ -247,11 +232,11 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         };
       }
 
-      const { agentId, stored } = await createAgentInstance(modelType, name, delegateConfig);
+      const { agentId, agent } = await createAgentInstance(modelType, name, delegateConfig);
 
       // Apply initial settings if provided
       if (settings) {
-        stored.agent.updateSettings({
+        agent.updateSettings({
           maxOperatorResultTokenLimit: settings.maxOperatorResultTokenLimit,
           maxOperatorResultCellTokenLimit: settings.maxOperatorResultCellTokenLimit,
           operatorResultSerializationMode: settings.operatorResultSerializationMode
@@ -267,7 +252,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         });
       }
 
-      return getAgentInfo(agentId, stored);
+      return getAgentInfo(agentId, agent);
     },
     {
       body: t.Object({
@@ -296,28 +281,23 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 
   // Get agent by ID
   .get("/:id", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
+    const agent = getAgent(id);
     return {
-      ...getAgentInfo(id, stored),
-      workflow: stored.agent.getWorkflowState().getWorkflowContent(),
-      messageCount: stored.agent.getMessages().length,
+      ...getAgentInfo(id, agent),
+      workflow: agent.getWorkflowState().getWorkflowContent(),
+      messageCount: agent.getMessages().length,
     };
   })
 
   // Delete agent
   .delete("/:id", ({ params: { id } }) => {
-    const stored = agentStore.get(id);
-    if (!stored) {
+    const agent = agentStore.get(id);
+    if (!agent) {
       throw new Error("Agent not found");
     }
 
-    // Unsubscribe agent action subscription if it exists
-    if (stored.agentActionSubscription) {
-      stored.agentActionSubscription.unsubscribe();
-    }
-
-    // Destroy agent (cleans up workflow state, subscriptions, and agent action manager)
-    stored.agent.destroy();
+    // Destroy agent (cleans up all subscriptions, websockets, workflow state, and agent action manager)
+    agent.destroy();
 
     agentStore.delete(id);
     return { deleted: true };
@@ -327,7 +307,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
   .post(
     "/:id/message",
     async ({ params: { id }, body }) => {
-      const stored = getStoredAgent(id);
+      const agent = getAgent(id);
       const { message } = body;
 
       if (!message || typeof message !== "string") {
@@ -336,13 +316,13 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 
       console.log(`[Server] Agent ${id} received message: ${message.substring(0, 50)}...`);
 
-      const result = await stored.agent.sendMessage(message);
+      const result = await agent.sendMessage(message);
 
       console.log(`[Server] Agent ${id} completed with ${result.messages.length} messages`);
 
       return {
         response: result.response,
-        messages: stored.agent.getMessages(),
+        messages: agent.getMessages(),
         usage: result.usage,
         stats: result.stats,
         stopped: result.stopped,
@@ -358,39 +338,39 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 
   // Get all ReActSteps (for polling fallback or initial load)
   .get("/:id/react-steps", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
-    return { steps: stored.agent.getReActSteps(), state: stored.agent.getState() };
+    const agent = getAgent(id);
+    return { steps: agent.getReActSteps(), state: agent.getState() };
   })
 
   // Get all agent actions (for polling fallback or initial load)
   .get("/:id/agent-actions", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
-    return { agentActions: stored.agent.getAgentActions() };
+    const agent = getAgent(id);
+    return { agentActions: agent.getAgentActions() };
   })
 
   // Get workflow (returns workflow content directly, not wrapped)
   .get("/:id/workflow", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
-    return stored.agent.getWorkflowState().getWorkflowContent();
+    const agent = getAgent(id);
+    return agent.getWorkflowState().getWorkflowContent();
   })
 
   // Get agent internal state (workflow state as JSON for debugging)
   .get("/:id/state", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
-    const workflowState = stored.agent.getWorkflowState();
+    const agent = getAgent(id);
+    const workflowState = agent.getWorkflowState();
+    const delegateConfig = agent.getDelegateConfig();
     return {
       agentId: id,
-      agentName: stored.agent.agentName,
-      agentState: stored.agent.getState(),
+      agentName: agent.agentName,
+      agentState: agent.getState(),
       workflow: workflowState.getWorkflowContent(),
-      messageCount: stored.agent.getMessages().length,
-      reActStepsCount: stored.agent.getReActSteps().length,
-      createdAt: stored.createdAt,
-      delegate: stored.delegate
+      messageCount: agent.getMessages().length,
+      reActStepsCount: agent.getReActSteps().length,
+      createdAt: agent.createdAt,
+      delegate: delegateConfig
         ? {
-            workflowId: stored.delegate.workflowId,
-            workflowName: stored.delegate.workflowName,
-            userInfo: stored.delegate.userInfo,
+            workflowId: delegateConfig.workflowId,
+            workflowName: delegateConfig.workflowName,
           }
         : undefined,
     };
@@ -398,41 +378,41 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 
   // Get messages
   .get("/:id/messages", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
-    return { messages: stored.agent.getMessages() };
+    const agent = getAgent(id);
+    return { messages: agent.getMessages() };
   })
 
   // Get system info (system prompt and tools)
   .get("/:id/system-info", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
-    return stored.agent.getSystemInfo();
+    const agent = getAgent(id);
+    return agent.getSystemInfo();
   })
 
   // Stop agent
   .post("/:id/stop", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
-    stored.agent.stop();
+    const agent = getAgent(id);
+    agent.stop();
     return { status: "stopping" };
   })
 
   // Reset agent
   .post("/:id/reset", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
-    stored.agent.reset();
+    const agent = getAgent(id);
+    agent.reset();
     return { status: "reset" };
   })
 
   // Clear messages
   .post("/:id/clear", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
-    stored.agent.clearHistory();
+    const agent = getAgent(id);
+    agent.clearHistory();
     return { status: "cleared" };
   })
 
   // Get agent settings
   .get("/:id/settings", ({ params: { id } }) => {
-    const stored = getStoredAgent(id);
-    const agentSettings = stored.agent.getSettings();
+    const agent = getAgent(id);
+    const agentSettings = agent.getSettings();
     return {
       maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
       maxOperatorResultCellTokenLimit: agentSettings.maxOperatorResultCellTokenLimit,
@@ -451,10 +431,10 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
   .patch(
     "/:id/settings",
     ({ params: { id }, body }) => {
-      const stored = getStoredAgent(id);
+      const agent = getAgent(id);
       const settings = body as UpdateAgentSettingsRequest;
 
-      stored.agent.updateSettings({
+      agent.updateSettings({
         maxOperatorResultTokenLimit: settings.maxOperatorResultTokenLimit,
         maxOperatorResultCellTokenLimit: settings.maxOperatorResultCellTokenLimit,
         operatorResultSerializationMode: settings.operatorResultSerializationMode
@@ -471,7 +451,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       });
 
       // Return updated settings
-      const agentSettings = stored.agent.getSettings();
+      const agentSettings = agent.getSettings();
       return {
         maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
         maxOperatorResultCellTokenLimit: agentSettings.maxOperatorResultCellTokenLimit,
@@ -524,16 +504,16 @@ interface WsOutgoingMessage {
  * Broadcast a message to all WebSocket clients connected to an agent
  */
 function broadcastToAgent(agentId: string, message: WsOutgoingMessage): void {
-  const stored = agentStore.get(agentId);
-  if (!stored) return;
+  const agent = agentStore.get(agentId);
+  if (!agent) return;
 
   const jsonMessage = JSON.stringify(message);
-  for (const ws of stored.websockets) {
+  for (const ws of agent.getWebsockets()) {
     try {
       ws.send(jsonMessage);
     } catch (error) {
       console.error(`[WS] Failed to send message to client:`, error);
-      stored.websockets.delete(ws);
+      agent.removeWebsocket(ws);
     }
   }
 }
@@ -557,31 +537,31 @@ const app = new Elysia()
       const agentId = (ws.data as any).params?.id;
       console.log(`[WS] Client connected to agent ${agentId}`);
 
-      const stored = agentStore.get(agentId);
-      if (!stored) {
+      const agent = agentStore.get(agentId);
+      if (!agent) {
         ws.send(JSON.stringify({ type: "error", error: "Agent not found" }));
         ws.close();
         return;
       }
 
       // Add this websocket to the agent's set
-      stored.websockets.add(ws);
+      agent.addWebsocket(ws);
 
       // Send initial state, existing steps, and agent actions
       const initMessage: WsOutgoingMessage = {
         type: "init",
-        state: stored.agent.getState(),
-        steps: stored.agent.getReActSteps(),
-        agentActions: stored.agent.getAgentActions(),
+        state: agent.getState(),
+        steps: agent.getReActSteps(),
+        agentActions: agent.getAgentActions(),
       };
       ws.send(JSON.stringify(initMessage));
     },
 
     async message(ws, messageData) {
       const agentId = (ws.data as any).params?.id;
-      const stored = agentStore.get(agentId);
+      const agent = agentStore.get(agentId);
 
-      if (!stored) {
+      if (!agent) {
         ws.send(JSON.stringify({ type: "error", error: "Agent not found" }));
         return;
       }
@@ -595,7 +575,7 @@ const app = new Elysia()
       }
 
       if (msg.type === "stop") {
-        stored.agent.stop();
+        agent.stop();
         // Broadcast STOPPING state immediately to all connected clients
         broadcastToAgent(agentId, { type: "state", state: "STOPPING" });
         return;
@@ -610,7 +590,7 @@ const app = new Elysia()
         console.log(`[WS] Agent ${agentId} received message: ${msg.content.substring(0, 50)}...`);
 
         // Set up step callback to stream steps in real-time
-        stored.agent.setStepCallback((step: ReActStep) => {
+        agent.setStepCallback((step: ReActStep) => {
           broadcastToAgent(agentId, { type: "step", step });
         });
 
@@ -619,14 +599,14 @@ const app = new Elysia()
         broadcastToAgent(agentId, { type: "state", state: "GENERATING" });
 
         try {
-          const result = await stored.agent.sendMessage(msg.content);
+          const result = await agent.sendMessage(msg.content);
 
           // Clear the callback
-          stored.agent.setStepCallback(null);
+          agent.setStepCallback(null);
 
           // Get the last step (which now has isEnd: true) and broadcast it
           // This ensures the frontend receives the final step with isEnd: true
-          const allSteps = stored.agent.getReActSteps();
+          const allSteps = agent.getReActSteps();
           const lastStep = allSteps[allSteps.length - 1];
           if (lastStep && lastStep.isEnd) {
             broadcastToAgent(agentId, { type: "step", step: lastStep });
@@ -635,12 +615,12 @@ const app = new Elysia()
           // Broadcast completion
           broadcastToAgent(agentId, {
             type: "complete",
-            state: stored.agent.getState(),
+            state: agent.getState(),
           });
 
           console.log(`[WS] Agent ${agentId} completed with ${result.messages.length} steps`);
         } catch (error: any) {
-          stored.agent.setStepCallback(null);
+          agent.setStepCallback(null);
           broadcastToAgent(agentId, { type: "error", error: error.message });
         }
       }
@@ -650,9 +630,9 @@ const app = new Elysia()
       const agentId = (ws.data as any).params?.id;
       console.log(`[WS] Client disconnected from agent ${agentId}`);
 
-      const stored = agentStore.get(agentId);
-      if (stored) {
-        stored.websockets.delete(ws);
+      const agent = agentStore.get(agentId);
+      if (agent) {
+        agent.removeWebsocket(ws);
       }
     },
   })

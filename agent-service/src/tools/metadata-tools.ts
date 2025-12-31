@@ -26,16 +26,10 @@ import { tool } from "ai";
 import Ajv from "ajv";
 import { createToolResult, createErrorResult } from "./tools-utility";
 import { fetchOperatorMetadata, type OperatorSchema, type OperatorMetadata } from "../api/backend-api";
+import type { ValidationError, Validation } from "../types/workflow";
 
-// ============================================================================
-// Validation Types (matching frontend ValidationWorkflowService)
-// ============================================================================
-
-export type ValidationError = {
-  isValid: false;
-  messages: Record<string, string>;
-};
-export type Validation = { isValid: true } | ValidationError;
+// Re-export validation types for backwards compatibility
+export type { ValidationError, Validation } from "../types/workflow";
 
 // ============================================================================
 // Tool Name Constants

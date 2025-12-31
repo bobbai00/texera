@@ -132,20 +132,6 @@ export function getBackendConfig(): BackendConfig {
   return { ...currentConfig };
 }
 
-/**
- * Print current configuration (useful for debugging).
- */
-export function printConfig(): void {
-  console.log("[BackendAPI] Current configuration:");
-  console.log(`  API Endpoint: ${currentConfig.apiEndpoint}`);
-  console.log(`  Models Endpoint: ${currentConfig.modelsEndpoint}`);
-  console.log(`  Compile Endpoint: ${currentConfig.compileEndpoint}`);
-  console.log(`  WebSocket Endpoint: ${currentConfig.wsEndpoint}`);
-  console.log(`  Dataset Endpoint: ${currentConfig.datasetEndpoint}`);
-  console.log(`  Computing Endpoint: ${currentConfig.computingEndpoint}`);
-  console.log(`  Config Endpoint: ${currentConfig.configEndpoint}`);
-}
-
 // ============================================================================
 // Operator Metadata Types
 // ============================================================================
