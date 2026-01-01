@@ -49,16 +49,12 @@ export interface ExecutionConfig {
   computingUnitId?: number;
   /** Serialization mode for operator results: "json" or "table" */
   serializationMode?: OperatorResultSerializationMode;
-  /** Whether to restrict operator result token limits */
-  restrictOperatorResultToken?: boolean;
-  /** Maximum tokens for operator results (total) - only used if restrictOperatorResultToken is true */
+  /** Maximum tokens for operator results (total) */
   maxOperatorResultTokenLimit?: number;
-  /** Maximum tokens per cell - only used if restrictOperatorResultToken is true */
+  /** Maximum tokens per cell */
   maxOperatorResultCellTokenLimit?: number;
   /** Execution timeout in milliseconds */
   executionTimeoutMs?: number;
-  /** Whether to disable print statements in Python UDFs */
-  disablePrint?: boolean;
 }
 
 // ============================================================================
@@ -315,10 +311,8 @@ async function executeWorkflowHttp(
     targetOperatorIds: logicalPlan.opsToViewResult || [],
     timeoutSeconds,
     serializationMode: "json", // Always request JSON from backend
-    restrictOperatorResultToken: config.restrictOperatorResultToken ?? DEFAULT_AGENT_SETTINGS.restrictOperatorResultToken,
     maxOperatorResultTokenLimit: config.maxOperatorResultTokenLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultTokenLimit,
     maxCellTokens: config.maxOperatorResultCellTokenLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCellTokenLimit,
-    disablePrint: config.disablePrint ?? DEFAULT_AGENT_SETTINGS.disablePrint,
   };
 
   console.log(`[ExecutionTools] Executing workflow via HTTP: ${url}`);

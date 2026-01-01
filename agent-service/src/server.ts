@@ -160,8 +160,6 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     disabledTools: Array.from(agentSettings.disabledTools),
     maxSteps: agentSettings.maxSteps,
     agentMode: agentSettings.agentMode,
-    restrictOperatorResultToken: agentSettings.restrictOperatorResultToken,
-    disablePrint: agentSettings.disablePrint,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -247,8 +245,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
           maxSteps: settings.maxSteps,
           agentMode: settings.agentMode ? (settings.agentMode as AgentMode) : undefined,
-          restrictOperatorResultToken: settings.restrictOperatorResultToken,
-          disablePrint: settings.disablePrint,
         });
       }
 
@@ -271,8 +267,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             disabledTools: t.Optional(t.Array(t.String())),
             maxSteps: t.Optional(t.Number()),
             agentMode: t.Optional(t.Union([t.Literal("code"), t.Literal("general")])),
-            restrictOperatorResultToken: t.Optional(t.Boolean()),
-            disablePrint: t.Optional(t.Boolean()),
           })
         ),
       }),
@@ -422,8 +416,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       disabledTools: Array.from(agentSettings.disabledTools),
       maxSteps: agentSettings.maxSteps,
       agentMode: agentSettings.agentMode,
-      restrictOperatorResultToken: agentSettings.restrictOperatorResultToken,
-      disablePrint: agentSettings.disablePrint,
     };
   })
 
@@ -446,8 +438,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
         maxSteps: settings.maxSteps,
         agentMode: settings.agentMode ? (settings.agentMode as AgentMode) : undefined,
-        restrictOperatorResultToken: settings.restrictOperatorResultToken,
-        disablePrint: settings.disablePrint,
       });
 
       // Return updated settings
@@ -461,8 +451,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         disabledTools: Array.from(agentSettings.disabledTools),
         maxSteps: agentSettings.maxSteps,
         agentMode: agentSettings.agentMode,
-        restrictOperatorResultToken: agentSettings.restrictOperatorResultToken,
-        disablePrint: agentSettings.disablePrint,
       };
     },
     {
@@ -475,8 +463,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         maxSteps: t.Optional(t.Number()),
         disabledTools: t.Optional(t.Array(t.String())),
         agentMode: t.Optional(t.Union([t.Literal("code"), t.Literal("general")])),
-        restrictOperatorResultToken: t.Optional(t.Boolean()),
-        disablePrint: t.Optional(t.Boolean()),
       }),
     }
   );

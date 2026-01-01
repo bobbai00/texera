@@ -65,9 +65,7 @@ case class SyncExecutionRequest(
     timeoutSeconds: Option[Int],
     maxOperatorResultTokenLimit: Option[Int], // Max tokens for operator results (total)
     maxCellTokens: Option[Int], // Max tokens per cell
-    serializationMode: Option[String], // "json" (default) or "table"
-    restrictOperatorResultToken: Option[Boolean], // If false, no token limit applied
-    disablePrint: Option[Boolean] // If true, validate Python UDFs have no print statements
+    serializationMode: Option[String] // "json" (default) or "table"
 )
 
 /**
@@ -136,7 +134,7 @@ class SyncExecutionResource extends LazyLogging {
   private val DEFAULT_TIMEOUT_SECONDS = 300
   private val DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT = 2000
   private val DEFAULT_MAX_CELL_TOKENS = 10000
-  // Ultimate caps - always applied regardless of restrictOperatorResultToken flag
+  // Maximum caps - always applied
   private val MAX_OPERATOR_RESULT_TOKEN = 10000
   private val MAX_CELL_TOKEN = 10000
 
@@ -150,26 +148,20 @@ class SyncExecutionResource extends LazyLogging {
       @Auth user: SessionUser
   ): SyncExecutionResult = {
     val timeoutSeconds = request.timeoutSeconds.getOrElse(DEFAULT_TIMEOUT_SECONDS)
-    val restrictTokens = request.restrictOperatorResultToken.getOrElse(false)
-    val disablePrint = request.disablePrint.getOrElse(true)
 
-    // Calculate token limits: use user-provided values if restrictTokens is true,
-    // otherwise use ultimate caps. Always cap at MAX values.
-    val (maxOperatorResultTokenLimit, maxCellTokens) = if (restrictTokens) {
-      (
-        Math.min(
-          request.maxOperatorResultTokenLimit.getOrElse(DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT),
-          MAX_OPERATOR_RESULT_TOKEN
-        ),
-        Math.min(request.maxCellTokens.getOrElse(DEFAULT_MAX_CELL_TOKENS), MAX_CELL_TOKEN)
-      )
-    } else {
-      (MAX_OPERATOR_RESULT_TOKEN, MAX_CELL_TOKEN)
-    }
+    // Calculate token limits: use user-provided values, capped at MAX values
+    val maxOperatorResultTokenLimit = Math.min(
+      request.maxOperatorResultTokenLimit.getOrElse(DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT),
+      MAX_OPERATOR_RESULT_TOKEN
+    )
+    val maxCellTokens = Math.min(
+      request.maxCellTokens.getOrElse(DEFAULT_MAX_CELL_TOKENS),
+      MAX_CELL_TOKEN
+    )
     val serializationMode = request.serializationMode.getOrElse("table")
 
     logger.info(
-      s"Starting sync execution for workflow $workflowId (restrictTokens=$restrictTokens, disablePrint=$disablePrint)"
+      s"Starting sync execution for workflow $workflowId"
     )
 
     try {
@@ -185,18 +177,16 @@ class SyncExecutionResource extends LazyLogging {
       val effectiveLogicalPlan =
         computeSubDAGIfNeeded(request.logicalPlan, request.targetOperatorIds)
 
-      // Validate Python UDFs for print statements if disablePrint is true
-      if (disablePrint) {
-        val printErrors = validateNoPrintStatements(effectiveLogicalPlan)
-        if (printErrors.nonEmpty) {
-          return SyncExecutionResult(
-            success = false,
-            state = "ValidationFailed",
-            operators = Map.empty,
-            compilationErrors = Some(printErrors),
-            errors = Some(printErrors.values.toList)
-          )
-        }
+      // Always validate Python UDFs for print statements
+      val printErrors = validateNoPrintStatements(effectiveLogicalPlan)
+      if (printErrors.nonEmpty) {
+        return SyncExecutionResult(
+          success = false,
+          state = "ValidationFailed",
+          operators = Map.empty,
+          compilationErrors = Some(printErrors),
+          errors = Some(printErrors.values.toList)
+        )
       }
 
       // Pre-compile the workflow to catch errors early

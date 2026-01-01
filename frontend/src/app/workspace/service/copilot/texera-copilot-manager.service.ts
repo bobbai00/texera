@@ -62,10 +62,6 @@ export interface AgentSettingsApi {
   maxSteps?: number;
   /** Agent mode: "code" for Python code operators, "general" for all operators with schema hints */
   agentMode?: "code" | "general";
-  /** Whether to restrict operator result token limits (if false, no truncation applied) */
-  restrictOperatorResultToken?: boolean;
-  /** Whether to disable print statements in Python UDFs (validation at compile time) */
-  disablePrint?: boolean;
 }
 
 /**
@@ -1141,8 +1137,6 @@ export class TexeraCopilotManagerService {
           disabledTools: [],
           maxSteps: 10,
           agentMode: "code" as const,
-          restrictOperatorResultToken: false,
-          disablePrint: true,
         })
       )
     );

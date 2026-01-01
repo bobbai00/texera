@@ -299,8 +299,7 @@ export class TexeraAgent {
         maxOperatorResultTokenLimit: this.settings.maxOperatorResultTokenLimit,
         maxOperatorResultCellTokenLimit: this.settings.maxOperatorResultCellTokenLimit,
         serializationMode: this.settings.operatorResultSerializationMode,
-        restrictOperatorResultToken: this.settings.restrictOperatorResultToken,
-        disablePrint: this.settings.disablePrint,
+        executionTimeoutMs: this.settings.executionTimeoutMs,
       };
       tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, executionConfig);
     }
@@ -455,8 +454,6 @@ export class TexeraAgent {
     disabledTools?: Set<string>;
     maxSteps?: number;
     agentMode?: AgentMode;
-    restrictOperatorResultToken?: boolean;
-    disablePrint?: boolean;
   }): void {
     let modeChanged = false;
 
@@ -484,12 +481,6 @@ export class TexeraAgent {
     if (updates.agentMode !== undefined && updates.agentMode !== this.settings.agentMode) {
       this.settings.agentMode = updates.agentMode;
       modeChanged = true;
-    }
-    if (updates.restrictOperatorResultToken !== undefined) {
-      this.settings.restrictOperatorResultToken = updates.restrictOperatorResultToken;
-    }
-    if (updates.disablePrint !== undefined) {
-      this.settings.disablePrint = updates.disablePrint;
     }
 
     // If mode changed, rebuild system prompt

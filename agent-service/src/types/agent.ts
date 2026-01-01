@@ -190,10 +190,6 @@ export interface AgentSettings {
   maxSteps: number;
   /** Agent operating mode (code or general) */
   agentMode: AgentMode;
-  /** Whether to restrict operator result token limits (if false, no truncation applied) */
-  restrictOperatorResultToken: boolean;
-  /** Whether to disable print statements in Python UDFs (validation at compile time) */
-  disablePrint: boolean;
 }
 
 /**
@@ -202,14 +198,12 @@ export interface AgentSettings {
 export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   disabledTools: new Set(),
   maxOperatorResultTokenLimit: 2000,
-  maxOperatorResultCellTokenLimit: 10000,
+  maxOperatorResultCellTokenLimit: 1000,
   operatorResultSerializationMode: OperatorResultSerializationMode.TABLE,
   toolTimeoutMs: 240000, // 4 minutes
   executionTimeoutMs: 240000, // 4 minutes
   maxSteps: 100,
   agentMode: AgentMode.CODE, // Default to CODE mode
-  restrictOperatorResultToken: false, // If false, no token limit applied to results
-  disablePrint: true, // If true, print statements are not allowed in Python UDFs
 };
 
 // ============================================================================
@@ -262,10 +256,6 @@ export interface AgentSettingsApi {
   maxSteps?: number;
   /** Agent operating mode: "code" or "general" */
   agentMode?: "code" | "general";
-  /** Whether to restrict operator result token limits (if false, no truncation applied) */
-  restrictOperatorResultToken?: boolean;
-  /** Whether to disable print statements in Python UDFs (validation at compile time) */
-  disablePrint?: boolean;
 }
 
 /**
@@ -319,8 +309,4 @@ export interface UpdateAgentSettingsRequest {
   maxSteps?: number;
   /** Agent operating mode: "code" or "general" */
   agentMode?: "code" | "general";
-  /** Whether to restrict operator result token limits (if false, no truncation applied) */
-  restrictOperatorResultToken?: boolean;
-  /** Whether to disable print statements in Python UDFs (validation at compile time) */
-  disablePrint?: boolean;
 }

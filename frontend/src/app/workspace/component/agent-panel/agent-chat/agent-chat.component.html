@@ -748,44 +748,6 @@
               >
             </div>
           </div>
-
-          <div class="settings-param-item">
-            <label class="settings-param-label">Restrict Operator Result Token</label>
-            <div class="settings-param-input">
-              <nz-switch
-                [(ngModel)]="settingsRestrictOperatorResultToken"
-                nzSize="small"></nz-switch>
-              <button
-                nz-button
-                nzType="primary"
-                nzSize="small"
-                (click)="saveRestrictOperatorResultToken()">
-                Save
-              </button>
-              <span class="settings-param-hint"
-                >If enabled, apply token limits to operator results; if disabled, no truncation</span
-              >
-            </div>
-          </div>
-
-          <div class="settings-param-item">
-            <label class="settings-param-label">Disable Print Statements</label>
-            <div class="settings-param-input">
-              <nz-switch
-                [(ngModel)]="settingsDisablePrint"
-                nzSize="small"></nz-switch>
-              <button
-                nz-button
-                nzType="primary"
-                nzSize="small"
-                (click)="saveDisablePrint()">
-                Save
-              </button>
-              <span class="settings-param-hint"
-                >If enabled, Python UDF code is validated for print statements at compile time</span
-              >
-            </div>
-          </div>
         </div>
       </nz-tab>
 
