@@ -49,10 +49,10 @@ export interface ExecutionConfig {
   computingUnitId?: number;
   /** Serialization mode for operator results: "json" or "table" */
   serializationMode?: OperatorResultSerializationMode;
-  /** Maximum tokens for operator results (total) */
-  maxOperatorResultTokenLimit?: number;
-  /** Maximum tokens per cell */
-  maxOperatorResultCellTokenLimit?: number;
+  /** Maximum characters for operator results (uses symmetric truncation) */
+  maxOperatorResultCharLimit?: number;
+  /** Maximum characters per cell */
+  maxOperatorResultCellCharLimit?: number;
   /** Execution timeout in milliseconds */
   executionTimeoutMs?: number;
 }
@@ -310,12 +310,17 @@ async function executeWorkflowHttp(
     },
     targetOperatorIds: logicalPlan.opsToViewResult || [],
     timeoutSeconds,
-    serializationMode: "json", // Always request JSON from backend
-    maxOperatorResultTokenLimit: config.maxOperatorResultTokenLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultTokenLimit,
-    maxCellTokens: config.maxOperatorResultCellTokenLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCellTokenLimit,
+    serializationMode: config.serializationMode ?? OperatorResultSerializationMode.TABLE,
+    maxOperatorResultCharLimit: config.maxOperatorResultCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit,
+    maxOperatorResultCellCharLimit:
+      config.maxOperatorResultCellCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCellCharLimit,
   };
 
-  console.log(`[ExecutionTools] Executing workflow via HTTP: ${url}`);
+  console.log(
+    `[ExecutionTools] Executing workflow via HTTP: ${url} ` +
+      `(maxOperatorResultCharLimit: ${request.maxOperatorResultCharLimit}, ` +
+      `maxOperatorResultCellCharLimit: ${request.maxOperatorResultCellCharLimit})`
+  );
 
   try {
     const response = await fetch(url, {
@@ -365,19 +370,19 @@ interface ResultMeta {
 
 /**
  * Formats the meta info line for execution results.
- * For table/toon: "table (rows: 10/100 truncated due to token limit, columns: 5)"
- * For json: "json (items: 10/100 truncated due to token limit)"
+ * For table/toon: "table (rows: 10/100 truncated due to character limit, columns: 5)"
+ * For json: "json (items: 10/100 truncated due to character limit)"
  */
 function formatResultMeta(meta: ResultMeta): string {
   if (meta.mode === "json") {
     const itemInfo = meta.truncated
-      ? `${meta.displayedRows}/${meta.totalRows} truncated due to token limit`
+      ? `${meta.displayedRows}/${meta.totalRows} truncated due to character limit`
       : `${meta.displayedRows}`;
     return `${meta.mode} (items: ${itemInfo})`;
   }
 
   const rowInfo = meta.truncated
-    ? `${meta.displayedRows}/${meta.totalRows} truncated due to token limit`
+    ? `${meta.displayedRows}/${meta.totalRows} truncated due to character limit`
     : `${meta.displayedRows}`;
   return `${meta.mode} (rows: ${rowInfo}, columns: ${meta.columns})`;
 }
@@ -467,13 +472,21 @@ function jsonToToonFormat(jsonResult: Record<string, any>[]): string {
 // Tool Creator
 // ============================================================================
 
-export function createExecuteWorkflowTool(workflowState: WorkflowState, config: ExecutionConfig) {
+/**
+ * Create the executeWorkflow tool.
+ * @param workflowState - The workflow state
+ * @param getConfig - Function that returns the current execution config (called at execution time)
+ */
+export function createExecuteWorkflowTool(workflowState: WorkflowState, getConfig: () => ExecutionConfig) {
   return tool({
     description: "Execute the current workflow and get the specified operator's result.",
     inputSchema: z.object({
       operatorId: z.string().describe("The operator ID to view result for."),
     }),
     execute: async (args: { operatorId: string }, options: { abortSignal?: AbortSignal }) => {
+      // Get current config at execution time (allows settings updates to take effect)
+      const config = getConfig();
+
       // Acquire mutex to serialize executions for this workflow
       // This prevents ConcurrentModificationException on the backend
       const release = await getWorkflowMutex(config.workflowId).acquire();
@@ -512,9 +525,7 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, config: 
               : undefined;
 
           const generalErrors =
-            result.state === "Killed"
-              ? ["Workflow execution was killed (timeout)."]
-              : result.errors;
+            result.state === "Killed" ? ["Workflow execution was killed (timeout)."] : result.errors;
 
           return createErrorResult(formatExecutionError(compilationErrors, operatorErrors, generalErrors));
         }
@@ -522,53 +533,73 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, config: 
         // Check operator result
         const opInfo = result.operators[operatorId];
         if (!opInfo) {
-          return createErrorResult(formatExecutionError(undefined, undefined, [`No result found for operator: ${operatorId}`]));
+          return createErrorResult(
+            formatExecutionError(undefined, undefined, [`No result found for operator: ${operatorId}`])
+          );
         }
 
         if (opInfo.error) {
           return createErrorResult(formatExecutionError(undefined, [{ operatorId, error: opInfo.error }]));
         }
 
-        // Format the result based on serialization mode
+        // Get result info
         const serializationMode = config.serializationMode ?? OperatorResultSerializationMode.TABLE;
 
         if (!opInfo.result) {
           return "(no result data)";
         }
 
-        if (!Array.isArray(opInfo.result)) {
-          // Non-array result (e.g., visualization)
-          return JSON.stringify(opInfo.result);
-        }
-
-        // Array result - format with meta info
-        const jsonArray = opInfo.result as Record<string, any>[];
-        const columns = jsonArray.length > 0 ? Object.keys(jsonArray[0]).length : 0;
-        const displayedRows = opInfo.displayedRows ?? jsonArray.length;
-        const totalRows = opInfo.totalRowCount ?? jsonArray.length;
+        const displayedRows = opInfo.displayedRows ?? 0;
+        const totalRows = opInfo.totalRowCount ?? displayedRows;
         const truncated = opInfo.truncated ?? displayedRows < totalRows;
 
-        let dataString: string;
-        let modeLabel: string;
+        // Backend now returns pre-serialized string based on requested mode
+        if (typeof opInfo.result === "string") {
+          // Result is already serialized by backend
+          const dataString = opInfo.result;
 
-        switch (serializationMode) {
-          case OperatorResultSerializationMode.TABLE:
-            dataString = jsonToTableFormat(jsonArray);
-            modeLabel = "table";
-            break;
-          case OperatorResultSerializationMode.TOON:
-            dataString = jsonToToonFormat(jsonArray);
-            modeLabel = "toon";
-            break;
-          case OperatorResultSerializationMode.JSON:
-          default:
-            dataString = JSON.stringify(jsonArray);
-            modeLabel = "json";
-            break;
+          // Estimate columns from first line if table format
+          let columns = 0;
+          if (opInfo.resultFormat === "table" && dataString.length > 0) {
+            const firstLine = dataString.split("\n")[0];
+            columns = (firstLine.match(/,/g) || []).length + 1;
+          }
+
+          const modeLabel = opInfo.resultFormat ?? serializationMode;
+          const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
+          return `${meta}\n${dataString}`;
         }
 
-        const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
-        return `${meta}\n${dataString}`;
+        // Handle array result (visualization or legacy)
+        if (Array.isArray(opInfo.result)) {
+          const jsonArray = opInfo.result as Record<string, any>[];
+          const columns = jsonArray.length > 0 ? Object.keys(jsonArray[0]).length : 0;
+
+          let dataString: string;
+          let modeLabel: string;
+
+          switch (serializationMode) {
+            case OperatorResultSerializationMode.TABLE:
+              dataString = jsonToTableFormat(jsonArray);
+              modeLabel = "table";
+              break;
+            case OperatorResultSerializationMode.TOON:
+              dataString = jsonToToonFormat(jsonArray);
+              modeLabel = "toon";
+              break;
+            case OperatorResultSerializationMode.JSON:
+            default:
+              dataString = JSON.stringify(jsonArray);
+              modeLabel = "json";
+              break;
+          }
+
+          const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
+          return `${meta}\n${dataString}`;
+        }
+
+        // Fallback for other types
+        return JSON.stringify(opInfo.result);
       } catch (error: any) {
         if (error.name === "AbortError") {
           throw error;

@@ -28,61 +28,109 @@ huggingface-cli login
 
 ## Usage
 
-### Quick Start (3 tasks from dev split)
+### Quick Start
 
 ```bash
+# Run all dev tasks (~50 tasks) with default settings
 uv run python main.py
+
+# Run specific number of tasks
+uv run python main.py --max-tasks 10
 ```
 
-### Run More Tasks
+### Full Command Template
+
+Run the dataflow agent with all configurable parameters:
 
 ```bash
-# Run 10 tasks from dev split
-uv run python main.py --max-tasks 10
-
-# Run all dev tasks (~50 tasks)
-uv run python main.py --max-tasks 0
-
-# Run full benchmark (~450 tasks)
-uv run python main.py --split default --max-tasks 0
+uv run python main.py \
+      --split dev \
+      --max-tasks 10 \
+      --model claude-haiku-4.5 \
+      --max-steps 50 \
+      --max-result-chars 20000 \
+      --max-cell-chars 4000 \
+      --result-format table \
+      --tool-timeout 240 \
+      --execution-timeout 4 \
+      --agent-mode code \
+      --verbosity 1
 ```
 
 ### Command Line Options
 
-```
---split SPLIT         Dataset split: "dev" (small) or "default" (full)
---max-tasks N         Maximum tasks to run (0 for all)
---model MODEL         LLM model type (default: claude-sonnet-4-20250514)
---max-steps N         Max agent steps per task (default: 10)
---data-dir PATH       Directory for context files (default: /tmp/DABstep-data)
---force-download      Force re-download of context files
---skip-download       Skip downloading (use existing files)
---evaluate            Evaluate results using dabstep_benchmark
---verbosity LEVEL     0=quiet, 1=normal, 2=verbose
-```
+#### Dataset Options
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--split` | `dev` | Dataset split: `dev` (~50 tasks) or `default` (~450 tasks) |
+| `--max-tasks` | all | Maximum tasks to run (omit for all tasks in split) |
+| `--data-dir` | `/tmp/DABstep-data` | Directory for context files |
+| `--force-download` | false | Force re-download of context files |
+| `--skip-download` | false | Skip downloading (use existing files) |
+
+#### Agent Settings (matches agent-service AgentSettings)
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--model` | `claude-haiku-4.5` | LLM model type |
+| `--max-steps` | `50` | Maximum agent steps per task |
+| `--max-result-chars` | `20000` | Max characters for operator results (uses symmetric truncation) |
+| `--max-cell-chars` | `4000` | Max characters per cell in results |
+| `--result-format` | `table` | Result serialization: `json`, `table`, or `toon` |
+| `--tool-timeout` | `240` | Tool execution timeout in seconds |
+| `--execution-timeout` | `4` | Workflow execution timeout in minutes |
+| `--agent-mode` | `code` | Agent mode: `code` or `general` |
+
+#### Execution Options
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--verbosity` | `1` | Logging level: 0=quiet, 1=normal, 2=verbose |
+| `-r, --retain` | false | Keep agents/workflows after tasks (for debugging) |
+| `--no-cleanup` | false | Skip initial cleanup of existing agents |
+| `--allow-all-operators` | false | Allow all operator types (default: relational only) |
+| `--parallel` | false | Run tasks in parallel using threads |
+| `--max-workers` | `4` | Max parallel workers (only with `--parallel`) |
+| `--evaluate` | false | Evaluate results (requires dabstep_benchmark) |
+| `--baseline` | false | Run baseline code agent (smolagents) instead |
 
 ### Examples
 
 ```bash
-# Run with verbose output
-uv run python main.py --verbosity 2
+# Run 10 tasks with verbose output
+uv run python main.py --max-tasks 10 --verbosity 2
 
-# Run with evaluation
-uv run python main.py --evaluate
+# Run with a different model and more steps
+uv run python main.py --model claude-sonnet-4-5 --max-steps 100
 
-# Run with a different model
-uv run python main.py --model gpt-4-turbo
+# Run in general mode (uses all operators instead of code operators)
+uv run python main.py --agent-mode general
 
-# Skip download (files already present)
-uv run python main.py --skip-download
+# Run with JSON result format and higher character limits
+uv run python main.py --result-format json --max-result-chars 40000 --max-cell-chars 8000
+
+# Run in parallel with 8 workers
+uv run python main.py --parallel --max-workers 8
+
+# Run full benchmark with evaluation
+uv run python main.py --split default --max-tasks 0 --evaluate
+
+# Skip download and retain agents for debugging
+uv run python main.py --skip-download --retain --max-tasks 3
+
+# Run baseline code agent (smolagents) for comparison
+uv run python main.py --baseline --max-tasks 10
 ```
 
 ## Output
 
 Results are saved to the `runs/` directory:
-- `{timestamp}.jsonl` - Task results in JSONL format
-- `{timestamp}.csv` - Task results in CSV format
-- `{timestamp}_scores.csv` - Evaluation scores (if --evaluate flag used)
+- `{timestamp}_task{id}/` - Per-task folder with:
+  - `prompt.txt` - Full prompt sent to agent
+  - `question.txt` - Original question
+  - `answer.txt` - Agent's answer
+  - `correct_answer.txt` - Ground truth answer
+  - `workflow.json` - Final workflow content
+  - `trace.json` - Full reasoning trace
+  - `score.txt` - Evaluation score (if evaluated)
 
 ## Architecture
 
@@ -118,7 +166,7 @@ The original DABstep benchmark uses HuggingFace's smolagents framework:
 - smolagents agents execute Python code directly
 - Texera agents build dataflow workflows with operators
 
-This benchmark allows comparing the two approaches on the same tasks.
+This benchmark allows comparing the two approaches on the same tasks using the `--baseline` flag.
 
 ## DABstep Benchmark
 
@@ -134,8 +182,16 @@ TEXERA_API_ENDPOINT = "http://localhost:8080"
 TEXERA_AGENT_SERVICE_ENDPOINT = "http://localhost:3001"
 TEXERA_USERNAME = "bob@test.com"
 TEXERA_PASSWORD = "123456"
-AGENT_MODEL_TYPE = "claude-sonnet-4-20250514"
-AGENT_MAX_STEPS = 10
+
+# Agent Settings (matches agent-service DEFAULT_AGENT_SETTINGS)
+AGENT_MODEL_TYPE = "claude-haiku-4.5"
+AGENT_MAX_STEPS = 50
+AGENT_MAX_OPERATOR_RESULT_CHAR_LIMIT = 20000  # 20,000 characters (uses symmetric truncation)
+AGENT_MAX_OPERATOR_RESULT_CELL_CHAR_LIMIT = 4000  # 4,000 characters per cell
+AGENT_OPERATOR_RESULT_SERIALIZATION_MODE = "table"
+AGENT_TOOL_TIMEOUT_SECONDS = 240  # 4 minutes
+AGENT_EXECUTION_TIMEOUT_MINUTES = 4
+AGENT_MODE = "code"
 ```
 
-Modify these values to match your environment.
+Modify these values to match your environment, or override via CLI arguments.

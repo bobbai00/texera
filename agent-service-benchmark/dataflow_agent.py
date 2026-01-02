@@ -30,10 +30,13 @@ TEXERA_PASSWORD = "123456"
 # Available models: claude-haiku-4.5, claude-sonnet-4-5, gpt-5-mini, llama-local
 AGENT_MODEL_TYPE = "claude-haiku-4.5"
 AGENT_MAX_STEPS = 50
-AGENT_MAX_OPERATOR_RESULT_TOKEN_LIMIT = 1000
-AGENT_TOOL_TIMEOUT_SECONDS = 120
-AGENT_EXECUTION_TIMEOUT_MINUTES = 10
+AGENT_MAX_OPERATOR_RESULT_CHAR_LIMIT = 20000  # 20,000 characters (matches smolagents)
+AGENT_MAX_OPERATOR_RESULT_CELL_CHAR_LIMIT = 4000  # 4,000 characters per cell
+AGENT_OPERATOR_RESULT_SERIALIZATION_MODE = "table"  # "json", "table", or "toon"
+AGENT_TOOL_TIMEOUT_SECONDS = 240  # 4 minutes (matches agent-service default)
+AGENT_EXECUTION_TIMEOUT_MINUTES = 4  # 4 minutes (matches agent-service default)
 AGENT_DISABLED_TOOLS: list[str] = []
+AGENT_MODE = "code"  # "code" or "general"
 
 # Workflow Configuration
 DEFAULT_WORKFLOW_NAME = "Benchmark Workflow"
@@ -46,23 +49,29 @@ DEFAULT_WORKFLOW_NAME = "Benchmark Workflow"
 
 @dataclass
 class AgentSettings:
-    """Agent settings for API requests."""
+    """Agent settings for API requests (matches agent-service AgentSettingsApi)."""
 
     max_steps: int = AGENT_MAX_STEPS
-    max_operator_result_token_limit: int = AGENT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
+    max_operator_result_char_limit: int = AGENT_MAX_OPERATOR_RESULT_CHAR_LIMIT
+    max_operator_result_cell_char_limit: int = AGENT_MAX_OPERATOR_RESULT_CELL_CHAR_LIMIT
+    operator_result_serialization_mode: str = AGENT_OPERATOR_RESULT_SERIALIZATION_MODE
     tool_timeout_seconds: int = AGENT_TOOL_TIMEOUT_SECONDS
     execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES
     disabled_tools: list[str] = field(default_factory=list)
+    agent_mode: str = AGENT_MODE
     only_use_relational_operators: bool = True  # Default to True to match agent-service
 
     def to_api_dict(self) -> dict[str, Any]:
         """Convert to API request format."""
         return {
             "maxSteps": self.max_steps,
-            "maxOperatorResultTokenLimit": self.max_operator_result_token_limit,
+            "maxOperatorResultCharLimit": self.max_operator_result_char_limit,
+            "maxOperatorResultCellCharLimit": self.max_operator_result_cell_char_limit,
+            "operatorResultSerializationMode": self.operator_result_serialization_mode,
             "toolTimeoutSeconds": self.tool_timeout_seconds,
             "executionTimeoutMinutes": self.execution_timeout_minutes,
             "disabledTools": self.disabled_tools,
+            "agentMode": self.agent_mode,
             "onlyUseRelationalOperators": self.only_use_relational_operators,
         }
 
@@ -514,10 +523,13 @@ class DataflowAgent:
         self,
         model_type: str = AGENT_MODEL_TYPE,
         max_steps: int = AGENT_MAX_STEPS,
-        max_operator_result_token_limit: int = AGENT_MAX_OPERATOR_RESULT_TOKEN_LIMIT,
+        max_operator_result_char_limit: int = AGENT_MAX_OPERATOR_RESULT_CHAR_LIMIT,
+        max_operator_result_cell_char_limit: int = AGENT_MAX_OPERATOR_RESULT_CELL_CHAR_LIMIT,
+        operator_result_serialization_mode: str = AGENT_OPERATOR_RESULT_SERIALIZATION_MODE,
         tool_timeout_seconds: int = AGENT_TOOL_TIMEOUT_SECONDS,
         execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES,
         disabled_tools: Optional[list[str]] = None,
+        agent_mode: str = AGENT_MODE,
         only_use_relational_operators: bool = True,
         texera_api_endpoint: str = TEXERA_API_ENDPOINT,
         computing_unit_endpoint: str = TEXERA_COMPUTING_UNIT_ENDPOINT,
@@ -534,10 +546,13 @@ class DataflowAgent:
         Args:
             model_type: LLM model type to use
             max_steps: Maximum number of steps per message
-            max_operator_result_token_limit: Max tokens for operator results
+            max_operator_result_char_limit: Max characters for operator results (uses symmetric truncation)
+            max_operator_result_cell_char_limit: Max characters per cell in results
+            operator_result_serialization_mode: Result format ("json", "table", or "toon")
             tool_timeout_seconds: Tool execution timeout in seconds
             execution_timeout_minutes: Workflow execution timeout in minutes
             disabled_tools: List of tool names to disable
+            agent_mode: Agent mode ("code" or "general")
             only_use_relational_operators: Only allow relational operators
             texera_api_endpoint: Texera backend API endpoint
             agent_service_endpoint: Agent service endpoint
@@ -550,10 +565,13 @@ class DataflowAgent:
         self.model_type = model_type
         self.settings = AgentSettings(
             max_steps=max_steps,
-            max_operator_result_token_limit=max_operator_result_token_limit,
+            max_operator_result_char_limit=max_operator_result_char_limit,
+            max_operator_result_cell_char_limit=max_operator_result_cell_char_limit,
+            operator_result_serialization_mode=operator_result_serialization_mode,
             tool_timeout_seconds=tool_timeout_seconds,
             execution_timeout_minutes=execution_timeout_minutes,
             disabled_tools=disabled_tools or [],
+            agent_mode=agent_mode,
             only_use_relational_operators=only_use_relational_operators,
         )
         self.texera_api_endpoint = texera_api_endpoint

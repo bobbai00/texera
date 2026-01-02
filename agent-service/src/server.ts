@@ -152,8 +152,8 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
   // Get settings from agent and convert to API format
   const agentSettings = agent.getSettings();
   const settingsApi: AgentSettingsApi = {
-    maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
-    maxOperatorResultCellTokenLimit: agentSettings.maxOperatorResultCellTokenLimit,
+    maxOperatorResultCharLimit: agentSettings.maxOperatorResultCharLimit,
+    maxOperatorResultCellCharLimit: agentSettings.maxOperatorResultCellCharLimit,
     operatorResultSerializationMode: agentSettings.operatorResultSerializationMode,
     toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
     executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
@@ -234,9 +234,14 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 
       // Apply initial settings if provided
       if (settings) {
+        console.log(
+          `[Server] Applying initial settings for agent ${agentId}: ` +
+            `maxOperatorResultCharLimit=${settings.maxOperatorResultCharLimit}, ` +
+            `maxOperatorResultCellCharLimit=${settings.maxOperatorResultCellCharLimit}`
+        );
         agent.updateSettings({
-          maxOperatorResultTokenLimit: settings.maxOperatorResultTokenLimit,
-          maxOperatorResultCellTokenLimit: settings.maxOperatorResultCellTokenLimit,
+          maxOperatorResultCharLimit: settings.maxOperatorResultCharLimit,
+          maxOperatorResultCellCharLimit: settings.maxOperatorResultCellCharLimit,
           operatorResultSerializationMode: settings.operatorResultSerializationMode
             ? (settings.operatorResultSerializationMode as OperatorResultSerializationMode)
             : undefined,
@@ -259,9 +264,11 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         computingUnitId: t.Optional(t.Number()),
         settings: t.Optional(
           t.Object({
-            maxOperatorResultTokenLimit: t.Optional(t.Number()),
-            maxOperatorResultCellTokenLimit: t.Optional(t.Number()),
-            operatorResultSerializationMode: t.Optional(t.Union([t.Literal("json"), t.Literal("table"), t.Literal("toon")])),
+            maxOperatorResultCharLimit: t.Optional(t.Number()),
+            maxOperatorResultCellCharLimit: t.Optional(t.Number()),
+            operatorResultSerializationMode: t.Optional(
+              t.Union([t.Literal("json"), t.Literal("table"), t.Literal("toon")])
+            ),
             toolTimeoutSeconds: t.Optional(t.Number()),
             executionTimeoutMinutes: t.Optional(t.Number()),
             disabledTools: t.Optional(t.Array(t.String())),
@@ -408,8 +415,8 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     const agent = getAgent(id);
     const agentSettings = agent.getSettings();
     return {
-      maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
-      maxOperatorResultCellTokenLimit: agentSettings.maxOperatorResultCellTokenLimit,
+      maxOperatorResultCharLimit: agentSettings.maxOperatorResultCharLimit,
+      maxOperatorResultCellCharLimit: agentSettings.maxOperatorResultCellCharLimit,
       operatorResultSerializationMode: agentSettings.operatorResultSerializationMode,
       toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
       executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
@@ -426,9 +433,15 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       const agent = getAgent(id);
       const settings = body as UpdateAgentSettingsRequest;
 
+      console.log(
+        `[Server] Updating settings for agent ${id}: ` +
+          `maxOperatorResultCharLimit=${settings.maxOperatorResultCharLimit}, ` +
+          `maxOperatorResultCellCharLimit=${settings.maxOperatorResultCellCharLimit}`
+      );
+
       agent.updateSettings({
-        maxOperatorResultTokenLimit: settings.maxOperatorResultTokenLimit,
-        maxOperatorResultCellTokenLimit: settings.maxOperatorResultCellTokenLimit,
+        maxOperatorResultCharLimit: settings.maxOperatorResultCharLimit,
+        maxOperatorResultCellCharLimit: settings.maxOperatorResultCellCharLimit,
         operatorResultSerializationMode: settings.operatorResultSerializationMode
           ? (settings.operatorResultSerializationMode as OperatorResultSerializationMode)
           : undefined,
@@ -443,8 +456,8 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       // Return updated settings
       const agentSettings = agent.getSettings();
       return {
-        maxOperatorResultTokenLimit: agentSettings.maxOperatorResultTokenLimit,
-        maxOperatorResultCellTokenLimit: agentSettings.maxOperatorResultCellTokenLimit,
+        maxOperatorResultCharLimit: agentSettings.maxOperatorResultCharLimit,
+        maxOperatorResultCellCharLimit: agentSettings.maxOperatorResultCellCharLimit,
         operatorResultSerializationMode: agentSettings.operatorResultSerializationMode,
         toolTimeoutSeconds: Math.round(agentSettings.toolTimeoutMs / 1000),
         executionTimeoutMinutes: Math.round(agentSettings.executionTimeoutMs / 60000),
@@ -455,9 +468,11 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     },
     {
       body: t.Object({
-        maxOperatorResultTokenLimit: t.Optional(t.Number()),
-        maxOperatorResultCellTokenLimit: t.Optional(t.Number()),
-        operatorResultSerializationMode: t.Optional(t.Union([t.Literal("json"), t.Literal("table"), t.Literal("toon")])),
+        maxOperatorResultCharLimit: t.Optional(t.Number()),
+        maxOperatorResultCellCharLimit: t.Optional(t.Number()),
+        operatorResultSerializationMode: t.Optional(
+          t.Union([t.Literal("json"), t.Literal("table"), t.Literal("toon")])
+        ),
         toolTimeoutSeconds: t.Optional(t.Number()),
         executionTimeoutMinutes: t.Optional(t.Number()),
         maxSteps: t.Optional(t.Number()),

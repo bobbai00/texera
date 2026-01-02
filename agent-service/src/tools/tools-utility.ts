@@ -30,8 +30,8 @@ import { DEFAULT_AGENT_SETTINGS } from "../types/agent";
 /** Default tool execution timeout in milliseconds */
 export const DEFAULT_TOOL_TIMEOUT_MS = DEFAULT_AGENT_SETTINGS.toolTimeoutMs;
 
-/** Default maximum token limit for operator result data */
-export const DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT = DEFAULT_AGENT_SETTINGS.maxOperatorResultTokenLimit;
+/** Default maximum character limit for operator result data */
+export const DEFAULT_MAX_OPERATOR_RESULT_CHAR_LIMIT = DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit;
 
 /** Default execution timeout for workflow execution in milliseconds */
 export const DEFAULT_EXECUTION_TIMEOUT_MS = DEFAULT_AGENT_SETTINGS.executionTimeoutMs;
@@ -166,31 +166,43 @@ export function withTimeout<TArgs, TResult>(
 }
 
 // ============================================================================
-// Result Token Filtering
+// Result Character Filtering
 // ============================================================================
 
 /**
- * Filters result rows by token limit.
+ * Filters result rows by character limit.
  */
-export function filterByTokenLimit<T>(
+export function filterByCharLimit<T>(
   rows: readonly T[],
-  maxTokenLimit: number = DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT
-): { limited: T[]; tokenCount: number; truncated: boolean } {
+  maxCharLimit: number = DEFAULT_MAX_OPERATOR_RESULT_CHAR_LIMIT
+): { limited: T[]; charCount: number; truncated: boolean } {
   const limited: T[] = [];
-  let tokenCount = 0;
+  let charCount = 0;
 
   for (const row of rows) {
-    const rowTokens = estimateTokenCount(row);
-    if (tokenCount + rowTokens > maxTokenLimit) break;
+    const rowChars = estimateCharCount(row);
+    if (charCount + rowChars > maxCharLimit) break;
     limited.push(row);
-    tokenCount += rowTokens;
+    charCount += rowChars;
   }
 
   return {
     limited,
-    tokenCount,
+    charCount,
     truncated: limited.length < rows.length,
   };
+}
+
+/**
+ * Estimates the number of characters in a JSON-serializable object.
+ */
+export function estimateCharCount(data: any): number {
+  try {
+    const jsonString = JSON.stringify(data);
+    return jsonString.length;
+  } catch {
+    return 0;
+  }
 }
 
 // ============================================================================

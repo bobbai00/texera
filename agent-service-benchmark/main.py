@@ -48,6 +48,12 @@ from dataflow_agent import (
     get_agent_workflow,
     AGENT_MODEL_TYPE,
     AGENT_MAX_STEPS,
+    AGENT_MAX_OPERATOR_RESULT_CHAR_LIMIT,
+    AGENT_MAX_OPERATOR_RESULT_CELL_CHAR_LIMIT,
+    AGENT_OPERATOR_RESULT_SERIALIZATION_MODE,
+    AGENT_TOOL_TIMEOUT_SECONDS,
+    AGENT_EXECUTION_TIMEOUT_MINUTES,
+    AGENT_MODE,
     TEXERA_AGENT_SERVICE_ENDPOINT,
 )
 
@@ -216,6 +222,12 @@ def run_single_task(
     timestamp: str,
     model_type: str = AGENT_MODEL_TYPE,
     max_steps: int = AGENT_MAX_STEPS,
+    max_operator_result_char_limit: int = AGENT_MAX_OPERATOR_RESULT_CHAR_LIMIT,
+    max_operator_result_cell_char_limit: int = AGENT_MAX_OPERATOR_RESULT_CELL_CHAR_LIMIT,
+    operator_result_serialization_mode: str = AGENT_OPERATOR_RESULT_SERIALIZATION_MODE,
+    tool_timeout_seconds: int = AGENT_TOOL_TIMEOUT_SECONDS,
+    execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES,
+    agent_mode: str = AGENT_MODE,
     verbosity_level: int = 1,
     retain: bool = False,
     relational_only: bool = True,
@@ -246,6 +258,12 @@ def run_single_task(
     agent = DataflowAgent(
         model_type=model_type,
         max_steps=max_steps,
+        max_operator_result_char_limit=max_operator_result_char_limit,
+        max_operator_result_cell_char_limit=max_operator_result_cell_char_limit,
+        operator_result_serialization_mode=operator_result_serialization_mode,
+        tool_timeout_seconds=tool_timeout_seconds,
+        execution_timeout_minutes=execution_timeout_minutes,
+        agent_mode=agent_mode,
         verbosity_level=verbosity_level,
         workflow_name=f"Benchmark Task {task_id}",
         agent_name=f"task-{task_id}",
@@ -392,6 +410,12 @@ def run_benchmark(
     timestamp: str,
     model_type: str = AGENT_MODEL_TYPE,
     max_steps: int = AGENT_MAX_STEPS,
+    max_operator_result_char_limit: int = AGENT_MAX_OPERATOR_RESULT_CHAR_LIMIT,
+    max_operator_result_cell_char_limit: int = AGENT_MAX_OPERATOR_RESULT_CELL_CHAR_LIMIT,
+    operator_result_serialization_mode: str = AGENT_OPERATOR_RESULT_SERIALIZATION_MODE,
+    tool_timeout_seconds: int = AGENT_TOOL_TIMEOUT_SECONDS,
+    execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES,
+    agent_mode: str = AGENT_MODE,
     verbosity_level: int = 1,
     retain: bool = False,
     relational_only: bool = True,
@@ -413,6 +437,12 @@ def run_benchmark(
             timestamp=timestamp,
             model_type=model_type,
             max_steps=max_steps,
+            max_operator_result_char_limit=max_operator_result_char_limit,
+            max_operator_result_cell_char_limit=max_operator_result_cell_char_limit,
+            operator_result_serialization_mode=operator_result_serialization_mode,
+            tool_timeout_seconds=tool_timeout_seconds,
+            execution_timeout_minutes=execution_timeout_minutes,
+            agent_mode=agent_mode,
             verbosity_level=verbosity_level,
             retain=retain,
             relational_only=relational_only,
@@ -447,6 +477,12 @@ def _run_task_in_thread(
     timestamp: str,
     model_type: str,
     max_steps: int,
+    max_operator_result_char_limit: int,
+    max_operator_result_cell_char_limit: int,
+    operator_result_serialization_mode: str,
+    tool_timeout_seconds: int,
+    execution_timeout_minutes: int,
+    agent_mode: str,
     verbosity_level: int,
     retain: bool,
     relational_only: bool,
@@ -466,6 +502,12 @@ def _run_task_in_thread(
             timestamp=timestamp,
             model_type=model_type,
             max_steps=max_steps,
+            max_operator_result_char_limit=max_operator_result_char_limit,
+            max_operator_result_cell_char_limit=max_operator_result_cell_char_limit,
+            operator_result_serialization_mode=operator_result_serialization_mode,
+            tool_timeout_seconds=tool_timeout_seconds,
+            execution_timeout_minutes=execution_timeout_minutes,
+            agent_mode=agent_mode,
             verbosity_level=verbosity_level,
             retain=retain,
             relational_only=relational_only,
@@ -497,6 +539,12 @@ def run_benchmark_parallel(
     timestamp: str,
     model_type: str = AGENT_MODEL_TYPE,
     max_steps: int = AGENT_MAX_STEPS,
+    max_operator_result_char_limit: int = AGENT_MAX_OPERATOR_RESULT_CHAR_LIMIT,
+    max_operator_result_cell_char_limit: int = AGENT_MAX_OPERATOR_RESULT_CELL_CHAR_LIMIT,
+    operator_result_serialization_mode: str = AGENT_OPERATOR_RESULT_SERIALIZATION_MODE,
+    tool_timeout_seconds: int = AGENT_TOOL_TIMEOUT_SECONDS,
+    execution_timeout_minutes: int = AGENT_EXECUTION_TIMEOUT_MINUTES,
+    agent_mode: str = AGENT_MODE,
     verbosity_level: int = 1,
     retain: bool = False,
     relational_only: bool = True,
@@ -532,6 +580,12 @@ def run_benchmark_parallel(
                 timestamp=timestamp,
                 model_type=model_type,
                 max_steps=max_steps,
+                max_operator_result_char_limit=max_operator_result_char_limit,
+                max_operator_result_cell_char_limit=max_operator_result_cell_char_limit,
+                operator_result_serialization_mode=operator_result_serialization_mode,
+                tool_timeout_seconds=tool_timeout_seconds,
+                execution_timeout_minutes=execution_timeout_minutes,
+                agent_mode=agent_mode,
                 verbosity_level=verbosity_level,
                 retain=retain,
                 relational_only=relational_only,
@@ -774,6 +828,44 @@ def main():
         help=f"Maximum agent steps per task (default: {AGENT_MAX_STEPS})",
     )
     parser.add_argument(
+        "--max-result-chars",
+        type=int,
+        default=AGENT_MAX_OPERATOR_RESULT_CHAR_LIMIT,
+        help=f"Max characters for operator results (default: {AGENT_MAX_OPERATOR_RESULT_CHAR_LIMIT})",
+    )
+    parser.add_argument(
+        "--max-cell-chars",
+        type=int,
+        default=AGENT_MAX_OPERATOR_RESULT_CELL_CHAR_LIMIT,
+        help=f"Max characters per cell in results (default: {AGENT_MAX_OPERATOR_RESULT_CELL_CHAR_LIMIT})",
+    )
+    parser.add_argument(
+        "--result-format",
+        type=str,
+        choices=["json", "table", "toon"],
+        default=AGENT_OPERATOR_RESULT_SERIALIZATION_MODE,
+        help=f"Result serialization format (default: {AGENT_OPERATOR_RESULT_SERIALIZATION_MODE})",
+    )
+    parser.add_argument(
+        "--tool-timeout",
+        type=int,
+        default=AGENT_TOOL_TIMEOUT_SECONDS,
+        help=f"Tool execution timeout in seconds (default: {AGENT_TOOL_TIMEOUT_SECONDS})",
+    )
+    parser.add_argument(
+        "--execution-timeout",
+        type=int,
+        default=AGENT_EXECUTION_TIMEOUT_MINUTES,
+        help=f"Workflow execution timeout in minutes (default: {AGENT_EXECUTION_TIMEOUT_MINUTES})",
+    )
+    parser.add_argument(
+        "--agent-mode",
+        type=str,
+        choices=["code", "general"],
+        default=AGENT_MODE,
+        help=f"Agent mode: 'code' uses code operators, 'general' uses all operators (default: {AGENT_MODE})",
+    )
+    parser.add_argument(
         "--data-dir",
         type=str,
         default=DATA_DIR,
@@ -851,6 +943,12 @@ def main():
     print(f"Max steps: {args.max_steps}")
     print(f"Data dir: {args.data_dir}")
     if not args.baseline:
+        print(f"Agent mode: {args.agent_mode}")
+        print(f"Max result chars: {args.max_result_chars}")
+        print(f"Max cell chars: {args.max_cell_chars}")
+        print(f"Result format: {args.result_format}")
+        print(f"Tool timeout: {args.tool_timeout}s")
+        print(f"Execution timeout: {args.execution_timeout}min")
         print(f"Retain mode: {args.retain}")
         print(f"Relational only: {relational_only}")
         print(f"Parallel: {args.parallel}")
@@ -907,6 +1005,12 @@ def main():
             timestamp=timestamp,
             model_type=args.model,
             max_steps=args.max_steps,
+            max_operator_result_char_limit=args.max_result_chars,
+            max_operator_result_cell_char_limit=args.max_cell_chars,
+            operator_result_serialization_mode=args.result_format,
+            tool_timeout_seconds=args.tool_timeout,
+            execution_timeout_minutes=args.execution_timeout,
+            agent_mode=args.agent_mode,
             verbosity_level=args.verbosity,
             retain=args.retain,
             relational_only=relational_only,
@@ -920,6 +1024,12 @@ def main():
             timestamp=timestamp,
             model_type=args.model,
             max_steps=args.max_steps,
+            max_operator_result_char_limit=args.max_result_chars,
+            max_operator_result_cell_char_limit=args.max_cell_chars,
+            operator_result_serialization_mode=args.result_format,
+            tool_timeout_seconds=args.tool_timeout,
+            execution_timeout_minutes=args.execution_timeout,
+            agent_mode=args.agent_mode,
             verbosity_level=args.verbosity,
             retain=args.retain,
             relational_only=relational_only,

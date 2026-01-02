@@ -176,10 +176,10 @@ export interface AgentSettings {
   systemPrompt: string;
   /** Set of disabled tool names */
   disabledTools: Set<string>;
-  /** Maximum token limit for operator results */
-  maxOperatorResultTokenLimit: number;
-  /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
-  maxOperatorResultCellTokenLimit: number;
+  /** Maximum character limit for operator results (uses symmetric truncation: first half + notice + last half) */
+  maxOperatorResultCharLimit: number;
+  /** Maximum character limit per cell (truncates individual cell values beyond this limit) */
+  maxOperatorResultCellCharLimit: number;
   /** Serialization mode for operator results (json, table, or toon) */
   operatorResultSerializationMode: OperatorResultSerializationMode;
   /** Tool execution timeout in milliseconds */
@@ -197,8 +197,8 @@ export interface AgentSettings {
  */
 export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   disabledTools: new Set(),
-  maxOperatorResultTokenLimit: 2000,
-  maxOperatorResultCellTokenLimit: 1000,
+  maxOperatorResultCharLimit: 20000, // 20,000 characters (matches smolagents)
+  maxOperatorResultCellCharLimit: 4000, // 4,000 characters per cell
   operatorResultSerializationMode: OperatorResultSerializationMode.TABLE,
   toolTimeoutMs: 240000, // 4 minutes
   executionTimeoutMs: 240000, // 4 minutes
@@ -240,10 +240,10 @@ export interface AgentDelegateConfig {
  * Agent settings for API (serializable version without Set)
  */
 export interface AgentSettingsApi {
-  /** Maximum token limit for operator results */
-  maxOperatorResultTokenLimit?: number;
-  /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
-  maxOperatorResultCellTokenLimit?: number;
+  /** Maximum character limit for operator results (uses symmetric truncation) */
+  maxOperatorResultCharLimit?: number;
+  /** Maximum character limit per cell (truncates individual cell values beyond this limit) */
+  maxOperatorResultCellCharLimit?: number;
   /** Serialization mode for operator results: "json", "table", or "toon" */
   operatorResultSerializationMode?: "json" | "table" | "toon";
   /** Tool execution timeout in seconds */
@@ -293,10 +293,10 @@ export interface CreateAgentRequest {
  * Request to update agent settings
  */
 export interface UpdateAgentSettingsRequest {
-  /** Maximum token limit for operator results */
-  maxOperatorResultTokenLimit?: number;
-  /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
-  maxOperatorResultCellTokenLimit?: number;
+  /** Maximum character limit for operator results (uses symmetric truncation) */
+  maxOperatorResultCharLimit?: number;
+  /** Maximum character limit per cell (truncates individual cell values beyond this limit) */
+  maxOperatorResultCellCharLimit?: number;
   /** Serialization mode for operator results: "json", "table", or "toon" */
   operatorResultSerializationMode?: "json" | "table" | "toon";
   /** Tool execution timeout in seconds */

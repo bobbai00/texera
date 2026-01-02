@@ -53,6 +53,8 @@ import javax.annotation.security.RolesAllowed
 import javax.ws.rs._
 import javax.ws.rs.core.MediaType
 import scala.collection.mutable
+import scala.jdk.CollectionConverters._
+import com.fasterxml.jackson.databind.ObjectMapper
 
 /**
   * Request body for synchronous workflow execution.
@@ -63,8 +65,8 @@ case class SyncExecutionRequest(
     workflowSettings: Option[WorkflowSettings],
     targetOperatorIds: List[String],
     timeoutSeconds: Option[Int],
-    maxOperatorResultTokenLimit: Option[Int], // Max tokens for operator results (total)
-    maxCellTokens: Option[Int], // Max tokens per cell
+    maxOperatorResultCharLimit: Int, // Max characters for operator results (uses symmetric truncation)
+    maxOperatorResultCellCharLimit: Int, // Max characters per cell
     serializationMode: Option[String] // "json" (default) or "table"
 )
 
@@ -132,11 +134,9 @@ case class TargetResultsReady(statsState: ExecutionStatsStore) extends Terminati
 class SyncExecutionResource extends LazyLogging {
 
   private val DEFAULT_TIMEOUT_SECONDS = 300
-  private val DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT = 2000
-  private val DEFAULT_MAX_CELL_TOKENS = 10000
-  // Maximum caps - always applied
-  private val MAX_OPERATOR_RESULT_TOKEN = 10000
-  private val MAX_CELL_TOKEN = 10000
+  // Maximum caps - always applied for safety
+  private val MAX_OPERATOR_RESULT_CHARS = 100000 // 100,000 characters max
+  private val MAX_OPERATOR_RESULT_CELL_CHARS = 20000 // 20,000 characters per cell max
 
   @POST
   @Path("/{wid}/{cuid}/run")
@@ -149,19 +149,17 @@ class SyncExecutionResource extends LazyLogging {
   ): SyncExecutionResult = {
     val timeoutSeconds = request.timeoutSeconds.getOrElse(DEFAULT_TIMEOUT_SECONDS)
 
-    // Calculate token limits: use user-provided values, capped at MAX values
-    val maxOperatorResultTokenLimit = Math.min(
-      request.maxOperatorResultTokenLimit.getOrElse(DEFAULT_MAX_OPERATOR_RESULT_TOKEN_LIMIT),
-      MAX_OPERATOR_RESULT_TOKEN
-    )
-    val maxCellTokens = Math.min(
-      request.maxCellTokens.getOrElse(DEFAULT_MAX_CELL_TOKENS),
-      MAX_CELL_TOKEN
-    )
+    // Apply maximum caps for safety
+    val maxOperatorResultCharLimit =
+      Math.min(request.maxOperatorResultCharLimit, MAX_OPERATOR_RESULT_CHARS)
+    val maxOperatorResultCellCharLimit =
+      Math.min(request.maxOperatorResultCellCharLimit, MAX_OPERATOR_RESULT_CELL_CHARS)
     val serializationMode = request.serializationMode.getOrElse("table")
 
     logger.info(
-      s"Starting sync execution for workflow $workflowId"
+      s"Starting sync execution for workflow $workflowId with limits: " +
+        s"maxOperatorResultCharLimit=${request.maxOperatorResultCharLimit} (capped to $maxOperatorResultCharLimit), " +
+        s"maxOperatorResultCellCharLimit=${request.maxOperatorResultCellCharLimit} (capped to $maxOperatorResultCellCharLimit)"
     )
 
     try {
@@ -357,8 +355,8 @@ class SyncExecutionResource extends LazyLogging {
         executionId,
         executionService,
         request.targetOperatorIds,
-        maxOperatorResultTokenLimit,
-        maxCellTokens,
+        maxOperatorResultCharLimit,
+        maxOperatorResultCellCharLimit,
         serializationMode,
         inMemoryConsoleState
       )
@@ -432,8 +430,8 @@ class SyncExecutionResource extends LazyLogging {
       executionId: ExecutionIdentity,
       executionService: org.apache.texera.web.service.WorkflowExecutionService,
       targetOperatorIds: List[String],
-      maxOperatorResultTokenLimit: Int,
-      maxCellTokens: Int,
+      maxOperatorResultCharLimit: Int,
+      maxOperatorResultCellCharLimit: Int,
       serializationMode: String,
       inMemoryConsoleState: Option[ExecutionConsoleStore] = None
   ): Map[String, OperatorInfo] = {
@@ -474,8 +472,8 @@ class SyncExecutionResource extends LazyLogging {
         collectOperatorResult(
           executionId,
           opId,
-          maxOperatorResultTokenLimit,
-          maxCellTokens,
+          maxOperatorResultCharLimit,
+          maxOperatorResultCellCharLimit,
           serializationMode
         )
 
@@ -554,16 +552,21 @@ class SyncExecutionResource extends LazyLogging {
 
   /**
     * Collect result for a single operator.
-    * Uses token-based limiting: iterates through all rows using get() iterator
-    * and stops when token limit is reached.
+    * Uses incremental fetching with character-based limiting:
+    * - Fetches tuples one at a time using iterator
+    * - Tracks accumulated size and stops when limit is reached
+    * - Serializes based on requested mode (table or json)
     */
   private def collectOperatorResult(
       executionId: ExecutionIdentity,
       opId: String,
-      maxOperatorResultTokenLimit: Int,
-      maxCellTokens: Int,
+      maxOperatorResultCharLimit: Int,
+      maxOperatorResultCellCharLimit: Int,
       serializationMode: String
   ): (String, Option[String], Option[Any], Option[Int], Option[Int], Option[Boolean]) = {
+    import com.fasterxml.jackson.databind.ObjectMapper
+    import com.fasterxml.jackson.databind.node.ObjectNode
+
     try {
       val storageUriOption = WorkflowExecutionsResource.getResultUriByLogicalPortId(
         executionId,
@@ -579,62 +582,131 @@ class SyncExecutionResource extends LazyLogging {
             .asInstanceOf[VirtualDocument[Tuple]]
 
           val totalCount = document.getCount.toInt
+          val mapper = new ObjectMapper()
 
-          // Check if limits are reasonable (avoid integer overflow)
-          val shouldTruncateCells = maxCellTokens < Int.MaxValue / 4
-          val shouldLimitByTokens = maxOperatorResultTokenLimit < Int.MaxValue / 4
+          // Use iterator to fetch tuples incrementally
+          val tupleIterator = document.get()
 
-          // Use iterator to fetch tuples with token-based limiting
-          val (tuples, truncatedByTokens) = collectTuplesWithTokenLimit(
-            document.get(),
-            maxOperatorResultTokenLimit,
-            maxCellTokens,
-            shouldLimitByTokens
-          )
+          // Check for visualization tuple (special case - single tuple with html/json content)
+          if (totalCount == 1 && tupleIterator.hasNext) {
+            val firstTuple = tupleIterator.next()
+            if (isVisualizationTuple(firstTuple)) {
+              val jsonResults =
+                ExecutionResultService.convertTuplesToJson(List(firstTuple), isVisualization = true)
+              return (
+                "visualization",
+                Some("json"),
+                Some(jsonResults),
+                Some(totalCount),
+                Some(1),
+                Some(false)
+              )
+            }
+            // Not a visualization tuple, need to process it normally
+            // Convert to JSON and start collecting
+            val firstJson = ExecutionResultService.convertTuplesToJson(List(firstTuple)).head
+            val truncatedFirst = truncateSingleTuple(firstJson, maxOperatorResultCellCharLimit)
+            val firstSize = estimateTupleSize(truncatedFirst, serializationMode, mapper)
 
-          if (tuples.size == 1 && isVisualizationTuple(tuples.head)) {
-            val jsonResults =
-              ExecutionResultService.convertTuplesToJson(tuples, isVisualization = true)
+            if (firstSize >= maxOperatorResultCharLimit) {
+              // Even one tuple exceeds limit - return truncated version
+              val result = serializeResult(List(truncatedFirst), serializationMode, mapper)
+              val truncatedResult = symmetricTruncate(result, maxOperatorResultCharLimit)
+              return (
+                "table",
+                Some(serializationMode),
+                Some(truncatedResult),
+                Some(totalCount),
+                Some(1),
+                Some(true)
+              )
+            }
+
+            // Continue collecting more tuples
+            val collectedTuples = mutable.ListBuffer[ObjectNode](truncatedFirst)
+            var accumulatedSize = firstSize
+            var wasTruncated = false
+
+            while (tupleIterator.hasNext && !wasTruncated) {
+              val tuple = tupleIterator.next()
+              val jsonTuple = ExecutionResultService.convertTuplesToJson(List(tuple)).head
+              val truncatedTuple = truncateSingleTuple(jsonTuple, maxOperatorResultCellCharLimit)
+              val tupleSize = estimateTupleSize(truncatedTuple, serializationMode, mapper)
+
+              if (accumulatedSize + tupleSize > maxOperatorResultCharLimit) {
+                wasTruncated = true
+              } else {
+                collectedTuples += truncatedTuple
+                accumulatedSize += tupleSize
+              }
+            }
+
+            // Check if there are remaining tuples we didn't collect
+            if (!wasTruncated && tupleIterator.hasNext) {
+              wasTruncated = true
+            }
+
+            val result = serializeResult(collectedTuples.toList, serializationMode, mapper)
             (
-              "visualization",
-              Some("json"),
-              Some(jsonResults),
+              "table",
+              Some(serializationMode),
+              Some(result),
               Some(totalCount),
-              Some(1),
+              Some(collectedTuples.size),
+              Some(wasTruncated)
+            )
+          } else if (totalCount == 0) {
+            // No tuples
+            val emptyResult = if (serializationMode == "table") "" else "[]"
+            (
+              "table",
+              Some(serializationMode),
+              Some(emptyResult),
+              Some(0),
+              Some(0),
               Some(false)
             )
           } else {
-            val jsonResults = ExecutionResultService.convertTuplesToJson(tuples)
+            // Multiple tuples - collect incrementally
+            val collectedTuples = mutable.ListBuffer[ObjectNode]()
+            var accumulatedSize = 0
+            var wasTruncated = false
 
-            // Apply cell truncation if needed
-            val cellTruncatedResults =
-              if (shouldTruncateCells) truncateCellsByTokens(jsonResults, maxCellTokens)
-              else jsonResults
+            while (tupleIterator.hasNext && !wasTruncated) {
+              val tuple = tupleIterator.next()
+              val jsonTuple = ExecutionResultService.convertTuplesToJson(List(tuple)).head
+              val truncatedTuple = truncateSingleTuple(jsonTuple, maxOperatorResultCellCharLimit)
+              val tupleSize = estimateTupleSize(truncatedTuple, serializationMode, mapper)
 
-            val displayedRows = cellTruncatedResults.size
-            val truncated = displayedRows < totalCount || truncatedByTokens
-
-            if (serializationMode == "table") {
-              val tableResult =
-                jsonToTable(cellTruncatedResults, shouldTruncateCells, maxCellTokens)
-              (
-                "table",
-                Some("table"),
-                Some(tableResult),
-                Some(totalCount),
-                Some(displayedRows),
-                Some(truncated)
-              )
-            } else {
-              (
-                "table",
-                Some("json"),
-                Some(cellTruncatedResults),
-                Some(totalCount),
-                Some(displayedRows),
-                Some(truncated)
-              )
+              if (
+                accumulatedSize + tupleSize > maxOperatorResultCharLimit && collectedTuples.nonEmpty
+              ) {
+                // Adding this tuple would exceed limit, stop here
+                wasTruncated = true
+              } else {
+                collectedTuples += truncatedTuple
+                accumulatedSize += tupleSize
+                // Check if we've reached the limit
+                if (accumulatedSize >= maxOperatorResultCharLimit) {
+                  wasTruncated = tupleIterator.hasNext
+                }
+              }
             }
+
+            // Check if there are remaining tuples we didn't collect
+            if (!wasTruncated && tupleIterator.hasNext) {
+              wasTruncated = true
+            }
+
+            val result = serializeResult(collectedTuples.toList, serializationMode, mapper)
+            (
+              "table",
+              Some(serializationMode),
+              Some(result),
+              Some(totalCount),
+              Some(collectedTuples.size),
+              Some(wasTruncated)
+            )
           }
 
         case None =>
@@ -648,128 +720,150 @@ class SyncExecutionResource extends LazyLogging {
   }
 
   /**
-    * Collect tuples from iterator with token-based limiting.
-    * Estimates tokens as characters / 4.
-    * Returns (collected tuples, whether truncation occurred due to token limit).
+    * Truncate cell values in a single tuple that exceed the character limit.
     */
-  private def collectTuplesWithTokenLimit(
-      iterator: Iterator[Tuple],
-      maxTokens: Int,
-      maxCellTokens: Int,
-      shouldLimit: Boolean
-  ): (List[Tuple], Boolean) = {
-    if (!shouldLimit) {
-      // No limit - collect all tuples
-      return (iterator.toList, false)
-    }
-
-    val result = scala.collection.mutable.ListBuffer[Tuple]()
-    var totalTokens = 0
-    val maxCellChars = maxCellTokens * 4
-
-    while (iterator.hasNext) {
-      val tuple = iterator.next()
-
-      // Estimate tokens for this tuple by converting to string representation
-      val tupleTokens = estimateTupleTokens(tuple, maxCellChars)
-
-      if (totalTokens + tupleTokens > maxTokens && result.nonEmpty) {
-        // Token limit reached - stop collecting
-        return (result.toList, true)
-      }
-
-      result += tuple
-      totalTokens += tupleTokens
-    }
-
-    (result.toList, false)
-  }
-
-  /**
-    * Estimate token count for a tuple.
-    * Approximates tokens as characters / 4.
-    */
-  private def estimateTupleTokens(tuple: Tuple, maxCellChars: Int): Int = {
-    var totalChars = 0
-    val schema = tuple.getSchema
-    for (i <- 0 until schema.getAttributes.size) {
-      val fieldValue = tuple.getField[Any](i)
-      val valueStr = if (fieldValue == null) "" else fieldValue.toString
-      // Apply cell truncation in estimation
-      val effectiveLength = Math.min(valueStr.length, maxCellChars)
-      totalChars += effectiveLength + 10 // Add overhead for field name and formatting
-    }
-    Math.ceil(totalChars / 4.0).toInt
-  }
-
-  private def truncateCellsByTokens(
-      tuples: List[ObjectNode],
-      maxCellTokens: Int
-  ): List[ObjectNode] = {
+  private def truncateSingleTuple(
+      tuple: ObjectNode,
+      maxCellChars: Int
+  ): ObjectNode = {
     import com.fasterxml.jackson.databind.ObjectMapper
     import com.fasterxml.jackson.databind.node.TextNode
 
     val mapper = new ObjectMapper()
-    val maxChars = maxCellTokens * 4
+    val truncatedTuple = mapper.createObjectNode()
+    val fieldNames = tuple.fieldNames()
 
-    tuples.map { tuple =>
-      val truncatedTuple = mapper.createObjectNode()
-      val fieldNames = tuple.fieldNames()
-      while (fieldNames.hasNext) {
-        val fieldName = fieldNames.next()
-        val fieldValue = tuple.get(fieldName)
-        if (fieldValue.isTextual) {
-          val text = fieldValue.asText()
-          if (text.length > maxChars) {
-            truncatedTuple.set(
-              fieldName,
-              new TextNode(text.substring(0, maxChars) + "...(cut off due to the token limit)")
-            )
-          } else {
-            truncatedTuple.set(fieldName, fieldValue)
-          }
+    while (fieldNames.hasNext) {
+      val fieldName = fieldNames.next()
+      val fieldValue = tuple.get(fieldName)
+      if (fieldValue.isTextual) {
+        val text = fieldValue.asText()
+        if (text.length > maxCellChars) {
+          val truncatedText = symmetricTruncateCellValue(text, maxCellChars)
+          truncatedTuple.set(fieldName, new TextNode(truncatedText))
         } else {
           truncatedTuple.set(fieldName, fieldValue)
         }
+      } else {
+        truncatedTuple.set(fieldName, fieldValue)
       }
-      truncatedTuple
+    }
+    truncatedTuple
+  }
+
+  /**
+    * Estimate the serialized size of a tuple based on serialization mode.
+    * For table mode: CSV row format
+    * For JSON mode: JSON object format
+    */
+  private def estimateTupleSize(
+      tuple: ObjectNode,
+      serializationMode: String,
+      mapper: ObjectMapper
+  ): Int = {
+    if (serializationMode == "table") {
+      // Estimate CSV row size: values joined by commas + newline
+      val fieldNames = tuple.fieldNames()
+      var size = 0
+      while (fieldNames.hasNext) {
+        val fieldName = fieldNames.next()
+        val fieldValue = tuple.get(fieldName)
+        val cellValue = if (fieldValue == null || fieldValue.isNull) {
+          ""
+        } else if (fieldValue.isTextual) {
+          fieldValue.asText()
+        } else {
+          fieldValue.toString
+        }
+        size += cellValue.length + 1 // +1 for comma or newline
+      }
+      size
+    } else {
+      // JSON object size
+      mapper.writeValueAsString(tuple).length + 1 // +1 for comma in array
     }
   }
 
-  private def jsonToTable(
+  /**
+    * Serialize collected tuples based on the serialization mode.
+    */
+  private def serializeResult(
       tuples: List[ObjectNode],
-      shouldTruncate: Boolean,
-      maxCellTokens: Int
-  ): TableResult = {
-    if (tuples.isEmpty) return TableResult("", List.empty)
+      serializationMode: String,
+      mapper: ObjectMapper
+  ): String = {
+    if (tuples.isEmpty) {
+      if (serializationMode == "table") "" else "[]"
+    } else if (serializationMode == "table") {
+      // CSV format: header row + data rows
+      val headers = scala.collection.mutable.ArrayBuffer[String]()
+      val fieldNames = tuples.head.fieldNames()
+      while (fieldNames.hasNext) {
+        headers += fieldNames.next()
+      }
 
-    val maxChars = maxCellTokens * 4
-    val headers = scala.collection.mutable.ArrayBuffer[String]()
-    val fieldNames = tuples.head.fieldNames()
-    while (fieldNames.hasNext) {
-      headers += fieldNames.next()
-    }
-
-    val rows = tuples.map { tuple =>
-      headers
-        .map { header =>
-          val fieldValue = tuple.get(header)
-          val cellValue = if (fieldValue == null || fieldValue.isNull) {
-            ""
-          } else {
-            val text = if (fieldValue.isTextual) fieldValue.asText() else fieldValue.toString
-            if (shouldTruncate && text.length > maxChars) {
-              text.substring(0, maxChars) + "...(cut off due to the token limit)"
+      val headerLine = headers.map(escapeTableCell).mkString(",")
+      val dataLines = tuples.map { tuple =>
+        headers
+          .map { header =>
+            val fieldValue = tuple.get(header)
+            val cellValue = if (fieldValue == null || fieldValue.isNull) {
+              ""
+            } else if (fieldValue.isTextual) {
+              fieldValue.asText()
             } else {
-              text
+              fieldValue.toString
             }
+            escapeTableCell(cellValue)
           }
-          escapeTableCell(cellValue)
-        }
-        .mkString(",")
-    }
+          .mkString(",")
+      }
 
-    TableResult(headers.map(escapeTableCell).mkString(","), rows)
+      (headerLine :: dataLines).mkString("\n")
+    } else {
+      // JSON array format
+      mapper.writeValueAsString(tuples.asJava)
+    }
+  }
+
+  /**
+    * Apply symmetric truncation to a string: keeps first half + notice + last half.
+    * This ensures both the beginning and end of the content are visible.
+    */
+  private def symmetricTruncate(content: String, maxChars: Int): String = {
+    if (content.length <= maxChars) {
+      content
+    } else {
+      val truncationNotice =
+        s"\n\n...[truncated ${content.length - maxChars} characters]...\n\n"
+      val availableChars = maxChars - truncationNotice.length
+      if (availableChars <= 0) {
+        content.substring(0, maxChars)
+      } else {
+        val halfChars = availableChars / 2
+        val firstHalf = content.substring(0, halfChars)
+        val lastHalf = content.substring(content.length - halfChars)
+        firstHalf + truncationNotice + lastHalf
+      }
+    }
+  }
+
+  /**
+    * Symmetric truncation for individual cell values.
+    */
+  private def symmetricTruncateCellValue(text: String, maxChars: Int): String = {
+    if (text.length <= maxChars) {
+      text
+    } else {
+      val notice = "...[truncated]..."
+      val availableChars = maxChars - notice.length
+      if (availableChars <= 0) {
+        text.substring(0, maxChars)
+      } else {
+        val halfChars = availableChars / 2
+        text.substring(0, halfChars) + notice + text.substring(text.length - halfChars)
+      }
+    }
   }
 
   private def escapeTableCell(value: String): String = {

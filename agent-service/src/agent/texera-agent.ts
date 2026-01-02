@@ -28,7 +28,12 @@ import { WorkflowState } from "../workflow/workflow-state";
 import { OperatorMetadataStore } from "../tools/metadata-tools";
 import { AgentActionManager } from "./agent-action-manager";
 import type { AgentSettings, ReActStep, AgentMessageStats, TokenUsage, AgentAction, UserInfo } from "../types/agent";
-import { AgentState as AgentStateEnum, DEFAULT_AGENT_SETTINGS, OperatorResultSerializationMode, AgentMode } from "../types/agent";
+import {
+  AgentState as AgentStateEnum,
+  DEFAULT_AGENT_SETTINGS,
+  OperatorResultSerializationMode,
+  AgentMode,
+} from "../types/agent";
 import { BASE_SYSTEM_PROMPT, buildGeneralModeSystemPrompt } from "./prompts";
 import {
   createGetCurrentWorkflowTool,
@@ -263,7 +268,7 @@ export class TexeraAgent {
         ? { wid: this.delegateConfig.workflowId, name: this.delegateConfig.workflowName }
         : undefined,
       settings: {
-        maxOperatorResultTokenLimit: this.settings.maxOperatorResultTokenLimit,
+        maxOperatorResultCharLimit: this.settings.maxOperatorResultCharLimit,
         toolTimeoutMs: this.settings.toolTimeoutMs,
         executionTimeoutMs: this.settings.executionTimeoutMs,
       },
@@ -292,16 +297,19 @@ export class TexeraAgent {
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
     if (this.delegateConfig) {
-      const executionConfig: ExecutionConfig = {
-        userToken: this.delegateConfig.userToken,
-        workflowId: this.delegateConfig.workflowId,
-        computingUnitId: this.delegateConfig.computingUnitId,
-        maxOperatorResultTokenLimit: this.settings.maxOperatorResultTokenLimit,
-        maxOperatorResultCellTokenLimit: this.settings.maxOperatorResultCellTokenLimit,
-        serializationMode: this.settings.operatorResultSerializationMode,
-        executionTimeoutMs: this.settings.executionTimeoutMs,
-      };
-      tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, executionConfig);
+      // Use a getter function so the tool reads current settings at execution time
+      const delegateConfig = this.delegateConfig;
+      const settings = this.settings;
+      const getExecutionConfig = (): ExecutionConfig => ({
+        userToken: delegateConfig.userToken,
+        workflowId: delegateConfig.workflowId,
+        computingUnitId: delegateConfig.computingUnitId,
+        maxOperatorResultCharLimit: settings.maxOperatorResultCharLimit,
+        maxOperatorResultCellCharLimit: settings.maxOperatorResultCellCharLimit,
+        serializationMode: settings.operatorResultSerializationMode,
+        executionTimeoutMs: settings.executionTimeoutMs,
+      });
+      tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, getExecutionConfig);
     }
 
     return tools;
@@ -446,8 +454,8 @@ export class TexeraAgent {
    * Only provided values will be updated.
    */
   updateSettings(updates: {
-    maxOperatorResultTokenLimit?: number;
-    maxOperatorResultCellTokenLimit?: number;
+    maxOperatorResultCharLimit?: number;
+    maxOperatorResultCellCharLimit?: number;
     operatorResultSerializationMode?: OperatorResultSerializationMode;
     toolTimeoutMs?: number;
     executionTimeoutMs?: number;
@@ -457,11 +465,11 @@ export class TexeraAgent {
   }): void {
     let modeChanged = false;
 
-    if (updates.maxOperatorResultTokenLimit !== undefined) {
-      this.settings.maxOperatorResultTokenLimit = updates.maxOperatorResultTokenLimit;
+    if (updates.maxOperatorResultCharLimit !== undefined) {
+      this.settings.maxOperatorResultCharLimit = updates.maxOperatorResultCharLimit;
     }
-    if (updates.maxOperatorResultCellTokenLimit !== undefined) {
-      this.settings.maxOperatorResultCellTokenLimit = updates.maxOperatorResultCellTokenLimit;
+    if (updates.maxOperatorResultCellCharLimit !== undefined) {
+      this.settings.maxOperatorResultCellCharLimit = updates.maxOperatorResultCellCharLimit;
     }
     if (updates.operatorResultSerializationMode !== undefined) {
       this.settings.operatorResultSerializationMode = updates.operatorResultSerializationMode;
@@ -490,7 +498,12 @@ export class TexeraAgent {
 
     // Rebuild tools with updated settings
     this.tools = this.createTools();
-    console.log(`[TexeraAgent ${this.agentId}] Settings updated (mode: ${this.settings.agentMode})`);
+    console.log(
+      `[TexeraAgent ${this.agentId}] Settings updated: ` +
+        `mode=${this.settings.agentMode}, ` +
+        `maxOperatorResultCharLimit=${this.settings.maxOperatorResultCharLimit}, ` +
+        `maxOperatorResultCellCharLimit=${this.settings.maxOperatorResultCellCharLimit}`
+    );
   }
 
   // ============================================================================

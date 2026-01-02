@@ -106,8 +106,8 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   // System info modal state (with editing capabilities)
   public isEditingSystemPrompt = false;
   public editingSystemPrompt = "";
-  public settingsMaxTokenLimit = 1000;
-  public settingsMaxCellTokenLimit = 200; // Default max tokens per cell
+  public settingsMaxCharLimit = 20000; // Default max characters for operator results
+  public settingsMaxCellCharLimit = 4000; // Default max characters per cell
   public settingsSerializationMode: "json" | "table" | "toon" = "table"; // Serialization mode for results
   public settingsToolTimeoutSeconds = 120; // 2 minutes default
   public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
@@ -388,8 +388,8 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       .getAgentSettings(this.agentInfo.id)
       .pipe(untilDestroyed(this))
       .subscribe(settings => {
-        this.settingsMaxTokenLimit = settings.maxOperatorResultTokenLimit ?? 1000;
-        this.settingsMaxCellTokenLimit = settings.maxOperatorResultCellTokenLimit ?? 200;
+        this.settingsMaxCharLimit = settings.maxOperatorResultCharLimit ?? 20000;
+        this.settingsMaxCellCharLimit = settings.maxOperatorResultCellCharLimit ?? 4000;
         this.settingsSerializationMode = settings.operatorResultSerializationMode ?? "table";
         this.settingsToolTimeoutSeconds = settings.toolTimeoutSeconds ?? 120;
         this.settingsExecutionTimeoutMinutes = settings.executionTimeoutMinutes ?? 10;
@@ -1025,31 +1025,31 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   }
 
   /**
-   * Save the max token limit.
+   * Save the max character limit.
    */
-  public saveMaxTokenLimit(): void {
+  public saveMaxCharLimit(): void {
     this.copilotManagerService
       .updateAgentSettings(this.agentInfo.id, {
-        maxOperatorResultTokenLimit: this.settingsMaxTokenLimit,
+        maxOperatorResultCharLimit: this.settingsMaxCharLimit,
       })
       .pipe(untilDestroyed(this))
       .subscribe({
-        next: () => this.notificationService.success("Max token limit saved"),
+        next: () => this.notificationService.success("Max character limit saved"),
         error: () => {}, // Error already handled by service
       });
   }
 
   /**
-   * Save the max cell token limit.
+   * Save the max cell character limit.
    */
-  public saveMaxCellTokenLimit(): void {
+  public saveMaxCellCharLimit(): void {
     this.copilotManagerService
       .updateAgentSettings(this.agentInfo.id, {
-        maxOperatorResultCellTokenLimit: this.settingsMaxCellTokenLimit,
+        maxOperatorResultCellCharLimit: this.settingsMaxCellCharLimit,
       })
       .pipe(untilDestroyed(this))
       .subscribe({
-        next: () => this.notificationService.success("Max cell token limit saved"),
+        next: () => this.notificationService.success("Max cell character limit saved"),
         error: () => {}, // Error already handled by service
       });
   }

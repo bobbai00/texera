@@ -46,10 +46,10 @@ import { ComputingUnitStatusService } from "../computing-unit-status/computing-u
  * Agent settings for API (serializable format).
  */
 export interface AgentSettingsApi {
-  /** Maximum token limit for operator results */
-  maxOperatorResultTokenLimit?: number;
-  /** Maximum token limit per cell (truncates individual cell values beyond this limit) */
-  maxOperatorResultCellTokenLimit?: number;
+  /** Maximum character limit for operator results (uses symmetric truncation) */
+  maxOperatorResultCharLimit?: number;
+  /** Maximum character limit per cell (truncates individual cell values beyond this limit) */
+  maxOperatorResultCellCharLimit?: number;
   /** Serialization mode for operator results: "json", "table", or "toon" */
   operatorResultSerializationMode?: "json" | "table" | "toon";
   /** Tool execution timeout in seconds */
@@ -1131,7 +1131,8 @@ export class TexeraCopilotManagerService {
     return this.http.get<AgentSettingsApi>(`${this.AGENT_API_BASE}/agents/${agentId}/settings`).pipe(
       catchError(() =>
         of({
-          maxOperatorResultTokenLimit: 1000,
+          maxOperatorResultCharLimit: 20000,
+          maxOperatorResultCellCharLimit: 4000,
           toolTimeoutSeconds: 120,
           executionTimeoutMinutes: 10,
           disabledTools: [],

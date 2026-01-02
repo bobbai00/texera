@@ -194,16 +194,6 @@ Purpose: Load data from files or external sources. No input ports.
 - Do NOT use print statements
 - Do NOT load the entire large data files directly, load its metadata and samples for understanding; Only load the entire file during processing time
 Examples:
-  # Load entire CSV file for downstream processing
-  def load() -> pd.DataFrame:
-      return pd.read_csv('/path/to/data.csv')
-  
-  # Load md file and emit the dataframe
-  def load() -> pd.DataFrame:
-      with open('/path/to/readme.md', 'r') as f:
-          content = f.read()
-      return pd.DataFrame([{'filename': 'readme.md', 'content': content}])
-
   # Load sample and metadata for a large CSV file
   def load() -> pd.DataFrame:
       import os
@@ -216,6 +206,30 @@ Examples:
           'columns': list(sample.columns),
           'sample_rows': sample.to_dict()
       }])
+
+  # Load first 10 records from a CSV file
+  def load() -> pd.DataFrame:
+      return pd.read_csv('/path/to/data.csv', nrows=10)
+      
+  # Load entire CSV file for downstream processing
+  def load() -> pd.DataFrame:
+      return pd.read_csv('/path/to/data.csv')
+  
+  # Load md file and emit the dataframe
+  def load() -> pd.DataFrame:
+      with open('/path/to/readme.md', 'r') as f:
+          content = f.read()
+      return pd.DataFrame([{'filename': 'readme.md', 'content': content}])
+
+  # Search for keywords in a file using system command and show matching lines
+  def load() -> pd.DataFrame:
+      import subprocess
+      result = subprocess.run(
+          ['grep', '-n', 'keyword', '/path/to/file.txt'],
+          capture_output=True, text=True
+      )
+      lines = result.stdout.strip().split('\\n') if result.stdout else []
+      return pd.DataFrame([{'line': l} for l in lines])
 
 ## def process(input1, input2, ...) -> pd.DataFrame
 Purpose: Transform input data. Each parameter becomes an input port and represents the dataframe from that input port.

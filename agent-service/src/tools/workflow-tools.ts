@@ -48,7 +48,7 @@ export interface ToolContext {
   agentName?: string;
   workflowMetadata?: { wid?: number; name?: string };
   settings?: {
-    maxOperatorResultTokenLimit?: number;
+    maxOperatorResultCharLimit?: number;
     toolTimeoutMs?: number;
     executionTimeoutMs?: number;
   };

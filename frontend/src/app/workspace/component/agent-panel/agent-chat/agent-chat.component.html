@@ -580,12 +580,33 @@
       <nz-tab nzTitle="Parameters">
         <div class="settings-section">
           <div class="settings-param-item">
-            <label class="settings-param-label">Max Operator Result Token Limit</label>
+            <label class="settings-param-label">Max Operator Result Character Limit</label>
             <div class="settings-param-input">
               <nz-input-number
-                [(ngModel)]="settingsMaxTokenLimit"
+                [(ngModel)]="settingsMaxCharLimit"
+                [nzMin]="1000"
+                [nzMax]="100000"
+                [nzStep]="1000"
+                nzSize="small"
+                style="width: 120px"></nz-input-number>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveMaxCharLimit()">
+                Save
+              </button>
+              <span class="settings-param-hint">Max characters for operator results (uses symmetric truncation)</span>
+            </div>
+          </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">Max Cell Character Limit</label>
+            <div class="settings-param-input">
+              <nz-input-number
+                [(ngModel)]="settingsMaxCellCharLimit"
                 [nzMin]="100"
-                [nzMax]="10000"
+                [nzMax]="20000"
                 [nzStep]="100"
                 nzSize="small"
                 style="width: 120px"></nz-input-number>
@@ -593,31 +614,10 @@
                 nz-button
                 nzType="primary"
                 nzSize="small"
-                (click)="saveMaxTokenLimit()">
+                (click)="saveMaxCellCharLimit()">
                 Save
               </button>
-              <span class="settings-param-hint">Limits the token count in operator results (100-10000)</span>
-            </div>
-          </div>
-
-          <div class="settings-param-item">
-            <label class="settings-param-label">Max Cell Token Limit</label>
-            <div class="settings-param-input">
-              <nz-input-number
-                [(ngModel)]="settingsMaxCellTokenLimit"
-                [nzMin]="10"
-                [nzMax]="2000"
-                [nzStep]="10"
-                nzSize="small"
-                style="width: 120px"></nz-input-number>
-              <button
-                nz-button
-                nzType="primary"
-                nzSize="small"
-                (click)="saveMaxCellTokenLimit()">
-                Save
-              </button>
-              <span class="settings-param-hint">Max tokens per cell - truncates large cell values (10-2000)</span>
+              <span class="settings-param-hint">Max characters per cell - truncates large cell values</span>
             </div>
           </div>
 
