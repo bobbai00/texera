@@ -221,3 +221,81 @@ class TestTuple:
             schema,
         )
         assert hash(tuple5) == -2099556631  # calculated with Java
+
+    # Tests for LIST and STRUCT types
+    def test_tuple_with_list_field(self):
+        tuple_ = Tuple({"name": "test", "tags": ["a", "b", "c"]})
+        assert tuple_["tags"] == ["a", "b", "c"]
+        assert tuple_.get_fields() == ("test", ["a", "b", "c"])
+
+    def test_tuple_with_struct_field(self):
+        tuple_ = Tuple({"name": "test", "metadata": {"key": "value", "count": 42}})
+        assert tuple_["metadata"] == {"key": "value", "count": 42}
+        assert tuple_.get_fields() == ("test", {"key": "value", "count": 42})
+
+    def test_finalize_tuple_with_list_type(self):
+        tuple_ = Tuple({"name": "texera", "tags": ["tag1", "tag2", "tag3"]})
+        schema = Schema(raw_schema={"name": "STRING", "tags": "LIST"})
+        tuple_.finalize(schema)
+        # LIST type should keep the list as-is
+        assert isinstance(tuple_["tags"], list)
+        assert tuple_["tags"] == ["tag1", "tag2", "tag3"]
+
+    def test_finalize_tuple_with_struct_type(self):
+        tuple_ = Tuple({"name": "texera", "data": {"key": "value"}})
+        schema = Schema(raw_schema={"name": "STRING", "data": "STRUCT"})
+        tuple_.finalize(schema)
+        # STRUCT type should keep the dict as-is
+        assert isinstance(tuple_["data"], dict)
+        assert tuple_["data"] == {"key": "value"}
+
+    def test_finalize_tuple_converts_iterable_to_list(self):
+        # Test that non-list iterables are converted to lists
+        tuple_ = Tuple({"name": "texera", "items": (1, 2, 3)})  # tuple, not list
+        schema = Schema(raw_schema={"name": "STRING", "items": "LIST"})
+        tuple_.finalize(schema)
+        assert isinstance(tuple_["items"], list)
+        assert tuple_["items"] == [1, 2, 3]
+
+    def test_hash_with_list_and_struct(self):
+        schema = Schema(
+            raw_schema={
+                "col-string": "STRING",
+                "col-list": "LIST",
+                "col-struct": "STRUCT",
+            }
+        )
+
+        tuple_ = Tuple(
+            {
+                "col-string": "test",
+                "col-list": ["a", "b"],
+                "col-struct": {"key": "value"},
+            },
+            schema,
+        )
+        # Hash should work without errors (value tested for consistency)
+        hash_value = hash(tuple_)
+        assert isinstance(hash_value, int)
+
+        # Same tuple should have same hash
+        tuple2 = Tuple(
+            {
+                "col-string": "test",
+                "col-list": ["a", "b"],
+                "col-struct": {"key": "value"},
+            },
+            schema,
+        )
+        assert hash(tuple_) == hash(tuple2)
+
+        # Different tuple should have different hash
+        tuple3 = Tuple(
+            {
+                "col-string": "test",
+                "col-list": ["a", "c"],  # different list
+                "col-struct": {"key": "value"},
+            },
+            schema,
+        )
+        assert hash(tuple_) != hash(tuple3)

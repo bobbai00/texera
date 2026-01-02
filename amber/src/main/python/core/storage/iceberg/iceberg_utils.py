@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import json
 import os
 import pyarrow as pa
 import pyiceberg.table
@@ -29,6 +30,7 @@ from typing import Optional, Iterable
 
 import core
 from core.models import ArrowTableTupleProvider, Tuple
+from core.models.schema.attribute_type import AttributeType
 
 
 def create_postgres_catalog(
@@ -133,32 +135,119 @@ def read_data_file_as_arrow_table(
     return arrow_table
 
 
+def _serialize_value_for_iceberg(value, attr_type: AttributeType):
+    """
+    Serialize a value for Iceberg storage.
+    LIST and STRUCT types are serialized as JSON strings.
+    """
+    if value is None:
+        return None
+    if attr_type == AttributeType.LIST or attr_type == AttributeType.STRUCT:
+        return json.dumps(value)
+    return value
+
+
 def amber_tuples_to_arrow_table(
-    iceberg_schema: Schema, tuple_list: Iterable[Tuple]
+    iceberg_schema: Schema, tuple_list: Iterable[Tuple], amber_schema=None
 ) -> pa.Table:
     """
     Converts a list of amber tuples to a pyarrow table for serialization.
+    LIST and STRUCT values are serialized as JSON strings for Iceberg compatibility.
+
+    :param iceberg_schema: The Iceberg schema for the table.
+    :param tuple_list: The list of Amber tuples to convert.
+    :param amber_schema: Optional Amber schema to determine attribute types.
+                         If not provided, types are inferred from values.
     """
-    return pa.Table.from_pydict(
-        {
-            name: [t[name] for t in tuple_list]
-            for name in iceberg_schema.as_arrow().names
-        },
-        schema=iceberg_schema.as_arrow(),
-    )
+    tuple_list = list(tuple_list)  # Materialize to allow multiple iterations
+    if not tuple_list:
+        return pa.Table.from_pydict(
+            {name: [] for name in iceberg_schema.as_arrow().names},
+            schema=iceberg_schema.as_arrow(),
+        )
+
+    arrow_names = iceberg_schema.as_arrow().names
+    result_dict = {}
+
+    for name in arrow_names:
+        values = [t[name] for t in tuple_list]
+        # Determine attribute type from amber_schema or infer from first non-None value
+        attr_type = None
+        if amber_schema is not None and name in amber_schema:
+            attr_type = amber_schema[name]
+        else:
+            # Infer type from first non-None value
+            for v in values:
+                if v is not None:
+                    if isinstance(v, list):
+                        attr_type = AttributeType.LIST
+                    elif isinstance(v, dict):
+                        attr_type = AttributeType.STRUCT
+                    break
+
+        # Serialize LIST/STRUCT values to JSON strings
+        if attr_type in (AttributeType.LIST, AttributeType.STRUCT):
+            values = [_serialize_value_for_iceberg(v, attr_type) for v in values]
+
+        result_dict[name] = values
+
+    return pa.Table.from_pydict(result_dict, schema=iceberg_schema.as_arrow())
+
+
+def _deserialize_value_from_iceberg(value, is_nested_type: bool):
+    """
+    Deserialize a value from Iceberg storage.
+    JSON strings for LIST/STRUCT types are deserialized to list/dict.
+    """
+    if value is None:
+        return None
+    if is_nested_type and isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
 
 
 def arrow_table_to_amber_tuples(
-    iceberg_schema: Schema, arrow_table: pa.Table
+    iceberg_schema: Schema, arrow_table: pa.Table, amber_schema=None
 ) -> Iterable[Tuple]:
     """
     Converts an arrow table to a list of amber tuples for deserialization.
+    JSON strings for LIST/STRUCT types are deserialized back to list/dict.
+
+    :param iceberg_schema: The Iceberg schema for the table.
+    :param arrow_table: The Arrow table to convert.
+    :param amber_schema: Optional Amber schema to determine which fields are LIST/STRUCT.
+                         If not provided, JSON deserialization is attempted for string fields.
     """
     tuple_provider = ArrowTableTupleProvider(arrow_table)
-    return (
-        Tuple(
-            {name: field_accessor for name in arrow_table.column_names},
-            schema=core.models.Schema(iceberg_schema.as_arrow()),
-        )
-        for field_accessor in tuple_provider
-    )
+    arrow_schema = iceberg_schema.as_arrow()
+    column_names = arrow_table.column_names
+
+    # Determine which columns need JSON deserialization
+    nested_columns = set()
+    if amber_schema is not None:
+        for name in column_names:
+            if name in amber_schema and amber_schema[name] in (
+                AttributeType.LIST,
+                AttributeType.STRUCT,
+            ):
+                nested_columns.add(name)
+    else:
+        # Check arrow schema for string fields that might be serialized LIST/STRUCT
+        for i, name in enumerate(column_names):
+            field = arrow_schema.field(name)
+            if pa.types.is_string(field.type) or pa.types.is_large_string(field.type):
+                # Mark as potential nested type for JSON deserialization attempt
+                nested_columns.add(name)
+
+    for field_accessor in tuple_provider:
+        tuple_dict = {}
+        for name in column_names:
+            value = field_accessor[name] if isinstance(field_accessor, dict) else getattr(field_accessor, name, None)
+            if name in nested_columns:
+                value = _deserialize_value_from_iceberg(value, True)
+            tuple_dict[name] = value
+
+        yield Tuple(tuple_dict, schema=core.models.Schema(arrow_schema))

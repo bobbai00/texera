@@ -87,10 +87,19 @@ class ArrowTableTupleProvider:
             value = self._table.column(field_name).chunks[chunk_idx][tuple_idx].as_py()
             field_type = self._table.schema.field(field_name).type
 
-            # for binary types, convert pickled objects back.
-            if (
+            # Handle native Arrow nested types
+            if pyarrow.types.is_list(field_type) or pyarrow.types.is_large_list(field_type):
+                # Native Arrow list - value is already a Python list
+                return value
+            elif pyarrow.types.is_struct(field_type) or pyarrow.types.is_map(field_type):
+                # Native Arrow struct/map - value is already a Python dict
+                return value
+            # Legacy support: for binary types, convert pickled objects back.
+            elif (
                 field_type == pyarrow.binary()
                 and value is not None
+                and isinstance(value, bytes)
+                and len(value) >= 6
                 and value[:6] == b"pickle"
             ):
                 value = pickle.loads(value[10:])
@@ -266,9 +275,10 @@ class Tuple:
         """
         Safely cast each field value to match the target schema.
         If failed, the value will stay not changed.
-        This current conducts two kinds of casts:
+        This current conducts three kinds of casts:
             1. cast NaN to None;
-            2. cast any object to bytes (using pickle).
+            2. cast list/dict to native LIST/STRUCT types;
+            3. cast any other unsupported object to bytes (using pickle) - legacy.
         :param schema: The target Schema that describes the target AttributeType to
             cast.
         :return:
@@ -283,7 +293,27 @@ class Tuple:
 
                 if field_value is not None:
                     field_type = schema.get_attr_type(field_name)
-                    if field_type == AttributeType.BINARY and not isinstance(
+
+                    # Native LIST type - ensure value is a list
+                    if field_type == AttributeType.LIST:
+                        if not isinstance(field_value, list):
+                            # Try to convert to list if possible
+                            if hasattr(field_value, '__iter__') and not isinstance(field_value, (str, bytes, dict)):
+                                self[field_name] = list(field_value)
+                            else:
+                                self[field_name] = [field_value]
+
+                    # Native STRUCT type - ensure value is a dict
+                    elif field_type == AttributeType.STRUCT:
+                        if not isinstance(field_value, dict):
+                            # Try to convert to dict if possible
+                            if hasattr(field_value, '__dict__'):
+                                self[field_name] = dict(field_value.__dict__)
+                            elif hasattr(field_value, 'items'):
+                                self[field_name] = dict(field_value.items())
+
+                    # Legacy: for BINARY type with non-bytes value, use pickle
+                    elif field_type == AttributeType.BINARY and not isinstance(
                         field_value, bytes
                     ):
                         self[field_name] = b"pickle    " + pickle.dumps(field_value)
@@ -385,6 +415,15 @@ class Tuple:
         result = 1
         salt = 31  # for ease of optimization
 
+        def hash_nested(value) -> int:
+            """Hash nested structures (list/dict) by converting to string and hashing."""
+            import json
+            try:
+                json_str = json.dumps(value, sort_keys=True, default=str)
+                return java_hash_bytes(map(ord, json_str), 0, salt)
+            except Exception:
+                return java_hash_bytes(map(ord, str(value)), 0, salt)
+
         mapping = {
             AttributeType.BOOL: lambda f: java_hash_bool(f),
             AttributeType.INT: lambda f: int_32(f),
@@ -393,6 +432,8 @@ class Tuple:
             AttributeType.STRING: lambda f: java_hash_bytes(map(ord, f), 0, salt),
             AttributeType.TIMESTAMP: lambda f: java_hash_long(int(f.timestamp())),
             AttributeType.BINARY: lambda f: java_hash_bytes(f, 1, salt),
+            AttributeType.LIST: lambda f: hash_nested(f),
+            AttributeType.STRUCT: lambda f: hash_nested(f),
         }
 
         for name, field in self.as_key_value_pairs():

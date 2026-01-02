@@ -38,6 +38,9 @@ import org.apache.arrow.vector.{
   VarCharVector,
   VectorSchemaRoot
 }
+import org.apache.arrow.vector.complex.{ListVector, StructVector}
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.scala.DefaultScalaModule
 
 import java.nio.charset.StandardCharsets
 import java.util
@@ -134,6 +137,12 @@ object ArrowUtils extends LazyLogging {
       case _: ArrowType.Binary =>
         AttributeType.BINARY
 
+      case _: ArrowType.List | _: ArrowType.LargeList =>
+        AttributeType.LIST
+
+      case _: ArrowType.Struct =>
+        AttributeType.STRUCT
+
       case _ =>
         throw new AttributeTypeUtils.AttributeTypeException(
           "Unexpected value: " + srcType.getTypeID
@@ -214,10 +223,60 @@ object ArrowUtils extends LazyLogging {
               .asInstanceOf[VarBinaryVector]
               .setSafe(index, value.asInstanceOf[Array[Byte]])
 
+        case _: ArrowType.List | _: ArrowType.LargeList =>
+          // Handle ListVector for nested list data
+          vector match {
+            case listVector: ListVector =>
+              // For now, log warning - full ListVector write support is complex
+              // and would require dynamic element type inference
+              logger.warn(
+                s"Writing to ListVector not fully supported. Field: ${arrowFields(i).getName}"
+              )
+              // Mark as null for safety
+              listVector.setNull(index)
+            case charVector: VarCharVector =>
+              // Fallback: serialize as JSON string if vector is VarChar
+              if (isNull) charVector.setNull(index)
+              else {
+                val jsonBytes = objectMapper.writeValueAsString(value).getBytes(StandardCharsets.UTF_8)
+                charVector.setSafe(index, jsonBytes)
+              }
+            case _ =>
+              logger.warn(s"Unexpected vector type for LIST: ${vector.getClass.getName}")
+          }
+
+        case _: ArrowType.Struct =>
+          // Handle StructVector for nested struct/dict data
+          vector match {
+            case structVector: StructVector =>
+              // For now, log warning - full StructVector write support is complex
+              logger.warn(
+                s"Writing to StructVector not fully supported. Field: ${arrowFields(i).getName}"
+              )
+              // Mark as null for safety
+              structVector.setNull(index)
+            case charVector: VarCharVector =>
+              // Fallback: serialize as JSON string if vector is VarChar
+              if (isNull) charVector.setNull(index)
+              else {
+                val jsonBytes = objectMapper.writeValueAsString(value).getBytes(StandardCharsets.UTF_8)
+                charVector.setSafe(index, jsonBytes)
+              }
+            case _ =>
+              logger.warn(s"Unexpected vector type for STRUCT: ${vector.getClass.getName}")
+          }
+
       }
     }
 
     vectorSchemaRoot.setRowCount(vectorSchemaRoot.getRowCount + 1)
+  }
+
+  // Shared ObjectMapper for JSON serialization of nested types
+  private lazy val objectMapper: ObjectMapper = {
+    val mapper = new ObjectMapper()
+    mapper.registerModule(DefaultScalaModule)
+    mapper
   }
 
   /**
@@ -227,25 +286,47 @@ object ArrowUtils extends LazyLogging {
     * @return An Arrow Schema.
     */
   def fromTexeraSchema(schema: Schema): org.apache.arrow.vector.types.pojo.Schema = {
+    import org.apache.arrow.vector.types.pojo.FieldType
     val arrowFields = new util.ArrayList[Field]
 
     for (amberAttribute <- schema.getAttributes) {
       val name = amberAttribute.getName
-      val field = Field.nullablePrimitive(name, fromAttributeType(amberAttribute.getType))
+      val attrType = amberAttribute.getType
+      val arrowType = fromAttributeType(attrType)
+
+      val field = attrType match {
+        case AttributeType.LIST =>
+          // Create a LIST field with a generic element type (string by default)
+          // The actual element type will be inferred from the data at runtime
+          val elementField = Field.nullable("item", ArrowType.Utf8.INSTANCE)
+          new Field(name, FieldType.nullable(arrowType), java.util.Collections.singletonList(elementField))
+
+        case AttributeType.STRUCT =>
+          // Create a STRUCT field with no predefined children
+          // Actual struct fields will be determined at runtime from the data
+          new Field(name, FieldType.nullable(arrowType), java.util.Collections.emptyList())
+
+        case _ =>
+          // For primitive types, use the standard nullablePrimitive method
+          arrowType match {
+            case pt: PrimitiveType => Field.nullablePrimitive(name, pt)
+            case _ => new Field(name, FieldType.nullable(arrowType), java.util.Collections.emptyList())
+          }
+      }
       arrowFields.add(field)
     }
     new org.apache.arrow.vector.types.pojo.Schema(arrowFields)
   }
 
   /**
-    * Converts an AttributeType into an ArrowType (PrimitiveType).
+    * Converts an AttributeType into an ArrowType.
     *
     * @param srcType The AttributeType to be converted.
     * @throws AttributeTypeException if the type cannot be converted.
-    * @return A PrimitiveType, a type of ArrowType, does not handle complex data.
+    * @return An ArrowType corresponding to the given AttributeType.
     */
   @throws[AttributeTypeException]
-  def fromAttributeType(srcType: AttributeType): PrimitiveType = {
+  def fromAttributeType(srcType: AttributeType): ArrowType = {
     srcType match {
       // Use 64-bit for INTEGER to avoid overflow for large integer values
       case AttributeType.INTEGER =>
@@ -268,6 +349,14 @@ object ArrowUtils extends LazyLogging {
 
       case AttributeType.STRING | AttributeType.ANY =>
         ArrowType.Utf8.INSTANCE
+
+      // For LIST and STRUCT, we use Arrow's native nested types
+      // The actual element/field types are determined at runtime from the data
+      case AttributeType.LIST =>
+        ArrowType.List.INSTANCE
+
+      case AttributeType.STRUCT =>
+        ArrowType.Struct.INSTANCE
 
       case _ =>
         throw new AttributeTypeUtils.AttributeTypeException("Unexpected value: " + srcType)

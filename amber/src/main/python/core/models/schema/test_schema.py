@@ -89,3 +89,47 @@ class TestSchema:
     def test_convert_from_arrow_schema(self, arrow_schema, schema):
         assert schema == Schema(arrow_schema=arrow_schema)
         assert schema.as_arrow_schema() == arrow_schema
+
+    # Tests for LIST and STRUCT types
+    def test_list_type_from_raw_schema(self):
+        raw = {"items": "LIST"}
+        schema = Schema(raw_schema=raw)
+        assert schema.get_attr_type("items") == AttributeType.LIST
+
+    def test_struct_type_from_raw_schema(self):
+        raw = {"data": "STRUCT"}
+        schema = Schema(raw_schema=raw)
+        assert schema.get_attr_type("data") == AttributeType.STRUCT
+
+    def test_list_type_arrow_conversion(self):
+        schema = Schema()
+        schema.add("items", AttributeType.LIST)
+
+        arrow_schema = schema.as_arrow_schema()
+        assert pa.types.is_list(arrow_schema.field("items").type)
+
+        # Convert back from Arrow
+        schema_from_arrow = Schema(arrow_schema=arrow_schema)
+        assert schema_from_arrow.get_attr_type("items") == AttributeType.LIST
+
+    def test_struct_type_arrow_conversion(self):
+        schema = Schema()
+        schema.add("data", AttributeType.STRUCT)
+
+        arrow_schema = schema.as_arrow_schema()
+        # STRUCT maps to map type (key-value pairs)
+        assert pa.types.is_map(arrow_schema.field("data").type)
+
+    def test_mixed_schema_with_nested_types(self):
+        raw = {
+            "name": "STRING",
+            "tags": "LIST",
+            "metadata": "STRUCT",
+            "count": "INTEGER",
+        }
+        schema = Schema(raw_schema=raw)
+
+        assert schema.get_attr_type("name") == AttributeType.STRING
+        assert schema.get_attr_type("tags") == AttributeType.LIST
+        assert schema.get_attr_type("metadata") == AttributeType.STRUCT
+        assert schema.get_attr_type("count") == AttributeType.INT

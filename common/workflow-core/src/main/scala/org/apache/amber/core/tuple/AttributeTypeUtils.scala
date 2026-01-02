@@ -50,7 +50,7 @@ object AttributeTypeUtils extends Serializable {
         resultType match {
           case AttributeType.STRING | AttributeType.INTEGER | AttributeType.DOUBLE |
               AttributeType.LONG | AttributeType.BOOLEAN | AttributeType.TIMESTAMP |
-              AttributeType.BINARY =>
+              AttributeType.BINARY | AttributeType.LIST | AttributeType.STRUCT =>
             new Attribute(attribute, resultType) // Cast to the specified result type
           case AttributeType.ANY | _ =>
             attr // Retain the original type for unsupported types
@@ -129,6 +129,8 @@ object AttributeTypeUtils extends Serializable {
       case AttributeType.STRING     => field.toString
       case AttributeType.BINARY     => field
       case AttributeType.BIG_OBJECT => new BigObject(field.toString)
+      case AttributeType.LIST       => parseList(field)
+      case AttributeType.STRUCT     => parseStruct(field)
       case AttributeType.ANY | _    => field
     }
   }
@@ -278,6 +280,48 @@ object AttributeTypeUtils extends Serializable {
   }
 
   /**
+    * Parse a field value to a LIST type (java.util.List).
+    * LIST fields are passed through if already a List, or wrapped in a single-element list.
+    */
+  @throws[AttributeTypeException]
+  private def parseList(fieldValue: Any): java.util.List[_] = {
+    fieldValue match {
+      case list: java.util.List[_] => list
+      case seq: Seq[_] =>
+        val javaList = new java.util.ArrayList[Any]()
+        seq.foreach(item => javaList.add(item.asInstanceOf[Object]))
+        javaList
+      case arr: Array[_] =>
+        val javaList = new java.util.ArrayList[Any]()
+        arr.foreach(item => javaList.add(item.asInstanceOf[Object]))
+        javaList
+      case _ =>
+        throw new AttributeTypeException(
+          s"Cannot parse type ${fieldValue.getClass.getName} to LIST"
+        )
+    }
+  }
+
+  /**
+    * Parse a field value to a STRUCT type (java.util.Map).
+    * STRUCT fields are passed through if already a Map.
+    */
+  @throws[AttributeTypeException]
+  private def parseStruct(fieldValue: Any): java.util.Map[String, _] = {
+    fieldValue match {
+      case map: java.util.Map[_, _] => map.asInstanceOf[java.util.Map[String, _]]
+      case map: Map[_, _] =>
+        val javaMap = new java.util.LinkedHashMap[String, Any]()
+        map.foreach { case (k, v) => javaMap.put(k.toString, v.asInstanceOf[Object]) }
+        javaMap
+      case _ =>
+        throw new AttributeTypeException(
+          s"Cannot parse type ${fieldValue.getClass.getName} to STRUCT"
+        )
+    }
+  }
+
+  /**
     * Infers field types of a given row of data. The given attributeTypes will be updated
     * through each iteration of row inference, to contain the most accurate inference.
     * @param attributeTypes AttributeTypes that being passed to each iteration.
@@ -318,8 +362,16 @@ object AttributeTypeUtils extends Serializable {
     * @return inferred AttributeType
     */
   def inferField(fieldValue: Any): AttributeType = {
-    // Start with LONG to avoid overflow for large integer values
-    tryParseLong(fieldValue)
+    // Check for nested types first
+    fieldValue match {
+      case _: java.util.List[_] => AttributeType.LIST
+      case _: Seq[_]            => AttributeType.LIST
+      case _: java.util.Map[_, _] => AttributeType.STRUCT
+      case _: Map[_, _]           => AttributeType.STRUCT
+      case _ =>
+        // Start with LONG to avoid overflow for large integer values
+        tryParseLong(fieldValue)
+    }
   }
 
   private def tryParseLong(fieldValue: Any): AttributeType = {
@@ -369,6 +421,13 @@ object AttributeTypeUtils extends Serializable {
     * @return inferred AttributeType
     */
   def inferField(attributeType: AttributeType, fieldValue: Any): AttributeType = {
+    // Check for nested types first - they take precedence
+    fieldValue match {
+      case _: java.util.List[_] | _: Seq[_] => return AttributeType.LIST
+      case _: java.util.Map[_, _] | _: Map[_, _] => return AttributeType.STRUCT
+      case _ => // Continue with regular inference
+    }
+
     attributeType match {
       case AttributeType.STRING  => tryParseString()
       case AttributeType.BOOLEAN => tryParseBoolean(fieldValue)
@@ -380,7 +439,9 @@ object AttributeTypeUtils extends Serializable {
       case AttributeType.BINARY    => tryParseString()
       case AttributeType.BIG_OBJECT =>
         AttributeType.BIG_OBJECT // Big objects are never inferred from data
-      case _ => tryParseString()
+      case AttributeType.LIST   => AttributeType.LIST
+      case AttributeType.STRUCT => AttributeType.STRUCT
+      case _                    => tryParseString()
     }
   }
 

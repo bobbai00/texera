@@ -312,3 +312,211 @@ class TestIcebergDocument:
         assert iceberg_document.get_count() == len(
             sample_items
         ), "get_count should return the same number as the length of sample_items"
+
+    # Tests for LIST and STRUCT types
+    @pytest.fixture
+    def nested_schema(self):
+        """Schema with LIST and STRUCT types"""
+        return Schema(
+            raw_schema={
+                "col-string": "STRING",
+                "col-list": "LIST",
+                "col-struct": "STRUCT",
+                "col-int": "INTEGER",
+            }
+        )
+
+    @pytest.fixture
+    def nested_iceberg_document(self, nested_schema):
+        """
+        Creates an iceberg document with nested types schema
+        """
+        operator_uuid = str(uuid.uuid4()).replace("-", "")
+        uri = VFSURIFactory.create_result_uri(
+            WorkflowIdentity(id=0),
+            ExecutionIdentity(id=0),
+            GlobalPortIdentity(
+                op_id=PhysicalOpIdentity(
+                    logical_op_id=OperatorIdentity(
+                        id=f"test_nested_table_{operator_uuid}"
+                    ),
+                    layer_name="main",
+                ),
+                port_id=PortIdentity(id=0),
+                input=False,
+            ),
+        )
+        DocumentFactory.create_document(uri, nested_schema)
+        document, _ = DocumentFactory.open_document(uri)
+        return document
+
+    @pytest.fixture
+    def nested_sample_items(self, nested_schema) -> [Tuple]:
+        """
+        Generates sample tuples with LIST and STRUCT fields
+        """
+        return [
+            Tuple(
+                {
+                    "col-string": "test1",
+                    "col-list": ["a", "b", "c"],
+                    "col-struct": {"key1": "value1", "key2": "value2"},
+                    "col-int": 42,
+                },
+                schema=nested_schema,
+            ),
+            Tuple(
+                {
+                    "col-string": "test2",
+                    "col-list": ["x", "y"],
+                    "col-struct": {"name": "alice"},
+                    "col-int": -1,
+                },
+                schema=nested_schema,
+            ),
+            Tuple(
+                {
+                    "col-string": "test3",
+                    "col-list": [],  # Empty list
+                    "col-struct": {},  # Empty struct
+                    "col-int": 0,
+                },
+                schema=nested_schema,
+            ),
+            Tuple(
+                {
+                    "col-string": "test4",
+                    "col-list": None,  # Null list
+                    "col-struct": None,  # Null struct
+                    "col-int": 100,
+                },
+                schema=nested_schema,
+            ),
+        ]
+
+    def test_list_type_write_and_read(self, nested_iceberg_document, nested_schema):
+        """
+        Test writing and reading tuples with LIST type
+        """
+        items = [
+            Tuple(
+                {
+                    "col-string": "list_test",
+                    "col-list": ["item1", "item2", "item3"],
+                    "col-struct": {"k": "v"},
+                    "col-int": 1,
+                },
+                schema=nested_schema,
+            ),
+        ]
+        writer = nested_iceberg_document.writer(str(uuid.uuid4()))
+        writer.open()
+        for item in items:
+            writer.put_one(item)
+        writer.close()
+
+        retrieved = list(nested_iceberg_document.get())
+        assert len(retrieved) == 1
+        assert retrieved[0]["col-list"] == ["item1", "item2", "item3"]
+
+    def test_struct_type_write_and_read(self, nested_iceberg_document, nested_schema):
+        """
+        Test writing and reading tuples with STRUCT type
+        """
+        items = [
+            Tuple(
+                {
+                    "col-string": "struct_test",
+                    "col-list": ["a"],
+                    "col-struct": {"name": "bob", "age": "30"},
+                    "col-int": 2,
+                },
+                schema=nested_schema,
+            ),
+        ]
+        writer = nested_iceberg_document.writer(str(uuid.uuid4()))
+        writer.open()
+        for item in items:
+            writer.put_one(item)
+        writer.close()
+
+        retrieved = list(nested_iceberg_document.get())
+        assert len(retrieved) == 1
+        assert retrieved[0]["col-struct"] == {"name": "bob", "age": "30"}
+
+    def test_nested_types_basic_read_and_write(
+        self, nested_iceberg_document, nested_sample_items
+    ):
+        """
+        Test basic read/write with mixed LIST and STRUCT types
+        """
+        writer = nested_iceberg_document.writer(str(uuid.uuid4()))
+        writer.open()
+        for item in nested_sample_items:
+            writer.put_one(item)
+        writer.close()
+
+        retrieved = list(nested_iceberg_document.get())
+        assert len(retrieved) == len(nested_sample_items)
+
+        # Check first tuple (non-null values)
+        assert retrieved[0]["col-string"] == "test1"
+        assert retrieved[0]["col-list"] == ["a", "b", "c"]
+        assert retrieved[0]["col-struct"] == {"key1": "value1", "key2": "value2"}
+        assert retrieved[0]["col-int"] == 42
+
+    def test_nested_types_with_null_values(
+        self, nested_iceberg_document, nested_schema
+    ):
+        """
+        Test handling of null LIST and STRUCT values
+        """
+        items = [
+            Tuple(
+                {
+                    "col-string": "null_test",
+                    "col-list": None,
+                    "col-struct": None,
+                    "col-int": 99,
+                },
+                schema=nested_schema,
+            ),
+        ]
+        writer = nested_iceberg_document.writer(str(uuid.uuid4()))
+        writer.open()
+        for item in items:
+            writer.put_one(item)
+        writer.close()
+
+        retrieved = list(nested_iceberg_document.get())
+        assert len(retrieved) == 1
+        assert retrieved[0]["col-list"] is None
+        assert retrieved[0]["col-struct"] is None
+
+    def test_nested_types_with_empty_collections(
+        self, nested_iceberg_document, nested_schema
+    ):
+        """
+        Test handling of empty LIST and STRUCT values
+        """
+        items = [
+            Tuple(
+                {
+                    "col-string": "empty_test",
+                    "col-list": [],
+                    "col-struct": {},
+                    "col-int": 0,
+                },
+                schema=nested_schema,
+            ),
+        ]
+        writer = nested_iceberg_document.writer(str(uuid.uuid4()))
+        writer.open()
+        for item in items:
+            writer.put_one(item)
+        writer.close()
+
+        retrieved = list(nested_iceberg_document.get())
+        assert len(retrieved) == 1
+        assert retrieved[0]["col-list"] == []
+        assert retrieved[0]["col-struct"] == {}

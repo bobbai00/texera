@@ -71,6 +71,9 @@ public enum AttributeType implements Serializable {
     TIMESTAMP("timestamp", Timestamp.class),
     BINARY("binary", byte[].class),
     BIG_OBJECT("big_object", BigObject.class),
+    // Nested types - represented as Java List and Map for Arrow interoperability
+    LIST("list", java.util.List.class),
+    STRUCT("struct", java.util.Map.class),
     ANY("ANY", Object.class);
 
     private final String name;
@@ -112,6 +115,10 @@ public enum AttributeType implements Serializable {
             return BINARY;
         } else if (fieldClass.equals(BigObject.class)) {
             return BIG_OBJECT;
+        } else if (java.util.List.class.isAssignableFrom(fieldClass)) {
+            return LIST;
+        } else if (java.util.Map.class.isAssignableFrom(fieldClass)) {
+            return STRUCT;
         } else {
             return ANY;
         }

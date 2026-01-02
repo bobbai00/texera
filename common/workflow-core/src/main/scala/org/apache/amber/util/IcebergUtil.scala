@@ -30,8 +30,7 @@ import org.apache.iceberg.io.{CloseableIterable, InputFile}
 import org.apache.iceberg.jdbc.JdbcCatalog
 import org.apache.iceberg.parquet.{Parquet, ParquetValueReader}
 import org.apache.iceberg.rest.RESTCatalog
-import org.apache.iceberg.types.Type.PrimitiveType
-import org.apache.iceberg.types.Types
+import org.apache.iceberg.types.{Type => IcebergType, Types}
 import org.apache.iceberg.{
   CatalogProperties,
   DataFile,
@@ -54,6 +53,15 @@ object IcebergUtil {
 
   // Unique suffix for BIG_OBJECT field encoding
   private val BIG_OBJECT_FIELD_SUFFIX = "__texera_big_obj_ptr"
+  // Unique suffix for LIST field encoding
+  private val LIST_FIELD_SUFFIX = "__texera_list"
+  // Unique suffix for STRUCT field encoding
+  private val STRUCT_FIELD_SUFFIX = "__texera_struct"
+  // Unique suffix for INTEGER field encoding (stored as LongType to avoid overflow)
+  private val INTEGER_FIELD_SUFFIX = "__texera_int"
+
+  // JSON object mapper for nested type serialization
+  private lazy val jsonMapper = new com.fasterxml.jackson.databind.ObjectMapper()
 
   /**
     * Creates and initializes a HadoopCatalog with the given parameters.
@@ -215,7 +223,7 @@ object IcebergUtil {
   def toIcebergSchema(amberSchema: Schema): IcebergSchema = {
     val icebergFields = amberSchema.getAttributes.zipWithIndex.map {
       case (attribute, index) =>
-        val encodedName = encodeBigObjectFieldName(attribute.getName, attribute.getType)
+        val encodedName = encodeFieldName(attribute.getName, attribute.getType)
         val icebergType = toIcebergType(attribute.getType)
         Types.NestedField.optional(index + 1, encodedName, icebergType)
     }
@@ -225,11 +233,12 @@ object IcebergUtil {
   /**
     * Converts a custom Amber `AttributeType` to an Iceberg `Type`.
     * Note: BIG_OBJECT is stored as StringType; field name encoding is used to distinguish it.
+    * LIST and STRUCT types are stored as Iceberg ListType and MapType respectively.
     *
     * @param attributeType The custom Amber AttributeType.
     * @return The corresponding Iceberg Type.
     */
-  def toIcebergType(attributeType: AttributeType): PrimitiveType = {
+  def toIcebergType(attributeType: AttributeType): IcebergType = {
     attributeType match {
       case AttributeType.STRING => Types.StringType.get()
       // Use LongType for INTEGER to avoid overflow for large integer values
@@ -241,6 +250,9 @@ object IcebergUtil {
       case AttributeType.BINARY    => Types.BinaryType.get()
       case AttributeType.BIG_OBJECT =>
         Types.StringType.get() // Store BigObjectPointer URI as string
+      // Nested types: LIST and STRUCT are serialized as JSON strings for storage
+      case AttributeType.LIST   => Types.StringType.get()
+      case AttributeType.STRUCT => Types.StringType.get()
       case AttributeType.ANY =>
         throw new IllegalArgumentException("ANY type is not supported in Iceberg")
     }
@@ -248,6 +260,7 @@ object IcebergUtil {
 
   /**
     * Converts a custom Amber `Tuple` to an Iceberg `GenericRecord`, handling `null` values.
+    * LIST and STRUCT types are serialized as JSON strings.
     *
     * @param tuple The custom Amber Tuple.
     * @return An Iceberg GenericRecord.
@@ -257,7 +270,7 @@ object IcebergUtil {
 
     tuple.schema.getAttributes.zipWithIndex.foreach {
       case (attribute, index) =>
-        val fieldName = encodeBigObjectFieldName(attribute.getName, attribute.getType)
+        val fieldName = encodeFieldName(attribute.getName, attribute.getType)
         val value = tuple.getField[AnyRef](index) match {
           case null                 => null
           case ts: Timestamp        => ts.toInstant.atZone(ZoneId.systemDefault()).toLocalDateTime
@@ -266,6 +279,11 @@ object IcebergUtil {
           // Convert Integer to Long since Iceberg uses LongType for INTEGER to avoid overflow
           case int: java.lang.Integer if attribute.getType == AttributeType.INTEGER =>
             java.lang.Long.valueOf(int.longValue())
+          // Serialize LIST and STRUCT types as JSON strings
+          case list: java.util.List[_] if attribute.getType == AttributeType.LIST =>
+            jsonMapper.writeValueAsString(list)
+          case map: java.util.Map[_, _] if attribute.getType == AttributeType.STRUCT =>
+            jsonMapper.writeValueAsString(map)
           case other => other
         }
         record.setField(fieldName, value)
@@ -276,6 +294,7 @@ object IcebergUtil {
 
   /**
     * Converts an Iceberg `Record` to an Amber `Tuple`
+    * LIST and STRUCT types are deserialized from JSON strings or passed through if native.
     *
     * @param record      The Iceberg Record.
     * @param amberSchema The corresponding Amber Schema.
@@ -283,8 +302,12 @@ object IcebergUtil {
     */
   def fromRecord(record: Record, amberSchema: Schema): Tuple = {
     val fieldValues = amberSchema.getAttributes.map { attribute =>
-      val fieldName = encodeBigObjectFieldName(attribute.getName, attribute.getType)
-      val rawValue = record.getField(fieldName)
+      // Try encoded field name first, then fall back to original name
+      // (for schemas created by external systems like PyIceberg)
+      val encodedName = encodeFieldName(attribute.getName, attribute.getType)
+      val rawValue = Option(record.getField(encodedName))
+        .orElse(Option(record.getField(attribute.getName)))
+        .orNull
 
       rawValue match {
         case null               => null
@@ -295,6 +318,21 @@ object IcebergUtil {
           bytes
         case uri: String if attribute.getType == AttributeType.BIG_OBJECT =>
           new BigObject(uri)
+        // Deserialize LIST from JSON string (when stored as StringType)
+        case jsonStr: String if attribute.getType == AttributeType.LIST =>
+          jsonMapper.readValue(jsonStr, classOf[java.util.List[_]])
+        // Deserialize STRUCT from JSON string (when stored as StringType)
+        case jsonStr: String if attribute.getType == AttributeType.STRUCT =>
+          jsonMapper.readValue(jsonStr, classOf[java.util.Map[String, _]])
+        // Native Iceberg List type - pass through as-is
+        case list: java.util.List[_] if attribute.getType == AttributeType.LIST =>
+          list
+        // Native Iceberg Map/Struct type - pass through as-is
+        case map: java.util.Map[_, _] if attribute.getType == AttributeType.STRUCT =>
+          map
+        // Convert Long back to Integer for INTEGER type
+        case long: java.lang.Long if attribute.getType == AttributeType.INTEGER =>
+          java.lang.Integer.valueOf(long.intValue())
         case other => other
       }
     }
@@ -303,18 +341,20 @@ object IcebergUtil {
   }
 
   /**
-    * Encodes a field name for BIG_OBJECT types by adding a unique system suffix.
-    * This ensures BIG_OBJECT fields can be identified when reading from Iceberg.
+    * Encodes a field name for special types (BIG_OBJECT, LIST, STRUCT) by adding a unique system suffix.
+    * This ensures these fields can be identified when reading from Iceberg.
     *
     * @param fieldName The original field name
     * @param attributeType The attribute type
-    * @return The encoded field name with a unique suffix for BIG_OBJECT types
+    * @return The encoded field name with a unique suffix for special types
     */
-  private def encodeBigObjectFieldName(fieldName: String, attributeType: AttributeType): String = {
-    if (attributeType == AttributeType.BIG_OBJECT) {
-      s"${fieldName}${BIG_OBJECT_FIELD_SUFFIX}"
-    } else {
-      fieldName
+  private def encodeFieldName(fieldName: String, attributeType: AttributeType): String = {
+    attributeType match {
+      case AttributeType.BIG_OBJECT => s"$fieldName$BIG_OBJECT_FIELD_SUFFIX"
+      case AttributeType.LIST       => s"$fieldName$LIST_FIELD_SUFFIX"
+      case AttributeType.STRUCT     => s"$fieldName$STRUCT_FIELD_SUFFIX"
+      case AttributeType.INTEGER    => s"$fieldName$INTEGER_FIELD_SUFFIX"
+      case _                        => fieldName
     }
   }
 
@@ -325,27 +365,37 @@ object IcebergUtil {
     * @param fieldName The encoded field name
     * @return The original field name with system suffix removed
     */
-  private def decodeBigObjectFieldName(fieldName: String): String = {
-    if (isBigObjectField(fieldName)) {
+  private def decodeFieldName(fieldName: String): String = {
+    if (fieldName.endsWith(BIG_OBJECT_FIELD_SUFFIX)) {
       fieldName.substring(0, fieldName.length - BIG_OBJECT_FIELD_SUFFIX.length)
+    } else if (fieldName.endsWith(LIST_FIELD_SUFFIX)) {
+      fieldName.substring(0, fieldName.length - LIST_FIELD_SUFFIX.length)
+    } else if (fieldName.endsWith(STRUCT_FIELD_SUFFIX)) {
+      fieldName.substring(0, fieldName.length - STRUCT_FIELD_SUFFIX.length)
+    } else if (fieldName.endsWith(INTEGER_FIELD_SUFFIX)) {
+      fieldName.substring(0, fieldName.length - INTEGER_FIELD_SUFFIX.length)
     } else {
       fieldName
     }
   }
 
   /**
-    * Checks if a field name indicates a BIG_OBJECT type by examining the unique suffix.
+    * Determines the AttributeType from an encoded field name by examining the unique suffix.
     *
     * @param fieldName The field name to check
-    * @return true if the field represents a BIG_OBJECT type, false otherwise
+    * @return Some(AttributeType) if a special type suffix is found, None otherwise
     */
-  private def isBigObjectField(fieldName: String): Boolean = {
-    fieldName.endsWith(BIG_OBJECT_FIELD_SUFFIX)
+  private def getTypeFromFieldSuffix(fieldName: String): Option[AttributeType] = {
+    if (fieldName.endsWith(BIG_OBJECT_FIELD_SUFFIX)) Some(AttributeType.BIG_OBJECT)
+    else if (fieldName.endsWith(LIST_FIELD_SUFFIX)) Some(AttributeType.LIST)
+    else if (fieldName.endsWith(STRUCT_FIELD_SUFFIX)) Some(AttributeType.STRUCT)
+    else if (fieldName.endsWith(INTEGER_FIELD_SUFFIX)) Some(AttributeType.INTEGER)
+    else None
   }
 
   /**
     * Converts an Iceberg `Schema` to an Amber `Schema`.
-    * Field names are decoded to restore original names and detect BIG_OBJECT types.
+    * Field names are decoded to restore original names and detect special types (BIG_OBJECT, LIST, STRUCT).
     *
     * @param icebergSchema The Iceberg Schema.
     * @return The corresponding Amber Schema.
@@ -356,8 +406,9 @@ object IcebergUtil {
       .asScala
       .map { field =>
         val fieldName = field.name()
-        val attributeType = fromIcebergType(field.`type`().asPrimitiveType(), fieldName)
-        val originalName = decodeBigObjectFieldName(fieldName)
+        val icebergType = field.`type`()
+        val attributeType = fromIcebergType(icebergType, fieldName)
+        val originalName = decodeFieldName(fieldName)
         new Attribute(originalName, attributeType)
       }
       .toList
@@ -369,23 +420,32 @@ object IcebergUtil {
     * Converts an Iceberg `Type` to an Amber `AttributeType`.
     *
     * @param icebergType The Iceberg Type.
-    * @param fieldName The field name (used to detect BIG_OBJECT by suffix).
+    * @param fieldName The field name (used to detect special types by suffix).
     * @return The corresponding Amber AttributeType.
     */
   def fromIcebergType(
-      icebergType: PrimitiveType,
+      icebergType: IcebergType,
       fieldName: String = ""
   ): AttributeType = {
-    icebergType match {
-      case _: Types.StringType =>
-        if (isBigObjectField(fieldName)) AttributeType.BIG_OBJECT else AttributeType.STRING
-      case _: Types.IntegerType   => AttributeType.INTEGER
-      case _: Types.LongType      => AttributeType.LONG
-      case _: Types.DoubleType    => AttributeType.DOUBLE
-      case _: Types.BooleanType   => AttributeType.BOOLEAN
-      case _: Types.TimestampType => AttributeType.TIMESTAMP
-      case _: Types.BinaryType    => AttributeType.BINARY
-      case _                      => throw new IllegalArgumentException(s"Unsupported Iceberg type: $icebergType")
+    // First check if field name has a special suffix indicating LIST, STRUCT, INTEGER, or BIG_OBJECT
+    getTypeFromFieldSuffix(fieldName) match {
+      case Some(attrType) => attrType
+      case None =>
+        // No special suffix, determine type from Iceberg type
+        icebergType match {
+          case _: Types.StringType    => AttributeType.STRING
+          case _: Types.IntegerType   => AttributeType.INTEGER
+          case _: Types.LongType      => AttributeType.LONG
+          case _: Types.DoubleType    => AttributeType.DOUBLE
+          case _: Types.BooleanType   => AttributeType.BOOLEAN
+          case _: Types.TimestampType => AttributeType.TIMESTAMP
+          case _: Types.BinaryType    => AttributeType.BINARY
+          // Native Iceberg nested types (e.g., from PyIceberg or external sources)
+          case _: Types.ListType   => AttributeType.LIST
+          case _: Types.MapType    => AttributeType.STRUCT
+          case _: Types.StructType => AttributeType.STRUCT
+          case _ => throw new IllegalArgumentException(s"Unsupported Iceberg type: $icebergType")
+        }
     }
   }
 

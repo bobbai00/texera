@@ -259,6 +259,12 @@ object ExecutionResultService {
                         stringValue.take(maxStringLength) + "..."
                       else
                         stringValue
+                    case AttributeType.LIST =>
+                      // Native LIST type - pass through as Java List for JSON serialization
+                      value
+                    case AttributeType.STRUCT =>
+                      // Native STRUCT type - pass through as Java Map for JSON serialization
+                      value
                     case _ => value
                   }
               }

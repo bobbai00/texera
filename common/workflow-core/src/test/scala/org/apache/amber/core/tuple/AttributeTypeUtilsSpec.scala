@@ -38,14 +38,14 @@ class AttributeTypeUtilsSpec extends AnyFunSuite {
   // Unit Test for Infer Schema
 
   test("type should get inferred correctly individually") {
-
-    assert(inferField(" 1     \n\n") == INTEGER)
+    // Integer values are inferred as LONG to avoid overflow for large integer values
+    assert(inferField(" 1     \n\n") == LONG)
     assert(inferField(" 1.1\t") == DOUBLE)
     assert(inferField("1,111.1 ") == STRING)
     assert(inferField("k2068-10-29T18:43:15.000Z") == STRING)
     assert(inferField(" 12321321312321312312321321 ") == DOUBLE)
     assert(inferField(" 123,123,123,123,123,123,123.11") == STRING)
-    assert(inferField(" 00\t") == INTEGER)
+    assert(inferField(" 00\t") == LONG)
     assert(inferField("\t-.2 ") == DOUBLE)
     assert(inferField("\n False ") == BOOLEAN)
     assert(inferField("07/10/96 4:5 PM, PDT") == TIMESTAMP)
@@ -85,7 +85,8 @@ class AttributeTypeUtilsSpec extends AnyFunSuite {
     val rows: Iterator[Array[Any]] = Iterator(row)
     val attributeTypes = inferSchemaFromRows(rows)
     assert(attributeTypes(0) == STRING)
-    assert(attributeTypes(1) == INTEGER)
+    // Integer values are inferred as LONG to avoid overflow for large integer values
+    assert(attributeTypes(1) == LONG)
     assert(attributeTypes(2) == TIMESTAMP)
     assert(attributeTypes(3) == DOUBLE)
     assert(attributeTypes(4) == LONG)
@@ -105,7 +106,8 @@ class AttributeTypeUtilsSpec extends AnyFunSuite {
     )
     val attributeTypes = inferSchemaFromRows(rows)
     assert(attributeTypes(0) == STRING)
-    assert(attributeTypes(1) == INTEGER)
+    // Integer values are inferred as LONG to avoid overflow for large integer values
+    assert(attributeTypes(1) == LONG)
     assert(attributeTypes(2) == TIMESTAMP)
     assert(attributeTypes(3) == DOUBLE)
     assert(attributeTypes(4) == LONG)
@@ -194,6 +196,87 @@ class AttributeTypeUtilsSpec extends AnyFunSuite {
     val binaryData = Array[Byte](1, 2, 3)
     assert(parseField(binaryData, AttributeType.BINARY) == binaryData)
     assert(parseField("anything", AttributeType.ANY) == "anything")
+  }
+
+  // LIST type tests
+  test("parseField correctly parses to LIST") {
+    // Java List passes through
+    val javaList = new java.util.ArrayList[Any]()
+    javaList.add("a")
+    javaList.add("b")
+    assert(parseField(javaList, AttributeType.LIST) == javaList)
+
+    // Scala Seq converts to Java List
+    val scalaSeq = Seq("x", "y", "z")
+    val result = parseField(scalaSeq, AttributeType.LIST).asInstanceOf[java.util.List[_]]
+    assert(result.size() == 3)
+    assert(result.get(0) == "x")
+
+    // Array converts to Java List
+    val array = Array(1, 2, 3)
+    val arrayResult = parseField(array, AttributeType.LIST).asInstanceOf[java.util.List[_]]
+    assert(arrayResult.size() == 3)
+    assert(arrayResult.get(0) == 1)
+
+    // Non-iterable throws exception
+    assertThrows[AttributeTypeException] {
+      parseField("not a list", AttributeType.LIST)
+    }
+  }
+
+  test("inferField correctly identifies LIST type") {
+    val javaList = new java.util.ArrayList[Any]()
+    javaList.add("item")
+    assert(inferField(javaList) == LIST)
+
+    val scalaSeq = Seq(1, 2, 3)
+    assert(inferField(scalaSeq) == LIST)
+  }
+
+  // STRUCT type tests
+  test("parseField correctly parses to STRUCT") {
+    // Java Map passes through
+    val javaMap = new java.util.HashMap[String, Any]()
+    javaMap.put("key1", "value1")
+    javaMap.put("key2", 42)
+    assert(parseField(javaMap, AttributeType.STRUCT) == javaMap)
+
+    // Scala Map converts to Java Map
+    val scalaMap = Map("a" -> 1, "b" -> 2)
+    val result = parseField(scalaMap, AttributeType.STRUCT).asInstanceOf[java.util.Map[String, _]]
+    assert(result.size() == 2)
+    assert(result.get("a") == 1)
+    assert(result.get("b") == 2)
+
+    // Non-map throws exception
+    assertThrows[AttributeTypeException] {
+      parseField("not a map", AttributeType.STRUCT)
+    }
+  }
+
+  test("inferField correctly identifies STRUCT type") {
+    val javaMap = new java.util.HashMap[String, Any]()
+    javaMap.put("key", "value")
+    assert(inferField(javaMap) == STRUCT)
+
+    val scalaMap = Map("x" -> 1)
+    assert(inferField(scalaMap) == STRUCT)
+  }
+
+  test("inferField with typeSoFar correctly handles LIST and STRUCT") {
+    // LIST preserves LIST type
+    val javaList = new java.util.ArrayList[Any]()
+    assert(inferField(LIST, javaList) == LIST)
+    assert(inferField(LIST, "any-value") == LIST)
+
+    // STRUCT preserves STRUCT type
+    val javaMap = new java.util.HashMap[String, Any]()
+    assert(inferField(STRUCT, javaMap) == STRUCT)
+    assert(inferField(STRUCT, "any-value") == STRUCT)
+
+    // Nested value overrides any typeSoFar
+    assert(inferField(STRING, javaList) == LIST)
+    assert(inferField(INTEGER, javaMap) == STRUCT)
   }
 
   test("parseField correctly parses to BIG_OBJECT") {

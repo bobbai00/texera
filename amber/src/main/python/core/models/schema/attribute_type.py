@@ -37,6 +37,9 @@ class AttributeType(Enum):
     DOUBLE = 5
     TIMESTAMP = 6
     BINARY = 7
+    # Nested types for complex data structures
+    LIST = 8
+    STRUCT = 9
 
 
 RAW_TYPE_MAPPING = bidict(
@@ -48,6 +51,8 @@ RAW_TYPE_MAPPING = bidict(
         "BOOLEAN": AttributeType.BOOL,
         "TIMESTAMP": AttributeType.TIMESTAMP,
         "BINARY": AttributeType.BINARY,
+        "LIST": AttributeType.LIST,
+        "STRUCT": AttributeType.STRUCT,
     }
 )
 
@@ -59,6 +64,10 @@ TO_ARROW_MAPPING = {
     AttributeType.BOOL: pa.bool_(),
     AttributeType.BINARY: pa.binary(),
     AttributeType.TIMESTAMP: pa.timestamp("us"),
+    # For nested types, store as JSON strings for Iceberg compatibility
+    # This matches the Scala implementation where LIST/STRUCT are serialized as JSON
+    AttributeType.LIST: pa.string(),
+    AttributeType.STRUCT: pa.string(),
 }
 
 FROM_ARROW_MAPPING = {
@@ -71,6 +80,11 @@ FROM_ARROW_MAPPING = {
     lib.Type_BINARY: AttributeType.BINARY,
     lib.Type_LARGE_BINARY: AttributeType.BINARY,
     lib.Type_TIMESTAMP: AttributeType.TIMESTAMP,
+    # Nested types
+    lib.Type_LIST: AttributeType.LIST,
+    lib.Type_LARGE_LIST: AttributeType.LIST,
+    lib.Type_STRUCT: AttributeType.STRUCT,
+    lib.Type_MAP: AttributeType.STRUCT,  # Map is treated as STRUCT (key-value pairs)
 }
 
 
@@ -83,6 +97,8 @@ TO_PYOBJECT_MAPPING = {
     AttributeType.BOOL: bool,
     AttributeType.BINARY: bytes,
     AttributeType.TIMESTAMP: datetime.datetime,
+    AttributeType.LIST: list,
+    AttributeType.STRUCT: dict,
 }
 
 FROM_PYOBJECT_MAPPING = {
@@ -92,4 +108,6 @@ FROM_PYOBJECT_MAPPING = {
     bool: AttributeType.BOOL,
     bytes: AttributeType.BINARY,
     datetime.datetime: AttributeType.TIMESTAMP,
+    list: AttributeType.LIST,
+    dict: AttributeType.STRUCT,
 }

@@ -160,15 +160,18 @@ object Tuple {
     * @throws RuntimeException if the field's type does not match the attribute's defined type.
     */
   private def checkAttributeMatchesField(attribute: Attribute, field: Any): Unit = {
-    if (
-      field != null && attribute.getType != AttributeType.ANY && !field.getClass.equals(
-        attribute.getType.getFieldClass
-      )
-    ) {
-      throw new RuntimeException(
-        s"Attribute ${attribute.getName}'s type (${attribute.getType}) is different from field's type (${AttributeType
-          .getAttributeType(field.getClass)})"
-      )
+    if (field != null && attribute.getType != AttributeType.ANY) {
+      val expectedClass = attribute.getType.getFieldClass
+      val actualClass = field.getClass
+      // Use isAssignableFrom for interface types (e.g., List, Map) to allow subclasses
+      val isMatch = expectedClass.isAssignableFrom(actualClass) ||
+        actualClass.equals(expectedClass)
+      if (!isMatch) {
+        throw new RuntimeException(
+          s"Attribute ${attribute.getName}'s type (${attribute.getType}) is different from field's type (${AttributeType
+            .getAttributeType(field.getClass)})"
+        )
+      }
     }
   }
 

@@ -111,16 +111,30 @@ class ArrowUtilsSpec extends AnyFlatSpec {
     }
 
     assertThrows[AttributeTypeException] {
-      ArrowUtils.toAttributeType(new ArrowType.Map(true))
-    }
-
-    assertThrows[AttributeTypeException] {
-      ArrowUtils.toAttributeType(new ArrowType.List)
-    }
-
-    assertThrows[AttributeTypeException] {
       ArrowUtils.toAttributeType(new ArrowType.Interval(IntervalUnit.DAY_TIME))
     }
+  }
+
+  // LIST and STRUCT type tests
+  it should "convert Arrow List type to AttributeType.LIST" in {
+    val arrowListType = new ArrowType.List
+    assert(ArrowUtils.toAttributeType(arrowListType) == AttributeType.LIST)
+
+    val arrowLargeListType = new ArrowType.LargeList
+    assert(ArrowUtils.toAttributeType(arrowLargeListType) == AttributeType.LIST)
+  }
+
+  it should "convert Arrow Struct and Map types to AttributeType.STRUCT" in {
+    val arrowStructType = ArrowType.Struct.INSTANCE
+    assert(ArrowUtils.toAttributeType(arrowStructType) == AttributeType.STRUCT)
+
+    val arrowMapType = new ArrowType.Map(true)
+    assert(ArrowUtils.toAttributeType(arrowMapType) == AttributeType.STRUCT)
+  }
+
+  it should "convert AttributeType.LIST and STRUCT to Arrow types" in {
+    assert(ArrowUtils.fromAttributeType(AttributeType.LIST) == ArrowType.List.INSTANCE)
+    assert(ArrowUtils.fromAttributeType(AttributeType.STRUCT) == ArrowType.Struct.INSTANCE)
   }
 
   it should "convert to Texera Schema correctly" in {
