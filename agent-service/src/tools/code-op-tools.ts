@@ -194,6 +194,38 @@ Purpose: Load data from files or external sources. No input ports.
 - Do NOT use print statements
 - Do NOT load the entire large data files directly, load its metadata and samples for understanding; Only load the entire file during processing time
 Examples:
+  # Load CSV file metadata and sample rows
+  def load() -> pd.DataFrame:
+      path = '/path/to/payments.csv'
+      df = pd.read_csv(path, nrows=2)
+      return pd.DataFrame([{
+          'file': path,
+          'columns': df.columns.tolist(),
+          'shape': str(df.shape),
+          'sample': df.to_dict('records')
+      }])
+
+  # Load JSON file metadata and structure
+  def load() -> pd.DataFrame:
+      import json
+      path = '/path/to/fees.json'
+      with open(path, 'r') as f:
+          data = json.load(f)
+      if isinstance(data, dict):
+          return pd.DataFrame([{
+              'file': path,
+              'type': 'dict',
+              'keys': list(data.keys())[:10],
+              'sample': str(data)[:500]
+          }])
+      elif isinstance(data, list):
+          return pd.DataFrame([{
+              'file': path,
+              'type': 'list',
+              'length': len(data),
+              'first_item': data[0] if data else None
+          }])
+
   # Load sample and metadata for a large CSV file
   def load() -> pd.DataFrame:
       import os
@@ -210,11 +242,11 @@ Examples:
   # Load first 10 records from a CSV file
   def load() -> pd.DataFrame:
       return pd.read_csv('/path/to/data.csv', nrows=10)
-      
+
   # Load entire CSV file for downstream processing
   def load() -> pd.DataFrame:
       return pd.read_csv('/path/to/data.csv')
-  
+
   # Load md file and emit the dataframe
   def load() -> pd.DataFrame:
       with open('/path/to/readme.md', 'r') as f:

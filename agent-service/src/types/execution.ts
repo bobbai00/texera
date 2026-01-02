@@ -55,7 +55,7 @@ export interface OperatorInfo {
   outputTuples: number;
   resultMode: string; // "table" or "visualization"
   resultFormat?: string; // "json" or "table"
-  result?: Record<string, any>[] | TableResult; // JSON array or Table structure
+  result?: string | Record<string, any>[] | TableResult; // Pre-serialized string, JSON array, or Table structure
   totalRowCount?: number;
   displayedRows?: number;
   truncated?: boolean;
