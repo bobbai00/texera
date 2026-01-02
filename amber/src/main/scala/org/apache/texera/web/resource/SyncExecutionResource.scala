@@ -551,11 +551,11 @@ class SyncExecutionResource extends LazyLogging {
   }
 
   /**
-    * Collect result for a single operator.
+    * Collect result for a single operator with symmetric truncation.
     * Uses incremental fetching with character-based limiting:
-    * - Fetches tuples one at a time using iterator
-    * - Tracks accumulated size and stops when limit is reached
-    * - Serializes based on requested mode (table or json)
+    * - Collects tuples from the front until half the limit is reached
+    * - Keeps a sliding window buffer of recent tuples for the back
+    * - Serializes as: front tuples + truncation notice + back tuples
     */
   private def collectOperatorResult(
       executionId: ExecutionIdentity,
@@ -564,7 +564,6 @@ class SyncExecutionResource extends LazyLogging {
       maxOperatorResultCellCharLimit: Int,
       serializationMode: String
   ): (String, Option[String], Option[Any], Option[Int], Option[Int], Option[Boolean]) = {
-    import com.fasterxml.jackson.databind.ObjectMapper
     import com.fasterxml.jackson.databind.node.ObjectNode
 
     try {
@@ -587,78 +586,10 @@ class SyncExecutionResource extends LazyLogging {
           // Use iterator to fetch tuples incrementally
           val tupleIterator = document.get()
 
-          // Check for visualization tuple (special case - single tuple with html/json content)
-          if (totalCount == 1 && tupleIterator.hasNext) {
-            val firstTuple = tupleIterator.next()
-            if (isVisualizationTuple(firstTuple)) {
-              val jsonResults =
-                ExecutionResultService.convertTuplesToJson(List(firstTuple), isVisualization = true)
-              return (
-                "visualization",
-                Some("json"),
-                Some(jsonResults),
-                Some(totalCount),
-                Some(1),
-                Some(false)
-              )
-            }
-            // Not a visualization tuple, need to process it normally
-            // Convert to JSON and start collecting
-            val firstJson = ExecutionResultService.convertTuplesToJson(List(firstTuple)).head
-            val truncatedFirst = truncateSingleTuple(firstJson, maxOperatorResultCellCharLimit)
-            val firstSize = estimateTupleSize(truncatedFirst, serializationMode, mapper)
-
-            if (firstSize >= maxOperatorResultCharLimit) {
-              // Even one tuple exceeds limit - return truncated version
-              val result = serializeResult(List(truncatedFirst), serializationMode, mapper)
-              val truncatedResult = symmetricTruncate(result, maxOperatorResultCharLimit)
-              return (
-                "table",
-                Some(serializationMode),
-                Some(truncatedResult),
-                Some(totalCount),
-                Some(1),
-                Some(true)
-              )
-            }
-
-            // Continue collecting more tuples
-            val collectedTuples = mutable.ListBuffer[ObjectNode](truncatedFirst)
-            var accumulatedSize = firstSize
-            var wasTruncated = false
-
-            while (tupleIterator.hasNext && !wasTruncated) {
-              val tuple = tupleIterator.next()
-              val jsonTuple = ExecutionResultService.convertTuplesToJson(List(tuple)).head
-              val truncatedTuple = truncateSingleTuple(jsonTuple, maxOperatorResultCellCharLimit)
-              val tupleSize = estimateTupleSize(truncatedTuple, serializationMode, mapper)
-
-              if (accumulatedSize + tupleSize > maxOperatorResultCharLimit) {
-                wasTruncated = true
-              } else {
-                collectedTuples += truncatedTuple
-                accumulatedSize += tupleSize
-              }
-            }
-
-            // Check if there are remaining tuples we didn't collect
-            if (!wasTruncated && tupleIterator.hasNext) {
-              wasTruncated = true
-            }
-
-            val result = serializeResult(collectedTuples.toList, serializationMode, mapper)
-            (
-              "table",
-              Some(serializationMode),
-              Some(result),
-              Some(totalCount),
-              Some(collectedTuples.size),
-              Some(wasTruncated)
-            )
-          } else if (totalCount == 0) {
-            // No tuples
+          // Handle empty result
+          if (totalCount == 0 || !tupleIterator.hasNext) {
             val emptyResult = if (serializationMode == "table") "" else "[]"
-            (
+            return (
               "table",
               Some(serializationMode),
               Some(emptyResult),
@@ -666,46 +597,189 @@ class SyncExecutionResource extends LazyLogging {
               Some(0),
               Some(false)
             )
-          } else {
-            // Multiple tuples - collect incrementally
-            val collectedTuples = mutable.ListBuffer[ObjectNode]()
-            var accumulatedSize = 0
-            var wasTruncated = false
+          }
 
-            while (tupleIterator.hasNext && !wasTruncated) {
-              val tuple = tupleIterator.next()
-              val jsonTuple = ExecutionResultService.convertTuplesToJson(List(tuple)).head
-              val truncatedTuple = truncateSingleTuple(jsonTuple, maxOperatorResultCellCharLimit)
-              val tupleSize = estimateTupleSize(truncatedTuple, serializationMode, mapper)
+          // Check for visualization tuple (special case - single tuple with html/json content)
+          val firstTuple = tupleIterator.next()
+          if (totalCount == 1 && isVisualizationTuple(firstTuple)) {
+            val jsonResults =
+              ExecutionResultService.convertTuplesToJson(List(firstTuple), isVisualization = true)
+            return (
+              "visualization",
+              Some("json"),
+              Some(jsonResults),
+              Some(totalCount),
+              Some(1),
+              Some(false)
+            )
+          }
 
-              if (
-                accumulatedSize + tupleSize > maxOperatorResultCharLimit && collectedTuples.nonEmpty
-              ) {
-                // Adding this tuple would exceed limit, stop here
-                wasTruncated = true
-              } else {
-                collectedTuples += truncatedTuple
-                accumulatedSize += tupleSize
-                // Check if we've reached the limit
-                if (accumulatedSize >= maxOperatorResultCharLimit) {
-                  wasTruncated = tupleIterator.hasNext
+          // Process first tuple
+          val firstJson = ExecutionResultService.convertTuplesToJson(List(firstTuple)).head
+          val truncatedFirst = truncateSingleTuple(firstJson, maxOperatorResultCellCharLimit)
+          val firstSize = estimateTupleSize(truncatedFirst, serializationMode, mapper)
+
+          // If even one tuple exceeds limit, return truncated version
+          if (firstSize >= maxOperatorResultCharLimit) {
+            val result = serializeResult(List(truncatedFirst), serializationMode, mapper)
+            val truncatedResult = symmetricTruncate(result, maxOperatorResultCharLimit)
+            return (
+              "table",
+              Some(serializationMode),
+              Some(truncatedResult),
+              Some(totalCount),
+              Some(1),
+              Some(true)
+            )
+          }
+
+          // Allocate half the budget for front, half for back
+          val halfLimit = maxOperatorResultCharLimit / 2
+          val truncationNoticeSize = 50 // Approximate size for "\n\n...[truncated X rows]...\n\n"
+
+          // Collect front tuples
+          val frontTuples = mutable.ListBuffer[ObjectNode](truncatedFirst)
+          var frontSize = firstSize
+          var processedCount = 1
+
+          // Collect front tuples until we reach half the limit
+          while (tupleIterator.hasNext && frontSize < halfLimit) {
+            val tuple = tupleIterator.next()
+            processedCount += 1
+            val jsonTuple = ExecutionResultService.convertTuplesToJson(List(tuple)).head
+            val truncatedTuple = truncateSingleTuple(jsonTuple, maxOperatorResultCellCharLimit)
+            val tupleSize = estimateTupleSize(truncatedTuple, serializationMode, mapper)
+
+            if (frontSize + tupleSize <= halfLimit) {
+              frontTuples += truncatedTuple
+              frontSize += tupleSize
+            } else {
+              // This tuple would exceed front limit, start collecting for back
+              // Put this tuple in the back buffer
+              val backBuffer = mutable.ArrayBuffer[(ObjectNode, Int)]()
+              backBuffer += ((truncatedTuple, tupleSize))
+              var backSize = tupleSize
+
+              // Continue iterating, keeping a sliding window for the back
+              while (tupleIterator.hasNext) {
+                val t = tupleIterator.next()
+                processedCount += 1
+                val jt = ExecutionResultService.convertTuplesToJson(List(t)).head
+                val tt = truncateSingleTuple(jt, maxOperatorResultCellCharLimit)
+                val ts = estimateTupleSize(tt, serializationMode, mapper)
+
+                backBuffer += ((tt, ts))
+                backSize += ts
+
+                // Remove from front of buffer if we exceed back limit
+                while (backSize > halfLimit - truncationNoticeSize && backBuffer.size > 1) {
+                  val (_, removedSize) = backBuffer.remove(0)
+                  backSize -= removedSize
                 }
+              }
+
+              // Now we have front and back tuples
+              val backTuples = backBuffer.map(_._1).toList
+              val skippedRows = totalCount - frontTuples.size - backTuples.size
+
+              if (skippedRows > 0) {
+                val result = serializeResultWithTruncation(
+                  frontTuples.toList,
+                  backTuples,
+                  skippedRows,
+                  serializationMode,
+                  mapper
+                )
+                return (
+                  "table",
+                  Some(serializationMode),
+                  Some(result),
+                  Some(totalCount),
+                  Some(frontTuples.size + backTuples.size),
+                  Some(true)
+                )
+              } else {
+                // No truncation needed after all
+                val allTuples = frontTuples.toList ++ backTuples
+                val result = serializeResult(allTuples, serializationMode, mapper)
+                return (
+                  "table",
+                  Some(serializationMode),
+                  Some(result),
+                  Some(totalCount),
+                  Some(allTuples.size),
+                  Some(false)
+                )
+              }
+            }
+          }
+
+          // If we get here, all tuples fit in the front portion
+          // Check if there are more tuples
+          if (tupleIterator.hasNext) {
+            // Still have tuples, need to collect back portion
+            val backBuffer = mutable.ArrayBuffer[(ObjectNode, Int)]()
+            var backSize = 0
+
+            while (tupleIterator.hasNext) {
+              val t = tupleIterator.next()
+              processedCount += 1
+              val jt = ExecutionResultService.convertTuplesToJson(List(t)).head
+              val tt = truncateSingleTuple(jt, maxOperatorResultCellCharLimit)
+              val ts = estimateTupleSize(tt, serializationMode, mapper)
+
+              backBuffer += ((tt, ts))
+              backSize += ts
+
+              // Remove from front of buffer if we exceed back limit
+              while (backSize > halfLimit - truncationNoticeSize && backBuffer.size > 1) {
+                val (_, removedSize) = backBuffer.remove(0)
+                backSize -= removedSize
               }
             }
 
-            // Check if there are remaining tuples we didn't collect
-            if (!wasTruncated && tupleIterator.hasNext) {
-              wasTruncated = true
-            }
+            val backTuples = backBuffer.map(_._1).toList
+            val skippedRows = totalCount - frontTuples.size - backTuples.size
 
-            val result = serializeResult(collectedTuples.toList, serializationMode, mapper)
+            if (skippedRows > 0) {
+              val result = serializeResultWithTruncation(
+                frontTuples.toList,
+                backTuples,
+                skippedRows,
+                serializationMode,
+                mapper
+              )
+              (
+                "table",
+                Some(serializationMode),
+                Some(result),
+                Some(totalCount),
+                Some(frontTuples.size + backTuples.size),
+                Some(true)
+              )
+            } else {
+              // No truncation needed
+              val allTuples = frontTuples.toList ++ backTuples
+              val result = serializeResult(allTuples, serializationMode, mapper)
+              (
+                "table",
+                Some(serializationMode),
+                Some(result),
+                Some(totalCount),
+                Some(allTuples.size),
+                Some(false)
+              )
+            }
+          } else {
+            // All tuples fit within the limit
+            val result = serializeResult(frontTuples.toList, serializationMode, mapper)
             (
               "table",
               Some(serializationMode),
               Some(result),
               Some(totalCount),
-              Some(collectedTuples.size),
-              Some(wasTruncated)
+              Some(frontTuples.size),
+              Some(false)
             )
           }
 
@@ -823,6 +897,81 @@ class SyncExecutionResource extends LazyLogging {
     } else {
       // JSON array format
       mapper.writeValueAsString(tuples.asJava)
+    }
+  }
+
+  /**
+    * Serialize results with truncation notice between front and back tuples.
+    * Format: front tuples + truncation notice + back tuples
+    */
+  private def serializeResultWithTruncation(
+      frontTuples: List[ObjectNode],
+      backTuples: List[ObjectNode],
+      skippedRows: Int,
+      serializationMode: String,
+      mapper: ObjectMapper
+  ): String = {
+    val truncationNotice = s"\n\n...[truncated $skippedRows rows]...\n\n"
+
+    if (serializationMode == "table") {
+      // CSV format with truncation notice
+      if (frontTuples.isEmpty && backTuples.isEmpty) {
+        ""
+      } else {
+        val headers = scala.collection.mutable.ArrayBuffer[String]()
+        val sampleTuple = if (frontTuples.nonEmpty) frontTuples.head else backTuples.head
+        val fieldNames = sampleTuple.fieldNames()
+        while (fieldNames.hasNext) {
+          headers += fieldNames.next()
+        }
+
+        val headerLine = headers.map(escapeTableCell).mkString(",")
+
+        def tuplesToLines(tuples: List[ObjectNode]): List[String] =
+          tuples.map { tuple =>
+            headers
+              .map { header =>
+                val fieldValue = tuple.get(header)
+                val cellValue = if (fieldValue == null || fieldValue.isNull) {
+                  ""
+                } else if (fieldValue.isTextual) {
+                  fieldValue.asText()
+                } else {
+                  fieldValue.toString
+                }
+                escapeTableCell(cellValue)
+              }
+              .mkString(",")
+          }
+
+        val frontLines = tuplesToLines(frontTuples)
+        val backLines = tuplesToLines(backTuples)
+
+        if (backTuples.isEmpty) {
+          (headerLine :: frontLines).mkString("\n") + truncationNotice
+        } else if (frontTuples.isEmpty) {
+          truncationNotice + (headerLine :: backLines).mkString("\n")
+        } else {
+          (headerLine :: frontLines).mkString("\n") + truncationNotice + backLines.mkString("\n")
+        }
+      }
+    } else {
+      // JSON format with truncation notice embedded
+      // We can't easily embed a notice in JSON array, so we serialize separately and combine as string
+      val frontJson =
+        if (frontTuples.isEmpty) "" else mapper.writeValueAsString(frontTuples.asJava)
+      val backJson = if (backTuples.isEmpty) "" else mapper.writeValueAsString(backTuples.asJava)
+
+      if (frontJson.isEmpty && backJson.isEmpty) {
+        "[]"
+      } else if (backJson.isEmpty) {
+        frontJson + truncationNotice
+      } else if (frontJson.isEmpty) {
+        truncationNotice + backJson
+      } else {
+        // Remove closing ] from front and opening [ from back to combine
+        frontJson.dropRight(1) + truncationNotice + backJson.drop(1)
+      }
     }
   }
 
