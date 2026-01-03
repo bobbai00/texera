@@ -16,6 +16,7 @@
 # under the License.
 
 import ctypes
+import json
 import pandas
 import pickle
 import pyarrow
@@ -94,6 +95,19 @@ class ArrowTableTupleProvider:
             elif pyarrow.types.is_struct(field_type) or pyarrow.types.is_map(field_type):
                 # Native Arrow struct/map - value is already a Python dict
                 return value
+            # Handle JSON-serialized LIST/STRUCT (stored as strings for Arrow compatibility)
+            elif (
+                (pyarrow.types.is_string(field_type) or pyarrow.types.is_large_string(field_type))
+                and value is not None
+                and isinstance(value, str)
+                and len(value) > 0
+                and value[0] in ('[', '{')
+            ):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    # Not valid JSON, return as-is
+                    pass
             # Legacy support: for binary types, convert pickled objects back.
             elif (
                 field_type == pyarrow.binary()

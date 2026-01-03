@@ -15,11 +15,13 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import json
 import threading
 import typing
 from collections import OrderedDict
 from itertools import chain
 from loguru import logger
+import pyarrow as pa
 from pyarrow import Table
 from queue import Queue
 from threading import Thread
@@ -42,6 +44,7 @@ from core.architecture.sendsemantics.round_robin_partitioner import (
     RoundRobinPartitioner,
 )
 from core.models import Tuple, Schema, StateFrame
+from core.models.schema.attribute_type import AttributeType
 from core.models.payload import DataPayload, DataFrame
 from core.models.state import State
 from core.storage.document_factory import DocumentFactory
@@ -316,12 +319,34 @@ class OutputManager:
         )
 
     def tuple_to_frame(self, tuples: typing.List[Tuple]) -> DataFrame:
+        schema = self.get_port().get_schema()
+        arrow_schema = schema.as_arrow_schema()
+        data_dict = {}
+        for name in schema.get_attr_names():
+            values = [t[name] for t in tuples]
+            arrow_type = arrow_schema.field(name).type
+            # Coerce values to match the expected Arrow type
+            coerced_values = []
+            for v in values:
+                if v is None:
+                    coerced_values.append(None)
+                elif isinstance(v, (list, dict)):
+                    # Serialize list/dict to JSON string
+                    coerced_values.append(json.dumps(v))
+                elif pa.types.is_string(arrow_type) or pa.types.is_large_string(arrow_type):
+                    # Convert to string if Arrow expects string
+                    coerced_values.append(str(v) if not isinstance(v, str) else v)
+                elif pa.types.is_binary(arrow_type) or pa.types.is_large_binary(arrow_type):
+                    # Convert to bytes if Arrow expects binary
+                    if isinstance(v, bytes):
+                        coerced_values.append(v)
+                    elif isinstance(v, str):
+                        coerced_values.append(v.encode('utf-8'))
+                    else:
+                        coerced_values.append(str(v).encode('utf-8'))
+                else:
+                    coerced_values.append(v)
+            data_dict[name] = coerced_values
         return DataFrame(
-            frame=Table.from_pydict(
-                {
-                    name: [t[name] for t in tuples]
-                    for name in self.get_port().get_schema().get_attr_names()
-                },
-                schema=self.get_port().get_schema().as_arrow_schema(),
-            )
+            frame=Table.from_pydict(data_dict, schema=arrow_schema)
         )

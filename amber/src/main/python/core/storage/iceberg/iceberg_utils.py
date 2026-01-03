@@ -245,7 +245,8 @@ def arrow_table_to_amber_tuples(
     for field_accessor in tuple_provider:
         tuple_dict = {}
         for name in column_names:
-            value = field_accessor[name] if isinstance(field_accessor, dict) else getattr(field_accessor, name, None)
+            # field_accessor is a callable function that takes field_name as argument
+            value = field_accessor(name)
             if name in nested_columns:
                 value = _deserialize_value_from_iceberg(value, True)
             tuple_dict[name] = value
