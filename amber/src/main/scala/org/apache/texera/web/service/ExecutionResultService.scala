@@ -621,7 +621,8 @@ class ExecutionResultService(
               .getPhysicalOpsOfLogicalOp(globalPortIdOption.get.opId.logicalOpId)
               .flatMap(_.outputPorts.get(globalPortIdOption.get.portId))
               .map(_._1.mode)
-              .head
+              .headOption
+              .getOrElse(OutputMode.SET_SNAPSHOT)
 
             val changeDetector =
               if (mode == OutputMode.SET_SNAPSHOT) {
