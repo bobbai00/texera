@@ -339,14 +339,21 @@ class DataProcessor(Runnable, Stoppable):
 
     def _report_exception(self, exc_info: ExceptionInfo):
         tb = traceback.extract_tb(exc_info[2])
-        filename, line_number, func_name, text = tb[-1]
+        filename, line_number, func_name, code_line = tb[-1]
         base_name = os.path.basename(filename)
         module_name, _ = os.path.splitext(base_name)
-        formatted_exception = traceback.format_exception(*exc_info)
+
+        # Extract exception type and message
+        exception_type = type(exc_info[1]).__name__
+        exception_msg = str(exc_info[1])
 
         source = f"{module_name}:{func_name}:{line_number}"
-        title: str = formatted_exception[-1].strip()[:300] + f" ({source})"
-        message: str = "\n".join(formatted_exception)[:300]
+        # Title shows the exact code line that caused the error
+        title: str = (
+            f"`{code_line.strip()}` - {exception_type}: {exception_msg}"
+            if code_line
+            else f"{exception_type}: {exception_msg}"
+        )[:300]
 
         self._context.console_message_manager.put_message(
             ConsoleMessage(
@@ -355,7 +362,7 @@ class DataProcessor(Runnable, Stoppable):
                 msg_type=ConsoleMessageType.ERROR,
                 source=source,
                 title=title,
-                message=message,
+                message="",
             )
         )
 
