@@ -64,10 +64,9 @@ case class SyncExecutionRequest(
     logicalPlan: LogicalPlanPojo,
     workflowSettings: Option[WorkflowSettings],
     targetOperatorIds: List[String],
-    timeoutSeconds: Option[Int],
+    timeoutSeconds: Int, // Execution timeout in seconds
     maxOperatorResultCharLimit: Int, // Max characters for operator results (uses symmetric truncation)
-    maxOperatorResultCellCharLimit: Int, // Max characters per cell
-    serializationMode: Option[String] // "json" (default) or "table"
+    maxOperatorResultCellCharLimit: Int // Max characters per cell
 )
 
 /**
@@ -80,15 +79,6 @@ case class ConsoleMessageInfo(
 )
 
 /**
-  * Structured table result format for compact representation.
-  * Each row is a single comma-separated string.
-  */
-case class TableResult(
-    header: String,
-    rows: List[String]
-)
-
-/**
   * Per-operator result info - contains everything about one operator.
   */
 case class OperatorInfo(
@@ -96,8 +86,7 @@ case class OperatorInfo(
     inputTuples: Long,
     outputTuples: Long,
     resultMode: String, // "table" or "visualization"
-    resultFormat: Option[String], // "json" or "table"
-    result: Option[Any], // JSON array (List[ObjectNode]) or Table structure (TableResult)
+    result: Option[Any], // JSON array (List[ObjectNode])
     totalRowCount: Option[Int],
     displayedRows: Option[Int],
     truncated: Option[Boolean],
@@ -133,7 +122,6 @@ case class TargetResultsReady(statsState: ExecutionStatsStore) extends Terminati
 @Produces(Array(MediaType.APPLICATION_JSON))
 class SyncExecutionResource extends LazyLogging {
 
-  private val DEFAULT_TIMEOUT_SECONDS = 300
   // Maximum caps - always applied for safety
   private val MAX_OPERATOR_RESULT_CHARS = 100000 // 100,000 characters max
   private val MAX_OPERATOR_RESULT_CELL_CHARS = 20000 // 20,000 characters per cell max
@@ -147,14 +135,13 @@ class SyncExecutionResource extends LazyLogging {
       request: SyncExecutionRequest,
       @Auth user: SessionUser
   ): SyncExecutionResult = {
-    val timeoutSeconds = request.timeoutSeconds.getOrElse(DEFAULT_TIMEOUT_SECONDS)
+    val timeoutSeconds = request.timeoutSeconds
 
     // Apply maximum caps for safety
     val maxOperatorResultCharLimit =
       Math.min(request.maxOperatorResultCharLimit, MAX_OPERATOR_RESULT_CHARS)
     val maxOperatorResultCellCharLimit =
       Math.min(request.maxOperatorResultCellCharLimit, MAX_OPERATOR_RESULT_CELL_CHARS)
-    val serializationMode = request.serializationMode.getOrElse("table")
 
     logger.info(
       s"Starting sync execution for workflow $workflowId with limits: " +
@@ -357,7 +344,6 @@ class SyncExecutionResource extends LazyLogging {
         request.targetOperatorIds,
         maxOperatorResultCharLimit,
         maxOperatorResultCellCharLimit,
-        serializationMode,
         inMemoryConsoleState
       )
 
@@ -432,7 +418,6 @@ class SyncExecutionResource extends LazyLogging {
       targetOperatorIds: List[String],
       maxOperatorResultCharLimit: Int,
       maxOperatorResultCellCharLimit: Int,
-      serializationMode: String,
       inMemoryConsoleState: Option[ExecutionConsoleStore] = None
   ): Map[String, OperatorInfo] = {
     val operatorInfos = mutable.Map[String, OperatorInfo]()
@@ -468,13 +453,12 @@ class SyncExecutionResource extends LazyLogging {
       }
 
       // Get result
-      val (resultMode, resultFormat, result, totalRowCount, displayedRows, truncated) =
+      val (resultMode, result, totalRowCount, displayedRows, truncated) =
         collectOperatorResult(
           executionId,
           opId,
           maxOperatorResultCharLimit,
-          maxOperatorResultCellCharLimit,
-          serializationMode
+          maxOperatorResultCellCharLimit
         )
 
       // Get console logs - first try database, then fallback to in-memory state
@@ -509,7 +493,6 @@ class SyncExecutionResource extends LazyLogging {
         inputTuples = inputTuples,
         outputTuples = outputTuples,
         resultMode = resultMode,
-        resultFormat = resultFormat,
         result = result,
         totalRowCount = totalRowCount,
         displayedRows = displayedRows,
@@ -555,15 +538,14 @@ class SyncExecutionResource extends LazyLogging {
     * Uses incremental fetching with character-based limiting:
     * - Collects tuples from the front until half the limit is reached
     * - Keeps a sliding window buffer of recent tuples for the back
-    * - Serializes as: front tuples + truncation notice + back tuples
+    * - Returns JSON array (List[ObjectNode]) - serialization to table/toon format is done by agent-service
     */
   private def collectOperatorResult(
       executionId: ExecutionIdentity,
       opId: String,
       maxOperatorResultCharLimit: Int,
-      maxOperatorResultCellCharLimit: Int,
-      serializationMode: String
-  ): (String, Option[String], Option[Any], Option[Int], Option[Int], Option[Boolean]) = {
+      maxOperatorResultCellCharLimit: Int
+  ): (String, Option[Any], Option[Int], Option[Int], Option[Boolean]) = {
     import com.fasterxml.jackson.databind.node.ObjectNode
 
     try {
@@ -588,11 +570,9 @@ class SyncExecutionResource extends LazyLogging {
 
           // Handle empty result
           if (totalCount == 0 || !tupleIterator.hasNext) {
-            val emptyResult = if (serializationMode == "table") "" else "[]"
             return (
               "table",
-              Some(serializationMode),
-              Some(emptyResult),
+              Some(List.empty[ObjectNode].asJava),
               Some(0),
               Some(0),
               Some(false)
@@ -606,7 +586,6 @@ class SyncExecutionResource extends LazyLogging {
               ExecutionResultService.convertTuplesToJson(List(firstTuple), isVisualization = true)
             return (
               "visualization",
-              Some("json"),
               Some(jsonResults),
               Some(totalCount),
               Some(1),
@@ -617,16 +596,13 @@ class SyncExecutionResource extends LazyLogging {
           // Process first tuple
           val firstJson = ExecutionResultService.convertTuplesToJson(List(firstTuple)).head
           val truncatedFirst = truncateSingleTuple(firstJson, maxOperatorResultCellCharLimit)
-          val firstSize = estimateTupleSize(truncatedFirst, serializationMode, mapper)
+          val firstSize = estimateTupleSize(truncatedFirst, mapper)
 
           // If even one tuple exceeds limit, return truncated version
           if (firstSize >= maxOperatorResultCharLimit) {
-            val result = serializeResult(List(truncatedFirst), serializationMode, mapper)
-            val truncatedResult = symmetricTruncate(result, maxOperatorResultCharLimit)
             return (
               "table",
-              Some(serializationMode),
-              Some(truncatedResult),
+              Some(List(truncatedFirst).asJava),
               Some(totalCount),
               Some(1),
               Some(true)
@@ -635,7 +611,7 @@ class SyncExecutionResource extends LazyLogging {
 
           // Allocate half the budget for front, half for back
           val halfLimit = maxOperatorResultCharLimit / 2
-          val truncationNoticeSize = 50 // Approximate size for "\n\n...[truncated X rows]...\n\n"
+          val truncationNoticeSize = 50 // Approximate size for truncation metadata
 
           // Collect front tuples
           val frontTuples = mutable.ListBuffer[ObjectNode](truncatedFirst)
@@ -648,7 +624,7 @@ class SyncExecutionResource extends LazyLogging {
             processedCount += 1
             val jsonTuple = ExecutionResultService.convertTuplesToJson(List(tuple)).head
             val truncatedTuple = truncateSingleTuple(jsonTuple, maxOperatorResultCellCharLimit)
-            val tupleSize = estimateTupleSize(truncatedTuple, serializationMode, mapper)
+            val tupleSize = estimateTupleSize(truncatedTuple, mapper)
 
             if (frontSize + tupleSize <= halfLimit) {
               frontTuples += truncatedTuple
@@ -666,7 +642,7 @@ class SyncExecutionResource extends LazyLogging {
                 processedCount += 1
                 val jt = ExecutionResultService.convertTuplesToJson(List(t)).head
                 val tt = truncateSingleTuple(jt, maxOperatorResultCellCharLimit)
-                val ts = estimateTupleSize(tt, serializationMode, mapper)
+                val ts = estimateTupleSize(tt, mapper)
 
                 backBuffer += ((tt, ts))
                 backSize += ts
@@ -680,37 +656,16 @@ class SyncExecutionResource extends LazyLogging {
 
               // Now we have front and back tuples
               val backTuples = backBuffer.map(_._1).toList
-              val skippedRows = totalCount - frontTuples.size - backTuples.size
+              val allTuples = frontTuples.toList ++ backTuples
+              val skippedRows = totalCount - allTuples.size
 
-              if (skippedRows > 0) {
-                val result = serializeResultWithTruncation(
-                  frontTuples.toList,
-                  backTuples,
-                  skippedRows,
-                  serializationMode,
-                  mapper
-                )
-                return (
-                  "table",
-                  Some(serializationMode),
-                  Some(result),
-                  Some(totalCount),
-                  Some(frontTuples.size + backTuples.size),
-                  Some(true)
-                )
-              } else {
-                // No truncation needed after all
-                val allTuples = frontTuples.toList ++ backTuples
-                val result = serializeResult(allTuples, serializationMode, mapper)
-                return (
-                  "table",
-                  Some(serializationMode),
-                  Some(result),
-                  Some(totalCount),
-                  Some(allTuples.size),
-                  Some(false)
-                )
-              }
+              return (
+                "table",
+                Some(allTuples.asJava),
+                Some(totalCount),
+                Some(allTuples.size),
+                Some(skippedRows > 0)
+              )
             }
           }
 
@@ -726,7 +681,7 @@ class SyncExecutionResource extends LazyLogging {
               processedCount += 1
               val jt = ExecutionResultService.convertTuplesToJson(List(t)).head
               val tt = truncateSingleTuple(jt, maxOperatorResultCellCharLimit)
-              val ts = estimateTupleSize(tt, serializationMode, mapper)
+              val ts = estimateTupleSize(tt, mapper)
 
               backBuffer += ((tt, ts))
               backSize += ts
@@ -739,44 +694,21 @@ class SyncExecutionResource extends LazyLogging {
             }
 
             val backTuples = backBuffer.map(_._1).toList
-            val skippedRows = totalCount - frontTuples.size - backTuples.size
+            val allTuples = frontTuples.toList ++ backTuples
+            val skippedRows = totalCount - allTuples.size
 
-            if (skippedRows > 0) {
-              val result = serializeResultWithTruncation(
-                frontTuples.toList,
-                backTuples,
-                skippedRows,
-                serializationMode,
-                mapper
-              )
-              (
-                "table",
-                Some(serializationMode),
-                Some(result),
-                Some(totalCount),
-                Some(frontTuples.size + backTuples.size),
-                Some(true)
-              )
-            } else {
-              // No truncation needed
-              val allTuples = frontTuples.toList ++ backTuples
-              val result = serializeResult(allTuples, serializationMode, mapper)
-              (
-                "table",
-                Some(serializationMode),
-                Some(result),
-                Some(totalCount),
-                Some(allTuples.size),
-                Some(false)
-              )
-            }
-          } else {
-            // All tuples fit within the limit
-            val result = serializeResult(frontTuples.toList, serializationMode, mapper)
             (
               "table",
-              Some(serializationMode),
-              Some(result),
+              Some(allTuples.asJava),
+              Some(totalCount),
+              Some(allTuples.size),
+              Some(skippedRows > 0)
+            )
+          } else {
+            // All tuples fit within the limit
+            (
+              "table",
+              Some(frontTuples.toList.asJava),
               Some(totalCount),
               Some(frontTuples.size),
               Some(false)
@@ -784,12 +716,12 @@ class SyncExecutionResource extends LazyLogging {
           }
 
         case None =>
-          ("table", None, None, None, None, None)
+          ("table", None, None, None, None)
       }
     } catch {
       case e: Exception =>
         logger.warn(s"Error collecting result for operator $opId: ${e.getMessage}", e)
-        ("table", None, None, None, None, None)
+        ("table", None, None, None, None)
     }
   }
 
@@ -826,175 +758,13 @@ class SyncExecutionResource extends LazyLogging {
   }
 
   /**
-    * Estimate the serialized size of a tuple based on serialization mode.
-    * For table mode: CSV row format
-    * For JSON mode: JSON object format
+    * Estimate the serialized size of a tuple as JSON.
     */
   private def estimateTupleSize(
       tuple: ObjectNode,
-      serializationMode: String,
       mapper: ObjectMapper
   ): Int = {
-    if (serializationMode == "table") {
-      // Estimate CSV row size: values joined by commas + newline
-      val fieldNames = tuple.fieldNames()
-      var size = 0
-      while (fieldNames.hasNext) {
-        val fieldName = fieldNames.next()
-        val fieldValue = tuple.get(fieldName)
-        val cellValue = if (fieldValue == null || fieldValue.isNull) {
-          ""
-        } else if (fieldValue.isTextual) {
-          fieldValue.asText()
-        } else {
-          fieldValue.toString
-        }
-        size += cellValue.length + 1 // +1 for comma or newline
-      }
-      size
-    } else {
-      // JSON object size
-      mapper.writeValueAsString(tuple).length + 1 // +1 for comma in array
-    }
-  }
-
-  /**
-    * Serialize collected tuples based on the serialization mode.
-    */
-  private def serializeResult(
-      tuples: List[ObjectNode],
-      serializationMode: String,
-      mapper: ObjectMapper
-  ): String = {
-    if (tuples.isEmpty) {
-      if (serializationMode == "table") "" else "[]"
-    } else if (serializationMode == "table") {
-      // CSV format: header row + data rows
-      val headers = scala.collection.mutable.ArrayBuffer[String]()
-      val fieldNames = tuples.head.fieldNames()
-      while (fieldNames.hasNext) {
-        headers += fieldNames.next()
-      }
-
-      val headerLine = headers.map(escapeTableCell).mkString(",")
-      val dataLines = tuples.map { tuple =>
-        headers
-          .map { header =>
-            val fieldValue = tuple.get(header)
-            val cellValue = if (fieldValue == null || fieldValue.isNull) {
-              ""
-            } else if (fieldValue.isTextual) {
-              fieldValue.asText()
-            } else {
-              fieldValue.toString
-            }
-            escapeTableCell(cellValue)
-          }
-          .mkString(",")
-      }
-
-      (headerLine :: dataLines).mkString("\n")
-    } else {
-      // JSON array format
-      mapper.writeValueAsString(tuples.asJava)
-    }
-  }
-
-  /**
-    * Serialize results with truncation notice between front and back tuples.
-    * Format: front tuples + truncation notice + back tuples
-    */
-  private def serializeResultWithTruncation(
-      frontTuples: List[ObjectNode],
-      backTuples: List[ObjectNode],
-      skippedRows: Int,
-      serializationMode: String,
-      mapper: ObjectMapper
-  ): String = {
-    val truncationNotice = s"\n\n...[truncated $skippedRows rows]...\n\n"
-
-    if (serializationMode == "table") {
-      // CSV format with truncation notice
-      if (frontTuples.isEmpty && backTuples.isEmpty) {
-        ""
-      } else {
-        val headers = scala.collection.mutable.ArrayBuffer[String]()
-        val sampleTuple = if (frontTuples.nonEmpty) frontTuples.head else backTuples.head
-        val fieldNames = sampleTuple.fieldNames()
-        while (fieldNames.hasNext) {
-          headers += fieldNames.next()
-        }
-
-        val headerLine = headers.map(escapeTableCell).mkString(",")
-
-        def tuplesToLines(tuples: List[ObjectNode]): List[String] =
-          tuples.map { tuple =>
-            headers
-              .map { header =>
-                val fieldValue = tuple.get(header)
-                val cellValue = if (fieldValue == null || fieldValue.isNull) {
-                  ""
-                } else if (fieldValue.isTextual) {
-                  fieldValue.asText()
-                } else {
-                  fieldValue.toString
-                }
-                escapeTableCell(cellValue)
-              }
-              .mkString(",")
-          }
-
-        val frontLines = tuplesToLines(frontTuples)
-        val backLines = tuplesToLines(backTuples)
-
-        if (backTuples.isEmpty) {
-          (headerLine :: frontLines).mkString("\n") + truncationNotice
-        } else if (frontTuples.isEmpty) {
-          truncationNotice + (headerLine :: backLines).mkString("\n")
-        } else {
-          (headerLine :: frontLines).mkString("\n") + truncationNotice + backLines.mkString("\n")
-        }
-      }
-    } else {
-      // JSON format with truncation notice embedded
-      // We can't easily embed a notice in JSON array, so we serialize separately and combine as string
-      val frontJson =
-        if (frontTuples.isEmpty) "" else mapper.writeValueAsString(frontTuples.asJava)
-      val backJson = if (backTuples.isEmpty) "" else mapper.writeValueAsString(backTuples.asJava)
-
-      if (frontJson.isEmpty && backJson.isEmpty) {
-        "[]"
-      } else if (backJson.isEmpty) {
-        frontJson + truncationNotice
-      } else if (frontJson.isEmpty) {
-        truncationNotice + backJson
-      } else {
-        // Remove closing ] from front and opening [ from back to combine
-        frontJson.dropRight(1) + truncationNotice + backJson.drop(1)
-      }
-    }
-  }
-
-  /**
-    * Apply symmetric truncation to a string: keeps first half + notice + last half.
-    * This ensures both the beginning and end of the content are visible.
-    */
-  private def symmetricTruncate(content: String, maxChars: Int): String = {
-    if (content.length <= maxChars) {
-      content
-    } else {
-      val truncationNotice =
-        s"\n\n...[truncated ${content.length - maxChars} characters]...\n\n"
-      val availableChars = maxChars - truncationNotice.length
-      if (availableChars <= 0) {
-        content.substring(0, maxChars)
-      } else {
-        val halfChars = availableChars / 2
-        val firstHalf = content.substring(0, halfChars)
-        val lastHalf = content.substring(content.length - halfChars)
-        firstHalf + truncationNotice + lastHalf
-      }
-    }
+    mapper.writeValueAsString(tuple).length + 1 // +1 for comma in array
   }
 
   /**
@@ -1012,16 +782,6 @@ class SyncExecutionResource extends LazyLogging {
         val halfChars = availableChars / 2
         text.substring(0, halfChars) + notice + text.substring(text.length - halfChars)
       }
-    }
-  }
-
-  private def escapeTableCell(value: String): String = {
-    if (
-      value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")
-    ) {
-      "\"" + value.replace("\"", "\"\"") + "\""
-    } else {
-      value
     }
   }
 

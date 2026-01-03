@@ -299,7 +299,7 @@ async function executeWorkflowHttp(
     ? Math.ceil(config.executionTimeoutMs / 1000)
     : Math.ceil(DEFAULT_AGENT_SETTINGS.executionTimeoutMs / 1000);
 
-  // Always request JSON format from backend - we'll convert in agent-service if needed
+  // Backend returns JSON - agent-service handles serialization to table/toon format
   const request = {
     executionName: "agent-execution",
     logicalPlan: {
@@ -310,7 +310,6 @@ async function executeWorkflowHttp(
     },
     targetOperatorIds: logicalPlan.opsToViewResult || [],
     timeoutSeconds,
-    serializationMode: config.serializationMode ?? OperatorResultSerializationMode.TABLE,
     maxOperatorResultCharLimit: config.maxOperatorResultCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit,
     maxOperatorResultCellCharLimit:
       config.maxOperatorResultCellCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCellCharLimit,
@@ -422,28 +421,35 @@ function formatExecutionError(
 }
 
 /**
- * Convert JSON result to table format (CSV-like string).
- * This is done in agent-service rather than backend.
+ * Convert JSON result to table format (pandas DataFrame-like, tab-separated).
+ * Respects original types: numbers/booleans are not quoted, only complex types use JSON.
+ * Uses tab (\t) as column separator for readability.
  */
 function jsonToTableFormat(jsonResult: Record<string, any>[]): string {
   if (!jsonResult || jsonResult.length === 0) return "";
 
   const headers = Object.keys(jsonResult[0]);
-  const headerLine = headers.join(",");
+  const headerLine = headers.join("\t");
 
   const rows = jsonResult.map(row =>
     headers
       .map(h => {
         const val = row[h];
-        if (val === null || val === undefined) return "";
-        const str = typeof val === "string" ? val : JSON.stringify(val);
-        // Escape CSV: wrap in quotes if contains comma, quote, or newline
-        if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-          return `"${str.replace(/"/g, '""')}"`;
+        // Handle null/undefined
+        if (val === null) return "null";
+        if (val === undefined) return "";
+        // Preserve primitive types without quotes
+        if (typeof val === "number" || typeof val === "boolean") {
+          return String(val);
         }
-        return str;
+        // Strings: escape tabs and newlines for table format
+        if (typeof val === "string") {
+          return val.replace(/\t/g, "\\t").replace(/\n/g, "\\n");
+        }
+        // Complex types (arrays, objects): use JSON representation
+        return JSON.stringify(val);
       })
-      .join(",")
+      .join("\t")
   );
 
   return [headerLine, ...rows].join("\n");
@@ -542,10 +548,10 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, getConfi
           return createErrorResult(formatExecutionError(undefined, [{ operatorId, error: opInfo.error }]));
         }
 
-        // Get result info
+        // Get result info - backend always returns JSON array, agent-service serializes
         const serializationMode = config.serializationMode ?? OperatorResultSerializationMode.TABLE;
 
-        if (!opInfo.result) {
+        if (!opInfo.result || !Array.isArray(opInfo.result)) {
           return "(no result data)";
         }
 
@@ -553,53 +559,31 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, getConfi
         const totalRows = opInfo.totalRowCount ?? displayedRows;
         const truncated = opInfo.truncated ?? displayedRows < totalRows;
 
-        // Backend now returns pre-serialized string based on requested mode
-        if (typeof opInfo.result === "string") {
-          // Result is already serialized by backend
-          const dataString = opInfo.result;
+        // Backend returns JSON array - serialize based on configured mode
+        const jsonArray = opInfo.result as Record<string, any>[];
+        const columns = jsonArray.length > 0 ? Object.keys(jsonArray[0]).length : 0;
 
-          // Estimate columns from first line if table format
-          let columns = 0;
-          if (opInfo.resultFormat === "table" && dataString.length > 0) {
-            const firstLine = dataString.split("\n")[0];
-            columns = (firstLine.match(/,/g) || []).length + 1;
-          }
+        let dataString: string;
+        let modeLabel: string;
 
-          const modeLabel = opInfo.resultFormat ?? serializationMode;
-          const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
-          return `${meta}\n${dataString}`;
+        switch (serializationMode) {
+          case OperatorResultSerializationMode.TABLE:
+            dataString = jsonToTableFormat(jsonArray);
+            modeLabel = "table";
+            break;
+          case OperatorResultSerializationMode.TOON:
+            dataString = jsonToToonFormat(jsonArray);
+            modeLabel = "toon";
+            break;
+          case OperatorResultSerializationMode.JSON:
+          default:
+            dataString = JSON.stringify(jsonArray);
+            modeLabel = "json";
+            break;
         }
 
-        // Handle array result (visualization or legacy)
-        if (Array.isArray(opInfo.result)) {
-          const jsonArray = opInfo.result as Record<string, any>[];
-          const columns = jsonArray.length > 0 ? Object.keys(jsonArray[0]).length : 0;
-
-          let dataString: string;
-          let modeLabel: string;
-
-          switch (serializationMode) {
-            case OperatorResultSerializationMode.TABLE:
-              dataString = jsonToTableFormat(jsonArray);
-              modeLabel = "table";
-              break;
-            case OperatorResultSerializationMode.TOON:
-              dataString = jsonToToonFormat(jsonArray);
-              modeLabel = "toon";
-              break;
-            case OperatorResultSerializationMode.JSON:
-            default:
-              dataString = JSON.stringify(jsonArray);
-              modeLabel = "json";
-              break;
-          }
-
-          const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
-          return `${meta}\n${dataString}`;
-        }
-
-        // Fallback for other types
-        return JSON.stringify(opInfo.result);
+        const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
+        return `${meta}\n${dataString}`;
       } catch (error: any) {
         if (error.name === "AbortError") {
           throw error;

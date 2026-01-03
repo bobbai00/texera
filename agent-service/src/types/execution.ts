@@ -39,23 +39,15 @@ export interface ConsoleMessage {
 // ============================================================================
 
 /**
- * Structured table result format for compact representation.
- */
-export interface TableResult {
-  header: string[]; // Column names
-  rows: string[][]; // Array of rows, each row is an array of cell values
-}
-
-/**
  * Per-operator execution info returned by the sync API.
+ * Result is always a JSON array - serialization to table/toon format is done in agent-service.
  */
 export interface OperatorInfo {
   state: string;
   inputTuples: number;
   outputTuples: number;
   resultMode: string; // "table" or "visualization"
-  resultFormat?: string; // "json" or "table"
-  result?: string | Record<string, any>[] | TableResult; // Pre-serialized string, JSON array, or Table structure
+  result?: Record<string, any>[]; // JSON array of tuples
   totalRowCount?: number;
   displayedRows?: number;
   truncated?: boolean;
