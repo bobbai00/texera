@@ -1,16 +1,20 @@
 [project]
 name = "agent-service-benchmark"
 version = "0.1.0"
-description = "Benchmarking client for Texera Agent Service using DABstep benchmark"
+description = "Benchmarking client for Texera Agent Service using DABstep and Spider2-DBT benchmarks"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    # DABstep benchmark
     "dabstep-benchmark",
     "datasets==3.2.0",
     "smolagents[litellm]==1.6.0",
     "requests>=2.31.0",
     "pandas>=2.0.0",
     "huggingface-hub>=0.20.0",
+    # Spider2-DBT benchmark
+    "duckdb>=1.0.0",
+    "gdown>=5.0.0",
 ]
 
 [tool.uv.sources]

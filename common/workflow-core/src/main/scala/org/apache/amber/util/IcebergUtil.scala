@@ -430,7 +430,7 @@ object IcebergUtil {
     // First check if field name has a special suffix indicating LIST, STRUCT, INTEGER, or BIG_OBJECT
     getTypeFromFieldSuffix(fieldName) match {
       case Some(attrType) => attrType
-      case None =>
+      case None           =>
         // No special suffix, determine type from Iceberg type
         icebergType match {
           case _: Types.StringType    => AttributeType.STRING
@@ -444,7 +444,7 @@ object IcebergUtil {
           case _: Types.ListType   => AttributeType.LIST
           case _: Types.MapType    => AttributeType.STRUCT
           case _: Types.StructType => AttributeType.STRUCT
-          case _ => throw new IllegalArgumentException(s"Unsupported Iceberg type: $icebergType")
+          case _                   => throw new IllegalArgumentException(s"Unsupported Iceberg type: $icebergType")
         }
     }
   }

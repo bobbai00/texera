@@ -209,7 +209,7 @@ class CodeAgentWrapper:
 
         # State
         self._agent: Optional[CodeAgent] = None
-        self._model: Optional[LiteLLMModel] = None
+        self._model: Optional[OpenAIServerModel] = None
         self._last_result: Optional[CodeAgentResult] = None
 
     @property

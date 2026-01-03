@@ -238,7 +238,8 @@ object ArrowUtils extends LazyLogging {
               // Fallback: serialize as JSON string if vector is VarChar
               if (isNull) charVector.setNull(index)
               else {
-                val jsonBytes = objectMapper.writeValueAsString(value).getBytes(StandardCharsets.UTF_8)
+                val jsonBytes =
+                  objectMapper.writeValueAsString(value).getBytes(StandardCharsets.UTF_8)
                 charVector.setSafe(index, jsonBytes)
               }
             case _ =>
@@ -259,7 +260,8 @@ object ArrowUtils extends LazyLogging {
               // Fallback: serialize as JSON string if vector is VarChar
               if (isNull) charVector.setNull(index)
               else {
-                val jsonBytes = objectMapper.writeValueAsString(value).getBytes(StandardCharsets.UTF_8)
+                val jsonBytes =
+                  objectMapper.writeValueAsString(value).getBytes(StandardCharsets.UTF_8)
                 charVector.setSafe(index, jsonBytes)
               }
             case _ =>
@@ -299,7 +301,11 @@ object ArrowUtils extends LazyLogging {
           // Create a LIST field with a generic element type (string by default)
           // The actual element type will be inferred from the data at runtime
           val elementField = Field.nullable("item", ArrowType.Utf8.INSTANCE)
-          new Field(name, FieldType.nullable(arrowType), java.util.Collections.singletonList(elementField))
+          new Field(
+            name,
+            FieldType.nullable(arrowType),
+            java.util.Collections.singletonList(elementField)
+          )
 
         case AttributeType.STRUCT =>
           // Create a STRUCT field with no predefined children
@@ -310,7 +316,8 @@ object ArrowUtils extends LazyLogging {
           // For primitive types, use the standard nullablePrimitive method
           arrowType match {
             case pt: PrimitiveType => Field.nullablePrimitive(name, pt)
-            case _ => new Field(name, FieldType.nullable(arrowType), java.util.Collections.emptyList())
+            case _ =>
+              new Field(name, FieldType.nullable(arrowType), java.util.Collections.emptyList())
           }
       }
       arrowFields.add(field)

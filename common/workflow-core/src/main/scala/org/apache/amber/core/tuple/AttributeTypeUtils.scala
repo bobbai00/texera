@@ -364,11 +364,11 @@ object AttributeTypeUtils extends Serializable {
   def inferField(fieldValue: Any): AttributeType = {
     // Check for nested types first
     fieldValue match {
-      case _: java.util.List[_] => AttributeType.LIST
-      case _: Seq[_]            => AttributeType.LIST
+      case _: java.util.List[_]   => AttributeType.LIST
+      case _: Seq[_]              => AttributeType.LIST
       case _: java.util.Map[_, _] => AttributeType.STRUCT
       case _: Map[_, _]           => AttributeType.STRUCT
-      case _ =>
+      case _                      =>
         // Start with LONG to avoid overflow for large integer values
         tryParseLong(fieldValue)
     }
@@ -423,9 +423,9 @@ object AttributeTypeUtils extends Serializable {
   def inferField(attributeType: AttributeType, fieldValue: Any): AttributeType = {
     // Check for nested types first - they take precedence
     fieldValue match {
-      case _: java.util.List[_] | _: Seq[_] => return AttributeType.LIST
+      case _: java.util.List[_] | _: Seq[_]      => return AttributeType.LIST
       case _: java.util.Map[_, _] | _: Map[_, _] => return AttributeType.STRUCT
-      case _ => // Continue with regular inference
+      case _                                     => // Continue with regular inference
     }
 
     attributeType match {

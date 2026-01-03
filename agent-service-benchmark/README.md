@@ -1,10 +1,31 @@
 # Agent Service Benchmark
 
-Benchmarking client for Texera Agent Service using the [DABstep benchmark](https://huggingface.co/spaces/adyen/DABstep).
+Benchmarking client for Texera Agent Service using multiple benchmarks:
+- [DABstep benchmark](https://huggingface.co/spaces/adyen/DABstep) - Data analysis questions
+- [Spider2-DBT benchmark](https://github.com/xlang-ai/Spider2/tree/main/spider2-dbt) - DuckDB data transformation
 
 ## Overview
 
-This benchmark tests the Texera Agent Service's ability to answer data analysis questions by building and executing dataflow workflows. It uses the DABstep (Data Analysis Benchmark Step) benchmark, which contains questions about payment transaction data.
+This benchmark suite tests the Texera Agent Service's ability to:
+1. **DABstep**: Answer data analysis questions about payment transaction data
+2. **Spider2-DBT**: Complete complex DuckDB data transformation projects requiring SQL generation and code comprehension
+
+## Project Structure
+
+```
+agent-service-benchmark/
+├── agents/                    # Agent implementations
+│   ├── __init__.py
+│   ├── dataflow_agent.py     # Texera Agent Service client
+│   └── code_agent.py         # Baseline smolagents wrapper
+├── benchmarks/               # Benchmark runners
+│   ├── __init__.py
+│   ├── dabstep.py           # DABstep benchmark runner
+│   └── spider_2_dbt.py      # Spider2-DBT benchmark runner
+├── runs/                     # Output directory for results
+├── pyproject.toml           # Dependencies
+└── README.md
+```
 
 ## Prerequisites
 
@@ -32,10 +53,10 @@ huggingface-cli login
 
 ```bash
 # Run all dev tasks (~50 tasks) with default settings
-uv run python main.py
+uv run python -m benchmarks.dabstep
 
 # Run specific number of tasks
-uv run python main.py --max-tasks 10
+uv run python -m benchmarks.dabstep --max-tasks 10
 ```
 
 ### Full Command Template
@@ -43,7 +64,7 @@ uv run python main.py --max-tasks 10
 Run the dataflow agent with all configurable parameters:
 
 ```bash
-uv run python main.py \
+uv run python -m benchmarks.dabstep \
       --split dev \
       --max-tasks 10 \
       --model claude-haiku-4.5 \
@@ -96,28 +117,28 @@ uv run python main.py \
 
 ```bash
 # Run 10 tasks with verbose output
-uv run python main.py --max-tasks 10 --verbosity 2
+uv run python -m benchmarks.dabstep --max-tasks 10 --verbosity 2
 
 # Run with a different model and more steps
-uv run python main.py --model claude-sonnet-4-5 --max-steps 100
+uv run python -m benchmarks.dabstep --model claude-sonnet-4-5 --max-steps 100
 
 # Run in general mode (uses all operators instead of code operators)
-uv run python main.py --agent-mode general
+uv run python -m benchmarks.dabstep --agent-mode general
 
 # Run with JSON result format and higher character limits
-uv run python main.py --result-format json --max-result-chars 40000 --max-cell-chars 8000
+uv run python -m benchmarks.dabstep --result-format json --max-result-chars 40000 --max-cell-chars 8000
 
 # Run in parallel with 8 workers
-uv run python main.py --parallel --max-workers 8
+uv run python -m benchmarks.dabstep --parallel --max-workers 8
 
 # Run full benchmark with evaluation
-uv run python main.py --split default --max-tasks 0 --evaluate
+uv run python -m benchmarks.dabstep --split default --max-tasks 0 --evaluate
 
 # Skip download and retain agents for debugging
-uv run python main.py --skip-download --retain --max-tasks 3
+uv run python -m benchmarks.dabstep --skip-download --retain --max-tasks 3
 
 # Run baseline code agent (smolagents) for comparison
-uv run python main.py --baseline --max-tasks 10
+uv run python -m benchmarks.dabstep --baseline --max-tasks 10
 ```
 
 ## Output
@@ -136,16 +157,26 @@ Results are saved to the `runs/` directory:
 
 ### Components
 
-1. **DataflowAgent** (`dataflow_agent.py`)
+1. **DataflowAgent** (`agents/dataflow_agent.py`)
    - Python client for the Texera Agent Service
    - Handles authentication, workflow creation, and agent interaction
    - Compatible interface with smolagents for benchmark comparison
 
-2. **Benchmark Runner** (`main.py`)
+2. **CodeAgentWrapper** (`agents/code_agent.py`)
+   - Baseline agent using smolagents library
+   - Used for comparison with the dataflow agent
+
+3. **DABstep Benchmark** (`benchmarks/dabstep.py`)
    - Downloads DABstep context files from HuggingFace
    - Loads benchmark tasks
    - Runs agent on each task and collects results
    - Optionally evaluates results
+
+4. **Spider2-DBT Benchmark** (`benchmarks/spider_2_dbt.py`)
+   - Downloads Spider2-DBT data from GitHub/Google Drive
+   - Loads 69 DuckDB data transformation tasks
+   - Runs agent on complex SQL generation tasks
+   - Supports table/DuckDB comparison for evaluation
 
 ### How It Works
 
@@ -174,9 +205,73 @@ This benchmark allows comparing the two approaches on the same tasks using the `
 - **Leaderboard**: [DABstep Space](https://huggingface.co/spaces/adyen/DABstep)
 - **Framework**: [smolagents](https://github.com/huggingface/smolagents)
 
+---
+
+## Spider2-DBT Benchmark
+
+Spider2-DBT contains 69 examples of DuckDB data transformation projects. These tasks require models to understand project code, navigate complex SQL environments, and generate sophisticated SQL queries (often exceeding 100 lines).
+
+### Setup Spider2-DBT
+
+```bash
+# Download and setup benchmark data (requires gdown)
+uv run python -m benchmarks.spider_2_dbt --setup
+
+# Force re-download if needed
+uv run python -m benchmarks.spider_2_dbt --setup --force
+```
+
+### Running Spider2-DBT
+
+```bash
+# Run all tasks with default settings
+uv run python -m benchmarks.spider_2_dbt
+
+# Run specific number of tasks
+uv run python -m benchmarks.spider_2_dbt --max-tasks 10
+
+# Filter tasks by prefix (e.g., only 'playbook' tasks)
+uv run python -m benchmarks.spider_2_dbt --filter playbook
+
+# Run baseline code agent (smolagents)
+uv run python -m benchmarks.spider_2_dbt --baseline --max-tasks 5
+```
+
+### Spider2-DBT Command Line Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--setup` | - | Download and setup benchmark data |
+| `--force` | false | Force re-download (with --setup) |
+| `--max-tasks` | all | Maximum tasks to run |
+| `--filter` | none | Filter tasks by instance_id prefix |
+| `--data-dir` | `/tmp/spider2-dbt-data` | Directory for benchmark data |
+| `--model` | `claude-haiku-4.5` | LLM model type |
+| `--max-steps` | `50` | Maximum agent steps per task |
+| `--baseline` | false | Run baseline code agent instead |
+
+### Spider2-DBT Output
+
+Results are saved to `runs/spider2-dbt/`:
+- `{timestamp}_{instance_id}/` - Per-task folder with:
+  - `prompt.txt` - Full prompt sent to agent
+  - `instruction.txt` - Original task instruction
+  - `answer.txt` - Agent's answer
+  - `workflow.json` - Final workflow content
+  - `trace.json` - Full reasoning trace
+- `results_metadata.jsonl` - Metadata for evaluation
+
+### Spider2-DBT Reference
+
+- **Repository**: [xlang-ai/Spider2](https://github.com/xlang-ai/Spider2)
+- **Benchmark**: [spider2-dbt](https://github.com/xlang-ai/Spider2/tree/main/spider2-dbt)
+- **Tasks**: 69 DuckDB data transformation projects
+
+---
+
 ## Configuration
 
-Default configuration in `dataflow_agent.py`:
+Default configuration in `agents/dataflow_agent.py`:
 ```python
 TEXERA_API_ENDPOINT = "http://localhost:8080"
 TEXERA_AGENT_SERVICE_ENDPOINT = "http://localhost:3001"
