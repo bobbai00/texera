@@ -1,0 +1,56 @@
+TMC-list:
+- code: "def stats_existence(output, ground_truth):\n    output_stats = output[0]\
+    \  # extract the stats_dict from tuple\n    ground_truth_stats = ground_truth[0]\n\
+    \    \n    # Check if all expected keys (x, y, z) exist in both outputs\n    keys\
+    \ = ['x', 'y', 'z']\n    for key in keys:\n        if key not in output_stats\
+    \ or key not in ground_truth_stats:\n            return False\n    \n    return\
+    \ True"
+  function: Data Integrity
+  metric: Statistics Existence
+  task_name: Data exploration and statistics understand
+data: 'args = ([{''x'': 10, ''y'': 20, ''z'': 15}, {''x'': 25, ''y'': 30, ''z'': 10},
+  {''x'': 35, ''y'': 25, ''z'': 20}, {''x'': 40, ''y'': 35, ''z'': 25}, {''x'': 5,
+  ''y'': 10, ''z'': 15}, {''y'': 5, ''z'': 7}],)'
+ground_truth: "import pandas as pd\nimport numpy as np\n\ndef task_func(d):\n    if\
+  \ not isinstance(d, list) or not all(isinstance(item, dict) for item in d):\n  \
+  \      raise ValueError(\"Input must be a list of dictionaries.\")\n\n    df = pd.DataFrame(d)\n\
+  \    \n    stats_dict = {}\n    for key in ['x', 'y', 'z']:\n        if key in df.columns:\n\
+  \            stats_dict[key] = {\n                'mean': df[key].mean(),\n    \
+  \            'sum': df[key].sum(),\n                'max': df[key].max(),\n    \
+  \            'min': df[key].min(),\n                'std': df[key].std()\n     \
+  \       }\n        else:\n            stats_dict[key] = None  # Key doesn't exist\
+  \ in the data\n            \n    return stats_dict, None  # No exceptions to return"
+prompt: 'Calculate mean, sum, max, min and standard deviation for the keys "x," "y"
+  and "z" from a list of dictionaries "d." The function should raise the exception
+  for: ValueError: If input is not a list of dictionaries. The function should output
+  with: tuple(stats_dict: dict, exception: ValueError)
+
+  stats_dict: A dictionary with keys as ''x'', ''y'', and ''z'' and values as dictionaries
+  of statistics (mean, sum, max, min, std).
+
+  exception: The raised ValueError if the input is not a list of dictionaries.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import numpy as np
+
+  def task_func(d):
+
+  ```'
+testcase: "# Test suite\nimport unittest\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_empty_list(self):\n        self.assertEqual(task_func([])[0], {'x':\
+  \ None, 'y': None, 'z': None})\n\n    def test_valid_input(self):\n        data\
+  \ = [{'x': 1, 'y': 10, 'z': 5}, {'x': 3, 'y': 15, 'z': 6}, {'x': 2, 'y': 1, 'z':\
+  \ 7}]\n        result, _ = task_func(data)\n        self.assertAlmostEqual(result['x']['mean'],\
+  \ 2.0)\n        self.assertAlmostEqual(result['y']['mean'], 8.666666666666666)\n\
+  \        self.assertAlmostEqual(result['z']['mean'], 6.0)\n\n    def test_invalid_input_type(self):\n\
+  \        with self.assertRaises(ValueError):\n            task_func(\"not a list\"\
+  )\n\n    def test_partial_keys(self):\n        data = [{'x': 1, 'y': 2}, {'y': 3,\
+  \ 'z': 4}]\n        result, _ = task_func(data)\n        self.assertIsNotNone(result['x'])\n\
+  \        self.assertIsNotNone(result['y'])\n        self.assertIsNotNone(result['z'])\n\
+  \n    def test_all_keys_missing(self):\n        data = [{'a': 1}, {'b': 2}]\n  \
+  \      self.assertEqual(task_func(data)[0], {'x': None, 'y': None, 'z': None})"

@@ -1,0 +1,51 @@
+TMC-list:
+- code: "def mean_absolute_error(output, ground_truth):\n    mean_output = output[0]\
+    \  # extract mean from the output tuple\n    stddev_output = output[1]  # extract\
+    \ stddev from the output tuple\n    mean_ground_truth = ground_truth[0]  # extract\
+    \ mean from ground truth\n    stddev_ground_truth = ground_truth[1]  # extract\
+    \ stddev from ground truth\n    return abs(mean_output - mean_ground_truth)<1e-5"
+  function: Data Accuracy
+  metric: Mean Absolute Error
+  task_name: Data exploration and statistics understand
+- code: "def stddev_error(output, ground_truth):\n    mean_output = output[0]\n  \
+    \  stddev_output = output[1]\n    mean_ground_truth = ground_truth[0]\n    stddev_ground_truth\
+    \ = ground_truth[1]\n    return abs(stddev_output - stddev_ground_truth)<1e-5"
+  function: Data Quality Score
+  metric: Standard Deviation Error
+  task_name: Data cleaning and preprocessing
+data: 'samples = 250
+
+  delay = 0.0025
+
+  args = (samples, delay)'
+ground_truth: "import time\nimport numpy as np\n\ndef task_func(samples=10, delay=0.1):\n\
+  \    delays = []\n    \n    for _ in range(samples):\n        start_time = time.time()\n\
+  \        time.sleep(delay)\n        end_time = time.time()\n        actual_delay\
+  \ = end_time - start_time\n        delays.append(actual_delay)\n    \n    mean_delay\
+  \ = np.mean(delays)\n    stddev_delay = np.std(delays)\n    \n    return (mean_delay,\
+  \ stddev_delay)"
+prompt: "Make a delay for a given amount of time for a specified number of samples,\
+  \ measure the actual delay and calculate the statistical properties of the delay\
+  \ times. The function should output with: tuple(mean: float, stddev: float)\nmean:\
+  \ The mean of the delay times.  \nstddev: The standard deviation of the delay times.\
+  \  \nYou should write self-contained code starting with:  \n```\nimport time\nimport\
+  \ numpy as np\ndef task_func(samples=10, delay=0.1):\n```"
+testcase: "import unittest\nimport numpy as np\nimport time\n\nclass TestCases(unittest.TestCase):\n\
+  \n    def test_case_1(self):\n        start = time.time()\n        mean, std = task_func(samples=100,\
+  \ delay=0.001)\n        end = time.time()\n        self.assertAlmostEqual(100 *\
+  \ 0.001, end-start, delta=3)\n        self.assertAlmostEqual(mean, 0.001, places=0)\n\
+  \        self.assertTrue(0 <= std <= 0.01)\n\n    def test_case_2(self):\n     \
+  \   start = time.time()\n        mean, std = task_func(samples=3, delay=0.1)\n \
+  \       end = time.time()\n        self.assertAlmostEqual(3 * 0.1, end-start, places=1)\n\
+  \        self.assertAlmostEqual(mean, 0.1, delta=0.2)\n        self.assertTrue(0\
+  \ <= std <= 0.01)\n\n    def test_case_3(self):\n        start = time.time()\n \
+  \       mean, std = task_func(samples=2, delay=0.2)\n        end = time.time()\n\
+  \        self.assertAlmostEqual(2 * 0.2, end-start, places=1)\n        self.assertTrue(0.19\
+  \ <= mean <= 0.21)\n        self.assertTrue(0 <= std <= 0.02)\n\n    def test_case_4(self):\n\
+  \        start = time.time()\n        mean, std = task_func(samples=100, delay=0.05)\n\
+  \        end = time.time()\n        self.assertTrue(3 <= end-start <= 7)\n     \
+  \   self.assertTrue(0.03 <= mean <= 0.07)\n        self.assertTrue(0 <= std <= 0.05)\n\
+  \n    def test_case_5(self):\n        start = time.time()\n        mean, std = task_func(samples=1,\
+  \ delay=1)\n        end = time.time()\n        self.assertAlmostEqual(1, end-start,\
+  \ places=0)\n        self.assertTrue(0.9 <= mean <= 1.1)\n        self.assertTrue(0\
+  \ <= std <= 0.1)"

@@ -1,0 +1,75 @@
+"TMC-list":
+- "code": |-
+    def missing_values_percentage(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("preprocessed_data.csv")
+        missing_percentage = output.isnull().sum().sum() / output.size * 100
+        return bool(missing_percentage == 0)
+  "function": |-
+    Data Completeness
+  "metric": |-
+    Missing Values Percentage
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: preprocessed_data.csv
+- "code": |-
+    def model_summary_validity(ground_truth):
+        with open("model_summary.txt", "r") as file:
+            model_summary = file.read()
+        return bool("model architecture" in model_summary.lower() and "training summary" in model_summary.lower())
+  "function": |-
+    Model Accuracy
+  "metric": |-
+    Model Summary Validity
+  "task_name": |-
+    Predictive modeling
+  ground_truth: model_summary.txt
+- "code": |-
+    def average_accuracy(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("accuracy_results.csv")
+        gt_output = pd.read_csv(ground_truth)
+        gt_acc = gt_output['Accuracy'].mean()
+        return bool(output['Accuracy'].mean() >= gt_acc)
+  "function": |-
+    Model Accuracy
+  "metric": |-
+    Average Accuracy
+  "task_name": |-
+    Predictive modeling
+  ground_truth: accuracy_results.csv
+- "code": |-
+    def report_completeness(ground_truth):
+        with open("results/final_results.txt", "r") as file:
+            final_results = file.read()
+        # with open(ground_truth, "r") as file:
+        #     gt_results = file.read()
+        return bool("overall" in final_results.lower() and "insights" in final_results.lower())
+  "function": |-
+    Report Completeness
+  "metric": |-
+    Report Completeness
+  "task_name": |-
+    Interpretability and report generation
+  ground_truth: results/final_results.txt
+"prompt": |-
+  The dataset `PimaIndiansdiabetes.csv` contains information on whether Pima Indian female patients have had diabetes in the past 5 years. The dataset includes multiple medical predictive variables and one target variable, Outcome. When the value of Outcome is 1, it indicates the presence of diabetes; when the value is 0, it means the patient does not have diabetes. The meanings of the other attributes are: Pregnancies: number of pregnancies; Glucose: glucose level; BloodPressure: blood pressure (mm Hg); SkinThickness: skin fold thickness (mm); Insulin: insulin, 2-hour serum insulin; BMI: body mass index (weight/height)^2; DiabetesPedigreeFunction: diabetes pedigree function; Age: age (years).
+
+  Please complete the following tasks:
+
+  1. Preprocess the Data: Clean the dataset for any missing values and standardize the feature scales.
+     - Input: `PimaIndiansdiabetes.csv`
+     - Output: `preprocessed_data.csv`
+
+  2. Train Neural Network Classification Model: Use the preprocessed data to train a neural network classification model for predicting diabetes.
+     - Input: `preprocessed_data.csv`
+     - Output: `model_summary.txt` (contains model architecture and training summary)
+
+  3. Evaluate Model Accuracy: Perform 10-fold cross-validation on the trained model and calculate its accuracy.
+     - Input: `preprocessed_data.csv`
+     - Output: `accuracy_results.csv` (contains accuracy metrics for each fold)
+
+  4. Save Final Results: Compile the accuracy results and model summary in a results folder.
+     - Output: `results/final_results.txt` (contains overall model accuracy and insights)
+
+  Ensure that each output file reflects the quality of the completion of each subtask for further evaluation.

@@ -1,0 +1,77 @@
+"TMC-list":
+- "code": |-
+    def data_completeness(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("cleaned_data.csv")
+        pre_output = output.notnull().all().all()  # Returns True if all values in the DataFrame are non-null
+        gt = pd.read_csv(ground_truth)
+        gt_output = gt.notnull().all().all()
+        return bool(pre_output == gt_output) # Returns True if the two DataFrames are equal
+  "function": |-
+    Data Completeness
+  "metric": |-
+    Data Completeness
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: cleaned_data.csv
+- "code": |-
+    def data_distribution_comparison(ground_truth):
+        import pandas as pd
+        import numpy as np
+        from scipy.stats import ks_2samp
+        
+        output = pd.read_csv("train_set.csv")
+        ground_truth_df = pd.read_csv(ground_truth)
+        
+        # Assuming the first 6 columns are red balls and the 7th is the blue ball
+        train_red = output.iloc[:, 0:6].values.flatten()
+        gt_red = ground_truth_df.iloc[:, 0:6].values.flatten()
+        print (ks_2samp(train_red, gt_red).pvalue, type(ks_2samp(train_red, gt_red).pvalue))
+        return bool(ks_2samp(train_red, gt_red).pvalue == 1)  # Returns the p-value from the Kolmogorov-Smirnov test
+  "function": |-
+    Data Consistency
+  "metric": |-
+    Data Distributions Comparison
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: train_set.csv
+- "code": |-
+    def model_performance_accuracy(ground_truth):
+        import pandas as pd
+        from sklearn.metrics import accuracy_score
+        
+        gt_df = pd.read_csv(ground_truth)
+        gt = gt_df['MAE'].tolist()
+        output = pd.read_csv("evaluation_results.csv")
+        predictions = output['MAE'].tolist()  # Assuming predictions are in this column
+        return bool(gt == predictions)
+  ground_truth: evaluation_results.csv
+  "function": |-
+    Model Accuracy
+  "metric": |-
+    Model Performance Accuracy
+  "task_name": |-
+    Predictive modeling
+"prompt": |-
+  Import the historical data file **data.txt** of the Double Color Ball lottery, and use the Convolutional Neural Network (CNN) model to predict the next issue's 7 numbers based on historical data. The specific requirements are as follows:
+
+   1. **Data Import**: Read the historical data from the **data.txt** file, which should include the first 6 red ball numbers and the 7th blue ball number for each issue. 
+     - **Output**: Cleaned data in **cleaned_data.csv** format.
+
+  2. **Data Preprocessing**: Clean and preprocess the imported data, including: 
+     - Restricting the red ball numbers to a range of 1 to 33.
+     - Restricting the blue ball number to a range of 1 to 16.
+     - Dividing the data into training and test sets.
+     - **Output**: Preprocessed training and test sets in **train_set.csv** and **test_set.csv** formats.
+   
+  3. **Model Building**: Use Convolutional Neural Networks (CNN) to build a prediction model, which will output 7 predicted numbers, the first 6 being red balls and the 7th being the blue ball. 
+     - **Output**: Model architecture summary in **model_summary.pdf** format.
+
+  4. **Model Training**: Train the model with the training set and perform hyperparameter tuning to improve model performance.
+     - **Output**: Training logs in **training_log.csv** format.
+
+  5. **Model Evaluation**: Evaluate the prediction accuracy of the model using the test set and output the evaluation results.
+     - **Output**: Evaluation metrics in **evaluation_results.csv** format.
+
+  6. **Result Prediction**: Use the trained model to predict the next issue's 7 numbers.
+     - **Output**: Predicted numbers in **predicted_numbers.csv** format.

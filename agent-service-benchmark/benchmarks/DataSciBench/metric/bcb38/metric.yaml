@@ -1,0 +1,111 @@
+TMC-list:
+- code: "def standardization_check(output, ground_truth):\n    std_data_output = output[0]\
+    \  # extract standardized DataFrame\n    std_data_ground_truth = ground_truth[0]\n\
+    \    return (std_data_output.mean().equals(std_data_ground_truth.mean())) and\
+    \ \\\n           (std_data_output.std().equals(std_data_ground_truth.std()))"
+  function: Normalization Range Check
+  metric: Standardization Check
+  task_name: Data cleaning and preprocessing
+- code: "def histogram_title_verification(output, ground_truth):\n    hist_ax_output\
+    \ = output[1]  # extract histogram Axes\n    hist_ax_ground_truth = ground_truth[1]\n\
+    \    return hist_ax_output.get_title() == hist_ax_ground_truth.get_title() ==\
+    \ 'Distribution of Means'"
+  function: Title Verification
+  metric: Histogram Title Verification
+  task_name: Data visualization
+data: "import numpy as np\n\ndata = np.array([[34, 23, 7, 18, 44],\n             \
+  \    [-12, 15, 20, 10, 5],\n                 [0, 0, 0, 0, 0],\n                \
+  \ [50, 65, 70, 55, 60],\n                 [-5, -10, -15, -20, -25],\n          \
+  \       [22, 31, 40, 50, 60]])\nargs = (data,)"
+ground_truth: "import pandas as pd\nfrom sklearn.preprocessing import StandardScaler\n\
+  import matplotlib.pyplot as plt\n\n# Constants\nFEATURE_NAMES = [\"Feature 1\",\
+  \ \"Feature 2\", \"Feature 3\", \"Feature 4\", \"Feature 5\"]\n\ndef task_func(data_matrix):\n\
+  \    # Standardize the data\n    scaler = StandardScaler()\n    std_data_array =\
+  \ scaler.fit_transform(data_matrix)\n    \n    # Calculate mean of each row\n  \
+  \  mean_values = std_data_array.mean(axis=1)\n    \n    # Create a DataFrame with\
+  \ standardized data and mean values\n    std_data = pd.DataFrame(std_data_array,\
+  \ columns=FEATURE_NAMES)\n    std_data['Mean'] = mean_values\n    \n    # Visualize\
+  \ the distribution of the mean values\n    fig, hist_ax = plt.subplots()\n    hist_ax.hist(mean_values,\
+  \ bins='auto', alpha=0.7, color='blue')\n    hist_ax.set_title('Distribution of\
+  \ Means')\n    hist_ax.set_xlabel('Mean Value')\n    hist_ax.set_ylabel('Frequency')\n\
+  \    \n    # Show the plot\n    plt.show()\n    \n    return std_data, hist_ax"
+prompt: 'Standardize a 2D data matrix, calculate the mean value of each row and then
+  visualize the distribution of the mean values with a histogram. - Each row of the
+  matrix represents a data point, its length is the same as that of FEATURE_NAMES.
+  - The plot title should be ''Distribution of Means''. The function should output
+  with: tuple(std_data: pandas.DataFrame, hist_ax: matplotlib.axes.Axes) std_data:
+  A DataFrame containing the standardized data and the mean of each row. Its column
+  names should be FEATURE_NAMES and ''Mean''. hist_ax: The histogram plot of the distribution
+  of means. You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  from sklearn.preprocessing import StandardScaler
+
+  import matplotlib.pyplot as plt
+
+  # Constants
+
+  FEATURE_NAMES = ["Feature 1", "Feature 2", "Feature 3", "Feature 4", "Feature 5"]
+
+  def task_func(data_matrix):
+
+  ```'
+testcase: "import unittest\nimport numpy as np\nimport pandas as pd\nfrom sklearn.preprocessing\
+  \ import StandardScaler\n\nclass TestCases(unittest.TestCase):\n    \"\"\"Test cases\
+  \ for the task_func function.\"\"\"\n\n    def test_case_1(self):\n        data\
+  \ = np.array([[6, 8, 1, 3, 4], [-1, 0, 3, 5, 1]])\n        df, ax = task_func(data)\n\
+  \        # Check the dataframe structure and values\n        self.assertTrue(isinstance(df,\
+  \ pd.DataFrame))\n        self.assertListEqual(\n            list(df.columns),\n\
+  \            [\"Feature 1\", \"Feature 2\", \"Feature 3\", \"Feature 4\", \"Feature\
+  \ 5\", \"Mean\"],\n        )\n        self.assertAlmostEqual(df[\"Mean\"].iloc[0],\
+  \ 0.2)\n        self.assertAlmostEqual(df[\"Mean\"].iloc[1], -0.2)\n        # Check\
+  \ the histogram plot\n        self.assertEqual(ax.get_title(), \"Distribution of\
+  \ Means\")\n        self.assertIsNotNone(ax.patches)  # Check if histogram bars\
+  \ exist\n\n    def test_case_2(self):\n        data = np.array([[1, 2, 3, 4, 5],\
+  \ [5, 4, 3, 2, 1]])\n        df, ax = task_func(data)\n        # Check the dataframe\
+  \ structure and values\n        self.assertTrue(isinstance(df, pd.DataFrame))\n\
+  \        self.assertListEqual(\n            list(df.columns),\n            [\"Feature\
+  \ 1\", \"Feature 2\", \"Feature 3\", \"Feature 4\", \"Feature 5\", \"Mean\"],\n\
+  \        )\n        self.assertAlmostEqual(df[\"Mean\"].iloc[0], 0.0)\n        self.assertAlmostEqual(df[\"\
+  Mean\"].iloc[1], 0.0)\n        # Check the histogram plot\n        self.assertEqual(ax.get_title(),\
+  \ \"Distribution of Means\")\n        self.assertIsNotNone(ax.patches)  # Check\
+  \ if histogram bars exist\n\n    def test_case_3(self):\n        data = np.array([[1,\
+  \ 7, 9, 4, 2], [8, 3, 5, 6, 10]])\n        df, ax = task_func(data)\n        # Check\
+  \ the dataframe structure and values\n        self.assertTrue(isinstance(df, pd.DataFrame))\n\
+  \        self.assertListEqual(\n            list(df.columns),\n            [\"Feature\
+  \ 1\", \"Feature 2\", \"Feature 3\", \"Feature 4\", \"Feature 5\", \"Mean\"],\n\
+  \        )\n        self.assertAlmostEqual(df[\"Mean\"].iloc[0], -0.2)\n       \
+  \ self.assertAlmostEqual(df[\"Mean\"].iloc[1], 0.2)\n        # Check the histogram\
+  \ plot\n        self.assertEqual(ax.get_title(), \"Distribution of Means\")\n  \
+  \      self.assertIsNotNone(ax.patches)  # Check if histogram bars exist\n\n   \
+  \ def test_case_4(self):\n        data = np.array(\n            [\n            \
+  \    [16, 3, 1, 9, 20],\n                [2, 12, 13, 8, 17],\n                [2,\
+  \ 4, 5, 11, 19],\n                [15, 7, 6, 14, 18],\n            ]\n        )\n\
+  \        df, ax = task_func(data)\n        # Check the dataframe structure and values\n\
+  \        self.assertTrue(isinstance(df, pd.DataFrame))\n        self.assertListEqual(\n\
+  \            list(df.columns),\n            [\"Feature 1\", \"Feature 2\", \"Feature\
+  \ 3\", \"Feature 4\", \"Feature 5\", \"Mean\"],\n        )\n        # Check the\
+  \ histogram plot\n        self.assertEqual(ax.get_title(), \"Distribution of Means\"\
+  )\n        self.assertIsNotNone(ax.patches)  # Check if histogram bars exist\n \
+  \       \n        # Expected output\n        FEATURE_NAMES = [\n            \"Feature\
+  \ 1\",\n            \"Feature 2\",\n            \"Feature 3\",\n            \"Feature\
+  \ 4\",\n            \"Feature 5\",\n        ]\n        scaler = StandardScaler()\n\
+  \        expected_data = scaler.fit_transform(data)\n        np.testing.assert_array_equal(df.loc[:,\
+  \ FEATURE_NAMES].values, expected_data)\n\n    def test_case_5(self):\n        data\
+  \ = np.array(\n            [\n                [1, 2, 3, 4, 5],\n               \
+  \ [6, 7, 8, 9, 10],\n                [11, 12, 13, 14, 15],\n                [16,\
+  \ 17, 18, 19, 20],\n                [21, 22, 23, 24, 25],\n            ]\n     \
+  \   )\n        df, ax = task_func(data)\n        # Check the dataframe structure\
+  \ and values\n        self.assertTrue(isinstance(df, pd.DataFrame))\n        self.assertListEqual(\n\
+  \            list(df.columns),\n            [\"Feature 1\", \"Feature 2\", \"Feature\
+  \ 3\", \"Feature 4\", \"Feature 5\", \"Mean\"],\n        )\n        # Check the\
+  \ histogram plot\n        self.assertEqual(ax.get_title(), \"Distribution of Means\"\
+  )\n        self.assertIsNotNone(ax.patches)  # Check if histogram bars exist\n \
+  \       \n        # Expected output\n        FEATURE_NAMES = [\n            \"Feature\
+  \ 1\",\n            \"Feature 2\",\n            \"Feature 3\",\n            \"Feature\
+  \ 4\",\n            \"Feature 5\",\n        ]\n        scaler = StandardScaler()\n\
+  \        expected_data = scaler.fit_transform(data)\n        np.testing.assert_array_equal(df.loc[:,\
+  \ FEATURE_NAMES].values, expected_data)"

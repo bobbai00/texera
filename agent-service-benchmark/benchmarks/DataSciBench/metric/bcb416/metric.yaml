@@ -1,0 +1,93 @@
+TMC-list:
+- code: "def columns_removed(output, ground_truth):\n    output_data = output[0] \
+    \ # \u63D0\u53D6 Axes \u5BF9\u8C61\n    ground_truth_data = ground_truth[0]\n\
+    \    \n    # \u5047\u8BBE ground_truth \u5305\u542B\u521D\u59CB\u7684\u5217\u6570\
+    \n    initial_columns = len(ground_truth_data.columns)\n    remaining_columns\
+    \ = len(output_data.collections[0].get_array()) if output_data.collections else\
+    \ 0  # \u5047\u8BBE\u53EA\u6709\u5B58\u5728\u6570\u503C\u5217\u65F6\u624D\u4F1A\
+    \u521B\u5EFA\u70ED\u56FE\n    \n    # \u8BA1\u7B97\u4FDD\u7559\u7684\u5217\u6570\
+    \u5360\u521D\u59CB\u5217\u6570\u7684\u6BD4\u4F8B\n    retention_ratio = remaining_columns\
+    \ / initial_columns if initial_columns > 0 else 0\n    \n    # \u8FD4\u56DE\u4E00\
+    \u4E2A\u5728 [0,1] \u8303\u56F4\u5185\u7684\u6570\u503C\uFF0C1 \u8868\u793A\u6700\
+    \u597D\u7684\u7ED3\u679C\uFF08\u5373\u6CA1\u6709\u79FB\u9664\u4EFB\u4F55\u5217\
+    \uFF09\n    return retention_ratio\n"
+  function: Data Quality Score
+  metric: Number of columns removed
+  task_name: Data cleaning and preprocessing
+- code: "def heatmap_generated(output, ground_truth):\n    output_data = output[0]\
+    \  # extract the Axes object from the tuple\n    return output_data is not None\
+    \  # returns True if heatmap is generated, otherwise False"
+  function: Visualization Completeness
+  metric: Validity of heatmap generation
+  task_name: Data visualization
+data: "import numpy as np\ndata = {\n    \"X\": np.random.rand(50) * 100,\n    \"\
+  Y\": np.random.rand(50) * 50,\n    \"Z\": np.random.randn(50),\n    \"Category\"\
+  : np.random.choice(['A', 'B', 'C'], size=50),\n    \"c\": np.random.rand(50) * 25\n\
+  }\nargs = (data, 'c')"
+ground_truth: "import pandas as pd\nimport seaborn as sns\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(data, column='c'):\n    # Convert the input dictionary\
+  \ to a DataFrame\n    df = pd.DataFrame(data)\n    \n    # Remove the specified\
+  \ column\n    if column in df.columns:\n        df = df.drop(columns=[column])\n\
+  \    \n    # Select only the numeric columns\n    numeric_df = df.select_dtypes(include=['number'])\n\
+  \    \n    # Check if there's any numeric data to work with\n    if numeric_df.empty:\n\
+  \        return (None,)\n    \n    # Compute the correlation matrix\n    correlation_matrix\
+  \ = numeric_df.corr()\n    \n    # Create a heatmap\n    plt.figure(figsize=(10,\
+  \ 8))\n    heatmap_axes = sns.heatmap(correlation_matrix, annot=True, fmt=\".2f\"\
+  , cmap='coolwarm', square=True)\n    \n    # Show the heatmap\n    plt.show()\n\
+  \    \n    return (heatmap_axes,)"
+prompt: '"Removes a column from a given data dictionary and creates a heatmap of the
+  correlation matrix of the remaining data. Non-numeric columns are excluded from
+  the heatmap. If the data is empty or has no numeric columns, the function returns
+  None. The function should output with: tuple(heatmap_axes: matplotlib.axes._axes.Axes
+  or None) heatmap_axes: The Axes object of the heatmap or None if the heatmap is
+  not generated. You should write self-contained code starting with: ``` import pandas
+  as pd import seaborn as sns def task_func(data, column=''c''): ```"'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\nfrom matplotlib\
+  \ import pyplot as plt\n\nclass TestCases(unittest.TestCase):\n    def _assert_heatmap_matches_corr(self,\
+  \ ax, corr):\n        # Helper function to assert that the heatmap matches the correlation\
+  \ matrix\n        heatmap_data = ax.collections[0].get_array().data\n        np.testing.assert_array_almost_equal(\n\
+  \            heatmap_data, corr.values.flatten(), decimal=2\n        )\n\n    def\
+  \ test_case_1(self):\n        # Input: DataFrame with column \"c\".\n        data\
+  \ = {\n            \"a\": list(range(10)),\n            \"b\": list(range(10)),\n\
+  \            \"c\": list(range(10)),\n        }\n        df = pd.DataFrame(data)\n\
+  \        ax = task_func(data)\n        # Assert that column \"c\" is not in the\
+  \ heatmap\n        self.assertNotIn(\"c\", [col.get_text() for col in ax.get_xticklabels()])\n\
+  \        # Check plotted value correctness\n        self._assert_heatmap_matches_corr(ax,\
+  \ df.drop(columns=[\"c\"]).corr())\n\n    def test_case_2(self):\n        # Input:\
+  \ DataFrame without column \"c\".\n        data = {\"a\": list(range(10)), \"b\"\
+  : list(range(10))}\n        df = pd.DataFrame(data)\n        ax = task_func(data)\n\
+  \        # Assert that columns \"a\" and \"b\" are in the heatmap\n        self.assertIn(\"\
+  a\", [col.get_text() for col in ax.get_xticklabels()])\n        self.assertIn(\"\
+  b\", [col.get_text() for col in ax.get_xticklabels()])\n        # Check plotted\
+  \ value correctness\n        self._assert_heatmap_matches_corr(ax, df.corr())\n\n\
+  \    def test_case_3(self):\n        # Input: DataFrame with column \"c\", but we\
+  \ specify another column to remove\n        data = {\n            \"a\": list(range(10)),\n\
+  \            \"b\": list(range(10)),\n            \"c\": list(range(10)),\n    \
+  \    }\n        df = pd.DataFrame(data)\n        ax = task_func(data, column=\"\
+  b\")\n        # Assert that column \"b\" is not in the heatmap\n        self.assertNotIn(\"\
+  b\", [col.get_text() for col in ax.get_xticklabels()])\n        # Assert that other\
+  \ columns are in the heatmap\n        self.assertIn(\"a\", [col.get_text() for col\
+  \ in ax.get_xticklabels()])\n        self.assertIn(\"c\", [col.get_text() for col\
+  \ in ax.get_xticklabels()])\n        # Check plotted value correctness\n       \
+  \ self._assert_heatmap_matches_corr(ax, df.drop(columns=[\"b\"]).corr())\n\n   \
+  \ def test_case_4(self):\n        # Input: DataFrame with non-numeric columns and\
+  \ column \"c\".\n        data = {\n            \"a\": list(range(4)),\n        \
+  \    \"b\": [\"low\", \"medium\", \"high\", \"medium\"],\n            \"c\": [\"\
+  apple\", \"banana\", \"cherry\", \"dates\"],\n        }\n        df = pd.DataFrame(data)\n\
+  \        ax = task_func(data)\n        # Assert that only numeric column \"a\" is\
+  \ in the heatmap\n        self.assertIn(\"a\", [col.get_text() for col in ax.get_xticklabels()])\n\
+  \        self.assertNotIn(\"b\", [col.get_text() for col in ax.get_xticklabels()])\n\
+  \        self.assertNotIn(\"c\", [col.get_text() for col in ax.get_xticklabels()])\n\
+  \n    def test_case_5(self):\n        # Input: DataFrame with missing values and\
+  \ column \"c\".\n        np.random.seed(0)\n        data = {\n            \"a\"\
+  : np.random.choice([1, np.nan], 100),\n            \"b\": np.random.choice([2, np.nan],\
+  \ 100),\n            \"c\": np.random.choice([3, np.nan], 100),\n        }\n   \
+  \     df = pd.DataFrame(data)\n        ax = task_func(data)\n        # Assert that\
+  \ columns \"a\" and \"b\" are in the heatmap and column \"c\" is not\n        self.assertIn(\"\
+  a\", [col.get_text() for col in ax.get_xticklabels()])\n        self.assertIn(\"\
+  b\", [col.get_text() for col in ax.get_xticklabels()])\n        self.assertNotIn(\"\
+  c\", [col.get_text() for col in ax.get_xticklabels()])\n\n    def test_case_6(self):\n\
+  \        # Input: Empty DataFrame.\n        data = {}\n        df = pd.DataFrame(data)\n\
+  \        ax = task_func(data)\n        # Assert that the function returns None for\
+  \ an empty DataFrame\n        self.assertIsNone(ax)\n\n    def tearDown(self):\n\
+  \        plt.close(\"all\")"

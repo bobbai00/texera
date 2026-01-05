@@ -1,0 +1,94 @@
+TMC-list:
+- code: "def percentage_nan_replaced(output, ground_truth):\n    stats_df_output =\
+    \ output[0]  # extract the stats DataFrame from the output tuple\n    total_nan\
+    \ = 8  # total number of NaN values in the input DataFrame\n    replaced_nan =\
+    \ (total_nan - stats_df_output.isnull().sum().sum())\n    return replaced_nan\
+    \ / total_nan if total_nan > 0 else 0"
+  function: Data Completeness
+  metric: Percentage of NaN Values Replaced
+  task_name: Data cleaning and preprocessing
+- code: "def mean_value_comparison(output, ground_truth):\n    stats_df_output = output[0]\
+    \  # extract the stats DataFrame from the output tuple\n    stats_df_ground_truth\
+    \ = ground_truth[0]\n    output_means = stats_df_output.loc['mean']\n    ground_truth_means\
+    \ = stats_df_ground_truth.loc['mean']\n    return max(0,1-((output_means - ground_truth_means).abs()\
+    \ / ground_truth_means).mean())"
+  function: Data Consistency
+  metric: Mean Value Comparison
+  task_name: Data exploration and statistics understand
+- code: "def number_of_plots(output, ground_truth):\n    dist_plots_output = output[1]\
+    \  # extract the distribution plots list from the output tuple\n    return len(dist_plots_output)==len(ground_truth[1])"
+  function: Visualization Completeness
+  metric: Number of Distribution Plots Created
+  task_name: Data visualization
+data: "import numpy as np\nimport pandas as pd\n\n# Generating more complex data for\
+  \ testing\ndf7 = pd.DataFrame({\n    \"A\": [np.nan, 5, 10, 15, np.nan, 20, 25,\
+  \ np.nan],\n    \"B\": [2, 3, np.nan, 8, 13, 21, np.nan, 15],\n    \"C\": [np.nan,\
+  \ np.nan, 12, 14, 15, 18, 20, 22],\n    \"D\": [1, 3, 5, np.nan, 7, 9, 11, 13]\n\
+  })\n\nargs = (df7,)"
+ground_truth: "import numpy as np\nimport pandas as pd\nimport seaborn as sns\nimport\
+  \ matplotlib.pyplot as plt\nfrom matplotlib.axes import Axes\nfrom typing import\
+  \ List, Tuple\n\ndef task_func(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[Axes]]:\n\
+  \    # Replace NaN values with the mean of each numeric column\n    df.fillna(df.mean(),\
+  \ inplace=True)\n\n    # Calculate statistics\n    stats_df = df.describe()\n\n\
+  \    # Create distribution plots\n    dist_plots = []\n    numeric_cols = df.select_dtypes(include=[np.number]).columns\n\
+  \n    plt.figure(figsize=(15, 5))\n    for i, col in enumerate(numeric_cols):\n\
+  \        plt.subplot(1, len(numeric_cols), i + 1)\n        ax = sns.histplot(df[col],\
+  \ bins=10, kde=True)\n        ax.set_title(f'Distribution of {col}')\n        dist_plots.append(ax)\n\
+  \n    plt.tight_layout()\n    plt.show()\n\n    return stats_df, dist_plots"
+prompt: '"Describe a dataframe and draw a distribution chart for each numeric column
+  after replacing the NaN values with the average of the column. The function should
+  output with: tuple(stats_df: pandas.DataFrame, dist_plots: List[Axes])
+
+  stats_df: A pandas DataFrame with statistics. This includes count, mean, standard
+  deviation (std), min, 25%, 50%, 75%, and max values for each numeric column.
+
+  dist_plots: A list of matplotlib Axes objects representing the distribution plots
+  for each numeric column. Each plot visualizes the distribution of data in the respective
+  column with 10 bins. You should write self-contained code starting with:
+
+  ```
+
+  import numpy as np
+
+  import seaborn as sns
+
+  def task_func(df):
+
+  ```"'
+testcase: "import unittest\nimport pandas as pd\n\nclass TestCases(unittest.TestCase):\n\
+  \    \"\"\"Test cases for the f_112 function.\"\"\"\n\n    def setUp(self):\n  \
+  \      # Generating more complex data for testing\n        self.df1 = pd.DataFrame(\n\
+  \            {\"A\": [1, 2, 3, 4, 5], \"B\": [6, 7, 8, 9, 10], \"C\": [11, 12, 13,\
+  \ 14, 15]}\n        )\n        self.df2 = pd.DataFrame({\"X\": [1, None, 9, 13],\
+  \ \"Y\": [None, 3, 4, 8]})\n        self.df3 = pd.DataFrame(\n            {\"M\"\
+  : [7, 13, 21, 11, 22, 8, None, 17], \"N\": [None, 2, 3, 4, 10, 0, 27, 12]}\n   \
+  \     )\n        self.df4 = pd.DataFrame(\n            {\"P\": [None, None, 4],\
+  \ \"Q\": [7, None, 3], \"R\": [2, None, 6]}\n        )\n        self.df5 = pd.DataFrame({\"\
+  W\": [1, 2], \"Z\": [2, 1]})\n        self.df6 = pd.DataFrame(\n            {\n\
+  \                \"A\": [1, 2, 3, 4, 5, 6],\n                \"B\": [None, 8, 9,\
+  \ 10, 11, None],\n                \"C\": [13, None, None, None, None, 18],\n   \
+  \             \"D\": [19, None, 21, None, 23, None],\n            }\n        )\n\
+  \n    def test_case_1(self):\n        description, plots = task_func(self.df1)\n\
+  \        self.assertFalse(description.isna().any().any())\n        self.assertIsInstance(description,\
+  \ pd.DataFrame)\n        self.assertListEqual(list(description.columns), [\"A\"\
+  , \"B\", \"C\"])\n        self.assertEqual(len(plots), 3)\n\n    def test_case_2(self):\n\
+  \        description, plots = task_func(self.df2)\n        self.assertFalse(description.isna().any().any())\n\
+  \        self.assertIsInstance(description, pd.DataFrame)\n        self.assertListEqual(list(description.columns),\
+  \ [\"X\", \"Y\"])\n        self.assertEqual(len(plots), 2)\n\n    def test_case_3(self):\n\
+  \        description, plots = task_func(self.df3)\n        self.assertFalse(description.isna().any().any())\n\
+  \        self.assertIsInstance(description, pd.DataFrame)\n        self.assertListEqual(list(description.columns),\
+  \ [\"M\", \"N\"])\n        self.assertEqual(len(plots), 2)\n\n    def test_case_4(self):\n\
+  \        description, plots = task_func(self.df4)\n        self.assertFalse(description.isna().any().any())\n\
+  \        self.assertIsInstance(description, pd.DataFrame)\n        self.assertListEqual(list(description.columns),\
+  \ [\"P\", \"Q\", \"R\"])\n        self.assertEqual(len(plots), 3)\n\n    def test_case_5(self):\n\
+  \        description, plots = task_func(self.df5)\n        self.assertFalse(description.isna().any().any())\n\
+  \        self.assertIsInstance(description, pd.DataFrame)\n        self.assertListEqual(list(description.columns),\
+  \ [\"W\", \"Z\"])\n        self.assertEqual(len(plots), 2)\n\n    def test_case_6(self):\n\
+  \        description, plots = task_func(self.df6)\n        self.assertFalse(description.isna().any().any())\n\
+  \        self.assertIsInstance(description, pd.DataFrame)\n        self.assertListEqual(list(description.columns),\
+  \ [\"A\", \"B\", \"C\", \"D\"])\n        self.assertEqual(len(plots), 4)\n     \
+  \   self.assertEqual(description.loc[\"mean\", \"A\"], 3.5)\n        self.assertEqual(description.loc[\"\
+  std\", \"B\"], 1.0)\n        self.assertEqual(description.loc[\"25%\", \"A\"], 2.25)\n\
+  \        self.assertEqual(description.loc[\"50%\", \"C\"], 15.5)\n        self.assertEqual(description.loc[\"\
+  75%\", \"A\"], 4.75)\n        self.assertEqual(description.loc[\"max\", \"D\"],\
+  \ 23.0)"

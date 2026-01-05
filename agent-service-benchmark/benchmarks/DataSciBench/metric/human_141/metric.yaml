@@ -1,0 +1,57 @@
+"TMC-list":
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "numerical_histograms.png")
+        return float(score)
+  "function": |-
+    Visualization Completeness
+  "metric": |-
+    Histogram Coverage Ratio
+  "task_name": |-
+    Data visualization
+  ground_truth: numerical_histograms.png
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "categorical_bar_plots.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Bar Plot Completeness Score
+  "task_name": |-
+    Data visualization
+  ground_truth: categorical_bar_plots.png
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "correlation_heatmap.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "ground_truth": |-
+    correlation_heatmap.png
+  "metric": |-
+    Data visualization
+  "task_name": |-
+    Data visualization
+"prompt": |-
+    You are required to analyze the "Credit Card Default" dataset from the UCI Machine Learning Repository (https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients), which contains information on Taiwanese customers' credit card payment defaults. Your tasks are as follows:
+
+    1. **Data Visualization**:
+      - Generate histograms for numerical features.  
+        Input: "default of credit card clients.xls"  
+        Output: "numerical_histograms.png" (format: image)
+
+      - Create bar plots for categorical features.  
+        Input: "default of credit card clients.xls"  
+        Output: "categorical_bar_plots.png" (format: image)
+
+      - Use scatter plots to visualize the relationships between key numerical features and the default status.  
+        Input: "default of credit card clients.xls"  
+        Output: "scatter_plots.png" (format: image)
+
+      - Generate a correlation heatmap to identify potential relationships between different features.  
+        Input: "default of credit card clients.xls"  
+        Output: "correlation_heatmap.png" (format: image)

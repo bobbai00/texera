@@ -1,0 +1,73 @@
+TMC-list:
+- code: "def visualization_completeness(output, ground_truth):\n    import numpy as\
+    \ np\n    output_axes = output[1]  # extract the plot output\n    ground_truth_axes\
+    \ = ground_truth[1]\n    return isinstance(output_axes, type(ground_truth_axes))\
+    \ and output_axes is not None"
+  function: Visualization Completeness
+  metric: Visualization Completeness
+  task_name: Data visualization
+- code: "def distance_accuracy(output, ground_truth):\n    import numpy as np\n  \
+    \  output_distances = output[0]  # extract the distances from tuple\n    ground_truth_distances\
+    \ = ground_truth[0]\n    return np.allclose(output_distances, ground_truth_distances)"
+  function: Data Accuracy
+  metric: Distance Accuracy
+  task_name: Data exploration and statistics understand
+data: 'n_samples = 150
+
+  centers = 6
+
+  plot_path = None
+
+  random_seed = 99
+
+
+  args = (n_samples, centers, plot_path, random_seed)'
+ground_truth: "from scipy.spatial.distance import cdist\nfrom sklearn.datasets import\
+  \ make_blobs\nimport matplotlib.pyplot as plt\n\ndef task_func(n_samples=200, centers=4,\
+  \ plot_path=None, random_seed=None):\n    # Generate synthetic dataset\n    X, y\
+  \ = make_blobs(n_samples=n_samples, centers=centers, random_state=random_seed)\n\
+  \    \n    # Calculate pairwise Euclidean distances\n    distances = cdist(X, X,\
+  \ metric='euclidean')\n\n    # Create a scatter plot\n    plt.figure(figsize=(10,\
+  \ 6))\n    scatter = plt.scatter(X[:, 0], X[:, 1], c=y, cmap='viridis', marker='o')\n\
+  \    plt.title('Synthetic 2D Dataset')\n    plt.xlabel('Feature 1')\n    plt.ylabel('Feature\
+  \ 2')\n    plt.colorbar(scatter, label='Cluster Label')\n\n    # Save or show the\
+  \ plot\n    if plot_path is None:\n        ax = plt.gca()\n        plt.grid(True)\n\
+  \        plt.show()\n        return distances, ax\n    else:\n        plt.savefig(plot_path)\n\
+  \        plt.close()\n        return distances, None"
+prompt: "Generate a synthetic 2D dataset using make_blobs, visualize the dataset,\
+  \ and then calculate the Euclidean distance between individual samples of the dataset.\n\
+  The function should output with: tuple(distances: ndarray, plot_output: Axes or\
+  \ None) \ndistances: A 2D array with distances between each sample. \nplot_output:\
+  \ If plot_path is None, returns the matplotlib Axes object of the plot. Otherwise,\
+  \ saves the plot to the provided path and returns None. \nPlot shows values of the\
+  \ first feature dimension on the x-axis, values of the second feature dimension\
+  \ on the y-axis, and labels of the synthetic examples as color. \nYou should write\
+  \ self-contained code starting with:\n```\nfrom scipy.spatial.distance import cdist\n\
+  from sklearn.datasets import make_blobs\nimport matplotlib.pyplot as plt\ndef task_func(n_samples=200,\
+  \ centers=4, plot_path=None, random_seed=None):\n```"
+testcase: "import unittest\nimport tempfile\nimport os\nimport numpy as np\nimport\
+  \ matplotlib.pyplot as plt\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n\
+  \        self.seed = 42\n        self.temp_dir = tempfile.TemporaryDirectory()\n\
+  \n    def test_case_1(self):\n        # Default parameters\n        distances, plot\
+  \ = task_func()\n        self.assertEqual(distances.shape, (200, 200))\n       \
+  \ self.assertEqual(len(plot.collections[0].get_offsets()), 200)\n        self.assertEqual(len(set(plot.collections[0].get_array())),\
+  \ 4)\n\n    def test_case_2(self):\n        # Custom parameters\n        n_samples,\
+  \ centers = 50, 5\n        distances, plot = task_func(\n            random_seed=self.seed,\
+  \ n_samples=n_samples, centers=centers\n        )\n        self.assertEqual(distances.shape,\
+  \ (n_samples, n_samples))\n        self.assertEqual(len(plot.collections[0].get_offsets()),\
+  \ n_samples)\n        self.assertEqual(len(set(plot.collections[0].get_array())),\
+  \ centers)\n\n    def test_case_3(self):\n        # Saving the plot to a path\n\
+  \        plot_path = os.path.join(self.temp_dir.name, \"test_plot.png\")\n     \
+  \   distances, plot = task_func(random_seed=self.seed, plot_path=plot_path)\n  \
+  \      self.assertEqual(distances.shape, (200, 200))\n        self.assertTrue(os.path.exists(plot_path))\n\
+  \        self.assertIsNone(plot)\n\n    def test_case_4(self):\n        # Test reproducibility\
+  \ with the same seed\n        distances1, _ = task_func(random_seed=self.seed)\n\
+  \        distances2, _ = task_func(random_seed=self.seed)\n        np.testing.assert_array_equal(distances1,\
+  \ distances2)\n        # Test different outputs with different seeds\n        distances3,\
+  \ _ = task_func(random_seed=43)\n        with self.assertRaises(AssertionError):\n\
+  \            np.testing.assert_array_equal(distances1, distances3)\n\n    def test_case_5(self):\n\
+  \        # Test negative parameters for n_samples\n        with self.assertRaises(ValueError):\n\
+  \            task_func(n_samples=-100, random_seed=self.seed)\n\n    def test_case_6(self):\n\
+  \        # Test non-integer inputs for n_samples\n        with self.assertRaises(TypeError):\n\
+  \            task_func(n_samples=200.5, random_seed=self.seed)\n\n    def tearDown(self):\n\
+  \        plt.close(\"all\")\n        self.temp_dir.cleanup()"

@@ -1,0 +1,65 @@
+"TMC-list":
+# - "code": |-
+#     def data_completeness(ground_truth):
+#         import pandas as pd
+#         input_data = pd.read_csv("input_data.csv")
+#         return input_data.notnull().mean().mean()  # Returns the average completeness of the dataset
+#   "function": |-
+#     Data Completeness
+#   "metric": |-
+#     Data Completeness
+#   "task_name": |-
+#     Data cleaning and preprocessing
+#   ground_truth: 
+# - "code": |-
+#     def mean_absolute_error(ground_truth):
+#         from sklearn.metrics import mean_absolute_error as mae
+#         import pandas as pd
+#         gt_output = pd.read_csv(ground_truth)
+#         output = pd.read_csv("evaluation_results.csv")
+#         predictions = output['Predictions'].tolist()
+#         return mae(ground_truth.flatten(), predictions)  # Assuming ground_truth is a 2D numpy array and Predictions is a list
+#   "function": |-
+#     Mean Absolute Error
+#   "metric": |-
+#     Model Performance (Mean Absolute Error)
+#   "task_name": |-
+#     Predictive modeling
+#   ground_truth: evaluation_results.csv
+- "code": |-
+    # def report_content_accuracy(ground_truth):
+    #     import pandas as pd
+    #     evaluation_report = pd.read_csv("evaluation_results.csv")  # Assuming this file has a 'Report' column
+    #     gt_report = pd.read_csv(ground_truth)
+    #     # Assuming ground_truth consists of key phrases that the report should contain
+    #     report_text = evaluation_report[evaluation_report.keys()[0]] # Get the content of the report
+    #     print("Size of the report: ", gt_report.size)
+    #     print(report_text)
+    #     # accuracy = sum([phrase in report_text for phrase in gt_report]) / len(gt_report)
+    #     # return accuracy  # Returns the ratio of key phrases found in the report
+    #     return 
+    def report_content_accuracy(ground_truth):
+        import pandas as pd
+        
+        # Load the evaluation report (assuming there's a 'Report' column)
+        evaluation_report = pd.read_csv("evaluation_results.csv")
+        
+        # Load the ground truth (assuming it contains a column with key phrases)
+        gt_report = pd.read_csv(ground_truth)
+        
+        # Check if the header of evaluation_report is a subset of the ground truth header
+        eval_report_columns = set(evaluation_report.columns)
+        gt_report_columns = set(gt_report.columns)
+        
+        return bool(eval_report_columns.issubset(gt_report_columns))
+  "function": |-
+    Report Quality
+  "metric": |-
+    Report Quality (Content Accuracy)
+  "task_name": |-
+    Interpretability and report generation
+  ground_truth: evaluation_results.csv
+"prompt": |-
+  Write a piece of neural network prediction code that establishes a relationship between inputs and outputs, and saves this mapping relationship to a pkl model. Utilize the input dataset from "input_data.csv," which contains 500 rows and 12 columns (each row represents a set of inputs). The known outputs are in "output_data.csv," a matrix with 7 rows and 500 columns. Ensure the data dimensions are automatically corresponded.
+
+  Use the data to train the model and save the parameters in "model.pkl" and output model evaluation results in "evaluation_results.csv".

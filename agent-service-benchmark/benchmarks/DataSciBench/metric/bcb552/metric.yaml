@@ -1,0 +1,61 @@
+TMC-list:
+- code: "def freq_dict_length(output, ground_truth):\n    output_freq_dict = output[1]\
+    \  # extract the frequency dictionary from tuple\n    ground_truth_freq_dict =\
+    \ ground_truth[1]\n    return len(output_freq_dict) == len(ground_truth_freq_dict)"
+  function: Data Quality Score
+  metric: Length of Frequency Dictionary
+  task_name: Data cleaning and preprocessing
+- code: "def correct_frequency_values(output, ground_truth):\n    output_freq_dict\
+    \ = output[1]  # extract the frequency dictionary from tuple\n    ground_truth_freq_dict\
+    \ = ground_truth[1]\n    return all(output_freq_dict.get(k, 0) == ground_truth_freq_dict.get(k,\
+    \ 0) for k in ground_truth_freq_dict)"
+  function: Data Accuracy
+  metric: Correct Frequency Values
+  task_name: Data exploration and statistics understand
+- code: "def compare_bar_charts(output, ground_truth):\n    output_freq_chart = output[0]\
+    \  # extract the frequency chart from tuple\n    ground_truth_freq_chart = ground_truth[0]\n\
+    \    return output_freq_chart.get_title() == ground_truth_freq_chart.get_title()\
+    \  # simplistic comparison based on title"
+  function: Plot Validity
+  metric: Bar Chart Comparison
+  task_name: Data visualization
+data: 'a = [''apple'', ''banana'', ''banana'', ''kiwi'', ''pineapple'', ''apple'']
+
+  b = [''dragonfruit'', ''banana'', ''apple'', ''grapefruit'', ''banana'', ''apple'',
+  ''banana'']
+
+  args = (a, b)'
+ground_truth: "import collections\nimport itertools\nimport matplotlib.pyplot as plt\n\
+  \n# Constants\nITEMS = ['apple', 'banana']\n\ndef task_func(a, b, items=ITEMS):\n\
+  \    # Combine two lists\n    combined_list = a + b\n    \n    # Count frequency\
+  \ of predefined items\n    freq_dict = collections.Counter(item for item in combined_list\
+  \ if item in items)\n    \n    # Create a bar chart\n    fig, ax = plt.subplots()\n\
+  \    ax.bar(freq_dict.keys(), freq_dict.values())\n    ax.set_title('Frequency of\
+  \ Predefined Items')\n    ax.set_xlabel('Items')\n    ax.set_ylabel('Frequency')\n\
+  \    \n    # Return the chart and the frequency dictionary\n    return (ax, dict(freq_dict))"
+prompt: "Combine two lists and record the frequency of predefined items in the combined\
+  \ list. The function should output with: tuple(freq_chart: matplotlib.axes.Axes,\
+  \ freq_dict: dict)\nfreq_chart: A bar chart showing the frequency of predefined\
+  \ items in the combined list.  \nfreq_dict: A dictionary containing the frequency\
+  \ of each predefined item.  \nYou should write self-contained code starting with:\
+  \  \n```\nimport collections\nimport itertools\nimport matplotlib.pyplot as plt\n\
+  # Constants\nITEMS = ['apple', 'banana']\ndef task_func(a, b, items=ITEMS):\n```"
+testcase: "import unittest\nimport matplotlib.pyplot as plt\n\nclass TestCases(unittest.TestCase):\n\
+  \n    def test_standard_functionality(self):\n        \"\"\"Test with typical list\
+  \ inputs.\"\"\"\n        a = ['apple', 'banana', 'cherry']\n        b = ['banana',\
+  \ 'apple', 'apple', 'dragonfruit']\n        ax, _ = task_func(a, b)\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n\n    def test_empty_lists(self):\n        \"\"\"Test with both lists\
+  \ empty.\"\"\"\n        a = []\n        b = []\n        ax, _ = task_func(a, b)\n\
+  \        self.assertIsInstance(ax, plt.Axes)\n\n    def test_one_empty_list(self):\n\
+  \        \"\"\"Test with one list empty.\"\"\"\n        a = ['apple', 'apple']\n\
+  \        b = []\n        ax, _ = task_func(a, b)\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n\n    def test_non_predefined_items_only(self):\n        \"\"\"Test\
+  \ with lists containing non-predefined items.\"\"\"\n        a = ['cherry', 'dragonfruit']\n\
+  \        b = ['cherry', 'mango']\n        ax, _ = task_func(a, b)\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n\n    def test_all_predefined_items(self):\n        \"\"\"Test with\
+  \ lists containing only predefined items.\"\"\"\n        a = ['apple', 'apple']\n\
+  \        b = ['banana']\n        ax, _ = task_func(a, b)\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n\n    def test_duplicate_items(self):\n        \"\"\"Test with lists\
+  \ containing duplicate items.\"\"\"\n        a = ['apple', 'apple']\n        b =\
+  \ ['apple', 'banana', 'banana']\n        ax, _ = task_func(a, b)\n        self.assertIsInstance(ax,\
+  \ plt.Axes)"

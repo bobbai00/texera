@@ -1,0 +1,93 @@
+TMC-list:
+- code: "def data_completeness(output, ground_truth):\n    output_data = output[0]\
+    \  # extract the list of matplotlib axes from tuple\n    ground_truth_data = ground_truth[0]\
+    \  # extract ground truth list of axes\n\n    return min(1,len(output_data)/len(ground_truth_data))\
+    \  # Return the fraction of complete axes\n"
+  function: Data Completeness
+  metric: Data Completeness
+  task_name: Data cleaning and preprocessing
+- code: "def plot_validation(output, ground_truth):\n    output_data = output[0] \
+    \ # extract the list of matplotlib axes from tuple\n    ground_truth_data = ground_truth[0]\
+    \  # extract ground truth list of axes\n    \n    validation_scores = []\n   \
+    \ \n    for i, ax in enumerate(output_data):\n        if i >= len(ground_truth_data):\n\
+    \            continue\n        # Compare number of lines plotted (assuming single\
+    \ line per axes for sales data)\n        output_lines = len(ax.get_lines())\n\
+    \        ground_truth_lines = len(ground_truth_data[i].get_lines())\n        validation_scores.append(output_lines\
+    \ == ground_truth_lines)\n    \n    return sum(validation_scores) / len(validation_scores)\
+    \  # Return the fraction of valid plots"
+  function: Plot Validity
+  metric: Plot Validation
+  task_name: Data visualization
+data: "import os\nimport pandas as pd\nimport re\nimport matplotlib.pyplot as plt\n\
+  \n# Assign new valid data for testing\ndirectory = \"new_task_func_data/\"\npattern\
+  \ = r\"^sales_report_\\d{4}_.*\\.csv\"\n\n# Create directory and new complex CSV\
+  \ files\nos.makedirs(directory, exist_ok=True)\n\ndata_2023 = pd.DataFrame({\n \
+  \   'Month': ['January', 'February', 'March', 'April', 'May'],\n    'Sales': [200,\
+  \ 250, 300, 400, 500]\n})\ndata_2024 = pd.DataFrame({\n    'Month': ['January',\
+  \ 'February', 'March', 'April', 'May'],\n    'Sales': [225, 275, 320, 450, 600]\n\
+  })\ndata_2023.to_csv(directory + \"sales_report_2023_Q1.csv\", index=False)\ndata_2024.to_csv(directory\
+  \ + \"sales_report_2024_Q1.csv\", index=False)\n\nargs = (directory, pattern)"
+ground_truth: "import os\nimport pandas as pd\nimport re\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(directory: str, pattern: str) -> list:\n    axes_list\
+  \ = []\n    \n    # Compile the regular expression pattern\n    regex = re.compile(pattern)\n\
+  \    \n    # Loop through all files in the directory\n    for filename in os.listdir(directory):\n\
+  \        if regex.match(filename) and filename.endswith('.csv'):\n            #\
+  \ Construct full file path\n            file_path = os.path.join(directory, filename)\n\
+  \            \n            # Read the CSV file\n            data = pd.read_csv(file_path)\n\
+  \            \n            # Create a plot\n            fig, ax = plt.subplots()\n\
+  \            ax.plot(data['Month'], data['Sales'])\n            ax.set_title(filename)\n\
+  \            ax.set_xlabel('Month')\n            ax.set_ylabel('Sales')\n      \
+  \      axes_list.append(ax)\n\n    plt.tight_layout()\n    plt.show()\n    \n  \
+  \  return (axes_list,)"
+prompt: 'Searches a directory for CSV files matching a given regular expression pattern,
+  reads sales data from these files, and plots the sales data with month on the x-axis
+  and sales on the y-axis. Note that: Each CSV file contains two columns: ''Month''
+  and ''Sales''. The function should output with: tuple(axes_list: list)
+
+  axes_list: A list of matplotlib.axes._axes.Axes objects, each representing a plot
+  of sales data from a matched CSV file. You should write self-contained code starting
+  with:
+
+  ```
+
+  import os
+
+  import pandas as pd
+
+  import re
+
+  import matplotlib.pyplot as plt
+
+  def task_func(directory: str, pattern: str) -> list:
+
+  ```'
+testcase: "import unittest\nimport shutil\nimport numpy as np\nimport os\nimport pandas\
+  \ as pd\nimport re\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n\
+  \        # Prepare test data\n        self.directory = \"task_func_data/\"\n   \
+  \     self.pattern = r\"^sales_data_\\d{4}.csv\"\n        os.makedirs(self.directory,\
+  \ exist_ok=True)\n        data_2021 = pd.DataFrame({\n            'Month': ['January',\
+  \ 'February', 'March'],\n            'Sales': [100, 150, 200]\n        })\n    \
+  \    data_2022 = pd.DataFrame({\n            'Month': ['January', 'February', 'March'],\n\
+  \            'Sales': [120, 130, 210]\n        })\n        data_2021.to_csv(self.directory\
+  \ + \"sales_data_2021.csv\", index=False)\n        data_2022.to_csv(self.directory\
+  \ + \"sales_data_2022.csv\", index=False)\n\n    def tearDown(self):\n        #\
+  \ Clean up test data\n        shutil.rmtree(self.directory)\n\n    def test_plots_generated(self):\n\
+  \        plots = task_func(self.directory, self.pattern)\n        self.assertEqual(len(plots),\
+  \ 2, \"Should generate two plots for two CSV files\")\n\n    def test_plot_titles(self):\n\
+  \        plots = task_func(self.directory, self.pattern)\n        expected_titles\
+  \ = ['sales_data_2022.csv', 'sales_data_2021.csv']\n        plot_titles = [plot.get_title()\
+  \ for plot in plots]\n        self.assertEqual(set(plot_titles), set(expected_titles),\
+  \ \"Plot titles should match the CSV filenames\")\n\n    def test_no_files_matched(self):\n\
+  \        plots = task_func(self.directory, r\"^no_match_\\d{4}.csv\")\n        self.assertEqual(len(plots),\
+  \ 0, \"Should return an empty list if no files match the pattern\")\n\n    def test_invalid_directory(self):\n\
+  \        with self.assertRaises(FileNotFoundError):\n            task_func(\"/invalid/directory/\"\
+  , self.pattern)\n\n    def test_plot_data_integrity(self):\n        plots = task_func(self.directory,\
+  \ self.pattern)\n        # Read the CSV files again to get expected data\n     \
+  \   expected_data = []\n        for file in os.listdir(self.directory):\n      \
+  \      if re.match(self.pattern, file):\n                df = pd.read_csv(os.path.join(self.directory,\
+  \ file))\n                expected_data.append(df['Sales'].to_list())\n        for\
+  \ plot, expected_sales in zip(plots, expected_data):\n            lines = plot.get_lines()\n\
+  \            for line in lines:\n                y_data = line.get_ydata()\n   \
+  \             # Use np.isclose for floating point comparison, if necessary\n   \
+  \             self.assertTrue(any(np.array_equal(y_data, expected) for expected\
+  \ in expected_data), \"Plotted data should match the CSV file content\")"

@@ -1,0 +1,59 @@
+TMC-list:
+- code: "def heatmap_color_consistency(output, ground_truth):\n    ax_output = output[0]\
+    \  # extract the Axes object from output\n    ax_ground_truth = ground_truth[0]\
+    \  # extract the Axes object from ground truth\n    \n    # Get the color map\
+    \ of the generated heatmap\n    color_map_output = ax_output.get_images()[0].get_array()\n\
+    \    color_map_ground_truth = ax_ground_truth.get_images()[0].get_array()\n  \
+    \  \n    # Compute the similarity of the color maps (using correlation)\n    from\
+    \ scipy.stats import pearsonr\n    correlation = pearsonr(color_map_output.flatten(),\
+    \ color_map_ground_truth.flatten())[0]\n    \n    return correlation"
+  function: Visualization Quality
+  metric: Heatmap Color Consistency
+  task_name: Data visualization
+data: 'import numpy as np
+
+
+  matrix = np.array([[15, 22, 13, 27], [41, 55, 63, 76], [82, 45, 39, 12], [98, 31,
+  78, 42]])
+
+  args = (matrix,)'
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\n\ndef task_func(matrix):\n\
+  \    fig, ax = plt.subplots()\n    heatmap = ax.imshow(matrix, cmap='hot', interpolation='nearest')\n\
+  \    plt.colorbar(heatmap, ax=ax)\n    return ax, heatmap"
+prompt: 'Visualize a 2D numeric array (matrix) as a heatmap using matplotlib, specifying
+  a cmap for the color mapping and interpolation to control the pixel rendering.
+
+  The function should output with: tuple(ax: matplotlib.axes._axes.Axes, heatmap:
+  matplotlib.collections.QuadMesh)
+
+  ax: The Axes object with the heatmap of the ''hot'' colormap.
+
+  heatmap: The QuadMesh object representing the heatmap.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import matplotlib.pyplot as plt
+
+  def task_func(matrix):
+
+  ```'
+testcase: "import unittest\nimport numpy as np\nimport matplotlib\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        matrix = np.array([[1, 2, 3], [4, 5, 6], [7,\
+  \ 8, 9]])\n        ax, _ = task_func(matrix)\n\n        # Asserting the return type\n\
+  \        self.assertIsInstance(ax, matplotlib.axes.Axes)\n\n        # Asserting\
+  \ the colormap used\n        self.assertEqual(ax.images[0].get_cmap().name, 'hot')\n\
+  \n    def test_case_2(self):\n        matrix = np.array([[10, 20], [30, 40]])\n\
+  \        ax, _ = task_func(matrix)\n\n        self.assertIsInstance(ax, matplotlib.axes.Axes)\n\
+  \        self.assertEqual(ax.images[0].get_cmap().name, 'hot')\n\n    def test_case_3(self):\n\
+  \        matrix = np.array([[1, 1], [1, 1], [1, 1]])\n        ax, _ = task_func(matrix)\n\
+  \n        self.assertIsInstance(ax, matplotlib.axes.Axes)\n        self.assertEqual(ax.images[0].get_cmap().name,\
+  \ 'hot')\n\n    def test_case_4(self):\n        matrix = np.array([[1]])\n     \
+  \   ax, _ = task_func(matrix)\n\n        self.assertIsInstance(ax, matplotlib.axes.Axes)\n\
+  \        self.assertEqual(ax.images[0].get_cmap().name, 'hot')\n\n    def test_case_5(self):\n\
+  \        matrix = np.random.rand(5, 5)  # Random 5x5 matrix\n        ax, _ = task_func(matrix)\n\
+  \n        self.assertIsInstance(ax, matplotlib.axes.Axes)\n        self.assertEqual(ax.images[0].get_cmap().name,\
+  \ 'hot')"

@@ -1,0 +1,37 @@
+TMC-list:
+- code: "def r_squared_score(output, ground_truth):\n    score_output = output[0]\
+    \  # extract the R-squared score from tuple\n    score_ground_truth = ground_truth[0]\n\
+    \    return abs(score_output - score_ground_truth) < 1e-4  # check if scores are\
+    \ approximately equal"
+  function: R-squared Value
+  metric: R-squared Score
+  task_name: Predictive modeling
+data: "import pandas as pd\n\ndf = pd.DataFrame([\n    [10, 20, 30],\n    [20, 25,\
+  \ 35],\n    [30, 35, 45],\n    [40, 50, 60],\n    [50, 60, 70],\n    [60, 70, 80]\n\
+  ], columns=['a', 'b', 'c'])\n\ntarget = 'c'\n\nargs = (df, target)"
+ground_truth: "import pandas as pd\nfrom sklearn.linear_model import LinearRegression\n\
+  from sklearn.metrics import r2_score\n\ndef task_func(df, target):\n    # Splitting\
+  \ the data into features and target\n    X = df.drop(columns=[target])\n    y =\
+  \ df[target]\n\n    # Creating and training the Linear Regression model\n    model\
+  \ = LinearRegression()\n    model.fit(X, y)\n\n    # Making predictions\n    y_pred\
+  \ = model.predict(X)\n\n    # Calculating the R-squared score\n    score = r2_score(y,\
+  \ y_pred)\n\n    return (score, model)"
+prompt: "Perform a linear regression analysis on a given DataFrame. The function should\
+  \ output with: tuple(score: float, model: LinearRegression)\nscore: The R-squared\
+  \ score of the model. \nmodel: The trained LinearRegression model. \nYou should\
+  \ write self-contained code starting with: \n```\nimport pandas as pd\nfrom sklearn.linear_model\
+  \ import LinearRegression\ndef task_func(df, target):\n```"
+testcase: "import unittest\nimport pandas as pd\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        df = pd.DataFrame([[0, 1, 2], [3, 4, 5], [6,\
+  \ 7, 8]], columns=['x', 'y', 'z'])\n        r_squared, _ = task_func(df, 'z')\n\
+  \        self.assertEqual(r_squared, 1.0)\n\n    def test_case_2(self):\n      \
+  \  df = pd.DataFrame([[-1, 1, 2], [3, 4, 5], [6, 7, 8]], columns=['x', 'y', 'z'])\n\
+  \        r_squared, _ = task_func(df, 'z')\n        self.assertEqual(r_squared,\
+  \ 1.0)\n\n    def test_case_3(self):\n        df = pd.DataFrame([[0, 0, 0], [1,\
+  \ 1, 1], [2, 2, 2]], columns=['x', 'y', 'z'])\n        r_squared, _ = task_func(df,\
+  \ 'z')\n        self.assertEqual(r_squared, 1.0)\n\n    def test_case_4(self):\n\
+  \        df = pd.DataFrame([[0, 0, 9], [1, 1, 35], [2, 2, 78]], columns=['x', 'y',\
+  \ 'z'])\n        r_squared, _ = task_func(df, 'z')\n        self.assertFalse(r_squared\
+  \ == 1.0)\n\n    def test_case_5(self):\n        df = pd.DataFrame([[0, 0, 0, 0],\
+  \ [1, 1, 1, 1], [2, 2, 2, 2]], columns=['x', 'y', 'z', 'w'])\n        r_squared,\
+  \ _ = task_func(df, 'w')\n        self.assertEqual(r_squared, 1.0)"

@@ -1,0 +1,78 @@
+TMC-list:
+- code: "def normalization_correctness(output, ground_truth):\n    output_normalized\
+    \ = output[1]  # extract the normalized_data from tuple\n    ground_truth_normalized\
+    \ = ground_truth[1]\n    return np.allclose(output_normalized, ground_truth_normalized)"
+  function: Normalization Range Check
+  metric: Normalization Correctness
+  task_name: Data cleaning and preprocessing
+- code: "def histogram_visual_quality(output, ground_truth):\n    output_axes = output[0]\
+    \  # extract the hist_axes from tuple\n    ground_truth_axes = ground_truth[0]\n\
+    \    output_hist = output_axes.patches\n    ground_truth_hist = ground_truth_axes.patches\n\
+    \    return len(output_hist) == len(ground_truth_hist) and \\\n           all([o.get_height()\
+    \ == g.get_height() for o, g in zip(output_hist, ground_truth_hist)])"
+  function: Visualization Quality
+  metric: Histogram Visual Quality
+  task_name: Data visualization
+data: 'import numpy as np
+
+  arr = np.array([[10, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120], [130,
+  140, 150]])
+
+  args = (arr,)'
+ground_truth: "import numpy as np\nimport matplotlib.pyplot as plt\nfrom scipy.stats\
+  \ import norm\n\ndef task_func(arr: np.ndarray) -> (plt.Axes, np.ndarray):\n   \
+  \ # Calculate the sum of elements in each row\n    row_sums = np.sum(arr, axis=1)\n\
+  \n    # Calculate mean and standard deviation\n    mean = np.mean(row_sums)\n  \
+  \  std = np.std(row_sums)\n\n    # Normalize the row sums\n    if std > 0:\n   \
+  \     normalized_data = (row_sums - mean) / std\n    else:\n        normalized_data\
+  \ = np.zeros(row_sums.shape)\n\n    # Plot the histogram\n    hist_axes = plt.figure().add_subplot(111)\n\
+  \    hist_axes.hist(normalized_data, bins=30, density=True, color='green', alpha=0.6)\n\
+  \n    # Define the range for the PDF curve\n    x = np.linspace(-4, 4, 100)\n  \
+  \  pdf = norm.pdf(x)\n\n    # Overlay the PDF on the histogram\n    hist_axes.plot(x,\
+  \ pdf, color='red', linewidth=2)\n\n    # Set the title\n    hist_axes.set_title(\"\
+  Histogram of Normalized Data with Standard Normal PDF\")\n\n    return hist_axes,\
+  \ normalized_data"
+prompt: "Plots a histogram of normalized data from an input 2D numpy array alongside\
+  \ the probability density function (PDF) of a standard normal distribution. Note\
+  \ that: Takes in a 2D numpy array as input. Calculates the sum of elements in each\
+  \ row of the array. Normalizes these row sums to have a mean of 0 and a standard\
+  \ deviation of 1. Normalization is achieved by first calculating the mean and standard\
+  \ deviation of the row sums. Each row sum is then transformed by subtracting the\
+  \ mean and dividing by the standard deviation. If the standard deviation is 0 (indicating\
+  \ all row sums are equal), normalization results in an array of zeros with the same\
+  \ shape. Plots a histogram of the normalized data. Uses 30 bins for the histogram.\
+  \ The histogram is density-based, meaning it represents the probability density\
+  \ rather than raw frequencies. The bars of the histogram are semi-transparent (60%\
+  \ opacity) and green in color. Overlays the PDF of a standard normal distribution\
+  \ on the histogram for comparison. The PDF curve is plotted in red with a line width\
+  \ of 2. The range of the PDF curve is set to cover 99% of a standard normal distribution.\
+  \ Sets the title of the plot to \"Histogram of Normalized Data with Standard Normal\
+  \ PDF\".\n\nThe function should output with: tuple(hist_axes: matplotlib.axes.Axes,\
+  \ normalized_data: np.ndarray)\nhist_axes: A matplotlib Axes object with the histogram\
+  \ of the normalized data and the overlaid standard normal PDF.\nnormalized_data:\
+  \ The normalized data as a 1D numpy array.\n\nYou should write self-contained code\
+  \ starting with:\n```\n import numpy as np\n import matplotlib.pyplot as plt\n from\
+  \ scipy.stats import norm\n def task_func(arr: np.ndarray) -> (plt.Axes, np.ndarray):\n\
+  ```"
+testcase: "import unittest\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    \"\"\"Tests for `task_func`.\"\"\"\n\n    def test_histogram_and_pdf(self):\n\
+  \        \"\"\"Test that the histogram and PDF are plotted.\"\"\"\n        arr =\
+  \ np.array([[i + j for i in range(3)] for j in range(5)])\n        ax, _ = task_func(arr)\n\
+  \        self.assertEqual(\n            ax.get_title(),\n            \"Histogram\
+  \ of Normalized Data with Standard Normal PDF\",\n        )\n        self.assertEqual(len(ax.lines),\
+  \ 1)\n        self.assertEqual(len(ax.patches), 30)\n\n    def test_normalized_data(self):\n\
+  \        \"\"\"Test that the normalized data is correct.\"\"\"\n        arr = np.array([[1,\
+  \ 2, 3], [4, 5, 6], [7, 8, 9]])\n        _, normalized_data = task_func(arr)\n \
+  \       expected_data = [-1.22474487, 0.0, 1.22474487]\n        for i in range(len(expected_data)):\n\
+  \            self.assertTrue(np.isclose(normalized_data[i], expected_data[i]))\n\
+  \n    def test_empty_array(self):\n        \"\"\"Test empty array.\"\"\"\n     \
+  \   arr = np.array([[], [], []])\n        _, normalized_data = task_func(arr)\n\
+  \        for value in normalized_data:\n            self.assertTrue(np.isclose(value,\
+  \ 0))\n\n    def test_single_value_array(self):\n        \"\"\"Test single value\
+  \ array.\"\"\"\n        arr = np.array([[5], [5], [5]])\n        _, normalized_data\
+  \ = task_func(arr)\n        for value in normalized_data:\n            self.assertTrue(np.isclose(value,\
+  \ 0))\n\n    def test_large_values(self):\n        \"\"\"Test large values.\"\"\"\
+  \n        arr = np.array([[1e6, 2e6, 3e6], [4e6, 5e6, 6e6], [7e6, 8e6, 9e6]])\n\
+  \        _, normalized_data = task_func(arr)\n        expected_data = [-1.22474487,\
+  \ 0.0, 1.22474487]\n        for i in range(len(expected_data)):\n            self.assertTrue(np.isclose(normalized_data[i],\
+  \ expected_data[i]))"

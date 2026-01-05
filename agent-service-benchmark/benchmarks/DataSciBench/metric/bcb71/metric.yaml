@@ -1,0 +1,104 @@
+TMC-list:
+- code: "def dataframe_completeness(output, ground_truth):\n    output_df = output[0]\n\
+    \    ground_truth_df = ground_truth[0]\n    return output_df.shape == ground_truth_df.shape\
+    \ and all(output_df.columns == ground_truth_df.columns)"
+  function: Data Completeness
+  metric: DataFrame Completeness
+  task_name: Data cleaning and preprocessing
+- code: "def mean_value_accuracy(output, ground_truth):\n    output_df = output[0]\n\
+    \    ground_truth_df = ground_truth[0]\n    return np.allclose(output_df['mean'],\
+    \ ground_truth_df['mean'])"
+  function: Data Accuracy
+  metric: Mean Value Accuracy
+  task_name: Data exploration and statistics understand
+- code: "def histogram_existence(output, ground_truth):\n    import matplotlib\n \
+    \   hist_axes_output = output[1]\n    return isinstance(hist_axes_output, matplotlib.axes.Axes)"
+  function: Visualization Completeness
+  metric: Histogram Existence
+  task_name: Data visualization
+data: "import pandas as pd\nimport os\n\n# Creating a new complex CSV file with varied\
+  \ email structures and data lengths\ncomplex_data = {\n    \"email\": [\n      \
+  \  \"alpha@example.com\", \"beta@example.com\", \"gamma@example.com\", \n      \
+  \  \"delta@example.com\", \"epsilon@example.com\", \"zeta@example.com\"\n    ],\n\
+  \    \"list\": [\n        [3, 6, 9, 12, 15, 18, 21, 24, 27], \n        [2, 4], \n\
+  \        [10, 20, 30, 40], \n        [1, 1, 1, 1, 1, 1],\n        [5, 15, 25, 35,\
+  \ 45, 55, 65],\n        [100, 200, 300, 400, 500]\n    ]\n}\ndf_complex = pd.DataFrame(complex_data)\n\
+  csv_complex_path = 'data/task_func/csv_complex.csv'\nos.makedirs(os.path.dirname(csv_complex_path),\
+  \ exist_ok=True)\ndf_complex.to_csv(csv_complex_path, index=False)\n\nargs = (csv_complex_path,)"
+ground_truth: "import pandas as pd\nimport seaborn as sns\nimport numpy as np\nimport\
+  \ ast\nimport matplotlib.pyplot as plt\n\ndef task_func(csv_file):\n    # Load e-mail\
+  \ data from a CSV file\n    df = pd.read_csv(csv_file)\n    \n    # Assume 'list'\
+  \ column contains string representations of lists\n    df['list'] = df['list'].apply(ast.literal_eval)\n\
+  \    \n    # Calculate sum, mean, and standard deviation for each list\n    df['sum']\
+  \ = df['list'].apply(np.sum)\n    df['mean'] = df['list'].apply(np.mean)\n    df['std']\
+  \ = df['list'].apply(np.std)\n\n    # Draw histogram of the mean values\n    plt.figure(figsize=(10,\
+  \ 6))\n    hist_axes = sns.histplot(df['mean'], bins=10, kde=True)\n    hist_axes.set_title('Histogram\
+  \ of Mean Values')\n    hist_axes.set_xlabel('Mean Values')\n    hist_axes.set_ylabel('Frequency')\n\
+  \    \n    # Return DataFrame and histogram plot\n    return (df, hist_axes)"
+prompt: "Load e-mail data from a CSV file, convert it into a Pandas DataFrame, and\
+  \ calculate the sum, mean, and standard deviation of the list associated with each\
+  \ e-mail. Additionally, this function will draw a histogram of the mean values and\
+  \ return both the DataFrame and the histogram plot. The function should output with:\
+  \ tuple(df: pandas.DataFrame, hist_axes: matplotlib.axes.Axes)\ndf: A pandas DataFrame\
+  \ with columns 'email', 'list', 'sum', 'mean', and 'std'. \nhist_axes: A histogram\
+  \ plot of the mean values. You should write self-contained code starting with: \n\
+  ```\nimport pandas as pd\nimport seaborn as sns\nimport numpy as np\nimport ast\n\
+  def task_func(csv_file):\n```"
+testcase: "import os\nimport unittest\nimport matplotlib.pyplot as plt\nimport pandas\
+  \ as pd\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n    \"\"\"Test\
+  \ cases for the task_func function.\"\"\"\n    \n    def setUp(self):\n        self.test_dir\
+  \ = 'data/task_func'\n        os.makedirs(self.test_dir, exist_ok=True)\n      \
+  \  \n        self.f_1 = os.path.join(self.test_dir, \"csv_1.csv\")\n        self.f_2\
+  \ = os.path.join(self.test_dir, \"csv_2.csv\")\n        self.f_3 = os.path.join(self.test_dir,\
+  \ \"csv_3.csv\")\n        \n        df = pd.DataFrame(\n            {\n        \
+  \        \"email\": [\"first@example.com\", \"second@example.com\", \"third@example.com\"\
+  ],\n                \"list\": [\n                    [11, 12, 34, 21, 9, 3, 32],\n\
+  \                    [17, 16, 15, 6, 3, 21, 6],\n                    [9, 7, 3, 3,\
+  \ 2, 1, 1, 1]\n                ]\n            }\n        )\n        df.to_csv(self.f_1,\
+  \ index=False)\n        \n        df = pd.DataFrame(\n            {\n          \
+  \      \"email\": [\"fourth@example.com\", \"fifth@example.com\", \"sixth@example.com\"\
+  , \"seventh@example.com\"],\n                \"list\": [\n                    [11,\
+  \ 12, 34, 21, 9, 3, 32],\n                    [8, 4, 2, 13, 2, 1, 1, 1],\n     \
+  \               [0, 7, 3, 3, 2, 1, 1, 1],\n                    [9, 7, 3, 3, 2, 1,\
+  \ 1, 1]\n                ]\n            }\n        )\n        df.to_csv(self.f_2,\
+  \ index=False)\n        \n        df = pd.DataFrame(\n            {\n          \
+  \      \"email\": [\"ninth@example.com\", \"tenth@example.com\"],\n            \
+  \    \"list\": [\n                    [19, 7, 23, 3, 2, 1, 5, 1],\n            \
+  \        [9, 7, 13, 3, 12, 1, 4, 5]\n                ]\n            }\n        )\n\
+  \        df.to_csv(self.f_3, index=False)\n\n        self.f_4 = os.path.join(self.test_dir,\
+  \ \"csv_4.csv\")\n        df = pd.DataFrame(\n            {\n                \"\
+  email\": [\"A@example.com\", \"B@example.com\"],\n                \"list\": [\n\
+  \                    [1],\n                    [1, 2],\n                ]\n    \
+  \        }\n        )\n        df.to_csv(self.f_4, index=False)\n\n        self.f_5\
+  \ = os.path.join(self.test_dir, \"csv_5.csv\")\n        df = pd.DataFrame(\n   \
+  \         {\n                \"email\": [\"C@example.com\"],\n                \"\
+  list\": [\n                    [11, 23, 36, 180, 32, 98, 96, 56, 32, 72, 7, 24,\
+  \ 32],\n                ]\n            }\n        )\n        df.to_csv(self.f_5,\
+  \ index=False)\n\n    def tearDown(self):\n        import shutil\n        try:\n\
+  \            shutil.rmtree(self.test_dir)\n        except OSError as e:\n      \
+  \      print(e)\n\n    def test_case_1(self):\n        df, plot = task_func(self.f_1)\n\
+  \        try:\n            fig = plot.get_figure()\n            plt.close(fig)\n\
+  \        except:\n            pass\n        self.assertEqual(df.shape[1], 5)\n \
+  \       self.assertIn('email', df.columns)\n        self.assertIn('list', df.columns)\n\
+  \        self.assertIn('sum', df.columns)\n        self.assertIn('mean', df.columns)\n\
+  \        self.assertIn('std', df.columns)\n        self.assertIsInstance(plot, plt.Axes)\n\
+  \n    def test_case_2(self):\n        df, ax = task_func(self.f_2)\n        try:\n\
+  \            fig = ax.get_figure()\n            plt.close(fig)\n        except:\n\
+  \            pass\n        for _, row in df.iterrows():\n            self.assertEqual(row['sum'],\
+  \ sum(row['list']))\n            self.assertAlmostEqual(row['mean'], np.mean(row['list']))\n\
+  \            self.assertAlmostEqual(row['std'], np.std(row['list']))\n\n    def\
+  \ test_case_3(self):\n        df, ax = task_func(self.f_3)\n        try:\n     \
+  \       fig = ax.get_figure()\n            plt.close(fig)\n        except:\n   \
+  \         pass\n        for _, row in df.iterrows():\n            self.assertEqual(row['sum'],\
+  \ sum(row['list']))\n            self.assertAlmostEqual(row['mean'], np.mean(row['list']))\n\
+  \            self.assertAlmostEqual(row['std'], np.std(row['list']))\n\n    def\
+  \ test_case_4(self):\n        df, ax = task_func(self.f_4)\n        try:\n     \
+  \       fig = ax.get_figure()\n            plt.close(fig)\n        except:\n   \
+  \         pass\n        for _, row in df.iterrows():\n            self.assertEqual(row['sum'],\
+  \ sum(row['list']))\n            self.assertAlmostEqual(row['mean'], np.mean(row['list']))\n\
+  \            self.assertAlmostEqual(row['std'], np.std(row['list']))\n\n    def\
+  \ test_case_5(self):\n        df, ax = task_func(self.f_5)\n        try:\n     \
+  \       fig = ax.get_figure()\n            plt.close(fig)\n        except:\n   \
+  \         pass\n        for _, row in df.iterrows():\n            self.assertEqual(row['sum'],\
+  \ sum(row['list']))\n            self.assertAlmostEqual(row['mean'], np.mean(row['list']))\n\
+  \            self.assertAlmostEqual(row['std'], np.std(row['list']))"

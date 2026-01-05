@@ -1,0 +1,54 @@
+TMC-list:
+- code: "def correlation_coefficient_validity(output, ground_truth):\n    output_coefficient\
+    \ = output[0]  # extract the correlation coefficient from the tuple\n    ground_truth_coefficient\
+    \ = ground_truth[0]\n    return abs(output_coefficient - ground_truth_coefficient)\
+    \ < 1e-6  # checks if output matches ground truth within a small tolerance"
+  function: Data Validity
+  metric: Correlation Coefficient Validity
+  task_name: Data exploration and statistics understand
+- code: "def scatter_plot_representation_check(output, ground_truth):\n    output_plot\
+    \ = output[1]  # extract the scatter plot from the tuple\n    ground_truth_plot\
+    \ = ground_truth[1]\n    return output_plot.get_title() == ground_truth_plot.get_title()\
+    \ and \\\n           len(output_plot.collections) > 0  # checks if plot title\
+    \ is the same and if there are any points plotted"
+  function: Visualization Quality
+  metric: Scatter Plot Representation Check
+  task_name: Data visualization
+data: "data_dict = {\n    'Temperature': [15.5, 16.2, 17.1, 17.8, 18.5, 19.0, 20.1,\
+  \ 20.5, 21.3, 22.0],\n    'Ice_Cream_Sales': [100, 120, 150, 190, 210, 240, 300,\
+  \ 310, 360, 400]\n}\ndata_keys = ['Temperature', 'Ice_Cream_Sales']\nargs = (data_dict,\
+  \ data_keys)"
+ground_truth: "from scipy import stats\nimport matplotlib.pyplot as plt\n\ndef task_func(data_dict,\
+  \ data_keys):\n    # Extracting the data series from the dictionary\n    x = data_dict[data_keys[0]]\n\
+  \    y = data_dict[data_keys[1]]\n    \n    # Calculating the correlation coefficient\n\
+  \    correlation_coefficient, _ = stats.pearsonr(x, y)\n    \n    # Creating the\
+  \ scatter plot\n    fig, ax = plt.subplots()\n    ax.scatter(x, y)\n    ax.set_xlabel(data_keys[0])\n\
+  \    ax.set_ylabel(data_keys[1])\n    ax.set_title(f'Scatter Plot (Correlation:\
+  \ {correlation_coefficient:.2f})')\n    \n    # Display the plot\n    plt.show()\n\
+  \    \n    return (correlation_coefficient, ax)"
+prompt: 'Calculate the correlation between two data series and return a scatter plot
+  along with the correlation coefficient. The function should output with: tuple(correlation_coefficient:
+  float, scatter_plot: matplotlib.axes.Axes) correlation_coefficient: The correlation
+  coefficient between the two data series. scatter_plot: The scatter plot of the two
+  data series. You should write self-contained code starting with: ``` from scipy
+  import stats import matplotlib.pyplot as plt def task_func(data_dict, data_keys):
+  ```'
+testcase: "import unittest\nimport numpy as np\nimport doctest\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        data_dict = {'X': [1, 2, 3, 4, 5], 'Y': [2,\
+  \ 3, 5, 7, 8]}\n        data_keys = ['X', 'Y']\n        correlation, plot = task_func(data_dict,\
+  \ data_keys)\n        self.assertAlmostEqual(correlation, 0.9923, places=4)\n  \
+  \      self.assertTrue(isinstance(plot, plt.Axes))\n  \n    def test_case_2(self):\n\
+  \        data_dict = {'A': [5, 4, 3, 2, 1], 'B': [1, 2, 3, 4, 5]}\n        data_keys\
+  \ = ['A', 'B']\n        correlation, plot = task_func(data_dict, data_keys)\n  \
+  \      self.assertAlmostEqual(correlation, -1.0, places=4)\n        self.assertTrue(isinstance(plot,\
+  \ plt.Axes))\n  \n    def test_case_3(self):\n        data_dict = {'X': [1, 1, 1,\
+  \ 1, 1], 'Y': [1, 1, 1, 1, 1]}\n        data_keys = ['X', 'Y']\n        correlation,\
+  \ plot = task_func(data_dict, data_keys)\n        self.assertTrue(np.isnan(correlation))\n\
+  \        self.assertTrue(isinstance(plot, plt.Axes))\n  \n    def test_case_4(self):\n\
+  \        data_dict = {'X': [1, 2, 3, 4, 5], 'Y': [1, 4, 9, 16, 25]}\n        data_keys\
+  \ = ['X', 'Y']\n        correlation, plot = task_func(data_dict, data_keys)\n  \
+  \      self.assertAlmostEqual(correlation, 0.9811, places=4)\n        self.assertTrue(isinstance(plot,\
+  \ plt.Axes))\n\n    def test_case_5(self):\n        data_dict = {'X': [1, 3, 5,\
+  \ 7, 9], 'Y': [2, 6, 10, 14, 18]}\n        data_keys = ['X', 'Y']\n        correlation,\
+  \ plot = task_func(data_dict, data_keys)\n        self.assertAlmostEqual(correlation,\
+  \ 1.0, places=4)\n        self.assertTrue(isinstance(plot, plt.Axes))"

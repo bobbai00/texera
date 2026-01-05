@@ -1,0 +1,59 @@
+TMC-list:
+- code: "def mean_absolute_error_mean(output, ground_truth):\n    output_mean = output[1]\
+    \  # extract the mean from tuple\n    ground_truth_mean = ground_truth[1]\n  \
+    \  return abs(output_mean - ground_truth_mean)<0.01"
+  function: Data Accuracy
+  metric: Mean Absolute Error of the mean
+  task_name: Data exploration and statistics understand
+- code: "def outlier_index_consistency(output, ground_truth):\n    output_outliers\
+    \ = output[0]  # extract the outlier indices from tuple\n    ground_truth_outliers\
+    \ = ground_truth[0]\n    return len(set(output_outliers) - set(ground_truth_outliers))\
+    \ == 0 and len(set(ground_truth_outliers) - set(output_outliers)) == 0"
+  function: Data Quality Score
+  metric: Outlier Index Consistency
+  task_name: Data cleaning and preprocessing
+data: 'import numpy as np
+
+  data = np.array([-20, -15, -10, -5, 0, 5, 15, 20, 30, 100, 150, 200, 250])
+
+  threshold = 3.5
+
+  args = (data, threshold)'
+ground_truth: "import numpy as np\nfrom scipy.stats import norm\n\ndef task_func(data:\
+  \ np.ndarray, threshold: float = 2.0) -> tuple:\n    mean = np.mean(data)\n    std_dev\
+  \ = np.std(data)\n    \n    if std_dev == 0:\n        return [], mean, np.var(data)\n\
+  \n    z_scores = (data - mean) / std_dev\n    outliers = np.where(np.abs(z_scores)\
+  \ > threshold)[0].tolist()\n    \n    return outliers, mean, np.var(data)"
+prompt: "Determine the outlier indices in a 1D numpy array based on the Z score. First\
+  \ a normal distribution is fitted to the data, the mean and standard deviation is\
+  \ used to calculate the z scores of each datapoint. If the absolute z score of a\
+  \ datapoint is larger than the threshold it is considered an outlier and its index\
+  \ is recorded. If the standard deviation is 0, an empty list is returned as outliers.\
+  \ >>> data = np.array([-10, 3, 5, 5, 5, 5, 5, 7, 20]) >>> outliers, mean, var =\
+  \ task_func(data, threshold=4) >>> print(outliers) [] >>> print(mean) 5.0 >>> print(var)\
+  \ 50.888888888888886. The function should output with: tuple(outliers: list, mean:\
+  \ float, var: float)\noutliers: The indices of outliers in the data where Z score\
+  \ > threshold. Empty if standard deviation is 0.\nmean: The mean of the fitted normal\
+  \ distribution.\nvar: The variance of the fitted normal distribution. \nYou should\
+  \ write self-contained code starting with:\n```\nimport numpy as np\nfrom scipy.stats\
+  \ import norm\ndef task_func(data: np.ndarray, threshold: float = 2.0) -> list:\n\
+  ```"
+testcase: "import unittest\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        data = np.array([1, 2, 3, 4, 5, 6, 100])\n\
+  \        result, mean, var = task_func(data)\n        self.assertEqual(result, [6])\n\
+  \        self.assertAlmostEqual(mean, 17.2, delta=0.1)\n        self.assertAlmostEqual(var,\
+  \ 1142.78, delta=0.1)\n\n    def test_case_2(self):\n        data = np.array([1,\
+  \ 2, 3, 4, 5, 6, 7])\n        result, mean, var = task_func(data)\n        self.assertEqual(result,\
+  \ [])\n        self.assertAlmostEqual(mean, 4, delta=0.1)\n        self.assertAlmostEqual(var,\
+  \ 4, delta=0.1)\n\n    def test_case_3(self):\n        data = np.array([5, 5, 5,\
+  \ 5, 5])\n        result, mean, var = task_func(data)\n        self.assertEqual(result,\
+  \ [])\n        self.assertAlmostEqual(mean, 5, delta=0.1)\n        self.assertAlmostEqual(var,\
+  \ 0, delta=0.1)\n\n    def test_case_4(self):\n        from faker import Faker\n\
+  \        fake = Faker()\n        fake.seed_instance(12)\n        data = np.array([fake.random_int(min=0,\
+  \ max=100) for _ in range(10000)])\n        result, mean, var = task_func(data)\n\
+  \        self.assertEqual(len(result), 0)\n        self.assertAlmostEqual(mean,\
+  \ 50.28, delta=0.1)\n        self.assertAlmostEqual(var, 842.86, delta=0.1)\n\n\
+  \    def test_case_5(self):\n        data = np.array([-5, -4, -3, -2, -1, 0, 1,\
+  \ 2, 3, 4, 5, 50])\n        result, mean, var = task_func(data, threshold=0.5)\n\
+  \        self.assertEqual(result, [0, 1, 2, 11])\n        self.assertAlmostEqual(mean,\
+  \ 4.17, delta=0.1)\n        self.assertAlmostEqual(var, 200.14, delta=0.1)"

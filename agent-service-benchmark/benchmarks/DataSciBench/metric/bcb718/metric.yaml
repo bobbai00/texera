@@ -1,0 +1,59 @@
+TMC-list:
+- code: "def t_statistic_validity(output, ground_truth):\n    import math\n    output_t_statistic\
+    \ = output[0]  # extract t-statistic from tuple\n    ground_truth_t_statistic\
+    \ = ground_truth[0]\n    return not (math.isnan(output_t_statistic) and not math.isnan(ground_truth_t_statistic)\
+    \ and abs(ground_truth_t_statistic-output_t_statistic)<1e-3)"
+  function: Data Accuracy
+  metric: T-Statistic Validity
+  task_name: Data exploration and statistics understand
+- code: "def p_value_validity(output, ground_truth):\n    output_p_value = output[1]\
+    \  # extract p-value from tuple\n    ground_truth_p_value = ground_truth[1]\n\
+    \    return not (np.isnan(output_p_value) and not np.isnan(ground_truth_p_value)\
+    \ and abs(ground_truth_p_value-output_p_value)<1e-3)"
+  function: Model Accuracy
+  metric: P-Value Validity
+  task_name: Predictive modeling
+data: 'text1 = "The quick brown fox jumps over the lazy dog."
+
+  text2 = "An agile fox leaps past a weary canine effortlessly."
+
+  args = (text1, text2)'
+ground_truth: "import re\nimport numpy as np\nfrom scipy.stats import ttest_rel\n\n\
+  def task_func(text1, text2):\n    words1 = re.findall(r'\\b\\w+\\b', text1)\n  \
+  \  words2 = re.findall(r'\\b\\w+\\b', text2)\n    \n    if len(words1) != len(words2):\n\
+  \        return (float('nan'), float('nan'))\n    \n    t_statistic, p_value = ttest_rel([len(w)\
+  \ for w in words1], [len(w) for w in words2])\n    return (t_statistic, p_value)"
+prompt: 'Perform a paired t-test for the number of words in two strings, only if the
+  strings produce the same number of words. The function should output with: tuple(t_statistic:
+  float, p_value: float) t_statistic: The t-statistic, or NaN if tests cannot be performed
+  due to unequal lengths. p_value: The p-value, or NaN if tests cannot be performed
+  due to unequal lengths. You should write self-contained code starting with:
+
+  ```
+
+  import re
+
+  import numpy as np
+
+  from scipy.stats import ttest_rel
+
+  def task_func(text1, text2):
+
+  ```'
+testcase: "import unittest\nimport re\nimport numpy as np\nfrom scipy.stats import\
+  \ ttest_rel\n\nclass TestCases(unittest.TestCase):\n    def test_1(self):\n    \
+  \    t_stat, p_val = task_func(\"Hello, world!\", \"Hi, universe!\")\n        self.assertTrue(isinstance(t_stat,\
+  \ float))\n        self.assertTrue(isinstance(p_val, float))\n\n    def test_2(self):\n\
+  \        t_stat, p_val = task_func(\"Short text.\", \"This is a slightly longer\
+  \ text.\")\n        self.assertTrue(isinstance(t_stat, float))\n        self.assertTrue(isinstance(p_val,\
+  \ float))\n\n    def test_3(self):\n        t_stat, p_val = task_func(\"A, B, C,\
+  \ D, E.\", \"F, G, H, I, J.\")\n        self.assertTrue(isinstance(t_stat, float))\n\
+  \        self.assertTrue(isinstance(p_val, float))\n\n    def test_4(self):\n  \
+  \      t_stat, p_val = task_func(\"\", \"\")\n        self.assertTrue(np.isnan(t_stat))\n\
+  \        self.assertTrue(np.isnan(p_val))\n\n    def test_5(self):\n        t_stat,\
+  \ p_val = task_func(\"Testing with similar lengths.\", \"Testing with similar lengths.\"\
+  )\n        self.assertTrue(np.isnan(t_stat))  # Since the lengths are the same,\
+  \ t-statistic should be NaN\n        self.assertTrue(np.isnan(p_val))\n\n    def\
+  \ test_unequal_lengths(self):\n        t_stat, p_val = task_func(\"Short text.\"\
+  , \"This is a slightly longer text.\")\n        self.assertTrue(np.isnan(t_stat))\n\
+  \        self.assertTrue(np.isnan(p_val))"

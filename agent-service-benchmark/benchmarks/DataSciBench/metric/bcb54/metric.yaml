@@ -1,0 +1,87 @@
+TMC-list:
+- code: "def non_empty_sentence_ratio(output, ground_truth):\n    output_df = output[0]\n\
+    \    ground_truth_df = ground_truth[0]\n    output_non_empty = output_df.shape[0]\n\
+    \    ground_truth_non_empty = ground_truth_df.shape[0]\n    return min(1,output_non_empty\
+    \ / ground_truth_non_empty) if ground_truth_non_empty > 0 else 0"
+  function: Data Completeness
+  metric: Non-empty Sentence Ratio
+  task_name: Data cleaning and preprocessing
+- code: "def feature_consistency(output, ground_truth):\n    output_df = output[0]\n\
+    \    ground_truth_df = ground_truth[0]\n    output_features = set(output_df.columns)\n\
+    \    ground_truth_features = set(ground_truth_df.columns)\n    return len(output_features.intersection(ground_truth_features))\
+    \ / len(ground_truth_features) if ground_truth_features else 0"
+  function: Data Consistency
+  metric: Feature Consistency
+  task_name: Data exploration and statistics understand
+- code: "def matrix_sparsity(output, ground_truth):\n    output_df = output[0]\n \
+    \   ground_truth_df = ground_truth[0]\n    total_elements = output_df.size\n \
+    \   non_zero_elements = output_df.astype(bool).sum().sum()\n    sparsity_output\
+    \ = 1 - (non_zero_elements / total_elements) if total_elements > 0 else 0\n  \
+    \  total_elements = ground_truth_df.size\n    non_zero_elements = ground_truth_df.astype(bool).sum().sum()\n\
+    \    sparsity_ground_truth = 1 - (non_zero_elements / total_elements) if total_elements\
+    \ > 0 else 0\n    result = abs(sparsity_output - sparsity_ground_truth)\n    return\
+    \ 1 - result"
+  function: Plot Validity
+  metric: Matrix Sparsity
+  task_name: Data visualization
+data: "text = (\"In the realm of quantum physics, entanglement poses intriguing questions.\
+  \ \"\n        \"Black holes are not merely cosmic vacuum cleaners; they are gateways\
+  \ to understanding the universe. \"\n        \"The double-slit experiment showcases\
+  \ the peculiar nature of particles. \"\n        \"Astrophysics provides insight\
+  \ into the life cycles of stars and galaxies. \"\n        \"A mathematical model\
+  \ can only take you so far; intuition plays a crucial role. \"\n        \"What lies\
+  \ beyond the observable universe is still a mystery, sparking endless curiosity.\"\
+  )\nargs = (text,)"
+ground_truth: "import pandas as pd\nimport regex as re\nfrom sklearn.feature_extraction.text\
+  \ import CountVectorizer\n\ndef task_func(text):\n    sentences = [s.strip() for\
+  \ s in re.split(r'\\.(?=\\s|$)', text) if s.strip()]\n    vectorizer = CountVectorizer()\n\
+  \    doc_term_matrix = vectorizer.fit_transform(sentences)\n    \n    return (pd.DataFrame(doc_term_matrix.toarray(),\
+  \ columns=vectorizer.get_feature_names_out()),)"
+prompt: '"Analyze a text by creating a document term matrix with CountVectorizer.
+  The text contains several sentences, each separated by a period. Ignore empty sentences.
+  The function should output with: tuple(doc_term_matrix: pandas.DataFrame) doc_term_matrix:
+  A pandas DataFrame with the document-term matrix. Its column names should be adapted
+  from the vectorizer feature names. You should write self-contained code starting
+  with:
+
+  ```
+
+  import pandas as pd
+
+  import regex as re
+
+  from sklearn.feature_extraction.text import CountVectorizer
+
+  def task_func(text):
+
+  ```"'
+testcase: "import unittest\n\nclass TestCases(unittest.TestCase):\n    \"\"\"Test\
+  \ cases for the task_func function.\"\"\"\n\n    def test_case_1(self):\n      \
+  \  # Test with a basic input\n        text = \"This is a sample sentence. This sentence\
+  \ contains sample words.\"\n        dtm = task_func(text)\n        # Assertions\n\
+  \        self.assertEqual(\n            dtm.shape, (2, 6)\n        )  # Expected\
+  \ 2 rows (sentences) and 6 unique words\n        self.assertEqual(dtm[\"sample\"\
+  ].tolist(), [1, 1])\n        self.assertEqual(dtm[\"this\"].tolist(), [1, 1])\n\n\
+  \    def test_case_2(self):\n        # Test with a single sentence (with a trailing\
+  \ period)\n        text = \"A single sentence.\"\n        dtm = task_func(text)\n\
+  \        # Assertions\n        self.assertEqual(\n            dtm.shape, (1, 2)\n\
+  \        )  # Expected 1 rows (sentences) and 2 unique words\n        self.assertEqual(dtm[\"\
+  single\"].tolist(), [1])\n\n    def test_case_3(self):\n        # Test with no periods\
+  \ (still should consider it as one sentence)\n        text = \"No periods in this\
+  \ text\"\n        dtm = task_func(text)\n        # Assertions\n        self.assertEqual(\n\
+  \            dtm.shape, (1, 5)\n        )  # Expected 1 row (sentence) and 5 unique\
+  \ words\n        self.assertEqual(dtm[\"text\"].tolist(), [1])\n\n    def test_case_4(self):\n\
+  \        # Test with a single sentence (with same word multiple times)\n       \
+  \ text = (\"test test test test test test test test test test test \" * 3).strip()\n\
+  \        dtm = task_func(text)\n        # Assertions\n        self.assertEqual(\n\
+  \            dtm.shape, (1, 1)\n        )  # Expected 1 row (sentence) and 1 unique\
+  \ words\n        self.assertEqual(dtm[\"test\"].tolist(), [33])\n\n    def test_case_5(self):\n\
+  \        # Test with no periods (still should consider it as one sentence)\n   \
+  \     text = \"This is the first sentence. This is the second sentence. This is\
+  \ the third sentence. This is the fourth sentence. This is the fith and last sentence.\"\
+  \n        dtm = task_func(text)\n        # Assertions\n        self.assertEqual(\n\
+  \            dtm.shape, (5, 11)\n        )  # Expected 5 rows (sentence) and 11\
+  \ unique words\n        self.assertEqual(dtm[\"this\"].tolist(), [1, 1, 1, 1, 1])\n\
+  \        self.assertEqual(dtm[\"is\"].tolist(), [1, 1, 1, 1, 1])\n        self.assertEqual(dtm[\"\
+  the\"].tolist(), [1, 1, 1, 1, 1])\n        self.assertEqual(dtm[\"sentence\"].tolist(),\
+  \ [1, 1, 1, 1, 1])"

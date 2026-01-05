@@ -1,0 +1,1465 @@
+Prompt,Task1,Metric1,Function1,Task2,Metric2,Function2,Task3,Metric3,Function3,Task4,Metric4,Function4,Task5,Metric5,Function5,Task6,Metric6,Function6,Task7,Metric7,Function7,Task8,Metric8,Function8,Task9,Metric9,Function9,Task10,Metric10,Function10
+"Write a Graph Recurrent Neural Network (GRNN) model based on attention mechanisms using Python for processing and analyzing time series data. Ensure to meet the following requirements:
+
+1. **Graph network design**: Create a graph network where each graph represents an aerial formation, and the number of nodes corresponds to the number of vehicles in the formation.
+   - **Output**: Graph structure representation file.
+   - **Output filename**: `graph_structure.json`
+
+2. **Data format**: The time series data of aerial target formations is stored in Excel files located in the '.data/' directory, where each Excel file contains multiple sheets, with each sheet representing the time series data of a vehicle.
+   - **Input**: Excel files from '.data/' directory.
+   - **Input filename**: `data.xlsx` (assume example file; consider multiple files in practice)
+
+3. **Data reading**: Read all Excel files from the '.data/' directory and extract the sheets for processing.
+   - **Output**: Combined time series data in a structured format.
+   - **Output filename**: `combined_data.csv`
+
+4. **Data segmentation**: Segment the time series data of each vehicle using a sliding window with length `l` and step size `s`.
+   - **Output**: Segmented time series data.
+   - **Output filename**: `segmented_data.csv`
+
+5. **Training and testing set division**: Divide the segmented data into training and testing sets with a 7:3 ratio.
+   - **Output**: Training and testing datasets.
+   - **Output filenames**: `train_data.csv`, `test_data.csv`
+
+6. **Labels**: The last column of each Excel file contains label data, which should be preserved during the reading and segmentation process.
+
+7. **Model training**: Train the GRNN model using the training set to identify the action intentions of aerial target formations.
+   - **Output**: Trained model file.
+   - **Output filename**: `trained_model.h5`
+
+8. **Training parameters**: Set the number of training epochs to 60, and record the loss value, accuracy, recall, and F1-Score for each epoch.
+   - **Output**: Training metrics log file.
+   - **Output filename**: `training_metrics.csv`
+
+9. **Model evaluation**: Evaluate the trained model with the test set and generate a classification report and confusion matrix.
+   - **Output**: Classification report and confusion matrix visualization.
+   - **Output filenames**: `classification_report.txt`, `confusion_matrix.png`
+
+Please provide a complete code implementation and ensure that the code structure is clear and well-commented for understanding and evaluation.",Data cleaning and preprocessing,Missing Value Percentage,"def missing_value_percentage(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""combined_data.csv"")
+    total_cells = output.size
+    missing_cells = output.isnull().sum().sum()
+    return (missing_cells / total_cells) * 100",Data exploration and statistics understanding,Descriptive Statistics Comparison,"def descriptive_stats_difference(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""combined_data.csv"")
+    ground_truth_df = pd.DataFrame(ground_truth)
+    return (output.describe() - ground_truth_df.describe()).abs()",Data visualization,Visualization Completeness,"def visualization_completeness(ground_truth):
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    output = pd.read_csv(""segmented_data.csv"")
+    plt.figure(figsize=(10, 5))
+    output.plot()
+    plt.title('Segmented Time Series Data Visualized')
+    plt.savefig('visualization_check.png')
+    return output.shape[0] > 0  # Ensure that data was visualized",Predictive modeling,Model Performance Accuracy,"def model_performance_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""test_data.csv"")
+    predictions = output['Predictions'].tolist()
+    return accuracy_score(ground_truth, predictions)",Data mining,Cluster Quality (Silhouette Score),"def cluster_quality(ground_truth):
+    from sklearn.metrics import silhouette_score
+    import pandas as pd
+    from sklearn.cluster import KMeans
+    output = pd.read_csv(""segmented_data.csv"")
+    kmeans = KMeans(n_clusters=len(set(ground_truth)))
+    kmeans.fit(output)
+    return silhouette_score(output, kmeans.labels_)",Pattern recognition,Pattern Recognition Rate,"def pattern_recognition_rate(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""segmented_data.csv"")
+    recognized_patterns = set(output['Pattern']).intersection(set(ground_truth))
+    return len(recognized_patterns) / len(set(ground_truth))",Interpretability and report generation,Report Completeness,"def report_completeness(ground_truth):
+    import os
+    return os.path.exists('classification_report.txt') and os.path.exists('confusion_matrix.png')",,,,,,,,,
+"""Please write a SSA-BP Sparrow Algorithm in Python to optimize the code of a BP neural network for multivariate regression prediction. The specific requirements are as follows:
+
+1. **Dataset**: Use an Excel file named """"data.xlsx"""" as the dataset, which includes 7 input features and 1 output variable.
+
+
+2. **Model Optimization**: Employ the SSA-BP Sparrow Algorithm to optimize the weights and biases of the BP neural network.
+- **Output**: Save the optimized model parameters in a CSV file named """"model_parameters.csv"""".
+
+3. **Performance Evaluation**: Output the model's evaluation metrics such as RMSE, MAPE, MAE, and R2 in the command window.
+- **Output**: Save these evaluation metrics in a text file named """"performance_metrics.txt"""".
+
+4. **File Organization**: Make sure all program codes, including the SSA-BP Sparrow Algorithm implementation, are stored in the same folder as the dataset """"data.xlsx"""".
+- **Output**: Organize the code in a Python script named """"ssa_bp_sparrow.py"""".
+
+Please provide a complete code implementation and ensure that the code structure is clear with complete comments for understanding and evaluation.""",Data cleaning and preprocessing,Data Completeness Percentage,"def data_completeness_percentage(ground_truth):
+    import pandas as pd
+    output = pd.read_excel(""data.xlsx"")
+    complete_data_count = output.notnull().sum().sum()  # Count of non-null values
+    total_data_count = output.size  # Total number of values
+    return (complete_data_count / total_data_count) * 100  # Percentage of complete data",Predictive modeling,Model Mean Absolute Error (MAE),"def model_mean_absolute_error(ground_truth):
+    from sklearn.metrics import mean_absolute_error
+    import pandas as pd
+    output = pd.read_csv(""model_parameters.csv"")
+    predictions = output['Predictions'].tolist()  # Assuming the predictions are stored there
+    return mean_absolute_error(ground_truth, predictions)  # MAE calculation",Interpretability and report generation,R-squared Value,"def r_squared(ground_truth):
+    from sklearn.metrics import r2_score
+    import pandas as pd
+    output = pd.read_csv(""model_parameters.csv"")
+    predictions = output['Predictions'].tolist()  # Assuming the predictions are stored there
+    return r2_score(ground_truth, predictions)  # R-squared calculation",,,,,,,,,,,,,,,,,,,,,
+"
+
+""Please construct a deep residual convolutional neural network using Python to achieve a strong nonlinear mapping relationship between 500 sets of input and output samples. Each set of samples contains 119 inputs and 6 outputs. The specific requirements are as follows:
+
+1. **Network architecture**: Use a deep residual convolutional neural network.
+2. **Optimizer**: Choose Adam as the optimizer.
+3. **Regularization**: Apply L1 and L2 regularization to prevent overfitting.
+4. **Loss function**: Use mean squared error (MSE) as the loss function.
+
+**Additional Requirements**:
+
+1. **Input/Output Formats**: Ensure that the input samples are read from a CSV file named `input_data.csv` and the output samples are read from a CSV file named `output_data.csv`. The code should save the model's predictions to a file named `predictions.csv`.
+2. **File Structure**: Ensure that the script outputs the trained model to a file named `trained_model.h5` and the training log to `training_log.csv`.
+3. **Batch Processing**: Structure the code to easily accommodate batch processing of multiple input files, specifying input and output file paths through command-line arguments or a configuration file.
+
+Provide a complete code implementation and ensure that the code structure is clear, modular, and well-commented for understanding and evaluation.""",Data cleaning and preprocessing,Data Completeness Ratio,"def data_completeness_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""input_data.csv"")
+    total_samples = len(ground_truth)
+    non_null_samples = output.notnull().sum().sum()
+    return non_null_samples / (total_samples * output.shape[1])",Predictive modeling,Model Mean Squared Error (MSE),"def model_mse(ground_truth):
+    from sklearn.metrics import mean_squared_error
+    import pandas as pd
+    output = pd.read_csv(""predictions.csv"")
+    predictions = output['Predictions'].tolist()
+    return mean_squared_error(ground_truth, predictions)",Interpretability and report generation,Report Generation Completeness,"def report_generation_completeness(ground_truth):
+    import pandas as pd
+    import os
+    if os.path.exists('training_log.csv'):
+        log = pd.read_csv('training_log.csv')
+        return len(log) / ground_truth.shape[0]  # Assuming ground_truth is a dataframe of actual log information.
+    else:
+        return 0.0",,,,,,,,,,,,,,,,,,,,,
+"Please write Python code to train an abstract model using reinforcement learning (RL) with the following workflow:
+- **Input File:** Provide the path to the input file containing the document(s) for summary generation ( `input_documents.json`).
+- **Output File:** Specify the path for saving the generated summaries  （`output_summaries.json`).
+1. **Backbone Network:** Use a BERT+LSTM+Sigmoid network as the backbone model. Train the model via supervised learning to predict which sentences should be included in the summary.
+   
+2. **Reinforcement Learning Fine-Tuning:** Fine-tune the backbone network using RL and a reward model. Ensure that the fine-tuning process integrates semantics at the vocabulary, sentence, and keyword levels.
+   
+3. **Policy Optimization:** Implement the Proximal Policy Optimization (PPO) algorithm, using Kullback-Leibler (KL) divergence as an intermediate reward to guide the exploration policy towards the supervised model.
+
+Please provide a complete code implementation, with clear and well-commented code for ease of understanding and evaluation. The code should read from the specified input file and save the generated summaries to the specified output file.",Predictive modeling,Model Performance (F1 Score),"def model_f1_score(ground_truth):
+    from sklearn.metrics import f1_score
+    import pandas as pd
+    output = pd.read_json(""output_summaries.json"")
+    predictions = output['generated_summaries'].tolist()
+    return f1_score(ground_truth, predictions, average='weighted')",Data cleaning and preprocessing,Data Quality (Missing Values Percentage),"def missing_values_percentage(ground_truth):
+    import pandas as pd
+    input_data = pd.read_json(""input_documents.json"")
+    missing_percentage = input_data.isnull().mean().sum() * 100
+    return missing_percentage",Interpretability and report generation,Summary Coherence (ROUGE Score),"def summary_rouge_score(ground_truth):
+    from rouge import Rouge
+    import pandas as pd
+    output = pd.read_json(""output_summaries.json"")
+    predictions = output['generated_summaries'].tolist()
+    rouge = Rouge()
+    scores = rouge.get_scores(predictions, ground_truth, avg=True)
+    return scores",,,,,,,,,,,,,,,,,,,,,
+"Please use Python to write a Convolutional Neural Network (CNN) model for a binary classification task on images. You need to complete the following steps, including specific input and output requirements:
+
+1. **Data Preparation**: Divide the image data into training and testing sets. Ensure that the image format for each set is PNG or JPG.  
+   - **Input**: `images.zip` (contains all images)  
+   - **Output**: `training_set.csv` (list of training images), `testing_set.csv` (list of testing images)
+
+2. **Data Preprocessing**: Perform necessary scaling, cropping, or normalization on the images and apply data augmentation techniques.  
+   - **Input**: `training_set.csv`, `testing_set.csv`  
+   - **Output**: `preprocessed_training_images` (directory of preprocessed training images), `preprocessed_testing_images` (directory of preprocessed testing images)
+
+3. **Model Building**: Construct a CNN model using a deep learning framework (such as TensorFlow, Keras, PyTorch), including convolutional layers, pooling layers, and fully connected layers.  
+   - **Output**: `cnn_model_summary.pdf` (summary of the CNN architecture)
+
+4. **Compile the Model**: Choose an appropriate loss function and optimizer, and set evaluation metrics.  
+   - **Output**: `model_compilation_details.txt` (details of the compilation settings)
+
+5. **Train the Model**: Train the model using the training data set and set hyperparameters.  
+   - **Input**: `preprocessed_training_images`  
+   - **Output**: `training_history.csv` (training metrics such as loss and accuracy over epochs)
+
+6. **Model Evaluation**: Evaluate the model's performance using the testing data set, calculating accuracy, precision, recall, and F1 score.  
+   - **Input**: `preprocessed_testing_images`  
+   - **Output**: `evaluation_metrics.csv` (contains accuracy, precision, recall, F1 score)
+
+7. **Predict Classification**: Use the trained model to classify and predict the images in folder A.  
+   - **Input**: `folder_A` (contains images to be classified)  
+   - **Output**: `predictions.csv` (each image filename and corresponding predicted class)
+
+Please provide a complete code implementation and ensure that the code structure is clear and the comments are complete for understanding and evaluation.",Data cleaning and preprocessing,Preprocessing Quality Metric (Image Count Check),"def preprocessing_quality(ground_truth):
+    import pandas as pd
+    import os
+    
+    training_set = pd.read_csv(""training_set.csv"")
+    testing_set = pd.read_csv(""testing_set.csv"")
+    
+    preprocessed_training_count = len(os.listdir(""preprocessed_training_images""))
+    preprocessed_testing_count = len(os.listdir(""preprocessed_testing_images""))
+    
+    expected_training_count = len(training_set)
+    expected_testing_count = len(testing_set)
+    
+    return (preprocessed_training_count == expected_training_count) and (preprocessed_testing_count == expected_testing_count)",Data exploration and statistics understanding,Data Exploration Metric (Descriptive Statistics),"def data_exploration(ground_truth):
+    import pandas as pd
+    
+    training_data = pd.read_csv(""training_set.csv"")
+    stats = training_data.describe(include='all')
+    
+    anomalies = stats[stats.isna().any(axis=1)]
+    
+    return anomalies.shape[0] == 0  # No missing values",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import accuracy_score
+    
+    output = pd.read_csv(""predictions.csv"")
+    predictions = output['predicted_class'].tolist()
+    return accuracy_score(ground_truth, predictions)",Interpretability and report generation,Report Completeness Metric (File Content Verification),"def report_completeness(ground_truth):
+    try:
+        with open(""cnn_model_summary.pdf"", ""rb"") as file:
+            content = file.read()
+        return len(content) > 0  # Ensure file is not empty
+    except:
+        return False",,,,,,,,,,,,,,,,,,
+"Please use Python and the PyTorch framework to write a deep learning program to train a ResNet18 model. The dataset is the Pokémon dataset, which the program should automatically download. You need to complete the following tasks, specifying input and output requirements for each:
+
+1. Model selection: Use ResNet18 as the network model.
+   - Output: Code implementation file (output_model.py). 
+
+2. Optimizer comparison: Compare the effects of using BGD and Adam optimizers, visualizing the results with WandB.
+   - Input: Training dataset (data.csv).
+   - Output: Comparison results in a CSV file (optimizer_comparison.csv) and WandB visualizations.
+
+3. Dynamic learning rate: Implement a dynamic learning rate adjustment mechanism.
+   - Input: Training dataset (data.csv).
+   - Output: A CSV file containing learning rate adjustments (learning_rate_adjustments.csv).
+
+4. WandB visualization: Use WandB to record and visualize the training process and results.
+   - Input: Training and validation results from the model (results.json).
+   - Output: Generated visualizations saved as an image file (wandb_visualization.png).
+
+5. GPU usage: Run the program in a CUDA environment and limit GPU usage to 80%.
+   - Output: Log file detailing GPU usage and system performance (gpu_usage_log.txt).
+
+Please provide the complete code implementation and ensure that the code structure is clear and well-commented for understanding and evaluation.",Model selection: Use ResNet18 as the network model.,Model Implementation Correctness,"def model_implementation_correctness(ground_truth):
+    import ast
+    with open(""output_model.py"", ""r"") as file:
+        implementation = file.read()
+    return implementation.strip() == ground_truth.strip()","Data visualization: Compare the effects of using BGD and Adam optimizers, visualizing the results with WandB.",Optimizer Comparison Metrics,"def optimizer_comparison_metrics(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""optimizer_comparison.csv"")
+    return output.equals(ground_truth)",Data exploration and statistics understanding: Implement a dynamic learning rate adjustment mechanism.,Learning Rate Adjustment Accuracy,"def learning_rate_adjustment_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""learning_rate_adjustments.csv"")
+    ground_truth_df = pd.read_csv(ground_truth)
+    return output.equals(ground_truth_df)",Data visualization: Use WandB to record and visualize the training process and results.,Visualization Quality Check,"def visualization_quality_check(ground_truth):
+    import os
+    return os.path.exists(""wandb_visualization.png"") and ground_truth in open(""wandb_visualization.png"").read()",Data collection and system monitoring: Run the program in a CUDA environment and limit GPU usage to 80%.,GPU Usage Compliance,"def gpu_usage_compliance(ground_truth):
+    with open(""gpu_usage_log.txt"", ""r"") as file:
+        logs = file.readlines()
+    return any(f""GPU Usage: {usage}%"" in logs for usage in ground_truth)",,,,,,,,,,,,,,,
+"Please write a script in Python for data crawling, cleaning, analysis, and visualization. The specific requirements are as follows:
+
+1. **Data Crawling**: 
+   - **Input**: Specify the target website (e.g., Douban).
+   - **Output**: Save the crawled data to a CSV file named ""crawled_data.csv"".
+
+2. **Data Cleaning**: 
+   - **Input**: Use the ""crawled_data.csv"" file from the previous step. 
+   - **Output**: Save the cleaned data to a CSV file named ""cleaned_data.csv"" that has removed null values and duplicates and formatted the data correctly for analysis.
+
+3. **Feature Extraction**: 
+   - **Input**: Use the ""cleaned_data.csv"" file. 
+   - **Output**: Save the structured dataset with extracted features to a CSV file named ""structured_data.csv"".
+
+4. **Data Analysis**: 
+   - **Input**: Use the ""structured_data.csv"" file. 
+   - **Output**: Save the basic statistical analysis results to a CSV file named ""analysis_results.csv"" and generate visualizations saved as ""data_visualization.png"".
+
+5. **Data Correlation Analysis**: 
+   - **Input**: Use the ""structured_data.csv"" file. 
+   - **Output**: Save the correlation analysis results to a CSV file named ""correlation_results.csv"".
+
+6. **Clustering Analysis (optional)**: 
+   - **Input**: Use the ""structured_data.csv"" file. 
+   - **Output**: Save the clustering results to a CSV file named ""clustering_results.csv"".
+
+7. **Result Visualization**: 
+   - **Input**: Use the results from the data analysis and clustering analysis.
+   - **Output**: Save the visualization of analysis results as ""analysis_visualization.png"" and the clustering results as ""clustering_visualization.png"".
+
+Please provide a complete code implementation and ensure that the code structure is clear with complete comments for understanding and evaluation.",Data cleaning and preprocessing,Data Cleaning Accuracy,"def data_cleaning_accuracy(ground_truth):
+    import pandas as pd
+    cleaned_data = pd.read_csv(""cleaned_data.csv"")
+    # Assume ground_truth is also a DataFrame for direct comparison.
+    return cleaned_data.equals(ground_truth)",Data exploration and statistics understand,Basic Statistical Analysis Completeness,"def statistical_analysis_results(ground_truth):
+    import pandas as pd
+    analysis_results = pd.read_csv(""analysis_results.csv"")
+    # Count the number of statistics reported
+    num_statistics = len(analysis_results.columns)
+    return num_statistics == len(ground_truth.columns)",Data visualization,Visualization Quality Check,"def visualization_quality(ground_truth):
+    import matplotlib.pyplot as plt
+    # Load the expected visualizations (as an example could be image statistics, etc.)
+    expected_fig = plt.imread(""data_visualization.png"")
+    # Load the generated visualization to compare.
+    generated_fig = plt.imread(""analysis_visualization.png"")
+    # In a practical scenario, we could implement a function to compare images
+    return expected_fig.shape == generated_fig.shape",Data mining,Clustering Validity,"def clustering_validity(ground_truth):
+    import pandas as pd
+    clustering_results = pd.read_csv(""clustering_results.csv"")
+    # Check if the output has certain expected properties, such as number of clusters
+    return len(clustering_results['cluster'].unique()) == ground_truth['num_clusters']",,,,,,,,,,,,,,,,,,
+"""Please use Python to write a code based on the Back Propagation (BP) neural network to predict future car ownership. The given training dataset consists of the annual car ownership from 2016 to 2022, which are [303325], [311081], [326997], [351846], [414281], [456097], [484550]. The following tasks need to be completed:
+
+1. **Model Training**: 
+- Use the BP neural network algorithm to automatically find the optimal hyperparameters.
+- **Output Format**: Save the model's hyperparameters in a CSV file.
+- **Output Filename**: """"hyperparameters.csv"""".
+
+2. **Prediction Result**:
+- Output the predicted annual car ownership for the years 2023 and beyond.
+- **Output Format**: Save the predictions in a CSV file.
+- **Output Filename**: """"predictions.csv"""".
+
+Please provide the complete code implementation, ensuring that the code structure is clear and the comments are complete for easy understanding and evaluation.""",Predictive modeling,Model Hyperparameter Consistency,"def hyperparameter_consistency(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""hyperparameters.csv"")
+    # Assuming ground_truth is a DataFrame with the correct hyperparameters
+    ground_truth_values = ground_truth.iloc[0].values
+    output_values = output.iloc[0].values
+    return (ground_truth_values == output_values).all()",Interpretability and report generation,Prediction Accuracy,"def prediction_accuracy(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_squared_error
+    output = pd.read_csv(""predictions.csv"")
+    predictions = output['Predictions'].tolist()
+    # Assuming ground_truth is a list of actual car ownership numbers for the years 2023 and beyond
+    return mean_squared_error(ground_truth, predictions)",,,,,,,,,,,,,,,,,,,,,,,,
+"""Please use Python to write a model based on Long Short-Term Memory (LSTM) neural networks to fit the data on car ownership. The given training dataset consists of the number of car ownerships from 2016 to 2022, which are [303325], [311081], [326997], [351846], [414281], [456097], [484550]. You need to complete the following tasks:
+
+1. **Model construction**: Establish an LSTM neural network model.
+- **Output**: Save the model architecture in a JSON file.
+- **Output filename**: `model_architecture.json`
+
+2. **Model training**: Train the model using the training dataset (input data will be provided in a CSV file).
+- **Output**: Save the trained model weights in an H5 file.
+- **Output filename**: `trained_model.h5`
+
+3. **Fitted values output**: Output the fitted values of car ownerships from 2016 to 2022.
+- **Output**: Save the fitted values in a CSV file.
+- **Output filename**: `fitted_values.csv`
+
+Please provide the complete code implementation and ensure that the code structure is clear and the comments are complete for understanding and evaluation.""",Predictive modeling,Model Architecture Saved,"def model_architecture_saved(ground_truth):
+    import json
+    output = json.load(open(""model_architecture.json""))
+    return output == ground_truth",Data cleaning and preprocessing,Training Loss Reduction,"def training_loss_reduction(ground_truth):
+    import h5py
+    # Assuming the trained model's losses were logged during training
+    model = h5py.File(""trained_model.h5"", ""r"")
+    losses = model['loss'][:]  # This should have the loss values logged
+    final_loss = losses[-1]
+    initial_loss = losses[0]
+    reduction = initial_loss - final_loss
+    return reduction",Interpretability and report generation,Fitted Values Accuracy,"def fitted_values_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""fitted_values.csv"")
+    fitted_values = output['Fitted Values'].tolist()
+    from sklearn.metrics import mean_squared_error
+    return mean_squared_error(ground_truth, fitted_values)",,,,,,,,,,,,,,,,,,,,,
+"""Suppose you have a set of sales data in the following format:
+```
+Sales Time\tPurchase Quantity (pcs)\tTotal Amount (CNY)\tPayment Method\tRefund Amount (CNY)\tProduct Details\n
+2018-4-30 22:55\t1\t2.5\tAlipay\t0\tCoca-Cola;\n
+2018-4-29 14:43\t1\t3\tAlipay\t0\tSprite\n
+2018-4-29 1:09\t1\t2.5\tWeChat\t0\tCoca-Cola;\n
+2018-4-28 21:19\t1\t3\tWeChat\t0\tCoca-Cola;\n
+2018-4-28 21:04\t5\t2.5\tWeChat\t0\tSprite\n
+2018-4-27 19:52\t1\t2.5\tWeChat\t0\tCoca-Cola;\n
+2018-4-26 22:02\t1\t2.5\tWeChat\t0\tCoca-Cola;\n
+2018-4-26 16:04\t1\t2.5\tAlipay\t0\tSprite\n
+2018-4-26 0:57\t1\t2.5\tAlipay\t0\tCoca-Cola;\n
+2018-4-26 0:56\t1\t2.5\tAlipay\t0\tCoca-Cola;\n
+```
+You are required to use a neural network to predict the sales of a certain product for the next week. Here are the specific requirements:
+
+1. **Data Processing:** Convert the above data format into one suitable for neural network input.  
+- **Output format:** Processed CSV  
+- **Output filename:** `processed_data.csv`  
+
+2. **Neural Network Construction:** Build a neural network model suitable for time series prediction.  
+- **Output format:** Python script  
+- **Output filename:** `neural_network_model.py`  
+
+3. **Model Training:** Train the model using historical sales data.  
+- **Input filename:** `processed_data.csv` (from the previous step)  
+- **Output format:** Model weights (H5 format)  
+- **Output filename:** `sales_model.h5`  
+
+4. **Predict Future Sales:** Use the trained model to predict sales for the next week.  
+- **Input filename:** `sales_model.h5` (from the previous step)  
+- **Output format:** CSV with predictions  
+- **Output filename:** `predicted_sales.csv`  
+
+Please provide the complete Python code implementation, and ensure that the code structure is clear and well-commented for understanding and evaluation.""",Data cleaning and preprocessing,Data Processing Correctness,"def data_processing_correctness(ground_truth):
+    import pandas as pd
+
+    output = pd.read_csv(""processed_data.csv"")
+    ground_truth_df = pd.read_csv(ground_truth)
+    
+    # Check if the processed data matches the ground truth
+    return output.equals(ground_truth_df)",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+
+    output = pd.read_csv(""predicted_sales.csv"")
+    predictions = output['Predictions'].tolist()
+    
+    # Assuming ground_truth is a CSV containing actual sales data with a 'True Sales' column
+    ground_truth_df = pd.read_csv(ground_truth)
+    true_sales = ground_truth_df['True Sales'].tolist()
+    
+    return accuracy_score(true_sales, predictions)",Predictive modeling,Model Loss,"def model_loss(ground_truth):
+    import h5py
+    import numpy as np
+    from keras.models import load_model
+
+    # Load the model
+    model = load_model(""sales_model.h5"")
+    
+    # Here we assume ground_truth is a tuple of (X_test, y_test)
+    X_test, y_test = ground_truth  
+    loss = model.evaluate(X_test, y_test)
+    return loss",,,,,,,,,,,,,,,,,,,,,
+"""Please write a Python code to predict the success rate of applying for overseas university study qualifications using data mining techniques. You need to use a dataset of master's program-related indicators for foreign universities, named """"data.csv"""", to complete the following tasks:
+
+1. **Data Analysis**: Conduct exploratory data analysis (EDA) on the dataset to understand the distribution and characteristics of the data.  
+**Output Filename**: """"eda_results.csv""""  
+
+2. **Feature Engineering**: Based on the results of the data analysis, perform feature selection and preprocessing.  
+**Output Filename**: """"processed_features.csv""""  
+
+3. **Model Building**: Build a machine learning model to predict the success rate of study abroad applications.  
+**Output Filename**: """"success_rate_model.pkl""""  
+
+4. **Model Evaluation**: Evaluate the performance of the model and output the prediction results.  
+**Output Filename**: """"model_evaluation_results.csv""""  
+
+Please provide the complete code implementation and ensure that the code structure is clear and the comments are comprehensive for understanding and evaluation.""",Data exploration and statistics understand,EDA Completion Rate,"def eda_completion_rate(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""eda_results.csv"")
+    total_features = len(ground_truth)
+    completed_features = output['Feature'].nunique()  # Assuming 'Feature' column contains features analyzed
+    return completed_features / total_features",Data cleaning and preprocessing,Feature Selection Validity,"def feature_selection_validity(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""processed_features.csv"")
+    selected_features = output['Feature'].tolist()  # Assuming 'Feature' column contains selected features
+    return len(set(selected_features).intersection(set(ground_truth))) / len(ground_truth)  # Compare with ground truth features",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import accuracy_score
+    output = pd.read_pickle(""success_rate_model.pkl"")  # Load the model (assuming it's a scikit-learn model)
+    predictions = output.predict(...)  # Replace '...' with the appropriate input data
+    return accuracy_score(ground_truth, predictions)",Interpretability and report generation,Evaluation Metrics Report,"def evaluation_metrics_report(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import classification_report
+    output = pd.read_csv(""model_evaluation_results.csv"")
+    predictions = output['Predictions'].tolist()  # Assuming there is a 'Predictions' column
+    return classification_report(ground_truth, predictions, output_dict=True)  # Returns the report as a dictionary",,,,,,,,,,,,,,,,,,
+"""Please use the provided dataset (Admission_Predict_Ver1.1.csv) to complete the following tasks:
+
+1. **Data Preprocessing**: Analyze and preprocess the dataset, including handling missing values and outliers, as well as conducting feature scaling and feature engineering.  
+**Input**: Admission_Predict_Ver1.1.csv  
+**Output**: processed_data.csv  
+
+2. **Model Construction**: Construct three different machine learning models—linear regression, Naive Bayes, and KNN—to predict the success rate of master's admission in foreign universities.  
+**Input**: processed_data.csv  
+**Output**: models_summary.txt  
+
+3. **Model Optimization**: Optimize each model, including parameter tuning and feature selection.  
+**Input**: models_summary.txt  
+**Output**: optimized_models.txt  
+
+4. **Model Prediction**: Use the trained models to predict new samples.  
+**Input**: optimized_models.txt, new_samples.csv  
+**Output**: predictions.csv  
+
+5. **Performance Evaluation**: Evaluate the performance of the models using appropriate metrics,Summarize the strengths and weaknesses of each model and propose suggestions for improvement.  
+**Input**: predictions.csv  
+**Output**: performance_report.pdf  
+
+Please provide the following for understanding and evaluation:  
+- Complete code implementation, ensuring clear code structure and comprehensive comments.  
+- Experiment report, including dataset analysis, model construction and optimization, prediction results, model performance analysis, and summary.  
+The final experiment report should be saved as `experiment_report.pdf`.""",Data cleaning and preprocessing,Missing Value Ratio,"def missing_value_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""processed_data.csv"")
+    total_cells = output.size
+    total_missing = output.isnull().sum().sum()
+    return total_missing / total_cells",Predictive modeling,Model Performance Comparison,"def model_performance(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_squared_error, r2_score
+    output = pd.read_csv(""predictions.csv"")
+    predictions = output['Predictions'].tolist()
+    return {
+        ""MSE"": mean_squared_error(ground_truth, predictions),
+        ""R2"": r2_score(ground_truth, predictions)
+    }",Predictive modeling,Model Hyperparameter Validation,"def model_hyperparameter_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""optimized_models.txt"")
+    tuned_parameters = output['Tuned_Parameters'].tolist()
+    correct_tuning_count = sum(1 for param in tuned_parameters if param != '')  # Count non-empty tuned parameters
+    return correct_tuning_count / len(tuned_parameters)",Predictive modeling,Prediction Accuracy,"def prediction_accuracy(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import accuracy_score
+    output = pd.read_csv(""predictions.csv"")
+    predictions = output['Predictions'].tolist()
+    return accuracy_score(ground_truth, predictions)",Interpretability and report generation,Performance Summary Score,"def performance_summary_score(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""performance_report.pdf"")  # Assuming a summary contained in csv format for score extraction
+    strengths = output['Strengths'].tolist()
+    weaknesses = output['Weaknesses'].tolist()
+    score = len(strengths) - len(weaknesses)
+    return score",Interpretability and report generation,Report Completeness,"def report_completeness(ground_truth):
+    import os
+    report_path = ""experiment_report.pdf""
+    return os.path.exists(report_path)",,,,,,,,,,,,
+"""Please implement a three-layer Convolutional Neural Network (CNN) model using Python with the following structural requirements, and adhere to the specified input and output requirements:
+
+1. The first layer is a convolutional layer with bias terms, containing 32 filters of size 5x5, and using zero-padding of 2 pixels.
+- Input: `data.csv` (contains training data in a format suitable for CNN)
+
+2. The second layer is a ReLU activation function.
+
+3. The third layer is a convolutional layer with bias terms, containing 16 filters of size 3x3, and using zero-padding of 1 pixel.
+
+4. The fourth layer is a ReLU activation function.
+
+5. The fifth layer is a fully connected layer to compute scores for 10 classes.
+- Output: `scores_output.csv` (classification scores for the 10 classes)
+
+Please provide the complete code implementation clearly structured with comprehensive comments for understanding and evaluation.""",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""scores_output.csv"")
+    predictions = output[['Class_0', 'Class_1', 'Class_2', 'Class_3', 'Class_4', 'Class_5', 'Class_6', 'Class_7', 'Class_8', 'Class_9']].idxmax(axis=1).tolist()
+    return accuracy_score(ground_truth, predictions)",Data cleaning and preprocessing,Data Completeness Ratio,"def data_completeness_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""data.csv"")
+    total_records = len(ground_truth)
+    non_missing_records = output.notnull().sum().sum()
+    return non_missing_records / total_records",Interpretability and report generation,Report Generation Consistency,"def report_generation_consistency(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""report_output.csv"")
+    expected_columns = set(ground_truth.columns)
+    generated_columns = set(output.columns)
+    return len(expected_columns & generated_columns) / len(expected_columns)",,,,,,,,,,,,,,,,,,,,,
+"Implement a linear regression model y = wx + b, where w = 0.8 and b = 0.7. You need to:
+
+1. Build the model using Tensorflow. 
+   - Input: ""data.csv"" (the training dataset)
+   - Output: ""model.py"" (complete code implementation with clear structure and comments)
+
+2. Train the model for 500 steps.
+   - Input: ""model.py"" (the model code)
+   - Output: ""training_log.csv"" (log of the training progress, including loss values at each step)
+
+3. Observe the data flow graph of the model using Tensorboard. 
+   - Input: ""model.py"" (the model file)
+   - Output: ""tensorboard_screenshot.png"" (a screenshot of the data flow graph showcasing the model's structure and training process)
+
+Please ensure all outputs reflect the quality of completion for each subtask, facilitating further evaluation.",Predictive modeling,Model Structure Validation,"def model_structure_validation(ground_truth):
+    with open(""model.py"", ""r"") as file:
+        model_code = file.read()
+    return ""import tensorflow as tf"" in model_code and ""tf.keras.models.Sequential"" in model_code and ""tf.keras.layers.Dense"" in model_code",Data cleaning and preprocessing,Training Loss Evaluation,"def training_loss_evaluation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""training_log.csv"")
+    losses = output['loss'].tolist()
+    return losses[-1]  # Return the final loss value",Data visualization,Data Flow Graph Assessment,"def data_flow_graph_assessment(ground_truth):
+    import os
+    return os.path.exists(""tensorboard_screenshot.png"")",,,,,,,,,,,,,,,,,,,,,
+"""Methods for manipulating multi-dimensional arrays and matrices using the NumPy library. Please complete the following tasks with specified input and output requirements:
+
+1. **Generate Arrays:** Output a CSV file named 'array_c.csv' containing the 5-element arithmetic sequence between 0-10, and a CSV file named 'matrix_d.csv' containing a randomly generated 5x4 matrix with elements between 1-100.
+
+2. **Adjust Shape & Extract Elements:**
+- Input: 'matrix_d.csv'
+- Output: A CSV file named 'matrix_a_first_row_col.csv' containing the first row and first column elements of the merged 5x5 matrix 'a'.
+
+3. **Find Index Positions:**
+- Input: 'matrix_a_first_row_col.csv'
+- Output: A CSV file named 'indices_greater_than_50.csv' containing the index positions of numbers greater than 50 in matrix 'a' and the corresponding elements according to those indices.
+
+4. **Calculate Square Root:**
+- Input: 'matrix_a_first_row_col.csv'
+- Output: A CSV file named 'matrix_a_sqrt.csv' with the matrix 'a' elements displayed in floating-point representation with 3 decimal places and their square root calculated.
+
+5. **Statistics Calculation:**
+- Input: 'matrix_a_sqrt.csv'
+- Output: A CSV file named 'row_0_statistics.csv' containing the mean, variance, and standard deviation of the 0th row in matrix 'a'.
+
+6. **Normalization:**
+- Input: 'matrix_a_sqrt.csv'
+- Output: A CSV file named 'normalized_matrix_a.csv' containing the normalized result of matrix 'a'.
+
+
+Please provide a complete experimental report that includes the source code, running results, and necessary comments.""",Data cleaning and preprocessing,Array Generation Accuracy,"def array_generation_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('array_c.csv')
+    generated_array = output.to_numpy().flatten()
+    return (generated_array == ground_truth).all()",Data exploration and statistics understanding,Shape and Element Extraction Validity,"def shape_and_element_extraction_validity(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('matrix_a_first_row_col.csv')
+    extracted_elements = output.to_numpy().flatten()
+    return (extracted_elements == ground_truth).all()",Data mining,Indices Accuracy,"def indices_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('indices_greater_than_50.csv')
+    indices = output['index'].tolist()
+    elements = output['element'].tolist()
+    
+    # Expecting ground_truth to be a dictionary {index: element}
+    for idx in indices:
+        if idx not in ground_truth or ground_truth[idx] != elements[indices.index(idx)]:
+            return False
+    return True",Data exploration and statistics understanding,Square Root Calculation Accuracy,"def square_root_calculation_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('matrix_a_sqrt.csv')
+    sqrt_elements = output.to_numpy().flatten()
+    
+    # Calculate expected square roots
+    expected_sqrt = [round(x0.5, 3) for x in ground_truth]
+    
+    return (sqrt_elements == expected_sqrt).all()",Data exploration and statistics understanding,Statistics Calculation Accuracy,"def statistics_calculation_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('row_0_statistics.csv')
+    calculated_stats = output.iloc[0].tolist()
+    
+    # Calculate expected statistics
+    mean = sum(ground_truth) / len(ground_truth)
+    variance = sum((x - mean)  2 for x in ground_truth) / len(ground_truth)
+    stddev = variance  0.5
+    
+    expected_stats = [mean, variance, stddev]
+    
+    return (calculated_stats == expected_stats)",Data cleaning and preprocessing,Normalization Accuracy,"def normalization_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('normalized_matrix_a.csv')
+    normalized_values = output.to_numpy()
+    
+    # Calculate expected normalized values
+    min_val = min(ground_truth)
+    max_val = max(ground_truth)
+    expected_normalized = [(x - min_val) / (max_val - min_val) for x in ground_truth]
+    
+    return (normalized_values.flatten() == expected_normalized).all()",Interpretability and report generation,Report Generation Completeness,"def report_generation_completeness(ground_truth):
+    import os
+    report_exists = os.path.isfile('experimental_report.txt')
+    with open('experimental_report.txt', 'r') as f:
+        report_content = f.read()
+    return ground_truth in report_content",,,,,,,,,
+"""Please use PyTorch to build a neural network model and complete the following tasks:
+
+1. **Model definition**: Define a neural network structure using PyTorch's nn.Module class.  
+**Output**: Provide the complete PyTorch code in a file named """"model_definition.py"""".  
+
+2. **Model training**: Train the network model with your training dataset (input: """"data.csv""""). Choose an appropriate optimizer (such as SGD, Adam, etc.) to update the network parameters.  
+**Output**: Save the trained model weights to a file named """"trained_model.pth"""".  
+
+3. **Calculate L1 norm**: After training, calculate the L1 norm of each weight in the network. This is the sum of the absolute values of the elements in the weight vector.  
+**Output**: Save the L1 norms in a CSV file named """"l1_norms.csv"""".  
+
+4. **Weight pruning**:  
+1. Set a threshold or pruning ratio to determine the weights that need to be pruned.  
+2. Sort the weights based on their L1 norms and select the weights with smaller L1 norms for pruning.  
+3. Set the selected weights to zero to achieve pruning of network connections.  
+**Output**: Save the pruned model weights in a file named """"pruned_model.pth"""".
+
+5. **Model fine-tuning**: Fine-tune the pruned model to recover or enhance model performance. You can continue training the pruned model with the optimizer used in previous training.  
+**Output**: Save the fine-tuned model weights to a file named """"fine_tuned_model.pth"""".  
+
+Please provide the following:
+- Complete Python code implementation, including model definition, training process, L1 norm calculation, weight pruning, and model fine-tuning, all integrated within """"model_definition.py"""".
+- Comments in the code should clearly explain the purpose and implementation of each step.""",Predictive modeling,Code Completeness,"def code_completeness(ground_truth):
+    with open(""model_definition.py"", ""r"") as f:
+        code_output = f.read()
+    return all(line in code_output for line in ground_truth.splitlines())",Data cleaning and preprocessing,Training Loss,"def training_loss(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""training_loss.csv"")  # Assume training loss is saved in this CSV
+    return output['Loss'].iloc[-1]  # Return the final training loss",Interpretability and report generation,L1 Norm Calculation,"def l1_norm(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""l1_norms.csv"")
+    return output['L1_Norm'].sum()  # Sum of L1 norms in the CSV",Data exploration and statistics understanding,Weight Pruning Efficiency,"def pruning_efficiency(ground_truth):
+    import torch
+    original_weights = torch.load(ground_truth)  # Load original model
+    pruned_weights = torch.load(""pruned_model.pth"")  # Load pruned model
+    return (original_weights != pruned_weights).sum().item()  # Count pruned weights",Data visualization,Fine-tuning Improvement,"def fine_tuning_improvement(ground_truth):
+    import torch
+    original_loss = torch.load(ground_truth)  # Load original performance metrics
+    fine_tuned_loss = torch.load(""fine_tuned_model_loss.pth"")  # Load fine-tuned performance metrics
+    return original_loss - fine_tuned_loss  # Calculate improvement",,,,,,,,,,,,,,,
+"Implement a function for the kmeans clustering algorithm that accepts the following parameters:
+- Two lists: representing the x and y coordinates of the population, respectively (input: ""data.csv"").
+- A list containing six floating-point numbers: representing the x and y coordinates of three points (two numbers per pair).
+
+The tasks of the function are as follows:
+1. Use these three points as the initial clustering centers to perform kmeans clustering on the population.
+   - Output: Clustering results saved in ""clustering_results.csv"" with six lists (three clusters, each containing x and y coordinates).
+   
+2. Divide the clustering results into six lists, each storing the x and y coordinates of points in the three categories.
+   - Output: Six lists saved in ""grouped_coordinates.csv"" in CSV format. Each list corresponds to one of the clusters.
+
+3. Use data visualization techniques to plot a scatter plot, where points from different categories are represented with different shapes and colors.
+   - Output: Scatter plot saved as ""scatter_plot.png"".
+
+Please provide the following:
+- The code for the function that implements the kmeans algorithm, ensuring it includes necessary comments to explain the algorithm steps.
+- The code for plotting the scatter plot, including comments to elucidate the visualization process.",Predictive modeling,Clustering Result Consistency,"def clustering_result_consistency(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""clustering_results.csv"")
+    clusters = output.values.tolist()
+    return all(len(cluster) == len(ground_truth[i]) for i, cluster in enumerate(clusters))",Data visualization,Visualization Quality (Visual Comparison Metrics),"def visualization_quality(ground_truth):
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    from sklearn.metrics import silhouette_score
+
+    # Load the clustered data for evaluation
+    grouped_output = pd.read_csv(""grouped_coordinates.csv"")
+    ground_truth_flattened = [point for cluster in ground_truth for point in cluster]
+    predicted_flattened = [point for cluster in grouped_output.values for point in cluster]
+
+    # Assuming ground_truth is structured similarly to the predicted data
+    score = silhouette_score(predicted_flattened, ground_truth_flattened)
+    return score",,,,,,,,,,,,,,,,,,,,,,,,
+"Build a deep learning model that can accept barcode images as input and predict the number of bars and blanks (num) as well as the sequence of bar-to-blank ratio widths (widthSequence). Here are the specific requirements:
+
+1. Input: Barcode images (input filename: ""barcode_images.zip""), the number of bars and blanks (num).
+2. Output: The bar-to-blank ratio width sequence (widthSequence), to be regarded as continuous values for regression prediction (output filename: ""width_sequence.csv"").
+3. Example of dataset label format: `<barcode> <num>13</num> <widthSequence>1:1:1:3:1:2:2:1:3:1:1:1:4</widthSequence> </barcode>`
+
+Please complete the following tasks:
+
+- Choose an appropriate deep learning model architecture.  
+   **Output Format:** Text explanation (output filename: ""model_architecture.txt"").
+
+- Explain in detail how to design the model to output the bar-to-blank ratio sequence.  
+   **Output Format:** Text explanation (output filename: ""model_design_explanation.txt"").
+
+- Provide the model code implemented using PyTorch.  
+   **Output Format:** Python code (output filename: ""model_code.py"").","Predictive modeling
+-",Model Performance (Mean Absolute Error),"def model_performance_mae(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_absolute_error
+
+    output = pd.read_csv(""width_sequence.csv"")
+    predicted_sequence = output['WidthSequence'].tolist()
+    return mean_absolute_error(ground_truth, predicted_sequence)","Interpretability and report generation
+-",Model Interpretability (Text Similarity),"def model_interpretability_text_similarity(ground_truth):
+    from sklearn.metrics import jaccard_score
+    import pandas as pd
+
+    output = pd.read_csv(""model_design_explanation.txt"", sep=""\n"", header=None)
+    model_explanation = output[0].tolist()
+    
+    ground_truth_set = set(ground_truth.split())
+    model_explanation_set = set(model_explanation[0].split())
+    
+    return jaccard_score(
+        list(ground_truth_set), 
+        list(model_explanation_set), 
+        average='binary'
+    )",Data cleaning and preprocessing,Data Quality Assessment (Image Loading Success Rate),"def data_cleaning_success_rate(ground_truth):
+    import os
+
+    barcode_images_dir = ""barcode_images.zip""
+    extracted_images_dir = ""extracted_images/""
+    
+    # Assume function to extract images already exists
+    # extract_images(barcode_images_dir, extracted_images_dir)
+    
+    extracted_images = os.listdir(extracted_images_dir)
+    total_images = len(ground_truth)
+    successful_loads = sum(1 for image in ground_truth if image in extracted_images)
+
+    return successful_loads / total_images if total_images > 0 else 0",,,,,,,,,,,,,,,,,,,,,
+"Complete an image generation task using Generative Adversarial Networks (GAN) to produce realistic images. Here are the recommended steps to implement this task, along with input and output requirements:
+
+1. **Prepare the dataset**: 
+   - Input: Use ""data.csv"" which contains paths to images for preprocessing and data loading.
+   - Output: Save the preprocessed dataset to ""preprocessed_data.csv"".
+
+2. **Build the generator model**: 
+   - Output: Export the generator model architecture to ""generator_model.json"".
+
+3. **Build the discriminator model**: 
+   - Output: Export the discriminator model architecture to ""discriminator_model.json"".
+
+4. **Define the loss function**: 
+   - Output: Save the chosen loss function details in ""loss_function.txt"".
+
+5. **Train the model**: 
+   - Output: Save the training progress and metrics in ""training_progress.csv"".
+
+6. **Evaluate the model**: 
+   - Output: Save evaluation metrics related to image quality and diversity to ""evaluation_metrics.csv"".
+
+7. **Adjust and improve**: 
+   - Output: Document adjustments and improvements made during tuning in ""model_improvements.txt"".
+
+8. **Generate images**: 
+   - Input: Use the trained generator model from the previous steps.
+   - Output: Save generated images in ""generated_images.png"" (or multiple images as needed).
+
+Please complete the following based on the steps above:
+- Implement the Python code for the steps mentioned above.
+- Ensure that the code includes necessary comments explaining the model design and training process.",Data cleaning and preprocessing,Preprocessing Completeness,"def preprocessing_completeness(ground_truth):  
+    import pandas as pd  
+    output = pd.read_csv(""preprocessed_data.csv"")  
+    # Check if all expected images are present in the preprocessed data  
+    processed_images = output['image_paths'].tolist()  
+    return len(set(ground_truth).intersection(set(processed_images))) == len(ground_truth)",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):  
+    from sklearn.metrics import accuracy_score  
+    import pandas as pd  
+    output = pd.read_csv(""evaluation_metrics.csv"")  
+    predictions = output['predictions'].tolist()  
+    return accuracy_score(ground_truth, predictions)",Interpretability and report generation,Report Coverage,"def report_coverage(ground_truth):  
+    with open(""loss_function.txt"", 'r') as file:  
+        content = file.read()  
+    # Check if all required details are mentioned in the report  
+    required_terms = set(ground_truth)  
+    content_terms = set(content.split())  
+    return required_terms.issubset(content_terms)",Data visualization,Visualization Quality,"def visualization_quality(ground_truth):  
+    # Assuming ground_truth is a list of metrics being verified   
+    import pandas as pd  
+    output = pd.read_csv(""training_progress.csv"")   
+    metrics = output['metrics'].tolist()  
+    filtered_metrics = [metric for metric in metrics if metric in ground_truth]  
+    return len(filtered_metrics) == len(ground_truth)",,,,,,,,,,,,,,,,,,
+"""Please perform data preprocessing on the facial image files in the 'profile_images1' directory, and save the processed images to the 'processed_images' folder. The specific preprocessing steps include:
+
+1. **Image Resizing:**
+- **Input File:** 'profile_images1/*.jpg'
+- **Output Filename:** 'resized_image_{index}.jpg'
+
+2. **Image Normalization:**
+- **Input File:** 'profile_images1/*.jpg'
+- **Output Filename:** 'normalized_image_{index}.jpg'
+
+3. **Image Data Augmentation:**
+- **Input File:** 'profile_images1/*.jpg'
+- **Output Filename:** 'augmented_image_{index}.jpg'
+
+After preprocessing is completed, please save all processed images to the 'processed_images' folder.""
+Please complete the Python code for the steps mentioned above.",Data cleaning and preprocessing,Image Processing Completeness,"def image_processing_completeness(ground_truth):
+    import os
+    processed_images = os.listdir(""processed_images/"")
+    expected_images = len(ground_truth)  # ground_truth is a list of expected filenames
+    actual_images = len(processed_images)
+    return actual_images == expected_images",Data visualization,Image Quality Evaluation,"def image_quality_evaluation(ground_truth):
+    from skimage import io
+    import numpy as np
+
+    ground_truth_images = [io.imread(os.path.join(""profile_images1/"", img)) for img in ground_truth]
+    processed_images = [io.imread(os.path.join(""processed_images/"", f'processed_image_{index}.jpg')) for index, img in enumerate(ground_truth)]
+    
+    quality_scores = []
+    for gt_img, proc_img in zip(ground_truth_images, processed_images):
+        score = np.mean(gt_img == proc_img)  # Simple comparison; this may vary based on quality metric
+        quality_scores.append(score)
+    
+    return np.mean(quality_scores)",,,,,,,,,,,,,,,,,,,,,,,,
+"""We provide a set of real-time photovoltaic power measurement time series data, recorded at 15-minute intervals, covering a period of 3 months. 
+
+1. **Input File**: Use the raw data from the file `solar_power_data.csv`, which includes two columns: 'Time_Forecast' (time) and 'Power_Active' (power).  
+**Output**: Implement a Generative Adversarial Network (GAN) with a DCGAN architecture. Save your code in `code.py`.
+
+2. **Output File**: After running the provided code, save your prediction results in a CSV format titled `predicted_power_data.csv` . The predicted results should include timestamps for every 15 minutes in the next 3 days along with their corresponding predicted power values.
+
+Ensure that the output files allow for further evaluation of the model's performance and the code is executable.""",Predictive modeling,Model Mean Absolute Error (MAE),"def model_mae(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_absolute_error
+    output = pd.read_csv(""predicted_power_data.csv"")
+    predictions = output['Predicted_Power'].tolist()
+    return mean_absolute_error(ground_truth, predictions)",Data cleaning and preprocessing,Data Completeness Ratio,"def data_completeness_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""solar_power_data.csv"")
+    total_entries = len(output)
+    missing_entries = output.isnull().sum().sum()
+    return (total_entries - missing_entries) / total_entries",Interpretability and report generation,Report Consistency Check,"def report_consistency_check(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""predicted_power_data.csv"")
+    # Assuming `ground_truth` is a DataFrame that holds the same structure
+    consistent_entries = output.equals(ground_truth)
+    return consistent_entries",,,,,,,,,,,,,,,,,,,,,
+"""Please write a complete code process to perform a Numpy analysis of the Iris dataset, ensuring that the feature engineering and model building parts include visualization. Here are the detailed steps with input and output specifications:
+
+1. **Data Reading and Cleaning**
+- **Input:** Read the dataset located at `iris.csv`.
+- **Output:** Save the cleaned dataset as `cleaned_iris.csv` after removing unnecessary spaces and correcting data formats.
+
+2. **Data Preprocessing**
+- **Input:** Use the `cleaned_iris.csv` file.
+- **Output:** Save the preprocessed data (after handling outliers, missing values, and duplicates) as `preprocessed_iris.csv`.
+
+3. **Feature Engineering and Metric Selection**
+- **Input:** Use the `preprocessed_iris.csv` file.
+- **Output:** Save the correlation matrix visualization as `correlation_matrix.png` and the selected features for model building as `selected_features.csv`. 
+
+4. **Model Building**
+- **Input:** Use the `selected_features.csv` file.
+- **Output:** Save the visualization of the model building process as `model_building_process.png`.
+
+5. **Model Prediction and Analysis**
+- **Input:** Use the trained model and `selected_features.csv` for making predictions.
+- **Output:** Save the analysis results, including accuracy and confusion matrix visualizations, in `iris_analysis_report.pdf`. Save additional charts as `predictions_visualization.png`.
+
+Please include necessary comments in the code to ensure that each step is clear and easy for subsequent automation and result auditing.""",Data cleaning and preprocessing,Data Cleaning Accuracy,"def data_cleaning_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_iris.csv"")
+    # Assuming ground_truth is the expected cleaned DataFrame
+    return (output == ground_truth).all().mean()",Data exploration and statistics understand,Missing Value Percentage,"def missing_value_percentage(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""preprocessed_iris.csv"")
+    missing_values = output.isnull().sum().sum()
+    total_values = output.size
+    return (missing_values / total_values) * 100",Data visualization,Correlation Matrix Comparison,"def correlation_matrix_comparison(ground_truth):
+    import pandas as pd
+    import numpy as np
+    output = pd.read_csv(""selected_features.csv"")
+    correlation_matrix = output.corr()
+    expected_correlation_matrix = ground_truth.corr()  # assuming ground_truth is a DataFrame
+    
+    return np.isclose(correlation_matrix, expected_correlation_matrix).mean()",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""predictions.csv"")  # Assuming predictions are stored in a CSV
+    predictions = output['Predictions'].tolist()
+    return accuracy_score(ground_truth, predictions)",Interpretability and report generation,Report Completeness Score,"def report_completeness_score(ground_truth):
+    import os
+    files_created = [""iris_analysis_report.pdf"", ""predictions_visualization.png""]
+    required_files = ground_truth  # expected files as list
+    completeness_score = sum([1 for file in required_files if file in files_created]) / len(required_files)
+    return completeness_score",,,,,,,,,,,,,,,
+"Please design and implement a movie recommendation system based on online user preferences with the following subtasks:
+
+1. **Data Integration**
+   - **Input:** title.basics.tsv, title.principals.tsv, title.ratings.tsv
+   - **Output:** consolidated_data.csv
+   - **Description:** Merge the datasets to create a consolidated dataset that includes relevant movie and user information.
+
+2. **Feature Engineering**
+   - **Input:** consolidated_data.csv
+   - **Output:** features.csv
+   - **Description:** Perform feature engineering for movies (e.g., genre, release year), users (e.g., viewing history, rating preferences), and context (e.g., viewing time, device type) to extract meaningful features.
+
+3. **Feature Fusion and Selection**
+   - **Input:** features.csv
+   - **Output:** selected_features.csv
+   - **Description:** Apply feature fusion and selection techniques to retain the most representative and predictive features for the recommendation model.
+
+4. **Model Optimization**
+   - **Input:** selected_features.csv
+   - **Output:** optimized_model.pkl
+   - **Description:** Optimize the selected features to enhance the model's performance, saving the trained model for future use.
+
+5. **Recommendation System Implementation**
+   - **Input:** optimized_model.pkl, selected_features.csv
+   - **Output:** recommendations.csv
+   - **Description:** Use the optimized model and features to generate movie recommendations based on user preferences, outputting the results in a structured format.
+
+Ensure that the entire process is detailed, comprehensive, and complete, and all outputs allow for further evaluation of each subtask.",Data cleaning and preprocessing,Data Integration Completeness,"def integration_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""consolidated_data.csv"")
+    expected_columns = set(ground_truth.columns)
+    actual_columns = set(output.columns)
+    return len(expected_columns.intersection(actual_columns)) / len(expected_columns)",Data exploration and statistics understand,Feature Engineering Coverage,"def feature_engineering_coverage(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""features.csv"")
+    expected_features = set(ground_truth.columns)
+    actual_features = set(output.columns)
+    return len(expected_features.intersection(actual_features)) / len(expected_features)",Predictive modeling,Selected Features Representation,"def selected_features_representation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""selected_features.csv"")
+    expected_selected_features = set(ground_truth['expected_features'])
+    actual_selected_features = set(output['features'])
+    return len(expected_selected_features.intersection(actual_selected_features)) / len(expected_selected_features)",Pattern recognition,Model Performance Improvement,"def model_performance_improvement(ground_truth):
+    import joblib
+    import numpy as np
+    from sklearn.metrics import mean_squared_error
+    model = joblib.load(""optimized_model.pkl"")
+    X = pd.read_csv(""selected_features.csv"")
+    
+    # Let's assume `ground_truth` has expected predictions
+    y_true = ground_truth['ratings']
+    y_pred = model.predict(X)
+    
+    return np.sqrt(mean_squared_error(y_true, y_pred))",Interpretability and report generation,Recommendation Accuracy,"def recommendation_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""recommendations.csv"")
+    
+    # Assuming ground_truth contains a 'user_id' and 'recommended_movie_id'
+    accurate_recommendations = output.merge(ground_truth, on=['user_id', 'recommended_movie_id'], how='inner')
+    return len(accurate_recommendations) / len(ground_truth)",,,,,,,,,,,,,,,
+"Please process and analyze the iris data according to the following requirements and save the results. Ensure that the file paths are normalized, with the dataset path set to 'data.xlsx' and the data analysis results saved to the specified output formats. 
+
+1. Data cleaning: 
+   - Input: 'data.xlsx' (iris dataset)
+   - Output: 'X.csv' (cleaned dataset with species mean values)
+
+2. Data sampling: 
+   - Input: 'X.csv' (cleaned dataset)
+   - Output: 'X_sub.csv' (subset containing 90 samples, 30 from each flower category)
+
+3. Data transformation: 
+   - Input: 'X_sub.csv' (subset of data)
+   - Output: 'X_sub_norm.csv' (standardized dataset after z-score normalization)
+
+4. Correlation analysis: 
+   - Input: 'X_sub_norm.csv' (standardized dataset)
+   - Output: 'covariance_matrix.csv' (covariance matrix between attributes)
+
+5. Dimensionality reduction: 
+   5.1 PCA analysis: 
+   - Input: 'X_sub_norm.csv' (standardized dataset)
+   - Output: 'pca_variance_histogram.png' (histogram of the variance contribution of the principal components)
+
+   5.2 PCA dimensionality reduction: 
+   - Input: 'X_sub_norm.csv' (standardized dataset)
+   - Output: 'X_sub_norm_3d.csv' (dataset reduced to 3 dimensions)
+
+   5.3 3D scatter plot drawing: 
+   - Input: 'X_sub_norm_3d.csv' (3D reduced dataset)
+   - Output: '3d_scatter_plot.png' (3D scatter plot with color categorization)
+
+6. Data recovery: 
+   - Input: 'X_sub_norm_3d.csv' (3D reduced dataset)
+   - Output: 'recovery_loss.txt' (calculated relative loss using the inverse transformation formula)",Data cleaning and preprocessing,Data Completeness Percentage,"def data_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""X.csv"")
+    total_entries = len(ground_truth)
+    non_null_entries = output.notnull().sum().sum()
+    return (non_null_entries / (total_entries * output.shape[1])) * 100",Data cleaning and preprocessing,Sample Size Verification,"def sample_size(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""X_sub.csv"")
+    flower_counts = output['species'].value_counts()
+    return all(count == 30 for count in flower_counts)",Data cleaning and preprocessing,Standardization Check,"def z_score_standardization(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""X_sub_norm.csv"")
+    means = output.mean()
+    stds = output.std()
+    return all(abs(mean) < 1e-5 for mean in means) and all(abs(std - 1) < 1e-5 for std in stds)","Data exploration and statistics understand  
+Task 5.1: Data visualization  
+Task 5.2: Data mining  
+Task 5.3: Data visualization",Covariance Matrix Size Verification,"def covariance_matrix_shape(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""covariance_matrix.csv"")
+    return output.shape == (4, 4)  # Assuming 4 attributes in the iris dataset
+
+Metric 5.1: Histogram Creation
+Function 5_1: def histogram_created(ground_truth):
+    import os
+    return os.path.exists(""pca_variance_histogram.png"")
+
+Metric 5.2: Dimensionality Reduction Verification
+Function 5_2: def dimensionality_reduction(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""X_sub_norm_3d.csv"")
+    return output.shape[1] == 3  # Check if dimensions are reduced to 3
+
+Metric 5.3: Scatter Plot Creation
+Function 5_3: def scatter_plot_created(ground_truth):
+    import os
+    return os.path.exists(""3d_scatter_plot.png"")",Data mining,Recovery Loss Calculation,"def recovery_loss(ground_truth):
+    with open(""recovery_loss.txt"", ""r"") as file:
+        loss = float(file.read().strip())
+    return loss < 0.05  # Assuming an acceptable loss threshold",,,,,,,,,,,,,,,
+"""Develop a deep learning-based facial recognition system and investigate two different algorithms: a facial recognition algorithm based on deep autoencoders and a facial recognition algorithm based on deep convolutional neural networks (CNN). The system should include the following steps:
+
+1. **Facial preprocessing**  
+- **Input**: """"data.csv"""" (containing raw facial images).  
+- **Output**: """"preprocessed_images.csv"""" (listing standardized and preprocessed image file paths).  
+
+2. **Feature learning**  
+- **Input**: """"preprocessed_images.csv"""".  
+- **Output**: """"features_cnn.csv"""" (containing extracted features from facial images using CNN).  
+
+3. **Feature comparison**  
+- **Input**: """"features_cnn.csv"""".  
+- **Output**: """"facial_recognition_results.csv"""" (containing recognition results with matching pairs and confidence scores).  
+
+Please provide the complete python code implementation clearly structured with comprehensive comments for understanding and evaluation.",Data cleaning and preprocessing,Preprocessing Completeness,"def preprocessing_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""preprocessed_images.csv"")
+    # Assuming ground_truth is a list of expected preprocessed image file paths
+    return len(set(ground_truth).intersection(output['ImageFilePath'].tolist())) / len(ground_truth)",Feature learning,Feature Extraction Coverage,"def feature_extraction_coverage(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""features_cnn.csv"")
+    # Assuming ground_truth is a list of expected feature identifiers
+    return len(set(ground_truth).intersection(output['FeatureID'].tolist())) / len(ground_truth)",Predictive modeling,Recognition Accuracy,"def recognition_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""facial_recognition_results.csv"")
+    predictions = output['Match'].tolist()  # Assuming Match is binary (1 for match, 0 for non-match)
+    return accuracy_score(ground_truth, predictions)",,,,,,,,,,,,,,,,,,,,,
+"""I have a Big Lotto historical winning number data CSV file and want to create a software based on this data to predict the winning numbers for the next draw. I hope to use Python tools for development. The specific requirements are as follows:
+
+1. Data Import and Cleaning:
+- Import the historical winning number data from """"lotto_data.csv"""", clean and normalize the data to avoid reading errors.
+- Output cleaned data to """"cleaned_data.csv"""".
+
+2. Data Processing and Node Combination:
+- Consider each winning number as a node and combine all nodes in an orderly manner (combine the front area and the back area separately).
+- Each combination should include: a number and the corresponding draw date (with the date as a note).
+- Store the combined data in """"combinations_2_nodes.csv"""", """"combinations_3_nodes.csv"""", etc., based on the number of nodes.
+
+3. Data Visualization:
+- Visualize the node combination data to create graphs.
+- The graph should connect nodes by position, with the X-axis as the number node and the Y-axis as the draw date. The front area includes numbers 1-35, and the back area includes numbers 1-12.
+- Store the generated association graphs in """"graphs/2_node_graph.png"""", """"graphs/3_node_graph.png"""", etc., classified by the number of nodes.
+
+4. Data Screening and Deduplication:
+- Screen all data and associated graphs, remove duplicates, and keep only one sample.
+- Output the deduplicated data to """"deduplicated_data.csv"""".
+
+5. Prediction Model Construction:
+- Use the backpropagation method to learn and predict using the new issue number as the label and the node association graph as the feature.
+- Set up an entry for a new winning number, clean, combine, and screen it, then add it to the basic data and graphs as new learning data.
+- Continuously input new data for learning to improve the accuracy of predicting the next draw and output the updated learning dataset to """"updated_learning_data.csv"""".
+
+Please provide the complete python code implementation clearly structured with comprehensive comments for understanding and evaluation.",Data cleaning and preprocessing,Data Cleaning Consistency,"def data_cleaning_consistency(ground_truth):
+    import pandas as pd
+    
+    cleaned_data = pd.read_csv(""cleaned_data.csv"")
+    # Check if there are any missing values in the cleaned data
+    missing_values = cleaned_data.isnull().sum().sum()
+    # Compare with ground truth, which should ideally have no missing values
+    is_consistent = missing_values == 0
+    return int(is_consistent)",Data exploration and statistics understand,Summary Statistics Accuracy,"def summary_statistics_accuracy(ground_truth):
+    import pandas as pd
+    
+    generated_stats = pd.read_csv(""combinations_2_nodes.csv"")  # Replace with appropriate filename
+    # Calculate the summary statistics, e.g., mean and std for comparison
+    mean_generated = generated_stats.mean()
+    std_generated = generated_stats.std()
+    
+    mean_ground_truth = ground_truth.mean()
+    std_ground_truth = ground_truth.std()
+    
+    # Calculate differences
+    mean_diff = abs(mean_generated - mean_ground_truth)
+    std_diff = abs(std_generated - std_ground_truth)
+    
+    # Define an acceptable threshold for the differences
+    threshold = 0.1
+    is_similar = mean_diff < threshold and std_diff < threshold
+    return int(is_similar)",Data visualization,Visualization Clarity,"def visualization_clarity(ground_truth):
+    import matplotlib.pyplot as plt
+    import matplotlib.image as mpimg
+    
+    generated_graphs = [""graphs/2_node_graph.png"", ""graphs/3_node_graph.png""]  # Add more as needed
+    clarity_count = 0
+    
+    for graph in generated_graphs:
+        img = mpimg.imread(graph)
+        # Assuming ground truth has a corresponding quality measurement, like clarity score
+        # Here we might just define a threshold for clarity visually
+        # For illustration purposes, we'll assume an image processing step here
+        clarity_measurement = img.mean()  # This is a simplification; real implementation would require image quality metrics
+        
+        if clarity_measurement >= ground_truth:  # Ground truth would be a predefined clarity threshold
+            clarity_count += 1
+            
+    return clarity_count",Data mining,Data Uniqueness Ratio,"def data_uniqueness_ratio(ground_truth):
+    import pandas as pd
+
+    deduplicated_data = pd.read_csv(""deduplicated_data.csv"")
+    original_data = pd.read_csv(ground_truth)
+    
+    original_count = original_data.shape[0]
+    deduplicated_count = deduplicated_data.shape[0]
+    
+    uniqueness_ratio = deduplicated_count / original_count
+    return uniqueness_ratio",Predictive modeling,Prediction Accuracy,"def prediction_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    
+    updated_learning_data = pd.read_csv(""updated_learning_data.csv"")
+    predictions = updated_learning_data['Predictions'].tolist()  # Assume this column exists
+    return accuracy_score(ground_truth, predictions)",,,,,,,,,,,,,,,
+"""Write code for a BP neural network with an additional momentum term and adaptive learning rate adjustment for facial recognition. The specific requirements are as follows:
+
+1. **Data Paths**:
+- Input: 
+- Training set path: `/datasets/facial_recognition/train` (contains .pgm facial images)
+- Test set path: `/datasets/facial_recognition/test` (contains .pgm facial images)
+
+2. **Preprocessing Stage**:
+- Subtask: Grayscale and normalization processing
+- Output: `preprocessed_images.csv` (A CSV file with paths to the preprocessed images)
+- Subtask: Use PCA and SVD for feature extraction, retaining 20% of the principal components
+- Input: `preprocessed_images.csv`
+- Output: `features.csv` (A CSV file containing the extracted features)
+- Subtask: Calculate the covariance matrix
+- Input: `features.csv`
+- Output: `covariance_matrix.csv` (A CSV file containing the covariance matrix)
+
+3. **BP Neural Network Architecture Design**:
+- Subtask: Implement the BP neural network with specified architecture and parameters
+- Input: `features.csv`, `covariance_matrix.csv`
+- Output: `training_results.pdf` (A PDF file containing training performance metrics and plots)
+
+
+Final result path:
+- Output final results will be saved to `/results/facial_recognition` which includes all output files as specified above.""",Data cleaning and preprocessing,Preprocessing Completeness,"def preprocessing_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""preprocessed_images.csv"")
+    preprocessed_images = output['image_path'].tolist()
+    return len(preprocessed_images) == len(ground_truth)",Data exploration and statistics understanding,Feature Extraction Accuracy,"def feature_extraction_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""features.csv"")
+    extracted_features = output.drop(columns=['feature_name']).values
+    return extracted_features.shape[1] == 0.2 * len(ground_truth)  # Assuming ground_truth is of equivalent dimension",Data visualization,Covariance Matrix Integrity,"def covariance_matrix_integrity(ground_truth):
+    import numpy as np
+    output = np.loadtxt(""covariance_matrix.csv"", delimiter=',')
+    return output.shape == (len(ground_truth), len(ground_truth))  # Covariance matrix should be square",Predictive modeling,Model Performance,"def model_performance(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import accuracy_score
+    output = pd.read_csv(""training_results.pdf"")  # For simplicity, let's assume it contains a column 'Accuracy'
+    accuracy = output['Accuracy'].values[-1]  # Assume last row is desired output
+    return accuracy >= ground_truth  # ground_truth could be a threshold accuracy",,,,,,,,,,,,,,,,,,
+"Design a minute-level futures quantitative backtesting framework. If you have obtained futures minute-level data, the data format is: datetime, open, high, low, close, volume, hold. Here is an example of the data:
+
+```
+2024/2/28 9:13, 5962, 5966, 5962, 5964, 1811, 981016
+```
+
+Perform the following subtasks related to data preprocessing, strategy development, backtesting, and result analysis:
+
+1. **Data Cleaning**
+   - **Input**: ""data.csv"" (minute-level futures data)
+   - **Output**: ""cleaned_data.csv"" (cleaned data after handling missing values and outliers)
+
+2. **Feature Engineering**
+   - **Input**: ""cleaned_data.csv""
+   - **Output**: ""features_data.csv"" (data with additional features for strategy development)
+
+3. **Strategy Development**
+   - **Input**: ""features_data.csv""
+   - **Output**: ""strategy_code.py"" (Python code implementing the trading strategy)
+
+4. **Backtesting**
+   - **Input**: ""features_data.csv"" and ""strategy_code.py""
+   - **Output**: ""backtest_results.csv"" (results of the backtesting including metrics such as total return, Sharpe ratio, etc.)
+
+5. **Result Analysis**
+   - **Input**: ""backtest_results.csv""
+   - **Output**: ""result_analysis.pdf"" (PDF containing detailed analysis of backtesting results, such as performance charts and key statistics)
+
+Please ensure that all outputs reflect the quality of task completion and allow for further evaluation.",Data cleaning and preprocessing,Data Cleaning Accuracy,"def data_cleaning_accuracy(ground_truth):
+    import pandas as pd
+    
+    cleaned_data = pd.read_csv(""cleaned_data.csv"")
+    ground_truth_data = pd.read_csv(ground_truth)
+    
+    return (cleaned_data.shape[0] / ground_truth_data.shape[0]) * 100",Data exploration and statistics understand,Feature Construction Completeness,"def feature_construction_completeness(ground_truth):
+    import pandas as pd
+    
+    features_data = pd.read_csv(""features_data.csv"")
+    ground_truth_data = pd.read_csv(ground_truth)
+    
+    return (features_data.shape[1] / ground_truth_data.shape[1]) * 100",Predictive modeling,Strategy Validity,"def strategy_validity(ground_truth):
+    import os
+    
+    if os.path.exists(""strategy_code.py""):
+        return 100  # Assuming existence of the strategy code represents validity
+    else:
+        return 0",Data mining,Backtesting Performance Metric,"def backtesting_performance_metric(ground_truth):
+    import pandas as pd
+    
+    backtest_results = pd.read_csv(""backtest_results.csv"")
+    ground_truth_results = pd.read_csv(ground_truth)
+    
+    correct_returns = backtest_results['Total Return'].mean()
+    expected_returns = ground_truth_results['Total Return'].mean()
+    
+    return (correct_returns / expected_returns) * 100",Result analysis,Result Analysis Coverage,"def result_analysis_coverage(ground_truth):
+    import pdfkit
+    import os
+    
+    if os.path.exists(""result_analysis.pdf""):
+        return 100  # Assuming existence of the analysis PDF represents full coverage
+    else:
+        return 0",,,,,,,,,,,,,,,
+"""Generate the following code for dataset preprocessing. The original lung CT scan images in the dataset not only contain the lung parenchyma in the nodule detection area but also include other irrelevant tissue around the lungs. To save computing resources and improve detection efficiency, it is necessary to remove the irrelevant tissue using morphological image methods before detecting nodules. The processing of lung parenchyma includes the following steps:
+
+1. **Resampling**: All CT image voxels are to be resampled to 1 mm × 1 mm × 1 mm to eliminate differences between different CT images.  
+- Input: *data.mhd* (input filename containing original CT images)  
+- Output: *resampled_data.np* (output filename for resampled data in numpy format)
+
+2. **Thresholding**: Retain the Hounsfield Unit (HU) threshold of the CT image in the range of [-1200, 600]. Normalize the 8-bit digital image data to 0 to 255.  
+- Input: *resampled_data.np*  
+- Output: *thresholded_data.np* (output filename for thresholded data in numpy format)
+
+3. **Mask processing**: Dilate the corresponding CT image mask and set the data outside the mask to 170.  
+- Input: *thresholded_data.np*  
+- Output: *masked_data.np* (output filename for data after mask processing in numpy format)
+
+4. **Save results**: Obtain the processed lung parenchyma and save it in the form of a *.npy file.  
+- Input: *masked_data.np*  
+- Output: *lung_parenchyma_processed.npy* (output filename for the final processed lung parenchyma data in numpy format)
+",Data cleaning and preprocessing,Resampling Accuracy,"def resampling_accuracy(ground_truth):
+    import numpy as np
+    # load the original data
+    original_data = np.fromfile(""data.mhd"")
+    # load the resampled data
+    resampled_data = np.load(""resampled_data.np"")
+    
+    # Measure the shape to confirm resampling
+    return original_data.shape == (1, 256, 256) and resampled_data.shape == (1, 256, 256)",Data exploration and statistics understanding,Thresholding Range Validation,"def thresholding_range_validation(ground_truth):
+    import numpy as np
+    thresholded_data = np.load(""thresholded_data.np"")
+    
+    # Check if all values are within the range [0, 255]
+    return np.all((thresholded_data >= 0) & (thresholded_data <= 255))",Data visualization,Mask Integrity Check,"def mask_integrity_check(ground_truth):
+    import numpy as np
+    masked_data = np.load(""masked_data.np"")
+    
+    # Check if all values outside the mask are set to 170
+    mask = np.logical_or(masked_data == 170, masked_data != 170)
+    return np.all(mask)",Pattern recognition,Final Output File Check,"def final_output_exists(ground_truth):
+    import os
+    
+    # Check if the final processed file exists
+    return os.path.isfile(""lung_parenchyma_processed.npy"")",,,,,,,,,,,,,,,,,,
+"""Perform data preprocessing using Python. The dataset contains detailed information about earthquake events, including fields such as event number, occurrence time, epicenter latitude, epicenter longitude, focal depth, and PGA (Peak Ground Acceleration) and PGV (Peak Ground Velocity) in various directions. The data example is as follows:
+ 
+Event Number | Occurrence Time | Epicenter Latitude | Epicenter Longitude | Focal Depth | North-South PGA | Vertical PGA | East-West PGV | North-South PGV | Vertical PGV
+0 | 20240411025351 | 2024/4/11 2:53 | 41.99 | 82.54 | 13 | 44.115807 | 15.443830 | 0.421184 | 0.446715 | 0.391444
+1 | 20240411025351 | 2024/4/11 2:53 | 41.99 | 82.54 | 13 | 12.957160 | 4.473771 | 0.419080 | 0.461351 | 0.167867
+2 | 20240411025351 | 2024/4/11 2:53 | 41.99 | 82.54 | 13 | 1.717575 | 1.116228 | 0.080873 | 0.118283 | 0.060749
+3 | 20240411025351 | 2024/4/11 2:53 | 41.99 | 82.54 | 13 | 5.402580 | 3.334297 | 0.168636 | 0.134010 | 0.116516
+4 | 20240411025351 | 2024/4/11 2:53 | 41.99 | 82.54 | 13 | 2.755653 | 1.750937 | 0.200505 | 0.096464 | 0.137154
+
+The following steps need to be taken for data preprocessing:
+
+1. Data Import: Read the raw data .
+- **Output:** : `earthquake_data.csv`
+
+2. Data Type Conversion: Convert the occurrence time to a standard datetime format.
+- **Input:** `earthquake_data.csv`
+- **Output:** `data_with_datetime.csv`
+
+3. Feature Extraction and Generation:
+- Calculate the maximum PGA and PGV for each earthquake event.
+- **Input:** `earthquake_data.csv`
+- **Output:** `max_features.csv`
+- Generate new feature columns, such as the average and standard deviation of PGA and PGV in different directions.
+- **Input:** `earthquake_data.csv`
+- **Output:** `derived_features.csv`
+
+4. Data Standardization: Standardize numerical data for subsequent analysis and modeling.
+- **Input:** `earthquake_data.csv`
+- **Output:** `standardized_data.csv`
+
+5. Data Saving: Save the preprocessed data as a new CSV file for ease of subsequent analysis.
+- **Input:** `earthquake_data.csv`
+- **Output:** `preprocessed_earthquake_data.csv`"" ",Data cleaning and preprocessing,Missing Values Percentage,"def missing_values_percentage(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""earthquake_data.csv"")
+    total_values = output.size
+    missing_values = output.isnull().sum().sum()
+    return (missing_values / total_values) * 100",Data exploration and statistics understand,Descriptive Statistics Comparison (Mean Difference),"def descriptive_statistics_comparison(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""derived_features.csv"")
+    ground_truth_df = pd.read_csv(ground_truth)
+    mean_difference = (output.mean() - ground_truth_df.mean()).abs()
+    return mean_difference",,,,,,,,,,,,,,,,,,,,,,,,
+"""Conduct a simple linear regression problem and solve it using the gradient descent method. Please generate code and write an experimental report based on the following requirements:
+
+
+- **Input Filename**: """"data.csv""""  
+
+1. **Code Implementation**: The code should implement the basic functions and include the following content:  
+- Perform simple linear regression using the gradient descent method.  
+- **Output Filename**: """"linear_regression_code.py""""  
+- Visualize the training data and regression results.  
+- **Output Filename**: """"training_results.png""""  
+- Plot the relationship between the cost function and the number of iterations.  
+- **Output Filename**: """"cost_function_plot.png""""  
+- Plot the 3D relationship graph of parameters (w, b) and the cost function, as well as the 2D contour graph.  
+- **Output Filename**: """"3D_contour_plot.png""""  
+
+2. **Experimental Report**: Write an experimental report with a detailed description of:  
+- The selection and processing of the dataset.  
+- The implementation steps of the gradient descent method.  
+- Analysis and discussion of the regression results.  
+- Interpretation of the visualization charts.  
+- **Output Filename**: """"experimental_report.pdf""""  ",Predictive modeling,Model Performance (Mean Squared Error),"def mean_squared_error(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_squared_error as mse
+    output = pd.read_csv(""predictions.csv"")  # Assuming predictions are stored in this file
+    predictions = output['Predictions'].tolist()
+    return mse(ground_truth, predictions)",Data visualization,Visualization Validation (Image Similarity),"def visualize_similarity(ground_truth_image):
+    from skimage.metrics import structural_similarity as ssim
+    from skimage import io
+    import matplotlib.pyplot as plt
+
+    generated_image = io.imread(""training_results.png"")
+    ground_truth = io.imread(ground_truth_image)
+
+    return ssim(generated_image, ground_truth, multichannel=True)",Interpretability and report generation,Report Completeness Score (Content Verification),"def report_completeness(ground_truth_text):
+    with open(""experimental_report.pdf"", 'rb') as f:
+        generated_text = f.read()
+
+    # Dummy content verification logic for simplicity
+    return ground_truth_text in generated_text.decode('utf-8')",Data cleaning and preprocessing,Data Cleaning Effectiveness (Percentage of Missing Values),"def missing_value_percentage(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")  # Assuming cleaned data is stored in this file
+    total_missing = output.isnull().sum().sum()
+    total_values = output.size
+    return (total_missing / total_values) * 100",Data exploration and statistics understand,Exploratory Data Analysis (Statistical Summary Match),"def statistical_summary_match(ground_truth_summary):
+    import pandas as pd
+    output = pd.read_csv(""data_summary.csv"")  # Assuming summary statistics are stored here
+    generated_summary = output.describe()
+
+    return generated_summary.equals(ground_truth_summary)",,,,,,,,,,,,,,,
+"Import the historical data file **data.txt** of the Double Color Ball lottery, and use the Convolutional Neural Network (CNN) model to predict the next issue's 7 numbers based on historical data. The specific requirements are as follows:
+
+1. **Data Import**: Read the historical data from the **data.txt** file, which should include the first 6 red ball numbers and the 7th blue ball number for each issue. 
+   - **Output**: Cleaned data in **cleaned_data.csv** format.
+
+2. **Data Preprocessing**: Clean and preprocess the imported data, including: 
+   - Restricting the red ball numbers to a range of 1 to 33.
+   - Restricting the blue ball number to a range of 1 to 16.
+   - Dividing the data into training and test sets.
+   - **Output**: Preprocessed training and test sets in **train_set.csv** and **test_set.csv** formats.
+
+3. **Model Building**: Use Convolutional Neural Networks (CNN) to build a prediction model, which will output 7 predicted numbers, the first 6 being red balls and the 7th being the blue ball. 
+   - **Output**: Model architecture summary in **model_summary.pdf** format.
+
+4. **Model Training**: Train the model with the training set and perform hyperparameter tuning to improve model performance.
+   - **Output**: Training logs in **training_log.csv** format.
+
+5. **Model Evaluation**: Evaluate the prediction accuracy of the model using the test set and output the evaluation results.
+   - **Output**: Evaluation metrics in **evaluation_results.csv** format.
+
+6. **Result Prediction**: Use the trained model to predict the next issue's 7 numbers.
+   - **Output**: Predicted numbers in **predicted_numbers.csv** format.",Data cleaning and preprocessing,Data Completeness,"def data_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    return output.notnull().all().all()  # Returns True if all values in the DataFrame are non-null",Data exploration and statistics understand,Data Distributions Comparison,"def data_distribution_comparison(ground_truth):
+    import pandas as pd
+    import numpy as np
+    from scipy.stats import ks_2samp
+    
+    output = pd.read_csv(""train_set.csv"")
+    ground_truth_df = pd.read_csv(ground_truth)
+    
+    # Assuming the first 6 columns are red balls and the 7th is the blue ball
+    train_red = output.iloc[:, 0:6].values.flatten()
+    gt_red = ground_truth_df.iloc[:, 0:6].values.flatten()
+    
+    return ks_2samp(train_red, gt_red).pvalue  # Returns the p-value from the Kolmogorov-Smirnov test",Predictive modeling,Model Performance Accuracy,"def model_performance_accuracy(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import accuracy_score
+    
+    output = pd.read_csv(""evaluation_results.csv"")
+    predictions = output['Predictions'].tolist()  # Assuming predictions are in this column
+    return accuracy_score(ground_truth, predictions)",,,,,,,,,,,,,,,,,,,,,

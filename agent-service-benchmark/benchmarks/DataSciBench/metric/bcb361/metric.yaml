@@ -1,0 +1,75 @@
+TMC-list:
+- code: "def column_sum_accuracy(output, ground_truth):\n    output_sums = output[0]\
+    \  # extract the column sums dict from tuple\n    ground_truth_sums = ground_truth[0]\n\
+    \    return all(output_sums[col] == ground_truth_sums[col] for col in ground_truth_sums)"
+  function: Data Quality Score
+  metric: Column Sum Accuracy
+  task_name: Data cleaning and preprocessing
+- code: "def csv_file_path_validation(output, ground_truth):\n    output_path = output[1]\
+    \  # extract the csv file path from tuple\n    ground_truth_path = ground_truth[1]\n\
+    \    return output_path == ground_truth_path"
+  function: Data Accuracy
+  metric: CSV File Path Validation
+  task_name: Data exploration and statistics understand
+- code: "def data_integrity_check(output, ground_truth):\n    output_sums = output[0]\
+    \  # extract the column sums dict from tuple\n    ground_truth_sums = ground_truth[0]\n\
+    \    return len(output_sums) == len(ground_truth_sums)  # Check if the number\
+    \ of columns is the same"
+  function: Result Completeness
+  metric: Data Integrity Check
+  task_name: Data visualization
+data: "import pandas as pd\nimport os\n\n# Creating a more complex dummy Excel file\
+  \ for testing\ncomplex_excel_file = 'complex_test.xlsx'\ncomplex_csv_file = 'complex_test.csv'\n\
+  complex_sheet_name = 'ComplexSheet'\ncomplex_data = {\n    'X': [5, 15, 25, 35,\
+  \ 45],\n    'Y': [100, 200, 300, 400, 500],\n    'Z': [1.5, 2.5, 3.5, 4.5, 5.5]\n\
+  }\ndf_complex = pd.DataFrame(complex_data)\ndf_complex.to_excel(complex_excel_file,\
+  \ sheet_name=complex_sheet_name, index=False)\n\nargs = (complex_sheet_name, complex_excel_file,\
+  \ complex_csv_file)"
+ground_truth: "import pandas as pd\nimport logging\n\n# Set up basic configuration\
+  \ for logging\nlogging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s\
+  \ - %(message)s')\n\ndef task_func(sheet_name, excel_file_location=\"test.xlsx\"\
+  , csv_file_location=\"test.csv\"):\n    try:\n        # Read the Excel file\n  \
+  \      df = pd.read_excel(excel_file_location, sheet_name=sheet_name)\n    except\
+  \ FileNotFoundError:\n        logging.error(\"The specified Excel file was not found.\"\
+  )\n        raise\n    except ValueError:\n        logging.error(\"The specified\
+  \ sheet name does not exist in the Excel file.\")\n        raise\n    \n    # Check\
+  \ if the DataFrame contains only numerical data\n    if not df.applymap(lambda x:\
+  \ isinstance(x, (int, float))).all().all():\n        logging.error(\"The Excel file\
+  \ contains non-numerical data.\")\n        raise ValueError(\"The Excel file contains\
+  \ non-numerical data.\")\n    \n    # Convert the DataFrame to a CSV file\n    df.to_csv(csv_file_location,\
+  \ index=False)\n    logging.info(f\"CSV file created at {csv_file_location}\")\n\
+  \n    # Calculate the sum of each column\n    column_sums = df.sum().to_dict()\n\
+  \    \n    return column_sums, csv_file_location"
+prompt: "Reads data from an Excel spreadsheet, converts it to a CSV file, then calculates\
+  \ the sum of each column in the CSV file. Note that: Ensure the Excel file contains\
+  \ only numerical data for accurate sum calculations. The function should raise the\
+  \ exception for: FileNotFoundError: If the Excel file does not exist at the specified\
+  \ path. ValueError: If the specified sheet name is not found in the Excel file.\
+  \ The function should output with: tuple(column_sums: dict, csv_file_path: str)\n\
+  column_sums: A dictionary with the sum of each column. \ncsv_file_path: The path\
+  \ of the generated CSV file. \nYou should write self-contained code starting with:\n\
+  ```\nimport pandas as pd\nimport logging\n# Set up basic configuration for logging\n\
+  logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')\n\
+  def task_func(sheet_name, excel_file_location=\"test.xlsx\", csv_file_location=\"\
+  test.csv\"):\n```"
+testcase: "import unittest\nimport pandas as pd\nimport os\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        # Creating a dummy Excel file for testing\n     \
+  \   self.test_excel_file = 'dummy_test.xlsx'\n        self.test_csv_file = 'dummy_test.csv'\n\
+  \        self.test_sheet_name = 'TestSheet'\n        data = {'A': [10, 20, 30],\
+  \ 'B': [40, 50, 60]}\n        df = pd.DataFrame(data)\n        df.to_excel(self.test_excel_file,\
+  \ sheet_name=self.test_sheet_name, index=False)\n\n    def tearDown(self):\n   \
+  \     os.remove(self.test_excel_file)\n        if os.path.exists(self.test_csv_file):\n\
+  \            os.remove(self.test_csv_file)\n\n    def test_normal_functionality(self):\n\
+  \        result, _ = task_func(self.test_sheet_name, self.test_excel_file, self.test_csv_file)\n\
+  \        self.assertEqual(result, {'A': 60, 'B': 150})\n\n    def test_file_not_found(self):\n\
+  \        with self.assertRaises(FileNotFoundError):\n            task_func(self.test_sheet_name,\
+  \ 'nonexistent.xlsx', self.test_csv_file)\n\n    def test_sheet_not_found(self):\n\
+  \        with self.assertRaises(ValueError):\n            task_func('NonexistentSheet',\
+  \ self.test_excel_file, self.test_csv_file)\n\n    def test_empty_excel_file(self):\n\
+  \        empty_excel_file = 'empty_test.xlsx'\n        pd.DataFrame().to_excel(empty_excel_file,\
+  \ index=False)\n        with self.assertRaises(ValueError):\n            task_func(self.test_sheet_name,\
+  \ empty_excel_file, self.test_csv_file)\n        os.remove(empty_excel_file)\n\n\
+  \    def test_overwrite_existing_csv(self):\n        with open(self.test_csv_file,\
+  \ 'w') as file:\n            file.write('Old Data')\n        task_func(self.test_sheet_name,\
+  \ self.test_excel_file, self.test_csv_file)\n        with open(self.test_csv_file,\
+  \ 'r') as file:\n            self.assertNotIn('Old Data', file.read())"

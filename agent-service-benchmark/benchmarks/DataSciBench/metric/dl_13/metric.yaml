@@ -1,0 +1,53 @@
+"TMC-list":
+- "code": |-
+    def model_structure_validation(ground_truth):
+        with open("model.py", "r") as file:
+            model_code = file.read()
+        return bool("import tensorflow as tf" in model_code and "tf.Variable" in model_code)
+  "function": |-
+    Model Accuracy
+  "metric": |-
+    Model Structure Validation
+  "task_name": |-
+    Predictive modeling
+- "code": |-
+    def training_loss_evaluation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("training_log.csv")
+        losses = output.iloc[:, -1].tolist()
+        gt_output = pd.read_csv(ground_truth)
+        gt_losses = gt_output.iloc[:, -1].tolist()
+        return bool(losses[-1] <= gt_losses[-1]) # Return the final loss value
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Training Loss Evaluation
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: training_log.csv
+- "code": |-
+    def data_flow_graph_assessment(ground_truth):
+        import os
+        return bool(os.path.exists("tensorboard_screenshot.png"))
+  "function": |-
+    Visualization Completeness
+  "metric": |-
+    Data Flow Graph Assessment
+  "task_name": |-
+    Data visualization
+"prompt": |-
+  Implement a linear regression model y = wx + b, where w = 0.8 and b = 0.7. You need to:
+
+  1. Build the model using Tensorflow. 
+     - Input: "data.csv" (the training dataset)
+     - Output: "model.py" (complete code implementation with clear structure and comments)
+
+  2. Train the model for 500 steps.
+     - Input: "model.py" (the model code)
+     - Output: "training_log.csv" (log of the training progress, including loss values at each step)
+
+  3. Observe the data flow graph of the model using Tensorboard. 
+     - Input: "model.py" (the model file)
+     - Output: "tensorboard_screenshot.png" (a screenshot of the data flow graph showcasing the model's structure and training process)
+
+  Please ensure all outputs reflect the quality of completion for each subtask, facilitating further evaluation.

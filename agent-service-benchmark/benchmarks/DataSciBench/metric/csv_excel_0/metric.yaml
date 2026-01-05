@@ -1,0 +1,50 @@
+"TMC-list":
+- "code": |-
+    def data_completeness_ratio(ground_truth):
+        import pandas as pd
+        gt_output = pd.read_csv(ground_truth)
+        output = pd.read_csv("output.csv")
+        total_entries = gt_output.notnull().sum().sum()
+        actual_entries = output.notnull().sum().sum()
+        return bool(actual_entries == total_entries)
+  "function": |-
+    Data Completeness
+  "metric": |-
+    Data Completeness Ratio
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: "output.csv"
+- "code": |-
+    def visualization_quality_score(ground_truth):
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        gt_output = pd.read_csv(ground_truth)
+        output = pd.read_csv("output.csv")
+        return bool(output.equals(gt_output))
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Visualization Quality Score
+  "task_name": |-
+    Data visualization
+  ground_truth: "output.csv"
+- "code": |-
+    def report_completeness_score(ground_truth):
+        import pandas as pd
+        gt_output = pd.read_csv(ground_truth)
+        output = pd.read_csv("output.csv")
+        
+        required_fields = set(gt_output.columns[1:])  # Assuming ground truth contains the indicators
+        actual_fields = set(output.columns[1:])  # Ignoring year
+        completeness = required_fields.issubset(actual_fields)
+        
+        return completeness  # Returns True if all required fields are present
+  "function": |-
+    Report Completeness
+  "metric": |-
+    Report Completeness Score
+  "task_name": |-
+    Interpretability and report generation
+  ground_truth: "output.csv"
+"prompt": |-
+  Create a dataframe with the following structure, using different years as row indices and different categories as column names, filling in the corresponding values. The input data is as follows:\n```\n\u65f6\u95f4,\u54c1\u7c7b,\u6307\u6807,\u5730\u533a,\u5468\u671f,\u5355\u4f4d,\u6570\u503c\n2022,\u519c\u4e1a\u79d1\u6280\u8fdb\u6b65\u8d21\u732e\u7387,\u8d21\u732e\u7387,\u5168\u56fd,\u5e74,%,62.4\n2021,\u519c\u4e1a\u79d1\u6280\u8fdb\u6b65\u8d21\u732e\u7387,\u8d21\u732e\u7387,\u5168\u56fd,\u5e74,%,61.5\n2020,\u5316\u80a5\u6709\u6548\u5229\u7528\u7387,\u5229\u7528\u7387,\u5168\u56fd,\u5e74,%,40.2\n2020,\u519c\u836f\u6709\u6548\u5229\u7528\u7387,\u5229\u7528\u7387,\u5168\u56fd,\u5e74,%,40.6\n2020,\u53bf\u57df\u6570\u5b57\u519c\u4e1a\u519c\u6751\u53d1\u5c55\u603b\u4f53\u6c34\u5e73,\u5360\u6bd4,\u5168\u56fd,\u5e74,%,37.9\n2020,\u519c\u4e1a\u79d1\u6280\u8fdb\u6b65\u8d21\u732e\u7387,\u8d21\u732e\u7387,\u5168\u56fd,\u5e74,%,60.7\n2019,\u519c\u836f\u6709\u6548\u5229\u7528\u7387,\u5229\u7528\u7387,\u5168\u56fd,\u5e74,%,39.8\n2019,\u5316\u80a5\u6709\u6548\u5229\u7528\u7387,\u5229\u7528\u7387,\u5168\u56fd,\u5e74,%,39.2\n2019,\u53bf\u57df\u6570\u5b57\u519c\u4e1a\u519c\u6751\u53d1\u5c55\u603b\u4f53\u6c34\u5e73,\u5360\u6bd4,\u5168\u56fd,\u5e74,%,36.0\n2019,\u519c\u4e1a\u79d1\u6280\u8fdb\u6b65\u8d21\u732e\u7387,\u8d21\u732e\u7387,\u5168\u56fd,\u5e74,%,59.2\n2018,\u53bf\u57df\u6570\u5b57\u519c\u4e1a\u519c\u6751\u53d1\u5c55\u603b\u4f53\u6c34\u5e73,\u5360\u6bd4,\u5168\u56fd,\u5e74,%,33.0\n2018,\u519c\u4e1a\u79d1\u6280\u8fdb\u6b65\u8d21\u732e\u7387,\u8d21\u732e\u7387,\u5168\u56fd,\u5e74,%,58.3\n2017,\u519c\u836f\u6709\u6548\u5229\u7528\u7387,\u5229\u7528\u7387,\u5168\u56fd,\u5e74,%,38.8\n2017,\u5316\u80a5\u6709\u6548\u5229\u7528\u7387,\u5229\u7528\u7387,\u5168\u56fd,\u5e74,%,38.8\n2017,\u519c\u4e1a\u79d1\u6280\u8fdb\u6b65\u8d21\u732e\u7387,\u8d21\u732e\u7387,\u5168\u56fd,\u5e74,%,57.5\n2016,\u519c\u4e1a\u79d1\u6280\u8fdb\u6b65\u8d21\u732e\u7387,\u8d21\u732e\u7387,\u5168\u56fd,\u5e74,%,56.7\n2015,\u519c\u836f\u6709\u6548\u5229\u7528\u7387,\u5229\u7528\u7387,\u5168\u56fd,\u5e74,%,36.6\n2015,\u5316\u80a5\u6709\u6548\u5229\u7528\u7387,\u5229\u7528\u7387,\u5168\u56fd,\u5e74,%,35.2\n2015,\u519c\u4e1a\u79d1\u6280\u8fdb\u6b65\u8d21\u732e\u7387,\u8d21\u732e\u7387,\u5168\u56fd,\u5e74,%,56.1\n2014,\u519c\u4e1a\u79d1\u6280\u8fdb\u6b65\u8d21\u732e\u7387,\u8d21\u732e\u7387,\u5168\u56fd,\u5e74,%,55.6\n2013,\u519c\u836f\u6709\u6548\u5229\u7528\u7387,\u5229\u7528\u7387,\u5168\u56fd,\u5e74,%,35.0\n2013,\u5316\u80a5\u6709\u6548\u5229\u7528\u7387,\u5229\u7528\u7387,\u5168\u56fd,\u5e74,%,33.0\n2013,\u519c\u4e1a\u79d1\u6280\u8fdb\u6b65\u8d21\u732e\u7387,\u8d21\u732e\u7387,\u5168\u56fd,\u5e74,%,55.2\n2012,\u519c\u4e1a\u79d1\u6280\u8fdb\u6b65\u8d21\u732e\u7387,\u8d21\u732e\u7387,\u5168\u56fd,\u5e74,%,54.5\n```\nThe output should be saved in \"output.csv\".

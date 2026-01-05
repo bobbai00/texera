@@ -1,0 +1,109 @@
+TMC-list:
+- code: "def column_presence(output, ground_truth):\n    output_columns = output[0].columns.tolist()\
+    \  # extract columns from zscore_df\n    ground_truth_columns = ground_truth[0].columns.tolist()\n\
+    \    return all(col in output_columns for col in ground_truth_columns)  # check\
+    \ all expected columns are present"
+  function: DataFrame Shape Validation
+  metric: Column Presence
+  task_name: Data cleaning and preprocessing
+- code: "def zscore_calculation_accuracy(output, ground_truth):\n    output_zscore\
+    \ = output[0]  # extract zscore_df from tuple\n    ground_truth_zscore = ground_truth[0]\n\
+    \    return (output_zscore.equals(ground_truth_zscore))  # check if zscore_df\
+    \ matches with ground truth"
+  function: Data Accuracy
+  metric: Z-Score Calculation Accuracy
+  task_name: Data exploration and statistics understand
+- code: "def boxplot_title_check(output, ground_truth):\n    boxplot_fig = output[1]\
+    \  # extract boxplot_fig from tuple\n    return boxplot_fig.axes[0].title.get_text()\
+    \ == \"Z-Scores Over Time\"  # check if the title matches expectation"
+  function: Title Verification
+  metric: Boxplot Title
+  task_name: Data visualization
+- code: "def boxplot_axes_labels(output, ground_truth):\n    boxplot_fig = output[1]\
+    \  # extract boxplot_fig from tuple\n    xlabel = boxplot_fig.axes[0].get_xlabel()\n\
+    \    ylabel = boxplot_fig.axes[0].get_ylabel()\n    return xlabel == \"Date\"\
+    \ and ylabel == \"Z-Score\"  # check if the x and y labels are correct"
+  function: Model Accuracy
+  metric: Boxplot Axes Labels
+  task_name: Predictive modeling
+data: 'import pandas as pd
+
+  import numpy as np
+
+  from datetime import datetime, timedelta
+
+
+  # Generating more complex and non-trivial data
+
+  dates = [(datetime(2023, 1, 1) + timedelta(days=i)).date() for i in range(10)]
+
+  values = [[np.random.uniform(1, 100) if i % 2 == 0 else np.nan for i in range(5)]
+  for _ in range(10)]
+
+  df = pd.DataFrame(list(zip(dates, values)), columns=[''Date'', ''Value''])
+
+
+  args = (df,)'
+ground_truth: "import pandas as pd\nfrom scipy.stats import zscore\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(df):\n    if 'Date' not in df.columns or 'Value' not in\
+  \ df.columns:\n        raise KeyError(\"DataFrame must contain 'Date' and 'Value'\
+  \ columns\")\n    \n    # Convert 'Date' to datetime\n    df['Date'] = pd.to_datetime(df['Date'])\n\
+  \    \n    # Split 'Value' lists into separate columns\n    value_expanded = df['Value'].apply(pd.Series)\n\
+  \    \n    # Calculate Z-scores\n    zscore_df = value_expanded.apply(zscore, axis=1)\n\
+  \    \n    # Add 'Date' as the first column\n    zscore_df.insert(0, 'Date', df['Date'])\n\
+  \    \n    # Create the box plot of Z-scores over time\n    boxplot_fig = plt.figure(figsize=(10,\
+  \ 6))\n    plt.boxplot(zscore_df.iloc[:, 1:], labels=zscore_df.columns[1:])\n  \
+  \  plt.title(\"Z-Scores Over Time\")\n    plt.xlabel(\"Date\")\n    plt.ylabel(\"\
+  Z-Score\")\n    plt.xticks(rotation=45)\n    plt.tight_layout()\n    \n    return\
+  \ zscore_df, boxplot_fig"
+prompt: 'Processes a pandas DataFrame with ''Date'' and ''Value'' columns. The ''Value''
+  column contains lists of numbers. Converts ''Date'' to datetime, splits ''Value''
+  lists into separate columns, calculates Z-scores, and creates a box plot for Z-scores
+  over time. Note that: This function use "Z-Scores Over Time" for the plot title.
+  This function use "Date" and "Z-Score" as the xlabel and ylabel respectively. The
+  function should raise the exception for: This function will raise KeyError if the
+  DataFrame does not have the ''Date'' and ''Value'' columns. The function should
+  output with: tuple(zscore_df: pandas.DataFrame, boxplot_fig: matplotlib.figure.Figure)
+  zscore_df: DataFrame with original ''Value'' lists split into separate columns and
+  replaced with Z-scores. boxplot_fig: A matplotlib figure of a box plot of Z-scores
+  over time. You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  from scipy.stats import zscore
+
+  import matplotlib.pyplot as plt
+
+  def task_func(df):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nfrom faker import Faker\nimport matplotlib.pyplot\
+  \ as plt\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n\
+  \        self.fake = Faker()\n\n    def test_empty_dataframe(self):\n        df\
+  \ = pd.DataFrame(columns=['Date', 'Value'])\n        with self.assertRaises(Exception):\n\
+  \            task_func(df)\n        plt.close()\n\n    def test_typical_data(self):\n\
+  \        df = pd.DataFrame([[self.fake.date(), [self.fake.random_number(digits=2)\
+  \ for _ in range(3)]] for _ in range(5)],\n                          columns=['Date',\
+  \ 'Value'])\n        zscore_df, fig = task_func(df)\n        self.assertEqual(zscore_df.shape,\
+  \ (5, 4))\n        self.assertIsInstance(fig, plt.Figure)\n        self.assertEqual(len(fig.axes),\
+  \ 1)\n        ax = fig.axes[0]\n        self.assertEqual(ax.get_title(), 'Z-Scores\
+  \ Over Time')\n        self.assertEqual(ax.get_xlabel(), 'Date')\n        self.assertEqual(ax.get_ylabel(),\
+  \ 'Z-Score')\n        plt.close()\n\n    def test_nan_values(self):\n        df\
+  \ = pd.DataFrame([['2021-01-01', [5, np.nan, 7]], \n                           ['2021-01-02',\
+  \ [np.nan, 9, 10]]], columns=['Date', 'Value'])\n        zscore_df, fig = task_func(df)\n\
+  \        self.assertEqual(zscore_df.shape, (2, 4))\n        self.assertIsInstance(fig,\
+  \ plt.Figure)\n        plt.close()\n\n    def test_single_row_data(self):\n    \
+  \    df = pd.DataFrame([[self.fake.date(), [self.fake.random_number(digits=2) for\
+  \ _ in range(3)]]],\n                          columns=['Date', 'Value'])\n    \
+  \    zscore_df, fig = task_func(df)\n        self.assertEqual(zscore_df.shape, (1,\
+  \ 4))\n        self.assertIsInstance(fig, plt.Figure)\n        plt.close()\n\n \
+  \   def test_non_numeric_values(self):\n        df = pd.DataFrame([[self.fake.date(),\
+  \ [self.fake.word() for _ in range(3)]] for _ in range(5)],\n                  \
+  \        columns=['Date', 'Value'])\n        with self.assertRaises(Exception):\n\
+  \            task_func(df)\n        plt.close()\n\n    def test_large_dataset(self):\n\
+  \        df = pd.DataFrame([[self.fake.date(), [self.fake.random_number(digits=2)\
+  \ for _ in range(10)]] for _ in range(100)],\n                          columns=['Date',\
+  \ 'Value'])\n        zscore_df, fig = task_func(df)\n        self.assertEqual(zscore_df.shape,\
+  \ (100, 11))\n        self.assertIsInstance(fig, plt.Figure)\n        plt.close()"

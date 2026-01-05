@@ -1,0 +1,45 @@
+TMC-list:
+- code: "def normalization_range_check(output, ground_truth):\n    output = output[0]\
+    \  # extract the normalized array from tuple\n    ground_truth = ground_truth[0]\n\
+    \    return np.all((output >= 0) & (output <= 1)) and np.allclose(np.min(output),\
+    \ 0) and np.allclose(np.max(output), 1)"
+  function: Normalization Range Check
+  metric: Normalization Range Check
+  task_name: Data cleaning and preprocessing
+data: args = ([-200, -150, -100, -75, -50, 0, 50, 100, 150, 200],)
+ground_truth: "from sklearn.preprocessing import MinMaxScaler\nimport numpy as np\n\
+  \ndef task_func(myList):\n    scaler = MinMaxScaler()\n    normalized_array = scaler.fit_transform(np.array(myList).reshape(-1,\
+  \ 1)).flatten()\n    return (normalized_array,)"
+prompt: 'Normalize a list of numeric values to the range [0, 1] using min-max scaling.
+  The function should output with: tuple(normalized_array: ndarray)
+
+  normalized_array: An array of normalized values.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  from sklearn.preprocessing import MinMaxScaler
+
+  import numpy as np
+
+  def task_func(myList):
+
+  ```'
+testcase: "import unittest\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_1(self):\n        # Testing basic functionality\n        input_data\
+  \ = [10, 20, 30, 40, 50]\n        expected_output = np.array([0. , 0.25, 0.5 , 0.75,\
+  \ 1. ])\n        np.testing.assert_array_almost_equal(task_func(input_data), expected_output,\
+  \ decimal=2)\n\n    def test_2(self):\n        # Testing with negative values\n\
+  \        input_data = [-50, -40, -30, -20, -10]\n        expected_output = np.array([0.\
+  \ , 0.25, 0.5 , 0.75, 1. ])\n        np.testing.assert_array_almost_equal(task_func(input_data),\
+  \ expected_output, decimal=2)\n\n    def test_3(self):\n        # Testing with mixed\
+  \ negative and positive values\n        input_data = [-50, -25, 0, 25, 50]\n   \
+  \     expected_output = np.array([0. , 0.25, 0.5 , 0.75, 1. ])\n        np.testing.assert_array_almost_equal(task_func(input_data),\
+  \ expected_output, decimal=2)\n\n    def test_4(self):\n        # Testing with single\
+  \ value\n        input_data = [100]\n        expected_output = np.array([0.])\n\
+  \        np.testing.assert_array_almost_equal(task_func(input_data), expected_output,\
+  \ decimal=2)\n\n    def test_5(self):\n        # Testing with all zeros\n      \
+  \  input_data = [0, 0, 0, 0, 0]\n        expected_output = np.array([0., 0., 0.,\
+  \ 0., 0.])\n        np.testing.assert_array_almost_equal(task_func(input_data),\
+  \ expected_output, decimal=2)"

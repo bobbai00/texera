@@ -1,0 +1,71 @@
+TMC-list:
+- code: "def dataframe_shape(output, ground_truth):\n    output_shape = output[0].shape\n\
+    \    ground_truth_shape = ground_truth[0].shape\n    return output_shape == ground_truth_shape"
+  function: DataFrame Shape Validation
+  metric: DataFrame Shape Consistency
+  task_name: Data cleaning and preprocessing
+- code: "def scatter_plot_validity(output, ground_truth):\n    output_ax = output[1]\
+    \  # extract the Axes object from tuple\n    assert hasattr(output_ax, 'collections'),\
+    \ \"The scatter plot has not been created properly.\"\n    return output_ax.get_title()\
+    \ == \"Scatter Plot of Standardized Age and Score\" and \\\n           output_ax.get_xlabel()\
+    \ == \"Age (standardized)\" and \\\n           output_ax.get_ylabel() == \"Score\
+    \ (standardized)\""
+  function: Plot Validity
+  metric: Scatter Plot Validity
+  task_name: Data visualization
+data: "import pandas as pd\nfrom faker import Faker\n\nfake = Faker()\ndata = pd.DataFrame([\n\
+  \    {'Name': fake.name(), 'Age': fake.random_int(min=18, max=100), 'Score': fake.random_int(min=0,\
+  \ max=100)} \n    for _ in range(15)\n]).drop_duplicates(subset='Name')\n\nargs\
+  \ = (data,)"
+ground_truth: "import matplotlib\nimport matplotlib.pyplot as plt\nfrom sklearn.preprocessing\
+  \ import StandardScaler\nimport pandas as pd\n\ndef task_func(df):\n    # Standardize\
+  \ 'Age' and 'Score' columns\n    scaler = StandardScaler()\n    df[['Age', 'Score']]\
+  \ = scaler.fit_transform(df[['Age', 'Score']])\n    \n    # Remove duplicate entries\
+  \ based on 'Name'\n    df = df.drop_duplicates(subset='Name')\n    \n    # Create\
+  \ a scatter plot\n    fig, scatter_ax = plt.subplots()\n    scatter_ax.scatter(df['Age'],\
+  \ df['Score'])\n    scatter_ax.set_title(\"Scatter Plot of Standardized Age and\
+  \ Score\")\n    scatter_ax.set_xlabel(\"Age (standardized)\")\n    scatter_ax.set_ylabel(\"\
+  Score (standardized)\")\n    \n    return df, scatter_ax"
+prompt: 'Standardize ''Age'' and ''Score'' columns in a pandas DataFrame, remove duplicate
+  entries based on ''Name'', and plot a scatter plot of these standardized values.
+  Note that: The function use "Scatter Plot of Standardized Age and Score" for the
+  plot title. The function use "Age (standardized)" and "Score (standardized)" as
+  the xlabel and ylabel respectively. The function should output with: tuple(std_df:
+  pandas.DataFrame, scatter_ax: matplotlib.axes.Axes) std_df: DataFrame with standardized
+  ''Age'' and ''Score'', duplicates removed. scatter_ax: Axes object of the scatter
+  plot. You should write self-contained code starting with:
+
+  ```
+
+  import matplotlib
+
+  import matplotlib.pyplot as plt
+
+  from sklearn.preprocessing import StandardScaler
+
+  def task_func(df):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nfrom faker import Faker\nimport matplotlib\n\
+  \nclass TestCases(unittest.TestCase):\n    def setUp(self):\n        # Using Faker\
+  \ to create test data\n        fake = Faker()\n        self.test_data = pd.DataFrame([{'Name':\
+  \ fake.name(), 'Age': fake.random_int(min=18, max=100), 'Score': fake.random_int(min=0,\
+  \ max=100)} for _ in range(10)])\n\n    def test_duplicate_removal(self):\n    \
+  \    df, _ = task_func(self.test_data)\n        self.assertEqual(df['Name'].nunique(),\
+  \ df.shape[0])\n\n    def test_standardization(self):\n        df, _ = task_func(self.test_data)\n\
+  \        self.assertAlmostEqual(df['Age'].mean(), 0, places=1)\n        self.assertAlmostEqual(int(df['Age'].std()),\
+  \ 1, places=1)\n        self.assertAlmostEqual(df['Score'].mean(), 0, places=1)\n\
+  \        self.assertAlmostEqual(int(df['Score'].std()), 1, places=1)\n\n    def\
+  \ test_return_types(self):\n        data = pd.DataFrame([\n            {'Name':\
+  \ 'James', 'Age': 30, 'Score': 85},\n            {'Name': 'James', 'Age': 35, 'Score':\
+  \ 90},\n            {'Name': 'Lily', 'Age': 28, 'Score': 92},\n            {'Name':\
+  \ 'Sam', 'Age': 40, 'Score': 88},\n            {'Name': 'Nick', 'Age': 50, 'Score':\
+  \ 80}\n        ])\n        df, ax = task_func(data)\n        self.assertIsInstance(df,\
+  \ pd.DataFrame)\n        self.assertIsInstance(ax, matplotlib.axes.Axes)\n\n   \
+  \ def test_plot_contents(self):\n        _, ax = task_func(self.test_data)\n   \
+  \     self.assertEqual(ax.get_title(), 'Scatter Plot of Standardized Age and Score')\n\
+  \        self.assertEqual(ax.get_xlabel(), 'Age (standardized)')\n        self.assertEqual(ax.get_ylabel(),\
+  \ 'Score (standardized)')\n\n    def test_plot_data_points(self):\n        df, ax\
+  \ = task_func(self.test_data)\n        scatter = [child for child in ax.get_children()\
+  \ if isinstance(child, matplotlib.collections.PathCollection)]\n        self.assertGreater(len(scatter),\
+  \ 0)\n        self.assertEqual(len(scatter[0].get_offsets()), len(df))"

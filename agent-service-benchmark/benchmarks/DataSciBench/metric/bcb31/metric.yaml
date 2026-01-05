@@ -1,0 +1,90 @@
+TMC-list:
+- code: "def plot_validity(output, ground_truth):\n    plot_output = output[0]\n \
+    \   has_words_output = output[1]\n    has_words_ground_truth = ground_truth[1]\n\
+    \n    if has_words_ground_truth:\n        return isinstance(plot_output, plt.Axes)\
+    \ and has_words_output == has_words_ground_truth\n    else:\n        return plot_output\
+    \ is None and has_words_output == has_words_ground_truth"
+  function: Plot Validity
+  metric: Plot Validity
+  task_name: Data visualization
+data: 'text = "In the garden, I found $mango $kiwi and $! fruit $mango $banana $kiwi"
+
+  args = (text,)'
+ground_truth: "import nltk\nfrom string import punctuation\nimport seaborn as sns\n\
+  import matplotlib.pyplot as plt\n# Constants\nPUNCTUATION = set(punctuation)\n\n\
+  def task_func(text):\n    words = text.split()\n    dollar_words = [word for word\
+  \ in words if word.startswith('$') and any(c.isalnum() for c in word[1:])]\n   \
+  \ \n    if not dollar_words:\n        return (None, False)\n    \n    freq_dict\
+  \ = {}\n    for word in dollar_words:\n        freq_dict[word] = freq_dict.get(word,\
+  \ 0) + 1\n    \n    # Create a bar plot\n    plt.figure(figsize=(10, 6))\n    ax\
+  \ = sns.barplot(x=list(freq_dict.keys()), y=list(freq_dict.values()))\n    ax.set_xlabel('Words')\n\
+  \    ax.set_ylabel('Frequency')\n    ax.set_title('Frequency of Words Starting with\
+  \ \"$\"')\n    plt.xticks(rotation=45)\n    \n    plt.tight_layout()\n    plt.show()\n\
+  \n    return (ax, True)"
+prompt: 'Draw a bar chart of the frequency of words in a text beginning with the "$"
+  character. Words that start with the ''$'' character but consist only of punctuation
+  (e.g., ''$!$'' and ''$.$'') are not included in the frequency count. If there is
+  no word respecting the above conditions, the plot should be None. The barplot should
+  have words on the x-axis and frequencies on the y-axis. The function should output
+  with: tuple(plot: matplotlib.axes._axes.Axes, has_words: bool)
+
+  plot: The plot showing the frequency of words beginning with the ''$'' character,
+  or None if there are no valid words.
+
+  has_words: A boolean indicating whether there were words that began with the ''$''
+  character and were not solely punctuation.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import nltk
+
+  from string import punctuation
+
+  import seaborn as sns
+
+  import matplotlib.pyplot as plt
+
+  # Constants
+
+  PUNCTUATION = set(punctuation)
+
+  def task_func(text):
+
+  ```'
+testcase: "import unittest\n\nclass TestCases(unittest.TestCase):\n    \"\"\"Test\
+  \ cases for the task_func function.\"\"\"\n\n    @staticmethod\n    def is_bar(ax,\
+  \ expected_values, expected_categories):\n        extracted_values = [\n       \
+  \     bar.get_height() for bar in ax.patches\n        ]  # extract bar height\n\
+  \        extracted_categories = [\n            tick.get_text() for tick in ax.get_xticklabels()\n\
+  \        ]  # extract category label\n        for actual_value, expected_value in\
+  \ zip(extracted_values, expected_values):\n            assert (\n              \
+  \  actual_value == expected_value\n            ), f\"Expected value '{expected_value}',\
+  \ but got '{actual_value}'\"\n        for actual_category, expected_category in\
+  \ zip(\n            extracted_categories, expected_categories\n        ):\n    \
+  \        assert (\n                actual_category == expected_category\n      \
+  \      ), f\"Expected category '{expected_category}', but got '{actual_category}'\"\
+  \n\n    def test_case_1(self):\n        # Randomly generated sentence with $ words\n\
+  \        text = \"This is the $first $first sentence.\"\n        plot, _ = task_func(text)\n\
+  \        self.assertIsInstance(plot, plt.Axes, \"Return type should be a plot (Axes).\"\
+  )\n        self.is_bar(plot, expected_categories=[\"$first\"], expected_values=[2.0])\n\
+  \n    def test_case_2(self):\n        # Another randomly generated sentence with\
+  \ $ words\n        text = \"This $is $is $is the $second $sentence $sentence\"\n\
+  \        plot, _ = task_func(text)\n        self.assertIsInstance(plot, plt.Axes,\
+  \ \"Return type should be a plot (Axes).\")\n        self.is_bar(\n            plot,\n\
+  \            expected_categories=[\"$is\", \"$second\", \"$sentence\"],\n      \
+  \      expected_values=[3.0, 1.0, 2.0],\n        )\n\n    def test_case_3(self):\n\
+  \        # Sentence without any $ words\n        text = \"This is the third sentence.\"\
+  \n        plot, _ = task_func(text)\n        self.assertIsNone(plot, \"The plot\
+  \ should be None since there are no $ words.\")\n\n    def test_case_4(self):\n\
+  \        # Sentence with all $ words being single characters or punctuation\n  \
+  \      text = \"$ $! $@ $$\"\n        plot, _ = task_func(text)\n        self.assertIsNone(\n\
+  \            plot,\n            \"The plot should be None since all $ words are\
+  \ single characters or punctuation.\",\n        )\n\n    def test_case_5(self):\n\
+  \        # Mix of valid $ words and punctuation-only $ words with some repeated\
+  \ words\n        text = \"$apple $apple $banana $!$ $@ fruit $cherry\"\n       \
+  \ plot, _ = task_func(text)\n        self.assertIsInstance(plot, plt.Axes, \"Return\
+  \ type should be a plot (Axes).\")\n        self.is_bar(\n            plot,\n  \
+  \          expected_categories=[\"$apple\", \"$banana\", \"$cherry\"],\n       \
+  \     expected_values=[2.0, 1.0, 1.0],\n        )"

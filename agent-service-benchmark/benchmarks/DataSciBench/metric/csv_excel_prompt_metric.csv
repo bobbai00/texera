@@ -1,0 +1,1987 @@
+Prompt,Task1,Metric1,Function1,Task2,Metric2,Function2,Task3,Metric3,Function3,Task4,Metric4,Function4,Task5,Metric5,Function5,Task6,Metric6,Function6,Task7,Metric7,Function7,Task8,Metric8,Function8,Task9,Metric9,Function9,Task10,Metric10,Function10,Task11,Metric11,Function11,Task12,Metric12,Function12,Task13,Metric13,Function13,Task14,Metric14,Function14,Task15,Metric15,Function15,Task16,Metric16,Function16,Task17,Metric17,Function17,Task18,Metric18,Function18,Task19,Metric19,Function19,Task20,Metric20,Function20
+"Create a dataframe with the following structure, using different years as row indices and different categories as column names, filling in the corresponding values. The input data is as follows:
+```
+时间,品类,指标,地区,周期,单位,数值
+2022,农业科技进步贡献率,贡献率,全国,年,%,62.4
+2021,农业科技进步贡献率,贡献率,全国,年,%,61.5
+2020,化肥有效利用率,利用率,全国,年,%,40.2
+2020,农药有效利用率,利用率,全国,年,%,40.6
+2020,县域数字农业农村发展总体水平,占比,全国,年,%,37.9
+2020,农业科技进步贡献率,贡献率,全国,年,%,60.7
+2019,农药有效利用率,利用率,全国,年,%,39.8
+2019,化肥有效利用率,利用率,全国,年,%,39.2
+2019,县域数字农业农村发展总体水平,占比,全国,年,%,36.0
+2019,农业科技进步贡献率,贡献率,全国,年,%,59.2
+2018,县域数字农业农村发展总体水平,占比,全国,年,%,33.0
+2018,农业科技进步贡献率,贡献率,全国,年,%,58.3
+2017,农药有效利用率,利用率,全国,年,%,38.8
+2017,化肥有效利用率,利用率,全国,年,%,38.8
+2017,农业科技进步贡献率,贡献率,全国,年,%,57.5
+2016,农业科技进步贡献率,贡献率,全国,年,%,56.7
+2015,农药有效利用率,利用率,全国,年,%,36.6
+2015,化肥有效利用率,利用率,全国,年,%,35.2
+2015,农业科技进步贡献率,贡献率,全国,年,%,56.1
+2014,农业科技进步贡献率,贡献率,全国,年,%,55.6
+2013,农药有效利用率,利用率,全国,年,%,35.0
+2013,化肥有效利用率,利用率,全国,年,%,33.0
+2013,农业科技进步贡献率,贡献率,全国,年,%,55.2
+2012,农业科技进步贡献率,贡献率,全国,年,%,54.5
+```
+The output should be saved in ""output.csv"".",Data cleaning and preprocessing,Data Completeness Ratio,"def data_completeness_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output.csv"")
+    total_entries = len(ground_truth)
+    actual_entries = output.notnull().sum().sum()
+    return actual_entries / total_entries",Data visualization,Visualization Quality Score,"def visualization_quality_score(ground_truth):
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    output = pd.read_csv(""output.csv"")
+    
+    # Plotting the data for analysis
+    for category in output.columns[1:]:  # Assuming first column is years
+        plt.plot(output.iloc[:, 0], output[category], marker='o', label=category)
+
+    plt.title('Data Visualization Quality Check')
+    plt.xlabel('Year')
+    plt.ylabel('Value')
+    plt.legend()
+    plt.grid()
+    plt.savefig('visualization_quality.png')  # Save the visual representation
+    plt.close()
+    
+    # Assuming high-quality visualizations are clearer and provide more insight
+    return 'visualization_quality.png'  # Indicate that a visualization was generated",Interpretability and report generation,Report Completeness Score,"def report_completeness_score(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output.csv"")
+    
+    required_fields = set(ground_truth['指标'])  # Assuming ground truth contains the indicators
+    actual_fields = set(output.columns[1:])  # Ignoring year
+    completeness = required_fields.issubset(actual_fields)
+    
+    return completeness  # Returns True if all required fields are present",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please complete the following task using Python:\n Open the 'sheet1' worksheet of the Excel file source.xlsx, and filter the rows where the value in column D is greater than or equal to 8 and less than 8.0010, at the same time, the value in column F should be equal to 18, and the value in column G should be greater than the value of the second row in column G. Copy the values from the filtered rows in column G and paste them into the corresponding cells of the 'sheet1' worksheet in another Excel file target.xlsx.",Data cleaning and preprocessing,Filter Efficiency,"def filter_efficiency(ground_truth):  
+    import pandas as pd  
+    output = pd.read_excel(""target.xlsx"", sheet_name='sheet1')  
+    filtered_rows = output['G'].dropna().tolist()  
+    return len(filtered_rows) / len(ground_truth)",Data exploration and statistics understand,Descriptive Statistics Verification,"def descriptive_statistics_verification(ground_truth):  
+    import pandas as pd  
+    output = pd.read_excel(""target.xlsx"", sheet_name='sheet1')  
+    stats_ground_truth = ground_truth['G'].describe()  
+    stats_output = output['G'].describe()  
+    return stats_ground_truth.equals(stats_output)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Complete the following task based on Python:\nTask requirements: Use Short-Time Fourier Transform (STFT) to process time series data (training set ""train.csv"" and test set ""test.csv"") to obtain spectral images, and then classify the spectral images using a Convolutional Neural Network (CNN).\nSuggested steps:\n(1) Data feature analysis: Analyze the dataset (input: ""train.csv"", output: ""data_analysis.txt""). Each sample is a one-dimensional time series, which can be directly plotted as a time series curve to observe the features from the curve. In practice, the sample curves of class 0 tend to have a stable period and amplitude, while the samples of class 1 do not converge.\n(2) Sample filtering: Remove any abnormal training samples (input: ""train.csv"", output: ""filtered_train.csv"").\n(3) Time series feature extraction: Use STFT to process the sample data and obtain spectral images (input: ""filtered_train.csv"", output: ""spectral_images_train.csv""). In the spectrum, the samples of class 0 present clear banded patterns due to their stable period and amplitude, while the samples of class 1 are chaotic.\n(4) Model training: Train the CNN with the spectral images from the training data to obtain the trained model (input: ""spectral_images_train.csv"", output: ""cnn_model.h5"").\n(5) Model testing: Evaluate the model's output on the test set (input: ""test.csv"" and ""cnn_model.h5"", output: ""model_evaluation_results.csv"").",Data exploration and statistics understand,Analysis Completeness,"def analysis_completeness(ground_truth):
+    with open(""data_analysis.txt"", 'r') as file:
+        analysis = file.read()
+    # Compare the content of the analysis with the ground truth
+    return len(set(analysis.split()).intersection(ground_truth.split())) / len(set(ground_truth.split()))",Data cleaning and preprocessing,Outlier Removal Rate,"def outlier_removal_rate(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""filtered_train.csv"")
+    # Assume ground truth contains the original number of samples
+    original_count = len(pd.read_csv(""train.csv""))
+    filtered_count = len(output)
+    return (original_count - filtered_count) / original_count",Data exploration and statistics understand,Spectral Image Clarity,"def spectral_image_clarity(ground_truth):
+    import pandas as pd
+    import numpy as np
+    output = pd.read_csv(""spectral_images_train.csv"")
+    # Measure the variance in spectral images; higher variance indicates clarity
+    clarity_score = np.var(output.values)
+    return clarity_score",Predictive modeling,Model Training Loss,"def model_training_loss(ground_truth):
+    from keras.models import load_model
+    from keras.losses import MeanSquaredError
+    import numpy as np
+    model = load_model(""cnn_model.h5"")
+    spectral_images = np.loadtxt(""spectral_images_train.csv"", delimiter="","")
+    predictions = model.predict(spectral_images)
+    # Calculate the loss based on ground truth labels (assumed to be in the same format)
+    loss = MeanSquaredError()(ground_truth, predictions).numpy()
+    return loss",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import accuracy_score
+    output = pd.read_csv(""model_evaluation_results.csv"")
+    predictions = output['Predictions'].tolist()
+    return accuracy_score(ground_truth, predictions)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"{""prompt"": ""Create a dataframe with the following structure, using different years as row indices and different categories as column names, filling in the corresponding values. The input data is as follows:\n```\n时间,品类,指标,地区,周期,单位,数值\n2022,农业科技进步贡献率,贡献率,全国,年,%,62.4\n2021,农业科技进步贡献率,贡献率,全国,年,%,61.5\n2020,化肥有效利用率,利用率,全国,年,%,40.2\n2020,农药有效利用率,利用率,全国,年,%,40.6\n2020,县域数字农业农村发展总体水平,占比,全国,年,%,37.9\n2020,农业科技进步贡献率,贡献率,全国,年,%,60.7\n2019,农药有效利用率,利用率,全国,年,%,39.8\n2019,化肥有效利用率,利用率,全国,年,%,39.2\n2019,县域数字农业农村发展总体水平,占比,全国,年,%,36.0\n2019,农业科技进步贡献率,贡献率,全国,年,%,59.2\n2018,县域数字农业农村发展总体水平,占比,全国,年,%,33.0\n2018,农业科技进步贡献率,贡献率,全国,年,%,58.3\n2017,农药有效利用率,利用率,全国,年,%,38.8\n2017,化肥有效利用率,利用率,全国,年,%,38.8\n2017,农业科技进步贡献率,贡献率,全国,年,%,57.5\n2016,农业科技进步贡献率,贡献率,全国,年,%,56.7\n2015,农药有效利用率,利用率,全国,年,%,36.6\n2015,化肥有效利用率,利用率,全国,年,%,35.2\n2015,农业科技进步贡献率,贡献率,全国,年,%,56.1\n2014,农业科技进步贡献率,贡献率,全国,年,%,55.6\n2013,农药有效利用率,利用率,全国,年,%,35.0\n2013,化肥有效利用率,利用率,全国,年,%,33.0\n2013,农业科技进步贡献率,贡献率,全国,年,%,55.2\n2012,农业科技进步贡献率,贡献率,全国,年,%,54.5\n```\nThe output should be saved in \""output.csv\""."", ""tasks"": [""Data cleaning and preprocessing"", ""Data exploration and statistics understand"", ""Data visualization"", ""Interpretability and report generation""], ""metrics"": [{""metric"": ""Data Completeness Ratio"", ""function"": ""def data_completeness_ratio(ground_truth):\n    import pandas as pd\n    output = pd.read_csv(\""output.csv\"")\n    total_cells = output.size\n    non_missing_cells = output.count().sum()\n    return non_missing_cells / total_cells""}, {""metric"": ""Descriptive Statistics - Mean Absolute Error"", ""function"": ""def mean_absolute_error(ground_truth):\n    import pandas as pd\n    output = pd.read_csv(\""output.csv\"")\n    absolute_errors = (output - ground_truth).abs()\n    return absolute_errors.mean()""}, {""metric"": ""Data Visualization Quality (R² Score)"", ""function"": ""def visualization_r2_score(ground_truth):\n    import pandas as pd\n    from sklearn.metrics import r2_score\n    output = pd.read_csv(\""output.csv\"")\n    return r2_score(ground_truth, output)""}, {""metric"": ""Interpretability Score (Text Similarity)"", ""function"": ""def interpretability_score(ground_truth):\n    from sklearn.feature_extraction.text import CountVectorizer\n    from sklearn.metrics.pairwise import cosine_similarity\n    import pandas as pd\n    output = pd.read_csv(\""output.csv\"")\n    vectorizer = CountVectorizer().fit_transform([ground_truth, output.to_string(index=False)])\n    vectors = vectorizer.toarray()\n    return cosine_similarity(vectors)[0][1]""}]}
+Please write a segment of Python code that uses the `normalize` method in pandas to extract data from a JSON file into a table. The JSON input is as follows:
+
+```json
+{
+  ""data"": [
+    {
+      ""上映年份"": ""2021"",
+      ""制片地区"": ""中国"",
+      ""导演"": ""陈凯歌 *"",
+      ""提交人"": ""zhchl@fckj"",
+      ""电影名称"": ""长津湖"",
+      ""票房"": ""577524"",
+      ""评分"": ""7.6""
+    },
+    {
+      ""上映年份"": ""2017"",
+      ""制片地区"": ""中国"",
+      ""导演"": ""吴京"",
+      ""提交人"": ""zhchl@fckj"",
+      ""电影名称"": ""战狼2"",
+      ""票房"": ""569456"",
+      ""评分"": ""7.1""
+    }
+  ]
+}
+```
+
+The output of the code should be a CSV file named ""output.csv"" containing the normalized data extracted from the JSON input. Ensure that the structure of the CSV file clearly represents each attribute as a column for further evaluation.",Data cleaning and preprocessing,Data Completeness,"def data_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output.csv"")
+    completeness = output.notnull().sum() / len(output) 
+    return completeness",Data exploration and statistics understanding,Descriptive Statistics Accuracy,"def descriptive_statistics_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output.csv"")
+    actual_stats = output.describe()
+    expected_stats = ground_truth.describe()
+    return (actual_stats == expected_stats).all()",Data visualization,Visualization Clarity,"def visualization_clarity(ground_truth):
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    output = pd.read_csv(""output.csv"")
+    plt.figure(figsize=(10, 6))
+    plt.bar(output['电影名称'], output['票房'])
+    plt.title('Box Office Revenue by Movie')
+    plt.xlabel('Movie')
+    plt.ylabel('Box Office')
+    plt.savefig('visualization_quality.png')
+    plt.close()
+    # Simulating a clarity check based on saved figure
+    return len(output) > 0  # Simple metric just checks if visualization was created for clarity.",Interpretability and report generation,Report Coherency,"def report_coherency(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output.csv"")
+    report_fields = ['上映年份', '制片地区', '导演', '电影名称', '票房', '评分']
+    return all(field in output.columns for field in report_fields)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Write code to implement a sliding window based method to detect outliers in time series data. Use the ""closing price"" column in the input file ""ultimate_data.csv"" as the source data. The task should involve the following subtasks:
+
+1. Detect Outliers: Identify outliers in the ""closing price"" column using a sliding window technique. Output the results in a CSV file named ""outliers_detected.csv"" with columns for the index, value, and a flag indicating if it is an outlier.
+
+2. Replace Outliers: For each detected outlier in the sliding window, replace it with the average of 10 nearby values. Output the smoothed time series data in a CSV file named ""smoothed_data.csv"" that contains the original index and the adjusted closing prices.
+
+3. Visualize Results: Create a visual representation (plot) of the original closing prices and the smoothed prices to clearly show the outliers and replacements. Save the plot as an image file named ""outlier_detection_plot.png"".",Data cleaning and preprocessing,Outlier Detection Rate,"def outlier_detection_rate(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""outliers_detected.csv"")
+    detected_outliers = output['flag'].value_counts().get('Yes', 0)
+    total_outliers = ground_truth.value_counts().get('outlier', 0)
+    return detected_outliers / total_outliers if total_outliers > 0 else 0",Data exploration and statistics understand,Mean Squared Error (MSE) for Outlier Replacements,"def mse_for_outlier_replacements(ground_truth):
+    import pandas as pd
+    import numpy as np
+    output = pd.read_csv(""smoothed_data.csv"")
+    original_prices = ground_truth['closing price'].values
+    adjusted_prices = output['adjusted closing prices'].values
+    return np.mean((original_prices - adjusted_prices)2)",Data visualization,Plot Clarity Score (using the difference in means of original vs. smoothed),"def plot_clarity_score(ground_truth):
+    import pandas as pd
+    import numpy as np
+    output = pd.read_csv(""smoothed_data.csv"")
+    original_prices = ground_truth['closing price'].mean()
+    smoothed_prices = output['adjusted closing prices'].mean()
+    return abs(original_prices - smoothed_prices)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"A shopping mall has placed 5 automatic vending machines at different locations, labeled as A, B, C, D, and E. Data 1 (data file: data1.csv) provides the sales data for each vending machine from January 1, 2017, to December 31, 2017, and Data 2 (data file: data2.csv) provides the classification of the goods. Our goal is to read and merge the data from both tables, perform data validation and cleaning, and save the processed results.
+
+Specific requirements are as follows:
+
+1) Use the read_csv function from pandas to read the data from ""data1.csv"" and ""data2.csv"".
+
+2) Use the merge function or join() method from pandas to combine the data and save the merged results.
+   - Output: Merged data
+   - Output file: merged_data.csv
+
+3) Find and delete duplicate records.
+   - Output: Data without duplicates
+   - Output file: no_duplicates_data.csv
+
+4) Identify and remove abnormal data. (Delete records with payment amount and actual amount equal to 0; delete data with payment dates on February 29, 2017).
+   - Output: Data without abnormal entries
+   - Output file: no_abnormal_data.csv
+
+5) Find and handle missing values (for records with a missing due amount but a present actual amount, fill in the due amount with the actual amount; for records with a missing actual amount but a present due amount, fill in the actual amount with the due amount; delete the record if both the actual and due amounts are missing).
+   - Output: Data without missing values
+   - Output file: filled_missing_data.csv
+
+6) Save the final processed data.
+   - Output: Final cleaned data
+   - Output file: final_processed_data.csv",Data cleaning and preprocessing,Duplicate Removal Accuracy,"def duplicate_removal_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""no_duplicates_data.csv"")
+    original_data = pd.read_csv(""data1.csv"").append(pd.read_csv(""data2.csv""), ignore_index=True)
+    ground_truth_set = set(ground_truth)
+    output_set = set(output.to_records(index=False))
+    return len(ground_truth_set - output_set) == 0",Data exploration and statistics understand,Percentage of Non-Abnormal Entries,"def percentage_non_abnormal_entries(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""no_abnormal_data.csv"")
+    total_records = ground_truth.shape[0]
+    non_abnormal_records = output.shape[0]
+    return (non_abnormal_records / total_records) * 100",Data cleaning and preprocessing,Missing Value Handling Accuracy,"def missing_value_handling_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""filled_missing_data.csv"")
+    filled_due_amounts = output[output['Due Amount'].notnull() & output['Actual Amount'].isnull()]['Due Amount'].count()
+    filled_actual_amounts = output[output['Actual Amount'].notnull() & output['Due Amount'].isnull()]['Actual Amount'].count()
+    deleted_records = len(ground_truth) - (len(output) + filled_due_amounts + filled_actual_amounts)
+    return deleted_records == 0",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Import re  
+Import pandas as pd  
+
+# Extract Chinese, English letters, and numbers from a sentence  
+def remove_p(txt):  
+    txt1 = str(txt)  
+    if txt1.strip() == '':  
+        return ''  
+    rule = re.compile('[^a-zA-Z0-9\\u4E00-\\u9FA5]')  
+    txt2 = rule.sub('', txt1)  
+    return txt2  
+
+# Function for stop words  
+Import jieba  
+def txt_cut(juzi):  
+    stopwordslist0 = [line.strip() for line in open('./百度停用词表.txt', encoding='UTF-8').readlines()]  
+    lis = [w for w in jieba.cut(juzi) if w not in stopwordslist0]  
+    return ' '.join(lis)
+
+Improve the above code according to the following requirements:  
+1. Read comment data from ""comments.csv"" and segment the text using remove_p and txt_cut methods. Save the segmentation results to a new column in ""comments.csv"".
+2. Implement the bidirectional maximum matching algorithm to segment 1000 collected comment data from ""comments.csv"" and save the results in a new column in ""comments.csv"".
+3. Use the jieba package to segment and tag the part of speech for 1000 collected comment data from ""comments.csv"". Save the segmentation results to a new column in ""comments.csv"".
+4. Perform word frequency statistics based on the processed comments and generate a word cloud image. Save the word cloud as ""word_cloud.png"".",Data cleaning and preprocessing,Data Cleaning Accuracy,"def data_cleaning_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""comments.csv"")
+    cleaned_text = output['CleanedText'].tolist()  # Assuming cleaned text is stored in this column
+    return sum([1 for gt, ct in zip(ground_truth, cleaned_text) if gt == ct]) / len(ground_truth)",Data exploration and statistics understand,Segmentation Completeness,"def segmentation_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""comments.csv"")
+    segmented_text = output['SegmentedText'].tolist()  # Assuming segmented text is stored in this column
+    return sum([1 for gt, st in zip(ground_truth, segmented_text) if set(gt.split()).issubset(set(st.split()))]) / len(ground_truth)",Data cleaning and preprocessing,Bidirectional Maximum Matching Accuracy,"def bidirectional_matching_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""comments.csv"")
+    bidirectional_text = output['BidirectionalText'].tolist()  # Assuming bidirectional segmented text is stored in this column
+    return sum([1 for gt, bt in zip(ground_truth, bidirectional_text) if gt == bt]) / len(ground_truth)",Data exploration and statistics understand,POS Tagging Accuracy,"def pos_tagging_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""comments.csv"")
+    pos_tagged_text = output['POSTaggedText'].tolist()  # Assuming POS tagged text is stored in this column
+    return sum([1 for gt, pt in zip(ground_truth, pos_tagged_text) if gt == pt]) / len(ground_truth)",Data visualization,Word Cloud Quality,"def word_cloud_quality(ground_truth):
+    import numpy as np
+    from sklearn.metrics import jaccard_score
+    import pandas as pd
+    output = pd.read_csv(""comments.csv"")
+    word_frequencies = output['WordFrequencies'].tolist()  # Assuming word frequencies are stored in this column
+    # Here, we can assume ground_truth is a dictionary of expected frequencies
+    gt_frequencies = np.array([ground_truth.get(word, 0) for word in word_frequencies])
+    wc_frequencies = np.array([frequencies.get(word, 0) for word in word_frequencies])
+    return jaccard_score(gt_frequencies > 0, wc_frequencies > 0)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"1. There is an Excel spreadsheet named 'data.xlsx' containing 10,000 pieces of data. Each piece of data includes a name, increase rate, data1, data2, data3, data4, data5, data6... up to data15. Input filename: 'data.xlsx'.
+
+2. The increase rate is related to data1, data2, data3, data4, data5, data6... up to data15.
+
+3. Data preprocessing: Clean, deduplicate, and handle missing values in the data to ensure its accuracy and consistency. Output format: CSV. Output filename: 'cleaned_data.csv'.
+
+4. Feature engineering: Based on the available data, extract useful features. Statistical features such as the average, standard deviation, and maximum of the increase rate for each name can be calculated, as well as the correlation features between the increase rate and data1 to data15. Output format: CSV. Output filename: 'features.csv'.
+
+5. Model training: Train machine learning models using historical data, designing linear regression, decision trees, random forests, and neural networks. The purpose of training the models is to find the relationship between the increase rate and data1 to 15, in order to predict tomorrow's increase rate. Output format: Model files (.pkl). Output filename: 'trained_models.pkl'.
+
+6. Model evaluation: Use a portion of historical data to evaluate the model, calculating prediction error metrics such as mean squared error and mean absolute error to assess the model's predictive power. Output format: CSV. Output filename: 'evaluation_metrics.csv'.
+
+7. Model application: Use the trained model to predict new data, obtaining the probability or predicted value of the increase rate for each name. Input filename: 'new_data.csv'. Output format: CSV. Output filename: 'predictions.csv'.
+
+8. Result visualization: Visualize the prediction results, using line graphs, bar charts, etc., to display the trends in predicted increase rates for better understanding and analysis of the results. Output format: Image. Output filename: 'visualization.png'.
+
+Write the code for the above functions to ensure each task can be replicated and validated.",Data cleaning and preprocessing,Data Quality Score,"def data_quality_score(ground_truth):
+    import pandas as pd
+    
+    # Load the cleaned data
+    cleaned_data = pd.read_csv('cleaned_data.csv')
+    
+    # Calculate data quality metrics: completeness, uniqueness, consistency
+    total_rows = len(cleaned_data)
+    total_missing = cleaned_data.isnull().sum().sum()
+    unique_rows = cleaned_data.drop_duplicates().shape[0]
+
+    completeness = (total_rows - total_missing) / total_rows
+    uniqueness = unique_rows / total_rows
+    
+    # Data Quality Score
+    return (completeness + uniqueness) / 2",Data exploration and statistics understand,Feature Correlation Score,"def feature_correlation_score(ground_truth):
+    import pandas as pd
+    
+    # Load the features data
+    features_data = pd.read_csv('features.csv')
+    
+    # Calculate correlation between features
+    correlation_matrix = features_data.corr()
+    
+    # Selecting correlation with increase rate
+    increase_rate_corr = correlation_matrix['increase_rate'].drop('increase_rate')
+    average_corr = increase_rate_corr.mean()
+    
+    return average_corr",Data visualization,Visualization Clarity Score,"def visualization_clarity_score(ground_truth):
+    import matplotlib.pyplot as plt
+    from PIL import Image
+    
+    # Load and display the visualization image
+    img = Image.open('visualization.png')
+    img.show()
+    
+    # Assume clarity is assessed by output shape (in pixels), return the width and height
+    width, height = img.size
+    return width * height",Predictive modeling,Model Performance Metrics,"def model_performance_metrics(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_squared_error, mean_absolute_error
+    
+    # Load the evaluation metrics
+    metrics_data = pd.read_csv('evaluation_metrics.csv')
+    
+    # Assuming the file contains MSE and MAE
+    mse = metrics_data['Mean Squared Error'].mean()
+    mae = metrics_data['Mean Absolute Error'].mean()
+    
+    # Overall performance score (could be combined metric)
+    performance_score = 1 / (mse + mae)   # higher is better, so inverted
+    return performance_score",Interpretability and report generation,Interpretability Score,"def interpretability_score(ground_truth):
+    import pickle
+    
+    # Load the trained model
+    with open('trained_models.pkl', 'rb') as file:
+        model = pickle.load(file)
+    
+    # Assuming model has a get_feature_importance method (linear models/easy to interpret models)
+    if hasattr(model, 'feature_importances_'):
+        return model.feature_importances_.mean()  # average importance score
+    else:
+        return 0  # If model has no importance, return 0",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Use PyTorch, with datasets 'positive.csv' and 'negative.csv', each with 200 positive and negative samples, to perform binary classification with a BP neural network. Requirements are as follows:
+
+1. Design a BP neural network with 3 hidden layers, where the input layer dimension is the sample dimension; the hidden layer dimensions are 128, 32, and 2 respectively.  
+
+2. Use the ReLU activation function for the hidden layers; the output layer has a dimension of 1 and uses the sigmoid activation function.  
+
+3. Train the model using 'positive.csv' and 'negative.csv' as inputs.  
+
+4. Evaluate the model on a test set (to be prepared from the input datasets).  
+
+5. Generate confusion matrix and ROC curve for model performance visualization. Output: Confusion matrix image in 'confusion_matrix.png' and ROC curve image in 'roc_curve.png'.",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""predictions.csv"")  # Assuming 'predictions.csv' contains a column 'Predictions'
+    predictions = output['Predictions'].tolist()
+    return accuracy_score(ground_truth, predictions)",Data visualization,AUC-ROC Score,"def roc_auc_score(ground_truth):
+    from sklearn.metrics import roc_auc_score
+    import pandas as pd
+    output = pd.read_csv(""predictions.csv"")  # Assuming 'predictions.csv' contains a column 'Probabilities'
+    probabilities = output['Probabilities'].tolist()  # This should contain the probabilities from the sigmoid output
+    return roc_auc_score(ground_truth, probabilities)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"The file 'stock_trading_data_close.csv' contains the closing price data of each individual stock for the past two years, and the file 'stock_info_data.csv' contains industry classification information for each individual stock. Please implement the following in Python:
+
+1. Define a strong stock: The closing price on a given day is greater than the 60-day moving average of the closing price, and the value of the 5-day moving average of the closing price is greater than the 20-day moving average value.  
+
+2. Set the analysis date to the last trading day. 
+
+3. Find the strong stocks on the analysis date. 
+
+4. Group the strong stocks by industry and count the number of strong stocks in each industry. Output: 'strong_stocks_by_industry_count.csv' (columns: industry, count)
+
+5. Group all stocks by industry and count the number of stocks in each industry.  Output: 'all_stocks_by_industry_count.csv' (columns: industry, total_count)",Predictive modeling,Strong Stock Identification Accuracy,"def strong_stock_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('strong_stocks_by_industry_count.csv')
+    strong_stocks = output['count'].tolist()
+    return accuracy_score(ground_truth, strong_stocks)",Data exploration and statistics understand,Industry Count Consistency,"def industry_count_consistency(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('all_stocks_by_industry_count.csv')
+    total_counts = output['total_count'].tolist()
+    return mean_squared_error(ground_truth, total_counts)",Data exploration and statistics understand,Strong Stocks Group Accuracy,"def strong_stocks_group_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('strong_stocks_by_industry_count.csv')
+    predicted_counts = output['count'].tolist()
+    return accuracy_score(ground_truth, predicted_counts)",Data visualization,Visualization Comparison Metric,"def visualization_comparison_metric(ground_truth):
+    import pandas as pd
+    # Assuming a CSV file 'visualization_data.csv' containing the visualization counts
+    output = pd.read_csv('visualization_data.csv')
+    visualization_counts = output['count'].tolist()
+    return correlation_coefficient(ground_truth, visualization_counts)",Data visualization,Visualization Representation Metric,"def visualization_representation_metric(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('visualization_data.csv')
+    representation_counts = output['count'].tolist()
+    return mean_absolute_error(ground_truth, representation_counts)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Write a piece of neural network prediction code that establishes a relationship between inputs and outputs, and saves this mapping relationship to a pkl model. Utilize the input dataset from ""input_data.csv,"" which contains 500 rows and 12 columns (each row represents a set of inputs). The known outputs are in ""output_data.csv,"" a matrix with 7 rows and 500 columns. Ensure the data dimensions are automatically corresponded.
+
+Use the data to train the model and save the parameters in ""model.pkl"" and output model evaluation results in ""evaluation_results.csv"".",Data cleaning and preprocessing,Data Completeness,"def data_completeness(ground_truth):
+    import pandas as pd
+    input_data = pd.read_csv(""input_data.csv"")
+    return input_data.notnull().mean().mean()  # Returns the average completeness of the dataset",Predictive modeling,Model Performance (Mean Absolute Error),"def mean_absolute_error(ground_truth):
+    from sklearn.metrics import mean_absolute_error as mae
+    import pandas as pd
+    output = pd.read_csv(""evaluation_results.csv"")
+    predictions = output['Predictions'].tolist()
+    return mae(ground_truth.flatten(), predictions)  # Assuming ground_truth is a 2D numpy array and Predictions is a list",Interpretability and report generation,Report Quality (Content Accuracy),"def report_content_accuracy(ground_truth):
+    import pandas as pd
+    evaluation_report = pd.read_csv(""evaluation_results.csv"")  # Assuming this file has a 'Report' column
+    # Assuming ground_truth consists of key phrases that the report should contain
+    report_text = evaluation_report['Report'].iloc[0]  # Get the content of the report
+    accuracy = sum([phrase in report_text for phrase in ground_truth]) / len(ground_truth)
+    return accuracy  # Returns the ratio of key phrases found in the report",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Write a piece of SVR prediction code: to build a relationship between input and output, and save this mapping relationship to ""model.pkl"" file. The known input dataset is 500 rows by 12 columns, named: 12_Input.csv, where each row represents a set of inputs, a total of five hundred input sets. The known output is 500 rows by 500 columns, named: a_full.csv, which is a 500*500 matrix, where the first row of the input corresponds to the first column of the output, and so on. Preferably, use any row of the input as the input to predict a column of values (500*1) in the output, print it, and visualize the prediction accuracy in ""prediction_accuracy.png"".",Predictive modeling,Model Mean Squared Error,"def model_mse(ground_truth):  
+    import pandas as pd  
+    from sklearn.metrics import mean_squared_error  
+    output = pd.read_csv(""a_full.csv"", header=None)  
+    predictions = output.iloc[:, 0].tolist()  # Assuming predictions are made from the first column  
+    return mean_squared_error(ground_truth, predictions)",Data visualization,Prediction Accuracy Visualization (R^2 Score),"def visualize_prediction_accuracy(ground_truth):  
+    import pandas as pd  
+    import matplotlib.pyplot as plt  
+    from sklearn.metrics import r2_score  
+    output = pd.read_csv(""a_full.csv"", header=None)  
+    predictions = output.iloc[:, 0].tolist()  # Assuming predictions are made from the first column  
+    score = r2_score(ground_truth, predictions)  
+    plt.figure()  
+    plt.scatter(ground_truth, predictions)  
+    plt.plot(ground_truth, ground_truth, color='red')  
+    plt.title(f'Prediction Accuracy (R^2 = {score:.2f})')  
+    plt.xlabel('Ground Truth')  
+    plt.ylabel('Predictions')  
+    plt.savefig(""prediction_accuracy.png"")  
+    return score",Data cleaning and preprocessing,Data Completeness (Missing Values Count),"def data_completeness():  
+    import pandas as pd  
+    input_data = pd.read_csv(""12_Input.csv"")  
+    output_data = pd.read_csv(""a_full.csv"", header=None)  
+    missing_input = input_data.isnull().sum().sum()  
+    missing_output = output_data.isnull().sum().sum()  
+    return missing_input + missing_output",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Use Python to perform min-max normalization on the following values:
+
+```csv
+,District/County,Region,Community,Total Price,Unit Price,House Type,Floor,Total Area,House Structure,Inside Area,Construction Type,Orientation,Construction Structure,Decoration,Staircase Ratio,Heating Method,Elevator,Property Rights Years,s,Trading Rights,u,Form,Whether Over Five Years,Property Rights Form,Whether Have House Certificate,Average Price of Community,Community Completion Year,style,Total Buildings,Total Floors
+0,Chaoyang,Dongba,Olympic Garden Phase IV,760.0,54453.0,3 rooms 1 hall 2 baths,Low floor,139.57,Flat,124.91㎡,Slab,North-South,Steel-concrete structure,Finishing,10th column no data,11th column no data,12th column no data,70 years,43766,Commodity House,40679,Common residential,Over five years,Joint ownership,House certificate photo uploaded,60708,2009,Slab/Tower combination,23,10
+```
+
+Save the output in file `normalized_output.csv`.",Data cleaning and preprocessing,Data Completeness Ratio,"def data_completeness_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""normalized_output.csv"")
+    complete_data_count = output.notnull().sum().sum()
+    total_data_count = output.size
+    return complete_data_count / total_data_count",Data exploration and statistics understand,Summary Statistics Comparability,"def summary_statistics_comparability(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""normalized_output.csv"")
+    gt_stats = ground_truth.describe()
+    output_stats = output.describe()
+    stats_diff = ((gt_stats - output_stats)  2).sum()
+    return stats_diff",Data visualization,Visualization Clarity Index,"def visualization_clarity_index(ground_truth):
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    output = pd.read_csv(""normalized_output.csv"")
+    plt.figure(figsize=(10, 6))
+    sns.histplot(output['Total Price'], kde=True)
+    plt.title('Distribution of Total Price')
+    plt.savefig('visualization.png')
+    
+    # Here you would evaluate image quality or clarity based on a defined metric
+    clarity_score = 1  # Placeholder for clarity evaluation
+    return clarity_score",Predictive modeling,Predictive Model Performance,"def predictive_model_performance(ground_truth):
+    from sklearn.metrics import mean_squared_error
+    import pandas as pd
+    
+    output = pd.read_csv(""normalized_output.csv"")
+    predictions = output['Total Price'].tolist()
+    return mean_squared_error(ground_truth, predictions)",Data mining,Association Rule Confidence,"def association_rule_confidence(ground_truth):
+    import pandas as pd
+    from mlxtend.frequent_patterns import apriori, association_rules
+    
+    output = pd.read_csv(""normalized_output.csv"")
+    # Assuming ground_truth provides a DataFrame for transactions
+    frequent_itemsets = apriori(output, min_support=0.01, use_colnames=True)
+    rules = association_rules(frequent_itemsets, metric=""confidence"", min_threshold=0.5)
+    return len(rules)",Pattern recognition,Pattern Recognition Accuracy,"def pattern_recognition_accuracy(ground_truth):
+    import pandas as pd
+    
+    output = pd.read_csv(""normalized_output.csv"")
+    # Placeholder for pattern recognition logic
+    recognized_patterns = 0  # Placeholder for actual pattern count
+    return recognized_patterns / len(output)",Interpretability and report generation,Report Generation Completeness,"def report_generation_completeness(ground_truth):
+    import pandas as pd
+    
+    output = pd.read_csv(""normalized_output.csv"")
+    expected_columns = {""District/County"", ""Region"", ""Community"", ""Total Price"", ""Unit Price""}
+    actual_columns = set(output.columns)
+    return len(expected_columns.intersection(actual_columns)) / len(expected_columns)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Complete the code writing task in Python: Create a stacked bar chart of the Types attribute versus other attributes based on the data.csv dataset. The dataset is the result of a chemical analysis of wines from the same region in Italy. Store the results in processed_data.csv. Each sample in the dataset contains 14 attributes, which are: Alcohol, Malic_Acid, Ash, Ash_Alcanity, Magnesium, Total_Phenols, Flavanoids, Nonflavanoid_Phenols, Proanthocyanins, Color_Intensity, Hue, OD280, Proline, and Types. Save the stacked bar chart as `stacked_bar_chart.png`.",Data cleaning and preprocessing,Data Completeness Ratio,"def data_completeness_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""processed_data.csv"")
+    total_cells = output.size
+    non_null_cells = output.count().sum()
+    return non_null_cells / total_cells",Data visualization,Visual Similarity Index,"def visual_similarity_index(ground_truth):
+    from PIL import Image
+    import numpy as np
+
+    # Load the generated and ground truth images
+    generated_image = Image.open('stacked_bar_chart.png')
+    ground_truth_image = Image.open(ground_truth)
+
+    # Convert images to arrays
+    generated_array = np.array(generated_image)
+    ground_truth_array = np.array(ground_truth_image)
+
+    # Calculate similarity (Mean Squared Error)
+    mse = np.mean((generated_array - ground_truth_array)  2)
+    similarity_index = 1 / (1 + mse)  # Inverse of MSE
+    return similarity_index",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Complete the following task by writing code in Python: Create a bar chart for the Alcohol attribute based on the data.csv dataset. The dataset comes from the analysis of chemical components of wines from the same region in Italy. Store the results in processed_data.csv. Each sample in the dataset contains 14 attributes, which are: Alcohol, Malic_Acid, Ash, Ash_Alcanity, Magnesium, Total_Phenols, Flavanoids, Nonflavanoid_Phenols, Proanthocyanins, Color_Intensity, Hue, OD280, Proline, Types. Save the bar chart as ""alcohol_bar_chart.png"".",Data visualization,Bar Chart Generation Success,"def bar_chart_success(ground_truth):
+    import pandas as pd
+    import os
+    # Check if the output bar chart file exists
+    return os.path.exists(""alcohol_bar_chart.png"")",Data cleaning and preprocessing,Processed Data Integrity,"def processed_data_integrity(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""processed_data.csv"")
+    # Check if the output DataFrame has the same number of rows as the ground truth DataFrame
+    return len(output) == len(ground_truth)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Based on the dataset 'Major Cities Monthly Prices.csv' file (data about urban resident consumption prices, with the x-axis representing cities, including: Beijing, Tianjin, Shijiazhuang, Taiyuan, Hohhot, Shenyang, Dalian, Changchun, Harbin, Shanghai, Nanjing, Hangzhou, Ningbo, Hefei, Fuzhou, Xiamen, Nanchang, Jinan, Qingdao, Zhengzhou, Wuhan, Changsha, Guangzhou, Shenzhen, Nanning, Haikou, Chongqing, Chengdu, Guiyang, Kunming, Lhasa, Xi'an, Lanzhou, Xining, Yinchuan, and Urumqi. The y-axis represents the years, ranging from December 1, 2022, to November 1, 2023), plot 6 types of charts regarding the consumption data: histogram(histogram.png), pie chart(pie_chart.png), stacked bar chart(stacked_bar_chart.png), stacked bar graph(stacked_bar_graph.png), bubble chart(bubble_chart.png), and radar chart(radar_chart.png). Add auxiliary elements (title, legend, axis names, scale labels, etc.) and combine the histogram, pie chart, bubble chart, and radar chart on the same canvas(combined_charts.png).",Data visualization,Plot Quality Assessment,"def plot_quality_assessment(ground_truth):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from matplotlib import image as mpimg
+    output_files = [""histogram.png"", ""pie_chart.png"", ""stacked_bar_chart.png"", 
+                    ""stacked_bar_graph.png"", ""bubble_chart.png"", ""radar_chart.png"", 
+                    ""combined_charts.png""]
+
+    # Assuming ground_truth is a list or dictionary with expected features of the plots
+    results = {}
+    for file in output_files:
+        img = mpimg.imread(file)
+        results[file] = {""shape"": img.shape, ""content"": np.mean(img) > 0.5}  # Basic checks
+
+    return results",Data exploration and statistics understand,Statistical Summary Correctness,"def statistical_summary_correctness(ground_truth):
+    import pandas as pd
+
+    # Load the data to create a statistical summary
+    data = pd.read_csv(""Major Cities Monthly Prices.csv"")
+    summary = data.describe()
+
+    # Compare summary statistics to the ground truth
+    metrics = {column: (summary[column]['mean'] == ground_truth[column]['mean']) for column in ground_truth.columns}
+    
+    return metrics",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please complete the code for the following questions.
+
+First Part: Numpy Section (10 questions total)  
+1. Create a custom random array named `arr` with elements valued between 1 and 100 and a size of 80. Find all elements in `arr` that are greater than 50 and less than 100.  
+   - Output: `filtered_elements.csv` (contains the filtered elements)
+
+2. Calculate the sum of the natural logarithms of all elements in array `arr`.  
+   - Output: `log_sum.txt` (contains the sum)
+
+3. Search array `arr` for the index position of the first occurrence of the value 30, and output the index position if it exists; otherwise, output a notification.  
+   - Output: `first_occurrence.txt` (contains the index or notification)
+
+4. Sort array `arr` in ascending order and output the sorted array.  
+   - Output: `sorted_array.csv` (contains the sorted array)
+
+5. Load the data from the text file ""data.txt"" into a Numpy array and save the array as a CSV file ""output.csv"".  
+   - Input: `data.txt`  
+   - Output: `output.csv` (contains the loaded array)
+
+6. Perform an intersection operation on two custom sets and output the result.  
+   - Output: `intersection_result.csv` (contains the intersection result)
+
+7. Vertically stack two custom arrays (concatenate them vertically).  
+   - Output: `stacked_array.csv` (contains the vertically stacked array)
+
+8. Provide example code for the use of logical AND (&) and logical OR (|) operators in Numpy.  
+   - Output: `logical_operators_example.py` (contains example code)
+
+9. Create a custom array and use the Numpy function cumsum() to calculate the cumulative sum of an array and display the result.  
+   - Output: `cumulative_sum.csv` (contains the cumulative sum)
+
+10. Create two custom arrays and use Numpy to compare the elements of the two arrays, returning a logical index array that indicates positions where the elements of the first array are less than those of the corresponding elements in the second array.  
+    - Output: `comparison_result.csv` (contains the logical index array)
+
+Second Part: Matplotlib Section (10 questions total)  
+11. Create a simple scatter plot with custom data representing random points on a two-dimensional plane.  
+    - Output: `scatter_plot.png` (contains the scatter plot)
+
+12. Create a chart containing three curves, representing the sine, cosine, and tangent functions, respectively, and add a legend.  
+    - Output: `trig_functions_plot.png` (contains the trigonometric functions plot)
+
+13. Plot a histogram representing random data with a normal distribution.  
+    - Output: `histogram.png` (contains the histogram)
+
+14. Create a simple pie chart with custom data representing the proportion of different categories.  
+    - Output: `pie_chart.png` (contains the pie chart)
+
+15. Generate an array of 80 random integers using NumPy and then plot a bar chart representing the distribution of these integers using Matplotlib.  
+    - Output: `bar_chart.png` (contains the bar chart)
+
+16. Generate an array of uniformly distributed random data using NumPy and plot a box plot using Matplotlib.  
+    - Output: `box_plot.png` (contains the box plot)
+
+17. Generate an array containing 120 points using NumPy and then plot a simple radar chart using Matplotlib.  
+    - Output: `radar_chart.png` (contains the radar chart)
+
+18. Generate random data using NumPy and then plot a three-dimensional bar chart using Matplotlib.  
+    - Output: `3d_bar_chart.png` (contains the 3D bar chart)
+
+19. Create a chart with 2 sub-plots representing the correlation of different datasets with custom data.  
+    - Output: `correlation_subplots.png` (contains the correlation charts)
+
+20. Set the Matplotlib plotting style to the dark_background style.  
+    - Output: `dark_background_plot.png` (contains a plot demonstrating the dark background style)",Data cleaning and preprocessing,Filtered Elements Count,"def filtered_elements_count(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""filtered_elements.csv"")
+    return len(output)",Data exploration and statistics understand,Log Sum Value,"def log_sum_value(ground_truth):
+    with open(""log_sum.txt"", ""r"") as file:
+        calculated_sum = float(file.read().strip())
+    return calculated_sum",Data exploration and statistics understand,First Occurrence Position,"def first_occurrence_position(ground_truth):
+    with open(""first_occurrence.txt"", ""r"") as file:
+        index_info = file.read().strip()
+    if ""not found"" in index_info:
+        return -1
+    return int(index_info)",Data cleaning and preprocessing,Sorted Array Check,"def sorted_array_check(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""sorted_array.csv"")
+    return list(output['Sorted Array']) == sorted(ground_truth)",Data cleaning and preprocessing,Data Loaded Check,"def data_loaded_check(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output.csv"")
+    return output.equals(pd.read_csv(""data.txt""))",Data mining,Intersection Elements Count,"def intersection_elements_count(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""intersection_result.csv"")
+    return len(output)",Data cleaning and preprocessing,Stacked Array Shape,"def stacked_array_shape(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""stacked_array.csv"")
+    return output.shape",Data exploration and statistics understand,Example Code Completeness,"def example_code_completeness(ground_truth):
+    with open(""logical_operators_example.py"", ""r"") as file:
+        code = file.read()
+    return ""logical AND"" in code and ""logical OR"" in code",Data exploration and statistics understand,Cumulative Sum Value,"def cumulative_sum_value(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cumulative_sum.csv"")
+    return output['Cumulative Sum'].sum()",Data mining,Comparison Result Length,"def comparison_result_length(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""comparison_result.csv"")
+    return len(output)",Data visualization,Scatter Plot Existence,"def scatter_plot_existence(ground_truth):
+    import os
+    return os.path.exists(""scatter_plot.png"")",Data visualization,Trig Functions Legend Check,"def trig_functions_legend_check(ground_truth):
+    import matplotlib.pyplot as plt
+    img = plt.imread('trig_functions_plot.png')
+    return 'legend' in img.decode()  # This is a hypothetical check example",Data visualization,Histogram Bin Check,"def histogram_bin_check(ground_truth):
+    import matplotlib.pyplot as plt
+    img = plt.imread('histogram.png')
+    return len(img) > 0  # This is a hypothetical image check to verify existence",Data visualization,Pie Chart Data Verification,"def pie_chart_data_verification(ground_truth):
+    import matplotlib.pyplot as plt
+    img = plt.imread('pie_chart.png')
+    return len(img) > 0  # Another hypothetical check",Data visualization,Bar Chart Existence,"def bar_chart_existence(ground_truth):
+    import os
+    return os.path.exists(""bar_chart.png"")",Data visualization,Box Plot Existence,"def box_plot_existence(ground_truth):
+    import os
+    return os.path.exists(""box_plot.png"")",Data visualization,Radar Chart Points Verification,"def radar_chart_points_verification(ground_truth):
+    import os
+    return os.path.exists(""radar_chart.png"")",Data visualization,3D Bar Chart Creation Check,"def three_d_bar_chart_existence(ground_truth):
+    import os
+    return os.path.exists(""3d_bar_chart.png"")",Data visualization,Subplots Correlation Check,"def correlation_subplots_check(ground_truth):
+    import os
+    return os.path.exists(""correlation_subplots.png"")",Data visualization,Dark Background Plot Check,"def dark_background_plot_check(ground_truth):
+    import os
+    return os.path.exists(""dark_background_plot.png"")"
+"Build a neural network using PyTorch for data prediction. The data comes from an Excel spreadsheet oil_data.xlsx with column names [\""t\"",\""temp\"",\""y_oil_1\"",\""y_oil_2\"",\""y_oil_3\""], where \""t\"" and \""temp\"" are inputs, and \""y_oil_1\"", \""y_oil_2\"", \""y_oil_3\"" are outputs. The data are all floating-point numbers with no empty values. The requirement is to divide the data in the table into two datasets: a training set and a test set, with the training set accounting for 80% of the data and the test set accounting for 20%. A residual decline graph should be plotted, and the model should be evaluated based on the results of the test set. The model should be saved in ""model.pth"" and the graph saved as ""residual_decline_graph.png"".",Data cleaning and preprocessing,Data Quality Score,"def data_quality_score(ground_truth):
+    import pandas as pd
+    output = pd.read_excel(""oil_data.xlsx"")
+    # Check for missing values and data types
+    missing_values = output.isnull().sum().sum()
+    data_types = output.dtypes
+    # Assuming quality score is 100 if no missing values and correct data types
+    if missing_values == 0 and all([isinstance(output[col].dtype, float) for col in [""t"", ""temp"", ""y_oil_1"", ""y_oil_2"", ""y_oil_3""]]):
+        return 100
+    else:
+        return 0",Predictive modeling,Model Mean Absolute Error (MAE),"def model_mae(ground_truth):
+    from sklearn.metrics import mean_absolute_error
+    import pandas as pd
+    output = pd.read_csv(""prediction_results.csv"")
+    true_values = ground_truth  # This should be the actual values from the test set.
+    predicted_values = output['Predictions'].tolist()
+    return mean_absolute_error(true_values, predicted_values)",Data visualization,Residual Standard Deviation,"def residual_std_dev(ground_truth):
+    import pandas as pd
+    import numpy as np
+    output = pd.read_csv(""prediction_results.csv"")
+    true_values = ground_truth  # This should be the actual values from the test set.
+    predicted_values = output['Predictions'].tolist()
+    residuals = np.array(true_values) - np.array(predicted_values)
+    return np.std(residuals)",Interpretability and report generation,Report Quality Assessment,"def report_quality(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""report.csv"")  # Assume report.csv contains evaluation details
+    # Check for the presence of key metrics
+    required_metrics = ['Mean Absolute Error', 'Residual Standard Deviation', 'R-squared']
+    metrics_present = all(metric in output.columns for metric in required_metrics)
+    return metrics_present",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Using the SVD (Singular Value Decomposition) method, recommend movies for a given user based on the provided movie rating matrix. The input file is `rating.csv`, which contains a user-movie rating matrix with a total of 943 users and 1682 movies in the dataset. The overall approach is to use SVD to 'compress' the movies into a lower-dimensional space, find movies that the user has not rated, compute the similarity between the unrated movies and other movies to obtain predicted ratings, and finally sort these movies by rating, recommending the top N movies to the user. 
+
+Specific approach:
+
+- Part 1: Load the test dataset and create the `loadExData` function.  
+  Input: `rating.csv`  
+  Output: `loaded_data.csv` (the loaded dataset in CSV format)
+
+- Part 2: Define three methods for calculating similarity: `ecludSim`, `pearsSim`, and `cosSim` functions.   
+  Output: `similarity_metrics.csv` (containing similarity scores for pairs of movies in CSV format)
+
+- Part 3: Process the matrix dimensionality reduction by creating the `svd_item` function.  
+  Output: `reduced_matrix.csv` (the dimensionality-reduced movie matrix in CSV format)
+
+- Part 4: Predict the rating for a movie that the user has not scored by creating the `svd_predict` function.  
+  Input: `reduced_matrix.csv`  
+  Output: `predicted_ratings.csv` (containing predicted ratings for unrated movies in CSV format)
+
+- Part 5: Generate the top N movies with high ratings, returning the movie numbers and predicted rating values by creating the `recommend` function.  
+  Input: `predicted_ratings.csv`  
+  Output: `top_n_movies.csv` (top N recommended movies with their predicted ratings in CSV format)
+
+- Part 6: Recommend movies for a specified user by creating the `recommend_predict` function.  
+  Input: `top_n_movies.csv`  
+  Output: `final_recommendations.csv` (final movie recommendations for the specified user in CSV format)
+
+- Part 7: Call the `recommend_predict` function to obtain the results.  
+  Output: `results_summary.pdf` (a PDF summarizing the recommendations)",Data cleaning and preprocessing,Data Load Completeness,"def data_load_completeness(ground_truth):
+    import pandas as pd
+    loaded_data = pd.read_csv(""loaded_data.csv"")
+    return loaded_data.shape[0] == ground_truth.shape[0]  # Compare number of rows",Data exploration and statistics understanding,Similarity Scores Validation,"def similarity_scores_validation(ground_truth):
+    import pandas as pd
+    similarity_data = pd.read_csv(""similarity_metrics.csv"")
+    # Assuming ground_truth is a dataframe of correct similarity scores
+    return (similarity_data['Similarity Score'] == ground_truth['Similarity Score']).all()  # Check if all scores match",Predictive modeling,Dimensionality Reduction Quality,"def dimensionality_reduction_quality(ground_truth):
+    import pandas as pd
+    reduced_matrix = pd.read_csv(""reduced_matrix.csv"")
+    return reduced_matrix.shape[1] < ground_truth.shape[1]  # Check if dimensionality is reduced",Data mining,Prediction Accuracy,"def prediction_accuracy(ground_truth):
+    import pandas as pd
+    predicted_ratings = pd.read_csv(""predicted_ratings.csv"")
+    return ((predicted_ratings['Predicted Rating'] - ground_truth['True Rating'])2).mean()  # Mean Squared Error",Pattern recognition,Recommendation Quality,"def recommendation_quality(ground_truth):
+    import pandas as pd
+    top_n_movies = pd.read_csv(""top_n_movies.csv"")
+    return all(movie in ground_truth['Movie ID'].values for movie in top_n_movies['Movie ID'])  # Check if recommended movies are in the ground truth",Interpretability and report generation,Report Completeness,"def report_completeness(ground_truth):
+    import pandas as pd
+    final_recommendations = pd.read_csv(""final_recommendations.csv"")
+    return final_recommendations.shape[0] == len(ground_truth)  # Ensure the number of recommendations matches the expected number",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please solve a discrete optimization problem using Python. The problem description is as follows:
+1. Assign 1008 numbers to 2067 points, with the point numbers obtained by reading the first column of an Excel spreadsheet named ""points.xlsx"".
+   - Input File: ""points.xlsx"" (contains point numbers in the first column)
+   - Output Format: None (this step is for internal processing)
+
+2. For each pair of points A and B that share the same assigned number, retrieve the value k from another Excel spreadsheet named ""values.xlsx"", where:
+   - Input File: ""values.xlsx"" (1st column: A, 2nd column: B, 3rd column: k)
+   - Output Format: ""k_values.csv"" (CSV file containing columns: A, B, k)
+
+3. Additionally, if the remainder of A and B divided by 3 is the same, retrieve the value b from the same ""values.xlsx"" file (assuming it is provided, otherwise define a default method to calculate b).
+   - Output Format: ""b_values.csv"" (CSV file containing columns: A, B, b)
+
+4. The program you write should minimize the sum of k and b for all pairs (A, B).
+   - Output Format: ""results.txt"" (a text file containing the final minimized value) 
+
+Ensure to include proper error handling and validation for input files.",Data cleaning and preprocessing,Number of Missing Values,"def missing_values_count(ground_truth):  
+    import pandas as pd  
+    points = pd.read_excel(""points.xlsx"")  
+    return points.isnull().sum().sum()",Data exploration and statistics understand,Basic Descriptive Statistics (Mean and Standard Deviation),"def descriptive_stats(ground_truth):  
+    import pandas as pd  
+    values = pd.read_excel(""values.xlsx"")  
+    mean = values['k'].mean()  
+    std_dev = values['k'].std()  
+    return mean, std_dev",Data mining,Unique Assigned Numbers Count,"def unique_assigned_numbers_count(ground_truth):  
+    import pandas as pd  
+    output = pd.read_csv(""k_values.csv"")  
+    unique_count = output['k'].nunique()  
+    return unique_count",Predictive modeling,Minimization Success Rate,"def minimization_success_rate(ground_truth):  
+    with open(""results.txt"", ""r"") as file:  
+        minimized_value = float(file.read().strip())  
+    return minimized_value < ground_truth  # ground_truth should represent a baseline value for comparison",Interpretability and report generation,Report Completeness,"def report_completeness(ground_truth):  
+    with open(""results.txt"", ""r"") as file:  
+        report_content = file.read()  
+    return all(item in report_content for item in ground_truth)  # ground_truth should be a list of key items that should be in the report",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please implement a complex optimization problem in Python. The problem description is as follows:
+
+1. Input Requirements:
+   - Read the point numbers from the first column of Excel sheet 1, named ""points.xlsx"".
+   - Read the dependency values from Excel sheet 2, named ""dependencies.xlsx"", specifically the third column when the first column is i and the second column is j.
+
+2. Subtasks:
+   a. Create a matrix A of size 2067x2067, where each value a[i][j] is calculated based on values from ""dependencies.xlsx"". If values assigned to i and j are the same, the value of a[i][j] should be multiplied by 2.  
+      Output: Save matrix A to ""matrix_A.csv"" in CSV format.
+   
+   b. Create a matrix B of size 2067x2067, where each value b[i][j] is similarly calculated. If values assigned to i and j have the same remainder when divided by 3, the value of b[i][j] should be multiplied by 2.  
+      Output: Save matrix B to ""matrix_B.csv"" in CSV format.
+   
+   c. Find the allocation of values for matrices A and B that minimizes their sum and determine the minimum value.  
+      Output: Save the corresponding values of the 2067 points in ""results.csv"", where the first column is the point number and the second column is the assigned value.
+
+3. Output Requirements:
+   - Ensure all outputs are formatted correctly for evaluation. The output files should clearly indicate the matrix or results they contain.  
+   - The final result, including the allocations for the points, must be saved in ""results.csv"".",Data cleaning and preprocessing,Matrix A Completeness,"def check_matrix_a_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""matrix_A.csv"", header=None)
+    return output.isnull().sum().sum() == 0  # Check if there are any missing values",Data exploration and statistics understand,Matrix B Completeness,"def check_matrix_b_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""matrix_B.csv"", header=None)
+    return output.isnull().sum().sum() == 0  # Check if there are any missing values",Predictive modeling,Results Allocation Accuracy,"def results_allocation_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    return all(output['Point Number'].tolist() == ground_truth)  # Verify all point numbers match the ground truth",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please implement a simulated annealing algorithm in Python. The problem is described as follows: 
+
+1. Read four Excel spreadsheets named 'points.xlsx', 'A1.xlsx', 'A2.xlsx', and 'B.xlsx'.
+   - Input files: 'points.xlsx', 'A1.xlsx', 'A2.xlsx', 'B.xlsx'
+
+2. Assign 1008 numbers (ranging from 0 to 1007) to n points, which can be repeated (the point numbers are read from the first column of 'points.xlsx'). 
+   - This will generate three n*n matrices: A1, A2, and B.
+
+3. Populate matrices A1 and A2:
+   - For each matrix A1 and A2, each element a1[i][j] or a2[i][j] (where i represents the row and j represents the column) depends on the Excel spreadsheets A1 and A2, respectively. Specific values are read from the third column when the first column is i and the second column is j. If the values allocated to i and j are the same, then the value of a[i][j] is doubled.
+
+4. Populate matrix B:
+   - Each element b[i][j] in matrix B depends on the Excel spreadsheet B. Values are read from the third column when the first column is i and the second column is j. If the values allocated to i and j have the same remainder when divided by 3, then the value of b[i][j] is doubled.
+
+5. The program needs to find an allocation of the A1, A2, and B matrices that minimizes their sum and calculates the minimum value.
+
+6. Output the corresponding values of the n points into an Excel spreadsheet named 'output.xlsx', where the first column is the point number and the second column is the allocated value.
+   - Output file: 'output.xlsx'
+
+7. Plot a progress bar for the optimization process and save the plot as an image file named 'progress.png'.
+   - Output file: 'progress.png'
+
+8. Save the final results in a folder named 'results' within the specified output files. 
+
+Please ensure all input and output files are correctly named and formatted to allow for further evaluation of your results.",Data cleaning and preprocessing,Data Completeness,"def data_completeness(ground_truth):
+    import pandas as pd
+    points = pd.read_excel('points.xlsx')
+    A1 = pd.read_excel('A1.xlsx')
+    A2 = pd.read_excel('A2.xlsx')
+    B = pd.read_excel('B.xlsx')
+    
+    # Check for missing values in each dataframe
+    completeness_points = points.isnull().sum().sum() == 0
+    completeness_A1 = A1.isnull().sum().sum() == 0
+    completeness_A2 = A2.isnull().sum().sum() == 0
+    completeness_B = B.isnull().sum().sum() == 0
+    
+    return completeness_points and completeness_A1 and completeness_A2 and completeness_B",Data exploration and statistics understand,Consistency Check,"def consistency_check(ground_truth):
+    import pandas as pd
+    A1 = pd.read_excel('A1.xlsx')
+    A2 = pd.read_excel('A2.xlsx')
+    
+    num_rows_A1 = len(A1)
+    num_rows_A2 = len(A2)
+    
+    return num_rows_A1 == num_rows_A2  # Assuming they should have the same number of rows",Predictive modeling,Matrix Population Accuracy,"def matrix_population_accuracy(ground_truth):
+    import pandas as pd
+    A1 = pd.read_excel('A1.xlsx').iloc[:, [0, 1, 2]]
+    A2 = pd.read_excel('A2.xlsx').iloc[:, [0, 1, 2]]
+    
+    # Validate if A1 and A2 are populated correctly based on ground truth
+    populated_A1 = A1.set_index([A1.columns[0], A1.columns[1]]).to_dict()[A1.columns[2]]
+    populated_A2 = A2.set_index([A2.columns[0], A2.columns[1]]).to_dict()[A2.columns[2]]
+    
+    return populated_A1 == ground_truth['A1'] and populated_A2 == ground_truth['A2']",Interpretability and report generation,Output Accuracy,"def output_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_excel('output.xlsx')
+    allocated_values = output.set_index('point_number')['allocated_value'].tolist()
+    
+    # Compare against the ground truth allocated values
+    return allocated_values == ground_truth['allocated_values']",Data visualization,Visualization Quality,"def visualization_quality(ground_truth):
+    from PIL import Image
+    import numpy as np
+    
+    # Read the saved progress plot
+    img = Image.open('progress.png')
+    img_array = np.array(img)
+    
+    # Check if the image is not blank or can be saved
+    return img_array.size > 0  # Ensure the image has content",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please solve a complex optimization problem using Python. The problem is described as follows:
+
+1. Data Input: Read the point numbers and attributes from ""data.xlsx"", where:
+   - First column: Point numbers
+   - Second column: Attribute X
+
+2. Matrix A Construction: 
+   - Read values for matrix A from ""matrixA.xlsx"", where:
+     - First column: i
+     - Second column: j
+     - Third column: Value
+   - Construct a 2067x2067 matrix A, where each value a[i][j] is calculated based on the rules provided (multiplied by 2 if i and j have the same attribute X).
+
+3. Matrix B Construction: 
+   - Read values for matrix B from ""matrixB.xlsx"", where:
+     - First column: i
+     - Second column: j
+     - Third column: Value
+   - Construct a 2067x2067 matrix B, where each value b[i][j] is calculated based on the rules provided (multiplied by 2 if i and j have the same remainder when divided by 3 and the same attribute X).
+
+4. Optimization Procedure: 
+   - Implement an algorithm to allocate the values in matrices A and B to minimize their total sum and find the minimum value.
+
+5. Output: 
+   - Create an Excel sheet named ""results.csv"" that contains:
+     - First column: Point number
+     - Second column: Assigned value for each point.
+
+Please ensure that the output file ""results.csv"" allows for further evaluation of the completed optimization task.",Data cleaning and preprocessing,Data Completeness,"def data_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_excel(""data.xlsx"")
+    # Check if all point numbers from ground_truth are present in output
+    return output['Point numbers'].isin(ground_truth).all()",Data exploration and statistics understand,Data Consistency,"def data_consistency(ground_truth):
+    import pandas as pd
+    output = pd.read_excel(""data.xlsx"")
+    # Check if the attributes X in the output match the ground truth attributes
+    return all(output['Attribute X'] == ground_truth['Attribute X'])",Data visualization,Matrix A Accuracy,"def matrix_a_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_excel(""matrixA.xlsx"")
+    calculated_matrix_a = create_matrix_a(output)
+    # Assuming ground_truth is a 2D array or DataFrame for comparison
+    return (calculated_matrix_a == ground_truth).all()",Predictive modeling,Matrix B Accuracy,"def matrix_b_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_excel(""matrixB.xlsx"")
+    calculated_matrix_b = create_matrix_b(output)
+    # Assuming ground_truth is a 2D array or DataFrame for comparison
+    return (calculated_matrix_b == ground_truth).all()",Interpretability and report generation,Output Value Accuracy,"def output_value_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    # Compare the assigned values in the output with the expected values in ground_truth
+    return (output['Assigned value'].tolist() == ground_truth['Assigned value'].tolist())",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please solve a complex optimization problem using Python. The problem is described as follows:
+
+1. Distribute 1008 numbers (ranging from 0 to 1007) to 2067 points (the point numbers are read from the first column of Excel sheet 1). 
+   - Input: Excel sheet 1 (input filename: `points.xlsx`).
+   - Output: Assigned values for the 2067 points in an Excel sheet (`results.csv`), where the first column is the point number and the second column is the assigned value.
+
+2. These points form two 2067x2067 matrices A and B, which are independent of each other and have two independent scenarios:
+   - Each element a[i][j] in matrix A (where i represents the row and j represents the column) depends on an Excel sheet 2 (input filename: `matrix_a.xlsx`, read from the third column where the first column is i and the second column is j).
+     - If the values assigned to i and j are the same, then the value of a[i][j] is multiplied by 2.
+   
+   - Each element b[i][j] in matrix B depends on an Excel sheet 3 (input filename: `matrix_b.xlsx`, read from the third column where the first column is i and the second column is j).
+     - If the values assigned to i and j have the same remainder when divided by 3, then the value of b[i][j] is multiplied by 2.
+
+3. The program you write needs to find out how to allocate the values to matrices A and B to minimize their sum and calculate the minimum value.
+   - Output: Minimum value obtained from the optimization process in a text file (`minimum_value.txt`).
+
+4. Use GUROBI based on the simulated annealing algorithm to implement this. 
+   - Final Output: Save the final results in a file named `results.csv`. 
+
+Ensure the final outputs reflect the quality of your implementation and allow for further evaluation.",Data cleaning and preprocessing,Data Cleaning Completeness,"def data_cleaning_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_excel(""points.xlsx"")
+    cleaned_data = output.dropna()  # Example cleaning step
+    return len(cleaned_data) / len(ground_truth)",Data exploration and statistics understand,Exploratory Data Analysis Coverage,"def exploratory_data_coverage(ground_truth):
+    import pandas as pd
+    output = pd.read_excel(""points.xlsx"")
+    total_unique_values = len(set(output.iloc[:, 0]))  # Unique point numbers
+    expected_unique_values = len(set(ground_truth))
+    return total_unique_values / expected_unique_values",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    predictions = output['Assigned Value'].tolist()  # Assuming the assigned values are stored in this column
+    return accuracy_score(ground_truth, predictions)",Pattern recognition,Pattern Detection Precision,"def pattern_detection_precision(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    detected_patterns = output['Pattern Detected'].tolist()  # Assuming a column for detected patterns
+    true_positive = sum(1 for i in range(len(detected_patterns)) if detected_patterns[i] in ground_truth)
+    return true_positive / len(ground_truth)",Interpretability and report generation,Report Generation Accuracy,"def report_generation_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")  # Assume the report is in result file
+    report_data = output['Report Data'].tolist()  # Assuming the report is based on this column
+    correct_reports = sum(1 for item in report_data if item in ground_truth)
+    return correct_reports / len(ground_truth)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please solve a complex optimization problem using Python. The problem description is as follows:
+
+Distribute 1008 numbers (ranging from 0 to 1007) to 2067 points (the point numbers are read from the first column of Excel sheet 1). These points form three 2067x2067 matrices A1, A2, and B. Matrices A1, A2, and B are independent of each other and have two independent situations:
+
+1. Matrices A1 and A2 are independent, where each element a1[i][j] or a2[i][j] (where i represents the row and j represents the column) depends on an input file named ""excel_sheet_2.xlsx"" (read from the third column when the first column is i and the second column is j). If the values assigned to i and j are the same, then the value of a[i][j] is multiplied by 2.
+
+2. Each element b[i][j] in matrix B depends on an input file named ""excel_sheet_3.xlsx"" (read from the third column when the first column is i and the second column is j), and if the values assigned to i and j have the same remainder when divided by 3, then the value of b[i][j] is multiplied by 2.
+
+Your program needs to determine how to allocate the matrices A1, A2, and B to minimize their sum and find the minimum value. 
+
+Subtasks:
+- Implement the simulated annealing algorithm using GUROBI.
+- Output the corresponding values for the 2067 points in a file named ""results.csv"", where the first column is the point number and the second column is the assigned value.
+- Provide the minimum value separately in a file named ""minimum_value.txt"".
+
+Input Files:
+- ""excel_sheet_1.xlsx""
+- ""excel_sheet_2.xlsx""
+- ""excel_sheet_3.xlsx""
+
+Output Files:
+- ""results.csv"" (CSV format)
+- ""minimum_value.txt"" (Text format)",Predictive modeling,Objective Function Value,"def objective_function_value(ground_truth):
+    with open(""minimum_value.txt"", ""r"") as file:
+        min_value = float(file.read().strip())
+    return ground_truth == min_value",Data cleaning and preprocessing,Result Consistency,"def result_consistency(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    # Check if the values in the output file match the expected structure/requirements of the ground truth
+    expected_points = set(range(2067))  # Assuming point numbers are from 0 to 2066
+    actual_points = set(output['point_number'].tolist())
+    return actual_points == expected_points",Interpretability and report generation,Report Completeness,"def report_completeness(ground_truth):
+    with open(""report.txt"", ""r"") as file:
+        report_content = file.read()
+    return ground_truth in report_content",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please implement a complex optimization problem in Python as described below:
+
+1. Read Points:
+   - Input: Read the 'points' from the first column of the Excel table named 'points.xlsx'.
+   - Output: Save the read points into a CSV file named 'points.csv'.
+
+2. Construct Matrices A1 and A2:
+   - Input: Construct matrices A1 and A2 by reading from the Excel tables named 'A1.xlsx' and 'A2.xlsx', specifically using the third column where the first column is i and the second column is j.
+   - Output: Save matrices A1 and A2 into separate CSV files named 'matrix_A1.csv' and 'matrix_A2.csv' respectively.
+
+3. Construct Matrix B:
+   - Input: Construct matrix B by reading from the Excel table named 'B.xlsx', using the third column where the first column is i and the second column is j.
+   - Output: Save matrix B into a CSV file named 'matrix_B.csv'.
+
+4. Optimization Implementation:
+   - Implement a simulated annealing algorithm using GUROBI to determine the optimal allocation of matrices A1, A2, and B to minimize their sum based on the defined conditions.
+   - Output: Save the corresponding values for the 2067 points in an Excel table named 'results.xlsx', where the first column is the point number and the second column is the assigned value.
+
+5. Final Results:
+   - Additionally, save the minimum value found by the optimization algorithm in a text file named 'minimum_value.txt'.
+
+Ensure that all output files reflect the quality of the completion of each subtask, allowing for further evaluation.",Data cleaning and preprocessing,Points Read Correctly,"def points_read_correctly(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""points.csv"")
+    points = output['points'].tolist()
+    return set(ground_truth) == set(points)",Data cleaning and preprocessing,Matrices A1 and A2 Construction Validity,"def matrices_construction_validity(ground_truth_A1, ground_truth_A2):
+    import pandas as pd
+    A1 = pd.read_csv(""matrix_A1.csv"").values
+    A2 = pd.read_csv(""matrix_A2.csv"").values
+    return (A1.tolist() == ground_truth_A1) and (A2.tolist() == ground_truth_A2)",Data cleaning and preprocessing,Matrix B Construction Validity,"def matrix_B_construction_validity(ground_truth):
+    import pandas as pd
+    B = pd.read_csv(""matrix_B.csv"").values
+    return B.tolist() == ground_truth",Predictive modeling,Optimization Result Validity,"def optimization_result_validity(ground_truth):
+    import pandas as pd
+    results = pd.read_excel(""results.xlsx"")
+    return results.iloc[:, 1].tolist() == ground_truth",Interpretability and report generation,Minimum Value Correctness,"def minimum_value_correctness(ground_truth):
+    with open(""minimum_value.txt"", ""r"") as file:
+        min_value = float(file.read().strip())
+    return min_value == ground_truth",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please solve the following problem using Python. The description is as follows:
+
+1. Read four Excel sheets named ""points.xlsx"", ""A1.xlsx"", ""A2.xlsx"", and ""B.xlsx"".
+   - Input files: 
+     - ""points.xlsx"" (contains point numbers in the first column)
+     - ""A1.xlsx"" (contains matrix data for A1)
+     - ""A2.xlsx"" (contains matrix data for A2)
+     - ""B.xlsx"" (contains matrix data for B)
+
+2. Assign the numbers 0-1007 to n points, allowing repetitions from the first column of the ""points.xlsx"" sheet. These points will form three n*n matrices A1, A2, and B.
+
+3. Create the matrices A1, A2, and B as follows:
+   - A1: Each element a1[i][j] is derived from ""A1.xlsx"" based on the third column when the first column is i and the second column is j. If i equals j, then double the value of a1[i][j].
+   - A2: Each element a2[i][j] is derived similarly from ""A2.xlsx"", with the same doubling condition.
+   - B: Each element b[i][j] is derived from ""B.xlsx"" based on similar column rules. If the indices i and j have the same remainder when divided by 3, then double the value of b[i][j].
+
+4. The program must determine the optimal assignment of matrices A1, A2, and B to minimize their total sum and compute the minimum value.
+
+5. Output requirements:
+   - Save the results in an Excel file named ""output.xlsx"". The first column should contain the point numbers, and the second column should contain the assigned values corresponding to those points.
+   - Create a progress bar for the optimization process, displayed in the console during execution.
+
+6. Final output files:
+   - ""output.xlsx"" (output format: Excel)
+   - Ensure all relevant data is included in the output for evaluation purposes. 
+
+7. Results should be stored in a folder named ""results"".",Data cleaning and preprocessing,Data Quality Score,"def data_quality_score(ground_truth):
+    import pandas as pd
+    output = pd.read_excel(""points.xlsx"")
+    # Assuming ground_truth is a list of expected point numbers
+    unique_points = output.iloc[:, 0].unique()
+    return len(set(unique_points) & set(ground_truth)) / len(ground_truth)",Data exploration and statistics understand,Missing Values Percentage,"def missing_values_percentage(ground_truth):
+    import pandas as pd
+    output_a1 = pd.read_excel(""A1.xlsx"")
+    output_a2 = pd.read_excel(""A2.xlsx"")
+    output_b = pd.read_excel(""B.xlsx"")
+    
+    total_cells = output_a1.size + output_a2.size + output_b.size
+    missing_cells = output_a1.isnull().sum().sum() + output_a2.isnull().sum().sum() + output_b.isnull().sum().sum()
+    
+    return missing_cells / total_cells",Predictive modeling,Model Performance (Total Cost),"def total_matrix_cost(ground_truth):
+    import pandas as pd
+    # Simulating getting optimal cost from matrices
+    output = pd.read_excel(""output.xlsx"")
+    # Assuming ground_truth is a dict with point numbers as keys and expected assigned values as values
+    total_cost = sum((output.iloc[i, 1] - ground_truth[output.iloc[i, 0]])  2 for i in range(len(output)))
+    return total_cost",Interpretability and report generation,Report Completeness Ratio,"def report_completeness_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_excel(""output.xlsx"")
+    # Assuming ground_truth is a list of required output columns 
+    completeness = all(col in output.columns for col in ground_truth)
+    return completeness",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please write code to solve the following problem:
+
+1. Load text information from the ""input/word_test.csv"" file.
+   - Input: ""input/word_test.csv""
+   - Output: ""text_info.json"" (JSON format)
+
+2. Load image IDs from the ""input/image_data.csv"" file.
+   - Input: ""input/image_data.csv""
+   - Output: ""image_ids.json"" (JSON format)
+
+3. Perform image retrieval on the images located in the ""input/ImageData"" folder using the loaded text information.
+   - Input: ""text_info.json"", ""image_ids.json"", and images from ""input/ImageData""
+   - Output: ""results.csv"" (CSV format) containing the image IDs of the top five images with the highest retrieval similarity, along with their similarity scores. 
+
+Please ensure the outputs reflect comprehensive and high-quality results for evaluation.",Data cleaning and preprocessing,Data Cleanliness Ratio,"def data_cleanliness_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""input/word_test.csv"")
+    total_entries = len(output)
+    clean_entries = output.dropna().shape[0]
+    return clean_entries / total_entries",Data exploration and statistics understand,Data Exploration Summary Statistics,"def data_exploration_statistics(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""input/image_data.csv"")
+    stats = output.describe()
+    return stats.to_dict()",Predictive modeling,Model Retrieval Precision,"def model_retrieval_precision(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import precision_score
+    output = pd.read_csv(""results.csv"")
+    retrieved_ids = output['ImageID'].astype(str).tolist()
+    return precision_score(ground_truth, retrieved_ids, average='binary')",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please write code to solve the following problem: 
+
+1. Read the 'input/word_data.csv' file (input) to extract relevant text entries for retrieval.
+2. Read the 'input/image_test.csv' file (input) to obtain the image IDs for which text retrieval is to be performed.
+3. Perform text retrieval using the specified text retrieval model and algorithm on the extracted texts corresponding to the image IDs. 
+4. List the top five texts with the highest retrieval similarity for each image ID and save the results in 'results.csv' (output).
+
+Please ensure that the output files allow further evaluation of the completed tasks.",Data cleaning and preprocessing,Data Cleaning Completeness,"def data_cleaning_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""input/word_data.csv"")
+    # Assuming ground_truth is a list of expected non-null entries
+    cleaned_data = output.dropna()
+    return len(cleaned_data) / len(ground_truth)",Data exploration and statistics understand,Data Exploration Coverage,"def data_exploration_coverage(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""input/image_test.csv"")
+    # Assuming ground_truth contains the expected number of unique image IDs
+    unique_ids = output['image_id'].nunique()
+    return unique_ids / len(ground_truth)",Predictive modeling,Text Retrieval Accuracy,"def text_retrieval_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    # Assuming ground_truth contains the exact text entries that should have been retrieved
+    retrieved_texts = output['retrieved_texts'].tolist()
+    return sum([1 for text in retrieved_texts if text in ground_truth]) / len(ground_truth)",Interpretability and report generation,Report Generation Completeness,"def report_generation_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    # Assuming ground_truth contains the expected metrics or entries in the report
+    report_entries = len(output)
+    return report_entries / len(ground_truth)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please complete the following task:
+Write a complete LSTM (Long Short-Term Memory) neural network for time series prediction based on PyTorch. Use 'data.csv' as the dataset for this task. Implement the actual training and prediction of the LSTM model. Use data from column ""Value1"" from the CSV file 'data.csv' to train the LSTM model. Then make predicions and save to 'predictions.csv' and visualize it with a image 'predictions_chart.png'.
+",Data cleaning and preprocessing,Data Consistency Ratio,"def data_consistency_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""data.csv"")
+    cleaned_data = output['Value1'].dropna()
+    consistency_ratio = len(cleaned_data) / len(output)
+    return consistency_ratio",Predictive modeling,Model Mean Absolute Error (MAE),"def model_mae(ground_truth):
+    from sklearn.metrics import mean_absolute_error
+    import pandas as pd
+    output = pd.read_csv(""predictions.csv"")
+    predictions = output['Predictions'].tolist()
+    return mean_absolute_error(ground_truth, predictions)",Data visualization,Visualization Quality Score,"def visualize_quality_score(ground_truth):
+    # Assuming the image is reviewed manually for quality, so we simulate a score of 0-1 based on ground truth
+    # Here, we return a mock score instead of actual code, as image quality is not automatically measurable
+    return 0.95  # Replace this with actual metrics if the quality is quantitatively evaluated",Interpretability and report generation,Report Coverage Ratio,"def report_coverage_ratio(ground_truth):
+    with open(""report.txt"", ""r"") as file:
+        report_content = file.read()
+    coverage = sum(word in report_content for word in ground_truth) / len(ground_truth)
+    return coverage",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"There are three sets of strings: ""230203199611020216"" and ""230203196201020236"", ""g7amms3t"" and ""ms3t"", ""9ojhg65t6754"" and ""ijg8g65t67ui"". For each pair of strings, calculate their similarity using Jaccard, Sorensen Dice, Levenshtein, and cosine similarity, expressed as a percentage. The results should be organized in a table format and saved in the output file named ""results.csv"". 
+
+Output format: ""results.csv"" containing a table with columns for each similarity measure and corresponding similarity percentages for each pair.",Data cleaning and preprocessing,Data Quality - Missing Values Percentage,"def missing_values_percentage(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    total_cells = output.size
+    missing_cells = output.isnull().sum().sum()
+    return (missing_cells / total_cells) * 100",Data exploration and statistics understand,Unique Values Count,"def unique_values_count(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    return output.nunique().sum()",Data visualization,Visualization Coverage Ratio,"def visualization_coverage_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    # Assuming we want to visualize the Jaccard similarity here
+    jaccard_values = output['Jaccard'].dropna()
+    coverage_ratio = (jaccard_values.count() / len(jaccard_values)) * 100
+    return coverage_ratio",Interpretability and report generation,Report Completeness Score,"def report_completeness_score(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    expected_columns = ['Jaccard', 'Sorensen Dice', 'Levenshtein', 'Cosine']
+    completeness = all(col in output.columns for col in expected_columns)
+    return 1.0 if completeness else 0.0",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Use the credit card data from the Kaggle platform, KaggleCredit.csv, to train the model and make predictions on the test set, and finally calculate the model score. The steps are as follows:
+(1) Prepare to import the credit card data;
+(2) Standardize the feature columns;
+(3) Divide into training and test sets;
+(4) Create an SVM model and train it;
+(5) Use the test set to make predictions;
+(6) Calculate the model score.
+
+The final results are saved in the results folder. The model should be saved as ""model.pkl"" and the predictions saved in ""predictions.csv"" and the model score saved in ""model_score.txt"".",Data cleaning and preprocessing,Data Quality Score,"def data_quality_score(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""KaggleCredit.csv"")
+    # Check for missing values as a simplification of data quality
+    missing_values = output.isnull().sum().sum()
+    total_cells = output.size
+    return (total_cells - missing_values) / total_cells  # Proportion of non-missing values",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""predictions.csv"")
+    predictions = output['Predictions'].tolist()
+    return accuracy_score(ground_truth, predictions)",Interpretability and report generation,Model Score (R-squared),"def model_score(ground_truth):
+    from sklearn.metrics import r2_score
+    import pandas as pd
+    output = pd.read_csv(""predictions.csv"")
+    predictions = output['Predictions'].tolist()
+    return r2_score(ground_truth, predictions)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"The dataset `PimaIndiansdiabetes.csv` contains information on whether Pima Indian female patients have had diabetes in the past 5 years. The dataset includes multiple medical predictive variables and one target variable, Outcome. When the value of Outcome is 1, it indicates the presence of diabetes; when the value is 0, it means the patient does not have diabetes. The meanings of the other attributes are: Pregnancies: number of pregnancies; Glucose: glucose level; BloodPressure: blood pressure (mm Hg); SkinThickness: skin fold thickness (mm); Insulin: insulin, 2-hour serum insulin; BMI: body mass index (weight/height)^2; DiabetesPedigreeFunction: diabetes pedigree function; Age: age (years).
+
+Please complete the following tasks:
+
+1. Preprocess the Data: Clean the dataset for any missing values and standardize the feature scales.
+   - Input: `PimaIndiansdiabetes.csv`
+   - Output: `preprocessed_data.csv`
+
+2. Train Neural Network Classification Model: Use the preprocessed data to train a neural network classification model for predicting diabetes.
+   - Input: `preprocessed_data.csv`
+   - Output: `model_summary.txt` (contains model architecture and training summary)
+
+3. Evaluate Model Accuracy: Perform 10-fold cross-validation on the trained model and calculate its accuracy.
+   - Input: `preprocessed_data.csv`
+   - Output: `accuracy_results.csv` (contains accuracy metrics for each fold)
+
+4. Save Final Results: Compile the accuracy results and model summary in a results folder.
+   - Output: `results/final_results.txt` (contains overall model accuracy and insights)
+
+Ensure that each output file reflects the quality of the completion of each subtask for further evaluation.",Data cleaning and preprocessing,Missing Values Percentage,"def missing_values_percentage(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""preprocessed_data.csv"")
+    missing_percentage = output.isnull().sum().sum() / output.size * 100
+    return missing_percentage",Predictive modeling,Model Summary Validity,"def model_summary_validity(ground_truth):
+    with open(""model_summary.txt"", ""r"") as file:
+        model_summary = file.read()
+    return ""Model architecture"" in model_summary and ""Training summary"" in model_summary",Predictive modeling,Average Accuracy,"def average_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""accuracy_results.csv"")
+    return output['Accuracy'].mean()",Interpretability and report generation,Report Completeness,"def report_completeness(ground_truth):
+    with open(""results/final_results.txt"", ""r"") as file:
+        final_results = file.read()
+    return ""Overall model accuracy"" in final_results and ""Insights"" in final_results",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Task: Clustering Negative Samples Classification
+
+Input File:  
+- `combine_land.csv`: This file contains the columns `dt2IC`, `dt2CIdbz`, `date_first`, `feature1`, `feature2`, `feature3` for clustering.
+
+Output File:  
+- `combine_land.csv`: This file will include the original data with two additional columns: `clus` and `keep`.
+
+Subtasks:
+
+1. Clustering for 'clus' Column:
+   - Operations: 
+     - For rows where `dt2IC=1`, `dt2CIdbz=1`, and `date_first < 20230810000000`, perform Agglomerative clustering, calculating the number of clusters from 2 to 10.
+     - Select the number of clusters corresponding to the largest Silhouette Index (SI) coefficient as the final number of clusters.
+     - Assign the cluster labels to the `clus` column for the respective rows and leave the rest empty.
+   - Output Format: Append results to `1combine_land.csv`.
+
+2. Processing for 'keep' Column:
+   - Operations:
+     - For the updated `clus` column, calculate the count of each cluster.
+     - Determine the median of all counts.
+     - Assign a value of 1 to all clusters with a count less than or equal to the median.
+     - Randomly select a number of rows from clusters with a count higher than the median equivalent to the median itself and assign them a value of 1.
+     - All other rows should be assigned a value of 0.
+     - Maintain the original sorting order of the data in `1combine_land.csv`.
+   - Output Format: The updated `1combine_land.csv` will reflect these changes and contain the `keep` column alongside the `clus` column. 
+
+Final Outputs:  
+- The completed `combine_land.csv` will contain the processed data with `clus` and `keep` columns, facilitating further evaluation of the retained negative samples and positive samples from the training, validation, and test datasets.",Clustering for 'clus' Column,Silhouette Score for Clustering,"def silhouette_score(ground_truth):
+    from sklearn.metrics import silhouette_score
+    import pandas as pd
+    from sklearn.cluster import AgglomerativeClustering
+    
+    output = pd.read_csv(""1combine_land.csv"")
+    clustering_data = output[(output['dt2IC'] == 1) & (output['dt2CIdbz'] == 1) & (output['date_first'] < 20230810000000)]
+    
+    best_silhouette = -1
+    best_n_clusters = 0
+    
+    for n_clusters in range(2, 11):
+        clusterer = AgglomerativeClustering(n_clusters=n_clusters)
+        cluster_labels = clusterer.fit_predict(clustering_data[['feature1', 'feature2', 'feature3']])
+        silhouette_avg = silhouette_score(clustering_data[['feature1', 'feature2', 'feature3']], cluster_labels)
+        
+        if silhouette_avg > best_silhouette:
+            best_silhouette = silhouette_avg
+            best_n_clusters = n_clusters
+    
+    return best_silhouette",Processing for 'keep' Column,Keep Column Accuracy,"def keep_column_accuracy(ground_truth):
+    import pandas as pd
+    
+    output = pd.read_csv(""1combine_land.csv"")
+    
+    # Assuming ground_truth is a correct version of the 'keep' column
+    predictions = output['keep'].tolist()
+    
+    # For simplicity, assuming ground truth is given as a list
+    return sum(1 for gt, pred in zip(ground_truth, predictions) if gt == pred) / len(ground_truth)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please use the public microdata sample from the 2000 U.S. Census (refer to the 'data_pums_2000.csv' file) to perform the following subtasks:
+
+1. Data Preparation  
+   - Input: 'data_pums_2000.csv'  
+   - Output: 'cleaned_data.csv' (This file should contain the cleaned and preprocessed data, suitable for further analysis.)
+
+2. Plot the Lorenz Curve  
+   - Input: 'cleaned_data.csv'  
+   - Output: 'lorenz_curve.png' (This image should visually represent the Lorenz curve based on the income distribution in the dataset.)
+
+3. Calculate the Gini Coefficient  
+   - Input: 'cleaned_data.csv'  
+   - Output: 'gini_coefficient.txt' (This text file should contain the calculated Gini coefficient value, formatted as a simple numeric output.)
+
+Please complete this task using Python, and ensure all output files are saved in the 'results' folder.",Data cleaning and preprocessing,Data Quality Score,"def data_quality_score(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results/cleaned_data.csv"")
+    # Assuming ground_truth is also a DataFrame
+    total_records = len(ground_truth)
+    cleaned_records = len(output)
+    return cleaned_records / total_records",Data visualization,Lorenz Curve Visual Inspection,"def lorenz_curve_inspection(ground_truth):
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    output = pd.imread(""results/lorenz_curve.png"")
+    # Here we would compare the output image with a ground truth image
+    # This is a conceptual placeholder; actual image comparison is more complex
+    return ""Visual inspection required for comparison.""",Data exploration and statistics understand,Gini Coefficient Calculation,"def calculate_gini_coefficient(ground_truth):
+    import numpy as np
+    output = float(open(""results/gini_coefficient.txt"").read().strip())
+    return output  # Assuming ground_truth is the expected value",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Please build a feedforward neural network (FNN) using PyTorch for data regression. 
+
+Task Input:
+- Input File: ""data.xlsx"" (Excel spreadsheet containing 1,000,000 data records with columns for x, y, and sign)
+
+Subtasks and Output Requirements:
+1. Data Preprocessing:
+   - Output Format: ""processed_data.csv"" (CSV file)
+   - Description: Clean and preprocess the data, including normalization, encoding of the 'sign' character, and splitting into training and testing datasets.
+
+2. Model Construction:
+   - Output Format: ""model.py"" (Python script)
+   - Description: Construct the feedforward neural network architecture and define the forward pass.
+
+3. Hyperparameter Tuning:
+   - Output Format: ""hyperparameters.json"" (JSON file)
+   - Description: Document the chosen hyperparameters (e.g., learning rate, batch size, number of epochs) to evaluate model performance.
+
+4. Model Training:
+   - Output Format: ""training_results.csv"" (CSV file)
+   - Description: Save the training results, including loss values and accuracy at each epoch, throughout the training process.
+
+5. Model Evaluation:
+   - Output Format: ""evaluation_results.pdf"" (PDF file)
+   - Description: Include visualizations and metrics of the model performance on the test dataset, such as mean squared error and comparison plots.
+
+6. Model Saving:
+   - Output Format: ""final_model.pth"" (PyTorch model file)
+   - Description: Save the trained neural network model for future inference.
+
+Make sure to clearly label and document all files to facilitate further evaluation.",Data cleaning and preprocessing,Data Completeness,"def data_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""processed_data.csv"")
+    total_records = len(ground_truth)
+    processed_records = output.shape[0]
+    return processed_records / total_records",Predictive modeling,Model Mean Squared Error (MSE),"def model_mse(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_squared_error
+    output = pd.read_csv(""training_results.csv"")
+    predictions = output['predicted'].tolist()  # Assuming 'predicted' column in CSV
+    return mean_squared_error(ground_truth, predictions)",Interpretability and report generation,Model Performance Report Availability,"def report_availability(ground_truth):
+    import os
+    return os.path.exists(""evaluation_results.pdf"")",Model training,Training Loss Convergence,"def training_loss_convergence(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""training_results.csv"")
+    return output['loss'].iloc[-1]  # Assuming 'loss' column in CSV",Model evaluation,Evaluation Metric Summary,"def evaluation_metric_summary(ground_truth):
+    from PyPDF2 import PdfReader
+    pdf_file = PdfReader(""evaluation_results.pdf"")
+    return len(pdf_file.pages) > 0  # Check if the PDF has content",Model saving,Model File Existence,"def model_file_existence(ground_truth):
+    import os
+    return os.path.exists(""final_model.pth"")",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"In financial data analysis, assume the variables date, Mkt-RF, SMB, HML, RF, PERMNO, shrcd, exchcd, RET, sprtrn, price, shrout, mktcap, and size are in a CSV file named ""trd.csv"". Use Python to solve the following tasks:
+
+1. Calculate Beta: Compute the beta for the three-factor model using data from ""trd.csv"".
+   - Output: A CSV file named ""beta.csv"" containing the calculated beta values for each asset.
+
+2. Form Portfolios: Create portfolios based on the breakpoints (5th quantiles) of the beta.
+   - Output: A CSV file named ""portfolios.csv"" listing the formed portfolios including asset identifiers and their respective beta groups.
+
+3. Calculate Excess Returns: Compute the excess returns of the portfolios based on the previously calculated returns.
+   - Output: A CSV file named ""excess_returns.csv"" containing the excess returns for each portfolio.
+
+4. Calculate Abnormal Returns: Adjust the returns by the Fama and French three-factor model to find abnormal returns.
+   - Output: A CSV file named ""abnormal_returns.csv"" with the calculated abnormal returns for each portfolio.
+
+5. Sample Distribution: Analyze the sample distribution of the abnormal returns.
+   - Output: A PDF file named ""sample_distribution.pdf"" containing graphs and summary statistics of the sample distribution.
+
+6. Final Results: Compile all calculated data into a comprehensive results file.
+   - Output: A CSV file named ""results.csv"" that includes all relevant calculated metrics from the previous tasks.",Predictive modeling,Beta Calculation Accuracy,"def beta_calculation_accuracy(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_squared_error
+    output = pd.read_csv(""beta.csv"")
+    calculated_betas = output['Beta'].tolist()
+    return mean_squared_error(ground_truth, calculated_betas)",Data mining,Portfolio Group Consistency,"def portfolio_group_consistency(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""portfolios.csv"")
+    formed_portfolios = output['Beta_Group'].tolist()
+    return sum(1 for true, formed in zip(ground_truth, formed_portfolios) if true == formed) / len(ground_truth)",Data mining,Excess Returns Accuracy,"def excess_returns_accuracy(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_absolute_percentage_error
+    output = pd.read_csv(""excess_returns.csv"")
+    calculated_excess_returns = output['Excess_Return'].tolist()
+    return mean_absolute_percentage_error(ground_truth, calculated_excess_returns)",Predictive modeling,Abnormal Returns Difference,"def abnormal_returns_difference(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""abnormal_returns.csv"")
+    calculated_abnormal_returns = output['Abnormal_Return'].tolist()
+    differences = [abs(gt - ar) for gt, ar in zip(ground_truth, calculated_abnormal_returns)]
+    return sum(differences) / len(differences)",Data exploration and statistics understand,Sample Distribution Normality,"def sample_distribution_normality(ground_truth):
+    import pandas as pd
+    from scipy.stats import shapiro
+    output = pd.read_csv(""sample_distribution.csv"")  # assuming this contains abnormal returns
+    sample_data = output['Abnormal_Returns'].tolist()
+    statistic, p_value = shapiro(sample_data)
+    return p_value  # a p-value > 0.05 indicates normal distribution",Interpretability and report generation,Comprehensive Results Completeness,"def comprehensive_results_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""results.csv"")
+    metrics_present = set(output.columns)
+    return len(metrics_present.intersection(set(ground_truth))) / len(set(ground_truth))",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"I currently have a structured dataset named date.csv with 6 columns and 5960 rows of data. The first column is named X, the second column is named Y, both of which are structural parameters set for simulation. The following four columns, ff, ft, tt, and tf, represent the simulation results. Now, I need to train a model that can accurately predict the four simulation results for other structural parameters. The model and related content will be saved in the results folder. The model should be saved as ""model.pkl"" and the final accuracy should be saved in ""acc.txt"".",Data cleaning and preprocessing,Percentage of Missing Values,"def percentage_missing_values(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""data.csv"")
+    total_cells = output.size
+    missing_cells = output.isnull().sum().sum()
+    return (missing_cells / total_cells) * 100",Predictive modeling,Mean Absolute Error (MAE),"def mean_absolute_error(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_absolute_error as mae
+    output = pd.read_csv(""results/predictions.csv"")  # Assuming predictions are saved here
+    predictions = output[['ff', 'ft', 'tt', 'tf']].values
+    return mae(ground_truth, predictions)",Interpretability and report generation,R-squared Score,"def r_squared_score(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import r2_score
+    output = pd.read_csv(""results/predictions.csv"")  # Assuming predictions are saved here
+    predictions = output[['ff', 'ft', 'tt', 'tf']].values
+    return r2_score(ground_truth, predictions)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Load data from the following input files:
+- ""links.csv""
+- ""movies.csv""
+- ""ratings.csv""
+- ""tags.csv""
+
+Subtasks:
+1. Data Cleaning and Preprocessing
+   - Check for missing values, handle missing values, convert data types, deal with outliers, select specific columns.
+   - Output: ""cleaned_data.csv""
+
+2. Data Merging
+   - Merge relevant datasets based on movieId and userId to create a comprehensive dataset for analysis.
+   - Output: ""merged_data.csv""
+
+3. User Preference Analysis
+   - Conduct user rating analysis (calculate the average rating, standard deviation of ratings, and number of ratings for each user on movies) and user tag analysis.
+   - Combine results from the user preference analyses.
+   - Output: ""user_preference_analysis.csv""
+
+4. Feature Engineering
+   - Perform movie feature engineering, user feature engineering, and interaction feature engineering to enhance the dataset for model training.
+   - Output: ""feature_engineering_results.csv""
+
+5. Model Construction
+   - Implement a collaborative filtering algorithm (combination of user-based and item-based) and integrate a content-based recommendation model using deep learning.
+   - Output: ""model_construction_summary.pdf""
+
+6. Evaluation and Training
+   - Train the model and evaluate its performance using appropriate metrics.
+   - Output: ""model_evaluation_results.csv""
+
+7. Generate Recommendations
+   - Generate personalized movie recommendations for users based on the trained model.
+   - Output: ""recommendations.csv""
+
+Implement the tasks using Python code in a detailed and comprehensive manner.",Data Cleaning and Preprocessing,Percentage of Missing Values,"def percentage_missing_values(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    total_elements = output.size
+    missing_values = output.isnull().sum().sum()
+    return (missing_values / total_elements) * 100",Data Merging,Merge Quality Score,"def merge_quality_score(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""merged_data.csv"")
+    merged_count = output.shape[0]
+    ground_truth_count = ground_truth.shape[0]
+    return merged_count / ground_truth_count  # Assuming ground_truth contains the ideal merged count.",User Preference Analysis,User Rating Analysis Metrics,"def user_rating_analysis_metrics(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""user_preference_analysis.csv"")
+    average_rating = output['average_rating'].mean()
+    std_dev_rating = output['std_dev_rating'].mean()
+    num_ratings = output['num_ratings'].sum()
+    return average_rating, std_dev_rating, num_ratings",Feature Engineering,Feature Engineering Completeness,"def feature_engineering_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""feature_engineering_results.csv"")
+    feature_columns = output.columns
+    expected_features = set(ground_truth)  # ground_truth should provide the ideal feature set
+    actual_features = set(feature_columns)
+    return len(expected_features & actual_features) / len(expected_features)",Model Construction,Model Summary Completeness,"def model_summary_completeness(ground_truth):
+    with open(""model_construction_summary.pdf"", 'rb') as f:
+        content = f.read()
+    return len(content) > 0  # Checks that the content is not empty",Evaluation and Training,Evaluation Metrics Calculation,"def evaluation_metrics(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""model_evaluation_results.csv"")
+    mse = ((output['true_values'] - output['predicted_values'])  2).mean()
+    return mse  # Mean Squared Error",Generate Recommendations,Recommendation Precision,"def recommendation_precision(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""recommendations.csv"")
+    recommended_movies = set(output['recommended_movie_ids'])
+    actual_movies = set(ground_truth)  # ground_truth contains the actual movies liked by users
+    return len(recommended_movies & actual_movies) / len(recommended_movies)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Data source for this case: the whole year of Beijing weather in 2018, input file: beijing_tianqi_2018.csv (file encoding: utf-8)
+
+Attribute description:
+- ymd: Year, month, day
+- bWendu: Maximum temperature
+- yWendu: Minimum temperature
+- tianqi: Weather status (sunny, sunny to cloudy)
+- fengxiang: Wind direction (southwest wind, north wind)
+- fengli: Wind force level
+- aqi: Air quality
+- aqiInfo: Air Quality Index (excellent, good, light pollution)
+- aqiLevel: Air quality score
+
+Please complete the following data analysis tasks and provide the specified outputs:
+
+1. Set the index to the date for easy filtering by date.
+   - Output: output_indexed.csv (csv)
+   
+2. Look up the weather conditions on March 1, 2018.
+   - Input: beijing_tianqi_2018.csv (csv)
+   - Output: output_march_01_2018.csv (csv)
+
+3. Replace the temperature units with ℃ removed.
+   - Input: beijing_tianqi_2018.csv (csv)
+   - Output: output_temperature_cleaned.csv (csv)
+
+4. Check the maximum and minimum temperatures for the consecutive 7 days starting from August 1, 2018.
+   - Input: beijing_tianqi_2018.csv (csv)
+   - Output: output_august_temperatures.csv (csv)
+
+5. Check results where the minimum temperature is below -10.
+   - Input: beijing_tianqi_2018.csv (csv)
+   - Output: output_below_negative_10.csv (csv)
+
+6. Check for ""my perfect weather"" (maximum temperature less than 30, minimum temperature greater than 15, sunny, air quality excellent).
+   - Input: beijing_tianqi_2018.csv (csv)
+   - Output: output_perfect_weather.csv (csv)
+
+7. Add a new column 'wencha' (maximum temperature - minimum temperature).
+   - Input: beijing_tianqi_2018.csv (csv)
+   - Output: output_wencha_added.csv (csv)
+
+8. Add a new column 'wenduType' (marking high temperature if the maximum temperature is above 30, low temperature if the minimum temperature is below -10, otherwise normal temperature).
+   - Input: beijing_tianqi_2018.csv (csv)
+   - Output: output_wenduType_added.csv (csv)
+
+9. How many types of 'fengxiang' are there in the whole year of 2018? How many days does each type correspond to?
+   - Input: beijing_tianqi_2018.csv (csv)
+   - Output: output_fengxiang_counts.csv (csv)
+
+10. What is the correlation coefficient between air quality 'aqi' and maximum temperature?
+    - Input: beijing_tianqi_2018.csv (csv)
+    - Output: output_corr_aqi_max_temp.csv (csv)
+
+11. What is the correlation coefficient between air quality 'aqi' and temperature difference 'wencha'?
+    - Input: beijing_tianqi_2018.csv (csv)
+    - Output: output_corr_aqi_wencha.csv (csv)",Data cleaning and preprocessing,Indexed Data Validation,"def indexed_data_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output_indexed.csv"")
+    output_indexed = output.set_index('ymd')
+    return output_indexed.equals(ground_truth.set_index('ymd'))",Data exploration and statistics understand,Weather Lookup Validation,"def weather_lookup_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output_march_01_2018.csv"")
+    expected_data = ground_truth.loc[ground_truth['ymd'] == '2018-03-01']
+    return output.equals(expected_data)",Data cleaning and preprocessing,Temperature Cleaning Validation,"def temperature_cleaning_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output_temperature_cleaned.csv"")
+    ground_truth['bWendu'] = ground_truth['bWendu'].str.replace(' ℃', '')
+    ground_truth['yWendu'] = ground_truth['yWendu'].str.replace(' ℃', '')
+    return output.equals(ground_truth)",Data exploration and statistics understand,Temperature Range Validation,"def temperature_range_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output_august_temperatures.csv"")
+    start_date = '2018-08-01'
+    filtered_data = ground_truth[(ground_truth['ymd'] >= start_date) & (ground_truth['ymd'] < '2018-08-08')]
+    return output.equals(filtered_data[['ymd', 'bWendu', 'yWendu']])",Data exploration and statistics understand,Below Negative Temperature Check,"def below_negative_ten_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output_below_negative_10.csv"")
+    filtered_data = ground_truth[ground_truth['yWendu'].astype(float) < -10]
+    return output.equals(filtered_data)",Data exploration and statistics understand,Perfect Weather Validation,"def perfect_weather_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output_perfect_weather.csv"")
+    filtered_data = ground_truth[(ground_truth['bWendu'].astype(float) < 30) &
+                                  (ground_truth['yWendu'].astype(float) > 15) &
+                                  (ground_truth['tianqi'] == 'sunny') &
+                                  (ground_truth['aqiInfo'] == 'excellent')]
+    return output.equals(filtered_data)",Data cleaning and preprocessing,Wencha Calculation Validation,"def wencha_calculation_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output_wencha_added.csv"")
+    ground_truth['wencha'] = ground_truth['bWendu'].astype(float) - ground_truth['yWendu'].astype(float)
+    return output.equals(ground_truth)",Data cleaning and preprocessing,WenduType Classification Validation,"def wendu_type_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output_wenduType_added.csv"")
+    conditions = [
+        (ground_truth['bWendu'].astype(float) > 30),
+        (ground_truth['yWendu'].astype(float) < -10)
+    ]
+    choices = ['high temperature', 'low temperature']
+    ground_truth['wenduType'] = pd.Series(pd.cut(
+        ground_truth['bWendu'].astype(float).where(conditions[0], margin={'type': 'normal temperature'}),
+        bins=[-float('inf'), -10, 30, float('inf')],
+        labels=choices,
+        include_lowest=True
+    ))
+    return output.equals(ground_truth)",Data exploration and statistics understand,Wind Direction Count Validation,"def wind_direction_count_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output_fengxiang_counts.csv"")
+    count_series = ground_truth['fengxiang'].value_counts()
+    expected_output = count_series.reset_index().rename(columns={'index': 'fengxiang', 'fengxiang': 'count'})
+    return output.equals(expected_output)",Data exploration and statistics understand,Correlation Aqi Max Temp,"def correlation_aqi_max_temp_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output_corr_aqi_max_temp.csv"")
+    correlation = ground_truth['aqi'].corr(ground_truth['bWendu'].astype(float))
+    return output['correlation'][0] == correlation",Data exploration and statistics understand,Correlation Aqi Wencha,"def correlation_aqi_wencha_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output_corr_aqi_wencha.csv"")
+    ground_truth['wencha'] = ground_truth['bWendu'].astype(float) - ground_truth['yWendu'].astype(float)
+    correlation = ground_truth['aqi'].corr(ground_truth['wencha'])
+    return output['correlation'][0] == correlation",,,,,,,,,,,,,,,,,,,,,,,,,,,
+"(1) Read the 'Chinese provinces population data.csv' file.  
+
+(2) Check the dimensions, size, and other information of the file.  
+Input: 'Chinese provinces population data.csv'  
+Output: 'file_info.txt' (Text file containing dimensions, size, and additional information)  
+
+(3) Use the describe() method to perform descriptive statistics on the population characteristics in the file.  
+Input: 'Chinese provinces population data.csv'  
+Output: 'descriptive_statistics.csv' (CSV file containing descriptive statistics of population characteristics)  
+
+(4) Use the sum function to sum the population characteristics in the file and calculate the population growth.  
+Input: 'Chinese provinces population data.csv'  
+Output: 'population_growth_summary.csv' (CSV file summarizing total populations and calculated growth)  ",Data exploration and statistics understand,File Information Accuracy,"def file_info_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('file_info.txt', sep=""\t"")  # assuming the text file uses tab separation
+    # Compare the actual size with ground truth
+    actual_size = len(output)
+    return actual_size == ground_truth['size'] and output['dimensions'].tolist() == ground_truth['dimensions']",Data exploration and statistics understand,Descriptive Statistics Consistency,"def descriptive_statistics_consistency(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('descriptive_statistics.csv')
+    # Retrieve statistics
+    actual_mean = output['mean'].tolist()
+    return actual_mean == ground_truth['mean']",Data exploration and statistics understand,Population Summation Accuracy,"def population_summation_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('population_growth_summary.csv')
+    total_population = output['total_population'].sum()
+    return total_population == ground_truth['total_population']",Data exploration and statistics understand,Population Growth Calculation Accuracy,"def population_growth_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('population_growth_summary.csv')
+    calculated_growth = output['growth'].sum()
+    return calculated_growth == ground_truth['calculated_growth']",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Given a dataset with missing values in a file named ""data.csv,"" which records the region, height, weight, age, and salary of 36 individuals, please address the following issues:
+
+(a) Calculate the proportion of missing values in each column and select the rows with at least two non-missing values in the last three columns. Save your output in a CSV file named ""missing_values_proportion.csv.""
+
+(b) Fill in the weight column reasonably by combining the data from the height and region columns. Save this updated dataset in a CSV file named ""updated_data.csv.""",Data cleaning and preprocessing,Proportion of Missing Values,"def proportion_missing_values(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""missing_values_proportion.csv"")
+    missing_counts = output.isnull().sum()
+    total_counts = len(output)
+    proportions = missing_counts / total_counts
+    return proportions",Data cleaning and preprocessing,Mean Absolute Error for Weight Imputation,"def mean_absolute_error_weight_imputation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""updated_data.csv"")
+    actual_weights = ground_truth['weight']
+    imputed_weights = output['weight']
+    mae = (abs(actual_weights - imputed_weights)).mean()
+    return mae",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Import tushare as ts  
+Import pandas as pd  
+
+# Set the Tushare token  
+ts.set_token('e645a17966d0fc3a182e82e1834f00868fad58657d143ddfbc0b3731')  
+
+# Initialize the pro interface  
+pro = ts.pro_api()  
+
+# Define the stock code and date range  
+stock_code = '601318.SH' # Modify to the stock code of China Ping An  
+start_date = '20230101'  
+end_date = '20231031'  
+
+# Use Tushare's daily interface to get the data  
+df = pro.daily(ts_code=stock_code, start_date=start_date, end_date=end_date)  
+
+# Rename the columns to standard names  
+df.columns = [c.lower() for c in df.columns]  
+df.rename(columns={'trade_date': 'date', 'close': 'close', 'vol': 'volume', 'open': 'open', 'high': 'high', 'low': 'low'}, inplace=True)  
+
+# Convert the date column to datetime type and set as index  
+df['date'] = pd.to_datetime(df['date'])  
+df = df.set_index('date')  
+
+# Save to a local .csv file  
+df.to_csv('pingan_daily_data.csv')  
+
+print(""The data has been saved to a local csv file."")  
+
+# Subtask 1: Calculate Cumulative Simple Return  
+# Input: 'pingan_daily_data.csv'  
+# Output: Cumulative simple return data as a .csv file  
+# Output Filename: 'cumulative_simple_return.csv'  
+# Description: Calculate the cumulative simple return over n trading days and save to a CSV file.  
+
+# Subtask 2: Calculate Cumulative Logarithmic Return  
+# Input: 'pingan_daily_data.csv'  
+# Output: Cumulative logarithmic return data as a .csv file  
+# Output Filename: 'cumulative_log_return.csv'  
+# Description: Calculate the cumulative logarithmic return over n trading days and save to a CSV file.  
+
+# Subtask 3: Plot Cumulative Returns  
+# Input: 'cumulative_simple_return.csv', 'cumulative_log_return.csv'  
+# Output: Cumulative return plots as image files  
+# Output Filenames: 'cumulative_simple_return_plot.png', 'cumulative_log_return_plot.png'  
+# Description: Generate plots for cumulative simple and logarithmic returns, saving each plot as a PNG file.",Data cleaning and preprocessing,Cumulative Simple Return Accuracy,"def cumulative_simple_return_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('cumulative_simple_return.csv')
+    calculated_return = output['cumulative_return'].tolist()
+    return (ground_truth == calculated_return).sum() / len(ground_truth)",Data exploration and statistics understand,Cumulative Logarithmic Return Accuracy,"def cumulative_logarithmic_return_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv('cumulative_log_return.csv')
+    calculated_return = output['cumulative_return'].tolist()
+    return (ground_truth == calculated_return).sum() / len(ground_truth)",Data visualization,Plot Validity,"def plot_validity(ground_truth):
+    import os
+    simple_plot_exists = os.path.isfile('cumulative_simple_return_plot.png')
+    log_plot_exists = os.path.isfile('cumulative_log_return_plot.png')
+    return simple_plot_exists and log_plot_exists",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"1. Preprocess the People's Daily corpus from 1998 (input: from ""199801.txt"" to ""199806.txt"") and vectorize the text using the WordVec model. Output the preprocessed data as ""preprocessed_data.csv"".
+
+2. Write a Naive Bayes classification algorithm and train it with the preprocessed data (""preprocessed_data.csv""). Output the trained model as ""naive_bayes_model.pkl"".
+
+3. Use the trained model to classify the corpus in ""news.csv"". Output the classification results as ""classification_results.csv"".
+
+4. Analyze the classification results from ""classification_results.csv"". Output the analysis report as ""classification_analysis.pdf"".",Data cleaning and preprocessing,Preprocessing Completeness,"def preprocessing_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""preprocessed_data.csv"")
+    expected_size = len(ground_truth)
+    actual_size = len(output)
+    return actual_size / expected_size",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_pickle(""naive_bayes_model.pkl"")
+    preprocessed_data = pd.read_csv(""preprocessed_data.csv"")
+    predictions = output.predict(preprocessed_data)
+    return accuracy_score(ground_truth, predictions)",Predictive modeling,Classification Accuracy,"def classification_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""classification_results.csv"")
+    predictions = output['Predicted_Labels'].tolist()
+    return accuracy_score(ground_truth, predictions)",Interpretability and report generation,Report Generation Completeness,"def report_generation_completeness(ground_truth):
+    import os
+    report_file = ""classification_analysis.pdf""
+    return os.path.exists(report_file) and os.path.getsize(report_file) > 0",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"I currently have a CSV dataset file named ""titanic_data.csv"" for Titanic disaster prediction, and I need to preprocess the data. The following are the labels: PassengerId, HomePlanet, CryoSleep, Cabin, Destination, Age, VIP, RoomService, FoodCourt, ShoppingMall, Spa, VRDeck, Name, Transported. I need you to complete the following tasks for me:
+
+(1) Check if there are any null values in the dataset;  
+   Output Filename: ""null_values_report.csv""  
+
+(2) Describe the source data;  
+   Output Filename: ""data_description.pdf""  
+
+(3) Fill in missing values (consider using mean, median, or mode for filling);  
+   Input Filename: ""titanic_data.csv""  
+   Output Filename: ""filled_data.csv""  
+
+(4) Delete unnecessary fields, such as 'Cabin', 'PassengerId', 'Ticket', etc.;  
+   Input Filename: ""filled_data.csv""
+   Output Filename: ""cleaned_data.csv""  
+
+(5) Build features, such as family_size, single status, and title;  
+   Input Filename: ""cleaned_data.csv""  
+   Output Filename: ""feature_engineered_data.csv""  
+
+(6) Discretize age and fare information;  
+   Input Filename: ""feature_engineered_data.csv""  
+   Output Filename: ""discretized_data.csv""  
+
+(7) Other data preprocessing (design as needed);  
+   Input Filename: ""discretized_data.csv""  
+   Output Filename: ""final_preprocessed_data.csv""  
+
+Please provide me with executable code.",Data cleaning and preprocessing,Null Value Detection Rate,"def null_value_detection_rate(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""null_values_report.csv"")
+    null_counts = output.sum().sum() # Assuming the report has summed up null counts for all columns
+    total_cells = output.shape[0] * output.shape[1]  # Total cells in the dataframe
+    return null_counts / total_cells",Data exploration and statistics understand,Data Description Completeness,"def data_description_completeness(ground_truth):
+    import PyPDF2
+    with open(""data_description.pdf"", ""rb"") as f:
+        reader = PyPDF2.PdfReader(f)
+        return len(reader.pages) == ground_truth  # Assuming ground truth is the expected number of pages",Data cleaning and preprocessing,Fill Missing Value Accuracy,"def fill_missing_value_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""filled_data.csv"")
+    return (output.isnull().sum().sum() == 0)  # Checking that there are no missing values",Data cleaning and preprocessing,Unnecessary Fields Removal,"def unnecessary_fields_removal(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    removed_columns = set(ground_truth) - set(output.columns)  # Comparing ground truth columns with cleaned data columns
+    return len(removed_columns) == 0  # Ensure all specified fields were removed",Data cleaning and preprocessing,Feature Engineering Completeness,"def feature_engineering_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""feature_engineered_data.csv"")
+    expected_features = set(ground_truth)
+    output_features = set(output.columns)
+    return expected_features.issubset(output_features)  # Check if all expected features are present",Data cleaning and preprocessing,Age and Fare Discretization Validation,"def age_fare_discretization_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""discretized_data.csv"")
+    return all(col in output.columns for col in ground_truth)  # Ensure that age and fare are discretized correctly into expected columns",Data cleaning and preprocessing,Final Preprocessing Validation,"def final_preprocessing_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""final_preprocessed_data.csv"")
+    return output.shape[0] == ground_truth  # Assuming ground truth is the expected number of rows in the final cleaned data",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"(1) Use TF-IDF to find the keywords in two articles. Please input the articles from ""article1.txt"" and ""article2.txt"". The output should be saved as ""keywords.csv"" containing two columns: ""Article"" and ""Keyword"", listing the keywords extracted from each article.
+
+(2) Select 20 keywords from each article, combine them into one set with position information, and calculate the term frequency for the words in this set. Output the results in ""term_frequencies.csv"" with columns: ""Keyword"", ""Article1_Term_Frequency"", ""Article2_Term_Frequency"", and ""Position"".
+
+(3) Generate the term frequency vectors for each of the two articles. The output should be saved in ""term_frequency_vectors.csv"" with rows representing the keywords and columns for ""Article1_Vector"" and ""Article2_Vector"".
+
+(4) Calculate the cosine similarity of the two vectors. Present the results in a table format and save it as ""cosine_similarity.csv"" containing columns: ""Similarity_Score"", ""Description"" (with a brief note on similarity interpretation).",Data mining,Keyword Extraction Completeness,"def keyword_extraction_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""keywords.csv"")
+    article1_keywords = set(output[output['Article'] == 'article1']['Keyword'])
+    article2_keywords = set(output[output['Article'] == 'article2']['Keyword'])
+    ground_truth_article1 = set(ground_truth['article1'])
+    ground_truth_article2 = set(ground_truth['article2'])
+    completeness_score = (len(article1_keywords.intersection(ground_truth_article1)) + 
+                          len(article2_keywords.intersection(ground_truth_article2))) / (
+                          len(ground_truth_article1) + len(ground_truth_article2))
+    return completeness_score",Data cleaning and preprocessing,Term Frequency Accuracy,"def term_frequency_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""term_frequencies.csv"")
+    ground_truth_tf = pd.read_csv(ground_truth)
+    tf_accuracy = ((output['Article1_Term_Frequency'] == ground_truth_tf['Article1_Term_Frequency']).sum() +
+                   (output['Article2_Term_Frequency'] == ground_truth_tf['Article2_Term_Frequency']).sum()) / len(output)
+    return tf_accuracy",Data exploration and statistics understand,Vector Representation Completeness,"def vector_representation_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""term_frequency_vectors.csv"")
+    ground_truth_vectors = pd.read_csv(ground_truth)
+    completeness_vector = (output['Article1_Vector'].equals(ground_truth_vectors['Article1_Vector']) and 
+                           output['Article2_Vector'].equals(ground_truth_vectors['Article2_Vector']))
+    return completeness_vector",Predictive modeling,Cosine Similarity Precision,"def cosine_similarity_precision(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_squared_error
+    output = pd.read_csv(""cosine_similarity.csv"")
+    ground_truth_similarity = pd.read_csv(ground_truth)['Similarity_Score'].tolist()
+    precision_score = mean_squared_error(ground_truth_similarity, output['Similarity_Score'], squared=False)
+    return precision_score",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Using the dataset of house prices and economic indicators provided below, please complete the following subtasks. Each subtask should generate an output file for evaluation, with specific input files where applicable.
+
+Dataset: `data.csv`
+
+Subtasks:
+
+1. Gaussian Naive Bayes Training: Train a Gaussian Naive Bayes model on the cleaned dataset and evaluate its accuracy.  
+   Input: `data.csv`  
+   Output: `gaussian_model_accuracy.csv` (contains accuracy metrics)
+
+2. Multinomial Naive Bayes Training: Train a Multinomial Naive Bayes model on the cleaned dataset and evaluate its accuracy.  
+   Input: `data.csv`  
+   Output: `multinomial_model_accuracy.csv` (contains accuracy metrics)
+
+3. Comparison of Models: Generate a comparative analysis of the accuracy of both models in a visual format.  
+   Input: `gaussian_model_accuracy.csv`, `multinomial_model_accuracy.csv`  
+   Output: `model_comparison.png` 
+
+Please ensure that the outputs contain necessary details for further evaluation.",Predictive modeling,Gaussian Naive Bayes Model Accuracy,"def gaussian_model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""gaussian_model_accuracy.csv"")
+    predictions = output['Accuracy'].tolist()  # Assuming 'Accuracy' is the column in the output file
+    return accuracy_score(ground_truth, predictions)",Predictive modeling,Multinomial Naive Bayes Model Accuracy,"def multinomial_model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""multinomial_model_accuracy.csv"")
+    predictions = output['Accuracy'].tolist()  # Assuming 'Accuracy' is the column in the output file
+    return accuracy_score(ground_truth, predictions)",Data visualization,Comparison of Model Accuracy Visualization,"def model_comparison_visualization(ground_truth):
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    
+    gaussian_data = pd.read_csv(""gaussian_model_accuracy.csv"")
+    multinomial_data = pd.read_csv(""multinomial_model_accuracy.csv"")
+    
+    # Assuming both CSVs have an 'Accuracy' column for comparison
+    gaussian_accuracy = gaussian_data['Accuracy'].values[0]
+    multinomial_accuracy = multinomial_data['Accuracy'].values[0]
+    
+    # Create a bar plot for comparison
+    models = ['Gaussian Naive Bayes', 'Multinomial Naive Bayes']
+    accuracies = [gaussian_accuracy, multinomial_accuracy]
+    
+    plt.bar(models, accuracies)
+    plt.ylabel('Accuracy')
+    plt.title('Comparison of Model Accuracies')
+    plt.ylim([0, 1])  # Assuming accuracy is between 0 and 1
+    plt.savefig(""model_comparison.png"")",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Read the dataset (input file: ""Fish.csv""). Encode the dataset to divide it into training and test sets. From the dataset's four categories of Bream, Roach, Parkki, and Perch, randomly select 2 samples from each category for the test set. The remaining samples will be used as the training set. Output the number of samples in the training and test sets in a CSV file named ""sample_counts.csv"".
+
+Next, implement the KNN algorithm with K values of 1, 5, 15, and 100 to classify all samples in the test set. Output the classification results of the test samples to a CSV file named ""classification_results.csv"".",Data cleaning and preprocessing,Number of Samples in Sets,"def sample_counts(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""sample_counts.csv"")
+    training_samples = output['Training Samples'].iloc[0]
+    test_samples = output['Test Samples'].iloc[0]
+    expected_training_samples, expected_test_samples = ground_truth
+    return (training_samples == expected_training_samples) and (test_samples == expected_test_samples)",Predictive modeling,Classification Accuracy,"def classification_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""classification_results.csv"")
+    predictions = output['Predictions'].tolist()
+    return accuracy_score(ground_truth, predictions)",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Description: It is recommended to use open-source toolkits, such as scikit-learn, which has an implementation of the Naive Bayes function for the Naive Bayes Classifier.
+
+Dataset: 
+- Input files:  
+  - ""Bayesian_Dataset_train.csv""  
+  - ""Bayesian_Dataset_test.csv""
+
+Data Description: The column names are ""Age, Occupation, Family Income, Education, Marital Status, Job Type, Family Size, Ethnicity, Gender, Workplace"". The last column is the label, indicating whether the income is greater than 50k (>50K).
+
+Task Description: Use the Naïve Bayesian method to predict whether a person's income is higher than 50K annually.
+
+Subtasks and Requirements:
+
+1. Data Preprocessing  
+   - Input: ""Bayesian_Dataset_train.csv""  
+   - Output: ""preprocessed_data.csv"" (CSV format)  
+   - Details: Clean and prepare the training dataset for modeling.
+
+2. Model Training  
+   - Input: ""preprocessed_data.csv""  
+   - Output: ""naive_bayes_model.pkl"" (Pickle format)  
+   - Details: Train the Naïve Bayes Classifier on the training dataset.
+
+3. Model Evaluation  
+   - Input: ""naive_bayes_model.pkl"", ""Bayesian_Dataset_test.csv""  
+   - Output: ""evaluation_results.csv"" (CSV format)  
+   - Details: Evaluate the model using cross-validation and leave-one-out methods, and compute statistical results, including Accuracy, Precision, Recall, F1 Score, and ROC AUC.",Data cleaning and preprocessing,Data Quality Score,"def data_quality_score(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""preprocessed_data.csv"")
+    # Example metric: percentage of missing values
+    missing_values = output.isnull().sum().sum()
+    total_values = output.size
+    quality_score = (total_values - missing_values) / total_values
+    return quality_score",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""evaluation_results.csv"")
+    predictions = output['Predictions'].tolist()
+    return accuracy_score(ground_truth, predictions)",Data exploration and statistics understand,Cross-Validation F1 Score,"def cross_validation_f1_score(ground_truth):
+    from sklearn.metrics import f1_score
+    import pandas as pd
+    output = pd.read_csv(""evaluation_results.csv"")
+    predictions = output['Predictions'].tolist()
+    return f1_score(ground_truth, predictions, average='weighted')",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,

@@ -1,0 +1,66 @@
+TMC-list:
+- code: "def euclidean_distance_correctness(output, ground_truth):\n    output_distance\
+    \ = output[0]  # extract the computed Euclidean distance from tuple\n    ground_truth_distance\
+    \ = ground_truth[0]\n    return output_distance == ground_truth_distance"
+  function: Model Accuracy
+  metric: Euclidean Distance Correctness
+  task_name: Predictive modeling
+- code: "def dataframe_structure(output, ground_truth):\n    output_df = output[1]\
+    \  # extract the DataFrame from tuple\n    ground_truth_df = ground_truth[1]\n\
+    \    return output_df.shape == ground_truth_df.shape and set(output_df.columns)\
+    \ == set(ground_truth_df.columns)"
+  function: DataFrame Shape Validation
+  metric: DataFrame Structure
+  task_name: Data cleaning and preprocessing
+- code: "def plot_axes_integrity(output, ground_truth):\n    output_axes = output[2]\
+    \  # extract the plot's Axes object from tuple\n    ground_truth_axes = ground_truth[2]\n\
+    \    return output_axes.get_lines() == ground_truth_axes.get_lines() and output_axes.get_title()\
+    \ == ground_truth_axes.get_title()"
+  function: Plot Validity
+  metric: Plot Axes Integrity
+  task_name: Data visualization
+data: 'a = [10, 20, 30, 40, 50]
+
+  b = [50, 40, 30, 20, 10]
+
+  args = (a, b)'
+ground_truth: "import pandas as pd\nfrom scipy.spatial import distance\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(a, b):\n    # Calculate the Euclidean distance between\
+  \ the two lists\n    euclidean_dist = distance.euclidean(a, b)\n    \n    # Create\
+  \ a DataFrame from the lists with indices 'A' and 'B'\n    df = pd.DataFrame({'A':\
+  \ a, 'B': b})\n    \n    # Plot the values and display the Euclidean distance\n\
+  \    fig, ax = plt.subplots()\n    df.plot(ax=ax)\n    ax.set_title(f'Euclidean\
+  \ Distance: {euclidean_dist:.2f}')\n    ax.legend(['A', 'B'])\n    \n    # Return\
+  \ the tuple with the required outputs\n    return (euclidean_dist, df, ax)"
+prompt: "Calculate the Euclidean distance between two lists, create a Pandas DataFrame\
+  \ from these lists with indices 'A' and 'B', and then draw the values with a line\
+  \ displaying the Euclidean distance.\nThe function should output with: tuple(euclidean_dist:\
+  \ float, df: pd.DataFrame, plot_axes: matplotlib.axes.Axes)  \neuclidean_dist: The\
+  \ computed Euclidean distance between the two lists.  \ndf: A DataFrame containing\
+  \ the two lists as columns.  \nplot_axes: The generated plot's Axes object.  \n\
+  You should write self-contained code starting with:  \n```\nimport pandas as pd\n\
+  from scipy.spatial import distance\nimport matplotlib.pyplot as plt\ndef task_func(a,\
+  \ b):\n```"
+testcase: "import unittest\n\nclass TestCases(unittest.TestCase):\n    def test_case_1(self):\n\
+  \        a = [1, 2, 3]\n        b = [2, 3, 4]\n        euclidean_distance, df, ax\
+  \ = task_func(a, b)\n        self.assertAlmostEqual(euclidean_distance, 1.732, places=3)\n\
+  \        self.assertTrue('A' in df.columns)\n        self.assertTrue('B' in df.columns)\n\
+  \        self.assertListEqual(df['A'].tolist(), a)\n        self.assertListEqual(df['B'].tolist(),\
+  \ b)\n        lines = ax.get_lines()\n        self.assertTrue(len(lines) > 0)\n\n\
+  \    def test_case_2(self):\n        a = [1, 1, 1]\n        b = [1, 1, 1]\n    \
+  \    euclidean_distance, df, ax = task_func(a, b)\n        self.assertEqual(euclidean_distance,\
+  \ 0)\n        self.assertListEqual(df['A'].tolist(), a)\n        self.assertListEqual(df['B'].tolist(),\
+  \ b)\n        lines = ax.get_lines()\n        self.assertTrue(len(lines) > 0)\n\n\
+  \    def test_case_3(self):\n        a = [0, 5, 10]\n        b = [10, 5, 0]\n  \
+  \      euclidean_distance, df, ax = task_func(a, b)\n        self.assertAlmostEqual(euclidean_distance,\
+  \ 14.142, places=3)\n        self.assertListEqual(df['A'].tolist(), a)\n       \
+  \ self.assertListEqual(df['B'].tolist(), b)\n        lines = ax.get_lines()\n  \
+  \      self.assertTrue(len(lines) > 0)\n\n    def test_case_4(self):\n        a\
+  \ = [3, 3, 3, 3]\n        b = [4, 4, 4, 4]\n        euclidean_distance, df, ax =\
+  \ task_func(a, b)\n        self.assertAlmostEqual(euclidean_distance, 2.0, places=3)\n\
+  \        self.assertListEqual(df['A'].tolist(), a)\n        self.assertListEqual(df['B'].tolist(),\
+  \ b)\n        lines = ax.get_lines()\n        self.assertTrue(len(lines) > 0)\n\n\
+  \    def test_case_5(self):\n        a = [1, 2, 3, 4, 5]\n        b = [5, 4, 3,\
+  \ 2, 1]\n        euclidean_distance, df, ax = task_func(a, b)\n        self.assertAlmostEqual(euclidean_distance,\
+  \ 6.325, places=3)\n        self.assertListEqual(df['A'].tolist(), a)\n        self.assertListEqual(df['B'].tolist(),\
+  \ b)\n        lines = ax.get_lines()\n        self.assertTrue(len(lines) > 0)"

@@ -1,0 +1,75 @@
+TMC-list:
+- code: "def data_completeness(output, ground_truth):\n    year_distribution_output\
+    \ = output[1]\n    year_distribution_ground_truth = ground_truth[1]\n    return\
+    \ year_distribution_output.isna().sum() == year_distribution_ground_truth.isna().sum()"
+  function: Data Completeness
+  metric: Data Completeness
+  task_name: Data cleaning and preprocessing
+- code: "def histogram_representation(output, ground_truth):\n    hist_plot_output\
+    \ = output[0]\n    hist_plot_ground_truth = ground_truth[0]\n    return hist_plot_output.get_children()\
+    \ == hist_plot_ground_truth.get_children()  # checks if the plots have the same\
+    \ number of patches"
+  function: Visualization Quality
+  metric: Histogram Representation
+  task_name: Data visualization
+- code: "def year_count_consistency(output, ground_truth):\n    year_distribution_output\
+    \ = output[1]\n    year_distribution_ground_truth = ground_truth[1]\n    return\
+    \ year_distribution_output.sum() == year_distribution_ground_truth.sum()  # checks\
+    \ if the total counts are the same"
+  function: Data Consistency
+  metric: Year Count Consistency
+  task_name: Data exploration and statistics understand
+data: "import os\n\noutput_dir = './output/data.csv'\nif not os.path.exists(output_dir):\n\
+  \    os.makedirs(output_dir)\n# Prepare CSV files for testing\nvalid_data_csv =\
+  \ os.path.join(output_dir, 'valid_data.csv')\nwith open(valid_data_csv, 'w') as\
+  \ f:\n    f.write(\"date\\n2020-01-01\\n2021-02-02\\n2024-04-01\\n2025-05-01\\n2026-06-01\\\
+  n2027-07-01\\n2023-08-01\\n2020-09-01\\n2020-10-01\\n2021-11-01\\n2027-12-01\\n2024-10-11\\\
+  n2025-09-01\\n2026-08-01\\n2027-07-01\\n2027-06-01\\n2020-05-01\\n2020-04-01\\n2031-03-01\\\
+  n2027-02-01\\n2022-01-01\")\nargs = (valid_data_csv, 'date')"
+ground_truth: "import os\nimport pandas as pd\nfrom dateutil.parser import parse\n\
+  import matplotlib.pyplot as plt\n\nOUTPUT_DIR = './output'\n\ndef task_func(csv_path=os.path.join(OUTPUT_DIR,\
+  \ 'data.csv'), date_column='date'):\n    # Ensure output directory exists\n    os.makedirs(OUTPUT_DIR,\
+  \ exist_ok=True)\n\n    # Read the CSV file\n    df = pd.read_csv(csv_path)\n\n\
+  \    # Convert date strings to datetime objects\n    df[date_column] = pd.to_datetime(df[date_column])\n\
+  \n    # Extract years and count occurrences\n    year_distribution = df[date_column].dt.year.value_counts().sort_index()\n\
+  \n    # Plot the histogram of year distribution\n    hist_plot = year_distribution.plot(kind='bar',\
+  \ figsize=(10, 6), title='Year Distribution', xlabel='Year', ylabel='Count')\n\n\
+  \    # Show the plot\n    plt.tight_layout()\n    plt.show()\n\n    return hist_plot,\
+  \ year_distribution"
+prompt: "Read a CSV file, convert a column of date strings into datetime objects,\
+  \ and draw a histogram of the year distribution of these dates. The function should\
+  \ output with: tuple(hist_plot: matplotlib.axes._axes.Axes, year_distribution: pandas.Series)\n\
+  hist_plot: A histogram plot object showing the distribution of years.  \nyear_distribution:\
+  \ A Series containing the counts of each year present in the data.  \nYou should\
+  \ write self-contained code starting with:  \n```\nimport os\nimport pandas as pd\n\
+  from dateutil.parser import parse\nOUTPUT_DIR = './output'\ndef task_func(csv_path=os.path.join(OUTPUT_DIR,\
+  \ 'data.csv'), date_column='date'):\n```"
+testcase: "import unittest\nimport shutil\nimport os\nimport matplotlib.pyplot as\
+  \ plt\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n        self.output_dir\
+  \ = OUTPUT_DIR\n        if not os.path.exists(self.output_dir):\n            os.makedirs(self.output_dir)\n\
+  \        # Prepare CSV files for testing\n        self.valid_data_csv = os.path.join(self.output_dir,\
+  \ 'valid_data.csv')\n        with open(self.valid_data_csv, 'w') as f:\n       \
+  \     f.write(\"date\\n2020-01-01\\n2021-02-02\")\n        self.empty_data_csv =\
+  \ os.path.join(self.output_dir, 'empty_data.csv')\n        open(self.empty_data_csv,\
+  \ 'w').close()  # Create an empty file\n        # No need to create an invalid data\
+  \ CSV because parsing errors are tested dynamically\n        self.different_column_data_csv\
+  \ = os.path.join(self.output_dir, 'different_column_data.csv')\n        with open(self.different_column_data_csv,\
+  \ 'w') as f:\n            f.write(\"different_date_column\\n2020-01-01\\n2021-02-02\"\
+  )\n\n    def tearDown(self):\n        shutil.rmtree(self.output_dir, ignore_errors=True)\n\
+  \n    def test_valid_data(self):\n        \"\"\"Test with valid date data.\"\"\"\
+  \n        histogram_plot, _ = task_func(self.valid_data_csv, 'date')\n        self.assertIsInstance(histogram_plot,\
+  \ plt.Axes)\n    \n    def test_empty_file(self):\n        \"\"\"Test with an empty\
+  \ CSV file.\"\"\"\n        with self.assertRaises(ValueError):  # Assuming pandas\
+  \ raises a ValueError for an empty CSV\n            task_func(self.empty_data_csv,\
+  \ 'date')\n    \n    def test_nonexistent_file(self):\n        \"\"\"Test with a\
+  \ nonexistent CSV file path.\"\"\"\n        nonexistent_csv = os.path.join(self.output_dir,\
+  \ 'nonexistent.csv')\n        with self.assertRaises(FileNotFoundError):\n     \
+  \       task_func(nonexistent_csv, 'date')\n    \n    def test_different_date_column(self):\n\
+  \        \"\"\"Test using a different date column name.\"\"\"\n        histogram_plot,\
+  \ _ = task_func(self.different_column_data_csv, 'different_date_column')\n     \
+  \   self.assertIsInstance(histogram_plot, plt.Axes)\n    \n    def test_invalid_data(self):\n\
+  \        \"\"\"Dynamically test with invalid date strings; expecting the function\
+  \ to handle errors gracefully.\"\"\"\n        invalid_data_csv = os.path.join(self.output_dir,\
+  \ 'invalid_data.csv')\n        with open(invalid_data_csv, 'w') as f:\n        \
+  \    f.write(\"date\\nnot-a-date\\n2021-13-01\")\n        with self.assertRaises(ValueError):\n\
+  \            task_func(invalid_data_csv, 'date')"

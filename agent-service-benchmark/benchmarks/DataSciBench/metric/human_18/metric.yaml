@@ -1,0 +1,83 @@
+"TMC-list":
+- "code": |-
+    def pca_explained_variance(ground_truth):
+        import pandas as pd
+        from sklearn.decomposition import PCA
+        
+        output = pd.read_csv("pca_results.csv")
+        explained_variance = output['explained_variance_ratio'].tolist()
+
+        output_gt = pd.read_csv(ground_truth)
+        explained_variance_gt = output_gt['explained_variance_ratio'].tolist()
+        
+        # Calculation of explained variance
+        return sum(explained_variance) <= sum(explained_variance_gt)
+  "function": |-
+    Explained Variance Ratio
+  "ground_truth": |-
+    pca_results.csv
+  "metric": |-
+    PCA Explained Variance Ratio
+  "task_name": |-
+    Predictive modeling
+- "code": |-
+    def visualization_completeness(ground_truth):
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        
+        output = pd.read_csv("pca_results.csv")
+        plt_data = output[['PC1', 'PC2']]
+        # Check the number of data points plotted
+        num_points = plt_data.shape[0]
+
+        output_gt = pd.read_csv(ground_truth)
+        plt_data_gt = output_gt[['PC1', 'PC2']]
+        num_points_gt = plt_data_gt.shape[0]
+        
+        # Here we could check against the ground truth if needed
+        return num_points == num_points_gt
+  "function": |-
+    Visualization Completeness
+  "ground_truth": |-
+    pca_results.csv
+  "metric": |-
+    Visualization Completeness (number of PCA points displayed)
+  "task_name": |-
+    Data visualization
+- "code": |-
+    def model_accuracy(ground_truth):
+        pre_accuracy = float(open("model_accuracy.txt", "r").read().strip().split(': ')[-1])
+        gt_accuracy = float(open(ground_truth, "r").read().strip().split(': ')[-1])
+        return pre_accuracy >= gt_accuracy
+  "function": |-
+    Model Accuracy
+  "ground_truth": |-
+    model_accuracy.txt
+  "metric": |-
+    Classifier Model Accuracy
+  "task_name": |-
+    Predictive modeling
+"prompt": |-
+  You are provided with a dataset located at `data.csv`. The dataset contains the following columns:
+
+  - culmen_length_mm: The length of the penguin's culmen in mm.
+  - culmen_depth_mm: The depth of the penguin's culmen in mm.
+  - flipper_length_mm: The length of the penguin's flipper in mm.
+  - body_mass_g: The body mass of the penguin in grams.
+  - sex: The sex of the penguin.
+
+  Your task is to perform the following subtasks:
+
+  1. **Perform PCA on the dataset to reduce dimensionality.**
+     - Input: `data.csv`
+     - Output: `pca_results.csv` (containing the PCA components and explained variance)
+
+  2. **Visualize the PCA results in 2D.**
+     - Input: `pca_results.csv`
+     - Output: `pca_visualization.png` (a plot showing the first two PCA components)
+
+  3. **Train a classifier to predict the sex of the penguins using the reduced features.**
+     - Input: `pca_results.csv`
+     - Output: `model_accuracy.txt` (containing the accuracy of the trained classifier, with format "Classifier Accuracy: XX") 
+
+  Make sure that each output file is well-formatted for further evaluation.

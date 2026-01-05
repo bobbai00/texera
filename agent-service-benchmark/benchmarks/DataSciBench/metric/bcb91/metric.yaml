@@ -1,0 +1,57 @@
+TMC-list:
+- code: "def r_squared(output, ground_truth):\n    return (output[2] == ground_truth[2]).all()"
+  function: R-squared Value
+  metric: R-squared Value
+  task_name: Predictive modeling
+- code: "def plot_verification(output, ground_truth):\n    _, _, _, _, _, ax = output\n\
+    \    if ax.has_data():  # Check if the plot contains data\n        return True\n\
+    \    return False  # If not, it indicates an issue with the plot generation"
+  function: Plot Validity
+  metric: Plot Verification
+  task_name: Data visualization
+data: "import pandas as pd\n\ndata = pd.DataFrame(\n    {'Height': [161, 175, 180,\
+  \ 175, 168, 175, 180, 175, 176, 169], 'Weight': [53, 74, 60, 87, 55, 49, 62, 65,\
+  \ 58, 73], 'Age': [20, 34, 26, 40, 28, 32, 30, 35, 49, 31]})\nargs = (data, 'Height',\
+  \ 'Age')"
+ground_truth: "from scipy.stats import linregress\nimport matplotlib.pyplot as plt\n\
+  import pandas as pd\n\ndef task_func(data, column1, column2):\n    if column1 not\
+  \ in data.columns or column2 not in data.columns:\n        raise ValueError(f\"\
+  Specified columns '{column1}' or '{column2}' do not exist in the DataFrame.\")\n\
+  \    \n    x = data[column1]\n    y = data[column2]\n    \n    slope, intercept,\
+  \ r_value, p_value, std_err = linregress(x, y)\n    \n    plt.scatter(x, y, label='Original\
+  \ Data')\n    plt.plot(x, slope * x + intercept, color='red', label='Fitted Line')\n\
+  \    plt.xlabel(column1)\n    plt.ylabel(column2)\n    plt.title('Linear Regression')\n\
+  \    plt.legend()\n    ax = plt.gca()\n    plt.show()\n    \n    return (slope,\
+  \ intercept, r_value, p_value, std_err, ax)"
+prompt: "Perform a linear regression on two columns of a dataset and record the result.\
+  \ Additionally, generate a plot representing the original data and the fitted line.\
+  \ The function should raise the exception for: ValueError: If the specified columns\
+  \ do not exist in the DataFrame. The function should output with: tuple(slope: float,\
+  \ intercept: float, r_value: float, p_value: float, std_err: float, ax: matplotlib.axes.Axes)\n\
+  slope: The slope of the regression line. \nintercept: The y-intercept of the regression\
+  \ line. \nr_value: The correlation coefficient of the regression. \np_value: The\
+  \ p-value for the hypothesis test. \nstd_err: The standard error of the estimated\
+  \ slope. \nax: The matplotlib Axes object containing the plot. You should write\
+  \ self-contained code starting with: \n```\nfrom scipy.stats import linregress\n\
+  import matplotlib.pyplot as plt\ndef task_func(data, column1, column2):\n```"
+testcase: "import unittest\nimport pandas as pd\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        self.data = pd.DataFrame({\n            'Column1':\
+  \ [14, 1, 7, 10, 5],\n            'Column2': [25, 22, 8, 15, 11]\n        })\n\n\
+  \    def test_regression_results(self):\n        output = task_func(self.data, 'Column1',\
+  \ 'Column2')\n        result, _ = output[:-1], output[-1]\n        self.assertIsInstance(result,\
+  \ tuple)\n        self.assertEqual(len(result), 5)\n\n    def test_invalid_columns(self):\n\
+  \        with self.assertRaises(ValueError):\n            task_func(self.data, 'Invalid1',\
+  \ 'Column2')\n\n    def test_plot_axes(self):\n        ax = task_func(self.data,\
+  \ 'Column1', 'Column2')[-1]\n        self.assertEqual(len(ax.lines), 2)  # Original\
+  \ data and fitted line\n\n    def test_empty_dataframe(self):\n        with self.assertRaises(ValueError):\n\
+  \            task_func(pd.DataFrame(), 'Column1', 'Column2')\n\n    def test_single_point_regression(self):\n\
+  \        single_point_data = pd.DataFrame({'Column1': [1], 'Column2': [2]})\n  \
+  \      output = task_func(single_point_data, 'Column1', 'Column2')\n        result,\
+  \ ax = output[:-1], output[-1]\n        # self.assertEqual(result[0], np.nan)\n\
+  \        self.assertEqual(result[2], 0)  # Slope should be 0 for single point\n\n\
+  \    def test_return_values(self):\n        output = task_func(self.data, 'Column1',\
+  \ 'Column2')\n        result, ax = output[:-1], output[-1]\n        # print(result)\n\
+  \        # with open('df_contents.txt', 'w') as file:\n        #     file.write(str(result))\n\
+  \        expect = (0.3456790123456789, 13.641975308641975, 0.23699046752221187,\
+  \ 0.7011032163730078, 0.8181438416490141)\n        for res, exp in zip(result, expect):\n\
+  \            self.assertAlmostEqual(res, exp, places=7)"

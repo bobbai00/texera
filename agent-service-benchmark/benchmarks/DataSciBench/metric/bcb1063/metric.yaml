@@ -1,0 +1,73 @@
+TMC-list:
+- code: "def explained_variance(output, ground_truth):\n    output_variance = output[1]\
+    \  # extract explained variance from the output tuple\n    ground_truth_variance\
+    \ = ground_truth[1]\n    return output_variance == ground_truth_variance"
+  function: Data Validity
+  metric: Explained Variance
+  task_name: Data exploration and statistics understand
+- code: "def plot_title_verification(output, ground_truth):\n    ax = output[0]  #\
+    \ extract Axes object from output tuple\n    return ax.title.get_text() == \"\
+    Explained Variance Ratio of Principal Components\""
+  function: Title Verification
+  metric: Plot Title Verification
+  task_name: Data visualization
+- code: "def output_type_verification(output, ground_truth):\n    return isinstance(output[0],\
+    \ plt.Axes) and isinstance(output[1], float)"
+  function: Model Accuracy
+  metric: Output Type Verification
+  task_name: Predictive modeling
+data: 'import numpy as np
+
+  args = (np.array([[np.random.randint(1, 10) + j for i in range(4)] for j in range(6)]),)'
+ground_truth: "from matplotlib import pyplot as plt\nfrom sklearn.decomposition import\
+  \ PCA\nimport numpy as np\n\ndef task_func(arr):\n    # Sum the rows of the array\n\
+  \    row_sums = np.sum(arr, axis=1).reshape(-1, 1)\n    \n    # Perform PCA\n  \
+  \  pca = PCA(n_components=1)\n    pca.fit(row_sums)\n    \n    # Extract explained\
+  \ variance ratio\n    explained_variance = pca.explained_variance_ratio_[0]\n  \
+  \  \n    # Plotting the explained variance ratio\n    fig, ax = plt.subplots()\n\
+  \    ax.bar(['Principal Component 1'], [explained_variance])\n    ax.set_ylim(0,\
+  \ 1)\n    ax.set_title(\"Explained Variance Ratio of Principal Components\")\n \
+  \   ax.set_ylabel(\"Explained Variance Ratio\")\n    \n    plt.show()\n    \n  \
+  \  return ax, explained_variance"
+prompt: 'Performs Principal Component Analysis (PCA) on the sum of rows of a 2D numpy
+  array and plots the explained variance ratio. Note that: The title of the plot is
+  set to "Explained Variance Ratio of Principal Components". Notes: The function assumes
+  that ''arr'' is a valid 2D numpy array. Only the first principal component is considered
+  in this analysis. The plot illustrates the proportion of the dataset''s variance
+  that lies along the axis of this first principal component. The function should
+  output with: tuple(ax: matplotlib.axes.Axes, explained_variance: float) ax: An Axes
+  object from matplotlib. explained_variance: The explained variance ratio of the
+  first principal component. You should write self-contained code starting with:
+
+  ```
+
+  from matplotlib import pyplot as plt
+
+  from sklearn.decomposition import PCA
+
+  def task_func(arr):
+
+  ```'
+testcase: "import unittest\nimport numpy as np\nfrom sklearn.decomposition import\
+  \ PCA\nfrom matplotlib import pyplot as plt\n\nclass TestCases(unittest.TestCase):\n\
+  \    \"\"\"Tests for function task_func.\"\"\"\n\n    def test_basic_functionality(self):\n\
+  \        \"\"\"Test basic functionality of task_func.\"\"\"\n        arr = np.array([[i\
+  \ + j for i in range(3)] for j in range(5)])\n        result, _ = task_func(arr)\n\
+  \        self.assertIsInstance(result, plt.Axes)\n\n    def test_plot_title_verification(self):\n\
+  \        \"\"\"Test that the plot title is correct.\"\"\"\n        arr = np.array([[i\
+  \ + j for i in range(3)] for j in range(5)])\n        result, _ = task_func(arr)\n\
+  \        self.assertEqual(\n            result.get_title(), \"Explained Variance\
+  \ Ratio of Principal Components\"\n        )\n\n    def test_bar_count_verification(self):\n\
+  \        \"\"\"Test that the number of bars is correct.\"\"\"\n        arr = np.array([[i\
+  \ + j for i in range(3)] for j in range(5)])\n        result, _ = task_func(arr)\n\
+  \        n_components = min(2, arr.sum(axis=1).reshape(-1, 1).shape[1])\n      \
+  \  self.assertEqual(len(result.patches), n_components)\n\n    def test_variance_ratios_verification(self):\n\
+  \        \"\"\"Test that the variance ratios are correct.\"\"\"\n        arr = np.array([[i\
+  \ + j for i in range(3)] for j in range(5)])\n        row_sums = arr.sum(axis=1)\n\
+  \        n_components = min(2, row_sums.reshape(-1, 1).shape[1])\n        pca =\
+  \ PCA(n_components=n_components)\n        pca.fit(row_sums.reshape(-1, 1))\n   \
+  \     result, _ = task_func(arr)\n        for bar, variance_ratio in zip(result.patches,\
+  \ pca.explained_variance_ratio_):\n            self.assertAlmostEqual(bar.get_height(),\
+  \ variance_ratio)\n\n    def test_empty_input(self):\n        \"\"\"Test that an\
+  \ empty input raises a ValueError.\"\"\"\n        arr = np.array([])\n        with\
+  \ self.assertRaises(ValueError):\n            task_func(arr)"

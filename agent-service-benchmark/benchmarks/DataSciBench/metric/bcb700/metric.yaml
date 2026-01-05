@@ -1,0 +1,48 @@
+TMC-list:
+- code: "def dataframe_completeness(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the correlation matrix DataFrame from tuple\n    ground_truth_df\
+    \ = ground_truth[0]\n    # Check for NaN values in both DataFrames\n    completeness_output\
+    \ = output_df.isnull().sum().sum() == 0\n    completeness_ground_truth = ground_truth_df.isnull().sum().sum()\
+    \ == 0\n    return completeness_output == completeness_ground_truth"
+  function: Data Completeness
+  metric: DataFrame Completeness
+  task_name: Data cleaning and preprocessing
+- code: "def correlation_matrix_accuracy(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the correlation matrix DataFrame from tuple\n    ground_truth_df\
+    \ = ground_truth[0]\n    # Check if the correlation matrix is close to the ground\
+    \ truth within a tolerance\n    return output_df.equals(ground_truth_df)"
+  function: Data Accuracy
+  metric: Correlation Matrix Accuracy
+  task_name: Data exploration and statistics understand
+data: "data = [\n    [10.5, 20.1, 30.2],\n    [15.2, 25.4, 35.1],\n    [20.5, 30.6,\
+  \ 40.8],\n    [25.1, 35.2, 50.0],\n    [30.3, 26.4, 40.5],\n    [35.7, 45.1, 60.2]\n\
+  ]\ncols = ['x', 'y', 'z']\nargs = (data, cols)"
+ground_truth: "import pandas as pd\nimport numpy as np\n\ndef task_func(data, cols):\n\
+  \    # Turn the provided data into a DataFrame\n    df = pd.DataFrame(data, columns=cols)\n\
+  \    \n    # Calculate the correlation matrix of numeric columns\n    correlation_matrix\
+  \ = df.corr()\n    \n    # Return the correlation matrix as a tuple\n    return\
+  \ (correlation_matrix,)"
+prompt: 'Turn the provided data into a DataFrame and then calculate the correlation
+  matrix of numeric columns. The function should output with: tuple(correlation_matrix:
+  pandas.DataFrame) correlation_matrix: The correlation matrix. You should write self-contained
+  code starting with: ``` import pandas as pd import numpy as np def task_func(data,
+  cols): ```'
+testcase: "import unittest\n\nclass TestCases(unittest.TestCase):\n    def test_case_1(self):\n\
+  \        df = pd.DataFrame([[5.1, 3.5, 1.4], [4.9, 3.0, 1.4], [4.7, 3.2, 1.3]],\
+  \ columns=['x', 'y', 'z'])\n        correlation_matrix = task_func([[5.1, 3.5, 1.4],\
+  \ [4.9, 3.0, 1.4], [4.7, 3.2, 1.3]], ['x', 'y', 'z'])\n        self.assertTrue(np.allclose(correlation_matrix,\
+  \ df.corr()))\n\n    def test_case_2(self):\n        df = pd.DataFrame([[1.0, 2.0,\
+  \ 3.0], [4.0, 5.0, 6.0]], columns=['x', 'y', 'z'])\n        correlation_matrix =\
+  \ task_func([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], ['x', 'y', 'z'])\n        self.assertTrue(np.allclose(correlation_matrix,\
+  \ df.corr()))\n\n    def test_case_3(self):\n        df = pd.DataFrame([[1.0, 2.0,\
+  \ 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], columns=['x', 'y', 'z'])\n        correlation_matrix\
+  \ = task_func([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], ['x', 'y', 'z'])\n\
+  \        self.assertTrue(np.allclose(correlation_matrix, df.corr()))\n\n    def\
+  \ test_case_4(self):\n        df = pd.DataFrame([[-1.0, -2.0, -3.0], [-4.0, -5.0,\
+  \ -6.0]], columns=['x', 'y', 'z'])\n        correlation_matrix = task_func([[-1.0,\
+  \ -2.0, -3.0], [-4.0, -5.0, -6.0]], ['x', 'y', 'z'])\n        self.assertTrue(np.allclose(correlation_matrix,\
+  \ df.corr()))\n\n    def test_case_5(self):\n        df = pd.DataFrame([[-1.0, -2.0,\
+  \ -3.0], [-4.0, -5.0, -6.0], [-7.0, -8.0, -9.0]], columns=['x', 'y', 'z'])\n   \
+  \     correlation_matrix = task_func([[-1.0, -2.0, -3.0], [-4.0, -5.0, -6.0], [-7.0,\
+  \ -8.0, -9.0]], ['x', 'y', 'z'])\n        self.assertTrue(np.allclose(correlation_matrix,\
+  \ df.corr()))"

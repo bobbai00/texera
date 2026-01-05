@@ -1,0 +1,83 @@
+TMC-list:
+- code: "def validity_of_dataframe(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    return output_df.equals(ground_truth_df)"
+  function: DataFrame Shape Validation
+  metric: Validity of DataFrame
+  task_name: Data cleaning and preprocessing
+- code: "def frequency_distribution_consistency(output, ground_truth):\n    output_df\
+    \ = output[0]  # extract the DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    return all(output_df['Frequency'].values == ground_truth_df['Frequency'].values)"
+  function: Data Consistency
+  metric: Frequency Distribution Consistency
+  task_name: Data exploration and statistics understand
+- code: "def validate_plot_axes(output, ground_truth):\n    output_axes = output[1]\
+    \  # extract the Axes object from tuple\n    ground_truth_axes = ground_truth[1]\n\
+    \    return output_axes.get_title() == ground_truth_axes.get_title() and \\\n\
+    \           output_axes.get_xlabel() == ground_truth_axes.get_xlabel() and \\\n\
+    \           output_axes.get_ylabel() == ground_truth_axes.get_ylabel()"
+  function: Plot Validity
+  metric: Visualization Axes Validation
+  task_name: Data visualization
+data: args = ('ABCD1234EF56',)
+ground_truth: "import binascii\nimport numpy as np\nimport matplotlib.pyplot as plt\n\
+  import pandas as pd\n\ndef task_func(hex_str):\n    # Normalize hex string, remove\
+  \ '0x' or '\\x' prefix if present\n    hex_str = hex_str.replace('0x', '').replace('\\\
+  \\x', '')\n    \n    # Validate if the string is a valid hex\n    if not all(c in\
+  \ '0123456789abcdefABCDEF' for c in hex_str):\n        raise ValueError(\"Invalid\
+  \ hex string\")\n\n    # Convert hex string to bytes\n    byte_data = binascii.unhexlify(hex_str)\n\
+  \n    # Record the frequency of each byte\n    byte_values, counts = np.unique(np.frombuffer(byte_data,\
+  \ dtype=np.uint8), return_counts=True)\n    \n    # Create DataFrame for byte frequencies\n\
+  \    byte_freq_df = pd.DataFrame({\n        'Byte Value': byte_values,\n       \
+  \ 'Frequency': counts\n    })\n\n    # Plot the frequencies\n    fig, ax = plt.subplots()\n\
+  \    ax.bar(byte_freq_df['Byte Value'], byte_freq_df['Frequency'])\n    ax.set_xlabel('Byte\
+  \ Value')\n    ax.set_ylabel('Frequency')\n    ax.set_title('Byte Frequency Distribution')\n\
+  \    \n    return byte_freq_df, ax"
+prompt: '"Converts a hex string representation into actual bytes and records the frequency
+  of each byte value. The function supports hex strings with or without ''\\x'' prefix.
+  The function should raise the exception for: ValueError: If ''hex_str'' is not a
+  valid hex string. The function should output with: tuple(byte_freq_df: pandas.DataFrame,
+  plot_axes: matplotlib.axes.Axes) byte_freq_df: A DataFrame of byte frequencies with
+  columns [''Byte Value'', ''Frequency'']. plot_axes: Axes object for the plot with
+  ''Byte Value'' as the X-axis and ''Frequency'' as the Y-axis. You should write self-contained
+  code starting with:
+
+  ```
+
+  import binascii
+
+  import numpy as np
+
+  import matplotlib.pyplot as plt
+
+  import pandas as pd
+
+  def task_func(hex_str):
+
+  ```"'
+testcase: "import unittest\nimport pandas as pd\nimport matplotlib.pyplot as plt\n\
+  \nclass TestCases(unittest.TestCase):\n    def test_valid_hex_string(self):\n  \
+  \      df, ax = task_func('F3BE8080')\n        self.assertIsInstance(df, pd.DataFrame)\n\
+  \        self.assertIsInstance(ax, plt.Axes)\n        self.assertEqual(len(df),\
+  \ len(set('F3BE8080')) // 2)  # Unique byte values\n        self.assertTrue(all(col\
+  \ in df.columns for col in ['Byte Value', 'Frequency']))\n        df_list = df.apply(lambda\
+  \ row: ','.join(row.values.astype(str)), axis=1).tolist()\n        # with open('df_contents.txt',\
+  \ 'w') as file:\n        #     file.write(str(df_list))\n        expect = ['128,2',\
+  \ '190,1', '243,1']\n        self.assertEqual(df_list, expect, \"DataFrame contents\
+  \ should match the expected output\")\n\n    def test_invalid_hex_string(self):\n\
+  \        with self.assertRaises(ValueError):\n            task_func('invalid')\n\
+  \n    def test_empty_string(self):\n        df, ax = task_func('')\n        self.assertTrue(df.empty)\n\
+  \        # Adjusted expectation: ax should not be None, as the plot can still be\
+  \ generated but will be empty\n        self.assertIsInstance(ax, plt.Axes)\n\n \
+  \   def test_df_columns(self):\n        df, _ = task_func('F3BE8080')\n        self.assertListEqual(list(df.columns),\
+  \ ['Byte Value', 'Frequency'])\n\n    def test_alternative_format(self):\n     \
+  \   df, ax = task_func('\\\\xF3\\\\xBE\\\\x80\\\\x80')\n        self.assertIsInstance(df,\
+  \ pd.DataFrame)\n        self.assertIsInstance(ax, plt.Axes)\n        # Correct\
+  \ the expected number of unique bytes\n        self.assertEqual(len(df), 3)  # There\
+  \ are three unique bytes\n        # Validate that the DataFrame contains the expected\
+  \ byte values and frequencies\n        expected_values = [128, 190, 243]  # Expected\
+  \ byte values\n        expected_frequencies = [2, 1, 1]  # Expected frequencies\
+  \ for each byte value\n        # Check if the DataFrame contains the expected values\
+  \ and frequencies\n        for value, frequency in zip(expected_values, expected_frequencies):\n\
+  \            self.assertTrue((df['Byte Value'] == value).any())\n            self.assertEqual(df.loc[df['Byte\
+  \ Value'] == value, 'Frequency'].values[0], frequency)"

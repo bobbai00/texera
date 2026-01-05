@@ -1,0 +1,67 @@
+TMC-list:
+- code: "def numeric_columns_presence(output, ground_truth):\n    output_cumulative_sum_df\
+    \ = output[1]  # extract the cumulative_sum_df from tuple\n    ground_truth_cumulative_sum_df\
+    \ = ground_truth[1]\n    # Check if both dataframes are not empty and contain\
+    \ numeric columns\n    return not output_cumulative_sum_df.empty and not ground_truth_cumulative_sum_df.empty\
+    \ and all(output_cumulative_sum_df.select_dtypes(include='number').columns ==\
+    \ ground_truth_cumulative_sum_df.select_dtypes(include='number').columns)"
+  function: Data Quality Score
+  metric: Numeric Columns Presence
+  task_name: Data cleaning and preprocessing
+- code: "def heatmap_validity(output, ground_truth):\n    output_heatmap_axes = output[0]\
+    \  # extract the heatmap_axes from tuple\n    ground_truth_heatmap_axes = ground_truth[0]\n\
+    \    # Check if the output heatmap_axes is an instance of matplotlib.axes.Axes\n\
+    \    return isinstance(output_heatmap_axes, type(ground_truth_heatmap_axes))"
+  function: Plot Validity
+  metric: Heatmap Validity
+  task_name: Data visualization
+data: "data = {\n    \"A\": [10, 15, 20, 25, 30],\n    \"B\": [100, 200, 300, 400,\
+  \ 500],\n    \"C\": [\"text\", \"more text\", \"even more text\", \"text again\"\
+  , \"final text\"],\n    \"D\": [1.5, 2.5, 3.5, 4.5, 5.5],\n    \"E\": [None, None,\
+  \ None, None, None],\n    \"F\": [7, 8, 9, 10, 11]\n}\n\nargs = (data,)"
+ground_truth: "import pandas as pd\nimport seaborn as sns\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(data):\n    if not data or len(data) == 0:\n        raise\
+  \ ValueError(\"The DataFrame is empty.\")\n    \n    df = pd.DataFrame(data)\n \
+  \   \n    numeric_df = df.select_dtypes(include=['number'])\n    if numeric_df.empty:\n\
+  \        raise ValueError(\"No numeric columns are present.\")\n    \n    cumulative_sum_df\
+  \ = numeric_df.cumsum()\n    \n    plt.figure(figsize=(10, 6))\n    heatmap_axes\
+  \ = sns.heatmap(cumulative_sum_df, annot=True, cmap='viridis')\n    plt.title('Cumulative\
+  \ Sum Heatmap')\n    plt.tight_layout()\n    \n    return heatmap_axes, cumulative_sum_df"
+prompt: "Creates and return a heatmap of the cumulative sum of each column in a dictionary.\
+  \ Note that: Only numeric columns are considered for the heatmap. Non-numeric columns\
+  \ are ignored. The function should raise the exception for: ValueError: If the DataFrame\
+  \ is empty or if no numeric columns are present. The function should output with:\
+  \ tuple(heatmap_axes: matplotlib.axes._axes.Axes, cumulative_sum_df: pandas.DataFrame)\n\
+  heatmap_axes: The Axes object of the Seaborn heatmap.  \ncumulative_sum_df: The\
+  \ DataFrame containing the cumulative sums of the numeric columns.  \nYou should\
+  \ write self-contained code starting with:  \n```\nimport pandas as pd\nimport seaborn\
+  \ as sns\ndef task_func(data):\n```"
+testcase: "import unittest\nimport numpy as np\nimport pandas as pd\nimport matplotlib.pyplot\
+  \ as plt\n\nclass TestCases(unittest.TestCase):\n    def tearDown(self):\n     \
+  \   plt.close(\"all\")\n\n    def test_cumsum_correctness(self):\n        data =\
+  \ {\"A\": [1, 2, 3], \"B\": [4, 5, 6]}\n        df = pd.DataFrame(data)\n      \
+  \  ax, _ = task_func(data)\n        result_cumsum = df.cumsum().values.flatten()\n\
+  \        heatmap_data = ax.collections[0].get_array().data.flatten()\n        np.testing.assert_array_equal(\n\
+  \            result_cumsum, heatmap_data, \"Cumulative sum calculation is incorrect\"\
+  \n        )\n\n    def test_non_numeric_columns_ignored(self):\n        data = {\"\
+  A\": [1, 2, 3], \"B\": [\"one\", \"two\", \"three\"]}\n        ax, _ = task_func(data)\n\
+  \        self.assertIsInstance(\n            ax, plt.Axes, \"The result should be\
+  \ a matplotlib Axes object\"\n        )\n        self.assertEqual(\n           \
+  \ len(ax.get_xticklabels()), 1, \"Non-numeric columns should be ignored\"\n    \
+  \    )\n\n    def test_with_positive_numbers(self):\n        data = {\"A\": [1,\
+  \ 2, 3], \"B\": [4, 5, 6]}\n        result, _ = task_func(data)\n        self.assertIsInstance(\n\
+  \            result, plt.Axes, \"The result should be a matplotlib Axes object\"\
+  \n        )\n\n    def test_with_negative_numbers(self):\n        data = {\"A\"\
+  : [-1, -2, -3], \"B\": [-4, -5, -6]}\n        result, _ = task_func(data)\n    \
+  \    self.assertIsInstance(\n            result, plt.Axes, \"The result should be\
+  \ a matplotlib Axes object\"\n        )\n\n    def test_with_mixed_numbers(self):\n\
+  \        data = {\"A\": [1, -2, 3], \"B\": [-4, 5, -6]}\n        result, _ = task_func(data)\n\
+  \        self.assertIsInstance(\n            result, plt.Axes, \"The result should\
+  \ be a matplotlib Axes object\"\n        )\n\n    def test_with_zeroes(self):\n\
+  \        data = {\"A\": [0, 0, 0], \"B\": [0, 0, 0]}\n        result, _ = task_func(data)\n\
+  \        self.assertIsInstance(\n            result, plt.Axes, \"The result should\
+  \ be a matplotlib Axes object\"\n        )\n\n    def test_with_empty_dataframe(self):\n\
+  \        data = {\"A\": [], \"B\": []}\n        with self.assertRaises(ValueError):\n\
+  \            task_func(data)\n\n    def test_no_numeric_columns(self):\n       \
+  \ data = {\"A\": [\"one\", \"two\", \"three\"], \"B\": [\"four\", \"five\", \"six\"\
+  ]}\n        with self.assertRaises(ValueError):\n            task_func(data)"

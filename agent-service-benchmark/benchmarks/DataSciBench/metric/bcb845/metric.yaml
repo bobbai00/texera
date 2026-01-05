@@ -1,0 +1,65 @@
+TMC-list:
+- code: "def data_cleaning_accuracy(output, ground_truth):\n    cleaned_output1, cleaned_output2\
+    \ = output[0], output[1]\n    cleaned_ground_truth1, cleaned_ground_truth2 = ground_truth[0],\
+    \ ground_truth[1]\n    \n    return cleaned_output1 == cleaned_ground_truth1 and\
+    \ cleaned_output2 == cleaned_ground_truth2"
+  function: Data Cleaning Completeness
+  metric: Data Cleaning Accuracy
+  task_name: Data cleaning and preprocessing
+- code: "def cosine_similarity_comparison(output, ground_truth):\n    output_cosine\
+    \ = output[0]\n    ground_truth_cosine = ground_truth[0]\n    \n    return abs(output_cosine\
+    \ - ground_truth_cosine) < 1e-4  # Allow a small tolerance"
+  function: Data Consistency
+  metric: Cosine Similarity Comparison
+  task_name: Data exploration and statistics understand
+- code: "def levenshtein_ratio_assessment(output, ground_truth):\n    output_levenshtein\
+    \ = output[1]\n    ground_truth_levenshtein = ground_truth[1]\n    \n    return\
+    \ abs(output_levenshtein - ground_truth_levenshtein) < 1e-4  # Allow a small tolerance"
+  function: Prediction Accuracy
+  metric: Levenshtein Ratio Assessment
+  task_name: Data mining
+data: 'text1 = "The quick brown fox jumps over the lazy dog! 12345"
+
+  text2 = "A fast, dark-colored fox leaps over a sleepy canine. 54321"
+
+  args = (text1, text2)'
+ground_truth: "import re\nimport numpy as np\nfrom collections import Counter\nfrom\
+  \ Levenshtein import ratio\n\n# Constants\nALPHANUMERIC = re.compile('[\\W_]+')\n\
+  \ndef clean_text(text):\n    cleaned_text = ALPHANUMERIC.sub(' ', text).lower()\n\
+  \    return cleaned_text.strip()\n\ndef cosine_similarity(text1, text2):\n    words1\
+  \ = text1.split()\n    words2 = text2.split()\n    \n    vector1 = Counter(words1)\n\
+  \    vector2 = Counter(words2)\n    \n    intersection = set(vector1) & set(vector2)\n\
+  \    numerator = sum(vector1[word] * vector2[word] for word in intersection)\n \
+  \   \n    sum1 = sum(vector1[word] ** 2 for word in vector1)\n    sum2 = sum(vector2[word]\
+  \ ** 2 for word in vector2)\n    denominator = np.sqrt(sum1) * np.sqrt(sum2)\n \
+  \   \n    if not denominator:\n        return 0.0\n    else:\n        return numerator\
+  \ / denominator\n\ndef task_func(text1, text2):\n    cleaned_text1 = clean_text(text1)\n\
+  \    cleaned_text2 = clean_text(text2)\n    \n    cosine_sim = cosine_similarity(cleaned_text1,\
+  \ cleaned_text2)\n    levenshtein_r = ratio(cleaned_text1, cleaned_text2)\n    \n\
+  \    return (cosine_sim, levenshtein_r)"
+prompt: "Calculate the similarity values between two texts based on the cosine similarity\
+  \ and the Levenshtein ratio. The texts are first cleaned by removing all non-alphanumeric\
+  \ characters except spaces and converted to lowercase. Cosine similarity is computed\
+  \ based on term frequency in each text. The Levenshtein ratio is computed using\
+  \ the 'ratio' function from the 'python-Levenshtein' library, which measures the\
+  \ similarity of two strings as a number between 0 and 1.\nThe function should output\
+  \ with: tuple(cosine_similarity: float, levenshtein_ratio: float)  \ncosine_similarity:\
+  \ The cosine similarity ranges from 0 to 1, where 1 means identical term frequency,\
+  \ and 0 indicates no common terms.  \nlevenshtein_ratio: The Levenshtein ratio also\
+  \ ranges from 0 to 1, where 1 means the strings are identical, and 0 means they\
+  \ are completely different.  \nYou should write self-contained code starting with:\
+  \  \n```\nimport re\nimport numpy as np\nfrom collections import Counter\nfrom Levenshtein\
+  \ import ratio\n# Constants\nALPHANUMERIC = re.compile('[\\W_]+')\ndef task_func(text1,\
+  \ text2):\n```"
+testcase: "import unittest\nfrom unittest.mock import patch\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_identical_strings(self):\n        self.assertEqual(task_func(\"\
+  test\", \"test\"), (1.0, 1.0))\n\n    def test_case_different_strings(self):\n \
+  \       self.assertEqual(task_func(\"test\", \"different\"), (0.0, 0.3076923076923077))\
+  \ # Adjusted expected value\n\n    def test_case_empty_strings(self):\n        self.assertEqual(task_func(\"\
+  \", \"\"), (0.0, 1.0)) # Adjusted expected value; Empty strings are considered identical\n\
+  \n    def test_case_similar_strings(self):\n        self.assertEqual(task_func(\"\
+  hello world\", \"hola mundo\"), (0.0, 0.38095238095238093)) # Adjusted expected\
+  \ value\n\n    def test_case_numerical_strings(self):\n        cosine_similarity,\
+  \ levenshtein_ratio = task_func(\"123\", \"321\")\n        self.assertEqual(cosine_similarity,\
+  \ 0.0) # This comparison is fine with assertEqual since it's an exact match.\n \
+  \       self.assertAlmostEqual(levenshtein_ratio, 0.3333333, places=7)"

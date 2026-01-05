@@ -1,0 +1,63 @@
+TMC-list:
+- code: "def r_squared(output, ground_truth):\n    from sklearn.metrics import r2_score\n\
+    \    predictions = output[1]  # extract the predictions array from tuple\n   \
+    \ ground_truth_values = ground_truth[1]  # assuming the ground truth also has\
+    \ a similar structure\n    return r2_score(ground_truth_values, predictions)"
+  function: R-squared Value
+  metric: Model Coefficient of Determination (R^2)
+  task_name: Predictive modeling
+- code: "def check_plot_title(output, ground_truth):\n    expected_title='Value vs\
+    \ Date (Linear Regression Prediction)'\n    axes = output[2]  # extract the axes\
+    \ object from the tuple\n    return axes.get_title().strip() == expected_title"
+  function: Title Verification
+  metric: Visualization Title Check
+  task_name: Data visualization
+data: "import pandas as pd\nfrom pandas import to_datetime\n\ndata = {'category':\
+  \ ['X', 'X', 'Y', 'Y', 'Z', 'Z', 'X', 'Y'],\n        'date': to_datetime(['2021-06-01',\
+  \ '2021-06-15', '2021-07-01', '2021-07-22',\n                             '2021-08-10',\
+  \ '2021-08-15', '2021-09-05', '2021-09-20'],\n                            ), 'value':\
+  \ [25, 35, 50, 45, 60, 80, 70, 90]}\nargs = (data,)"
+ground_truth: "import pandas as pd\nfrom sklearn.linear_model import LinearRegression\n\
+  import matplotlib.pyplot as plt\nimport numpy as np\n\ndef task_func(df):\n    #\
+  \ Validate input DataFrame\n    if not isinstance(df, pd.DataFrame):\n        raise\
+  \ ValueError(\"Input is not a valid DataFrame.\")\n    if 'date' not in df.columns\
+  \ or 'value' not in df.columns:\n        raise ValueError(\"DataFrame must contain\
+  \ 'date' and 'value' columns.\")\n    if not pd.api.types.is_datetime64_any_dtype(df['date']):\n\
+  \        raise ValueError(\"The 'date' column must be in datetime format.\")\n \
+  \   \n    # Prepare data for regression\n    df['date_ordinal'] = df['date'].apply(lambda\
+  \ x: x.toordinal())\n    X = df[['date_ordinal']]\n    y = df['value']\n    \n \
+  \   # Create and fit the model\n    model = LinearRegression()\n    model.fit(X,\
+  \ y)\n    \n    # Make predictions\n    predictions = model.predict(X)\n    \n \
+  \   # Plot the results\n    fig, ax = plt.subplots()\n    ax.scatter(df['date_ordinal'],\
+  \ y, color='blue', label='Original values')\n    ax.plot(df['date_ordinal'], predictions,\
+  \ color='red', label='Predicted values')\n    ax.set_title('Value vs Date (Linear\
+  \ Regression Prediction)')\n    ax.set_xlabel('Date (ordinal)')\n    ax.set_ylabel('Value')\n\
+  \    ax.legend()\n    \n    # Return the model, predictions, and axes\n    return\
+  \ model, predictions, ax"
+prompt: 'Performs linear regression on a DataFrame using ''date'' (converted to ordinal)
+  as the predictor for ''value''. It plots both the original and predicted values,
+  showcasing the linear relationship. The function should raise the exception for:
+  ValueError: If ''df'' is not a valid DataFrame, lacks the required columns, or if
+  ''date'' column is not in datetime format. The function should output with: tuple(model:
+  LinearRegression, predictions: numpy.ndarray, axes: matplotlib.axes.Axes) model:
+  The LinearRegression model used for predictions. predictions: The array of predicted
+  values based on the regression. axes: The Axes object of the plot, which will have
+  a title ''Value vs Date (Linear Regression Prediction)'', x-axis labeled as ''Date
+  (ordinal)'', and y-axis labeled as ''Value''. You should write self-contained code
+  starting with: ``` import pandas as pd from sklearn.linear_model import LinearRegression
+  import matplotlib.pyplot as plt def task_func(df): ```'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\nfrom sklearn.linear_model\
+  \ import LinearRegression\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n\
+  \        self.df = pd.DataFrame({\n            \"group\": [\"A\", \"A\", \"A\",\
+  \ \"B\", \"B\"],\n            \"date\": pd.to_datetime([\"2022-01-02\", \"2022-01-13\"\
+  , \"2022-02-01\", \"2022-02-23\", \"2022-03-05\"]),\n            \"value\": [10,\
+  \ 20, 16, 31, 56],\n        })\n\n    def test_return_types(self):\n        model,\
+  \ predictions, ax = task_func(self.df)\n        self.assertIsInstance(model, LinearRegression)\n\
+  \        self.assertIsInstance(predictions, np.ndarray)\n        self.assertEqual(predictions.shape,\
+  \ (self.df.shape[0],))\n        self.assertEqual(ax.get_title(), 'Value vs Date\
+  \ (Linear Regression Prediction)')\n\n    def test_invalid_input(self):\n      \
+  \  with self.assertRaises(ValueError):\n            task_func(pd.DataFrame({'a':\
+  \ [1, 2], 'b': [3, 4]}))\n\n    def test_plot_labels(self):\n        _, _, ax =\
+  \ task_func(self.df)\n        self.assertEqual(ax.get_xlabel(), 'Date (ordinal)')\n\
+  \        self.assertEqual(ax.get_ylabel(), 'Value')\n\n    def test_empty_dataframe(self):\n\
+  \        with self.assertRaises(ValueError):\n            task_func(pd.DataFrame())"

@@ -1,0 +1,89 @@
+TMC-list:
+- code: "def sales_quantity_validity(output, ground_truth):\n    total_sales = output[0]\
+    \  # extract the total sales dictionary from tuple\n    # Check if any sales quantity\
+    \ is negative\n    for fruit, sales in total_sales.items():\n        if sales\
+    \ < 0:\n            return False\n    return True"
+  function: Data Quality Score
+  metric: Sales Quantity Validity
+  task_name: Data cleaning and preprocessing
+- code: "def bar_chart_aesthetic_consistency(output, ground_truth):\n    ax = output[1]\
+    \  # extract the axes object from tuple\n    if ax is None:\n        return False\
+    \  # no data for bar chart\n    # Check that colors are assigned correctly for\
+    \ the number of fruits in total_sales\n    total_sales = output[0]\n    colors\
+    \ = ['red', 'yellow', 'green', 'blue', 'purple']\n    return len(ax.patches) ==\
+    \ len(total_sales)"
+  function: Visualization Quality
+  metric: Bar Chart Aesthetic Consistency
+  task_name: Data visualization
+data: "data = [\n    {\"apple\": 20, \"banana\": 9, \"grape\": 17},\n    {\"banana\"\
+  : 20, \"grape\": 10, \"apple\": 5, \"date\": 12},\n    {\"orange\": 15, \"kiwi\"\
+  : 22, \"banana\": 14, \"apple\": 8},\n    {\"apple\": 30, \"grape\": 25, \"peach\"\
+  : 5, \"banana\": 10},\n]\nargs = (data,)"
+ground_truth: "import collections\nimport matplotlib.pyplot as plt\n\ndef task_func(data):\n\
+  \    # Initialize total sales dictionary\n    total_sales = collections.defaultdict(int)\n\
+  \n    # Iterate through the list of dictionaries\n    for entry in data:\n     \
+  \   for fruit, quantity in entry.items():\n            if quantity < 0:\n      \
+  \          raise ValueError(\"Sales quantity must not be negative.\")\n        \
+  \    total_sales[fruit] += quantity\n\n    # If total_sales is empty, return (empty\
+  \ dict, None)\n    if not total_sales:\n        return (dict(total_sales), None)\n\
+  \    \n    # Prepare data for the bar chart\n    fruits = list(total_sales.keys())\n\
+  \    sales = list(total_sales.values())\n    colors = ['red', 'yellow', 'green',\
+  \ 'blue', 'purple']\n    \n    # Generate bar chart\n    fig, ax = plt.subplots()\n\
+  \    bar_container = ax.bar(fruits, sales, color=colors[:len(fruits)])\n    \n \
+  \   # Set labels\n    ax.set_ylabel('Total Sales')\n    ax.set_title('Total Fruit\
+  \ Sales')\n    ax.set_xticks(range(len(fruits)))\n    ax.set_xticklabels(fruits)\n\
+  \n    # Show the plot (comment this out if you don't want to display the chart immediately)\n\
+  \    # plt.show()\n\n    return (dict(total_sales), bar_container)"
+prompt: "Combine a list of dictionaries with the same keys (fruit names) into a single\
+  \ dictionary, calculate the total turnover for each fruit, and return a bar chart's\
+  \ axes with colors representing different fruits. The colors are selected from:\
+  \ 'red', 'yellow', 'green', 'blue', 'purple'. The function ensures that sales quantity\
+  \ must not be negative, throwing a ValueError if encountered.\nThe function should\
+  \ output with: tuple(total_sales: dict, ax: matplotlib.container.BarContainer) \n\
+  total_sales: A dictionary containing the total sales for each fruit. \nax: A bar\
+  \ chart of total fruit sales, or None if data is empty. \nYou should write self-contained\
+  \ code starting with:\n```\nimport collections\nimport matplotlib.pyplot as plt\n\
+  def task_func(data):\n```"
+testcase: "import unittest\nimport collections\nimport matplotlib.pyplot as plt\n\n\
+  class TestCases(unittest.TestCase):\n    def test_case_1(self):\n        # Test\
+  \ basic case with one fruit\n        data = [{\"apple\": 5}, {\"apple\": 7}, {\"\
+  apple\": 3}]\n        sales, _ = task_func(data)\n        expected_sales = {\"apple\"\
+  : 15}\n        self.assertDictEqual(sales, expected_sales)\n\n    def test_case_2(self):\n\
+  \        # Test basic case with multiple fruits\n        data = [\n            {\"\
+  apple\": 10, \"banana\": 15, \"cherry\": 12, \"date\": 10},\n            {\"apple\"\
+  : 12, \"banana\": 20, \"cherry\": 14, \"date\": 9},\n            {\"apple\": 15,\
+  \ \"banana\": 18, \"cherry\": 15, \"date\": 8},\n            {\"apple\": 11, \"\
+  banana\": 17, \"cherry\": 13, \"date\": 7},\n        ]\n        sales, _ = task_func(data)\n\
+  \        expected_sales = {\"apple\": 48, \"banana\": 70, \"cherry\": 54, \"date\"\
+  : 34}\n        self.assertDictEqual(sales, expected_sales)\n\n    def test_case_3(self):\n\
+  \        # Test basic case with one entry per fruit\n        data = [{\"apple\"\
+  : 1}, {\"banana\": 2}, {\"cherry\": 3}]\n        sales, _ = task_func(data)\n  \
+  \      expected_sales = {\"apple\": 1, \"banana\": 2, \"cherry\": 3}\n        self.assertDictEqual(sales,\
+  \ expected_sales)\n\n    def test_case_4(self):\n        # Test zero quantities\n\
+  \        data = [\n            {\"apple\": 0, \"banana\": 0},\n            {\"apple\"\
+  : 0, \"banana\": 0},\n            {\"apple\": 0, \"banana\": 0},\n        ]\n  \
+  \      sales, _ = task_func(data)\n        expected_sales = {\"apple\": 0, \"banana\"\
+  : 0}\n        self.assertDictEqual(sales, expected_sales)\n\n    def test_case_5(self):\n\
+  \        # Test empty data\n        data = []\n        sales, _ = task_func(data)\n\
+  \        expected_sales = {}\n        self.assertDictEqual(sales, expected_sales)\n\
+  \n    def test_case_6(self):\n        # Test missing fruit\n        data = [{\"\
+  apple\": 10, \"banana\": 5}, {\"banana\": 15, \"cherry\": 7}, {\"cherry\": 3}]\n\
+  \        sales, _ = task_func(data)\n        expected_sales = {\"apple\": 10, \"\
+  banana\": 20, \"cherry\": 10}\n        self.assertDictEqual(sales, expected_sales)\n\
+  \n    def test_case_7(self):\n        # Test negative sales\n        data = [{\"\
+  apple\": -10, \"banana\": 15}, {\"apple\": 12, \"banana\": -20}]\n        with self.assertRaises(ValueError):\n\
+  \            task_func(data)\n\n    def test_case_8(self):\n        # Test large\
+  \ values\n        data = [\n            {\"apple\": 1000000, \"banana\": 500000},\n\
+  \            {\"apple\": 2000000, \"banana\": 1500000},\n        ]\n        sales,\
+  \ _ = task_func(data)\n        expected_sales = {\"apple\": 3000000, \"banana\"\
+  : 2000000}\n        self.assertDictEqual(sales, expected_sales)\n\n    def test_case_9(self):\n\
+  \        # Test visualization\n        data = [{\"apple\": 10, \"banana\": 15},\
+  \ {\"banana\": 5, \"apple\": 10}]\n        _, plot = task_func(data)\n        self.assertEqual(\n\
+  \            len(plot.patches), 2\n        )  # Checking if the number of bars in\
+  \ the plot is correct\n\n    def test_case_10(self):\n        # Test non-string\
+  \ keys\n        data = [{5: 10, \"banana\": 15}, {\"banana\": 5, 5: 10}]\n     \
+  \   with self.assertRaises(TypeError):\n            task_func(data)\n\n    def test_case_11(self):\n\
+  \        # Test mixed types in sales\n        data = [{\"apple\": 10.5, \"banana\"\
+  : 15}, {\"apple\": 12, \"banana\": 20.5}]\n        sales, _ = task_func(data)\n\
+  \        expected_sales = {\"apple\": 22.5, \"banana\": 35.5}\n        self.assertDictEqual(sales,\
+  \ expected_sales)\n\n    def tearDown(self):\n        plt.close(\"all\")"

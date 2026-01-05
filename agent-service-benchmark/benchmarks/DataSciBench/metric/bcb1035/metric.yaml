@@ -1,0 +1,88 @@
+TMC-list:
+- code: "def confusion_matrix_accuracy(output, ground_truth):\n    output_confusion_mtx\
+    \ = output[0]  # extract confusion matrix from tuple\n    ground_truth_confusion_mtx\
+    \ = ground_truth[0]\n    tp = output_confusion_mtx[1, 1]  # true positives\n \
+    \   tn = output_confusion_mtx[0, 0]  # true negatives\n    total = np.sum(output_confusion_mtx)\
+    \  # total predictions\n    return (tp + tn) / total if total > 0 else 0"
+  function: Model Accuracy
+  metric: Confusion Matrix Accuracy
+  task_name: Predictive modeling
+- code: "def confusion_matrix_plot_validity(output, ground_truth):\n    output_ax\
+    \ = output[1]  # extract axes object from tuple\n    ground_truth_ax = ground_truth[1]\n\
+    \    return output_ax.get_title() == ground_truth_ax.get_title()  # check if titles\
+    \ are the same"
+  function: Plot Validity
+  metric: Confusion Matrix Plot Validity
+  task_name: Data visualization
+data: 'import pandas as pd
+
+  import numpy as np
+
+
+  # Generating more complicated and non-trivial data for testing
+
+  np.random.seed(50)
+
+  feature = pd.Series(np.random.normal(loc=5, scale=2, size=200))  # Normal distribution
+  around 5
+
+  target = pd.Series(np.random.choice([0, 1], size=200, p=[0.7, 0.3]))  # Imbalanced
+  target distribution
+
+
+  args = (feature, target)'
+ground_truth: "import pandas as pd\nfrom sklearn.model_selection import train_test_split\n\
+  from sklearn.linear_model import LogisticRegression\nfrom sklearn.metrics import\
+  \ confusion_matrix\nimport numpy as np\nimport matplotlib.pyplot as plt\n\ndef task_func(feature:\
+  \ pd.Series, target: pd.Series) -> (np.ndarray, plt.Axes):\n    # Split the data\
+  \ into training and testing sets\n    X_train, X_test, y_train, y_test = train_test_split(feature.values.reshape(-1,\
+  \ 1), target, test_size=0.2, random_state=42)\n    \n    # Initialize and train\
+  \ the logistic regression model\n    model = LogisticRegression()\n    model.fit(X_train,\
+  \ y_train)\n    \n    # Make predictions on the test set\n    y_pred = model.predict(X_test)\n\
+  \    \n    # Compute the confusion matrix\n    confusion_mtx = confusion_matrix(y_test,\
+  \ y_pred)\n    \n    # Plot the confusion matrix\n    fig, ax = plt.subplots()\n\
+  \    cax = ax.matshow(confusion_mtx, cmap='Blues')\n    plt.colorbar(cax)\n    ax.set_xlabel('Predicted')\n\
+  \    ax.set_ylabel('True')\n    \n    # Annotate the confusion matrix\n    for (i,\
+  \ j), val in np.ndenumerate(confusion_mtx):\n        ax.text(j, i, val, ha='center',\
+  \ va='center')\n    \n    plt.title('Confusion Matrix')\n    plt.tight_layout()\n\
+  \    \n    return confusion_mtx, ax"
+prompt: "Train a logistic regression model on one feature and evaluate its performance\
+  \ using a confusion matrix plot. The function takes a feature and a target series,\
+  \ splits them into training and testing sets, trains the logistic regression model,\
+  \ predicts the target for the test set, and plots the confusion matrix. The function\
+  \ should output with: tuple(confusion_mtx: np.ndarray, ax: plt.Axes)\nconfusion_mtx:\
+  \ The confusion matrix as a NumPy array. \nax: The matplotlib Axes object of the\
+  \ confusion matrix plot. \nYou should write self-contained code starting with:\n\
+  ```\nimport pandas as pd\nfrom sklearn.model_selection import train_test_split\n\
+  from sklearn.linear_model import LogisticRegression\nfrom sklearn.metrics import\
+  \ confusion_matrix\nimport numpy as np\nimport matplotlib.pyplot as plt\ndef task_func(feature:\
+  \ pd.Series, target: pd.Series) -> (np.ndarray, plt.Axes):\n```"
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\nfrom matplotlib.axes\
+  \ import Axes\n\nclass TestCases(unittest.TestCase):\n    \"\"\"Test cases for the\
+  \ function task_func.\"\"\"\n\n    def test_with_random_data(self):\n        \"\"\
+  \"\n        Test the function with random data to ensure normal functionality.\n\
+  \        \"\"\"\n        np.random.seed(42)\n        feature = pd.Series(np.random.rand(100))\n\
+  \        np.random.seed(42)\n        target = pd.Series(np.random.randint(0, 2,\
+  \ size=100))\n        cm, ax = task_func(feature, target)\n        self.assertIsInstance(cm,\
+  \ np.ndarray)\n        self.assertIsInstance(ax, Axes)\n\n    def test_with_all_zeroes(self):\n\
+  \        \"\"\"\n        Test the function with all zeroes in the feature set.\n\
+  \        \"\"\"\n        feature = pd.Series(np.zeros(100))\n        np.random.seed(123)\n\
+  \        target = pd.Series(np.random.randint(0, 2, size=100))\n        cm, ax =\
+  \ task_func(feature, target)\n        self.assertIsInstance(cm, np.ndarray)\n  \
+  \      self.assertIsInstance(ax, Axes)\n\n    def test_with_all_ones(self):\n  \
+  \      \"\"\"\n        Test the function with all ones in the feature set.\n   \
+  \     \"\"\"\n        feature = pd.Series(np.ones(100))\n        np.random.seed(42)\n\
+  \        target = pd.Series(np.random.randint(0, 2, size=100))\n        cm, ax =\
+  \ task_func(feature, target)\n        self.assertIsInstance(cm, np.ndarray)\n  \
+  \      self.assertIsInstance(ax, Axes)\n\n    def test_with_perfect_correlation(self):\n\
+  \        \"\"\"\n        Test the function when the feature perfectly predicts the\
+  \ target.\n        \"\"\"\n        np.random.seed(123)\n        feature = pd.Series(np.random.rand(100))\n\
+  \        target = feature.round()\n        cm, ax = task_func(feature, target)\n\
+  \        self.assertIsInstance(cm, np.ndarray)\n        self.assertIsInstance(ax,\
+  \ Axes)\n\n    def test_with_no_correlation(self):\n        \"\"\"\n        Test\
+  \ the function when there is no correlation between feature and target.\n      \
+  \  \"\"\"\n        np.random.seed(42)\n        feature = pd.Series(np.random.rand(100))\n\
+  \        np.random.seed(42)\n        target = pd.Series(np.random.choice([0, 1],\
+  \ size=100))\n        cm, ax = task_func(feature, target)\n        self.assertIsInstance(cm,\
+  \ np.ndarray)\n        self.assertIsInstance(ax, Axes)\n\n    def tearDown(self):\n\
+  \        plt.close()"

@@ -1,0 +1,64 @@
+TMC-list:
+- code: "def data_cleaning_coverage(output, ground_truth):\n    output_df = output[0]\n\
+    \    ground_truth_df = ground_truth[0]\n    missing_before = ground_truth_df.isnull().sum().sum()\n\
+    \    missing_after = output_df.isnull().sum().sum()\n    return missing_before\
+    \ == 0 and missing_after == 0"
+  function: Data Cleaning Completeness
+  metric: Data Cleaning Coverage
+  task_name: Data cleaning and preprocessing
+- code: "def heatmap_correctness(output, ground_truth):\n    output_axes = output[1]\n\
+    \    ground_truth_axes = ground_truth[1]\n    return output_axes.get_lines() ==\
+    \ ground_truth_axes.get_lines()"
+  function: Plot Validity
+  metric: Heatmap Correctness
+  task_name: Data visualization
+data: "import pandas as pd\n\n# New test data\ndf = pd.DataFrame(\n    [[None, 20,\
+  \ 30], [12, 15, 25], [22, None, 35], [5, 10, None], [15, 18, 40]],\n    columns=[\"\
+  c1\", \"c2\", \"c3\"]\n)\n\n# Merge all assigned input args into a tuple named \"\
+  args\"\nargs = (df,)"
+ground_truth: "from sklearn.preprocessing import StandardScaler\nimport seaborn as\
+  \ sns\nimport matplotlib.pyplot as plt\nimport pandas as pd\n\ndef task_func(df):\n\
+  \    # Fill missing values with the column's average\n    df.fillna(df.mean(), inplace=True)\n\
+  \    \n    # Standardize numeric columns\n    scaler = StandardScaler()\n    numeric_cols\
+  \ = df.select_dtypes(include=['float64', 'int64']).columns\n    df[numeric_cols]\
+  \ = scaler.fit_transform(df[numeric_cols])\n    \n    # Calculate the correlation\
+  \ matrix\n    correlation_matrix = df.corr()\n    \n    # Create a heatmap\n   \
+  \ plt.figure(figsize=(10, 8))\n    heatmap_axes = sns.heatmap(correlation_matrix,\
+  \ annot=True, fmt=\".2f\", cmap='coolwarm', square=True)\n    \n    # Return standardized\
+  \ DataFrame and heatmap axes\n    return (df, heatmap_axes)"
+prompt: 'Standardize numeric columns in a DataFrame and return the heatmap of the
+  correlation matrix. Missing values are replaced by the column''s average. The function
+  should output with: tuple(standardized_df: pandas.DataFrame, heatmap_axes: Axes)
+  standardized_df: The pandas DataFrame after standardization. heatmap_axes: A heatmap
+  of the correlation matrix. You should write self-contained code starting with: ```
+  from sklearn.preprocessing import StandardScaler import seaborn as sns import matplotlib.pyplot
+  as plt def task_func(df): ```'
+testcase: "import unittest\nimport pandas as pd\nfrom sklearn.preprocessing import\
+  \ StandardScaler\nimport matplotlib.pyplot as plt\n\nclass TestCases(unittest.TestCase):\n\
+  \    \"\"\"Test cases for the task_func function.\"\"\"\n    \n    def test_case_1(self):\n\
+  \        df = pd.DataFrame(\n            [[1, 2, 3], [4, 5, 6], [7, None, 9]], columns=[\"\
+  c1\", \"c2\", \"c3\"]\n        )\n        # Expected output\n        expected_df\
+  \ = df.copy()\n        expected_df = expected_df.fillna(df.mean(axis=0))\n     \
+  \   scaler = StandardScaler()\n        expected_df[expected_df.columns] = scaler.fit_transform(\n\
+  \            expected_df[expected_df.columns]\n        )\n        # Function execution\n\
+  \        standardized_df, heatmap = task_func(df)\n        pd.testing.assert_frame_equal(standardized_df,\
+  \ expected_df)\n        # Asserting the output DataFrame\n        self.assertEqual(standardized_df.shape,\
+  \ df.shape)\n        # Asserting the heatmap\n        self.assertIsInstance(heatmap,\
+  \ plt.Axes)\n\n    def test_case_2(self):\n        df = pd.DataFrame([[3, 7, 9],\
+  \ [4, 1, 8], [2, 6, 5]], columns=[\"c1\", \"c2\", \"c3\"])\n        standardized_df,\
+  \ heatmap = task_func(df)\n        # Asserting the output DataFrame\n        self.assertEqual(standardized_df.shape,\
+  \ df.shape)\n        # Asserting the heatmap\n        self.assertIsInstance(heatmap,\
+  \ plt.Axes)\n\n    def test_case_3(self):\n        df = pd.DataFrame([[4, 6, 8],\
+  \ [9, 5, 2], [3, 1, 7]], columns=[\"c1\", \"c2\", \"c3\"])\n        standardized_df,\
+  \ heatmap = task_func(df)\n        # Asserting the output DataFrame\n        self.assertEqual(standardized_df.shape,\
+  \ df.shape)\n        # Asserting the heatmap\n        self.assertIsInstance(heatmap,\
+  \ plt.Axes)\n\n    def test_case_4(self):\n        df = pd.DataFrame([[9, 1, 2],\
+  \ [3, 4, 5], [7, 8, 6]], columns=[\"c1\", \"c2\", \"c3\"])\n        standardized_df,\
+  \ heatmap = task_func(df)\n        # Asserting the output DataFrame\n        self.assertEqual(standardized_df.shape,\
+  \ df.shape)\n        # Asserting the heatmap\n        self.assertIsInstance(heatmap,\
+  \ plt.Axes)\n\n    def test_case_5(self):\n        df = pd.DataFrame(\n        \
+  \    [[None, 17, 13], [None, None, 29], [42, 3, 100]], columns=[\"c1\", \"c2\",\
+  \ \"c3\"]\n        )\n        standardized_df, heatmap = task_func(df)\n       \
+  \ # Asserting the output DataFrame\n        self.assertEqual(standardized_df.shape,\
+  \ df.shape)\n        # Asserting the heatmap\n        self.assertIsInstance(heatmap,\
+  \ plt.Axes)"

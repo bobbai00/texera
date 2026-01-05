@@ -1,0 +1,80 @@
+"TMC-list":
+- "code": |-
+    def data_quality_score(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("preprocessed_data.csv")
+        # Example metric: percentage of missing values
+        missing_values = output.isnull().sum().sum()
+        total_values = output.size
+        quality_score = (total_values - missing_values) / total_values
+        return bool(quality_score == 1)
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Data Quality Score
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: preprocessed_data.csv
+- "code": |-
+    def model_accuracy(ground_truth):
+        from sklearn.metrics import accuracy_score
+        import pandas as pd
+        output = pd.read_csv("evaluation_results.csv")
+        accuracy_row = output.loc[output['Metric'].str.lower().str.contains('accuracy')]
+        acc = accuracy_row['Score'].values[0]
+        gt_output = pd.read_csv(ground_truth)
+        gt_acc_row = gt_output.loc[gt_output['Metric'].str.lower().str.contains('accuracy')]
+        gt_acc = gt_acc_row['Score'].values[0]
+        return bool(acc >= gt_acc)
+  "function": |-
+    Model Accuracy
+  "metric": |-
+    Model Accuracy
+  "task_name": |-
+    Predictive modeling
+  ground_truth: evaluation_results.csv
+- "code": |-
+    def cross_validation_f1_score(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("evaluation_results.csv")
+        f1_row = output.loc[output['Metric'].str.lower().str.contains('f1')]
+        f1 = accuracy_row['Score'].values[0]
+        gt_output = pd.read_csv(ground_truth)
+        gt_f1_row = gt_output.loc[gt_output['Metric'].str.lower().str.contains('f1')]
+        gt_f1 = gt_f1_row['Score'].values[0]
+        return bool(f1 >= gt_f1)
+  "function": |-
+    Data Accuracy
+  "metric": |-
+    Cross-Validation F1 Score
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: evaluation_results.csv
+"prompt": |-
+  Description: It is recommended to use open-source toolkits, such as scikit-learn, which has an implementation of the Naive Bayes function for the Naive Bayes Classifier.
+   
+  Dataset: 
+  - Input files:  
+    - "Bayesian_Dataset_train.csv"  
+    - "Bayesian_Dataset_test.csv"
+
+  Data Description: The column names are "Age, Occupation, Family Income, Education, Marital Status, Job Type, Family Size, Ethnicity, Gender, Workplace". The last column is the label, indicating whether the income is greater than 50k (>50K).
+   
+  Task Description: Use the NaÃ¯ve Bayesian method to predict whether a person's income is higher than 50K annually.
+
+  Subtasks and Requirements:
+
+  1. Data Preprocessing  
+     - Input: "Bayesian_Dataset_train.csv"  
+     - Output: "preprocessed_data.csv" (CSV format)  
+     - Details: Clean and prepare the training dataset for modeling.
+   
+  2. Model Training  
+     - Input: "preprocessed_data.csv"  
+     - Output: "naive_bayes_model.pkl" (Pickle format)  
+     - Details: Train the NaÃ¯ve Bayes Classifier on the training dataset.
+
+  3. Model Evaluation  
+     - Input: "naive_bayes_model.pkl", "Bayesian_Dataset_test.csv"  
+     - Output: "evaluation_results.csv" (CSV format)  
+     - Details: Evaluate the model using cross-validation and leave-one-out methods, and compute statistical results, including Accuracy, Precision, Recall, F1 Score, and ROC AUC.

@@ -1,0 +1,110 @@
+TMC-list:
+- code: "def series_length_match(output, ground_truth):\n    length_output = output[0].shape[0]\
+    \  # Get the number of cluster labels\n    length_ground_truth = ground_truth[0].shape[0]\
+    \  # Get the number of ground truth data points\n    return length_output == length_ground_truth\
+    \  # Returns True if they match, otherwise False"
+  function: Data Quality Score
+  metric: Series Length Match
+  task_name: Data cleaning and preprocessing
+- code: "def cluster_label_uniqueness(output, ground_truth):\n    unique_output_labels\
+    \ = len(set(output[0]))  # Unique cluster labels from model output\n    unique_ground_truth_labels\
+    \ = len(set(ground_truth[0]))  # Unique cluster labels from ground truth\n   \
+    \ return unique_output_labels == unique_ground_truth_labels  # Check if unique\
+    \ counts match"
+  function: Clustering Validity
+  metric: Cluster Label Uniqueness
+  task_name: Predictive modeling
+- code: "def visualization_object_check(output, ground_truth):\n    return isinstance(output[1],\
+    \ plt.Axes)  # Check if the output is a valid matplotlib Axes object"
+  function: Visualization Completeness
+  metric: Visualization Object Check
+  task_name: Data visualization
+data: 'import pandas as pd
+
+  import numpy as np
+
+
+  # Create more complex data for testing
+
+  np.random.seed(123)
+
+  s1 = pd.Series(np.random.normal(loc=0, scale=1, size=150), name="feature1")
+
+  np.random.seed(456)
+
+  s2 = pd.Series(np.random.normal(loc=5, scale=2, size=150), name="feature2")
+
+
+  args = (s1, s2, 4)'
+ground_truth: "import pandas as pd\nfrom sklearn.cluster import KMeans\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(s1, s2, n_clusters=3):\n    if not isinstance(s1, pd.Series)\
+  \ or not isinstance(s2, pd.Series):\n        raise ValueError(\"s1 and s2 must be\
+  \ pandas Series\")\n    if len(s1) != len(s2):\n        raise ValueError(\"s1 and\
+  \ s2 must have the same length\")\n    \n    # Combine the series into a DataFrame\n\
+  \    data = pd.DataFrame({'s1': s1, 's2': s2})\n    \n    # Perform K-Means clustering\n\
+  \    kmeans = KMeans(n_clusters=n_clusters)\n    cluster_labels = kmeans.fit_predict(data)\n\
+  \    \n    # Create a scatter plot\n    plt.figure(figsize=(8, 6))\n    for i in\
+  \ range(n_clusters):\n        plt.scatter(data[cluster_labels == i]['s1'], data[cluster_labels\
+  \ == i]['s2'], label=f'Cluster {i}')\n    \n    plt.title('K-Means Clustering')\n\
+  \    plt.xlabel('s1')\n    plt.ylabel('s2')\n    plt.legend()\n    plt.grid(True)\n\
+  \    ax = plt.gca()\n    \n    plt.show()\n    \n    return (cluster_labels, ax)"
+prompt: 'Perform K-Means clustering on data points from two pandas Series and visualize
+  the clusters. Note that: The function needs to ensure that s1 and s2 are pandas
+  Series of equal length. It then performs K-Means clustering on the combined data
+  points from s1 and s2. After clustering, it creates a scatter plot where each cluster
+  is visualized with a different color. The plot title is set to "K-Means Clustering"
+  to describe the visualization technique. A legend is added, which uses elements
+  from the scatter plot to describe each cluster. The function should raise the exception
+  for: ValueError: If either s1 or s2 is not a pandas Series, raise "s1 and s2 must
+  be pandas Series" ValueError: If s1 and s2 have different lengths, raise "s1 and
+  s2 must have the same length". The function should output with: tuple(cluster_labels:
+  ndarray, ax: matplotlib.axes.Axes) cluster_labels: An array of cluster labels indicating
+  the cluster each data point belongs to. ax: The Axes object of the plot, which shows
+  the data points colored according to their cluster labels. You should write self-contained
+  code starting with:
+
+  ```
+
+  import pandas as pd
+
+  from sklearn.cluster import KMeans
+
+  import matplotlib.pyplot as plt
+
+  def task_func(s1, s2, n_clusters=3):
+
+  ```'
+testcase: "import pandas as pd\nimport numpy as np\nimport unittest\nimport os\nfrom\
+  \ sklearn.datasets import make_blobs\n\nclass TestCases(unittest.TestCase):\n  \
+  \  \"\"\"Tests for task_func.\"\"\"\n    \n    def setUp(self) -> None:\n      \
+  \  os.environ[\"LOKY_MAX_CPU_COUNT\"] = \"2\"\n\n    def test_random_data_size_100(self):\n\
+  \        \"\"\"Test with random data of size 100 and default number of clusters\"\
+  \"\"\n        np.random.seed(42)\n        s1 = pd.Series(np.random.rand(100), name=\"\
+  feature1\")\n        np.random.seed(0)\n        s2 = pd.Series(np.random.rand(100),\
+  \ name=\"feature2\")\n        labels, ax = task_func(s1, s2)\n        # Check if\
+  \ labels are ndarray\n        self.assertIsInstance(labels, np.ndarray)\n      \
+  \  # Check the plot's title\n        self.assertEqual(ax.get_title(), \"K-Means\
+  \ Clustering\")\n\n    def test_random_data_custom_clusters(self):\n        \"\"\
+  \"Test with random data of size 100 and custom number of clusters\"\"\"\n      \
+  \  np.random.seed(42)\n        s1 = pd.Series(np.random.rand(100), name=\"feature1\"\
+  )\n        np.random.seed(0)\n        s2 = pd.Series(np.random.rand(100), name=\"\
+  feature2\")\n        labels, ax = task_func(s1, s2, n_clusters=5)\n        # Check\
+  \ if labels are ndarray\n        self.assertIsInstance(labels, np.ndarray)\n   \
+  \     self.assertEqual(len(set(labels)), 5)\n        # Check the plot's title\n\
+  \        self.assertEqual(ax.get_title(), \"K-Means Clustering\")\n\n    def test_invalid_input_non_series(self):\n\
+  \        \"\"\"Test with invalid input types (non-Series)\"\"\"\n        with self.assertRaises(ValueError):\n\
+  \            task_func([1, 2, 3], pd.Series([4, 5, 6]))\n\n    def test_invalid_input_mismatched_length(self):\n\
+  \        \"\"\"Test with mismatched length of Series\"\"\"\n        s1 = pd.Series([1,\
+  \ 2, 3], name=\"feature1\")\n        s2 = pd.Series([4, 5], name=\"feature2\")\n\
+  \        with self.assertRaises(ValueError):\n            task_func(s1, s2)\n\n\
+  \    def test_custom_clusters_with_synthetic_data(self):\n        \"\"\"Test with\
+  \ synthetic data and custom number of clusters using make_blobs\"\"\"\n        #\
+  \ Generate synthetic data with 2 distinct clusters\n        X, _ = make_blobs(n_samples=100,\
+  \ centers=2, random_state=42)\n        # Convert to pandas Series\n        s1 =\
+  \ pd.Series(X[:, 0], name=\"feature1\")\n        s2 = pd.Series(X[:, 1], name=\"\
+  feature2\")\n        # Run the clustering function\n        labels, ax = task_func(s1,\
+  \ s2, n_clusters=2)\n        # Check if labels are ndarray\n        self.assertIsInstance(labels,\
+  \ np.ndarray)\n        # Check the number of unique labels (should be 2 for 2 clusters)\n\
+  \        self.assertEqual(len(set(labels)), 2)\n        # Check the plot's title\n\
+  \        self.assertEqual(ax.get_title(), \"K-Means Clustering\")\n\n    def tearDown(self):\n\
+  \        plt.clf()"

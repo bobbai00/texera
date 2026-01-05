@@ -1,0 +1,46 @@
+"TMC-list":
+- "code": |-
+    def eda_completion_rate(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("eda_results.csv")
+        gt_output = pd.read_csv(ground_truth)
+        return bool(output.equals(gt_output))
+  "function": |-
+    Data Validity
+  "metric": |-
+    EDA Completion Rate
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: eda_results.csv
+- "code": |-
+    def evaluation_metrics_report(ground_truth):
+        import pandas as pd
+        from sklearn.metrics import classification_report
+        output = pd.read_csv("model_evaluation_results.csv")
+        predictions = set(output.iloc[:, 0].tolist())  # Assuming there is a 'predictions' column
+        gt_output = pd.read_csv(ground_truth)
+        gt = set(gt_output.iloc[:, 0].tolist())  # Assuming there is a 'Predictions' column
+        return bool(gt.issubset(predictions)) # Returns the report as a dictionary
+  "function": |-
+    Result Completeness
+  "metric": |-
+    Evaluation Metrics Report
+  "task_name": |-
+    Interpretability and report generation
+  ground_truth: model_evaluation_results.csv
+"prompt": |-
+  "Please write a Python code to predict the success rate of applying for overseas university study qualifications using data mining techniques. You need to use a dataset of master's program-related indicators for foreign universities, named ""data.csv"", to complete the following tasks:
+
+  1. **Data Analysis**: Conduct exploratory data analysis (EDA) on the dataset to understand the distribution and characteristics of the data.  
+  **Output Filename**: ""eda_results.csv""  
+
+  2. **Feature Engineering**: Based on the results of the data analysis, perform feature selection and preprocessing.  
+  **Output Filename**: ""processed_features.csv""  
+
+  3. **Model Building**: Build a machine learning model to predict the success rate of study abroad applications.  
+  **Output Filename**: ""success_rate_model.pkl""  
+
+  4. **Model Evaluation**: Evaluate the performance of the model and output the prediction results, the column name is "predictions".
+  **Output Filename**: ""model_evaluation_results.csv""  
+
+  Please provide the complete code implementation and ensure that the code structure is clear and the comments are comprehensive for understanding and evaluation."

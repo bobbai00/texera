@@ -1,0 +1,52 @@
+TMC-list:
+- code: "def bar_chart_validity(output, ground_truth):\n    output_ax = output[0]\
+    \  # extract the Axes object from tuple\n    ground_truth_ax = ground_truth[0]\n\
+    \    return isinstance(output_ax, type(ground_truth_ax))"
+  function: Plot Validity
+  metric: Bar Chart Validity
+  task_name: Data visualization
+- code: "def letter_frequency_match(output, ground_truth):\n    output_counts = output[1]\
+    \  # extract the pandas Series from tuple\n    ground_truth_counts = ground_truth[1]\n\
+    \    return output_counts.equals(ground_truth_counts)"
+  function: Data Consistency
+  metric: Letter Frequency Match
+  task_name: Data exploration and statistics understand
+data: "import pandas as pd\nimport matplotlib.pyplot as plt\nimport random\n\n# Create\
+  \ a more complex DataFrame with letters\nrandom.seed(123)\ncomplex_letters = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')\n\
+  df_complex = pd.DataFrame({\n    'Letters': random.choices(complex_letters, k=250)\
+  \ + ['A', 'B', 'C', 'D', 'E']\n})\n\nargs = (df_complex, list('ABCDEFGHIJKLMNOPQRSTUVWXYZ'))"
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\n\ndef task_func(df,\
+  \ letters=list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')):\n    # Check if df is a DataFrame\
+  \ and has 'Letters' column\n    if not isinstance(df, pd.DataFrame) or 'Letters'\
+  \ not in df.columns:\n        raise ValueError(\"Input must be a DataFrame with\
+  \ a 'Letters' column.\")\n\n    # Count frequency of each letter in the 'Letters'\
+  \ column\n    letter_counts = df['Letters'].value_counts().reindex(letters, fill_value=0)\n\
+  \n    # Create bar chart\n    fig, ax = plt.subplots()\n    letter_counts.plot(kind='bar',\
+  \ ax=ax)\n    \n    # Setting labels and title\n    ax.set_xlabel('Letters')\n \
+  \   ax.set_ylabel('Frequency')\n    ax.set_title('Letter Frequency')\n\n    return\
+  \ ax, letter_counts"
+prompt: "Create and return a bar chart of the frequency of letters in a DataFrame\
+  \ where the column 'Letters' contains English uppercase letters. The function should\
+  \ raise the exception for: ValueError: If 'df' is not a DataFrame or lacks the 'Letters'\
+  \ column. The function should output with: tuple(ax: matplotlib.axes.Axes, letter_counts:\
+  \ pandas.Series)\nax: A Matplotlib Axes object representing the bar graph of letter\
+  \ frequency, with the x-axis labeled 'Letters', the y-axis labeled 'Frequency',\
+  \ and the title 'Letter Frequency'.  \nletter_counts: A pandas Series containing\
+  \ the frequency counts of each letter.  \nYou should write self-contained code starting\
+  \ with:  \n```\nimport pandas as pd\nimport matplotlib.pyplot as plt\ndef task_func(df,\
+  \ letters=list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')):\n```"
+testcase: "import unittest\nimport pandas as pd\nimport random\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        self.letters = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')\n\
+  \        random.seed(42)\n        self.df = pd.DataFrame({'Letters': random.choices(self.letters,\
+  \ k=100)})\n\n    def test_return_type(self):\n        ax, _ = task_func(self.df)\n\
+  \        self.assertIsInstance(ax, plt.Axes)\n\n    def test_invalid_input_empty_dataframe(self):\n\
+  \        with self.assertRaises(ValueError):\n            task_func(pd.DataFrame())\n\
+  \n    def test_invalid_input_type(self):\n        with self.assertRaises(ValueError):\n\
+  \            task_func(\"not a dataframe\")\n\n    def test_plot_labels(self):\n\
+  \        ax, _ = task_func(self.df)\n        self.assertEqual(ax.get_title(), 'Letter\
+  \ Frequency')\n        self.assertEqual(ax.get_xlabel(), 'Letters')\n        self.assertEqual(ax.get_ylabel(),\
+  \ 'Frequency')\n\n    def test_bar_chart_values(self):\n        letter_counts =\
+  \ self.df['Letters'].value_counts()\n        ax, _ = task_func(self.df)\n      \
+  \  bars = ax.containers[0]\n        for i, bar in enumerate(bars):\n           \
+  \ expected_height = letter_counts.get(self.letters[i], 0)\n            self.assertEqual(bar.get_height(),\
+  \ expected_height)"

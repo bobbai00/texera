@@ -1,0 +1,80 @@
+"TMC-list":
+- "code": |-
+    def dataset_completeness(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("cleaned_data.csv")
+        output_gt = pd.read_csv(ground_truth)
+        return len(output) == len(output_gt)
+  "function": |-
+    Data Completeness
+  "metric": |-
+    Dataset Completeness
+  "task_name": |-
+    Data cleaning and preprocessing
+  "ground_truth": |-
+    cleaned_data.csv
+- "code": |-
+    def association_rule_count(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("association_rules.csv")
+        # Compare the number of generated rules with the expectation from the ground truth
+        ground_truth_df = pd.read_csv(ground_truth)
+        expected_rule_count = min(len(ground_truth_df), 5)  # We expect at least 5 rules
+        generated_rule_count = output.shape[0]
+        return generated_rule_count == expected_rule_count
+  "function": |-
+    Association Rule Count
+  "ground_truth": |-
+    association_rules.csv
+  "metric": |-
+    Association Rule Count
+  "task_name": |-
+    Data mining
+- "code": |-
+    def rule_analysis_completeness(ground_truth):
+        import PyPDF2
+        # Check if the PDF for rules analysis has been generated and contains expected content
+        with open("rules_analysis.pdf", "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text()
+        return "rules" in text.lower() and len(text) > 100  # Assuming analysis should mention 'rules' and be substantial
+  "function": |-
+    Completeness
+  "metric": |-
+    Rule Analysis Completeness
+  "task_name": |-
+    Pattern recognition
+"prompt": |-
+  "datadir = ''
+  You are provided with a dataset located at `datadir` named ""data.csv"". The dataset contains retail transaction data with the following columns:
+
+  - `Member_number`: A unique identifier for each customer.
+  - `Date`: The date of the transaction.
+  - `itemDescription`: The item purchased in the transaction.
+   
+  The two records are considered to be in the same transaction if they have the same `Member_number` and `Date`.
+
+  Your task is to mine association rules from this dataset using an appropriate algorithm. The output requirements are as follows:
+   
+  1. **Subtask: Data Preparation**
+  - **Input:** ""data.csv""
+  - **Output:** Cleaned data file with duplicate transactions removed.
+  - **Output Filename:** ""cleaned_data.csv""
+
+  2. **Subtask: Association Rule Mining**
+  - **Input:** ""cleaned_data.csv""
+  - **Output:** Association rules meeting the specified requirements.
+  - **Output Filename:** ""association_rules.csv""
+  - **Requirements:** 
+  - Minimum Support: 0.01
+  - Minimum Confidence: 0.05
+  - Only include the top 5 rules ranked by lift.
+
+  3. **Subtask: Analysis of Rules**
+  - **Input:** ""association_rules.csv""
+  - **Output:** A brief analysis of the discovered patterns and rules.
+  - **Output Filename:** ""rules_analysis.pdf""
+
+  Ensure that all outputs reflect the quality of completion for each corresponding subtask."

@@ -1,0 +1,66 @@
+TMC-list:
+- code: "def standardization_validation(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the standardized DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    \n    # Checking if the standardized columns 'age' and 'income' have mean\
+    \ close to 0 and std close to 1\n    mean_age = output_df['age'].mean()\n    std_age\
+    \ = output_df['age'].std()\n    mean_income = output_df['income'].mean()\n   \
+    \ std_income = output_df['income'].std()\n    \n    # Define acceptable range\
+    \ for mean and std\n    acceptable_range_mean = (-0.1, 0.1)  # mean should be\
+    \ close to 0\n    acceptable_range_std = (0.9, 1.1)    # std should be close to\
+    \ 1\n    \n    mean_age_valid = acceptable_range_mean[0] <= mean_age <= acceptable_range_mean[1]\n\
+    \    std_age_valid = acceptable_range_std[0] <= std_age <= acceptable_range_std[1]\n\
+    \    mean_income_valid = acceptable_range_mean[0] <= mean_income <= acceptable_range_mean[1]\n\
+    \    std_income_valid = acceptable_range_std[0] <= std_income <= acceptable_range_std[1]\n\
+    \    \n    return mean_age_valid and std_age_valid and mean_income_valid and std_income_valid"
+  function: Normalization Range Check
+  metric: Standardization Validation
+  task_name: Data cleaning and preprocessing
+data: "import pandas as pd\nargs = (pd.DataFrame({\n    'id': [101, 101, 102, 102,\
+  \ 103, 103, 104, 104],\n    'age': [22, 42, 33, 53, 29, 49, 19, 39],\n    'income':\
+  \ [55000, 85000, 64000, 84000, 78000, 91000, 32000, 72000]\n}),)"
+ground_truth: "import pandas as pd\nfrom sklearn.preprocessing import StandardScaler\n\
+  \ndef task_func(df):\n    if not all(col in df.columns for col in ['id', 'age',\
+  \ 'income']):\n        raise ValueError(\"DataFrame must contain 'id', 'age', and\
+  \ 'income' columns.\")\n    \n    scaler = StandardScaler()\n    grouped = df.groupby('id')\n\
+  \    \n    standardized_df = df.copy()\n    for name, group in grouped:\n      \
+  \  standardized_values = scaler.fit_transform(group[['age', 'income']])\n      \
+  \  standardized_df.loc[group.index, ['age', 'income']] = standardized_values\n \
+  \   \n    return (standardized_df,)"
+prompt: '"Standardize the ''age'' and ''income'' columns for each group by ''id''
+  in a Pandas DataFrame, and return the standardized DataFrame. The function should
+  raise the exception for: This function will raise ValueError if the DataFrame does
+  not have the ''id'', ''age'', and ''income'' columns. The function should output
+  with: tuple(standardized_df: pandas.DataFrame) standardized_df: The pandas DataFrame
+  after standardizing ''age'' and ''income'' columns. You should write self-contained
+  code starting with:
+
+  ```
+
+  import pandas as pd
+
+  from sklearn.preprocessing import StandardScaler
+
+  def task_func(df):
+
+  ```"'
+testcase: "import pandas as pd\nfrom sklearn.preprocessing import StandardScaler\n\
+  import unittest\n\nclass TestCases(unittest.TestCase):\n    def test_empty_dataframe(self):\n\
+  \        df = pd.DataFrame(columns=['id', 'age', 'income'])\n        result = task_func(df)\n\
+  \        self.assertEqual(len(result), 0)\n\n    def test_example_dataframe(self):\n\
+  \        df = pd.DataFrame({\n            'id': [1, 1, 2, 2, 3, 3],\n          \
+  \  'age': [25, 26, 35, 36, 28, 29],\n            'income': [50000, 60000, 70000,\
+  \ 80000, 90000, 100000]\n        })\n        result = task_func(df)\n        scaler\
+  \ = StandardScaler()\n        # check random point\n        self.assertEqual(-1,\
+  \ result.iloc[0]['age'])\n\n    def test_single_group(self):\n        df = pd.DataFrame({'id':\
+  \ [1, 1], 'age': [30, 40], 'income': [50000, 60000]})\n        result = task_func(df)\n\
+  \        self.assertEqual(len(result), 2)\n        self.assertNotEqual(result.iloc[0]['age'],\
+  \ 30)  # Checking if values are standardized\n\n    def test_multiple_groups(self):\n\
+  \        df = pd.DataFrame({'id': [1, 1, 2, 2], 'age': [25, 35, 45, 55], 'income':\
+  \ [30000, 40000, 50000, 60000]})\n        result = task_func(df)\n        self.assertEqual(len(result),\
+  \ 4)\n\n    def test_negative_values(self):\n        df = pd.DataFrame({'id': [1,\
+  \ 1], 'age': [-20, -30], 'income': [-10000, -20000]})\n        result = task_func(df)\n\
+  \        self.assertEqual(len(result), 2)\n\n    def test_large_data(self):\n  \
+  \      df = pd.DataFrame({'id': list(range(1000)), 'age': list(range(1000)), 'income':\
+  \ list(range(1000, 2000))})\n        result = task_func(df)\n        self.assertEqual(len(result),\
+  \ 1000)\n\n    def test_invalid_df(self):\n        df = pd.DataFrame()\n       \
+  \ with self.assertRaises(ValueError):\n            task_func(df)"

@@ -1,0 +1,65 @@
+TMC-list:
+- code: "def count_greater_than_avg(output, ground_truth):\n    return len(output[0])\
+    \ == len(ground_truth[0])"
+  function: Data Uniformity
+  metric: Count of Values Greater Than Average
+  task_name: Data exploration and statistics understand
+data: 'data = [3, 7, 5, 12, 10, 14, 2, 8, 6, 11, 4, 9]
+
+  value = 6.5
+
+  args = (data, value)'
+ground_truth: "import numpy as np\nimport bisect\nimport statistics\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(data, value):\n    if not data:\n        return (np.array([]),\
+  \ 0)\n    \n    average = statistics.mean(data)\n    greater_than_avg = np.array(sorted([x\
+  \ for x in data if x > average]))\n    count_greater_than_value = sum(1 for x in\
+  \ data if x > value)\n    \n    plt.hist(greater_than_avg, bins='auto', alpha=0.7,\
+  \ rwidth=0.85)\n    plt.title('Histogram of Values Greater Than Average')\n    plt.xlabel('Values')\n\
+  \    plt.ylabel('Frequency')\n    plt.grid(True)\n    plt.show()\n    \n    return\
+  \ (greater_than_avg, count_greater_than_value)"
+prompt: "Analyzes a list of numerical data, identifies values greater than the average,\
+  \ and counts how many values are greater than a specified value. Additionally, plots\
+  \ the histogram of the sorted numbers. Note that: If the data list is empty, the\
+  \ function returns an empty numpy.ndarray and a count of 0. This ensures the function's\
+  \ output remains consistent and predictable even with no input data. The function\
+  \ should output with: tuple(greater_than_avg: numpy.ndarray, count_greater_than_value:\
+  \ int)\ngreater_than_avg: An array of values from the data that are greater than\
+  \ the average.  \ncount_greater_than_value: The number of values in the data that\
+  \ are greater than the given value.  \nYou should write self-contained code starting\
+  \ with:  \n```\nimport numpy as np\nimport bisect\nimport statistics\nimport matplotlib.pyplot\
+  \ as plt\ndef task_func(data, value):\n```"
+testcase: "import unittest\nfrom unittest.mock import patch\nimport numpy as np\n\
+  import statistics\n\nclass TestCases(unittest.TestCase):\n    def test_return_types(self):\n\
+  \        \"\"\"Ensure the function returns a numpy.ndarray and an integer.\"\"\"\
+  \n        data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\n        result = task_func(data,\
+  \ 5)\n        self.assertIsInstance(result[0], np.ndarray, \"First return value\
+  \ should be an ndarray\")\n        self.assertIsInstance(result[1], int, \"Second\
+  \ return value should be an int\")\n\n    def test_greater_than_average(self):\n\
+  \        \"\"\"Verify the returned array contains only values greater than the average\
+  \ of the data list.\"\"\"\n        data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\n    \
+  \    result = task_func(data, 5)\n        self.assertTrue(all(val > statistics.mean(data)\
+  \ for val in result[0]), \"All returned values should be greater than the data's\
+  \ average\")\n\n    def test_count_greater_than_value(self):\n        \"\"\"Check\
+  \ if the function correctly counts the number of values greater than the specified\
+  \ value.\"\"\"\n        data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\n        _, count\
+  \ = task_func(data, 5)\n        self.assertEqual(count, 5, \"The count of values\
+  \ greater than 5 should be 5\")\n\n    def test_empty_data(self):\n        \"\"\"\
+  Ensure the function handles an empty data list correctly.\"\"\"\n        data =\
+  \ []\n        result = task_func(data, 5)\n        self.assertEqual(len(result[0]),\
+  \ 0, \"The returned array should be empty for empty input data\")\n        self.assertEqual(result[1],\
+  \ 0, \"The count should be 0 for empty input data\")\n\n    def test_small_data_set(self):\n\
+  \        \"\"\"Test functionality with a small data set.\"\"\"\n        data = [2,\
+  \ 3, 4]\n        result = task_func(data, 3)\n        self.assertTrue(all(val >\
+  \ statistics.mean(data) for val in result[0]), \"All returned values should be greater\
+  \ than the average in a small data set\")\n        self.assertEqual(result[1], 1,\
+  \ \"The count of values greater than 3 should be 1 in a small data set\")\n\n  \
+  \  @patch('matplotlib.pyplot.show')\n    def test_plotting_mocked(self, mock_show):\n\
+  \        \"\"\"Ensure the function triggers a plot display.\"\"\"\n        data\
+  \ = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\n        _ = task_func(data, 5)\n        mock_show.assert_called_once()\n\
+  \n    def test_with_floats_and_boundary_value(self):\n        \"\"\"Test function\
+  \ with floating point numbers and a boundary value exactly equal to one of the data\
+  \ points.\"\"\"\n        data = [1.5, 2.5, 3.5, 4.5, 5.5]\n        greater_avg,\
+  \ count = task_func(data, 3.5)\n        self.assertTrue(all(val > statistics.mean(data)\
+  \ for val in greater_avg), \"All returned values should be greater than the average\
+  \ with floats\")\n        self.assertEqual(count, 2, \"The count of values greater\
+  \ than 3.5 should be 2, including boundary conditions\")"

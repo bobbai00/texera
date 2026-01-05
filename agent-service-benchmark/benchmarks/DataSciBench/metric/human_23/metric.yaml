@@ -1,0 +1,96 @@
+"TMC-list":
+- "code": |-
+    def mean_absolute_error_missing(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("missing_values_handled.csv")
+        gt = pd.read_csv(ground_truth)
+        return bool(output[['Temperature', 'Humidity', 'WindSpeed']].equals(gt[['Temperature', 'Humidity', 'WindSpeed']]))
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Mean Absolute Error for Missing Values Handling
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: missing_values_handled.csv
+- "code": |-
+    def percentage_within_bounds(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("outliers_handled.csv")
+        ground_truth = pd.read_csv("outliers_handled.csv")
+        count_within_bounds = ((output[['Temperature', 'Humidity', 'WindSpeed']] >= ground_truth[['Temperature', 'Humidity', 'WindSpeed']].quantile(0.02)) &
+                                (output[['Temperature', 'Humidity', 'WindSpeed']] <= ground_truth[['Temperature', 'Humidity', 'WindSpeed']].quantile(0.98))).sum().sum()
+        total_count = output[['Temperature', 'Humidity', 'WindSpeed']].size
+        return bool((count_within_bounds / total_count) * 100 >= 95)
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Percentage of Data Within Bounds for Outliers Handling
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: outliers_handled.csv
+- "code": |-
+    def min_max_scaling_range(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("normalized_data.csv")
+        min_vals = output[['Temperature', 'Humidity', 'WindSpeed']].min()
+        max_vals = output[['Temperature', 'Humidity', 'WindSpeed']].max()
+        pre_output = (max_vals - min_vals).sum()
+        gt = pd.read_csv("normalized_data.csv")
+        pre_gt = (gt[['Temperature', 'Humidity', 'WindSpeed']].max() - gt[['Temperature', 'Humidity', 'WindSpeed']].min()).sum()
+        return bool(pre_output == pre_gt)
+  "function": |-
+    Normalization Range Check
+  "metric": |-
+    Minimum and Maximum Feature Values Normalization
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: normalized_data.csv
+- "code": |-
+    def verify_date_format(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("date_formatted.csv")
+        return bool(pd.to_datetime(output['Date'], errors='coerce').notna().all())
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Date Column Format Verification
+  "task_name": |-
+    Data cleaning and preprocessing
+- "code": |-
+    def one_hot_encoding_consistency(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("final_cleaned_data.csv")
+        gt = pd.read_csv(ground_truth)
+        unique_station_ids = gt['StationID_StationA'].unique()
+        return bool(all(station_id in output['StationID_StationA'].unique() for station_id in unique_station_ids))
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    One-Hot Encoding Consistency Check
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: final_cleaned_data.csv
+"prompt": |-
+  Given a DataFrame `df` of historical weather data with columns: StationID, Date, Temperature, Humidity, WindSpeed, perform the following tasks:
+   
+  1. **Handle Missing Values**: Handle missing values in Temperature, Humidity, and WindSpeed using the mean of each column.  
+     **Input**: `data.csv` (contains the initial DataFrame)  
+     **Output**: `missing_values_handled.csv` (the DataFrame after handling missing values)
+
+  2. **Detect and Replace Outliers**: Detect and replace outliers in Temperature, Humidity, and WindSpeed. An outlier is defined as a value below the 2nd percentile or above the 98th percentile. Replace these outliers with the corresponding 2nd or 98th percentile value.  
+     **Input**: `missing_values_handled.csv`  
+     **Output**: `outliers_handled.csv` (the DataFrame after handling outliers)
+   
+  3. **Normalize Features**: Normalize Temperature, Humidity, and WindSpeed using Min-Max scaling.  
+     **Input**: `outliers_handled.csv`  
+     **Output**: `normalized_data.csv` (the DataFrame after normalization)
+
+  4. **Ensure Date Format**: Ensure that the Date column is in datetime format.  
+     **Input**: `normalized_data.csv`  
+     **Output**: `date_formatted.csv` (the DataFrame after formatting the Date)
+
+   5. **One-Hot Encode StationID**: One-hot encode the StationID column.  
+     **Input**: `date_formatted.csv`  
+     **Output**: `final_cleaned_data.csv` (the final cleaned DataFrame ready for further analysis)
+
+  Apply the required data cleaning and preprocessing steps as specified above and output the final cleaned DataFrame as `final_cleaned_data.csv`.

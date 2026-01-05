@@ -1,0 +1,40 @@
+"TMC-list":
+- "code": |-
+    def encoding_consistency_check(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("final_cleaned_data.csv")
+        unique_product_ids = output['ProductID'].nunique()
+        unique_store_ids = output['StoreID'].nunique()
+        total_unique_ids = output['ProductID'].unique().size + output['StoreID'].unique().size
+        return bool(total_unique_ids == (unique_product_ids + unique_store_ids))  # Check if both encodings do not overlap
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Encoding Consistency Check
+  "task_name": |-
+    Data cleaning and preprocessing
+"prompt": |-
+
+  Given a DataFrame `df` with sales data containing columns: TransactionID, ProductID, Quantity, SaleDate, StoreID, Revenue:
+
+  1. **Handle missing Revenue values**: Impute any missing Revenue values with the median of the Revenue column.  
+     **Input file**: `data.csv`  
+     **Output**: `step1_imputed_revenue.csv` (contains the DataFrame after handling missing values)
+
+  2. **Detect and replace outliers**: Detect and replace outliers in Quantity and Revenue. Outliers are defined as values below the 1st percentile or above the 99th percentile. Replace them with the corresponding 1st or 99th percentile value instead of removing them.  
+     **Input file**: `step1_imputed_revenue.csv`  
+     **Output**: `step2_replaced_outliers.csv` (contains the DataFrame after outlier replacement)
+
+  3. **Normalize Quantity and Revenue**: Normalize Quantity and Revenue using Z-score normalization.  
+     **Input file**: `step2_replaced_outliers.csv`  
+     **Output**: `step3_normalized_data.csv` (contains the DataFrame after normalization)
+
+  4. **Ensure SaleDate format**: Ensure SaleDate is in datetime format.  
+     **Input file**: `step3_normalized_data.csv`  
+     **Output**: `step4_formatted_dates.csv` (contains the DataFrame after ensuring datetime format)
+
+  5. **Encode ProductID and StoreID**: Encode the ProductID and StoreID columns using separate label encoders to avoid any potential overlap in numerical values between categories from different columns.  
+     **Input file**: `step4_formatted_dates.csv`  
+     **Output**: `final_cleaned_data.csv` (contains the final cleaned DataFrame)
+
+  Perform the specified data cleaning and preprocessing tasks and output the cleaned DataFrame as the final result.

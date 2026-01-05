@@ -1,0 +1,87 @@
+TMC-list:
+- code: "def merge_validation(output, ground_truth):    \n    # Unpack output and\
+    \ ground_truth\n    _, heatmap_output = output\n    _, heatmap_gt = ground_truth\n\
+    \n    # Compare the heatmap data (based on the values in the contingency table\
+    \ used)\n    data_output = heatmap_output.get_children()[0].get_array().data\n\
+    \    data_gt = heatmap_gt.get_children()[0].get_array().data\n\n    # Compare\
+    \ the heatmap data (based on the values in the contingency table used)\n    heatmap_comparison\
+    \ = (data_output == data_gt).all()\n\n    return heatmap_comparison\n\n\n"
+  function: Data Quality Score
+  metric: Dataframe Merge Validation
+  task_name: Data cleaning and preprocessing
+- code: "def chi_square_p_value_accuracy(output, ground_truth):\n    output_p = output[0]\
+    \  # extract the p-value from the output tuple\n    ground_truth_p = ground_truth[0]\n\
+    \    return abs(output_p - ground_truth_p) < 0.05  # Check if the predicted p-value\
+    \ is within an acceptable range"
+  function: Data Accuracy
+  metric: Chi-Square Test P-Value Accuracy
+  task_name: Data exploration and statistics understand
+- code: "def heatmap_type_check(output, ground_truth):\n    import seaborn as sns\n\
+    \    output_heatmap = output[1]  # check the heatmap\n    from matplotlib.axes\
+    \ import Axes\n    return isinstance(output_heatmap, Axes)"
+  function: Plot Validity
+  metric: Heatmap Type Check
+  task_name: Data visualization
+data: "import pandas as pd\ndf1 = pd.DataFrame({\n    \"id\": [101, 102, 103, 104,\
+  \ 105, 106],\n    \"feature1\": [\"A\", \"A\", \"B\", \"C\", \"C\", \"B\"]\n})\n\
+  df2 = pd.DataFrame({\n    \"id\": [101, 102, 103, 104, 105, 106],\n    \"feature2\"\
+  : [\"W\", \"X\", \"Y\", \"W\", \"Y\", \"X\"]\n})\nargs = (df1, df2, \"feature1\"\
+  , \"feature2\")"
+ground_truth: "import pandas as pd\nimport seaborn as sns\nimport matplotlib.pyplot\
+  \ as plt\nfrom scipy.stats import chi2_contingency\n\ndef task_func(df1, df2, column1=\"\
+  feature1\", column2=\"feature2\"):\n    # Merge the two dataframes on the 'id' column\n\
+  \    merged_df = pd.merge(df1, df2, on='id')\n\n    # Create a contingency table\n\
+  \    contingency_table = pd.crosstab(merged_df[column1], merged_df[column2])\n\n\
+  \    # Perform the Chi-Squared independence test\n    chi2, p, _, _ = chi2_contingency(contingency_table)\n\
+  \n    # Create a heatmap of the contingency table\n    plt.figure(figsize=(10, 6))\n\
+  \    heatmap = sns.heatmap(contingency_table, annot=True, fmt='g', cmap='Blues')\n\
+  \    plt.title('Contingency Table Heatmap')\n    plt.xlabel(column2)\n    plt.ylabel(column1)\n\
+  \    plt.show()\n\n    return (p, heatmap)"
+prompt: '"Merge two dataframes based on the ''id'' column, perform a chi-square independence
+  test on the merged dataframe, and draw a heatmap of the contingency table created
+  from the features in column1, column2. The function should output with: tuple(p:
+  float, heatmap: matplotlib.pyplot.Axes) p: The p-value of the Chi-Squared test.
+  heatmap: Seaborn heatmap of the contingency table. You should write self-contained
+  code starting with:
+
+  ```
+
+  import seaborn as sns
+
+  from scipy.stats import chi2_contingency
+
+  def task_func(df1, df2, column1="feature1", column2="feature2"):
+
+  ```"'
+testcase: "import unittest\nimport pandas as pd\nimport matplotlib.pyplot as plt\n\
+  \nclass TestCases(unittest.TestCase):\n    def test_case_1(self):\n        # Testing\
+  \ basic functionality with simple data\n        df1 = pd.DataFrame({\"id\": [1,\
+  \ 2, 3], \"feature1\": [\"A\", \"B\", \"A\"]})\n        df2 = pd.DataFrame({\"id\"\
+  : [1, 2, 3], \"feature2\": [\"X\", \"Y\", \"X\"]})\n        p_value, heatmap = task_func(df1,\
+  \ df2)\n        # P-value should be between 0 and 1 inclusive\n        self.assertTrue(0.0\
+  \ <= p_value <= 1.0)\n        self.assertEqual(len(heatmap.get_yticklabels()), 2)\
+  \  # A and B\n        self.assertEqual(len(heatmap.get_xticklabels()), 2)  # X and\
+  \ Y\n\n    def test_case_2(self):\n        # Testing with distinct feature values\
+  \ across both dataframes\n        df1 = pd.DataFrame({\"id\": [1, 2, 3], \"feature1\"\
+  : [\"C\", \"D\", \"C\"]})\n        df2 = pd.DataFrame({\"id\": [1, 2, 3], \"feature2\"\
+  : [\"W\", \"W\", \"Z\"]})\n        p_value, heatmap = task_func(df1, df2)\n    \
+  \    self.assertTrue(0.0 <= p_value <= 1.0)\n        self.assertEqual(len(heatmap.get_yticklabels()),\
+  \ 2)  # C and D\n        self.assertEqual(len(heatmap.get_xticklabels()), 2)  #\
+  \ W and Z\n\n    def test_case_3(self):\n        # Test custom feature column names\n\
+  \        df1 = pd.DataFrame({\"id\": [1, 2, 3], \"foo\": [\"A\", \"B\", \"A\"]})\n\
+  \        df2 = pd.DataFrame({\"id\": [1, 2, 3], \"bar\": [\"X\", \"Y\", \"X\"]})\n\
+  \        p_value, heatmap = task_func(df1, df2, column1=\"foo\", column2=\"bar\"\
+  )\n        self.assertTrue(0.0 <= p_value <= 1.0)\n        self.assertEqual(len(heatmap.get_yticklabels()),\
+  \ 2)\n        self.assertEqual(len(heatmap.get_xticklabels()), 2)\n\n    def test_case_4(self):\n\
+  \        # Testing a scenario where the p-value is expected to be close to 0\n \
+  \       # This is because there's a strong association between feature1 and feature2\n\
+  \        df1 = pd.DataFrame(\n            {\"id\": list(range(1, 21)), \"feature1\"\
+  : [\"A\"] * 10 + [\"B\"] * 10}\n        )\n        df2 = pd.DataFrame(\n       \
+  \     {\"id\": list(range(1, 21)), \"feature2\": [\"X\"] * 10 + [\"Y\"] * 10}\n\
+  \        )\n        p_value, _ = task_func(df1, df2)\n        self.assertTrue(0.0\
+  \ <= p_value < 0.01)  # Expected p-value to be close to 0\n\n    def test_case_5(self):\n\
+  \        # Test error handling - should fail when there is no 'id' column\n    \
+  \    df1 = pd.DataFrame({\"foo\": [1, 2], \"bar\": [3, 4]})\n        df2 = pd.DataFrame({\"\
+  foo\": [1, 2], \"bar\": [3, 4]})\n        with self.assertRaises(KeyError):\n  \
+  \          task_func(df1, df2)\n\n    def tearDown(self):\n        plt.close(\"\
+  all\")"

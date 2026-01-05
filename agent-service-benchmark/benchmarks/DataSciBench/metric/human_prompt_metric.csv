@@ -1,0 +1,1539 @@
+Prompt,Task1,Metric1,Function1,Task2,Metric2,Function2,Task3,Metric3,Function3,Task4,Metric4,Function4,Task5,Metric5,Function5,Task6,Metric6,Function6,Task7,Metric7,Function7,Task8,Metric8,Function8,Task9,Metric9,Function9,Task10,Metric10,Function10
+"You are given a list of tickers and their daily closing prices for a given period stored in an input file named ""data.csv"". Implement the most_corr function that, when given the daily closing prices, returns the pair of tickers that are the most highly (linearly) correlated by daily percentage change. The function should follow these specifications:
+
+1. **Input File**: ""data.csv"" - A CSV file containing a dataframe with columns representing each ticker's daily closing prices.
+   
+2. **Output Requirements**: The function should generate the following output:
+   - **Output Format**: A CSV file.
+   - **Output Filename**: ""most_corr_output.csv"" - This file should contain two columns labeled ""Ticker 1"" and ""Ticker 2"", representing the pair of tickers that are most correlated by daily percentage change.
+
+Here's the starter code for your implementation:
+
+```python
+import pandas as pd
+import numpy as np
+
+def most_corr(prices):
+    """"""
+    :param prices: (pandas.DataFrame) A dataframe containing each ticker's 
+                   daily closing prices.
+    :returns: (container of strings) A container, containing the two tickers that 
+              are the most highly (linearly) correlated by daily percentage change.
+    """"""
+    return None
+
+# For example, the code below should print: ('FB', 'MSFT')
+print(most_corr(pd.DataFrame.from_dict({
+    'GOOG' : [
+        742.66, 738.40, 738.22, 741.16,
+        739.98, 747.28, 746.22, 741.80,
+        745.33, 741.29, 742.83, 750.50
+    ],
+    'FB' : [
+        108.40, 107.92, 109.64, 112.22,
+        109.57, 113.82, 114.03, 112.24,
+        114.68, 112.92, 113.28, 115.40
+    ],
+    'MSFT' : [
+        55.40, 54.63, 54.98, 55.88,
+        54.12, 59.16, 58.14, 55.97,
+        61.20, 57.14, 56.62, 59.25
+    ],
+    'AAPL' : [
+        106.00, 104.66, 104.87, 105.69,
+        104.22, 110.16, 109.84, 108.86,
+        110.14, 107.66, 108.08, 109.90
+    ]
+}))) 
+```",Data cleaning and preprocessing,Data Cleaning Completeness,"def data_cleaning_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""data.csv"")
+    # Assuming ground_truth is the expected cleaned dataframe
+    cleaned_output = output.dropna()  # Example of data cleaning operation
+    return cleaned_output.equals(ground_truth)",Data exploration and statistics understand,Summary Statistics Comparison,"def summary_statistics_comparison(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""data.csv"")
+    # Assuming ground_truth is a dataframe with expected summary statistics
+    stats_output = output.describe()  # Compute summary statistics of the output
+    return stats_output.equals(ground_truth)",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""most_corr_output.csv"")
+    # Assuming ground_truth contains the expected values of the most correlated tickers
+    predictions = output[['Ticker 1', 'Ticker 2']].values.flatten()
+    return accuracy_score(ground_truth, predictions)",Interpretability and report generation,Report Generation Completeness,"def report_generation_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""most_corr_output.csv"")
+    # Assuming ground_truth is a reference report structure
+    return output.shape[0] > 0 and output.equals(ground_truth)",,,,,,,,,,,,,,,,,,
+"As part of an application for iris enthusiasts, implement the `train_and_predict` function to classify three types of irises based on four features. The function should be able to handle input and output in the form of specified files, ensuring a standardized data format.
+
+### Input:
+- **train_input_file**: A file containing a two-dimensional NumPy array, where each element is an array with four features: sepal length, sepal width, petal length, and petal width.
+- **train_output_file**: A file containing a one-dimensional NumPy array, where each element is a number representing the species of iris corresponding to the same row in `train_input_file`. 0 represents Iris setosa, 1 represents Iris versicolor, and 2 represents Iris virginica.
+- **prediction_input_file**: A file containing a two-dimensional NumPy array, where each element is an array with four features: sepal length, sepal width, petal length, and petal width.
+
+### Output:
+- **prediction_output_file**: A file to store the predicted iris species as an iterable (like a list or `numpy.ndarray`). The nth position in the result should correspond to the classification of the nth row of the data in `prediction_input_file`.
+
+### Instructions:
+- The `train_and_predict` function should train a classifier using the data from `train_input_file` and `train_output_file`.
+- The trained classifier should then predict the labels for the data in `prediction_input_file`.
+- Save the predicted labels to `prediction_output_file`.
+
+### Starter Code:
+```python
+import numpy as np
+from sklearn import datasets
+from sklearn.model_selection import train_test_split
+from sklearn import metrics
+
+def train_and_predict(train_input_file, train_output_file, prediction_input_file, prediction_output_file):
+# Load input files
+train_input_features = np.load(train_input_file)
+train_outputs = np.load(train_output_file)
+prediction_features = np.load(prediction_input_file)
+
+# [Implement the classifier training and prediction here]
+    
+# Save the predictions to output file
+np.save(prediction_output_file, predictions)
+
+# Example usage
+iris = datasets.load_iris()
+X_train, X_test, y_train, y_test = train_test_split(iris.data, iris.target, test_size=0.3, random_state=0)
+
+# Saving the training and testing data to files
+np.save('train_input.npy', X_train)
+np.save('train_output.npy', y_train)
+np.save('prediction_input.npy', X_test)
+
+# Run the train_and_predict function
+train_and_predict('train_input.npy', 'train_output.npy', 'prediction_input.npy', 'prediction_output.npy')
+
+# Load and print the accuracy of the prediction
+y_pred = np.load('prediction_output.npy')
+print(metrics.accuracy_score(y_test, y_pred))
+```
+---
+
+This prompt ensures the function works with standardized input/output files while preserving the original functionality and tasks.",Data cleaning and preprocessing,Data Cleaning Completeness,"def data_cleaning_completeness(ground_truth):
+    import numpy as np
+    import pandas as pd
+    train_input_features = np.load(""train_input.npy"")
+    ground_truth_data = pd.Series(ground_truth)
+    
+    # Check for missing values in train_input_features
+    missing_values = np.any(np.isnan(train_input_features))
+    
+    # Assuming ground truth data should match the number of rows in the training input
+    is_complete = len(ground_truth_data) == train_input_features.shape[0]
+    
+    return {'missing_values': missing_values, 'complete_data': is_complete}",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import numpy as np
+    
+    y_pred = np.load(""prediction_output.npy"")
+    return accuracy_score(ground_truth, y_pred)",Interpretability and report generation,Report Generation Validation,"def report_generation_validation(ground_truth):
+    import numpy as np
+    import json
+    
+    with open('prediction_output_file_report.json', 'r') as f:
+        report = json.load(f)
+        
+    assert 'accuracy' in report, ""Report is missing accuracy""
+    
+    ground_truth_array = np.array(ground_truth)
+    y_pred = np.load(""prediction_output.npy"")
+    
+    accuracy = np.mean(y_pred == ground_truth_array)
+    return report['accuracy'] == accuracy",,,,,,,,,,,,,,,,,,,,,
+"Implement the desired _marketing_ expenditure function, which returns the required amount of money that needs to be invested in a new marketing campaign to sell the desired number of units. 
+
+### Subtasks:
+1. **Data Preparation**:
+   - **Input**: Read the previous campaign data from the file named `campaign_data.csv`, which contains the following columns: Campaign, Marketing expenditure, Units sold.
+   - **Output**: Prepare cleaned data and save it as `cleaned_campaign_data.csv`.
+
+2. **Model Training**:
+   - **Input**: Use the cleaned data from `cleaned_campaign_data.csv`.
+   - **Output**: Train a linear regression model and save the model parameters (coefficients) in a file named `model_parameters.csv`.
+
+3. **Expenditure Calculation**:
+   - **Input**: Use the model parameters from `model_parameters.csv` and the desired number of units to sell.
+   - **Output**: Calculate the required marketing expenditure and save the result as `required_expenditure.txt` containing a single float value.
+
+### Note:
+Use the following previous campaign data to evaluate how the number of units sold grows linearly as the amount of money invested increases:
+
+```
+Campaign       Marketing expenditure       Units sold
+#1                                 300,000                  60,000
+#2                                 200,000                  50,000
+#3                                 400,000                  90,000
+#4                                 300,000                  80,000
+#5                                 100,000                  30,000
+```
+
+Starter Code: 
+```python
+import numpy as np
+from sklearn import linear_model
+
+def desired_marketing_expenditure(marketing_expenditure, units_sold, desired_units_sold):
+    """"""
+    :param marketing_expenditure: (list) A list of integers with the expenditure for each previous campaign.
+    :param units_sold: (list) A list of integers with the number of units sold for each previous campaign.
+    :param desired_units_sold: (integer) Target number of units to sell in the new campaign.
+    :returns: (float) Required amount of money to be invested.
+    """"""
+    return None
+
+#For example, with the parameters below, the function should return 250000.0
+print(desired_marketing_expenditure(
+    [300000, 200000, 400000, 300000, 100000],
+    [60000, 50000, 90000, 80000, 30000],
+    60000))
+```",Data cleaning and preprocessing,Data Cleaning Completeness,"def data_cleaning_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_campaign_data.csv"")
+    # Checking if the number of rows matches the ground truth (total campaigns) and no NaN values
+    return output.shape[0] == len(ground_truth) and output.isnull().sum().sum() == 0",Predictive modeling,Model Performance (R-squared),"def model_performance_r_squared(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import r2_score
+    output = pd.read_csv(""model_parameters.csv"")
+    
+    # Read cleaned campaign data for actual units sold
+    cleaned_data = pd.read_csv(""cleaned_campaign_data.csv"")
+    X = cleaned_data[['Marketing expenditure']]
+    y = cleaned_data['Units sold']
+    
+    # Retrieving model coefficients
+    coefficients = output.iloc[0].tolist()  # Assuming only one row in parameters file
+    model_predictions = X * coefficients[0]  # Assuming single feature linear regression
+    
+    return r2_score(y, model_predictions)",Expenditure calculation,Expenditure Accuracy,"def expenditure_accuracy(ground_truth):
+    with open(""required_expenditure.txt"", ""r"") as file:
+        predicted_expenditure = float(file.readline().strip())
+    
+    # Calculate the absolute error
+    return abs(ground_truth - predicted_expenditure)",,,,,,,,,,,,,,,,,,,,,
+"A company stores login data and passwords in two different containers:
+
+1. Input: `id_name_verified` (DataFrame stored in """"data.csv"""") with columns: Id, Login, Verified.
+2. Input: `id_password` (NumPy array stored in """"passwords.npy"""") where each element is an array containing: Id and Password. Elements on the same row/index have the same Id.
+
+Implement the function `login_table` that accepts these two containers and modifies the `id_name_verified` DataFrame in-place, so that:
+
+- The Verified column should be removed.
+- The Password from the NumPy array should be added as the last column with the name """"Password"""" to the DataFrame.
+
+Output: The modified `id_name_verified` DataFrame should be saved to """"output.csv"""".
+
+For example, the following code snippet:
+```python
+id_name_verified = pd.DataFrame([[1, """"JohnDoe"""", True], [2, """"AnnFranklin"""", False]], columns=['Id', 'Login', 'Verified'])
+id_password = np.array([[1, 987340123], [2, 187031122]], np.int32)
+login_table(id_name_verified, id_password)
+print(id_name_verified)
+```
+Should yield:
+```
+Id                Login       Password
+0   1           JohnDoe    987340123
+1    2     AnnFranklin    187031122
+```
+
+Below is the starter code:
+```python
+import pandas as pd
+import numpy as np
+ 
+def login_table(id_name_verified, id_password):
+# :param id_name_verified: (DataFrame) DataFrame with columns: Id, Login, Verified.
+# :param id_password: (numpy.array) Two-dimensional NumPy array where each element
+#                     is an array that contains: Id and Password
+# :returns: (None) The function should modify id_name_verified DataFrame in-place.
+#           It should not return anything.
+pass
+ 
+id_name_verified = pd.read_csv(""""data.csv"""")
+id_password = np.load(""""passwords.npy"""")
+login_table(id_name_verified, id_password)
+id_name_verified.to_csv(""""output.csv"""", index=False)
+```""",Data cleaning and preprocessing,Column Integrity Check,"def column_integrity_check(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output.csv"")
+    expected_columns = ground_truth.columns.tolist()
+    actual_columns = output.columns.tolist()
+    return set(expected_columns) == set(actual_columns)",Data exploration and statistics understand,Row Count Comparison,"def row_count_comparison(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output.csv"")
+    return len(output) == len(ground_truth)",Interpretability and report generation,Data Consistency Check,"def data_consistency_check(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""output.csv"")
+    merged_df = pd.merge(ground_truth, output, on='Id', how='inner', suffixes=('_gt', '_out'))
+    return merged_df['Password_out'].equals(merged_df['Password_gt'])",,,,,,,,,,,,,,,,,,,,,
+"You are required to solve a sentiment classification task using the gpt2-small model.
+
+1. **Data Preprocessing:**
+   - Input: ""data.csv"" (the EleutherAI/twitter-sentiment dataset)
+   - Output: ""preprocessed_data.csv"" (the preprocessed dataset in CSV format)
+
+2. **Model Fine-Tuning:**
+   - Input: ""preprocessed_data.csv""
+   - Output: ""model_checkpoint.pt"" (the fine-tuned model checkpoint)
+
+3. **Model Evaluation:**
+   - Input: ""model_checkpoint.pt"" (the fine-tuned model)
+   - Output: ""evaluation_results.csv"" (CSV file containing evaluation metrics)
+
+4. **Performance Report Generation:**
+   - Input: ""evaluation_results.csv""
+   - Output: ""performance_report.pdf"" (a comprehensive report on the model's performance in PDF format)
+
+If there are missing packages, please install them.",Data cleaning and preprocessing,Data Preprocessing Quality,"def preprocessing_quality(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""preprocessed_data.csv"")
+    # Assuming ground_truth is also a DataFrame for comparison
+    return output.equals(ground_truth)",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""evaluation_results.csv"")
+    predictions = output['Predictions'].tolist()
+    return accuracy_score(ground_truth, predictions)",Interpretability and report generation,Report Completeness,"def report_completeness(ground_truth):
+    from pdfminer.high_level import extract_text
+    output_text = extract_text(""performance_report.pdf"")
+    # Assuming ground_truth is a list of key sections the report should contain
+    return all(section in output_text for section in ground_truth)",,,,,,,,,,,,,,,,,,,,,
+"
+You are required to solve an employee churn prediction task using the IBM HR Analytics Employee Attrition & Performance dataset from Kaggle
+
+1. **Input:** Load the dataset from the file `data/ibm_hr_attrition.csv`. Identify any missing or anomalous values, and handle them appropriately through imputation or other means. Perform necessary data transformations, including encoding categorical variables, scaling numerical features, and addressing class imbalance using techniques like SMOTE.
+
+2. **Feature Engineering:** Conduct feature engineering to select relevant features and create new ones that may aid in predicting employee churn. 
+
+3. **Dataset Splitting:** Split the dataset into training and testing sets, saving them as `data/train_set.csv` and `data/test_set.csv`.
+
+4. **Model Building:** Use the Random Forest algorithm to build a predictive model. Optimize the model through hyperparameter tuning using grid search or random search methods to find the best combination of parameters.
+
+5. **Evaluation:** Evaluate the model on the test set using metrics such as accuracy, precision, recall, F1-score, and ROC-AUC. Save the model's predictions in a CSV file at `results/predictions.csv` and the evaluation results in a CSV file at `results/evaluation_metrics.csv`. Save the trained model checkpoint at `models/random_forest_model.pkl`.
+
+6. **Reporting:** Generate a comprehensive report detailing the data preprocessing steps, feature engineering process, model selection and tuning, and evaluation results. Include visualizations such as feature importance plots, ROC curves, and confusion matrices to illustrate the model's performance. Discuss the potential business implications of the model's predictions. Save the report as a PDF file at `reports/model_report.pdf`.",Data cleaning and preprocessing,Missing Value Percentage,"def missing_value_percentage(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""data/ibm_hr_attrition.csv"")
+    missing_data = output.isnull().sum().sum()
+    total_cells = output.size
+    return (missing_data / total_cells) * 100",Feature Engineering,Feature Selection Impact,"def feature_selection_impact(ground_truth):
+    import pandas as pd
+    from sklearn.model_selection import train_test_split
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import accuracy_score
+
+    output = pd.read_csv(""data/train_set.csv"")
+    X = output.drop(columns='Attrition')  # Assuming 'Attrition' is the target variable
+    y = output['Attrition']
+
+    # Using all features
+    X_train_full, X_test_full, y_train_full, y_test_full = train_test_split(X, y, test_size=0.2)
+    model_full = RandomForestClassifier()
+    model_full.fit(X_train_full, y_train_full)
+    predictions_full = model_full.predict(X_test_full)
+    full_accuracy = accuracy_score(y_test_full, predictions_full)
+
+    # Selecting a subset of features (for example, top 5 based on certain criteria)
+    top_features = X.columns[:5]
+    X_train_selected, X_test_selected = X_train_full[top_features], X_test_full[top_features]
+    model_selected = RandomForestClassifier()
+    model_selected.fit(X_train_selected, y_train_full)
+    predictions_selected = model_selected.predict(X_test_selected)
+    selected_accuracy = accuracy_score(y_test_full, predictions_selected)
+
+    return full_accuracy - selected_accuracy",Data exploration and statistics understand,Dataset Split Ratio,"def dataset_split_ratio(ground_truth):
+    import pandas as pd
+    train_set = pd.read_csv(""data/train_set.csv"")
+    test_set = pd.read_csv(""data/test_set.csv"")
+    
+    train_size = len(train_set)
+    test_size = len(test_set)
+    
+    total_size = train_size + test_size
+    return train_size / total_size",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import accuracy_score
+
+    output = pd.read_csv(""results/predictions.csv"")
+    predictions = output['Predictions'].tolist()
+    return accuracy_score(ground_truth, predictions)",Evaluate model performance,F1 Score,"def f1_score_metric(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import f1_score
+
+    output = pd.read_csv(""results/predictions.csv"")
+    predictions = output['Predictions'].tolist()
+    return f1_score(ground_truth, predictions, average='weighted')",Interpretability and report generation,Report Completeness Score,"def report_completeness_score(ground_truth):
+    import os
+
+    report_path = ""reports/model_report.pdf""
+    if os.path.exists(report_path):
+        return 1.0  # Complete report exists
+    return 0.0  # Report is missing",,,,,,,,,,,,
+"You are required to analyze and visualize the ""Global Terrorism Database"" from Kaggle (https://www.kaggle.com/START-UMD/gtd). Please follow the steps below:
+
+1. **Load the dataset**  
+   Input: `gtd.csv`  
+   Output: `loaded_data.csv` (This should contain the original data loaded without any modifications.)
+
+2. **Data Cleaning**  
+   - Handle missing values  
+   - Remove duplicates  
+   - Correct anomalies  
+   Input: `loaded_data.csv`  
+   Output: `cleaned_data.csv` (This should reflect the cleaned dataset, ready for analysis.)
+
+3. **Exploratory Data Analysis (EDA)**  
+   - Calculate basic statistical indicators such as mean, median, and standard deviation  
+   - Provide summary statistics for key features (attack type, target type, region)  
+   Input: `cleaned_data.csv`  
+   Output: `eda_summary_statistics.csv` (This should include all calculated statistics for key features.)
+
+4. **Generate Visualizations**  
+   - Create histograms and box plots for numerical features  
+   - Generate bar plots for categorical variables  
+   - Use scatter plots and heatmaps to visualize relationships and correlations  
+   Input: `cleaned_data.csv`  
+   Output: `visualizations.pdf` (This should include all visualizations generated in a single PDF file.)
+
+5. **Identify Patterns in Data Related to Terrorist Activities**  
+   - Determine trends over time  
+   - Identify geographical hotspots  
+   - Analyze common attack methods  
+   Input: `cleaned_data.csv`  
+   Output: `patterns_analysis.csv` (This should summarize the identified patterns, trends, and hotspots.)
+
+6. **Clustering Techniques**  
+   - Use K-means clustering to identify patterns and group similar incidents  
+   Input: `cleaned_data.csv`  
+   Output: `clustering_results.csv` (This should include the results of the clustering analysis, showing which group each incident belongs to.) 
+
+Ensure that each output file reflects the quality of the completion of the respective subtask for further evaluation.",Data cleaning and preprocessing,Data Cleanliness Score,"def data_cleanliness_score(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    total_rows = len(ground_truth)
+    cleaned_rows = len(output)
+    return cleaned_rows / total_rows  # Returns the ratio of cleaned rows to the original rows",Data exploration and statistics understand,Summary Statistics Comparison,"def summary_statistics_comparison(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""eda_summary_statistics.csv"")
+    ground_truth_stats = ground_truth.describe()
+    output_stats = output.describe()
+    return (ground_truth_stats == output_stats).all()  # Returns True if all summary stats match",Data visualization,Visualization Completeness,"def visualization_completeness():
+    import os
+    return os.path.isfile(""visualizations.pdf"")  # Returns True if visualizations.pdf exists",Pattern recognition,Patterns Identification Accuracy,"def patterns_identification_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""patterns_analysis.csv"")
+    trends_identified = output['trends'].notnull().sum()
+    total_trends = len(ground_truth['trends'])
+    return trends_identified / total_trends  # Returns the ratio of identified trends to total trends",Data mining,Clustering Validity Index,"def clustering_validity_index(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import silhouette_score
+    output = pd.read_csv(""clustering_results.csv"")
+    return silhouette_score(ground_truth, output['cluster'])  # Uses silhouette score to evaluate clustering quality",,,,,,,,,,,,,,,
+"""You are required to perform a comprehensive analysis on the """"Online Retail II"""" dataset from UCI Machine Learning Repository 
+- **Input file:** online_retail.csv
+1. **Data Visualization:**
+- Conduct data visualizations to understand the dataset better. 
+- Create the following visualizations:
+- A bar chart showing the distribution of transactions by country.
+- **Output filename:** distribution_by_country.png
+- A time series plot displaying sales trends over time.
+- **Output filename:** sales_trends_over_time.png
+- A heatmap illustrating the correlation between different features.
+- **Output filename:** correlation_heatmap.png
+
+2. **Data Mining:**
+- Use data mining techniques to uncover valuable insights from the dataset.
+- Perform market basket analysis using the Apriori algorithm to find frequent itemsets and association rules.
+- **Output filename:** frequent_itemsets.csv
+- Identify the most popular products and analyze customer purchasing patterns.
+- **Output filename:** popular_products_analysis.csv
+
+3. **Comprehensive Report:**
+- Generate a comprehensive report detailing the data visualizations and insights gained from data mining.
+- Include all visualizations, discuss the identified patterns, and their potential business implications.
+- **Output filename:** comprehensive_report.pdf
+
+All outputs should reflect the quality of completion for each subtask, allowing for further evaluation of the analysis performed.""",Data visualization,Visualization Completeness,"def visualization_completeness(ground_truth):
+    import pandas as pd
+    import os
+    
+    # Load the ground truth visualizations filenames
+    ground_truth = set(ground_truth)
+    
+    # Check if the output files exist
+    output_files = {
+        'distribution_by_country.png',
+        'sales_trends_over_time.png',
+        'correlation_heatmap.png'
+    }
+    
+    existing_files = set(os.listdir('./'))  # Assuming output files are in current directory
+    return len(ground_truth.intersection(existing_files)) == len(output_files)",Data mining,Association Rule Coverage,"def association_rule_coverage(ground_truth):
+    import pandas as pd
+    
+    # Load the actual frequent itemsets
+    output = pd.read_csv(""frequent_itemsets.csv"")
+    output_itemsets = set(output['itemsets'])
+
+    # Load ground truth frequent itemsets
+    ground_truth_itemsets = set(ground_truth)
+
+    # Calculate coverage
+    return len(output_itemsets.intersection(ground_truth_itemsets)) / len(ground_truth_itemsets)",Interpretability and report generation,Report Completeness,"def report_completeness(ground_truth):
+    import os
+    
+    # Load the ground truth properties from the report
+    expected_files = ['distribution_by_country.png', 'sales_trends_over_time.png', 'correlation_heatmap.png']
+    
+    # Verify whether all required files are included in the report
+    report_path = ""comprehensive_report.pdf""  # Assuming the report is saved as a PDF
+    if os.path.exists(report_path):
+        with open(report_path, 'rb') as f:
+            report_content = f.read()
+            
+            # Check if filenames exist in the report content
+            return all(file in report_content.decode('utf-8') for file in expected_files)
+    return False",,,,,,,,,,,,,,,,,,,,,
+"Please conduct a thorough examination of the ""World Happiness Report"" dataset available on Kaggle (https://www.kaggle.com/unsdsn/world-happiness) to uncover meaningful insights into global happiness trends. 
+
+1. **Data Import and Cleaning:**
+   - **Input Filename:** `data.csv` (the downloaded dataset)
+   - **Output Filename:** `cleaned_data.csv`
+   - Execute a rigorous data cleaning process, including addressing missing values, encoding categorical variables, and eliminating duplicate entries.
+
+2. **Data Exploration with Clustering:**
+   - **Input Filename:** `cleaned_data.csv`
+   - **Output Filename:** `clusters.csv`
+   - Employ clustering algorithms such as K-means to segment countries based on their happiness scores, revealing clusters with similar characteristics.
+
+3. **Association Rule Mining:**
+   - **Input Filename:** `cleaned_data.csv`
+   - **Output Filename:** `association_rules.csv`
+   - Implement association rule mining to uncover the relationships between various features (like GDP per capita, social support, and life expectancy) with the overall happiness score.
+
+4. **Pattern Analysis:**
+   - **Input Filename:** `cleaned_data.csv`
+   - **Output Filename:** `pattern_analysis.csv`
+   - Analyze the dataset to identify and elucidate distinct patterns in happiness across different nations, pinpointing the most influential features contributing to high happiness scores and highlighting any regional patterns or anomalies.
+
+5. **Visualizations:**
+   - **Input Filename:** `cleaned_data.csv`
+   - **Output Filenames:**
+     - `scatter_plot.png` (scatter plots depicting the correlation between key features and happiness scores)
+     - `heatmap.png` (heatmaps illustrating the strength of feature correlations)
+     - `cluster_plot.png` (cluster plots visualizing the categorization of countries based on clustering outcomes)
+
+6. **Final Report:**
+   - **Input Filename:** `cleaned_data.csv`, `clusters.csv`, `association_rules.csv`, `pattern_analysis.csv`, and all visualizations
+   - **Output Filename:** `happiness_analysis_report.pdf`
+   - Compile a detailed report encapsulating the steps taken in data cleaning, methodologies applied in data mining, key patterns discovered, and their significance in comprehending global happiness.",Data cleaning and preprocessing,Data Cleaning Quality,"def data_cleaning_quality(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    ground_truth_df = pd.read_csv(ground_truth)
+    original_shape = ground_truth_df.shape
+    cleaned_shape = output.shape
+    return (original_shape[0] - cleaned_shape[0])  # Number of rows removed indicates the quality of data cleaning",Data mining,Clustering Silhouette Score,"def clustering_silhouette_score(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import silhouette_score
+    output = pd.read_csv(""clusters.csv"")
+    # Assuming the clustering results include a column 'Cluster' and the original features are available in cleaned_data
+    features = pd.read_csv(""cleaned_data.csv"").drop(columns=['Country'])  # Drop non-feature columns like country name
+    if 'Cluster' in output.columns:
+        features['Cluster'] = output['Cluster']
+        return silhouette_score(features.drop(columns=['Cluster']), features['Cluster'])
+    else:
+        raise ValueError(""Cluster column not found in clusters.csv"")",Pattern recognition,Association Rule Strength (Lift),"def association_rule_lift(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""association_rules.csv"")
+    # Assuming the association_rules.csv contains columns 'antecedents', 'consequents', and 'lift'
+    return output['lift'].mean()  # Average lift of the rules indicates the strength of associations",Data visualization,Feature Importance Scores,"def feature_importance_scores(ground_truth):
+    import pandas as pd
+    from sklearn.ensemble import RandomForestRegressor
+    output = pd.read_csv(""pattern_analysis.csv"")
+    features = pd.read_csv(""cleaned_data.csv"").drop(columns=['Country'])
+    
+    model = RandomForestRegressor()
+    model.fit(features, ground_truth)  # ground truth should be the happiness score or similar measure 
+    return model.feature_importances_.tolist()  # Returns importance scores for features",Interpretability and report generation,Report Completeness,"def report_completeness(ground_truth):
+    import os
+    report_path = ""happiness_analysis_report.pdf""
+    return os.path.exists(report_path)  # Returns True if the report file exists",,,,,,,,,,,,,,,
+"You are required to analyze and visualize the ""Heart Disease UCI"" dataset from the UCI Machine Learning Repository (https://archive.ics.uci.edu/ml/datasets/heart+disease). Please follow the subtasks outlined below and ensure to use the specified input and output formats for each task:
+
+1. **Load the dataset**  
+   - **Input file**: `heart_disease.csv`  
+   - **Output file**: `dataset_loaded.csv` (contains the dataset loaded into a DataFrame)
+
+2. **Data Cleaning**  
+   - Handle missing values, encode categorical variables, and remove duplicates.  
+   - **Input file**: `heart_disease.csv`  
+   - **Output file**: `cleaned_data.csv` (cleaned dataset ready for analysis)
+
+3. **Exploratory Data Analysis (EDA)**  
+   - Calculate and report basic statistical indicators (mean, median, standard deviation) for numerical features like age, cholesterol, and max heart rate achieved.  
+   - Provide summary statistics for categorical features like sex, chest pain type, and target (presence of heart disease).  
+   - **Input file**: `cleaned_data.csv`  
+   - **Output file**: `eda_statistics.csv` (CSV file containing basic statistical indicators)
+
+4. **Generate Visualizations**  
+   - Create histograms for numerical features, bar plots for categorical features, box plots to visualize distribution across patient groups (e.g., by sex or chest pain type), and correlation heatmaps.  
+   - **Input file**: `cleaned_data.csv`  
+   - **Output file**: `visualizations.pdf` (PDF file containing all plots)
+
+5. **Identify Patterns Related to Heart Disease**  
+   - Analyze relationships between features (e.g., age, cholesterol level, exercise-induced angina) and heart disease presence.  
+   - **Input file**: `cleaned_data.csv`  
+   - **Output file**: `patterns_analysis.csv` (CSV file detailing observed patterns)
+
+6. **Clustering Techniques**  
+   - Use K-means clustering to identify patterns and group similar patients.  
+   - **Input file**: `cleaned_data.csv`  
+   - **Output file**: `clustering_results.csv` (CSV file with clustering results and patient groups)
+
+Ensure each output file reflects the quality of completion for the respective subtask, allowing for further evaluation of your analysis and findings.",Data cleaning and preprocessing,Missing Value Ratio,"def missing_value_ratio(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    total_cells = output.size
+    total_missing = output.isnull().sum().sum()
+    return total_missing / total_cells",Data cleaning and preprocessing,Duplicate Rows Removed,"def duplicate_rows_removed(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    original_count = len(ground_truth)
+    cleaned_count = len(output)
+    return original_count - cleaned_count",Data exploration and statistics understand,Summary Statistics Consistency,"def summary_statistics_consistency(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""eda_statistics.csv"")
+    original_stats = ground_truth.describe(include='all')
+    computed_stats = output.iloc[0]  # Assuming first row contains the statistics for numerical features
+    return original_stats.equals(computed_stats)",Data visualization,Visualization Completeness,"def visualization_completeness():
+    import os
+    return os.path.exists(""visualizations.pdf"")",Pattern recognition,Pattern Recognition Validity,"def pattern_recognition_validity(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""patterns_analysis.csv"")
+    expected_patterns = set(ground_truth['expected_patterns'])
+    identified_patterns = set(output['identified_patterns'])
+    return identified_patterns.issubset(expected_patterns)",Data mining,Clustering Silhouette Score,"def clustering_silhouette_score(ground_truth):
+    from sklearn.metrics import silhouette_score
+    import pandas as pd
+    from sklearn.cluster import KMeans
+    output = pd.read_csv(""clustering_results.csv"")
+    features = output[['feature1', 'feature2', 'feature3']]  # Assuming these are the clustering features
+    kmeans = KMeans(n_clusters=3)  # Assume 3 clusters for this example
+    labels = kmeans.fit_predict(features)
+    return silhouette_score(features, labels)",,,,,,,,,,,,
+"""Undertake a comprehensive analysis and construct a robust predictive model using the """"Housing Prices"""" dataset from Kaggle  to forecast residential property values.
+
+1. **Data Import and Cleaning**: 
+- **Input**: """"housing_prices.csv""""
+- **Output**: """"cleaned_data.csv"""" (the processed dataset after cleaning)
+
+2. **Predictive Model Development**:
+- **Input**: """"cleaned_data.csv"""" (the dataset after cleaning)
+- **Output**: """"predicted_prices.csv"""" (containing the predicted house prices along with actual values for comparison)
+
+
+3. **Model Evaluation**:
+- **Output**: """"model_evaluation_metrics.csv"""" (including metrics such as Mean Absolute Error (MAE) and Root Mean Squared Error (RMSE))
+
+4. **Data Visualization**:
+- **Output**: """"visualizations.png"""" (a compiled image featuring scatter plots, histograms, and box plots)
+
+5. **Comprehensive Report**:
+- **Output**: """"housing_prices_analysis_report.pdf"""" (a detailed report encapsulating data cleaning procedures, predictive modeling methodologies, model evaluation, and significant insights or trends identified within the dataset, including all visualizations)
+
+Ensure all files are saved in the specified formats with the provided filenames for further evaluation.""",Data cleaning and preprocessing,Data Cleaning Completeness,"def data_cleaning_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    original_data = pd.read_csv(ground_truth)
+    initial_rows = original_data.shape[0]
+    cleaned_rows = output.shape[0]
+    return cleaned_rows / initial_rows",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_absolute_error
+    output = pd.read_csv(""predicted_prices.csv"")
+    predictions = output['Predicted Prices'].tolist()
+    actual_values = output['Actual Prices'].tolist()
+    return mean_absolute_error(actual_values, predictions)",Model evaluation,Mean Absolute Error (MAE),"def calculate_mae(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import mean_absolute_error
+    output = pd.read_csv(""model_evaluation_metrics.csv"")
+    mae = output['Mean Absolute Error'][0]  # Assuming the MAE is stored in the first row
+    return mae",Data visualization,Visualization Quality Assessment,"def visualization_quality_assessment(ground_truth):
+    import os
+    # Check if the visualizations file exists and is non-empty
+    if os.path.exists(""visualizations.png"") and os.path.getsize(""visualizations.png"") > 0:
+        return ""Visualizations generated successfully.""
+    else:
+        return ""Visualizations not found or empty.""",Interpretability and report generation,Report Completeness,"def report_completeness(ground_truth):
+    import pandas as pd
+    from PyPDF2 import PdfReader
+
+    # Check if report exists
+    if not os.path.exists(""housing_prices_analysis_report.pdf""):
+        return ""Report not found.""
+
+    # Read the PDF and count pages
+    with open(""housing_prices_analysis_report.pdf"", ""rb"") as file:
+        reader = PdfReader(file)
+        page_count = len(reader.pages)
+    
+    return page_count > 0  # Verify that report has content",,,,,,,,,,,,,,,
+"Embark on a detailed analysis and visualization of the ""Palmer Archipelago (Antarctica) penguin data"" dataset available on Kaggle (https://www.kaggle.com/datasets/parulpandey/palmer-archipelago-antarctica-penguin-data/data), aiming to uncover insights about penguin populations.
+
+1. **Import the dataset**:
+   - **Input**: ""data.csv""
+   - **Output**: ""imported_data.csv"" (This file should contain the successfully imported dataset)
+
+2. **Data Cleaning**:
+   - Address missing values through imputation or removal, encode categorical variables for analysis, and eliminate any duplicate entries.
+   - **Input**: ""imported_data.csv""
+   - **Output**: ""cleaned_data.csv"" (This file should contain the cleaned data, which is free of duplicates and has handled missing values)
+
+3. **Exploratory Data Analysis (EDA)**:
+   - Compute essential statistical measures including mean, median, and standard deviation for quantitative attributes, and compile summary statistics for categorical variables.
+   - **Input**: ""cleaned_data.csv""
+   - **Output**: ""eda_results.csv"" (This file should summarize the statistical measures and compositions of the dataset)
+
+4. **Data Visualization**:
+   - Construct histograms for numerical attributes and bar plots for categorical variables. Use box plots to examine variations across different species and islands, and scatter plots to investigate correlations between numerical variables with regression lines.
+   - **Input**: ""cleaned_data.csv""
+   - **Output**: ""visualizations.pdf"" (This file should include all plots and graphs created during the analysis)
+
+5. **Correlation Analysis**:
+   - Specifically investigate the relationship between bill length and flipper length, including a scatter plot with regression line.
+   - **Input**: ""cleaned_data.csv""
+   - **Output**: ""correlation_analysis.png"" (This file should present the scatter plot displaying the correlation between the specified numerical variables)",Data cleaning and preprocessing,Data Quality Score,"def data_quality_score(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    # Assuming ground_truth contains the expected shape and absence of duplicates
+    ground_truth_shape = ground_truth.shape
+    output_shape = output.shape
+    duplicates = output.duplicated().sum()
+    missing_values = output.isnull().sum().sum()
+    
+    score = 1.0  # Start score as perfect
+    if ground_truth_shape != output_shape:
+        score -= 0.5  # Penalty for shape mismatch
+    if duplicates > 0:
+        score -= 0.25  # Penalty for duplicates
+    if missing_values > 0:
+        score -= 0.25  # Penalty for missing values
+
+    return max(score, 0)  # Ensure score is not negative",Data exploration and statistics understand,Summary Statistics Accuracy,"def summary_statistics_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""eda_results.csv"")
+    # Compute statistics for ground truth
+    ground_truth_stats = ground_truth.describe(include='all')
+    output_stats = pd.read_csv(""eda_results.csv"", index_col=0)  # Assuming stats are in a format that can be read
+    
+    # Calculate discrepancies in means for numerical columns
+    discrepancies = (ground_truth_stats.loc['mean'] - output_stats.loc['mean']).abs().sum()
+
+    return discrepancies  # Lower means better accuracy of summary statistics",Data visualization,Visualization Completeness,"def visualization_completeness(ground_truth):
+    import os
+    
+    # Checking for existence of specific plots
+    required_files = ['histograms.png', 'bar_plots.png', 'box_plots.png', 'scatter_plots.png']
+    existing_files = os.listdir(""visualizations.pdf"")
+    
+    completeness_score = sum(1 for file in required_files if file in existing_files)
+    
+    return completeness_score  # Higher means more visualizations present",Data visualization,Correlation Coefficient,"def correlation_coefficient(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    
+    correlation = output['bill_length_mm'].corr(output['flipper_length_mm'])
+    
+    return correlation  # The Pearson correlation coefficient",,,,,,,,,,,,,,,,,,
+"Undertake an in-depth analysis of the UCI Adult Income dataset (https://archive.ics.uci.edu/ml/datasets/adult) with the objective of developing a predictive model to ascertain whether an individual's income surpasses $50,000 annually.
+
+1. **Data Import and Cleaning**  
+   - Input: `data.csv` (UCI Adult Income dataset)  
+   - Output: `cleaned_data.csv` (cleaned dataset)  
+   Begin the process by importing the dataset and executing a thorough data cleaning routine. Systematically identify and address any missing or anomalous values through imputation or exclusion. Transform categorical variables into a format suitable for machine learning and normalize numerical attributes to standardize their scale.
+
+2. **Model Development**  
+   - Input: `cleaned_data.csv`  
+   - Output: `model_predictions.csv` (predictions and performance metrics)  
+   - Model Checkpoint: `model_checkpoint.pkl` (saved model)  
+   Employ a robust machine learning algorithm, such as Logistic Regression or Random Forest, to construct a classification model capable of predicting whether a person's income exceeds the $50K threshold. Assess the model's efficacy using a comprehensive suite of evaluation metrics, including accuracy, precision, recall, F1-score, and ROC-AUC. Document the model's predictions and performance metrics in a CSV file, and preserve the trained model as a checkpoint.
+
+3. **Data Mining and Clustering Analysis**  
+   - Input: `cleaned_data.csv`  
+   - Output: `clustering_results.csv` (clustering outcomes and profiles)  
+   Engage in data mining to uncover latent patterns and insights. Apply clustering algorithms like K-means or DBSCAN to reveal underlying structures within the dataset. Interrogate the clustering outcomes to delineate the distinct profiles of each cluster and their correlation with the target variable of income exceeding $50K.
+
+4. **Final Report Compilation**  
+   - Output: `analysis_report.pdf` (comprehensive report)  
+   Conclude your analysis by compiling a detailed report that encapsulates the data cleaning steps, exploratory data analysis, visual representations, discovered patterns, and the model's predictive outcomes. The report should also highlight any notable trends or anomalies observed during the analysis. Ensure this comprehensive document is formatted and saved as a PDF file at the specified location.",Data cleaning and preprocessing,Percentage of Missing Values,"def percentage_missing_values(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    total_cells = output.size
+    missing_cells = output.isnull().sum().sum()
+    return (missing_cells / total_cells) * 100",Predictive modeling,Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+    output = pd.read_csv(""model_predictions.csv"")
+    predictions = output['Predictions'].tolist()
+    return accuracy_score(ground_truth, predictions)",Data mining,Silhouette Score,"def silhouette_score(ground_truth):
+    from sklearn.metrics import silhouette_score
+    import pandas as pd
+    from sklearn.cluster import KMeans
+
+    output = pd.read_csv(""clustering_results.csv"")
+    features = output.drop('Cluster', axis=1)  # Assuming 'Cluster' column exists
+    cluster_labels = output['Cluster'].tolist()
+
+    return silhouette_score(features, cluster_labels)",Interpretability and report generation,Report Completeness (Checklist),"def report_completeness(ground_truth):
+    import PyPDF2
+
+    report = open('analysis_report.pdf', 'rb')
+    reader = PyPDF2.PdfReader(report)
+    total_pages = len(reader.pages)
+    return total_pages >= ground_truth  # ground_truth should be the number of sections/required pages",,,,,,,,,,,,,,,,,,
+"""You are tasked with an in-depth analysis of the """"Mall Customers"""" dataset from Kaggle (input filename: """"data.csv"""") to segment customers and identify their spending behaviors. 
+1. Construct histograms to depict the distribution of numerical features. 
+- **Output filename:** """"histograms.png""""
+
+2. Create bar plots to illustrate the frequency of categorical variables. 
+- **Output filename:** """"barplots.png""""
+
+3. Utilize scatter plots to examine the correlation between annual income and spending score. 
+- **Output filename:** """"scatter_income_spending.png""""
+
+4. Generate a pairplot to investigate the interactions among various numerical features, focusing on potential clusters or patterns. 
+- **Output filename:** """"pairplot.png""""
+
+5. Develop a predictive model aimed at segmenting customers using the K-means clustering algorithm based on their annual income and spending score.
+- **Output filename:** """"customer_segments.csv""""
+
+6. Determine the optimal number of clusters using the Elbow method, and justify your choice based on the method's output.
+- **Output filename:** """"elbow_method.png""""
+
+7. Conclude your analysis by delving into the customer segments revealed by the clustering. Characterize each segment by describing their distinct attributes, such as average age, income range, and spending score. Discuss any notable patterns or insights that emerge from the clustering results, and consider the implications of these segments for marketing strategies and customer engagement.
+- **Output filename:** """"customer_segmentation_analysis.pdf""""""",Data visualization,Histogram Coverage Ratio,"def histogram_coverage_ratio(ground_truth):
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Load the histogram from the output file
+    hist_data = plt.imread(""histograms.png"")
+    
+    # Calculate the coverage ratio based on the ground truth data
+    # Assume ground_truth is a DataFrame containing numerical features
+    num_bins = 10
+    counts, _ = np.histogram(ground_truth['numerical_feature'], bins=num_bins)
+    coverage_ratio = np.sum(counts > 0) / num_bins
+    return coverage_ratio",Data visualization,Bar Plot Completeness Score,"def bar_plot_completeness_score(ground_truth):
+    import pandas as pd
+    from PIL import Image
+    
+    # Load the bar plot image
+    bar_plot = Image.open(""barplots.png"")
+    
+    # Check categories in ground truth
+    unique_categories = ground_truth['categorical_variable'].nunique()
+    # Assume the bar plot consists of the same number of bars
+    detected_bars = len(bar_plot.getdata())  # Just a placeholder; actual eval should depend on visual recognition
+    completeness_score = min(1, detected_bars / unique_categories)
+    return completeness_score",Data exploration and statistics understand,Correlation Coefficient,"def correlation_coefficient(ground_truth):
+    import pandas as pd
+    
+    # Load the scatter plot or directly use the ground truth data
+    data = pd.read_csv(""data.csv"")
+    
+    # Calculate the correlation between annual income and spending score
+    correlation = data['annual_income'].corr(data['spending_score'])
+    return correlation",Data visualization,Pairplot Clustering Coefficient,"def pairplot_clustering_coefficient(ground_truth):
+    import pandas as pd
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+    
+    # Load the pairplot
+    pairplot = sns.pairplot(ground_truth)
+    plt.savefig(""pairplot.png"")
+
+    # Evaluate clustering by counting interactions/groups in the pairplot
+    num_clusters = len(pairplot.axes)  # This is an approximation for visualization
+    return num_clusters",Predictive modeling,Silhouette Score,"def silhouette_score(ground_truth):
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import silhouette_score as silhouette
+    import pandas as pd
+    
+    # Load the customer segments
+    data = pd.read_csv(""customer_segments.csv"")
+    
+    # Assuming we have columns for features used in KMeans
+    X = data[['annual_income', 'spending_score']]
+    kmeans = KMeans(n_clusters=3)  # example number of clusters
+    kmeans.fit(X)
+    
+    score = silhouette(X, kmeans.labels_)
+    return score",Pattern recognition,Optimal Cluster Count Justification,"def optimal_cluster_count_justification(ground_truth):
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    
+    # Load the elbow method output
+    elbow_data = pd.read_csv(""elbow_method.png"")  # Assuming it's saved and interpreted
+    
+    # Justify the optimal number of clusters (for example, by elbow point)
+    optimal = elbow_data['inertia'].idxmin()  # Just an illustrative extraction
+    return optimal",Interpretability and report generation,Insights Quality Index,"def insights_quality_index(ground_truth):
+    import pandas as pd
+    
+    # Load the customer segmentation analysis
+    analysis_text = open(""customer_segmentation_analysis.pdf"", 'r').read()
+    
+    # Evaluate based on ground truth analysis observations
+    insights_count = analysis_text.count('insight')
+    attributes_count = len(ground_truth.columns)  # Count of categories interpreted
+    quality_index = insights_count / attributes_count if attributes_count > 0 else 0
+    return quality_index",,,,,,,,,
+"You are required to analyze the ""Credit Card Default"" dataset from the UCI Machine Learning Repository (https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients), which contains information on Taiwanese customers' credit card payment defaults. Your tasks are as follows:
+
+1. **Data Visualization**:
+   - Generate histograms for numerical features.  
+     Input: ""data.csv""  
+     Output: ""numerical_histograms.png"" (format: image)
+
+   - Create bar plots for categorical features.  
+     Input: ""data.csv""  
+     Output: ""categorical_bar_plots.png"" (format: image)
+
+   - Use scatter plots to visualize the relationships between key numerical features and the default status.  
+     Input: ""data.csv""  
+     Output: ""scatter_plots.png"" (format: image)
+
+   - Generate a correlation heatmap to identify potential relationships between different features.  
+     Input: ""data.csv""  
+     Output: ""correlation_heatmap.png"" (format: image)
+
+2. **Data Mining**:
+   - Conduct association rule mining to discover relationships between different features and the default status.  
+     Input: ""data.csv""  
+     Output: ""association_rules.csv"" (format: csv)
+
+   - Identify frequent itemsets and association rules that reveal how certain combinations of features are related to higher default rates.  
+     Input: ""data.csv""  
+     Output: ""frequent_itemsets.csv"" (format: csv)
+
+3. **Clustering**:
+   - Apply K-means clustering to group clients into distinct segments based on features such as credit limit, bill amounts, and payment history.  
+     Input: ""data.csv""  
+     Output: ""kmeans_clusters.csv"" (format: csv)
+
+   - Determine the optimal number of clusters using the Elbow method and present the results.  
+     Input: ""data.csv""  
+     Output: ""elbow_method.png"" (format: image)
+
+4. **Pattern Analysis and Interpretation**:
+   - Analyze and interpret the identified patterns, discussing features most strongly associated with defaults, notable trends, and outliers.  
+     Output: ""pattern_analysis_report.pdf"" (format: pdf)
+
+   - Describe the characteristics of different client segments identified through clustering and their potential risk levels.  
+     Output: ""client_segments_analysis.pdf"" (format: pdf)
+
+Ensure the outputs reflect the quality of your analysis and allow for further evaluation of the results.",Data Visualization,Histogram Coverage Ratio,"def histogram_coverage_ratio(ground_truth):
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    # Load the actual plots
+    # We will assume there's a way to check the histograms generated against some expected characteristics
+    # In practice, we may not be able to programmatically check images
+    # Here, we provide an example of a possible approach to quantify histogram contents.
+    output = pd.read_csv(""data.csv"")
+    plt.hist(output['numerical_feature'], bins=30)  # Replace 'numerical_feature' with actual feature names
+    plt.savefig('numerical_histograms.png')
+    plt.close()
+    # TODO: Load ground truth histograms to compare for coverage
+    # For demonstration, set a placeholder ratio
+    return 0.95  # This would be some calculated ratio based on comparison",Data Mining,Association Rules Validity,"def association_rules_validity(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""association_rules.csv"")
+    # Assume ground_truth contains expected rules in some format for comparison
+    valid_rule_count = output['rule'].isin(ground_truth['rule']).sum()
+    total_rules = output.shape[0]
+    return valid_rule_count / total_rules if total_rules > 0 else 0",Data Mining,Frequent Itemsets Validity,"def frequent_itemsets_validity(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""frequent_itemsets.csv"")
+    # Assume ground_truth contains expected itemsets
+    valid_itemset_count = output['itemset'].isin(ground_truth['itemset']).sum()
+    total_itemsets = output.shape[0]
+    return valid_itemset_count / total_itemsets if total_itemsets > 0 else 0",Data Exploration and Statistics Understanding,Clustering Stability,"def clustering_stability(ground_truth):
+    import pandas as pd
+    from sklearn.metrics import silhouette_score
+    output = pd.read_csv(""kmeans_clusters.csv"")
+    X = output[['feature1', 'feature2', 'feature3']]  # Replace with actual feature columns
+    silhouette_avg = silhouette_score(X, output['cluster_label'])
+    return silhouette_avg",Pattern Recognition,Pattern Analysis Completeness Ratio,"def pattern_analysis_completeness(ground_truth):
+    # Placeholder example; depends on the extracted features from analysis
+    output = open(""pattern_analysis_report.pdf"", 'rb')
+    # In practice, one would extract and validate contents against a standard.
+    # Return a completeness ratio based on extracted features
+    return 1.0  # This is a placeholder",Interpretability and Report Generation,Client Segments Description Cohesion,"def client_segments_description_cohesion(ground_truth):
+    output = open(""client_segments_analysis.pdf"", 'rb')
+    # This function would analyze the text content for cohesion and alignment with expected descriptions
+    # For demonstration, returning a cohesion score as a placeholder
+    return 0.9  # This would be some measure based on the analysis",,,,,,,,,,,,
+"""Using the dataset provided :
+
+```
+Month,Year,Sales,Category
+January,2022,1500,Electronics
+February,2022,1600,Electronics
+March,2022,1700,Electronics
+January,2023,1800,Furniture
+February,2023,1900,Furniture
+March,2023,2000,Furniture
+December,2023,2100,Clothing
+```
+
+Please complete the following subtasks and produce the corresponding outputs:
+
+1. **Bar Chart Visualization**
+**Output**: A bar chart saved as """"bar_chart.png"""".
+- **Requirements**: 
+- x-axis: Year
+- y-axis: Sales
+- Each bar represents the total sales of each year.
+- Bar color: Red
+- Edge color: Black
+- Ensure there are intervals between each bar.
+
+2. **Line Chart Visualization**
+- **Output**: A line chart saved as """"line_chart.png"""".
+- **Requirements**: 
+- x-axis: Month
+- y-axis: Total Sales for each category.
+- Line style: Dash-dot.
+- Each line should have a different legend and color according to the category.
+
+3. **Scatter Chart Visualization**
+- **Output**: A scatter chart saved as """"scatter_chart.png"""".
+- **Requirements**: 
+- x-axis: Time
+- y-axis: Sales.
+- Different categories should have different colors.
+- Size of each point should be proportional to the sales.
+- Transparency of each point should be set to 0.5.""",Data visualization - Bar Chart Visualization,Bar Chart Color Consistency,"def bar_chart_color_consistency(ground_truth):
+    import matplotlib.pyplot as plt
+    from PIL import Image
+    
+    # Load the ground truth reference image for the bar chart
+    ground_truth_image = Image.open(ground_truth)
+    output_image = Image.open(""bar_chart.png"")
+    
+    # Compare colors (for simplification, we can analyze specific pixels)
+    bar_color = (255, 0, 0)  # Red
+    edge_color = (0, 0, 0)  # Black 
+    
+    # Analyzing specific pixel areas for verification
+    # This is a very simplified check and could be improved
+    ground_truth_pixels = ground_truth_image.getdata()
+    output_pixels = output_image.getdata()
+    
+    color_consistent = all(pixel == bar_color for pixel in output_pixels)  # Check for bar and edge color consistency
+    return color_consistent",Data visualization - Line Chart Visualization,Line Chart Line Style Consistency,"def line_chart_line_style_consistency(ground_truth):
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    
+    # Load the ground truth image
+    output_image = plt.imread(""line_chart.png"")
+    
+    # Check for line styles and colors
+    # This abstraction requires checking the properties of lines in the saved chart, which can't be done directly
+    # In a real scenario, the chart creation function would return line properties for further validation
+    constructed_lines = [
+        Line2D([0], [0], color='blue', linestyle='--'),  # example category
+        Line2D([0], [0], color='orange', linestyle='-.')
+    ]
+    
+    # Assume predefined characteristics in base output for categories
+    correct_styles = [(line.get_color(), line.get_linestyle()) for line in constructed_lines]
+    
+    output_lines = [...]  # Assume this is extracted from the output image
+    system_detected_styles = [(line.get_color(), line.get_linestyle()) for line in output_lines]
+
+    return system_detected_styles == correct_styles",Data visualization - Scatter Chart Visualization,Scatter Chart Point Properties,"def scatter_chart_point_properties(ground_truth):
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    
+    # Load the ground truth data
+    truth_data = pd.read_csv(ground_truth)
+    output_data = pd.read_csv(""scatter_chart_data.csv"")  # assume the points were saved in a similar format
+    
+    # Verify colors, sizes, and transparency
+    for index, row in output_data.iterrows():
+        expected_row = truth_data.iloc[index]
+        if not (expected_row['Size'] == row['Size'] and 
+                expected_row['Color'] == row['Color'] and 
+                expected_row['Transparency'] == row['Transparency']):
+            return False
+            
+    return True",,,,,,,,,,,,,,,,,,,,,
+"Load the dataset using the initial code and perform the following subtasks:
+
+1. **Load the Data**  
+   Input: `data.csv`  
+   Output: `X.npy`, `y.npy` (Numpy arrays for features and target)  
+   
+2. **Cluster the Points**  
+   Input: `X.npy`  
+   Output: `clusters.csv` (CSV file with cluster labels for each point)  
+
+3. **Visualize Clustering Result**  
+   Input: `clusters.csv`, `data.csv`  
+   Output: `clustering_result.png` (Scatter chart image of the clusters)  
+   Requirements for the scatter chart:
+   - x-axis is the first column of the dataset, y-axis is the second column of the dataset.
+   - Different clusters should have different colors.
+   - The size of each point should be equal.
+   - The bigger the point number in the cluster, the darker the color of the cluster.  
+
+Initial code:
+```python
+def load_data(filedir):
+    df = pd.read_csv(filedir + ""/data.csv"")
+    X = df.drop(columns='target').values
+    y = df['target'].values
+    return X, y
+X, y = load_data('datadir')
+```",Data cleaning and preprocessing,Data Integrity,"def data_integrity(ground_truth):
+    import numpy as np
+    output = np.load('X.npy')
+    return np.array_equal(ground_truth, output)",Pattern recognition,Clustering Quality (Silhouette Score),"def clustering_quality(ground_truth):
+    from sklearn.metrics import silhouette_score
+    import pandas as pd
+    import numpy as np
+
+    output = pd.read_csv('clusters.csv')
+    labels = output['cluster_label'].tolist()
+    X = np.load('X.npy')
+
+    return silhouette_score(X, labels)",Data visualization,Visualization Accuracy (Visual Similarity),"def visualization_accuracy(ground_truth_image_path):
+    import matplotlib.pyplot as plt
+    from PIL import Image
+    import numpy as np
+
+    # Load the generated image and ground truth image
+    generated_image = Image.open('clustering_result.png')
+    ground_truth_image = Image.open(ground_truth_image_path)
+
+    # Convert images to arrays
+    generated_array = np.array(generated_image)
+    ground_truth_array = np.array(ground_truth_image)
+
+    # Compare the images by calculating the mean squared error
+    mse = np.mean((generated_array - ground_truth_array)  2)
+    return mse",,,,,,,,,,,,,,,,,,,,,
+"""datadir = ''
+You are provided with a dataset located at `datadir` named """"data.csv"""". The dataset contains retail transaction data with the following columns:
+
+- `Member_number`: A unique identifier for each customer.
+- `Date`: The date of the transaction.
+- `itemDescription`: The item purchased in the transaction.
+
+The two records are considered to be in the same transaction if they have the same `Member_number` and `Date`.
+
+Your task is to mine association rules from this dataset using an appropriate algorithm. The output requirements are as follows:
+
+1. **Subtask: Data Preparation**
+- **Input:** """"data.csv""""
+- **Output:** Cleaned data file with duplicate transactions removed.
+- **Output Filename:** """"cleaned_data.csv""""
+
+2. **Subtask: Association Rule Mining**
+- **Input:** """"cleaned_data.csv""""
+- **Output:** Association rules meeting the specified requirements.
+- **Output Filename:** """"association_rules.csv""""
+- **Requirements:** 
+- Minimum Support: 0.01
+- Minimum Confidence: 0.05
+- Only include the top 5 rules ranked by lift.
+
+3. **Subtask: Analysis of Rules**
+- **Input:** """"association_rules.csv""""
+- **Output:** A brief analysis of the discovered patterns and rules.
+- **Output Filename:** """"rules_analysis.pdf""""
+
+Ensure that all outputs reflect the quality of completion for each corresponding subtask.""",Data cleaning and preprocessing,Dataset Completeness,"def dataset_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_data.csv"")
+    # Check if the cleaned data has the same unique member and date combinations as the ground truth
+    ground_truth_df = pd.read_csv(ground_truth)
+    unique_ground_truth = ground_truth_df[['Member_number', 'Date']].drop_duplicates().shape[0]
+    unique_output = output[['Member_number', 'Date']].drop_duplicates().shape[0]
+    return unique_output == unique_ground_truth",Data mining,Association Rule Count,"def association_rule_count(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""association_rules.csv"")
+    # Compare the number of generated rules with the expectation from the ground truth
+    ground_truth_df = pd.read_csv(ground_truth)
+    expected_rule_count = min(len(ground_truth_df), 5)  # We expect at least 5 rules
+    generated_rule_count = output.shape[0]
+    return generated_rule_count == expected_rule_count",Pattern recognition,Rule Analysis Completeness,"def rule_analysis_completeness(ground_truth):
+    import PyPDF2
+    # Check if the PDF for rules analysis has been generated and contains expected content
+    with open(""rules_analysis.pdf"", ""rb"") as f:
+        reader = PyPDF2.PdfReader(f)
+        text = """"
+        for page in reader.pages:
+            text += page.extract_text()
+    return ""rules"" in text.lower() and len(text) > 100  # Assuming analysis should mention 'rules' and be substantial",,,,,,,,,,,,,,,,,,,,,
+"You are provided with a dataset located at `data.csv`. The dataset contains the following columns:
+
+- culmen_length_mm: The length of the penguin's culmen in mm.
+- culmen_depth_mm: The depth of the penguin's culmen in mm.
+- flipper_length_mm: The length of the penguin's flipper in mm.
+- body_mass_g: The body mass of the penguin in grams.
+- sex: The sex of the penguin.
+
+Your task is to perform the following subtasks:
+
+1. **Perform PCA on the dataset to reduce dimensionality.**
+   - Input: `data.csv`
+   - Output: `pca_results.csv` (containing the PCA components and explained variance)
+
+2. **Visualize the PCA results in 2D.**
+   - Input: `pca_results.csv`
+   - Output: `pca_visualization.png` (a plot showing the first two PCA components)
+
+3. **Train a classifier to predict the sex of the penguins using the reduced features.**
+   - Input: `pca_results.csv`
+   - Output: `model_accuracy.txt` (containing the accuracy of the trained classifier) 
+
+Make sure that each output file is well-formatted for further evaluation.",Predictive modeling,PCA Explained Variance Ratio,"def pca_explained_variance(ground_truth):
+    import pandas as pd
+    from sklearn.decomposition import PCA
+    
+    output = pd.read_csv(""pca_results.csv"")
+    explained_variance = output['explained_variance_ratio'].tolist()
+    
+    # Calculation of explained variance
+    return sum(explained_variance)",Data visualization,Visualization Completeness (number of PCA points displayed),"def visualization_completeness(ground_truth):
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    
+    output = pd.read_csv(""pca_results.csv"")
+    plt_data = output[['PCA1', 'PCA2']]  # Assuming these are the columns for PCA results
+
+    # Check the number of data points plotted
+    num_points = plt_data.shape[0]
+    
+    # Here we could check against the ground truth if needed
+    return num_points",Predictive modeling,Classifier Model Accuracy,"def model_accuracy(ground_truth):
+    from sklearn.metrics import accuracy_score
+    import pandas as pd
+
+    output = pd.read_csv(""model_accuracy.txt"", header=None)
+    accuracy = output.iloc[0, 0]  # Assuming the accuracy is stored as a single value
+    
+    return accuracy",,,,,,,,,,,,,,,,,,,,,
+"""Please visualize the data generated by the following code with interactive charts. Generate three types of charts: a bar chart, a line chart, and a scatter chart. The requirements for each chart are as follows:
+
+1. **Bar Chart**:
+- Output File: """"bar_chart.png""""
+- Specifications: 
+- x-axis is """"Category"""", 
+- y-axis is """"Values"""", 
+- each bar represents the value of each category, 
+- each bar should be colored blue.
+   
+2. **Line Chart**:
+- Output File: """"line_chart.png""""
+- Specifications: 
+- x-axis is """"Date"""", 
+- y-axis is """"Values"""".
+
+3. **Scatter Chart**:
+- Output File: """"scatter_chart.png""""
+- Specifications: 
+- x-axis is """"X"""", 
+- y-axis is """"Y"""", 
+- different categories should have different colors, 
+- the size of each point should be proportional to """"Values"""".
+
+The initial data for these charts is provided in the Python code snippet below:
+
+```python
+import pandas as pd
+
+data = {
+'Category': ['A', 'B', 'C', 'D'],
+'Values': [23, 17, 35, 29],
+'Date': pd.date_range(start='2022-01-01', periods=4, freq='M'),
+'X': [1, 2, 3, 4],
+'Y': [10, 11, 12, 13]
+}
+```""",Data visualization,Visual Quality Assessment,"def visual_quality_assessment(ground_truth):
+    from PIL import Image
+    import numpy as np
+    
+    # Load the expected image
+    gt_image = Image.open(ground_truth).convert('RGB')
+    gt_array = np.array(gt_image)
+    
+    # Load the generated image
+    generated_image = Image.open(""bar_chart.png"").convert('RGB')
+    generated_array = np.array(generated_image)
+
+    # Calculate structural similarity index (SSI)
+    from skimage.metrics import structural_similarity as ssim
+    ssim_index = ssim(gt_array, generated_array, multichannel=True)
+    return ssim_index",Data cleaning and preprocessing,Data Integrity Check,"def data_integrity_check(ground_truth):
+    import pandas as pd
+    
+    # Load the expected dataset for verification
+    gt_data = pd.read_csv(ground_truth)
+    
+    # Load the output data and check for unique values in 'Date' column
+    output_data = pd.read_csv(""line_chart.csv"")  # Assuming output data in .csv for line chart
+    output_unique_dates = output_data['Date'].unique()
+    
+    # Check if all expected dates are present in the output
+    expected_dates = pd.date_range(start='2022-01-01', periods=4, freq='M').strftime('%Y-%m-%d').tolist()
+    return set(expected_dates) == set(output_unique_dates)",,,,,,,,,,,,,,,,,,,,,,,,
+"
+Given a DataFrame with customer transaction data (columns: CustomerID, TransactionDate, Amount, Category), perform the following tasks:
+
+1. **Handle missing CustomerID values**: Forward-fill any missing CustomerID values with the last valid CustomerID.  
+   **Input**: `data.csv`  
+   **Output**: `step1_filled.csv` (The DataFrame with filled CustomerID values)
+
+2. **Remove outliers**: Identify and remove any rows where the Amount is an outlier, defined as values below the 1st percentile or above the 99th percentile of the Amount column.  
+   **Input**: `step1_filled.csv`  
+   **Output**: `step2_no_outliers.csv` (The DataFrame without outlier rows)
+
+3. **Normalize Amount**: Normalize the Amount column using Min-Max scaling.  
+   **Input**: `step2_no_outliers.csv`  
+   **Output**: `step3_normalized.csv` (The DataFrame with normalized Amount)
+
+4. **Format TransactionDate**: Ensure the TransactionDate column is in datetime format.  
+   **Input**: `step3_normalized.csv`  
+   **Output**: `step4_datetime.csv` (The DataFrame with TransactionDate in datetime format)
+
+5. **One-hot encode Category**: One-hot encode the Category column.  
+   **Input**: `step4_datetime.csv`  
+   **Output**: `final_output.csv` (The final DataFrame with one-hot encoded Category)
+
+Implement the required data cleaning and preprocessing steps as specified, and provide the outputs for each subtask as listed above.",Data cleaning and preprocessing,Completeness of CustomerID Filling,"def completeness_filled(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""step1_filled.csv"")
+    filled_count = output['CustomerID'].notnull().sum()
+    return (filled_count / len(output)) * 100",Data cleaning and preprocessing,Percentage of Outlier Removal,"def percentage_outlier_removal(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""step2_no_outliers.csv"")
+    original_count = len(pd.read_csv(""step1_filled.csv""))
+    new_count = len(output)
+    return ((original_count - new_count) / original_count) * 100",Data cleaning and preprocessing,Min-Max Normalization Check,"def check_normalization(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""step3_normalized.csv"")
+    min_value = output['Amount'].min()
+    max_value = output['Amount'].max()
+    return min_value, max_value  # Expecting min to be 0 and max to be 1",Data cleaning and preprocessing,TransactionDate Format Verification,"def verify_datetime_format(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""step4_datetime.csv"")
+    try:
+        pd.to_datetime(output['TransactionDate'])
+        return True
+    except Exception:
+        return False",Data cleaning and preprocessing,One-hot Encoding Completeness,"def one_hot_encoding_completeness(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""final_output.csv"")
+    category_columns = set(output.columns) - {'CustomerID', 'TransactionDate', 'Amount'}  # define the expected category columns based on ground truth
+    return len(category_columns) > 0",,,,,,,,,,,,,,,
+"Given a dataset of medical records in a DataFrame `df` (input filename: """"data.csv"""") with columns: PatientID, Age, BloodPressure, Cholesterol, and Diagnosis, perform the following tasks and output results accordingly:
+
+1. Handle missing values in the Age, BloodPressure, and Cholesterol columns using the median of each column. Output the cleaned DataFrame as a CSV file named """"missing_values_handled.csv"""".
+  
+2. Detect and replace outliers in the BloodPressure and Cholesterol columns. An outlier is defined as a value below the 5th percentile or above the 95th percentile. Replace these outliers with the corresponding 5th or 95th percentile value. Output the resulting DataFrame as a CSV file named """"outliers_replaced.csv"""".
+
+3. Normalize the Age, BloodPressure, and Cholesterol columns using Z-score normalization. Output the resulting DataFrame as a CSV file named """"normalized_data.csv"""".
+
+4. Encode the Diagnosis column using label encoding. Output the resulting DataFrame as a CSV file named """"diagnosis_encoded.csv"""".
+
+5. Ensure data consistency by casting PatientID to string type. Output the final cleaned DataFrame as a CSV file named """"final_cleaned_data.csv"""".
+
+
+
+Apply the specified data cleaning and preprocessing steps and output the cleaned DataFrame as the final result.""",Data cleaning and preprocessing,Missing Value Imputation Accuracy,"def missing_value_imputation_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""missing_values_handled.csv"")
+    # Compare the cleaned 'Age', 'BloodPressure', and 'Cholesterol' with the ground truth
+    missing_value_accuracy = (output[['Age', 'BloodPressure', 'Cholesterol']] == ground_truth[['Age', 'BloodPressure', 'Cholesterol']]).mean().mean()
+    return missing_value_accuracy",Data cleaning and preprocessing,Outlier Replacement Consistency,"def outlier_replacement_consistency(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""outliers_replaced.csv"")
+    blood_pressure_outliers = (ground_truth['BloodPressure'] < ground_truth['BloodPressure'].quantile(0.05)) | (ground_truth['BloodPressure'] > ground_truth['BloodPressure'].quantile(0.95))
+    cholesterol_outliers = (ground_truth['Cholesterol'] < ground_truth['Cholesterol'].quantile(0.05)) | (ground_truth['Cholesterol'] > ground_truth['Cholesterol'].quantile(0.95))
+    
+    return ((output.loc[blood_pressure_outliers, 'BloodPressure'] == ground_truth.loc[blood_pressure_outliers, 'BloodPressure'].quantile(0.05)).all() and 
+            (output.loc[cholesterol_outliers, 'Cholesterol'] == ground_truth.loc[cholesterol_outliers, 'Cholesterol'].quantile(0.95)).all())",Data cleaning and preprocessing,Z-Score Normalization Check,"def z_score_normalization_check(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""normalized_data.csv"")
+    # Calculate Z-scores for the 'Age', 'BloodPressure', and 'Cholesterol' in the ground truth
+    normalized_ground_truth = (ground_truth[['Age', 'BloodPressure', 'Cholesterol']] - ground_truth[['Age', 'BloodPressure', 'Cholesterol']].mean()) / ground_truth[['Age', 'BloodPressure', 'Cholesterol']].std()
+    return (output[['Age', 'BloodPressure', 'Cholesterol']] == normalized_ground_truth).all().all()",Data cleaning and preprocessing,Encoding Accuracy for Diagnosis,"def encoding_accuracy_diagnosis(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""diagnosis_encoded.csv"")
+    from sklearn.preprocessing import LabelEncoder
+    
+    le = LabelEncoder()
+    ground_truth_encoded = le.fit_transform(ground_truth['Diagnosis'])
+    return (output['Diagnosis'].values == ground_truth_encoded).all()",Data cleaning and preprocessing,PatientID Consistency Check,"def patient_id_consistency_check(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""final_cleaned_data.csv"")
+    # Check if PatientID is of string type and matches the ground truth
+    return output['PatientID'].dtype == 'object' and output['PatientID'].equals(ground_truth['PatientID'].astype(str))",,,,,,,,,,,,,,,
+"
+Given a retail dataset DataFrame `df` with columns: InvoiceNo, StockCode, Description, Quantity, InvoiceDate, UnitPrice, CustomerID, Country, perform the following subtasks:
+
+1. Handle any missing CustomerID values by removing corresponding rows.
+   - **Input**: `data.csv` (the original DataFrame saved as a CSV file)
+   - **Output**: `cleaned_no_missing_customer.csv` (the DataFrame after removing rows with missing CustomerID)
+
+2. Identify and remove any rows that have Quantity or UnitPrice as an outlier. An outlier is defined as any value that is below the 1st percentile or above the 99th percentile of the respective column.
+   - **Input**: `cleaned_no_missing_customer.csv`
+   - **Output**: `cleaned_no_outliers.csv` (the DataFrame after removing outliers)
+
+3. Normalize the Quantity and UnitPrice columns using Min-Max scaling.
+   - **Input**: `cleaned_no_outliers.csv`
+   - **Output**: `normalized_data.csv` (the DataFrame with normalized Quantity and UnitPrice)
+
+4. Ensure InvoiceDate is in datetime format.
+   - **Input**: `normalized_data.csv`
+   - **Output**: `data_with_datetime.csv` (the DataFrame with InvoiceDate in datetime format)
+
+5. Encode the Country column using one-hot encoding.
+   - **Input**: `data_with_datetime.csv`
+   - **Output**: `final_cleaned_data.csv` (the final cleaned DataFrame with one-hot encoded Country)
+
+Complete the specified data cleaning and preprocessing tasks and output the cleaned DataFrame as described above.",Data cleaning and preprocessing,CustomerID Missing Value Removal Rate,"def customer_id_removal_rate(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_no_missing_customer.csv"")
+    original_count = pd.read_csv(""data.csv"").shape[0]
+    cleaned_count = output.shape[0]
+    return (original_count - cleaned_count) / original_count",Data cleaning and preprocessing,Outlier Removal Rate,"def outlier_removal_rate(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""cleaned_no_outliers.csv"")
+    cleaned_count = output.shape[0]
+    no_outliers_count = pd.read_csv(""cleaned_no_missing_customer.csv"").shape[0]
+    return (no_outliers_count - cleaned_count) / no_outliers_count",Data cleaning and preprocessing,Normalization Check (Range of Normalized Data),"def normalization_check(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""normalized_data.csv"")
+    quantity_range = output['Quantity'].max() - output['Quantity'].min()
+    unit_price_range = output['UnitPrice'].max() - output['UnitPrice'].min()
+    return (quantity_range, unit_price_range)",Data cleaning and preprocessing,InvoiceDate Format Validation,"def invoice_date_format_validation(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""data_with_datetime.csv"")
+    return pd.to_datetime(output['InvoiceDate'], errors='coerce').notna().all()",Data cleaning and preprocessing,One-Hot Encoding Integrity,"def one_hot_encoding_integrity(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""final_cleaned_data.csv"")
+    country_columns = [col for col in output.columns if col.startswith('Country_')]
+    return len(country_columns) > 0",,,,,,,,,,,,,,,
+"# QUESTION 4
+Given a DataFrame `df` of historical weather data with columns: StationID, Date, Temperature, Humidity, WindSpeed, perform the following tasks:
+
+1. **Handle Missing Values**: Handle missing values in Temperature, Humidity, and WindSpeed using the mean of each column.  
+   **Input**: `data.csv` (contains the initial DataFrame)  
+   **Output**: `missing_values_handled.csv` (the DataFrame after handling missing values)
+
+2. **Detect and Replace Outliers**: Detect and replace outliers in Temperature, Humidity, and WindSpeed. An outlier is defined as a value below the 2nd percentile or above the 98th percentile. Replace these outliers with the corresponding 2nd or 98th percentile value.  
+   **Input**: `missing_values_handled.csv`  
+   **Output**: `outliers_handled.csv` (the DataFrame after handling outliers)
+
+3. **Normalize Features**: Normalize Temperature, Humidity, and WindSpeed using Min-Max scaling.  
+   **Input**: `outliers_handled.csv`  
+   **Output**: `normalized_data.csv` (the DataFrame after normalization)
+
+4. **Ensure Date Format**: Ensure that the Date column is in datetime format.  
+   **Input**: `normalized_data.csv`  
+   **Output**: `date_formatted.csv` (the DataFrame after formatting the Date)
+
+5. **One-Hot Encode StationID**: One-hot encode the StationID column.  
+   **Input**: `date_formatted.csv`  
+   **Output**: `final_cleaned_data.csv` (the final cleaned DataFrame ready for further analysis)
+
+Apply the required data cleaning and preprocessing steps as specified above and output the final cleaned DataFrame as `final_cleaned_data.csv`.",Data cleaning and preprocessing,Mean Absolute Error for Missing Values Handling,"def mean_absolute_error_missing(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""missing_values_handled.csv"")
+    return (output[['Temperature', 'Humidity', 'WindSpeed']] - ground_truth[['Temperature', 'Humidity', 'WindSpeed']]).abs().mean().mean()",Data cleaning and preprocessing,Percentage of Data Within Bounds for Outliers Handling,"def percentage_within_bounds(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""outliers_handled.csv"")
+    count_within_bounds = ((output[['Temperature', 'Humidity', 'WindSpeed']] >= ground_truth[['Temperature', 'Humidity', 'WindSpeed']].quantile(0.02)) &
+                            (output[['Temperature', 'Humidity', 'WindSpeed']] <= ground_truth[['Temperature', 'Humidity', 'WindSpeed']].quantile(0.98))).sum().sum()
+    total_count = output[['Temperature', 'Humidity', 'WindSpeed']].size
+    return (count_within_bounds / total_count) * 100",Data cleaning and preprocessing,Minimum and Maximum Feature Values Normalization,"def min_max_scaling_range(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""normalized_data.csv"")
+    min_vals = output[['Temperature', 'Humidity', 'WindSpeed']].min()
+    max_vals = output[['Temperature', 'Humidity', 'WindSpeed']].max()
+    return (max_vals - min_vals).sum()",Data cleaning and preprocessing,Date Column Format Verification,"def verify_date_format(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""date_formatted.csv"")
+    return pd.to_datetime(output['Date'], errors='coerce').notna().all()",Data cleaning and preprocessing,One-Hot Encoding Consistency Check,"def one_hot_encoding_consistency(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""final_cleaned_data.csv"")
+    unique_station_ids = ground_truth['StationID'].unique()
+    return all(station_id in output.columns for station_id in unique_station_ids)",,,,,,,,,,,,,,,
+"
+Given a DataFrame `df` with sales data containing columns: TransactionID, ProductID, Quantity, SaleDate, StoreID, Revenue:
+
+1. **Handle missing Revenue values**: Impute any missing Revenue values with the median of the Revenue column.  
+   **Input file**: `data.csv`  
+   **Output**: `step1_imputed_revenue.csv` (contains the DataFrame after handling missing values)
+
+2. **Detect and replace outliers**: Detect and replace outliers in Quantity and Revenue. Outliers are defined as values below the 1st percentile or above the 99th percentile. Replace them with the corresponding 1st or 99th percentile value instead of removing them.  
+   **Input file**: `step1_imputed_revenue.csv`  
+   **Output**: `step2_replaced_outliers.csv` (contains the DataFrame after outlier replacement)
+
+3. **Normalize Quantity and Revenue**: Normalize Quantity and Revenue using Z-score normalization.  
+   **Input file**: `step2_replaced_outliers.csv`  
+   **Output**: `step3_normalized_data.csv` (contains the DataFrame after normalization)
+
+4. **Ensure SaleDate format**: Ensure SaleDate is in datetime format.  
+   **Input file**: `step3_normalized_data.csv`  
+   **Output**: `step4_formatted_dates.csv` (contains the DataFrame after ensuring datetime format)
+
+5. **Encode ProductID and StoreID**: Encode the ProductID and StoreID columns using separate label encoders to avoid any potential overlap in numerical values between categories from different columns.  
+   **Input file**: `step4_formatted_dates.csv`  
+   **Output**: `final_cleaned_data.csv` (contains the final cleaned DataFrame)
+
+Perform the specified data cleaning and preprocessing tasks and output the cleaned DataFrame as the final result.",Data cleaning and preprocessing,Revenue Imputation Accuracy,"def revenue_imputation_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""step1_imputed_revenue.csv"")
+    return output['Revenue'].isna().sum() == 0  # Check that there are no missing values",Data cleaning and preprocessing,Outlier Replacement Accuracy,"def outlier_replacement_accuracy(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""step2_replaced_outliers.csv"")
+    lower_bound_quantity = output['Quantity'].quantile(0.01)
+    upper_bound_quantity = output['Quantity'].quantile(0.99)
+    lower_bound_revenue = output['Revenue'].quantile(0.01)
+    upper_bound_revenue = output['Revenue'].quantile(0.99)
+    
+    num_outliers_quantity = ((output['Quantity'] < lower_bound_quantity) | (output['Quantity'] > upper_bound_quantity)).sum()
+    num_outliers_revenue = ((output['Revenue'] < lower_bound_revenue) | (output['Revenue'] > upper_bound_revenue)).sum()
+    
+    return (num_outliers_quantity == 0) and (num_outliers_revenue == 0)",Data cleaning and preprocessing,Normalization Check,"def normalization_check(ground_truth):
+    import pandas as pd
+    from scipy.stats import zscore
+    output = pd.read_csv(""step3_normalized_data.csv"")
+    norm_quantity = zscore(output['Quantity'])
+    norm_revenue = zscore(output['Revenue'])
+    
+    return (len(norm_quantity) == len(output['Quantity'])) and (len(norm_revenue) == len(output['Revenue']))",Data cleaning and preprocessing,SaleDate Format Check,"def sale_date_format_check(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""step4_formatted_dates.csv"")
+    return pd.to_datetime(output['SaleDate'], errors='coerce').notna().all()  # Check if all SaleDate values can be converted to datetime",Data cleaning and preprocessing,Encoding Consistency Check,"def encoding_consistency_check(ground_truth):
+    import pandas as pd
+    output = pd.read_csv(""final_cleaned_data.csv"")
+    unique_product_ids = output['ProductID'].nunique()
+    unique_store_ids = output['StoreID'].nunique()
+    
+    total_unique_ids = output['ProductID'].unique().size + output['StoreID'].unique().size
+    return total_unique_ids == (unique_product_ids + unique_store_ids)  # Check if both encodings do not overlap",,,,,,,,,,,,,,,

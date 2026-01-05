@@ -1,0 +1,77 @@
+TMC-list:
+- code: "def normalization_consistency(output, ground_truth):\n    normalized_df_output\
+    \ = output[0]  # extract normalized DataFrame from tuple\n    normalized_df_ground_truth\
+    \ = ground_truth[0]\n    return (normalized_df_output == normalized_df_ground_truth).all().all()\
+    \  # Check if all elements are equal"
+  function: Normalization Range Check
+  metric: Normalization Consistency
+  task_name: Data cleaning and preprocessing
+- code: "def plot_representation_similarity(output, ground_truth):\n    plot_axes_output\
+    \ = output[1]  # extract plot Axes from tuple\n    plot_axes_ground_truth = ground_truth[1]\n\
+    \    output_data = plot_axes_output.lines[0].get_xydata()\n    ground_truth_data\
+    \ = plot_axes_ground_truth.lines[0].get_xydata()\n    return (output_data == ground_truth_data).all()\
+    \  # Check if plot data points are the same"
+  function: Visualization Quality
+  metric: Plot Representation Similarity
+  task_name: Data visualization
+data: "import pandas as pd\nimport numpy as np\n\n# New complex test data\ndata_dict\
+  \ = {\n    'Feature1': np.random.randint(0, 100, size=50).tolist(),\n    'Feature2':\
+  \ np.random.randn(50).tolist(),\n    'Feature3': np.random.uniform(1, 100, size=50).tolist(),\n\
+  \    'Feature4': np.random.exponential(scale=2.0, size=50).tolist(),\n    'Feature5':\
+  \ [f'Sample_{i}' for i in range(50)]  # Non-numerical feature\n}\n\n# New keys for\
+  \ normalization\ndata_keys = ['Feature1', 'Feature2', 'Feature3']\n\nargs = (data_dict,\
+  \ data_keys)"
+ground_truth: "import pandas as pd\nfrom sklearn.preprocessing import MinMaxScaler\n\
+  import matplotlib.pyplot as plt\n\ndef task_func(data_dict, data_keys):\n    # Check\
+  \ if any keys in data_keys are found in data_dict\n    if not any(key in data_dict\
+  \ for key in data_keys):\n        raise ValueError(\"No keys in data_keys are found\
+  \ in data_dict\")\n\n    # Prepare the data for normalization\n    data_to_normalize\
+  \ = pd.DataFrame({key: data_dict[key] for key in data_keys if key in data_dict})\n\
+  \n    # Normalize the data using MinMaxScaler\n    scaler = MinMaxScaler()\n   \
+  \ normalized_data = scaler.fit_transform(data_to_normalize)\n\n    # Create a DataFrame\
+  \ for normalized values\n    normalized_df = pd.DataFrame(normalized_data, columns=data_to_normalize.columns)\n\
+  \n    # Plotting the normalized data\n    plot_axes = normalized_df.plot(figsize=(10,\
+  \ 6), title='Normalized Data')\n    plot_axes.set_ylabel('Normalized Value')\n \
+  \   plt.legend(title='Data Keys')\n\n    # Show the plot\n    plt.show()\n\n   \
+  \ return normalized_df, plot_axes"
+prompt: 'Normalize data specified by keys in a dictionary using MinMax scaling and
+  plot the results. This function is useful for preprocessing data for machine learning
+  models where data scaling can impact performance. The function should raise the
+  exception for: ValueError: If no keys in `data_keys` are found in `data_dict`. The
+  function should output with: tuple(normalized_df: pandas.DataFrame, plot_axes: matplotlib.axes.Axes)
+  normalized_df: A DataFrame of normalized values. plot_axes: A matplotlib Axes object
+  representing a plot of the normalized data. You should write self-contained code
+  starting with:
+
+  ```
+
+  import pandas as pd
+
+  from sklearn.preprocessing import MinMaxScaler
+
+  def task_func(data_dict, data_keys):
+
+  ```'
+testcase: "import unittest\nimport matplotlib.pyplot as plt\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        # Sample data dictionary\n        self.data_dict\
+  \ = {\n            'A': [10, 20, 30, 40],\n            'B': [20, 30, 40, 50],\n\
+  \            'C': [30, 40, 50, 60]\n        }\n    \n    def test_normalization_single_key(self):\n\
+  \        # Test normalization with a single key\n        data_keys = ['A']\n   \
+  \     normalized_df, ax = task_func(self.data_dict, data_keys)\n        self.assertTrue((normalized_df\
+  \ >= 0).all().all() and (normalized_df <= 1).all().all(),\n                    \
+  \    \"Normalized data should be in the range [0, 1]\")\n    \n    def test_normalization_multiple_keys(self):\n\
+  \        # Test normalization with multiple keys\n        data_keys = ['A', 'B']\n\
+  \        normalized_df, ax = task_func(self.data_dict, data_keys)\n        self.assertEqual(len(normalized_df.columns),\
+  \ 2, \"Normalized DataFrame should have 2 columns\")\n        self.assertTrue({'A',\
+  \ 'B'}.issubset(normalized_df.columns), \"DataFrame should contain specified keys\"\
+  )\n    \n    def test_normalization_all_keys(self):\n        # Test normalization\
+  \ with all keys in the dictionary\n        data_keys = list(self.data_dict.keys())\n\
+  \        normalized_df, ax = task_func(self.data_dict, data_keys)\n        self.assertEqual(len(normalized_df.columns),\
+  \ 3, \"Normalized DataFrame should have 3 columns\")\n        self.assertTrue({'A',\
+  \ 'B', 'C'}.issubset(normalized_df.columns), \"DataFrame should contain all keys\"\
+  )\n    \n    def test_empty_keys(self):\n        # Test with no keys specified\n\
+  \        data_keys = []\n        with self.assertRaises(ValueError):\n         \
+  \   task_func(self.data_dict, data_keys)\n    \n    def test_key_not_in_dict(self):\n\
+  \        # Test with a key that's not in the dictionary\n        data_keys = ['D']\
+  \  # Assuming 'D' is not in `data_dict`\n        with self.assertRaises(ValueError):\n\
+  \            task_func(self.data_dict, data_keys)"

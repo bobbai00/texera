@@ -1,0 +1,77 @@
+TMC-list:
+- code: "def flattened_list_length(output, ground_truth):\n    output = output[1]\
+    \  # extract the flattened list from tuple\n    ground_truth = ground_truth[1]\n\
+    \    return len(output) == len(ground_truth)"
+  function: Data Quality Score
+  metric: Flattened List Length Check
+  task_name: Data cleaning and preprocessing
+- code: "def histogram_integrity(axes, ground_truth):\n    axes=axes[0]\n    hist_data\
+    \ = axes.containers[0]\n    heights = [bar.get_height() for bar in hist_data]\n\
+    \    return all(height >= 0 for height in heights)  # Check that all histogram\
+    \ bar heights are non-negative"
+  function: Visualization Completeness
+  metric: Histogram Plot Integrity
+  task_name: Data visualization
+- code: "def normal_distribution_fit(output, ground_truth):\n    from scipy.stats\
+    \ import norm\n    from sklearn.metrics import mean_squared_error\n    \n    #\
+    \ \u83B7\u53D6 task_func \u7684\u8F93\u51FA\uFF0C\u5373 ax \u548C \u6241\u5E73\
+    \u5316\u540E\u7684\u5217\u8868\n    ax, flattened_list_pred = output\n    \n \
+    \   # \u5BF9\u6241\u5E73\u5316\u540E\u7684\u5217\u8868\u62DF\u5408\u6B63\u6001\
+    \u5206\u5E03\uFF0C\u83B7\u53D6\u5747\u503C\u548C\u6807\u51C6\u5DEE\n    mu_pred,\
+    \ std_pred = norm.fit(flattened_list_pred)\n    \n    # \u83B7\u53D6\u771F\u5B9E\
+    \u6570\u636E\u7684 ax \u548C \u6241\u5E73\u5316\u540E\u7684\u5217\u8868\n    ax,\
+    \ flattened_list_true = ground_truth\n    \n    # \u5BF9\u771F\u5B9E\u6570\u636E\
+    \u7684\u6241\u5E73\u5316\u540E\u7684\u5217\u8868\u62DF\u5408\u6B63\u6001\u5206\
+    \u5E03\uFF0C\u83B7\u53D6\u5747\u503C\u548C\u6807\u51C6\u5DEE\n    mu_true, std_true\
+    \ = norm.fit(flattened_list_true)\n    \n    mse_mu = mean_squared_error([mu_true],\
+    \ [mu_pred])\n    mse_std = mean_squared_error([std_true], [std_pred])\n    \n\
+    \    # \u5B9A\u4E49\u6700\u5927\u53EF\u80FD\u7684MSE\u503C\uFF0C\u8FD9\u91CC\u5047\
+    \u8BBE\u4E3A1\uFF0C\u8FD9\u53EF\u80FD\u9700\u8981\u6839\u636E\u5B9E\u9645\u60C5\
+    \u51B5\u8FDB\u884C\u8C03\u6574\n    max_possible_mse = 1\n    \n    # \u5F52\u4E00\
+    \u5316MSE\u503C\u5230[0, 1]\u8303\u56F4\uFF0C\u5176\u4E2D1\u662F\u6700\u4F73\u60C5\
+    \u51B5\n    normalized_mse_mu = 1 - (mse_mu / max_possible_mse)\n    normalized_mse_std\
+    \ = 1 - (mse_std / max_possible_mse)\n    \n    # \u786E\u4FDD\u5F52\u4E00\u5316\
+    \u540E\u7684\u503C\u5728[0, 1]\u8303\u56F4\u5185\n    normalized_mse_mu = max(0,\
+    \ min(normalized_mse_mu, 1))\n    normalized_mse_std = max(0, min(normalized_mse_std,\
+    \ 1))\n    \n    # \u8FD4\u56DE\u5F52\u4E00\u5316\u540E\u7684MSE\u503C\uFF0C\u8FD9\
+    \u91CC\u6211\u4EEC\u8FD4\u56DE\u4E24\u4E2A\u503C\uFF0C\u4F46\u53EF\u4EE5\u6839\
+    \u636E\u9700\u8981\u8FD4\u56DE\u4E00\u4E2A\u7EFC\u5408\u8BC4\u5206\n    return\
+    \ normalized_mse_mu, normalized_mse_std\n"
+  function: Model Accuracy
+  metric: Normal Distribution Fit Check
+  task_name: Predictive modeling
+data: 'L = [[-20, 100, 300], [45, 60, 75], [22, -5, 13], [1000, 2000, -1500], [3,
+  7, 11], [0, 0, 0]]
+
+  args = (L,)'
+ground_truth: "import matplotlib.pyplot as plt\nimport numpy as np\nfrom scipy.stats\
+  \ import norm\nfrom itertools import chain\n\ndef task_func(L):\n    # Flatten the\
+  \ list of lists into a single list of integers\n    flattened_list = list(chain.from_iterable(L))\n\
+  \    \n    # Fit a normal distribution to the flattened data\n    mu, std = norm.fit(flattened_list)\n\
+  \    \n    # Create the histogram of the flattened data\n    fig, ax = plt.subplots()\n\
+  \    ax.hist(flattened_list, bins=30, density=True, alpha=0.6, color='g')\n    \n\
+  \    # Plot the PDF of the fitted normal distribution\n    xmin, xmax = ax.get_xlim()\n\
+  \    x = np.linspace(xmin, xmax, 100)\n    p = norm.pdf(x, mu, std)\n    ax.plot(x,\
+  \ p, 'k', linewidth=2)\n    \n    # Return the axes object and the flattened list\n\
+  \    return ax, flattened_list"
+prompt: "\"Convert a list of lists 'L' into a flattened list of integers, then fit\
+  \ a normal distribution to the data and plot a histogram with the fitted normal\
+  \ distribution overlay. The function should output with: tuple(axes: matplotlib.axes._axes.Axes,\
+  \ flattened_list: list)\naxes: Axes object with the plotted histogram and normal\
+  \ distribution overlay.  \nflattened_list: The flattened list of integers derived\
+  \ from the input list of lists 'L'.  \nYou should write self-contained code starting\
+  \ with:  \n```\nimport matplotlib.pyplot as plt\nimport numpy as np\nfrom scipy.stats\
+  \ import norm\nfrom itertools import chain\ndef task_func(L):\n```\""
+testcase: "import unittest\n\nclass TestCases(unittest.TestCase):\n    def test_case_1(self):\n\
+  \        L = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]\n        ax, _ = task_func(L)\n \
+  \       self.assertIsInstance(ax, plt.Axes)\n\n    def test_case_2(self):\n    \
+  \    L = [[10, 20, 30], [40, 50, 60], [70, 80, 90]]\n        ax, _ = task_func(L)\n\
+  \        self.assertIsInstance(ax, plt.Axes)\n        # self.assertIn(\"Fit results:\"\
+  , ax.get_title())\n\n    def test_case_3(self):\n        L = [[-1, -2, -3], [-4,\
+  \ -5, -6], [-7, -8, -9]]\n        ax, _ = task_func(L)\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n        # self.assertIn(\"Fit results:\", ax.get_title())\n\n    def\
+  \ test_case_4(self):\n        L = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]\n        ax,\
+  \ _ = task_func(L)\n        self.assertIsInstance(ax, plt.Axes)\n        # self.assertIn(\"\
+  Fit results:\", ax.get_title())\n\n    def test_case_5(self):\n        L = [[5,\
+  \ 15, 25], [35, 45, 55], [65, 75, 85]]\n        ax, _ = task_func(L)\n        self.assertIsInstance(ax,\
+  \ plt.Axes)"

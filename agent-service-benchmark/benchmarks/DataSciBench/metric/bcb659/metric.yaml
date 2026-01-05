@@ -1,0 +1,59 @@
+TMC-list:
+- code: "def visual_quality(output, ground_truth):\n    from skimage.metrics import\
+    \ structural_similarity as ssim\n    \n    output_image = output[0]  # This would\
+    \ require a method to convert the figure to an image array\n    ground_truth_image\
+    \ = ground_truth[0]  # Assuming the ground truth is also converted to an image\
+    \ array\n    \n    # Calculate SSIM, which ranges from -1 to 1\n    ssim_score\
+    \ = ssim(output_image, ground_truth_image, multichannel=True)\n    \n    # Convert\
+    \ SSIM score to the range [0, 1]\n    # Since SSIM ranges from -1 to 1, we add\
+    \ 1 to shift the range to [0, 2]\n    # Then we divide by 2 to get the score in\
+    \ the range [0, 1]\n    ssim_score_normalized = (ssim_score + 1) / 2\n    \n \
+    \   # Ensure the result is within [0, 1] range\n    ssim_score_normalized = max(0,\
+    \ min(ssim_score_normalized, 1))\n    \n    return ssim_score_normalized\n"
+  function: Visualization Quality
+  metric: Visual Quality Assessment (e.g., using Structural Similarity Index)
+  task_name: Data visualization
+data: 'import numpy as np
+
+  x = [np.array([12, 24, 36, 48]), np.array([18, 27, 36, 45]), np.array([14, 22, 30,
+  38])]
+
+  y = [np.array([21, 30, 39, 48]), np.array([17, 25, 33, 41]), np.array([16, 24, 32,
+  40])]
+
+  labels = [''NaCl'', ''CaCO3'', ''KCl'']
+
+  args = (x, y, labels)'
+ground_truth: "import matplotlib.pyplot as plt\nimport numpy as np\nimport scipy.stats\
+  \ as stats\n\ndef task_func(x, y, labels):\n    fig, ax = plt.subplots()\n    \n\
+  \    for i in range(len(x)):\n        mean = np.mean(x[i])\n        std_dev = np.std(x[i])\n\
+  \        y_normal = stats.norm.pdf(np.sort(x[i]), mean, std_dev)\n        \n   \
+  \     ax.plot(np.sort(x[i]), y_normal, label=labels[i])\n    \n    ax.set_title('Normal\
+  \ Distributions of Chemical Compounds')\n    ax.set_xlabel('X Values')\n    ax.set_ylabel('Probability\
+  \ Density')\n    ax.legend()\n    \n    plt.show()\n    \n    return (fig,)"
+prompt: "Draw normal distributions for multiple 'x' and 'y' arrays with labels. Each\
+  \ pair (x, y) represents a different chemical compound in the 'labels' list. The\
+  \ function should output with: tuple(fig: Matplotlib.figure.Figure)\nfig: Matplotlib\
+  \ figure object containing the drawn normal distributions.  \nYou should write self-contained\
+  \ code starting with:  \n```\nimport matplotlib.pyplot as plt\nimport numpy as np\n\
+  import scipy.stats as stats\ndef task_func(x, y, labels):\n```"
+testcase: "import unittest\nimport matplotlib\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        x = [np.array([1,2,3]), np.array([4,5,6]),\
+  \ np.array([7,8,9])]\n        y = [np.array([4,5,6]), np.array([7,8,9]), np.array([10,11,12])]\n\
+  \        labels = ['H\uFFFD\uFFFD\uFFFDO', 'O\uFFFD\uFFFD\uFFFD', 'CO\uFFFD\uFFFD\
+  \uFFFD']\n        fig = task_func(x, y, labels)\n        self.assertIsInstance(fig,\
+  \ matplotlib.figure.Figure)\n\n    def test_case_2(self):\n        x = [np.array([1,3,5]),\
+  \ np.array([2,4,6])]\n        y = [np.array([2,4,6]), np.array([1,3,5])]\n     \
+  \   labels = ['N\uFFFD\uFFFD\uFFFD', 'Ar']\n        fig = task_func(x, y, labels)\n\
+  \        self.assertIsInstance(fig, matplotlib.figure.Figure)\n\n    def test_case_3(self):\n\
+  \        x = [np.array([10,20,30])]\n        y = [np.array([15,25,35])]\n      \
+  \  labels = ['H\uFFFD\uFFFD\uFFFDO']\n        fig = task_func(x, y, labels)\n  \
+  \      self.assertIsInstance(fig, matplotlib.figure.Figure)\n\n    def test_case_4(self):\n\
+  \        x = [np.array([5,15,25]), np.array([10,20,30]), np.array([15,25,35])]\n\
+  \        y = [np.array([10,20,30]), np.array([15,25,35]), np.array([5,15,25])]\n\
+  \        labels = ['H\uFFFD\uFFFD\uFFFDO', 'O\uFFFD\uFFFD\uFFFD', 'CO\uFFFD\uFFFD\
+  \uFFFD']\n        fig = task_func(x, y, labels)\n        self.assertIsInstance(fig,\
+  \ matplotlib.figure.Figure)\n\n    def test_case_5(self):\n        x = [np.array([2,4,8]),\
+  \ np.array([1,3,7])]\n        y = [np.array([1,3,7]), np.array([2,4,8])]\n     \
+  \   labels = ['N\uFFFD\uFFFD\uFFFD', 'Ar']\n        fig = task_func(x, y, labels)\n\
+  \        self.assertIsInstance(fig, matplotlib.figure.Figure)"

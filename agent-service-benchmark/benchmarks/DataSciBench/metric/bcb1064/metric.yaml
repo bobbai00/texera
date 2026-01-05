@@ -1,0 +1,73 @@
+TMC-list:
+- code: "def row_sum_accuracy(output, ground_truth):\n    output_sums = output[0]\
+    \  # extract the row sums from the output tuple\n    ground_truth_sums = ground_truth[0]\
+    \  # extract the ground truth sums from the tuple\n    return np.allclose(output_sums,\
+    \ ground_truth_sums)  # Check if the computed sums match the ground truth"
+  function: Plot Validity
+  metric: Row Sum Accuracy
+  task_name: Data visualization
+- code: "def heatmap_validity(output, ground_truth):\n    ax = output[1]  # extract\
+    \ the Axes object from the output tuple\n    ax_gt = ground_truth[1]\n    # Check\
+    \ if the heatmap was plotted correctly by verifying that the Axes has lines drawn\n\
+    \    if not ax.get_title() == ax_gt.get_title():\n        return False\n    return\
+    \ ax.collections[0].colorbar.vmax == ax_gt.collections[0].colorbar.vmax"
+  function: Plot Validity
+  metric: Heatmap Validity
+  task_name: Data exploration and statistics understand
+data: "import numpy as np\nargs = (\n    np.array([[np.random.randint(1, 10) * i -\
+  \ np.random.randint(1, 10) for i in range(7)] for j in range(4)]),\n)"
+ground_truth: "import numpy as np\nimport seaborn as sns\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(arr):\n    row_sums = np.sum(arr, axis=1)\n    print(\"\
+  Sum of each row:\", row_sums)\n    \n    min_val = np.min(arr)\n    max_val = np.max(arr)\n\
+  \    \n    plt.figure(figsize=(10, 8))\n    ax = sns.heatmap(arr, vmin=min_val,\
+  \ vmax=max_val, cmap='coolwarm')\n    plt.title(\"Heatmap of the 2D Array\")\n \
+  \   plt.xlabel(\"Columns\")\n    plt.ylabel(\"Rows\")\n    plt.show()\n    \n  \
+  \  return row_sums, ax"
+prompt: '"Plots a heatmap of a given 2D numerical array and prints the sum of each
+  row. The heatmap''s color range is set based on the minimum and maximum values in
+  the array. Note that: The function calculates the sum of each row and prints these
+  values. The heatmap is plotted based on the original array with its color range
+  set from the minimum to the maximum value in the array. The function should output
+  with: tuple(row_sums: numpy.ndarray, ax: matplotlib.axes.Axes) row_sums: An array
+  containing the sum of each row. ax: The Axes object with the plotted heatmap. You
+  should write self-contained code starting with:
+
+  ```
+
+  import numpy as np
+
+  import seaborn as sns
+
+  def task_func(arr):
+
+  ```"'
+testcase: "import unittest\nimport numpy as np\nimport matplotlib.pyplot as plt\n\n\
+  class TestCases(unittest.TestCase):\n    \"\"\"Test cases for the function task_func.\"\
+  \"\"\n\n    def tearDown(self):\n        plt.clf()\n\n    def test_scenario_1(self):\n\
+  \        \"\"\"Scenario 1: Testing with a 2D array created by adding row and column\
+  \ indices.\"\"\"\n        arr = np.array([[i + j for i in range(3)] for j in range(5)])\n\
+  \        expected_vmax = np.max(arr)  # Calculate the expected vmax\n        _,\
+  \ ax = task_func(arr)\n        self.assertEqual(ax.get_title(), \"Heatmap of the\
+  \ 2D Array\")\n        self.assertEqual(ax.collections[0].colorbar.vmax, expected_vmax)\n\
+  \n    def test_scenario_2(self):\n        \"\"\"Scenario 2: Testing with a 2D array\
+  \ where each column has identical values based on the column index.\"\"\"\n    \
+  \    arr = np.array([[i for i in range(3)] for j in range(5)])\n        expected_vmax\
+  \ = np.max(arr)  # Calculate the expected vmax\n        _, ax = task_func(arr)\n\
+  \        self.assertEqual(ax.get_title(), \"Heatmap of the 2D Array\")\n       \
+  \ self.assertEqual(ax.collections[0].colorbar.vmax, expected_vmax)\n\n    def test_scenario_3(self):\n\
+  \        \"\"\"Scenario 3: Testing with a 2D array where each row has identical\
+  \ values based on the row index.\"\"\"\n        arr = np.array([[j for i in range(3)]\
+  \ for j in range(5)])\n        expected_vmax = np.max(arr)  # Calculate the expected\
+  \ vmax\n        _, ax = task_func(arr)\n        self.assertEqual(ax.get_title(),\
+  \ \"Heatmap of the 2D Array\")\n        self.assertEqual(ax.collections[0].colorbar.vmax,\
+  \ expected_vmax)\n\n    def test_scenario_4(self):\n        \"\"\"Scenario 4: Testing\
+  \ with a 2D array of zeros.\"\"\"\n        arr = np.zeros((5, 3))\n        expected_vmax\
+  \ = np.max(arr)  # Calculate the expected vmax\n        _, ax = task_func(arr)\n\
+  \        self.assertEqual(ax.get_title(), \"Heatmap of the 2D Array\")\n       \
+  \ self.assertAlmostEqual(\n            ax.collections[0].colorbar.vmax, expected_vmax,\
+  \ delta=0.2\n        )\n\n    def test_scenario_5(self):\n        \"\"\"Scenario\
+  \ 5: Testing with a 2D array of ones.\"\"\"\n        arr = np.ones((5, 3))\n   \
+  \     expected_vmax = np.max(arr)  # Calculate the expected vmax\n        _, ax\
+  \ = task_func(arr)\n        self.assertEqual(ax.get_title(), \"Heatmap of the 2D\
+  \ Array\")\n        self.assertAlmostEqual(\n            ax.collections[0].colorbar.vmax,\
+  \ expected_vmax, delta=0.2\n        )"

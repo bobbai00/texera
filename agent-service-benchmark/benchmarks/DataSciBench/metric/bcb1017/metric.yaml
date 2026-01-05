@@ -1,0 +1,106 @@
+TMC-list:
+- code: "def f1_score_specific_class(output, ground_truth, class_name='0'):\n    from\
+    \ sklearn.metrics import f1_score\n    # Extract the classification report from\
+    \ the output\n    report = output[0].split('\\n')\n    for line in report:\n \
+    \       if class_name in line:\n            f1_value_output = float(line.split()[4])\
+    \  # Extract F1 Score for the specific class\n            break\n    # Extract\
+    \ the F1 Score from ground truth\n    report_gt = ground_truth[0].split('\\n')\n\
+    \    for line in report_gt:\n        if class_name in line:\n            f1_value_gt\
+    \ = float(line.split()[4])  # Extract F1 Score for the specific class in ground\
+    \ truth\n            break\n    return (f1_value_output - f1_value_gt)<0.01"
+  function: Report Quality
+  metric: F1 Score for a Specific Class
+  task_name: Interpretability and report generation
+- code: "def model_accuracy(output, ground_truth):\n    from sklearn.metrics import\
+    \ accuracy_score\n    # Assuming the classification report string contains accuracy\
+    \ information\n    accuracy_str = output[0].split('accuracy')[-1].split('\\n')[0].strip()\
+    \  # Extract accuracy line\n    accuracy_value = float(accuracy_str.split()[1])\
+    \  # Extract numerical accuracy value\n    # Calculate expected accuracy from\
+    \ the ground truth if available\n    expected_accuracy = float(ground_truth[0].split('accuracy')[-1].split('\\\
+    n')[0].strip().split()[1])  # Same for ground truth\n    return (accuracy_value\
+    \ - expected_accuracy)<0.01"
+  function: Model Accuracy
+  metric: Model Accuracy
+  task_name: Predictive modeling
+data: "import os.path\nimport pandas as pd\n\nmock_data = {\n    \"feature1\": range(200,\
+  \ 400),  # Increasing the range for complexity\n    \"feature2\": [x * 2 for x in\
+  \ range(200)],  # More complex feature transformation\n    \"class_label\": [0,\
+  \ 1, 1, 1, 0] * 40  # Increased complexity in target with a longer pattern\n}\n\
+  if not os.path.exists(\"data/task_func\"):\n    os.makedirs(\"data/task_func\")\n\
+  df = pd.DataFrame(mock_data)\ndf.to_csv(\"data/task_func/complex_data.csv\", index=False)\n\
+  args = (\"data/task_func/complex_data.csv\", \"class_label\", 0.3, 200)"
+ground_truth: "import pandas as pd\nfrom sklearn.model_selection import train_test_split\n\
+  from sklearn.ensemble import RandomForestClassifier\nfrom sklearn.metrics import\
+  \ classification_report\n\ndef task_func(csv_file_path, target_column=\"target\"\
+  , test_size=0.2, n_estimators=100):\n    # Load the CSV file into a DataFrame\n\
+  \    df = pd.read_csv(csv_file_path)\n    \n    # Check if target_column exists\
+  \ in the DataFrame\n    if target_column not in df.columns:\n        raise ValueError(f\"\
+  The specified target_column '{target_column}' is not found in the CSV file.\")\n\
+  \    \n    # Separate features and target variable\n    X = df.drop(columns=[target_column])\n\
+  \    y = df[target_column]\n\n    # Split the dataset into training and testing\
+  \ sets\n    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size,\
+  \ random_state=42)\n    \n    # Initialize and train the Random Forest classifier\n\
+  \    model = RandomForestClassifier(n_estimators=n_estimators, random_state=42)\n\
+  \    model.fit(X_train, y_train)\n    \n    # Make predictions on the test set\n\
+  \    y_pred = model.predict(X_test)\n    \n    # Generate a classification report\n\
+  \    report = classification_report(y_test, y_pred, output_dict=True)\n    classification_report_str\
+  \ = classification_report(y_test, y_pred)\n\n    return (classification_report_str,)"
+prompt: 'Processes a CSV file to train a Random Forest classifier and generates a
+  formatted classification report. Note that: The CSV file must have a column with
+  the name specified by ''target_column'', and it should be in a format readable by
+  pandas.read_csv(). The function should raise the exception for: ValueError: If the
+  specified target_column is not found in the CSV file. The function should output
+  with: tuple(classification_report_str: str)
+
+  classification_report_str: A formatted classification report. The report includes
+  metrics such as precision, recall, f1-score for each class, as well as overall accuracy,
+  macro average, and weighted average. You should write self-contained code starting
+  with:
+
+  ```
+
+  import pandas as pd
+
+  from sklearn.model_selection import train_test_split
+
+  from sklearn.ensemble import RandomForestClassifier
+
+  from sklearn.metrics import classification_report
+
+  def task_func(csv_file_path, target_column="target", test_size=0.2, n_estimators=100):
+
+  ```'
+testcase: "import unittest\nfrom unittest.mock import patch\nimport pandas as pd\n\
+  \nclass TestCases(unittest.TestCase):\n    \"\"\"Test cases for task_func.\"\"\"\
+  \n    \n    @patch(\"pandas.read_csv\")\n    def test_default_parameters(self, mock_read_csv):\n\
+  \        \"\"\"\n        Test task_func with default parameters using an adequately\
+  \ sized mock dataset.\n        \"\"\"\n        mock_data = {\n            \"feature1\"\
+  : range(100),\n            \"feature2\": range(100, 200),\n            \"target\"\
+  : [0, 1] * 50,  # Alternating 0s and 1s\n        }\n        mock_read_csv.return_value\
+  \ = pd.DataFrame(mock_data)\n        result = task_func(\"dummy_path.csv\")\n  \
+  \      self.assertIn(\"precision\", result)\n\n    @patch(\"pandas.read_csv\")\n\
+  \    def test_non_default_target_column(self, mock_read_csv):\n        \"\"\"\n\
+  \        Test task_func with a non-default target column using a larger mock dataset.\n\
+  \        \"\"\"\n        mock_data = {\n            \"feature1\": range(100),\n\
+  \            \"feature2\": range(100, 200),\n            \"label\": [1, 0] * 50,\
+  \  # Alternating 1s and 0s\n        }\n        mock_read_csv.return_value = pd.DataFrame(mock_data)\n\
+  \        result = task_func(\"dummy_path.csv\", target_column=\"label\")\n     \
+  \   self.assertIn(\"precision\", result)\n\n    @patch(\"pandas.read_csv\")\n  \
+  \  def test_different_test_size(self, mock_read_csv):\n        \"\"\"\n        Test\
+  \ task_func with a different test size and a larger dataset.\n        \"\"\"\n \
+  \       mock_data = {\n            \"feature1\": range(100),\n            \"feature2\"\
+  : range(100, 200),\n            \"target\": [0, 1, 1, 0] * 25,  # Repeated pattern\n\
+  \        }\n        mock_read_csv.return_value = pd.DataFrame(mock_data)\n     \
+  \   result = task_func(\"dummy_path.csv\", test_size=0.5)\n        self.assertIn(\"\
+  precision\", result)\n\n    @patch(\"pandas.read_csv\")\n    def test_different_n_estimators(self,\
+  \ mock_read_csv):\n        \"\"\"\n        Test task_func with a different number\
+  \ of estimators and an expanded dataset.\n        \"\"\"\n        mock_data = {\n\
+  \            \"feature1\": range(100),\n            \"feature2\": range(100, 200),\n\
+  \            \"target\": [1, 0] * 50,  # Alternating 1s and 0s\n        }\n    \
+  \    mock_read_csv.return_value = pd.DataFrame(mock_data)\n        result = task_func(\"\
+  dummy_path.csv\", n_estimators=50)\n        self.assertIn(\"precision\", result)\n\
+  \n    @patch(\"pandas.read_csv\")\n    def test_missing_target_column(self, mock_read_csv):\n\
+  \        \"\"\"\n        Test task_func with a missing target column.\n        \"\
+  \"\"\n        mock_read_csv.return_value = pd.DataFrame(\n            {\"feature1\"\
+  : [1, 2], \"feature2\": [3, 4]}\n        )\n        with self.assertRaises(ValueError):\n\
+  \            task_func(\"dummy_path.csv\", target_column=\"not_exist\")"

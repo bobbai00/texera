@@ -1,0 +1,107 @@
+TMC-list:
+- code: "def imputation_accuracy(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    missing_values_original = ground_truth_df.isnull().sum().sum()\n    missing_values_imputed\
+    \ = output_df.isnull().sum().sum()\n    return missing_values_original == missing_values_imputed\
+    \  # Returns True if imputation was successful"
+  function: Data Completeness
+  metric: Missing Value Imputation Accuracy
+  task_name: Data cleaning and preprocessing
+- code: "def verify_scatter_labels(output, ground_truth):\n    scatter_ax = output[1]\
+    \  # extract the Axes object from tuple\n    expected_xlabel = 'Component 1'\n\
+    \    expected_ylabel = 'Component 2'\n    return scatter_ax.get_xlabel() == expected_xlabel\
+    \ and scatter_ax.get_ylabel() == expected_ylabel  # Returns True if labels match"
+  function: Plot Validity
+  metric: Scatter Plot Axes Labels Verification
+  task_name: Data visualization
+- code: "def variance_ratio(output, ground_truth):\n    from sklearn.metrics.pairwise\
+    \ import cosine_similarity\n    pca_df_output = output[0]\n    pca_df_ground_truth\
+    \ = ground_truth[0]\n\n    pca_output = PCA(n_components=2)\n    pca_output.fit(pca_df_output.dropna())\n\
+    \    explained_variance_output = pca_output.explained_variance_ratio_\n\n    pca_ground_truth\
+    \ = PCA(n_components=2)\n    pca_ground_truth.fit(pca_df_ground_truth.dropna())\n\
+    \    explained_variance_ground_truth = pca_ground_truth.explained_variance_ratio_\n\
+    \n    cosine_sim = cosine_similarity([explained_variance_output], [explained_variance_ground_truth])[0][0]\n\
+    \n    normalized_cosine_sim = (cosine_sim + 1) / 2\n\n    return normalized_cosine_sim"
+  function: Explained Variance Ratio
+  metric: Principal Component Variance Ratio
+  task_name: Predictive modeling
+data: "import pandas as pd\nimport numpy as np\ndf = pd.DataFrame(\n    {\n      \
+  \  \"feature_1\": [np.nan, 20.0, 30.5, 40.2, 50.1, 60.3, 70.4],\n        \"feature_2\"\
+  : [15, np.nan, 25, 35, 45, np.nan, 55],\n        \"feature_3\": [5.0, 10.1, np.nan,\
+  \ 20.2, 30.3, 40.4, 50.5],\n        \"category\": [\"A\", \"B\", \"B\", \"A\", \"\
+  C\", \"D\", \"E\"]\n    }\n)\nargs = (df,)"
+ground_truth: "import pandas as pd\nimport numpy as np\nfrom sklearn.decomposition\
+  \ import PCA\nimport seaborn as sns\nimport matplotlib.pyplot as plt\n\ndef task_func(df:\
+  \ pd.DataFrame):\n    # Exclude non-numeric columns\n    numeric_df = df.select_dtypes(include=[np.number])\n\
+  \    \n    # Replace missing values with the column's average\n    numeric_df.fillna(numeric_df.mean(),\
+  \ inplace=True)\n\n    # Perform PCA\n    pca = PCA(n_components=2)\n    components\
+  \ = pca.fit_transform(numeric_df)\n\n    # Create a new DataFrame for the principal\
+  \ components\n    pca_df = pd.DataFrame(data=components, columns=['Component 1',\
+  \ 'Component 2'])\n\n    # Create a scatter plot\n    fig, scatter_ax = plt.subplots()\n\
+  \    scatter_ax.scatter(pca_df['Component 1'], pca_df['Component 2'])\n    scatter_ax.set_xlabel('Component\
+  \ 1')\n    scatter_ax.set_ylabel('Component 2')\n    scatter_ax.set_title('PCA of\
+  \ DataFrame')\n\n    plt.show()\n\n    return (pca_df, scatter_ax)"
+prompt: 'Perform PCA on a DataFrame (excluding non-numeric columns) and draw a scatter
+  plot of the first two main components. The principal columns should be named ''Component
+  1'' and ''Component 2''. Missing values are replaced by the column''s average. The
+  function should output with: tuple(pca_df: pandas.DataFrame, scatter_ax: matplotlib.axes.Axes)
+
+  pca_df: A pandas DataFrame with the first two principal components. The columns
+  should be ''Component 1'' and ''Component 2''.
+
+  scatter_ax: A matplotlib Axes object representing the scatter plot. The xlabel should
+  be ''Component 1'' and the ylabel should be ''Component 2''.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import numpy as np
+
+  from sklearn.decomposition import PCA
+
+  import seaborn as sns
+
+  import matplotlib.pyplot as plt
+
+  def task_func(df: pd.DataFrame):
+
+  ```'
+testcase: "import unittest\n\nclass TestCases(unittest.TestCase):\n    \"\"\"Test\
+  \ cases for the task_func function.\"\"\"\n\n    def test_case_1(self):\n      \
+  \  df = pd.DataFrame(\n            [[1, 2, 3], [4, 5, 6], [7.0, np.nan, 9.0]], columns=[\"\
+  c1\", \"c2\", \"c3\"]\n        )\n        principalDf, ax = task_func(df)\n    \
+  \    self.assertTrue(\"Component 1\" in principalDf.columns)\n        self.assertTrue(\"\
+  Component 2\" in principalDf.columns)\n        self.assertEqual(principalDf.shape,\
+  \ (3, 2))\n        self.assertEqual(ax.get_xlabel(), \"Component 1\")\n        self.assertEqual(ax.get_ylabel(),\
+  \ \"Component 2\")\n\n    def test_case_2(self):\n        df = pd.DataFrame(\n \
+  \           {\n                \"A\": [1, 2.5, 3, 4.5, 5],\n                \"B\"\
+  : [5, 4.5, np.nan, 2, 1.5],\n                \"C\": [2.5, 3, 4, 5.5, 6],\n     \
+  \           \"categoral_1\": [\"A\", \"B\", \"B\", \"B\", \"A\"],\n            \
+  \    \"categoral_2\": [\"0\", \"1\", \"1\", \"0\", \"1\"],\n            }\n    \
+  \    )\n        principalDf, ax = task_func(df)\n        self.assertTrue(\"Component\
+  \ 1\" in principalDf.columns)\n        self.assertTrue(\"Component 2\" in principalDf.columns)\n\
+  \        self.assertEqual(principalDf.shape, (5, 2))\n        self.assertEqual(ax.get_xlabel(),\
+  \ \"Component 1\")\n        self.assertEqual(ax.get_ylabel(), \"Component 2\")\n\
+  \n    def test_case_3(self):\n        df = pd.DataFrame(\n            {\n      \
+  \          \"col1\": [None, 17, 11, None],\n                \"col2\": [0, 4, 15,\
+  \ 27],\n                \"col3\": [7, 9, 3, 8],\n            }\n        )\n    \
+  \    principalDf, ax = task_func(df)\n        self.assertTrue(\"Component 1\" in\
+  \ principalDf.columns)\n        self.assertTrue(\"Component 2\" in principalDf.columns)\n\
+  \        self.assertEqual(principalDf.shape, (4, 2))\n        self.assertEqual(ax.get_xlabel(),\
+  \ \"Component 1\")\n        self.assertEqual(ax.get_ylabel(), \"Component 2\")\n\
+  \n    def test_case_4(self):\n        df = pd.DataFrame(\n            {\n      \
+  \          \"c1\": [np.nan] * 9 + [10],\n                \"c2\": [np.nan] * 8 +\
+  \ [20, 30],\n                \"c3\": [np.nan] * 7 + [40, 50, 60],\n            }\n\
+  \        )\n        principalDf, ax = task_func(df)\n        self.assertTrue(\"\
+  Component 1\" in principalDf.columns)\n        self.assertTrue(\"Component 2\" in\
+  \ principalDf.columns)\n        self.assertEqual(principalDf.shape, (10, 2))\n \
+  \       self.assertEqual(ax.get_xlabel(), \"Component 1\")\n        self.assertEqual(ax.get_ylabel(),\
+  \ \"Component 2\")\n\n    def test_case_5(self):\n        df = pd.DataFrame({\"\
+  c1\": [1] * 10, \"c2\": [2] * 10, \"c3\": [3] * 10})\n        principalDf, ax =\
+  \ task_func(df)\n        self.assertTrue(\"Component 1\" in principalDf.columns)\n\
+  \        self.assertTrue(\"Component 2\" in principalDf.columns)\n        self.assertEqual(principalDf.shape,\
+  \ (10, 2))\n        self.assertEqual(ax.get_xlabel(), \"Component 1\")\n       \
+  \ self.assertEqual(ax.get_ylabel(), \"Component 2\")"

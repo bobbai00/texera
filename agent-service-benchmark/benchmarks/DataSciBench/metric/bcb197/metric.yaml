@@ -1,0 +1,56 @@
+TMC-list:
+- code: "def largest_difference(output, ground_truth):\n    differences_output = output[1]\
+    \  # extract the differences list from tuple\n    differences_ground_truth = ground_truth[1]\n\
+    \    return sorted(differences_output, reverse=True)[:len(differences_ground_truth)]\
+    \ == sorted(differences_ground_truth, reverse=True)[:len(differences_ground_truth)]"
+  function: Data Validity
+  metric: Largest Difference Calculation
+  task_name: Data exploration and statistics understand
+- code: "def plot_validity(output, ground_truth):\n    plot_axes_output = output[0]\
+    \  # extract the Axes object from tuple\n    plot_axes_ground_truth = ground_truth[0]\n\
+    \    # Assuming we take a plot valid if both have the same number of lines (this\
+    \ is a simplistic metric)\n    return len(plot_axes_output.lines) == len(plot_axes_ground_truth.lines)\
+    \  # Validity check based on number of lines"
+  function: Plot Validity
+  metric: Plot Validity Check
+  task_name: Data visualization
+data: 'l1 = [150, 200, 250, 300, 350, 400, 450, 500, 550, 600]
+
+  l2 = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500]
+
+  N = 5
+
+  args = (l1, l2, N)'
+ground_truth: "import heapq\nimport math\nimport matplotlib.pyplot as plt\n\ndef task_func(l1,\
+  \ l2, N=10):\n    # Calculate the absolute differences\n    differences = [abs(a\
+  \ - b) for a, b in zip(l1, l2)]\n    \n    # Get the N biggest differences\n   \
+  \ biggest_differences = heapq.nlargest(N, differences)\n    \n    # Square the differences\
+  \ and take the square root\n    squared_differences = [math.sqrt(d ** 2) for d in\
+  \ biggest_differences]\n    \n    # Plot the squared differences\n    fig, ax =\
+  \ plt.subplots()\n    ax.plot(squared_differences, marker='o')\n    ax.set_title(f'Top\
+  \ {N} Biggest Differences')\n    ax.set_xlabel('Difference Index')\n    ax.set_ylabel('Squared\
+  \ Differences')\n    \n    return (ax, squared_differences)"
+prompt: "Find the N biggest differences between the respective elements of the list\
+  \ 'l1' and list 'l2', square the differences, take the square root and return the\
+  \ plotted values as a matplotlib Axes object. The function should output with: tuple(plot_axes:\
+  \ matplotlib.axes._axes.Axes, differences: list)\nplot_axes: A matplotlib Axes object\
+  \ with the plotted differences. \ndifferences: A list of the N biggest squared differences\
+  \ (after taking the square root). You should write self-contained code starting\
+  \ with: \n```\nimport heapq\nimport math\nimport matplotlib.pyplot as plt\ndef task_func(l1,\
+  \ l2, N=10):\n```"
+testcase: "import unittest\nimport doctest\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        l1 = [99, 86, 90, 70, 86, 95, 56, 98, 80, 81]\n\
+  \        l2 = [21, 11, 21, 1, 26, 40, 4, 50, 34, 37]\n        ax, _ = task_func(l1,\
+  \ l2)\n        self.assertIsInstance(ax, plt.Axes)\n        self.assertEqual(len(ax.lines[0].get_ydata()),\
+  \ 10)\n\n    def test_case_2(self):\n        l1 = [10, 20, 30, 40, 50]\n       \
+  \ l2 = [1, 2, 3, 4, 5]\n        ax, _ = task_func(l1, l2, 3)\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n        self.assertEqual(len(ax.lines[0].get_ydata()), 3)\n\n    def\
+  \ test_case_3(self):\n        l1 = [0, 10, 20, 30, 40, 50]\n        l2 = [0, 0,\
+  \ 0, 0, 0, 0]\n        ax, _ = task_func(l1, l2)\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n        self.assertEqual(len(ax.lines[0].get_ydata()), 6)\n\n    def\
+  \ test_case_4(self):\n        l1 = [1, 2, 3, 4, 5]\n        l2 = [5, 4, 3, 2, 1]\n\
+  \        ax, _ = task_func(l1, l2)\n        self.assertIsInstance(ax, plt.Axes)\n\
+  \        self.assertEqual(len(ax.lines[0].get_ydata()), 5)\n\n    def test_case_5(self):\n\
+  \        l1 = [0, 0, 0, 0, 0]\n        l2 = [0, 0, 0, 0, 0]\n        ax, _ = task_func(l1,\
+  \ l2)\n        self.assertIsInstance(ax, plt.Axes)\n        self.assertEqual(len(ax.lines[0].get_ydata()),\
+  \ 5)"

@@ -1,0 +1,58 @@
+TMC-list:
+- code: "def filtered_word_count(output, ground_truth):\n    word_lengths_output =\
+    \ output[1]  # extract the Series of word lengths from tuple\n    word_lengths_ground_truth\
+    \ = ground_truth[1]\n    return len(word_lengths_output) == len(word_lengths_ground_truth)\
+    \  # check if counts match"
+  function: Data Quality Score
+  metric: Filtered Word Count
+  task_name: Data cleaning and preprocessing
+- code: "def statistics_accuracy(output, ground_truth):\n    stats_dict_output = output[0]\
+    \  # extract stats_dict from tuple\n    stats_dict_ground_truth = ground_truth[0]\n\
+    \    mean_accuracy = np.isclose(stats_dict_output['mean'], stats_dict_ground_truth['mean'],\
+    \ atol=1e-5)\n    median_accuracy = np.isclose(stats_dict_output['median'], stats_dict_ground_truth['median'],\
+    \ atol=1e-5)\n    mode_accuracy = stats_dict_output['mode'] == stats_dict_ground_truth['mode']\n\
+    \    return mean_accuracy and median_accuracy and mode_accuracy"
+  function: Data Accuracy
+  metric: Statistics Accuracy
+  task_name: Data exploration and statistics understand
+data: "import numpy as np\nimport pandas as pd\n\n# New test data\nword_list = [\n\
+  \    'apple', 'banana', 'avocado', 'grapefruit', 'peach', \n    'mango', 'blueberry',\
+  \ 'pineapple', 'strawberry', 'kiwi',\n    'marmalade', 'cantaloupe', 'nectarine',\
+  \ 'apricot', 'dragonfruit',\n    'blackberry', 'fig', 'pomegranate', 'coconut',\
+  \ 'watermelon',\n    'rhubarb', 'blueberry', 'tangerine', 'plum', 'persimmon'\n\
+  ]\ndf = {'Word': word_list}\nletter = 'b'\n\nargs = (df, letter)"
+ground_truth: "import numpy as np\nimport pandas as pd\n\ndef task_func(data_dict,\
+  \ letter):\n    # Convert the input dictionary to a DataFrame\n    df = pd.DataFrame(data_dict)\n\
+  \    \n    # Filter rows where 'Word' column values start with the specified letter\n\
+  \    filtered_df = df[df['Word'].str.startswith(letter, na=False)]\n    \n    #\
+  \ Calculate the lengths of the filtered words\n    word_lengths = filtered_df['Word'].str.len()\n\
+  \    \n    # Calculate basic statistics\n    mean_length = word_lengths.mean()\n\
+  \    median_length = word_lengths.median()\n    mode_length = word_lengths.mode()[0]\
+  \ if not word_lengths.mode().empty else None\n    \n    # Create a statistics dictionary\n\
+  \    stats_dict = {\n        'mean': mean_length,\n        'median': median_length,\n\
+  \        'mode': mode_length\n    }\n    \n    return (stats_dict, word_lengths)"
+prompt: "This function converts an input dictionary into a DataFrame, filters rows\
+  \ where 'Word' column values start with a specified letter, calculates the lengths\
+  \ of these words, and returns basic statistics (mean, median, mode) of the word\
+  \ lengths. The function should output with: tuple(stats_dict: dict, word_lengths:\
+  \ pandas.Series)\nstats_dict: A dictionary of mean, median, and mode of word lengths.\
+  \  \nword_lengths: A pandas Series containing the lengths of the filtered words.\
+  \  \nYou should write self-contained code starting with:  \n```\nimport numpy as\
+  \ np\nimport pandas as pd\ndef task_func(df, letter):\n```"
+testcase: "import unittest\nimport random\nfrom string import ascii_lowercase\n\n\
+  class TestCases(unittest.TestCase):\n    def setUp(self):\n        word_list = []\n\
+  \        num = 1000\n        for _ in range(num):\n            length = random.randint(3,\
+  \ 10)\n            word = ''.join(random.choice(ascii_lowercase) for _ in range(length))\n\
+  \            word_list.append(word)\n        self.df = {'Word': word_list}\n\n \
+  \   def test_case_1(self):\n        result, _ = task_func(self.df, 'a')\n      \
+  \  self.assertIn('mean', result)\n        self.assertIn('median', result)\n    \
+  \    self.assertIn('mode', result)\n\n    def test_case_2(self):\n        result,\
+  \ _ = task_func(self.df, 'z')\n        self.assertIn('mean', result)\n        self.assertIn('median',\
+  \ result)\n        self.assertIn('mode', result)\n\n    def test_case_3(self):\n\
+  \        result, _ = task_func(self.df, 'm')\n        self.assertIn('mean', result)\n\
+  \        self.assertIn('median', result)\n        self.assertIn('mode', result)\n\
+  \n    def test_case_4(self):\n        result, _ = task_func(self.df, 'f')\n    \
+  \    self.assertIn('mean', result)\n        self.assertIn('median', result)\n  \
+  \      self.assertIn('mode', result)\n\n    def test_case_5(self):\n        result,\
+  \ _ = task_func(self.df, 't')\n        self.assertIn('mean', result)\n        self.assertIn('median',\
+  \ result)\n        self.assertIn('mode', result)"

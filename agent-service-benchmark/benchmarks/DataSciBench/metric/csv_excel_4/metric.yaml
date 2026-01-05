@@ -1,0 +1,56 @@
+"TMC-list":
+- "code": |-
+    def outlier_detection_rate(ground_truth):
+        import pandas as pd
+        gt_output = pd.read_csv(ground_truth)
+        output = pd.read_csv("outliers_detected.csv")
+        detected_outliers = output.value_counts().get('is_outlier', True)
+        total_outliers = gt_output.value_counts().get('is_outlier', True)
+        return bool(detected_outliers == total_outliers)
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Outlier Detection Rate
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: "outliers_detected.csv"
+- "code": |-
+    def mse_for_outlier_replacements(ground_truth):
+        import pandas as pd
+        import numpy as np
+        gt_output = pd.read_csv(ground_truth)
+        output = pd.read_csv("smoothed_data.csv")
+        original_prices = gt_output['smoothed_closing_price'].values
+        adjusted_prices = output['smoothed_closing_price'].values
+        return bool(np.mean((original_prices - adjusted_prices)**2) < 0.05)
+  "function": |-
+    Data Accuracy
+  "metric": |-
+    Mean Squared Error (MSE) for Outlier Replacements
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: "smoothed_data.csv"
+- "code": |-
+    def plot_clarity_score(ground_truth):
+        import pandas as pd
+        import numpy as np
+        gt_output = pd.read_csv(ground_truth)
+        output = pd.read_csv("smoothed_data.csv")
+        original_prices = gt_output['smoothed_closing_price'].mean()
+        smoothed_prices = output['smoothed_closing_price'].mean()
+        return bool(original_prices == smoothed_prices)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Plot Clarity Score (using the difference in means of original vs. smoothed)
+  "task_name": |-
+    Data visualization
+  ground_truth: "smoothed_data.csv"
+"prompt": |-
+  Write code to implement a sliding window based method to detect outliers in time series data. Use the "closing price" column in the input file "ultimate_data.csv" as the source data. The task should involve the following subtasks:
+
+  1. Detect Outliers: Identify outliers in the "closing price" column using a sliding window technique. Output the results in a CSV file named "outliers_detected.csv" with columns for the index, value, and a flag indicating if it is an outlier.
+
+  2. Replace Outliers: For each detected outlier in the sliding window, replace it with the average of 10 nearby values. Output the smoothed time series data in a CSV file named "smoothed_data.csv" that contains the original index and the adjusted closing prices.
+
+  3. Visualize Results: Create a visual representation (plot) of the original closing prices and the smoothed prices to clearly show the outliers and replacements. Save the plot as an image file named "outlier_detection_plot.png".

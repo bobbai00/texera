@@ -1,0 +1,91 @@
+"TMC-list":
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "bar_chart.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Bar Chart Color Consistency
+  "task_name": |-
+    Data visualization
+  ground_truth: bar_chart.png
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "line_chart.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Line Chart Line Style Consistency
+  "task_name": |-
+    Data visualization
+  ground_truth: line_chart.png
+- "code": |-
+    def scatter_chart_point_properties(ground_truth):
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        
+        # Load the ground truth data
+        truth_data = pd.read_csv(ground_truth)
+        output_data = pd.read_csv("scatter_chart_data.csv")  # assume the points were saved in a similar format
+        
+        # Verify colors, sizes, and transparency
+        for index, row in output_data.iterrows():
+            expected_row = truth_data.iloc[index]
+            if not (expected_row['Size'] == row['Size'] and 
+                    expected_row['Color'] == row['Color'] and 
+                    expected_row['Transparency'] == row['Transparency']):
+                return False
+                
+        return True
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Scatter Chart Point Properties
+  "task_name": |-
+    Data visualization
+"prompt": |-
+  "Using the dataset provided :
+
+  ```
+  Month,Year,Sales,Category
+  January,2022,1500,Electronics
+   February,2022,1600,Electronics
+  March,2022,1700,Electronics
+  January,2023,1800,Furniture
+   February,2023,1900,Furniture
+  March,2023,2000,Furniture
+  December,2023,2100,Clothing
+   ```
+
+  Please complete the following subtasks and produce the corresponding outputs:
+   
+  1. **Bar Chart Visualization**
+  **Output**: A bar chart saved as ""bar_chart.png"".
+  - **Requirements**: 
+  - x-axis: Year
+  - y-axis: Sales
+  - Each bar represents the total sales of each year.
+  - Bar color: Red
+  - Edge color: Black
+  - Ensure there are intervals between each bar.
+
+  2. **Line Chart Visualization**
+  - **Output**: A line chart saved as ""line_chart.png"".
+  - **Requirements**: 
+  - x-axis: Month
+   - y-axis: Total Sales for each category.
+  - Line style: Dash-dot.
+  - Each line should have a different legend and color according to the category.
+
+  3. **Scatter Chart Visualization**
+  - **Output**: A scatter chart saved as ""scatter_chart.png"".
+  - **Requirements**: 
+  - x-axis: Time
+  - y-axis: Sales.
+  - Different categories should have different colors.
+  - Size of each point should be proportional to the sales.
+  - Transparency of each point should be set to 0.5."

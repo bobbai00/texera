@@ -1,0 +1,78 @@
+TMC-list:
+- code: "def clustering_validity(output, ground_truth):\n    from sklearn.metrics\
+    \ import adjusted_rand_score\n    output_labels = output[0]  # extract the cluster\
+    \ labels from tuple\n    ground_truth_labels = ground_truth[0]\n    return adjusted_rand_score(ground_truth_labels,\
+    \ output_labels)"
+  function: Clustering Validity
+  metric: Clustering Validity (Adjusted Rand Index)
+  task_name: Predictive modeling
+- code: "def centroid_presence(output, ground_truth):\n    scatter_ax = output[1]\
+    \  # extract the scatter plot Axes object from tuple\n    n_clusters = len(output[0])\
+    \  # number of clusters\n    centroids = scatter_ax.collections[0].get_offsets()\
+    \  # get centroid points from scatter plot\n    return len(centroids) == n_clusters\
+    \  # check if the number of centroids matches the number of clusters"
+  function: Visualization Completeness
+  metric: Visualization Completeness (Centroid Presence)
+  task_name: Data visualization
+data: "import pandas as pd\nimport numpy as np\n\n# Generating a more complex DataFrame\
+  \ with different distributions\nnp.random.seed(24)\ndata_advanced = pd.DataFrame({\n\
+  \    'Feature1': np.concatenate([np.random.normal(loc=-5, scale=1, size=50), np.random.normal(loc=5,\
+  \ scale=1, size=50)]),\n    'Feature2': np.concatenate([np.random.normal(loc=-5,\
+  \ scale=1, size=50), np.random.normal(loc=5, scale=1, size=50)])\n})\n\nn_clusters_advanced\
+  \ = 5  # More clusters than in the previous test case\n\n# Merging arguments into\
+  \ a tuple\nargs = (data_advanced, n_clusters_advanced)"
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\nfrom sklearn.cluster\
+  \ import KMeans\nimport numpy as np\n\ndef task_func(data, n_clusters=3):\n    if\
+  \ not isinstance(data, pd.DataFrame):\n        raise ValueError(\"Input 'data' must\
+  \ be a pd.DataFrame.\")\n    if not isinstance(n_clusters, int) or n_clusters <=\
+  \ 1:\n        raise ValueError(\"Input 'n_clusters' must be an integer greater than\
+  \ 1.\")\n\n    # Perform K-means clustering\n    kmeans = KMeans(n_clusters=n_clusters,\
+  \ random_state=42)\n    cluster_labels = kmeans.fit_predict(data)\n\n    # Plotting\n\
+  \    plt.figure(figsize=(8, 6))\n    scatter_ax = plt.gca()\n    scatter = scatter_ax.scatter(data.iloc[:,\
+  \ 0], data.iloc[:, 1], c=cluster_labels, cmap='viridis', label='Data Points')\n\
+  \    \n    # Plot the centroids\n    centroids = kmeans.cluster_centers_\n    scatter_ax.scatter(centroids[:,\
+  \ 0], centroids[:, 1], c='red', marker='X', s=200, label='Centroids')\n\n    # Add\
+  \ title and legend\n    scatter_ax.set_title('K-means Clustering')\n    scatter_ax.set_xlabel('Feature\
+  \ 1')\n    scatter_ax.set_ylabel('Feature 2')\n    plt.legend()\n    plt.colorbar(scatter)\n\
+  \n    return cluster_labels, scatter_ax"
+prompt: 'Perform K-means clustering on a dataset and generate a scatter plot visualizing
+  the clusters and their centroids. The function should raise the exception for: ValueError:
+  If ''data'' is not a pd.DataFrame. ValueError: If ''n_clusters'' is not an integer
+  greater than 1. The function should output with: tuple(cluster_labels: np.ndarray,
+  scatter_ax: plt.Axes) cluster_labels: An array of cluster labels assigned to each
+  sample. scatter_ax: An Axes object with the scatter plot showing the clusters and
+  centroids. You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import matplotlib.pyplot as plt
+
+  from sklearn.cluster import KMeans
+
+  from matplotlib.collections import PathCollection
+
+  def task_func(data, n_clusters=3):
+
+  ```'
+testcase: "import unittest\nfrom matplotlib.collections import PathCollection  # Correct\
+  \ import\nimport numpy as np\nimport pandas as pd\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        np.random.seed(42)\n        self.data = pd.DataFrame(np.random.rand(100,\
+  \ 2), columns=['Feature1', 'Feature2'])\n    \n    def test_cluster_centers(self):\n\
+  \        _, ax = task_func(self.data, 3)\n        centroids = [child for child in\
+  \ ax.get_children() if isinstance(child, PathCollection) and child.get_label() ==\
+  \ 'Centroids']\n        self.assertTrue(len(centroids) > 0, \"Centroids should be\
+  \ marked in the plot.\")\n        self.assertEqual(len(centroids[0].get_offsets()),\
+  \ 3, \"There should be 3 centroids marked in the plot.\")\n    \n    def test_single_cluster_error(self):\n\
+  \        with self.assertRaises(ValueError):\n            _, _ = task_func(self.data,\
+  \ 1)\n    \n    def test_valid_input(self):\n        labels, ax = task_func(self.data,\
+  \ 3)\n        self.assertEqual(len(labels), 100)  # Ensure labels array matches\
+  \ data length\n    \n    def test_invalid_data_type(self):\n        with self.assertRaises(ValueError):\n\
+  \            _, _ = task_func([[1, 2], [3, 4]], 3)\n    \n    def test_invalid_cluster_number(self):\n\
+  \        with self.assertRaises(ValueError):\n            _, _ = task_func(self.data,\
+  \ -1)\n    \n    def test_return_type(self):\n        _, ax = task_func(self.data,\
+  \ 3)\n        self.assertIsInstance(ax, plt.Axes)  # Ensuring the plot is returned\n\
+  \    \n    def test_return_labels(self):\n        labels, _ = task_func(self.data,\
+  \ 3)\n        unique_labels = np.unique(labels)\n        self.assertEqual(len(unique_labels),\
+  \ 3)  # Checking if 3 unique labels are returned"

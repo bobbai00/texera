@@ -1,0 +1,70 @@
+TMC-list:
+- code: "def replacement_accuracy(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the replaced DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    return (output_df == ground_truth_df).mean().mean()"
+  function: Data Quality Score
+  metric: DataFrame Value Replacement Accuracy
+  task_name: Data cleaning and preprocessing
+- code: "def histogram_validity(output, ground_truth):\n    output_fig = output[1]\
+    \  # extract the histogram figure from tuple\n    if output_fig is None:\n   \
+    \     return ground_truth[1] is None  # if ground truth is None, then the output\
+    \ is valid\n    return isinstance(output_fig, plt.Figure)  # check if the output\
+    \ is a matplotlib Figure"
+  function: Plot Validity
+  metric: Histogram Figure Validity
+  task_name: Data visualization
+data: "import pandas as pd\nimport matplotlib.pyplot as plt\n\ndf = pd.DataFrame({\n\
+  \    'col1': [10, 20, 30, 40, 50],\n    'col2': [5, 15, 25, 35, 45],\n    'col3':\
+  \ [100, 200, 300, 400, 500],\n    'col4': ['apple', 'banana', 'cherry', 'date',\
+  \ 'fig']\n})\n\ndct = {\n    10: 'ten', 20: 'twenty', 30: 'thirty', 40: 'forty',\
+  \ 50: 'fifty',\n    5: 'five', 15: 'fifteen', 25: 'twenty-five', 35: 'thirty-five',\
+  \ 45: 'forty-five',\n    100: 'hundred', 200: 'two hundred', 300: 'three hundred',\
+  \ 400: 'four hundred', 500: 'five hundred'\n}\n\ncolumns = ['col1', 'col2', 'col3']\n\
+  plot_histograms = True\n\nargs = (df, dct, columns, plot_histograms)"
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\n\ndef task_func(df,\
+  \ dct, columns=None, plot_histograms=False):\n    if not isinstance(df, pd.DataFrame):\n\
+  \        raise ValueError(\"Input must be a pandas DataFrame\")\n    \n    replaced_df\
+  \ = df.replace(dct)\n    \n    hist_fig = None\n    if plot_histograms and columns\
+  \ is not None:\n        hist_fig, axes = plt.subplots(len(columns), 1, figsize=(8,\
+  \ 5 * len(columns)))\n        if len(columns) == 1:\n            axes = [axes]\n\
+  \        for ax, column in zip(axes, columns):\n            if column in replaced_df.columns:\n\
+  \                replaced_df[column].hist(ax=ax)\n                ax.set_title(f'Histogram\
+  \ of {column}')\n                ax.set_xlabel(column)\n                ax.set_ylabel('Frequency')\n\
+  \            else:\n                ax.set_title(f'Column {column} does not exist\
+  \ in the DataFrame')\n                ax.set_axis_off()\n    \n    return replaced_df,\
+  \ hist_fig"
+prompt: "Replace values in a DataFrame with a dictionary mapping and optionally record\
+  \ histograms for specified columns. The function will raise a ValueError if input\
+  \ df is not a DataFrame. The function should output with: tuple(replaced_df: pandas.DataFrame,\
+  \ hist_fig: matplotlib.figure.Figure or None)\nreplaced_df: The DataFrame with replaced\
+  \ values. The columns are in the format of 'col1', 'col2', etc.  \nhist_fig: Figure\
+  \ containing histograms for the specified columns if plot_histograms is True; otherwise,\
+  \ None.  \nYou should write self-contained code starting with:\n```\nimport pandas\
+  \ as pd\nimport matplotlib.pyplot as plt\ndef task_func(df, dct, columns=None, plot_histograms=False):\n\
+  ```"
+testcase: "import pandas as pd\nimport unittest\nimport matplotlib.pyplot as plt\n\
+  \nclass TestCases(unittest.TestCase):\n    def test_basic_functionality(self):\n\
+  \        df = pd.DataFrame({'col1': [1, 2], 'col2': [3, 4]})\n        dct = {1:\
+  \ 'a', 2: 'b', 3: 'c', 4: 'd'}\n        expected_df = pd.DataFrame({'col1': ['a',\
+  \ 'b'], 'col2': ['c', 'd']})\n        result_df, _ = task_func(df, dct)\n      \
+  \  pd.testing.assert_frame_equal(result_df, expected_df)\n        plt.close()\n\n\
+  \    def test_complex_dataframe(self):\n        df = pd.DataFrame({'col1': [1, 2,\
+  \ 3, 4], 'col2': [5, 6, 7, 8], 'col3': [9, 10, 11, 12]})\n        dct = {1: 'a',\
+  \ 2: 'b', 3: 'c', 4: 'd', 5: 'e', 6: 'f', 7: 'g', 8: 'h', 9: 'i', 10: 'j', 11: 'k',\
+  \ 12: 'l'}\n        expected_df = pd.DataFrame({'col1': ['a', 'b', 'c', 'd'], 'col2':\
+  \ ['e', 'f', 'g', 'h'], 'col3': ['i', 'j', 'k', 'l']})\n        result_df, _ = task_func(df,\
+  \ dct)\n        pd.testing.assert_frame_equal(result_df, expected_df)\n        plt.close()\n\
+  \n    def test_empty_dataframe(self):\n        df = pd.DataFrame()\n        dct\
+  \ = {1: 'a', 2: 'b'}\n        result_df, _ = task_func(df, dct)\n        pd.testing.assert_frame_equal(result_df,\
+  \ df)\n        plt.close()\n\n    def test_columns_not_in_dataframe(self):\n   \
+  \     df = pd.DataFrame({'col1': [1, 2], 'col2': [3, 4]})\n        dct = {1: 'a',\
+  \ 2: 'b', 3: 'c', 4: 'd'}\n        result_df, _ = task_func(df, dct, columns=['col3',\
+  \ 'col4'], plot_histograms=True)\n        pd.testing.assert_frame_equal(result_df,\
+  \ df.replace(dct))\n        plt.close()\n\n    def test_histogram_plotting(self):\n\
+  \        df = pd.DataFrame({'col1': [1, 2], 'col2': [3, 4]})\n        dct = {1:\
+  \ 'a', 2: 'b', 3: 'c', 4: 'd'}\n        result_df, _ = task_func(df, dct, columns=['col3',\
+  \ 'col4'], plot_histograms=True)\n        # Since actual plot inspection is not\
+  \ feasible, assume histograms are correctly plotted if no errors are raised\n  \
+  \      pd.testing.assert_frame_equal(result_df, df.replace(dct))\n        plt.close()\n\
+  \n    def test_case_non_df(self):\n        with self.assertRaises(ValueError):\n\
+  \            task_func(\"non_df\", {})\n        plt.close()"

@@ -1,0 +1,84 @@
+"TMC-list":
+- "code": |-
+    def visualization_completeness(ground_truth):
+        import pandas as pd
+        import os
+        
+        # Load the ground truth visualizations filenames
+        ground_truth = set(ground_truth)
+        
+        # Check if the output files exist
+        ground_files = {
+            'distribution_by_country.png',
+            'sales_trends_over_time.png',
+            'correlation_heatmap.png'
+        }
+        
+        output_files = set(os.listdir('./'))  # Assuming output files are in current directory
+        return ground_files.issubset(output_files)
+  "function": |-
+    Visualization Completeness
+  "metric": |-
+    Visualization Completeness
+  "task_name": |-
+    Data visualization
+- "code": |-
+    def association_rule_coverage(ground_truth):
+        import pandas as pd
+        
+        # Load the actual frequent itemsets
+        output = pd.read_csv("frequent_itemsets.csv")
+        output_itemsets = set(output['itemsets'])
+
+        # Load ground truth frequent itemsets
+        ground_truth_itemsets = set(pd.read_csv(ground_truth)['itemsets'])
+
+        # Calculate coverage
+        return len(output_itemsets.intersection(ground_truth_itemsets)) / len(ground_truth_itemsets) >= 0.9
+  "function": |-
+    Association Rule Confidence
+  "ground_truth": |-
+    frequent_itemsets.csv
+  "metric": |-
+    Association Rule Coverage
+  "task_name": |-
+    Data mining
+- "code": |-
+    def report_completeness(ground_truth):
+        import os    
+        report_path = "comprehensive_report.pdf"  # Assuming the report is saved as a PDF
+        if os.path.exists(report_path):
+            return True
+        return False
+  "function": |-
+    Report Completeness
+  "metric": |-
+    Report Completeness
+  "task_name": |-
+    Interpretability and report generation
+"prompt": |-
+  "You are required to perform a comprehensive analysis on the ""Online Retail II"" dataset from UCI Machine Learning Repository 
+  - **Input file:** online_retail.csv
+   1. **Data Visualization:**
+  - Conduct data visualizations to understand the dataset better. 
+  - Create the following visualizations:
+  - A bar chart showing the distribution of transactions by country.
+  - **Output filename:** distribution_by_country.png
+   - A time series plot displaying sales trends over time.
+  - **Output filename:** sales_trends_over_time.png
+  - A heatmap illustrating the correlation between different features.
+  - **Output filename:** correlation_heatmap.png
+
+  2. **Data Mining:**
+   - Use data mining techniques to uncover valuable insights from the dataset.
+  - Perform market basket analysis using the Apriori algorithm to find frequent itemsets and association rules.
+  - **Output filename:** frequent_itemsets.csv
+  - Identify the most popular products and analyze customer purchasing patterns.
+  - **Output filename:** popular_products_analysis.csv
+
+  3. **Comprehensive Report:**
+  - Generate a comprehensive report detailing the data visualizations and insights gained from data mining.
+   - Include all visualizations, discuss the identified patterns, and their potential business implications.
+  - **Output filename:** comprehensive_report.pdf
+
+  All outputs should reflect the quality of completion for each subtask, allowing for further evaluation of the analysis performed."

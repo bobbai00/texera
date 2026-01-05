@@ -1,0 +1,92 @@
+TMC-list:
+- code: "def filtered_dataframe_validation(output, ground_truth):\n    output_df =\
+    \ output[0]  # extract the filtered DataFrame from tuple\n    ground_truth_df\
+    \ = ground_truth[0]\n    return output_df.shape[0] == ground_truth_df.shape[0]\
+    \ and output_df.columns.tolist() == ground_truth_df.columns.tolist()"
+  function: Data Quality Score
+  metric: Filtered DataFrame Validation
+  task_name: Data cleaning and preprocessing
+- code: "def histogram_data_extraction(output, ground_truth):\n    # Assuming the\
+    \ histogram object contains the data used for the histogram\n    output_hist =\
+    \ output[1].get_children()  # extract histogram children (bars)\n    ground_truth_hist\
+    \ = ground_truth[1].get_children()  # extract ground truth histogram children\
+    \ (bars)\n    return len(output_hist) == len(ground_truth_hist)"
+  function: Plot Validity
+  metric: Histogram Data Extraction
+  task_name: Data visualization
+data: "import os\nimport pandas as pd\n\ntest_dir = \"data/task_func\"\nos.makedirs(test_dir,\
+  \ exist_ok=True)\n\nf_1 = os.path.join(test_dir, \"csv_1.csv\")\ndf = pd.DataFrame(\n\
+  \    {\n        \"Employee ID\": [\"EMP001\", \"HR002\", \"EMP002\", \"EMP003\"\
+  , \"ENG001\", \"ENG002\", \"ENG003\", \"HR001\", \"HR003\", \"EC001\", \"EC002\"\
+  , \"EMP004\", \"EMP005\"],\n        \"Age\": [23, 45, 27, 32, 33, 35, 28, 34, 36,\
+  \ 29, 31, 30, 50]\n    }\n)\ndf.to_csv(f_1, index=False)\nargs = (f_1, 'EMP')"
+ground_truth: "import pandas as pd\nimport seaborn as sns\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(data='/path/to/data.csv', emp_prefix='EMP'):\n    # Load\
+  \ the CSV file into a DataFrame\n    df = pd.read_csv(data)\n\n    # Filter the\
+  \ DataFrame where 'Employee ID' starts with the given prefix\n    filtered_df =\
+  \ df[df['Employee ID'].str.startswith(emp_prefix)][['Employee ID', 'Age']]\n\n \
+  \   # Draw a histogram of the 'Age' column\n    age_hist = sns.histplot(filtered_df['Age'],\
+  \ bins=10, kde=True)\n    plt.xlabel('Age')\n    plt.ylabel('Frequency')\n    plt.title('Age\
+  \ Distribution of Employees')\n\n    # Show the plot\n    plt.show()\n\n    return\
+  \ (filtered_df, age_hist)"
+prompt: "Load a CSV file into a DataFrame, filter the lines in which the employee\
+  \ ID begins with a prefix, and draw a histogram of its age.\nThe function should\
+  \ output with: tuple(filtered_df: pandas.DataFrame, age_hist: seaborn.axisgrid.FacetGrid)\
+  \  \nfiltered_df: A pandas DataFrame with the filtered data, containing the columns\
+  \ 'Employee ID' and 'Age'.  \nage_hist: A histogram plot of the 'Age' column of\
+  \ the filtered data.  \nYou should write self-contained code starting with:  \n\
+  ```\nimport pandas as pd\nimport seaborn as sns\ndef task_func(data='/path/to/data.csv',\
+  \ emp_prefix='EMP'):\n```"
+testcase: "import unittest\nimport shutil\nimport os\nimport pandas as pd  # Assuming\
+  \ pd is pandas\n\nclass TestCases(unittest.TestCase):\n    \"\"\"Test cases for\
+  \ the task_func function.\"\"\"\n    \n    def setUp(self):\n        self.test_dir\
+  \ = \"data/task_func\"\n        os.makedirs(self.test_dir, exist_ok=True)\n    \
+  \    \n        self.f_1 = os.path.join(self.test_dir, \"csv_1.csv\")\n        df\
+  \ = pd.DataFrame(\n            {\n                \"Employee ID\": [\"EMP001\",\
+  \ \"EMP002\", \"EMP003\", \"ENG001\", \"ENG002\"],\n                \"Age\": [23,\
+  \ 45, 27, 32, 33]\n            }\n        )\n        df.to_csv(self.f_1, index=False)\n\
+  \        \n        self.f_2 = os.path.join(self.test_dir, \"csv_2.csv\")\n     \
+  \   df = pd.DataFrame(\n            {\n                \"Employee ID\": [\"CUSTOM001\"\
+  , \"MAN001\", \"CUSTOM002\", \"HR001\"],\n                \"Age\": [34, 56, 27,\
+  \ 29]\n            }\n        )\n        df.to_csv(self.f_2, index=False)\n    \
+  \    \n        self.f_3 = os.path.join(self.test_dir, \"csv_3.csv\")\n        df\
+  \ = pd.DataFrame(\n            {\n                \"Employee ID\": [\"CUSTOM003\"\
+  , \"CUSTOM004\", \"CUSTOM005\"],\n                \"Age\": [44, 45, 46]\n      \
+  \      }\n        )\n        df.to_csv(self.f_3, index=False)\n        \n      \
+  \  self.f_4 = os.path.join(self.test_dir, \"csv_4.csv\")\n        df = pd.DataFrame(\n\
+  \            {\n                \"Employee ID\": [\"HR007\", \"HR008\", \"HR009\"\
+  , \"DR001\", \"DR002\"],\n                \"Age\": [57, 31, 28, 49, 51]\n      \
+  \      }\n        )\n        df.to_csv(self.f_4, index=False)\n        \n      \
+  \  self.f_5 = os.path.join(self.test_dir, \"csv_5.csv\")\n        df = pd.DataFrame(\n\
+  \            {\n                \"Employee ID\": [\"RS001\", \"RS002\"],\n     \
+  \           \"Age\": [29, 36]\n            }\n        )\n        df.to_csv(self.f_5,\
+  \ index=False)\n        \n    def tearDown(self):\n        if os.path.exists(self.test_dir):\n\
+  \            shutil.rmtree(self.test_dir)\n            \n    def test_case_1(self):\n\
+  \        # Test the function with default parameters\n        df, ax = task_func(self.f_1)\n\
+  \        print(df.columns)\n        expected_df = pd.DataFrame(\n            {\n\
+  \                \"Employee ID\": [\"EMP001\", \"EMP002\", \"EMP003\"],\n      \
+  \          \"Age\": [23, 45, 27]\n            }\n        )\n        self.assertIsInstance(df,\
+  \ pd.DataFrame)\n        pd.testing.assert_frame_equal(df.reset_index(drop=True),\
+  \ expected_df.reset_index(drop=True))\n        self.assertIsNotNone(ax)\n      \
+  \  \n    def test_case_2(self):\n        # Test the function with custom input data\
+  \ and prefix\n        df, ax = task_func(self.f_2, 'CUSTOM')\n        expected_df\
+  \ = pd.DataFrame(\n            {\n                \"Employee ID\": [\"CUSTOM001\"\
+  , \"CUSTOM002\"],\n                \"Age\": [34, 27]\n            }\n        )\n\
+  \        self.assertIsInstance(df, pd.DataFrame)\n        pd.testing.assert_frame_equal(df.reset_index(drop=True),\
+  \ expected_df.reset_index(drop=True))\n        self.assertIsNotNone(ax)\n      \
+  \  \n    def test_case_3(self):\n        # Test the function with invalid prefix\n\
+  \        df, ax = task_func(self.f_3, 'INVALID')\n        self.assertIsInstance(df,\
+  \ pd.DataFrame)\n        self.assertTrue(df.shape[0] == 0)\n        self.assertTrue(all([col\
+  \ in df.columns for col in [\"Employee ID\", \"Age\"]]))\n        self.assertIsNotNone(ax)\n\
+  \        \n    def test_case_4(self):\n        # Test the function with custom input\
+  \ data and prefix\n        df, ax = task_func(self.f_4, 'DR')\n        expected_df\
+  \ = pd.DataFrame(\n            {\n                \"Employee ID\": [\"DR001\", \"\
+  DR002\"],\n                \"Age\": [49, 51]\n            }\n        )\n       \
+  \ self.assertIsInstance(df, pd.DataFrame)\n        pd.testing.assert_frame_equal(df.reset_index(drop=True),\
+  \ expected_df.reset_index(drop=True))\n        self.assertIsNotNone(ax)\n      \
+  \  \n    def test_case_5(self):\n        # Test the function with custom input data\
+  \ and prefix\n        df, ax = task_func(self.f_5, 'RS')\n        expected_df =\
+  \ pd.DataFrame(\n            {\n                \"Employee ID\": [\"RS001\", \"\
+  RS002\"],\n                \"Age\": [29, 36]\n            }\n        )\n       \
+  \ self.assertIsInstance(df, pd.DataFrame)\n        pd.testing.assert_frame_equal(df.reset_index(drop=True),\
+  \ expected_df.reset_index(drop=True))\n        self.assertIsNotNone(ax)"

@@ -1,0 +1,64 @@
+"TMC-list":
+- "code": |-
+    def clustering_quality(ground_truth):
+        from sklearn.metrics import silhouette_score
+        import pandas as pd
+        import numpy as np
+
+        output = pd.read_csv('clusters.csv')
+        labels = output['Cluster'].tolist()
+        X = np.load('X.npy')
+
+        output_gt = pd.read_csv(ground_truth)
+        labels_gt = output_gt['Cluster'].tolist()
+
+        return silhouette_score(X, labels) >= silhouette_score(X, labels_gt)
+  "function": |-
+    Silhouette Score
+  "ground_truth": |-
+    clusters.csv
+  "metric": |-
+    Clustering Quality (Silhouette Score)
+  "task_name": |-
+    Pattern recognition
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "clustering_result.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Visualization Accuracy (Visual Similarity)
+  "task_name": |-
+    Data visualization
+  ground_truth: clustering_result.png
+"prompt": |-
+  Load the dataset using the initial code and perform the following subtasks:
+   
+  1. **Load the Data**  
+     Input: `data.csv`  
+     Output: `X.npy`, `y.npy` (Numpy arrays for features and target)  
+     
+  2. **Cluster the Points**  
+     Input: `X.npy`  
+     Output: `clusters.csv` (CSV file with cluster labels for each point)  
+   
+  3. **Visualize Clustering Result**  
+     Input: `clusters.csv`, `data.csv`  
+     Output: `clustering_result.png` (Scatter chart image of the clusters)  
+     Requirements for the scatter chart:
+     - x-axis is the first column of the dataset, y-axis is the second column of the dataset.
+     - Different clusters should have different colors.
+     - The size of each point should be equal.
+     - The bigger the point number in the cluster, the darker the color of the cluster.  
+
+  Initial code:
+  ```python
+  def load_data(filedir):
+      df = pd.read_csv(filedir + "/data.csv")
+      X = df.drop(columns='target').values
+      y = df['target'].values
+      return X, y
+  X, y = load_data('datadir')
+  ```

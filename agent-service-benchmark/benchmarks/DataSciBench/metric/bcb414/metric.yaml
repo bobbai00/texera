@@ -1,0 +1,95 @@
+TMC-list:
+- code: "def column_existence(output, ground_truth):\n    modified_df_output = output[0]\
+    \  # extract the modified DataFrame from tuple\n    modified_df_ground_truth =\
+    \ ground_truth[0]\n    return not modified_df_ground_truth.columns.isin(modified_df_output.columns).any()"
+  function: DataFrame Shape Validation
+  metric: Column Existence Check
+  task_name: Data cleaning and preprocessing
+- code: "def plot_validity(output, ground_truth):\n    import numpy as np\n    plot_ax_output\
+    \ = output[1]  # extract the plot Axes object from tuple\n    plot_ax_ground_truth\
+    \ = output[1]  # for this scenario, we ensure the checking condition\n    return\
+    \ plot_ax_output is not None if len(ground_truth[0].select_dtypes(include=[np.number]).columns)\
+    \ > 0 else plot_ax_output is None"
+  function: Plot Validity
+  metric: Plot Validity Check
+  task_name: Data visualization
+data: "import pandas as pd\nimport numpy as np\n\ndata = {\n    \"a\": np.random.rand(20)\
+  \ * 100,\n    \"b\": np.random.rand(20) * 50,\n    \"c\": np.random.rand(20) * 10,\n\
+  \    \"d\": [\n        \"apple\", \"banana\", \"cherry\", \"date\", \"fig\",\n \
+  \       \"grape\", \"honeydew\", \"kiwi\", \"lime\", \"mango\",\n        \"nectarine\"\
+  , \"orange\", \"papaya\", \"quince\", \"raspberry\",\n        \"strawberry\", \"\
+  tangerine\", \"ugli fruit\", \"vanilla\", \"watermelon\"\n    ],\n    \"e\": np.random.randint(1,\
+  \ 100, size=20)\n}\n\nargs = (data, \"c\")"
+ground_truth: "import pandas as pd\nimport numpy as np\nimport matplotlib.pyplot as\
+  \ plt\n\ndef task_func(data, column=\"c\"):\n    # Convert the input data dictionary\
+  \ to a DataFrame\n    df = pd.DataFrame(data)\n    \n    # Remove the specified\
+  \ column if it exists\n    if column in df.columns:\n        df = df.drop(columns=[column])\n\
+  \    \n    # Initialize plot_ax as None\n    plot_ax = None\n    \n    # Check if\
+  \ there are any numeric columns to plot\n    numeric_df = df.select_dtypes(include=[np.number])\n\
+  \    \n    if not numeric_df.empty:\n        # Plot the remaining numeric data\n\
+  \        plot_ax = numeric_df.plot(kind='bar', ax=plt.gca())\n        plt.legend(loc='upper\
+  \ right')\n        plt.title(\"Bar Plot of Remaining Numeric Data\")\n        plt.xlabel(\"\
+  Index\")\n        plt.ylabel(\"Values\")\n        plt.show()\n    \n    return (df,\
+  \ plot_ax)"
+prompt: "Remove a column from a data dictionary if it exists, and then plot the remaining\
+  \ data if it contains numeric data. The function should output with: tuple(modified_df:\
+  \ pd.DataFrame, plot_ax: matplotlib.axes._axes.Axes or None)\nmodified_df: The modified\
+  \ DataFrame after removing the specified column.  \nplot_ax: The plot of the modified\
+  \ DataFrame if there's numeric data to plot, otherwise None.  \nYou should write\
+  \ self-contained code starting with:  \n```\nimport pandas as pd\nimport numpy as\
+  \ np\ndef task_func(data, column=\"c\"):\n```"
+testcase: "import unittest\nimport numpy as np\nimport pandas as pd\nimport matplotlib.pyplot\
+  \ as plt\n\nclass TestCases(unittest.TestCase):\n    def test_case_1(self):\n  \
+  \      # Scenario: DataFrame with columns 'a', 'b', and 'c'.\n        np.random.seed(0)\n\
+  \        data = {\n            \"a\": np.random.randn(10),\n            \"b\": np.random.randn(10),\n\
+  \            \"c\": np.random.randn(10),\n        }\n        df = pd.DataFrame(data)\n\
+  \        modified_df, ax = task_func(data)  # Remove default column 'c'.\n     \
+  \   # Assert column 'c' removal and plot data verification.\n        self.assertNotIn(\"\
+  c\", modified_df.columns)\n        plotted_data = [line.get_ydata() for line in\
+  \ ax.get_lines()]\n        self.assertTrue(\n            all(\n                [\n\
+  \                    np.array_equal(data, modified_df[col].values)\n           \
+  \         for data, col in zip(plotted_data, modified_df.columns)\n            \
+  \    ]\n            )\n        )\n\n    def test_case_2(self):\n        # Scenario:\
+  \ DataFrame with columns 'a' and 'b' (no 'c').\n        np.random.seed(0)\n    \
+  \    data = {\"a\": np.random.randn(10), \"b\": np.random.randn(10)}\n        df\
+  \ = pd.DataFrame(data)\n        modified_df, ax = task_func(data)\n        # Assert\
+  \ that the modified DataFrame remains unchanged and plot is generated.\n       \
+  \ self.assertEqual(list(df.columns), list(modified_df.columns))\n        self.assertIsNotNone(ax)\n\
+  \n    def test_case_3(self):\n        # Scenario: Empty DataFrame\n        data\
+  \ = {}\n        df = pd.DataFrame(data)\n        modified_df, ax = task_func(data)\n\
+  \        # Assert empty DataFrame and no plot.\n        self.assertTrue(modified_df.empty)\n\
+  \        self.assertIsNone(ax)\n\n    def test_case_4(self):\n        # Scenario:\
+  \ DataFrame with single non-numeric column 'c'.\n        data = {\"c\": [\"apple\"\
+  , \"banana\", \"cherry\"]}\n        df = pd.DataFrame(data)\n        modified_df,\
+  \ ax = task_func(data)\n        # Assert empty DataFrame after 'c' removal and no\
+  \ plot.\n        self.assertTrue(modified_df.empty)\n        self.assertIsNone(ax)\n\
+  \n    def test_case_5(self):\n        np.random.seed(0)\n        # Scenario: DataFrame\
+  \ with columns 'a', 'b', 'c', and non-numeric column 'd'.\n        data = {\n  \
+  \          \"a\": np.random.randn(10),\n            \"b\": np.random.randn(10),\n\
+  \            \"c\": np.random.randn(10),\n            \"d\": [\n               \
+  \ \"apple\",\n                \"banana\",\n                \"cherry\",\n       \
+  \         \"date\",\n                \"fig\",\n                \"grape\",\n    \
+  \            \"honeydew\",\n                \"kiwi\",\n                \"lime\"\
+  ,\n                \"mango\",\n            ],\n        }\n        df = pd.DataFrame(data)\n\
+  \        modified_df, ax = task_func(data)\n        # Assert column 'c' removal\
+  \ and plot data verification excluding non-numeric column 'd'.\n        self.assertNotIn(\"\
+  c\", modified_df.columns)\n        plotted_data = [line.get_ydata() for line in\
+  \ ax.get_lines()]\n        self.assertTrue(\n            all(\n                [\n\
+  \                    np.array_equal(data, modified_df[col].values)\n           \
+  \         for data, col in zip(plotted_data, modified_df.columns)\n            \
+  \        if col != \"d\"\n                ]\n            )\n        )\n\n    def\
+  \ test_case_6(self):\n        # Scenario: Remove specified column.\n        np.random.seed(0)\n\
+  \        data = {\n            \"a\": np.random.randn(10),\n            \"b\": np.random.randn(10),\n\
+  \        }\n        df = pd.DataFrame(data)\n        modified_df, ax = task_func(df,\
+  \ column=\"a\")\n        self.assertNotIn(\"a\", modified_df.columns)\n        plotted_data\
+  \ = [line.get_ydata() for line in ax.get_lines()]\n        self.assertTrue(\n  \
+  \          all(\n                [\n                    np.array_equal(data, modified_df[col].values)\n\
+  \                    for data, col in zip(plotted_data, modified_df.columns)\n \
+  \               ]\n            )\n        )\n\n    def test_case_7(self):\n    \
+  \    # Scenario: Only non-numeric columns.\n        data = {\n            \"a\"\
+  : [\"apple\", \"banana\"],\n            \"b\": [\"cherry\", \"date\"],\n       \
+  \     \"c\": [\"fig\", \"grape\"],\n        }\n        df = pd.DataFrame(data)\n\
+  \        modified_df, ax = task_func(data)\n        self.assertNotIn(\"c\", modified_df.columns)\n\
+  \        pd.testing.assert_frame_equal(df[[\"a\", \"b\"]], modified_df)\n      \
+  \  self.assertEqual(ax, None)\n\n    def tearDown(self):\n        plt.close(\"all\"\
+  )"

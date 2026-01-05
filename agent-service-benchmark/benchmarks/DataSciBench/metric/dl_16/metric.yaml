@@ -1,0 +1,45 @@
+"TMC-list":
+- "code": |-
+    def clustering_result_consistency(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("clustering_results.csv")
+        gt_output = pd.read_csv(ground_truth).values.tolist()
+        clusters = output.values.tolist()
+        return all(len(cluster) == len(gt_output[i]) for i, cluster in enumerate(clusters))
+  "function": |-
+    Clustering Validity
+  "metric": |-
+    Clustering Result Consistency
+  "task_name": |-
+    Predictive modeling
+  ground_truth: clustering_results.csv
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "scatter_plot.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Visualization Quality (Visual Comparison Metrics)
+  "task_name": |-
+    Data visualization
+  ground_truth: scatter_plot.png
+"prompt": |-
+  Implement a function for the kmeans clustering algorithm that accepts the following parameters:
+  - Two lists: representing the x and y coordinates of the population, respectively (input: "data.csv").
+  - A list containing six floating-point numbers: representing the x and y coordinates of three points (two numbers per pair).
+   
+  The tasks of the function are as follows:
+  1. Use these three points as the initial clustering centers to perform kmeans clustering on the population.
+     - Output: Clustering results saved in "clustering_results.csv" with six lists (three clusters, each containing x and y coordinates).
+     
+  2. Divide the clustering results into six lists, each storing the x and y coordinates of points in the three categories.
+     - Output: Six lists saved in "grouped_coordinates.csv" in CSV format. Each list corresponds to one of the clusters.
+
+  3. Use data visualization techniques to plot a scatter plot, where points from different categories are represented with different shapes and colors.
+     - Output: Scatter plot saved as "scatter_plot.png".
+
+  Please provide the following:
+  - The code for the function that implements the kmeans algorithm, ensuring it includes necessary comments to explain the algorithm steps.
+  - The code for plotting the scatter plot, including comments to elucidate the visualization process.

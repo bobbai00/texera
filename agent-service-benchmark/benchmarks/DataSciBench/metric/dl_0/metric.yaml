@@ -1,0 +1,101 @@
+"TMC-list":
+- "code": |-
+    def missing_value_percentage(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("combined_data.csv") 
+        total_cells = output.size
+        missing_cells = output.isnull().sum().sum()
+        gt_output = pd.read_csv(ground_truth) 
+        gt_total_cells = gt_output.size
+        gt_missing_cells = gt_output.isnull().sum().sum()
+        missing = (missing_cells / total_cells) * 100
+        gt_missing = (gt_missing_cells / gt_total_cells) * 100
+        return bool(missing == gt_missing)
+  "function": |-
+    Data Completeness
+  "metric": |-
+    Missing Value Percentage
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: combined_data.csv
+- "code": |-
+    def descriptive_stats_difference(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("combined_data.csv")
+        ground_truth_df = pd.read_csv(ground_truth)
+        return bool(output.describe().equals(ground_truth_df.describe()))
+  "function": |-
+    Data Consistency
+  "metric": |-
+    Descriptive Statistics Comparison
+  "task_name": Data exploration and statistics understand
+  ground_truth: combined_data.csv
+- "code": |-
+    def cluster_quality(ground_truth):
+        from sklearn.metrics import silhouette_score
+        import pandas as pd
+        from sklearn.cluster import KMeans
+        output = pd.read_csv("segmented_data.csv", nrows=1000)
+        kmeans = KMeans(n_clusters=len(set(output)))
+        kmeans.fit(output)
+        gt_output = pd.read_csv(ground_truth, nrows=1000)
+        gt_kmeans = KMeans(n_clusters=len(set(gt_output)))
+        gt_kmeans.fit(gt_output)
+        pre = silhouette_score(output, gt_kmeans.labels_)
+        gt = silhouette_score(gt_output, gt_kmeans.labels_)
+        return bool(pre >= gt)
+  "function": |-
+    Silhouette Score
+  "metric": |-
+    Cluster Quality (Silhouette Score)
+  "task_name": |-
+    Data mining
+  ground_truth: segmented_data.csv
+- "code": |-
+    def report_completeness(ground_truth):
+        import os
+        return bool(os.path.exists('classification_report.txt') and os.path.exists('confusion_matrix.png'))
+  "function": |-
+    Report Completeness
+  "metric": |-
+    Report Completeness
+  "task_name": |-
+    Interpretability and report generation
+"prompt": |-
+  Write a Graph Recurrent Neural Network (GRNN) model based on attention mechanisms using Python for processing and analyzing time series data. Ensure to meet the following requirements:
+
+  1. **Graph network design**: Create a graph network where each graph represents an aerial formation, and the number of nodes corresponds to the number of vehicles in the formation.
+     - **Output**: Graph structure representation file.
+     - **Output filename**: `graph_structure.json`
+
+  2. **Data format**: The time series data of aerial target formations is stored in Excel files located in the '.data/' directory, where each Excel file contains multiple sheets, with each sheet representing the time series data of a vehicle.
+     - **Input**: Excel files from '.data/' directory.
+     - **Input filename**: `data.xlsx` (assume example file; consider multiple files in practice)
+
+  3. **Data reading**: Read all Excel files from the '.data/' directory and extract the sheets for processing.
+     - **Output**: Combined time series data in a structured format.
+     - **Output filename**: `combined_data.csv`
+
+  4. **Data segmentation**: Segment the time series data of each vehicle using a sliding window with length `l` and step size `s`.
+     - **Output**: Segmented time series data.
+     - **Output filename**: `segmented_data.csv`
+
+  5. **Training and testing set division**: Divide the segmented data into training and testing sets with a 7:3 ratio.
+     - **Output**: Training and testing datasets.
+     - **Output filenames**: `train_data.csv`, `test_data.csv`
+
+  6. **Labels**: The last column of each Excel file contains label data, which should be preserved during the reading and segmentation process.
+
+  7. **Model training**: Train the GRNN model using the training set to identify the action intentions of aerial target formations.
+     - **Output**: Trained model file.
+     - **Output filename**: `trained_model.h5`
+
+  8. **Training parameters**: Set the number of training epochs to 60, and record the loss value, accuracy, recall, and F1-Score for each epoch.
+     - **Output**: Training metrics log file.
+     - **Output filename**: `training_metrics.csv`
+
+  9. **Model evaluation**: Evaluate the trained model with the test set and generate a classification report and confusion matrix.
+     - **Output**: Classification report and confusion matrix visualization.
+     - **Output filenames**: `classification_report.txt`, `confusion_matrix.png`
+
+  Please provide a complete code implementation and ensure that the code structure is clear and well-commented for understanding and evaluation.

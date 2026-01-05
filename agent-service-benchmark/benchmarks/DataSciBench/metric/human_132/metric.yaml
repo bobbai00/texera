@@ -1,0 +1,54 @@
+"TMC-list":
+- "code": |-
+    def silhouette_score(ground_truth):
+        from sklearn.metrics import silhouette_score
+        import pandas as pd
+
+        # Load the customer segments
+        data = pd.read_csv("customer_segments.csv")
+        X = data[['Annual Income (k$)', 'Spending Score (1-100)']]
+        labels = data['Cluster']
+
+        data_gt = pd.read_csv(ground_truth)
+        X_gt = data[['Annual Income (k$)', 'Spending Score (1-100)']]
+        labels_gt = data['Cluster'] 
+        
+        return silhouette_score(X, labels) >= silhouette_score(X_gt, labels_gt)
+  "function": |-
+    Clustering Validity
+  "metric": |-
+    Silhouette Score
+  "ground_truth": |-
+    customer_segments.csv
+  "task_name": |-
+    Predictive modeling
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "elbow_method.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Optimal Cluster Count Justification
+  "task_name": |-
+    Data visualization
+  ground_truth: elbow_method.png
+- "code": |-
+    def report_completeness(ground_truth):
+        return os.path.exists("customer_segmentation_analysis.pdf")
+  "function": |-
+    Report Completeness
+  "metric": |-
+    Report Completeness
+  "task_name": |-
+    Interpretability and report generation
+"prompt": |-
+    You are tasked with an in-depth analysis of the ""Mall Customers"" dataset from Kaggle (input filename: ""data.csv"") to segment customers and identify their spending behaviors. 1. Develop a predictive model aimed at segmenting customers using the K-means clustering algorithm based on their annual income and spending score.
+    - **Output filename:** ""customer_segments.csv""
+
+    2. Determine the optimal number of clusters using the Elbow method, and justify your choice based on the method's output.
+    - **Output filename:** ""elbow_method.png""
+
+    3. Conclude your analysis by delving into the customer segments revealed by the clustering. Characterize each segment by describing their distinct attributes, such as average age, income range, and spending score. Discuss any notable patterns or insights that emerge from the clustering results, and consider the implications of these segments for marketing strategies and customer engagement.
+    - **Output filename:** ""customer_segmentation_analysis.pdf

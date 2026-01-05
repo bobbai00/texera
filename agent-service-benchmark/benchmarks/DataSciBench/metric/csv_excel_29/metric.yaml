@@ -1,0 +1,63 @@
+"TMC-list":
+- "code": |-
+    def data_consistency_ratio(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("cleaned_data.csv")
+        gt_output = pd.read_csv(ground_truth)
+        cleaned_data = output['Value1'].dropna()
+        gt_cleaned = gt_output['Value1'].dropna()
+        # consistency_ratio = len(cleaned_data) / len(output)
+        return bool(len(cleaned_data) == len(gt_cleaned))
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Data Consistency Ratio
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: cleaned_data.csv
+- "code": |-
+    def model_mae(ground_truth):
+        from sklearn.metrics import mean_absolute_error
+        import pandas as pd
+        output = pd.read_csv("predictions.csv")
+        gt_output = pd.read_csv(ground_truth)
+        predictions = output[output.keys()[-1]].tolist()
+        gt_pred = gt_output[gt_output.keys()[-1]].tolist()
+        return bool(mean_absolute_error(gt_pred, predictions) < 0.1)
+  "function": |-
+    Mean Absolute Error
+  "metric": |-
+    Model Mean Absolute Error (MAE)
+  "task_name": |-
+    Predictive modeling
+  ground_truth: predictions.csv
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "predictions_chart.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Visualization Quality Score
+  "task_name": |-
+    Data visualization
+  ground_truth: predictions_chart.png
+# - "code": |-
+#     def report_coverage_ratio(ground_truth):
+#         with open("report.txt", "r") as file:
+#             gt_report = file.read()
+#         with open("report.txt", "r") as file:
+#             report_content = file.read()
+#         coverage = sum(word in report_content for word in gt_report) / len(gt_report)
+#         return coverage
+#   "function": |-
+#     Result Quality
+#   "metric": |-
+#     Report Coverage Ratio
+#   "task_name": |-
+#     Interpretability and report generation
+#   ground_truth: report.txt
+"prompt": |
+  Please complete the following task:
+  Write a complete LSTM (Long Short-Term Memory) neural network for time series prediction based on PyTorch. Use 'data.csv' as the dataset for this task. Implement the actual training and prediction of the LSTM model. Use data from column "Value1" from the CSV file 'data.csv' to train the LSTM model. Then make predicions and save to 'predictions.csv' and visualize it with a image 'predictions_chart.png'.

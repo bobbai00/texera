@@ -1,0 +1,86 @@
+"TMC-list":
+- "code": |-
+    def data_quality_score(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("cleaned_data.csv")
+        output_shape = output.shape
+        duplicates = output.duplicated().sum()
+        missing_values = output.isnull().sum().sum()
+
+        output_gt = pd.read_csv(ground_truth)
+        output_gt_shape = output_gt.shape
+        output_gt_duplicates = output_gt.duplicated().sum()
+        output_gt_missing_values = output_gt.isnull().sum().sum()
+
+        return all([output_shape == output_gt_shape, duplicates == output_gt_duplicates, missing_values == output_gt_missing_values])
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Data Quality Score
+  "ground_truth": |-
+    cleaned_data.csv
+  "task_name": |-
+    Data cleaning and preprocessing
+- "code": |-
+    def summary_statistics_accuracy(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("eda_results.csv")
+        output_gt = pd.read_csv(ground_truth)
+        return output.equals(output_gt)
+  "function": |-
+    Data Accuracy
+  "metric": |-
+    Summary Statistics Accuracy
+  "ground_truth": |-
+    eda_results.csv
+  "task_name": |-
+    Data exploration and statistics understand
+- "code": |-
+    def visualization_completeness(ground_truth):
+        import os    
+        return os.path.exists("visualizations.pdf")
+  "function": |-
+    Visualization Completeness
+  "metric": |-
+    Visualization Completeness
+  "task_name": |-
+    Data visualization
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "correlation_analysis.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Correlation Coefficient
+  "ground_truth": |-
+    correlation_analysis.png
+  "task_name": |-
+    Data visualization
+"prompt": |-
+  Embark on a detailed analysis and visualization of the "Palmer Archipelago (Antarctica) penguin data" dataset available on Kaggle (https://www.kaggle.com/datasets/parulpandey/palmer-archipelago-antarctica-penguin-data/data), aiming to uncover insights about penguin populations.
+
+  1. **Import the dataset**:
+     - **Input**: "data.csv"
+     - **Output**: "imported_data.csv" (This file should contain the successfully imported dataset)
+
+  2. **Data Cleaning**:
+     - Address missing values through imputation or removal, encode categorical variables for analysis, and eliminate any duplicate entries.
+     - **Input**: "imported_data.csv"
+     - **Output**: "cleaned_data.csv" (This file should contain the cleaned data, which is free of duplicates and has handled missing values)
+
+  3. **Exploratory Data Analysis (EDA)**:
+     - Compute essential statistical measures including mean, median, and standard deviation for quantitative attributes, and compile summary statistics for categorical variables.
+     - **Input**: "cleaned_data.csv"
+     - **Output**: "eda_results.csv" (This file should summarize the statistical measures and compositions of the dataset)
+
+  4. **Data Visualization**:
+     - Construct histograms for numerical attributes and bar plots for categorical variables. Use box plots to examine variations across different species and islands, and scatter plots to investigate correlations between numerical variables with regression lines.
+     - **Input**: "cleaned_data.csv"
+     - **Output**: "visualizations.pdf" (This file should include all plots and graphs created during the analysis)
+
+  5. **Correlation Analysis**:
+     - Specifically investigate the relationship between bill length and flipper length, including a scatter plot with regression line.
+     - **Input**: "cleaned_data.csv"
+     - **Output**: "correlation_analysis.png" (This file should present the scatter plot displaying the correlation between the specified numerical variables)

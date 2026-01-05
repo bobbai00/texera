@@ -1,0 +1,68 @@
+TMC-list:
+- code: "def mean_variance_consistency(output, ground_truth):\n    output_mean_var\
+    \ = output[0]\n    output_mean = output[1]\n    output_variance = output[2]\n\
+    \    \n    ground_truth_mean_var = ground_truth[0]\n    ground_truth_mean = ground_truth[1]\n\
+    \    ground_truth_variance = ground_truth[2]\n    \n    return (output_mean_var['mean']\
+    \ == ground_truth_mean) and (output_mean_var['variance'] == ground_truth_variance)"
+  function: Data Consistency
+  metric: Mean and Variance Consistency
+  task_name: Data exploration and statistics understand
+- code: "def variance_calculation_accuracy(output, ground_truth):\n    output_variance\
+    \ = output[2]\n    ground_truth_variance = ground_truth[2]\n    \n    return np.isclose(output_variance,\
+    \ ground_truth_variance)"
+  function: Data Quality Score
+  metric: Variance Calculation Accuracy
+  task_name: Data cleaning and preprocessing
+data: 'L = [[-2.5, 3.2, 7.8], [9.1, -1.4, 4.6], [2.3, 8.0], [6.5, -3.3, 5.0, 0.0],
+  [12.7]]
+
+  args = (L,)'
+ground_truth: "import numpy as np\nfrom itertools import chain\n\ndef task_func(L):\n\
+  \    # Flatten the nested list\n    flattened_list = list(chain.from_iterable(L))\n\
+  \    \n    # Calculate mean and variance\n    mean = np.mean(flattened_list)\n \
+  \   variance = np.var(flattened_list)\n    \n    # Create the mean_var dictionary\n\
+  \    mean_var = {\n        'mean': mean,\n        'variance': variance\n    }\n\
+  \    \n    return (mean_var, mean, variance)"
+prompt: 'Calculate the mean and variance of all elements in a nested list ''L''. The
+  function should output with: tuple(mean_var: dict, mean: float, variance: float)
+
+  mean_var: A dictionary containing the mean and variance.
+
+  mean: The calculated mean of all elements in the nested list.
+
+  variance: The calculated variance of all elements in the nested list.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import numpy as np
+
+  from itertools import chain
+
+  def task_func(L):
+
+  ```'
+testcase: "import unittest\nimport numpy as np\nfrom itertools import chain\n\nclass\
+  \ TestCases(unittest.TestCase):\n  \n    def test_1(self):\n        L = [[1, 2,\
+  \ 3], [4, 5, 6]]\n        result, _, _ = task_func(L)\n        flattened = list(chain.from_iterable(L))\n\
+  \        expected_mean = np.mean(flattened)\n        expected_variance = np.var(flattened)\n\
+  \        self.assertEqual(result['mean'], expected_mean)\n        self.assertEqual(result['variance'],\
+  \ expected_variance)\n\n    def test_2(self):\n        L = [[10, 20], [30, 40],\
+  \ [50, 60]]\n        result, _, _ = task_func(L)\n        flattened = list(chain.from_iterable(L))\n\
+  \        expected_mean = np.mean(flattened)\n        expected_variance = np.var(flattened)\n\
+  \        self.assertEqual(result['mean'], expected_mean)\n        self.assertEqual(result['variance'],\
+  \ expected_variance)\n\n    def test_3(self):\n        L = [[5]]\n        result,\
+  \ _, _ = task_func(L)\n        flattened = list(chain.from_iterable(L))\n      \
+  \  expected_mean = np.mean(flattened)\n        expected_variance = np.var(flattened)\n\
+  \        self.assertEqual(result['mean'], expected_mean)\n        self.assertEqual(result['variance'],\
+  \ expected_variance)\n\n    def test_4(self):\n        L = [[1, 2, 3], [3, 2, 1],\
+  \ [4, 5, 6], [6, 5, 4]]\n        result, _, _ = task_func(L)\n        flattened\
+  \ = list(chain.from_iterable(L))\n        expected_mean = np.mean(flattened)\n \
+  \       expected_variance = np.var(flattened)\n        self.assertEqual(result['mean'],\
+  \ expected_mean)\n        self.assertEqual(result['variance'], expected_variance)\n\
+  \n    def test_5(self):\n        L = [[10, 11, 12], [13, 14, 15], [16, 17, 18],\
+  \ [19, 20, 21]]\n        result, _, _ = task_func(L)\n        flattened = list(chain.from_iterable(L))\n\
+  \        expected_mean = np.mean(flattened)\n        expected_variance = np.var(flattened)\n\
+  \        self.assertEqual(result['mean'], expected_mean)\n        self.assertEqual(result['variance'],\
+  \ expected_variance)"

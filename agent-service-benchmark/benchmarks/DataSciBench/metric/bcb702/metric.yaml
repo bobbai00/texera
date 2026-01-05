@@ -1,0 +1,54 @@
+TMC-list:
+- code: "def explained_variance_accuracy(output, ground_truth):\n    output_variance\
+    \ = output[1]  # extract explained variance list from tuple\n    ground_truth_variance\
+    \ = ground_truth[1]\n    return all(abs(o - g) < 1e-5 for o, g in zip(output_variance,\
+    \ ground_truth_variance))"
+  function: Explained Variance Ratio
+  metric: Explained Variance Ratio Accuracy
+  task_name: Predictive modeling
+data: "import pandas as pd\n\ndf = pd.DataFrame([\n    [1.5, 2.3, 3.1, 4.0],\n   \
+  \ [2.1, 1.2, 3.3, 4.2],\n    [3.4, 2.5, 1.1, 2.9],\n    [3.0, 3.6, 4.4, 1.0],\n\
+  \    [1.0, 2.2, 3.9, 4.5]\n], columns=['feature1', 'feature2', 'feature3', 'feature4'])\n\
+  \nargs = (df,)"
+ground_truth: "import pandas as pd\nfrom sklearn.decomposition import PCA\n\ndef task_func(df):\n\
+  \    pca = PCA(n_components=2)\n    principal_components = pca.fit_transform(df)\n\
+  \    df_pca = pd.DataFrame(data=principal_components, columns=['PC1', 'PC2'])\n\
+  \    explained_var = pca.explained_variance_ratio_.tolist()\n    return df_pca,\
+  \ explained_var"
+prompt: "Perform Principal Component Analysis (PCA) on the DataFrame and record the\
+  \ first two main components. The function should output with: tuple(df_pca: pandas.DataFrame,\
+  \ explained_var: list)\ndf_pca: The DataFrame with the first two principal components\
+  \ named 'PC1' and 'PC2' as columns. \nexplained_var: A list containing the explained\
+  \ variance ratios of the first two principal components. \nYou should write self-contained\
+  \ code starting with:\n```\nimport pandas as pd\nfrom sklearn.decomposition import\
+  \ PCA\ndef task_func(df):\n```"
+testcase: "import unittest\nimport pandas as pd\nfrom sklearn.decomposition import\
+  \ PCA\n\nclass TestCases(unittest.TestCase):\n    def test_case_1(self):\n     \
+  \   df = pd.DataFrame([[0, 0], [0, 0]], columns=['x', 'y'])\n        df_pca, _ =\
+  \ task_func(df)\n        self.assertTrue('PC1' in df_pca.columns)\n        self.assertTrue('PC2'\
+  \ in df_pca.columns)\n        self.assertEqual(df_pca.shape, (2, 2))\n        self.assertEqual(df_pca['PC1'].iloc[0],\
+  \ 0)\n        self.assertEqual(df_pca['PC2'].iloc[0], 0)\n        self.assertEqual(df_pca['PC1'].iloc[1],\
+  \ 0)\n        self.assertEqual(df_pca['PC2'].iloc[1], 0)\n\n    def test_case_2(self):\n\
+  \        df = pd.DataFrame([[1, 1], [1, 1]], columns=['x', 'y'])\n        df_pca,\
+  \ _ = task_func(df)\n        self.assertTrue('PC1' in df_pca.columns)\n        self.assertTrue('PC2'\
+  \ in df_pca.columns)\n        self.assertEqual(df_pca.shape, (2, 2))\n        self.assertEqual(df_pca['PC1'].iloc[0],\
+  \ 0)\n        self.assertEqual(df_pca['PC2'].iloc[0], 0)\n        self.assertEqual(df_pca['PC1'].iloc[1],\
+  \ 0)\n        self.assertEqual(df_pca['PC2'].iloc[1], 0)\n\n    def test_case_3(self):\n\
+  \        df = pd.DataFrame([[1, 0], [0, 1]], columns=['x', 'y'])\n        df_pca,\
+  \ _ = task_func(df)\n        self.assertTrue('PC1' in df_pca.columns)\n        self.assertTrue('PC2'\
+  \ in df_pca.columns)\n        self.assertEqual(df_pca.shape, (2, 2))\n        pca_new\
+  \ = PCA(n_components=2)\n        df_pca_new = pca_new.fit_transform(df)\n      \
+  \  self.assertEqual(df_pca['PC1'].iloc[0], df_pca_new[0, 0])\n        self.assertEqual(df_pca['PC2'].iloc[0],\
+  \ df_pca_new[0, 1])\n        self.assertEqual(df_pca['PC1'].iloc[1], df_pca_new[1,\
+  \ 0])\n        self.assertEqual(df_pca['PC2'].iloc[1], df_pca_new[1, 1])\n\n   \
+  \ def test_case_4(self):\n        df = pd.DataFrame([[4, 3, 2, 1], [1, 2, 3, 4]],\
+  \ columns=['x', 'y', 'z', 'w'])\n        df_pca, _ = task_func(df)\n        self.assertTrue('PC1'\
+  \ in df_pca.columns)\n        self.assertTrue('PC2' in df_pca.columns)\n       \
+  \ self.assertEqual(df_pca.shape, (2, 2))\n        pca_new = PCA(n_components=2)\n\
+  \        df_pca_new = pca_new.fit_transform(df)\n        self.assertEqual(df_pca['PC1'].iloc[0],\
+  \ df_pca_new[0, 0])\n\n    def test_case_5(self):\n        df = pd.DataFrame([[1,\
+  \ 2, 3, 4], [4, 3, 2, 1]], columns=['x', 'y', 'z', 'w'])\n        df_pca, _ = task_func(df)\n\
+  \        self.assertTrue('PC1' in df_pca.columns)\n        self.assertTrue('PC2'\
+  \ in df_pca.columns)\n        self.assertEqual(df_pca.shape, (2, 2))\n        pca_new\
+  \ = PCA(n_components=2)\n        df_pca_new = pca_new.fit_transform(df)\n      \
+  \  self.assertEqual(df_pca['PC1'].iloc[0], df_pca_new[0, 0])"

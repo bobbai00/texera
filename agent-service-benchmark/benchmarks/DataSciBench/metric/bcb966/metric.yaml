@@ -1,0 +1,77 @@
+TMC-list:
+- code: "def check_non_empty(output, ground_truth):\n    output_df = output[0]  #\
+    \ extract cumulative sums DataFrame from tuple\n    return not output_df.empty"
+  function: Data Completeness
+  metric: DataFrame Non-emptiness Check
+  task_name: Data cleaning and preprocessing
+- code: "def validate_plot_title(output, ground_truth):\n    import matplotlib.pyplot\
+    \ as plt\n    bar_chart_fig = output[1]  # extract bar chart figure from tuple\n\
+    \    return bar_chart_fig._suptitle.get_text() == 'Cumulative Sum per Column'"
+  function: Title Verification
+  metric: Plot Title Validation
+  task_name: Data visualization
+- code: "def cumulative_sum_accuracy(output, ground_truth):\n    output_df = output[0]\
+    \  # extract cumulative sums DataFrame from tuple\n    ground_truth_df = ground_truth[0]\
+    \  # extract ground truth DataFrame from tuple\n    return output_df.equals(ground_truth_df)"
+  function: Model Accuracy
+  metric: Cumulative Sum Accuracy
+  task_name: Predictive modeling
+data: "import numpy as np\nimport pandas as pd\n\n# New test input\ncomplex_df = pd.DataFrame({\n\
+  \    \"A\": [10, np.nan, 20, -5, 15],\n    \"B\": [1.5, 2.5, 3.5, np.nan, 4.5],\n\
+  \    \"C\": [100, 200, 300, 400, 500]\n})\n\n# Merging inputs into a tuple\nargs\
+  \ = (complex_df,)"
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\n\ndef task_func(df:\
+  \ pd.DataFrame) -> tuple:\n    if df.empty:\n        raise ValueError(\"The DataFrame\
+  \ is empty.\")\n    \n    if not all(df.dtypes.apply(pd.api.types.is_numeric_dtype)):\n\
+  \        raise ValueError(\"The DataFrame contains non-numeric data.\")\n    \n\
+  \    cumulative_sums = df.cumsum(skipna=True)\n\n    # Plotting the cumulative sums\n\
+  \    bar_chart_fig, ax = plt.subplots()\n    cumulative_sums.plot(kind='bar', ax=ax,\
+  \ legend=True)\n    ax.set_title('Cumulative Sum per Column')\n    ax.set_xlabel('Index')\n\
+  \    ax.set_ylabel('Cumulative Sum')\n\n    plt.tight_layout()  # Adjust layout\
+  \ to make room for the title and labels\n\n    return cumulative_sums, bar_chart_fig"
+prompt: '"Calculate the cumulative sum for each column in a given DataFrame and plot
+  the results in a bar chart. Note that: NaN values are ignored in the cumulative
+  sum calculation, i.e. treated as zero for the purpose of the sum without changing
+  existing values to NaN. The plot title is set to ''Cumulative Sum per Column''.
+  X-axis label is ''Index'' and Y-axis label is ''Cumulative Sum''. A legend is included
+  in the plot. The function should raise the exception for: ValueError: If the DataFrame
+  is empty or contains non-numeric data. The function should output with: tuple(cumulative_sums:
+  pandas.DataFrame, bar_chart_fig: matplotlib.figure.Figure) cumulative_sums: A DataFrame
+  with cumulative sums for each column. bar_chart_fig: A matplotlib bar chart Figure
+  of these cumulative sums. You should write self-contained code starting with: ```
+  import pandas as pd import matplotlib.pyplot as plt def task_func(df: pd.DataFrame)
+  -> pd.DataFrame: ```"'
+testcase: "import numpy as np\nimport pandas as pd\nimport unittest\nimport matplotlib.pyplot\
+  \ as plt\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n        #\
+  \ Setup common for all tests\n        self.input_df = pd.DataFrame({\"A\": [1, 2,\
+  \ 3], \"B\": [4, 5, 6]})\n        self.expected_df = pd.DataFrame({\"A\": [1, 3,\
+  \ 6], \"B\": [4, 9, 15]})\n\n    def test_case_1(self):\n        # Test basic case\n\
+  \        output_df, _ = task_func(self.input_df)\n        pd.testing.assert_frame_equal(output_df,\
+  \ self.expected_df)\n\n    def test_case_2(self):\n        # Test cumulative sum\
+  \ correctness for a case with negative values\n        input_df_neg = pd.DataFrame({\"\
+  A\": [1, -2, 3], \"B\": [-4, 5, -6]})\n        expected_df_neg = pd.DataFrame({\"\
+  A\": [1, -1, 2], \"B\": [-4, 1, -5]})\n        output_df_neg, _ = task_func(input_df_neg)\n\
+  \        pd.testing.assert_frame_equal(output_df_neg, expected_df_neg)\n\n    def\
+  \ test_case_3(self):\n        # Test bar chart properties\n        _, fig = task_func(self.input_df)\n\
+  \        self.assertIsInstance(fig, plt.Figure)\n        ax = fig.axes[0]  # Get\
+  \ the Axes object from the figure\n        # Verify the title, x-label, and y-label\n\
+  \        self.assertEqual(ax.get_title(), \"Cumulative Sum per Column\")\n     \
+  \   self.assertEqual(ax.get_xlabel(), \"Index\")\n        self.assertEqual(ax.get_ylabel(),\
+  \ \"Cumulative Sum\")\n        # Ensure that a legend is present and contains the\
+  \ correct labels\n        legend_labels = [text.get_text() for text in ax.get_legend().get_texts()]\n\
+  \        expected_labels = self.input_df.columns.tolist()\n        self.assertEqual(legend_labels,\
+  \ expected_labels)\n\n    def test_case_4(self):\n        # Test with an empty DataFrame\n\
+  \        empty_df = pd.DataFrame()\n        with self.assertRaises(Exception):\n\
+  \            task_func(empty_df)\n\n    def test_case_5(self):\n        # Test with\
+  \ DataFrame containing NaN values\n        nan_df = pd.DataFrame({\"A\": [1, np.nan,\
+  \ 3], \"B\": [4, 5, np.nan]})\n        nan_df_cumsum = nan_df.cumsum()\n       \
+  \ output_nan_df, _ = task_func(nan_df)\n        pd.testing.assert_frame_equal(output_nan_df,\
+  \ nan_df_cumsum)\n\n    def test_case_6(self):\n        # Test with DataFrame containing\
+  \ all zeros\n        zeros_df = pd.DataFrame({\"A\": [0, 0, 0], \"B\": [0, 0, 0]})\n\
+  \        expected_zeros_df = pd.DataFrame({\"A\": [0, 0, 0], \"B\": [0, 0, 0]})\n\
+  \        output_zeros_df, _ = task_func(zeros_df)\n        pd.testing.assert_frame_equal(output_zeros_df,\
+  \ expected_zeros_df)\n\n    def test_case_7(self):\n        # Test with a DataFrame\
+  \ containing only one row\n        one_row_df = pd.DataFrame({\"A\": [1], \"B\"\
+  : [2]})\n        expected_one_row_df = pd.DataFrame({\"A\": [1], \"B\": [2]})\n\
+  \        output_one_row_df, _ = task_func(one_row_df)\n        pd.testing.assert_frame_equal(output_one_row_df,\
+  \ expected_one_row_df)"

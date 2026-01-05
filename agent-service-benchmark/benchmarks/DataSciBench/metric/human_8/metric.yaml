@@ -1,0 +1,110 @@
+"TMC-list":
+- "code": |-
+    def data_cleaning_quality(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("cleaned_data.csv")
+        ground_truth_df = pd.read_csv(ground_truth)
+        original_shape = ground_truth_df.shape
+        cleaned_shape = output.shape
+        return cleaned_shape[0] == original_shape[0]
+  "function": |-
+    Data Cleaning Completeness
+  "ground_truth": |-
+    cleaned_data.csv
+  "metric": |-
+    Data Cleaning Quality
+  "task_name": |-
+    Data cleaning and preprocessing
+- "code": |-
+    def clustering_silhouette_score(ground_truth):
+        import pandas as pd
+        from sklearn.metrics import silhouette_score
+        output = pd.read_csv("clusters.csv")
+        features = output.iloc[:, :-1]
+        labels = output.iloc[:, -1]
+        ground_truth_df = pd.read_csv(ground_truth)
+        ground_truth_features = ground_truth_df.iloc[:, :-1]
+        ground_truth_labels = ground_truth_df.iloc[:, -1]
+        return silhouette_score(features, labels) >= silhouette_score(ground_truth_features, ground_truth_labels)
+  "function": |-
+    Silhouette Score
+  "metric": |-
+    Clustering Silhouette Score
+  "task_name": |-
+    Data mining
+  "ground_truth": |-
+    clusters.csv
+- "code": |-
+    def association_rule_lift(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("association_rules.csv")
+        output_gd = pd.read_csv(ground_truth)
+        return all(output['lift'] == (output_gd['lift']))
+  "function": |-
+    Pattern Recognition Validity
+  "metric": |-
+    Association Rule Strength (Lift)
+  "task_name": |-
+    Pattern recognition
+  "ground_truth": |-
+    association_rules.csv
+- "code": |-
+    def feature_importance_scores(ground_truth):
+        import pandas as pd
+        from sklearn.ensemble import RandomForestRegressor
+        output = pd.read_csv("pattern_analysis.csv")
+        output_gd = pd.read_csv(ground_truth)
+        return output['Correlation with Happiness Score'].equals((output_gd['Correlation with Happiness Score']))
+  "function": |-
+    Plot Validity
+  "metric": |-
+    Feature Importance Scores
+  "task_name": |-
+    Data visualization
+  "ground_truth": |-
+    pattern_analysis.csv
+- "code": |-
+    def report_completeness(ground_truth):
+        import os
+        report_path = "happiness_analysis_report.pdf"
+        return os.path.exists(report_path)  # Returns True if the report file exists
+  "function": |-
+    Report Completeness
+  "metric": |-
+    Report Completeness
+  "task_name": |-
+    Interpretability and report generation
+"prompt": |-
+  Please conduct a thorough examination of the "World Happiness Report" dataset available on Kaggle (https://www.kaggle.com/unsdsn/world-happiness) to uncover meaningful insights into global happiness trends. 
+
+  1. **Data Import and Cleaning:**
+     - **Input Filename:** `data.csv` (the downloaded dataset)
+     - **Output Filename:** `cleaned_data.csv`
+     - Execute a rigorous data cleaning process, including addressing missing values, encoding categorical variables, and eliminating duplicate entries.
+   
+  2. **Data Exploration with Clustering:**
+     - **Input Filename:** `cleaned_data.csv`
+     - **Output Filename:** `clusters.csv`
+     - Employ clustering algorithms such as K-means to segment countries based on their happiness scores, revealing clusters with similar characteristics.
+
+  3. **Association Rule Mining:**
+     - **Input Filename:** `cleaned_data.csv`
+     - **Output Filename:** `association_rules.csv`
+     - Implement association rule mining to uncover the relationships between various features (like GDP per capita, social support, and life expectancy) with the overall happiness score.
+
+  4. **Pattern Analysis:**
+     - **Input Filename:** `cleaned_data.csv`
+     - **Output Filename:** `pattern_analysis.csv`
+     - Analyze the dataset to identify and elucidate distinct patterns in happiness across different nations, pinpointing the most influential features contributing to high happiness scores and highlighting any regional patterns or anomalies.
+
+  5. **Visualizations:**
+     - **Input Filename:** `cleaned_data.csv`
+     - **Output Filenames:**
+       - `scatter_plot.png` (scatter plots depicting the correlation between key features and happiness scores)
+       - `heatmap.png` (heatmaps illustrating the strength of feature correlations)
+       - `cluster_plot.png` (cluster plots visualizing the categorization of countries based on clustering outcomes)
+
+  6. **Final Report:**
+     - **Input Filename:** `cleaned_data.csv`, `clusters.csv`, `association_rules.csv`, `pattern_analysis.csv`, and all visualizations
+     - **Output Filename:** `happiness_analysis_report.pdf`
+     - Compile a detailed report encapsulating the steps taken in data cleaning, methodologies applied in data mining, key patterns discovered, and their significance in comprehending global happiness.

@@ -1,0 +1,99 @@
+TMC-list:
+- code: "def word_count_accuracy(output, ground_truth):\n    common_words_output =\
+    \ output[1]  # extract the list of tuples from output\n    common_words_ground_truth\
+    \ = ground_truth[1]\n    output_count = dict(common_words_output)  # create dict\
+    \ for frequencies\n    ground_truth_count = dict(common_words_ground_truth)\n\
+    \    total_output_count = sum(output_count.values())\n    total_ground_truth_count\
+    \ = sum(ground_truth_count.values())\n    return total_output_count == total_ground_truth_count"
+  function: Data Quality Score
+  metric: Word Count Accuracy
+  task_name: Data cleaning and preprocessing
+- code: "def common_words_match(output, ground_truth):\n    common_words_output =\
+    \ output[1]  # extract the list of tuples from output\n    common_words_ground_truth\
+    \ = ground_truth[1]\n    output_set = set(word for word, _ in common_words_output)\
+    \  # get words from output\n    ground_truth_set = set(word for word, _ in common_words_ground_truth)\
+    \  # get words from ground truth\n    return output_set == ground_truth_set"
+  function: Data Consistency
+  metric: Common Words Match
+  task_name: Data exploration and statistics understand
+- code: "def plot_validity(output, ground_truth):\n    bar_plot_output = output[0]\
+    \  # extract the bar plot object from output\n    return isinstance(bar_plot_output,\
+    \ plt.Axes)  # check if it is a matplotlib axes object"
+  function: Plot Validity
+  metric: Plot Validity
+  task_name: Data visualization
+data: "import csv\n\ndef create_complex_csv_file(filepath='complex_dummy.csv'):\n\
+  \    # More complex data to be written into the CSV file\n    data = [\n       \
+  \ ['Hello', 'world', 'example', 'test'],\n        ['World', 'python', 'is', 'great'],\n\
+  \        ['Example', 'example', 'hello', 'HELLO'],\n        ['Test', 'data', 'data',\
+  \ 'data'],\n        ['Python', 'programming', 'language', 'test'],\n        ['Normalization',\
+  \ 'is', 'important', 'in', 'text'],\n        ['Hello', 'world', 'python', 'rocks']\n\
+  \    ]\n    # Write data to CSV\n    with open(filepath, 'w', newline='') as file:\n\
+  \        writer = csv.writer(file)\n        writer.writerows(data)\n\ncreate_complex_csv_file()\n\
+  \nargs = ('complex_dummy.csv',)"
+ground_truth: "import unicodedata\nimport csv\nfrom collections import Counter\nimport\
+  \ matplotlib.pyplot as plt\n\ndef normalize_text(text):\n    # Normalize the text\
+  \ to ASCII\n    return unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')\n\
+  \ndef task_func(csv_file):\n    try:\n        with open(csv_file, mode='r', encoding='utf-8')\
+  \ as file:\n            reader = csv.reader(file)\n            words = []\n    \
+  \        for row in reader:\n                for cell in row:\n                \
+  \    normalized = normalize_text(cell)\n                    words.extend(normalized.split())\n\
+  \    except FileNotFoundError:\n        raise FileNotFoundError(f\"The file {csv_file}\
+  \ cannot be found.\")\n    except IOError as e:\n        raise IOError(f\"An error\
+  \ occurred reading the file {csv_file}: {e}\")\n\n    # Count the words\n    word_counts\
+  \ = Counter(words)\n\n    # Get the 10 most common words\n    common_words = word_counts.most_common(10)\n\
+  \n    # Prepare the data for plotting\n    labels, values = zip(*common_words)\n\
+  \n    # Create a bar plot\n    fig, ax = plt.subplots()\n    ax.bar(labels, values)\n\
+  \    ax.set_ylabel('Frequency')\n    ax.set_title('10 Most Common Words')\n\n  \
+  \  return ax, common_words"
+prompt: 'Reads a CSV file, normalizes the text in it to ASCII, counts the words, and
+  returns the 10 most common words along with their frequencies as a matplotlib bar
+  plot and a list of tuples. Note that: The function assumes that the CSV file contains
+  text data and that the file is properly formatted. The function should raise the
+  exception for: FileNotFoundError: If the CSV file cannot be found at the specified
+  path. IOError: If there is an error in reading the file. The function should output
+  with: tuple(bar_plot: matplotlib.axes.Axes, common_words: list of tuples) bar_plot:
+  A matplotlib.axes.Axes object for the bar plot. common_words: A list of the 10 most
+  common words with their frequencies. You should write self-contained code starting
+  with:
+
+  ```
+
+  import unicodedata
+
+  import csv
+
+  from collections import Counter
+
+  import matplotlib.pyplot as plt
+
+  def task_func(csv_file):
+
+  ```'
+testcase: "import unittest\nfrom unittest.mock import patch, mock_open\nimport matplotlib.axes\n\
+  import csv\n\ndef create_dummy_csv_file(filepath='dummy.csv'):\n    # Data to be\
+  \ written into the CSV file\n    data = [\n        ['word1', 'word2', 'word3', 'word4'],\n\
+  \        ['word2', 'word3', 'word3', 'word5'],\n        ['word6', 'word7', 'word8',\
+  \ 'word1']\n    ]\n    # Write data to CSV\n    with open(filepath, 'w', newline='')\
+  \ as file:\n        writer = csv.writer(file)\n        writer.writerows(data)\n\n\
+  class TestCases(unittest.TestCase):\n    def test_valid_csv_file(self):\n      \
+  \  \"\"\" Test with a valid CSV file. \"\"\"\n        with patch('builtins.open',\
+  \ mock_open(read_data=\"word1,word2\\nword3,word4\")):\n            ax, most_common_words\
+  \ = task_func('dummy.csv')\n            self.assertIsInstance(ax, matplotlib.axes.Axes)\n\
+  \            self.assertIsInstance(most_common_words, list)\n\n    def test_file_not_found_error(self):\n\
+  \        \"\"\" Test with a non-existent CSV file. \"\"\"\n        with self.assertRaises(FileNotFoundError):\n\
+  \            task_func('non_existent.csv')\n\n    def test_io_error(self):\n   \
+  \     \"\"\" Test with an IO error during file reading. \"\"\"\n        with patch('builtins.open',\
+  \ mock_open(read_data=\"word1,word2\\nword3,word4\")) as mock_file:\n          \
+  \  mock_file.side_effect = IOError\n            with self.assertRaises(IOError):\n\
+  \                task_func('dummy.csv')\n\n    def test_plot_output(self):\n   \
+  \     \"\"\" Test the output plot's type and attributes. \"\"\"\n        with patch('builtins.open',\
+  \ mock_open(read_data=\"word1,word1\\nword2,word2\")):\n            ax, most_common_words\
+  \ = task_func('dummy.csv')\n            self.assertIsInstance(ax, matplotlib.axes.Axes)\n\
+  \            self.assertEqual(len(ax.patches), 2)  # Check if there are 2 bars in\
+  \ the plot\n\n    def test_normalized_text(self):\n        \"\"\" Test if the text\
+  \ normalization works correctly. \"\"\"\n        test_data = \"Caf\uFFFD\uFFFD,Caf\uFFFD\
+  \uFFFD\\nNi\uFFFD\uFFFDo,Ni\uFFFD\uFFFDo\"\n        with patch('builtins.open',\
+  \ mock_open(read_data=test_data)):\n            ax, most_common_words = task_func('dummy.csv')\n\
+  \            # Check if 'Caf\uFFFD\uFFFD' is normalized to 'Cafe'\n            self.assertIn(('Cafe',\
+  \ 2), most_common_words)  # Directly check most_common_words"

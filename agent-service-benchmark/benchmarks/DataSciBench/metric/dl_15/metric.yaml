@@ -1,0 +1,96 @@
+"TMC-list":
+- "code": |-
+    def code_completeness(ground_truth):
+        with open("model_definition.py", "r") as f:
+            code_output = f.read()
+        with open(ground_truth, "r") as f:
+            gt_output = f.read()
+
+        return sum([line in code_output for line in gt_output.splitlines()]) / len(gt_output.splitlines()) > 0.9
+  "function": |-
+    Model Accuracy
+  "metric": |-
+    Code Completeness
+  "task_name": |-
+    Predictive modeling
+  ground_truth: model_definition.py
+- "code": |-
+    def l1_norm(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("l1_norms.csv")
+        gt_output = pd.read_csv(ground_truth)
+        return abs(output['L1 Norm'].sum() - gt_output['L1 Norm'].sum()) / gt_output['L1 Norm'].sum() <= 0.1  # Sum of L1 norms in the CSV
+  "function": |-
+    Result Quality
+  "metric": |-
+    L1 Norm Calculation
+  "task_name": |-
+    Interpretability and report generation
+  ground_truth: l1_norms.csv
+- "code": |-
+    def pruning_efficiency(ground_truth):
+        # import torch
+        # original_weights = torch.load("trained_model.pth")  # Load original model
+        # pruned_weights = torch.load("pruned_model.pth")  # Load pruned model
+        # return (original_weights != pruned_weights).sum().item()  # Count pruned weights
+        import torch
+
+        # Load the state dictionaries of the models
+        original_state_dict = torch.load("trained_model.pth")
+        pruned_state_dict = torch.load("pruned_model.pth")
+
+        total_weights = 0
+        pruned_weights = 0
+
+        for name, original_param in original_state_dict.items():
+            # Only consider parameters that are tensors
+            if isinstance(original_param, torch.Tensor):
+                total_weights += original_param.numel()  # Total number of weights
+
+                # Check if the parameter exists in the pruned model
+                if name in pruned_state_dict:
+                    pruned_param = pruned_state_dict[name]
+
+                    # Ensure the parameter is a tensor
+                    if isinstance(pruned_param, torch.Tensor):
+                        # Compare the original and pruned parameters
+                        # A weight is considered pruned if it is zero in the pruned model but non-zero in the original
+                        pruned_weights += ((original_param != 0) & (pruned_param == 0)).sum().item()
+                else:
+                    # If the parameter doesn't exist in the pruned model, consider all its weights as pruned
+                    pruned_weights += original_param.numel()
+
+        # Calculate pruning ratio (optional)
+        pruning_ratio = pruned_weights / total_weights if total_weights > 0 else 0
+
+        return pruning_ratio > 0
+  "function": |-
+    Data Accuracy
+  "metric": |-
+    Weight Pruning Efficiency
+  "task_name": Data exploration and statistics understand
+  ground_truth: trained_model.pth
+"prompt": |-
+  "Please use PyTorch to build a neural network model and complete the following tasks:
+
+  1. **Model definition**: Define a neural network structure using PyTorch's nn.Module class.  
+  **Output**: Provide the complete PyTorch code in a file named ""model_definition.py"".  
+
+  2. **Model training**: Train the network model with your training dataset (input: ""data.csv""). Choose an appropriate optimizer (such as SGD, Adam, etc.) to update the network parameters.  
+  **Output**: Save the trained model weights to a file named ""trained_model.pth"".  
+
+  3. **Calculate L1 norm**: After training, calculate the L1 norm of each weight in the network. This is the sum of the absolute values of the elements in the weight vector.  
+   **Output**: Save the L1 norms in a CSV file named ""l1_norms.csv"".  
+
+  4. **Weight pruning**:  
+  1. Set a threshold or pruning ratio to determine the weights that need to be pruned.  
+  2. Sort the weights based on their L1 norms and select the weights with smaller L1 norms for pruning.  
+  3. Set the selected weights to zero to achieve pruning of network connections.  
+  **Output**: Save the pruned model weights in a file named ""pruned_model.pth"".
+
+  5. **Model fine-tuning**: Fine-tune the pruned model to recover or enhance model performance. You can continue training the pruned model with the optimizer used in previous training.  
+  **Output**: Save the fine-tuned model weights to a file named ""fine_tuned_model.pth"".  
+
+   Please provide the following:
+  - Complete Python code implementation, including model definition, training process, L1 norm calculation, weight pruning, and model fine-tuning, all integrated within ""model_definition.py"".
+  - Comments in the code should clearly explain the purpose and implementation of each step."

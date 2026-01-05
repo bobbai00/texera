@@ -1,0 +1,99 @@
+TMC-list:
+- code: "def model_variance(output, ground_truth):\n    import numpy as np\n    model_o\
+    \ = output[1]  # extract the Linear Regression model from the output tuple\n \
+    \   model_g = ground_truth[1]\n    rel_diff = np.abs(model_o.coef_ - model_g.coef_)/np.abs(model_g.coef_)\n\
+    \    return np.mean(rel_diff) < 0.01"
+  function: Explained Variance Ratio
+  metric: Model Variance
+  task_name: Predictive modeling
+data: "import pandas as pd\n\n# New test input data\nnew_data = {\n    'feature1':\
+  \ [5, 12, 32, 45, 22, 18, 76, 87, 64, 99, 23, 39, 58],\n    'feature2': [8, 15,\
+  \ 35, 50, 25, 20, 80, 90, 65, 100, 28, 42, 59]\n}\ndf_new = pd.DataFrame(new_data)\n\
+  feature_column = 'feature1'\ntarget_column = 'feature2'\nn_largest_residuals = 4\n\
+  \nargs = (df_new, feature_column, target_column, n_largest_residuals)"
+ground_truth: "import pandas as pd\nimport heapq\nfrom sklearn.linear_model import\
+  \ LinearRegression\n\ndef task_func(df, feature, target, n=10):\n    if feature\
+  \ not in df.columns or target not in df.columns:\n        raise ValueError(\"Specified\
+  \ columns are not in the provided DataFrame.\")\n    \n    X = df[[feature]].values\n\
+  \    y = df[target].values\n    \n    model = LinearRegression()\n    model.fit(X,\
+  \ y)\n    \n    predictions = model.predict(X)\n    residuals = y - predictions\n\
+  \    \n    # Get the indices of the n largest residuals\n    largest_residuals_indices\
+  \ = heapq.nlargest(n, range(len(residuals)), key=lambda i: abs(residuals[i]))\n\
+  \    \n    return (largest_residuals_indices, model)"
+prompt: 'Fit a simple linear regression model to two columns of a DataFrame specified
+  by feature and target. Return the indices of the n largest residuals as well as
+  the linear regression model. >>> df = pd.DataFrame({ ... ''a'': [1, 2, 3, 4, 5],
+  ... ''b'': [1, 2, 3, 4, 5] ... }) >>> indices, model = task_func(df, ''a'', ''b'',
+  n=3) >>> print(indices) [0, 1, 2] >>> print(model) LinearRegression() The function
+  should raise the exception for: ValueError: If specified columns are not in the
+  provided DataFrame. The function should output with: tuple(indices: list[int], model:
+  LinearRegression) indices: Indices of the n largest residuals. model: The LinearRegression
+  model. You should write self-contained code starting with:
+
+  ```
+
+  import heapq
+
+  from sklearn.linear_model import LinearRegression
+
+  def task_func(df, feature, target, n=10):
+
+  ```'
+testcase: "import unittest\nfrom faker import Faker\nimport pandas as pd\nfake = Faker()\n\
+  \nclass TestCases(unittest.TestCase):\n\n    def setUp(self):\n        self.sample_data\
+  \ = {\n            'col1': [fake.random_int(min=1, max=100) for _ in range(100)],\n\
+  \            'col2': [fake.random_int(min=1, max=100) for _ in range(100)]\n   \
+  \     }\n\n    def test_wrong_columns(self):\n        # test with wrong columns\n\
+  \        data = {\n            'col1': [1, 2, 3, 4, 5],\n            'col2': [2,\
+  \ 3, 4, 5, 6]\n        }\n        df = pd.DataFrame(data)\n        self.assertRaises(Exception,\
+  \ task_func, df, 'a', 'col2')\n        self.assertRaises(Exception, task_func, df,\
+  \ 'col1', 'a')\n        self.assertRaises(Exception, task_func, df, 'a', 'b')\n\n\
+  \    # tests with random data\n    def test_case_1(self):\n        indices, model\
+  \ = task_func(pd.DataFrame(self.sample_data), 'col1', 'col2')\n        self.assertTrue(isinstance(model,\
+  \ LinearRegression))\n        self.assertEqual(len(indices), 10)\n\n    def test_case_2(self):\n\
+  \        indices, model = task_func(pd.DataFrame(self.sample_data), 'col1', 'col2',\
+  \ n=5)\n        self.assertTrue(isinstance(model, LinearRegression))\n        self.assertEqual(len(indices),\
+  \ 5)\n\n    def test_case_3(self):\n        random_length = fake.random_int(min=5,\
+  \ max=20)\n        df = pd.DataFrame({\n            'col1': [fake.random_int(min=1,\
+  \ max=100) for _ in range(random_length)],\n            'col2': [fake.random_int(min=1,\
+  \ max=100) for _ in range(random_length)]\n        })\n        indices, model =\
+  \ task_func(df, 'col1', 'col2', n=3)\n        self.assertTrue(isinstance(model,\
+  \ LinearRegression))\n        self.assertEqual(len(indices), 3)\n\n    def test_case_4(self):\n\
+  \        df = pd.DataFrame({\n            'col1': [fake.random_int(min=1, max=100)\
+  \ for _ in range(10)],\n            'col2': [50 for _ in range(10)]\n        })\n\
+  \        indices, model = task_func(df, 'col1', 'col2')\n        self.assertTrue(isinstance(model,\
+  \ LinearRegression))\n        self.assertEqual(len(indices), 10)\n\n    def test_case_5(self):\n\
+  \        df = pd.DataFrame({\n            'col1': list(range(10)),\n           \
+  \ 'col2': list(range(10))\n        })\n        indices, model = task_func(df, 'col1',\
+  \ 'col2')\n        self.assertTrue(isinstance(model, LinearRegression))\n      \
+  \  self.assertEqual(len(indices), 10)\n\n    # deterministic tests\n    def test_deterministic_case_1(self):\n\
+  \        df = pd.DataFrame({\n            'col1': [10, 20, 30, 40, 50],\n      \
+  \      'col2': [1, 2, 3, 4, 5]\n        })\n        indices, model = task_func(df,\
+  \ 'col1', 'col2')\n        self.assertTrue(isinstance(model, LinearRegression))\n\
+  \        # Given the linear relationship, the residuals should be close to zero.\n\
+  \        # Hence, any index could be in the top N residuals.\n        # check if\
+  \ model was used to generate indices\n        y = df['col2'].values\n        X =\
+  \ df['col1'].values.reshape(-1, 1)\n        residuals = y - model.predict(X)\n \
+  \       largest_residual_indices = heapq.nlargest(10, range(len(residuals)), key=lambda\
+  \ i: abs(residuals[i]))\n        self.assertListEqual(largest_residual_indices,\
+  \ indices)\n\n    def test_deterministic_case_2(self):\n        df = pd.DataFrame({\n\
+  \            'col1': [10, 20, 30, 40, 50],\n            'col2': [10, 40, 90, 160,\
+  \ 250]\n        })\n        indices, model = task_func(df, 'col1', 'col2')\n   \
+  \     self.assertTrue(isinstance(model, LinearRegression))\n        # Given the\
+  \ data, the residuals will vary. \n        # We're predicting the largest residuals\
+  \ based on known data.\n        expected_indices = [0, 2, 4, 1, 3]  # This is based\
+  \ on a manual observation.\n        self.assertEqual(indices, expected_indices)\n\
+  \        # check if model was used to generate indices\n        y = df['col2'].values\n\
+  \        X = df['col1'].values.reshape(-1, 1)\n        residuals = y - model.predict(X)\n\
+  \        largest_residual_indices = heapq.nlargest(10, range(len(residuals)), key=lambda\
+  \ i: abs(residuals[i]))\n        self.assertListEqual(largest_residual_indices,\
+  \ indices)\n\n    def test_deterministic_case_3(self):\n        df = pd.DataFrame({\n\
+  \            'col1': [1, 2, 3, 4, 5],\n            'col2': [5, 4, 3, 2, 1]\n   \
+  \     })\n        indices, model = task_func(df, 'col1', 'col2')\n        self.assertTrue(isinstance(model,\
+  \ LinearRegression))\n        # Given the inverse linear relationship, the residuals\
+  \ should be close to zero.\n        # Hence, any index could be in the top N residuals.\n\
+  \        self.assertEqual(len(indices), 5)\n        # check if model was used to\
+  \ generate indices\n        y = df['col2'].values\n        X = df['col1'].values.reshape(-1,\
+  \ 1)\n        residuals = y - model.predict(X)\n        largest_residual_indices\
+  \ = heapq.nlargest(10, range(len(residuals)), key=lambda i: abs(residuals[i]))\n\
+  \        self.assertListEqual(largest_residual_indices, indices)"

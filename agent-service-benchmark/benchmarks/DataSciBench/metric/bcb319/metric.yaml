@@ -1,0 +1,70 @@
+TMC-list:
+- code: "def word_count_accuracy(output, ground_truth):\n    output_common_words =\
+    \ output[1]  # extract common_words dictionary from tuple\n    ground_truth_common_words\
+    \ = ground_truth[1]  \n    return len(output_common_words) == len(ground_truth_common_words)"
+  function: Data Quality Score
+  metric: Word Count Accuracy
+  task_name: Data cleaning and preprocessing
+- code: "def frequency_plot_validity(output,ground_truth):\n    freq_plot = output[0]\
+    \  # extract freq_plot from tuple\n    import matplotlib.pyplot as plt\n    return\
+    \ isinstance(freq_plot, plt.Axes)"
+  function: Plot Validity
+  metric: Frequency Plot Validity
+  task_name: Data visualization
+- code: "def top_n_common_words_check(output, ground_truth):\n    top_n=10\n    output_common_words\
+    \ = output[1]\n    ground_truth_common_words = ground_truth[1]\n    return all(word\
+    \ in output_common_words for word in list(ground_truth_common_words.keys())[:top_n])"
+  function: Data Validity
+  metric: Top N Common Words Check
+  task_name: Data exploration and statistics understand
+data: 'example_str = "In the year [2023], advancements in AI [and other technologies]
+  are shaping our future. Many companies [like TechCorp and Innovate Ltd.] are at
+  the forefront of this revolution."
+
+  top_n = 10
+
+  args = (example_str, top_n)'
+ground_truth: "import re\nimport matplotlib.pyplot as plt\nfrom nltk.probability import\
+  \ FreqDist\n\ndef task_func(example_str, top_n=30):\n    # Remove text inside square\
+  \ brackets\n    cleaned_str = re.sub(r'\\[.*?\\]', '', example_str)\n    \n    #\
+  \ Split the cleaned string into words\n    words = cleaned_str.split()\n    \n \
+  \   # Calculate frequency distribution\n    freq_dist = FreqDist(words)\n    \n\
+  \    # Plot the frequency distribution\n    plt.figure(figsize=(12, 6))\n    freq_plot\
+  \ = plt.axes()\n    freq_dist.plot(30, cumulative=False)\n    plt.title('Word Frequency\
+  \ Distribution')\n    plt.xlabel('Words')\n    plt.ylabel('Frequency')\n    \n \
+  \   # Get the most common words\n    common_words = dict(freq_dist.most_common(top_n))\n\
+  \    \n    return freq_plot, common_words"
+prompt: "Extract all texts that are not enclosed in square brackets from the given\
+  \ string and plot a frequency distribution of the words. Also return the top_n most\
+  \ common words in the frequency distribution as a dictionary. The function should\
+  \ output with: tuple(freq_plot: matplotlib.axes.Axes, common_words: dict)\nfreq_plot:\
+  \ A matplotlib Axes object representing the frequency distribution plot. \ncommon_words:\
+  \ A dictionary containing the top_n most common words and their frequencies. \n\
+  You should write self-contained code starting with: \n```\nimport re\nimport matplotlib.pyplot\
+  \ as plt\nfrom nltk.probability import FreqDist\ndef task_func(example_str, top_n=30):\n\
+  ```"
+testcase: "import unittest\nimport doctest\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        example_str = \"Josie Smith [3996 COLLEGE AVENUE,\
+  \ SOMETOWN, MD 21003] Mugsy Dog Smith [2560 OAK ST, GLENMEADE, WI 14098]\"\n   \
+  \     ax, top_n_words = task_func(example_str)\n        self.assertIsInstance(ax,\
+  \ plt.Axes, \"The returned object is not of type plt.Axes.\")\n        # Test the\
+  \ number of words in the plot\n        self.assertEqual(len(ax.get_xticklabels()),\
+  \ 4, \"The number of words in the plot is not 30.\")\n        # Test the top_n_words\
+  \ dictionary\n        self.assertEqual(top_n_words, {'Smith': 2, 'Josie': 1, 'Mugsy':\
+  \ 1, 'Dog': 1}, \"The top_n_words dictionary is incorrect.\")\n    \n    def test_case_2(self):\n\
+  \        example_str = \"Hello [1234 STREET, CITY, STATE 12345] World [5678 LANE,\
+  \ TOWN, PROVINCE 67890]\"\n        ax, _ = task_func(example_str)\n        self.assertIsInstance(ax,\
+  \ plt.Axes, \"The returned object is not of type plt.Axes.\")\n    \n    def test_case_3(self):\n\
+  \        example_str = \"[IGNORE THIS] This is a simple test string [ANOTHER IGNORE]\"\
+  \n        ax, top_n_words = task_func(example_str, top_n=5)\n        self.assertIsInstance(ax,\
+  \ plt.Axes, \"The returned object is not of type plt.Axes.\")\n        # Test the\
+  \ histogram data\n        #self.assertEqual(len(ax.patches), 5, \"The number of\
+  \ words in the plot is not 5.\")\n        # Test the top_n_words dictionary\n  \
+  \      self.assertEqual(top_n_words, {'This': 1, 'is': 1, 'a': 1, 'simple': 1, 'test':\
+  \ 1}, \"The top_n_words dictionary is incorrect.\")\n    \n    def test_case_4(self):\n\
+  \        example_str = \"[BEGIN] Testing the function with different [MIDDLE] types\
+  \ of input strings [END]\"\n        ax, _ = task_func(example_str)\n        self.assertIsInstance(ax,\
+  \ plt.Axes, \"The returned object is not of type plt.Axes.\")\n    \n    def test_case_5(self):\n\
+  \        example_str = \"Example without any brackets so all words should be considered.\"\
+  \n        ax, _ = task_func(example_str)\n        self.assertIsInstance(ax, plt.Axes,\
+  \ \"The returned object is not of type plt.Axes.\")"

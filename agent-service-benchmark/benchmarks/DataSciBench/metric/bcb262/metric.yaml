@@ -1,0 +1,60 @@
+TMC-list:
+- code: "def dict_key_existence(output, ground_truth):\n    output_dict = output[0]\
+    \  # extract the updated dictionary from tuple\n    ground_truth_dict = ground_truth[0]\n\
+    \    return output_dict.keys() == ground_truth_dict.keys()  # Check if all keys\
+    \ are present"
+  function: Data Quality Score
+  metric: Dictionary Key Existence
+  task_name: Data cleaning and preprocessing
+- code: "def value_distribution_correlation(output, ground_truth):\n    import numpy\
+    \ as np\n    output_axes = output[1]  # extract the bar axes object from tuple\n\
+    \    ground_truth_axes = ground_truth[1]\n    # Get the heights of bars to compare\
+    \ against the ground truth values\n    bar_values = [rect.get_height() for rect\
+    \ in output_axes.patches]\n    gt_values = [rect.get_height() for rect in ground_truth_axes.patches]\n\
+    \    return np.corrcoef(bar_values, gt_values)[0, 1]  # Calculate the correlation\
+    \ coefficient"
+  function: Correlation Coefficient
+  metric: Bar Graph Value Distribution Correlation
+  task_name: Data visualization
+data: 'dictionary = {''x'': ''xigua'', ''y'': ''yellow squash'', ''z'': ''zucchini'',
+  ''a'': ''avocado''}
+
+  new_key = ''b''
+
+  new_value = ''blueberry''
+
+  args = (dictionary, new_key, new_value)'
+ground_truth: "import collections\nimport seaborn as sns\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(dictionary, new_key, new_value):\n    # Add the new key-value\
+  \ pair to the dictionary\n    dictionary[new_key] = new_value\n    \n    # Plot\
+  \ the distribution of the dictionary values\n    plt.figure(figsize=(10, 6))\n \
+  \   bar_axes = sns.barplot(x=list(dictionary.keys()), y=list(dictionary.values()))\n\
+  \    bar_axes.set_title('Distribution of Dictionary Values')\n    bar_axes.set_xlabel('Keys')\n\
+  \    bar_axes.set_ylabel('Values')\n    plt.xticks(rotation=45)\n    plt.tight_layout()\n\
+  \    plt.show()\n    \n    # Return the updated dictionary and the axes object\n\
+  \    return (dictionary, bar_axes)"
+prompt: "Add a new key-value pair to the dictionary and plot the distribution of its\
+  \ values. The function should output with: tuple(updated_dict: dict, bar_axes: matplotlib.axes.Axes)\n\
+  updated_dict: The updated dictionary after adding the new key-value pair.  \nbar_axes:\
+  \ The axes object of the plotted bar graph showing the distribution of the dictionary\
+  \ values.  \nYou should write self-contained code starting with:  \n```\nimport\
+  \ collections\nimport seaborn as sns\nimport matplotlib.pyplot as plt\ndef task_func(dictionary,\
+  \ new_key, new_value):\n```"
+testcase: "import unittest\nimport doctest\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        dictionary = {'a': 'apple', 'b': 'banana'}\n\
+  \        new_key = 'c'\n        new_value = 'cherry'\n        updated_dict, _ =\
+  \ task_func(dictionary, new_key, new_value)\n        self.assertEqual(updated_dict,\
+  \ {'a': 'apple', 'b': 'banana', 'c': 'cherry'})\n\n    def test_case_2(self):\n\
+  \        dictionary = {}\n        new_key = 'd'\n        new_value = 'date'\n  \
+  \      updated_dict, _ = task_func(dictionary, new_key, new_value)\n        self.assertEqual(updated_dict,\
+  \ {'d': 'date'})\n\n    def test_case_3(self):\n        dictionary = {'a': 'apple',\
+  \ 'b': 'apple'}\n        new_key = 'c'\n        new_value = 'apple'\n        updated_dict,\
+  \ _ = task_func(dictionary, new_key, new_value)\n        self.assertEqual(updated_dict,\
+  \ {'a': 'apple', 'b': 'apple', 'c': 'apple'})\n\n    def test_case_4(self):\n  \
+  \      dictionary = {'e': 'eggplant', 'f': 'fig', 'g': 'grape'}\n        new_key\
+  \ = 'h'\n        new_value = 'honeydew'\n        updated_dict, _ = task_func(dictionary,\
+  \ new_key, new_value)\n        self.assertEqual(updated_dict, {'e': 'eggplant',\
+  \ 'f': 'fig', 'g': 'grape', 'h': 'honeydew'})\n\n    def test_case_5(self):\n  \
+  \      dictionary = {'i': 'ice cream'}\n        new_key = 'i'\n        new_value\
+  \ = 'icing'\n        updated_dict, _ = task_func(dictionary, new_key, new_value)\n\
+  \        self.assertEqual(updated_dict, {'i': 'icing'})  # The value should be updated"

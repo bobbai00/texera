@@ -1,0 +1,67 @@
+TMC-list:
+- code: "def mean_value_completeness(output, ground_truth):\n    output_means = output[0].mean().isna().sum()\n\
+    \    ground_truth_means = ground_truth[0].mean().isna().sum()\n    return output_means\
+    \ == ground_truth_means"
+  function: Data Quality Score
+  metric: Mean Value Completeness
+  task_name: Data cleaning and preprocessing
+- code: "def position_mean_accuracy(output, ground_truth):\n    output_means = output[0].mean().values\n\
+    \    ground_truth_means = ground_truth[0].mean().values\n    return np.allclose(output_means,\
+    \ ground_truth_means, equal_nan=True)"
+  function: Data Accuracy
+  metric: Position Mean Accuracy
+  task_name: Data exploration and statistics understand
+- code: "def overall_dataframe_structure(output, ground_truth):\n    return output[0].shape\
+    \ == ground_truth[0].shape"
+  function: Plot Validity
+  metric: Overall DataFrame Structure
+  task_name: Data visualization
+- code: "def nan_ratio(output, ground_truth):\n    output_nan_ratio = output[0].isna().mean().mean()\n\
+    \    ground_truth_nan_ratio = ground_truth[0].isna().mean().mean()\n    return\
+    \ np.isclose(output_nan_ratio, ground_truth_nan_ratio)"
+  function: Result Quality
+  metric: NaN Ratio
+  task_name: Interpretability and report generation
+data: 'custom_data = [(''foo'', 11, 23.5), (''bar'', ''string'', 45.6), (100, 21,
+  ''test''), (None, 30, 5.9), (50, ''text'', 7.1)]
+
+  args = (custom_data,)'
+ground_truth: "import pandas as pd\nimport numpy as np\nimport itertools\n\ndef task_func(data_list=[('a',\
+  \ 1, 2.1), ('b', 2, 3.2), ('c', 3, 4.3), ('d', 4, 5.4), ('e', 5, 6.5)]):\n    if\
+  \ not data_list:\n        return (pd.DataFrame(columns=['Mean Value']),)\n\n   \
+  \ # Transpose the list of tuples to get values at each position\n    transposed_data\
+  \ = list(itertools.zip_longest(*data_list))\n\n    means = []\n\n    for position\
+  \ in transposed_data:\n        # Filter out non-numeric values\n        numeric_values\
+  \ = [x for x in position if isinstance(x, (int, float))]\n        # Calculate mean\
+  \ or NaN if no numeric values\n        mean_value = np.mean(numeric_values) if numeric_values\
+  \ else np.nan\n        means.append(mean_value)\n\n    # Create DataFrame\n    mean_df\
+  \ = pd.DataFrame(means, columns=['Mean Value'], index=[f'Position {i}' for i in\
+  \ range(len(means))])\n\n    return (mean_df,)"
+prompt: 'Calculate the mean of numerical values in each position across tuples in
+  a list. Non-numeric values are ignored, and means are computed only from available
+  data. That means that missing data in some of the tuples is simply ignored. A DataFrame
+  with one column named ''Mean Value'' which contains the mean values for all tuple
+  positions. The index is according to this scheme: ''Position i'' where i is the
+  current position. If an empty list is passed, then an empty DataFrame is returned.
+  >>> data = [(''a'', ''1'', 2.1), (''b'', 21, ''c''), (12, 3, 4.3), ([''d''], 4,
+  5.4), (''e'', 5, 6.5)] >>> df = task_func() >>> print(df) Mean Value Position 0
+  NaN Position 1 3.0 Position 2 4.3 The function should output with: tuple(mean_df:
+  pandas.DataFrame) mean_df: A pandas DataFrame with the mean values of the numerical
+  data at each position. You should write self-contained code starting with: ``` import
+  pandas as pd import numpy as np import itertools def task_func(data_list=[(''a'',
+  1, 2.1), (''b'', 2, 3.2), (''c'', 3, 4.3), (''d'', 4, 5.4), (''e'', 5, 6.5)]): ```'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_default_data(self):\n        df = task_func()\n        self.assertTrue(np.isnan(df.loc['Position\
+  \ 0', 'Mean Value']))\n        self.assertTrue(df.loc['Position 1', 'Mean Value']\
+  \ == 3.0)\n        self.assertTrue(df.loc['Position 2', 'Mean Value'] == 4.3)\n\
+  \        \n    def test_custom_data(self):\n        custom_data = [('x', 10, 20.5),\
+  \ ('y', 20, 40.6), ('z', 30, 60.7)]\n        df = task_func(custom_data)\n     \
+  \   self.assertTrue(df.loc['Position 1', 'Mean Value'] == 20.0)\n        self.assertTrue(df.loc['Position\
+  \ 2', 'Mean Value'] == 40.6)\n\n    def test_incomplete_data(self):\n        incomplete_data\
+  \ = [('a', 1), ('b', 2, 3.2), ('c',), ('d', 4, 5.4), ('e', 5, 6.5)]\n        df\
+  \ = task_func(incomplete_data)\n        self.assertTrue(df.loc['Position 1', 'Mean\
+  \ Value'] == 3.0)\n        self.assertTrue(np.isclose(df.loc['Position 2', 'Mean\
+  \ Value'], 5.0333333)) # corrected expected value\n\n    def test_empty_data(self):\n\
+  \        df = task_func([])\n        self.assertTrue(df.empty)\n\n    def test_non_numeric_data(self):\n\
+  \        non_numeric = [('a', 'x', 'y'), ('b', 'y', 'z'), ('c', 'z', 'x')]\n   \
+  \     df = task_func(non_numeric)\n        self.assertTrue(df.isna().values.all())"

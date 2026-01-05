@@ -1,0 +1,105 @@
+"TMC-list":
+- "code": |-
+    def completeness_filled(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("step1_filled.csv")
+        filled_count = output['CustomerID'].notnull().sum()
+        pre_output = (filled_count / len(output)) * 100
+        gt = pd.read_csv("step1_filled.csv")
+        gt_count = gt['CustomerID'].notnull().sum()
+        gt_pre_output = (gt_count / len(gt)) * 100
+        return bool(pre_output == gt_pre_output)
+  "function": |-
+    Data Completeness
+  "metric": |-
+    Completeness of CustomerID Filling
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: step1_filled.csv
+- "code": |-
+    def percentage_outlier_removal(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("step2_no_outliers.csv")
+        original_count = len(pd.read_csv("step1_filled.csv"))
+        new_count = len(output)
+        pre_output = ((original_count - new_count) / original_count) * 100
+        gt = pd.read_csv("step2_no_outliers.csv")
+        gt_original_count = len(pd.read_csv("step1_filled.csv"))
+        gt_new_count = len(gt)
+        gt_pre_output = ((gt_original_count - gt_new_count) / gt_original_count) * 100
+        return bool(pre_output == gt_pre_output)
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Percentage of Outlier Removal
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: step2_no_outliers.csv
+- "code": |-
+    def check_normalization(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("step3_normalized.csv")
+        min_value = output['Amount'].min()
+        max_value = output['Amount'].max()
+        gt = pd.read_csv("step3_normalized.csv")
+        gt_min_value = gt['Amount'].min()
+        gt_max_value = gt['Amount'].max()
+        return bool(min_value == gt_min_value and max_value == gt_max_value) # Expecting min to be 0 and max to be 1
+  "function": |-
+    Normalization Range Check
+  "metric": |-
+    Min-Max Normalization Check
+  "task_name": |-
+    Data cleaning and preprocessing
+- "code": |-
+    def verify_datetime_format(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("step4_datetime.csv")
+        try:
+            pd.to_datetime(output['TransactionDate'])
+            return True
+        except Exception:
+            return False
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    TransactionDate Format Verification
+  "task_name": |-
+    Data cleaning and preprocessing
+- "code": |-
+    def one_hot_encoding_completeness(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("final_output.csv")
+        category_columns = set(output.columns) - {'CustomerID', 'TransactionDate', 'Amount'}  # define the expected category columns based on ground truth
+        return bool(len(category_columns) > 0)
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    One-hot Encoding Completeness
+  "task_name": |-
+    Data cleaning and preprocessing
+"prompt": |-
+
+  Given a DataFrame with customer transaction data (columns: CustomerID, TransactionDate, Amount, Category), perform the following tasks:
+
+  1. **Handle missing CustomerID values**: Forward-fill any missing CustomerID values with the last valid CustomerID.  
+     **Input**: `data.csv`  
+     **Output**: `step1_filled.csv` (The DataFrame with filled CustomerID values)
+
+  2. **Remove outliers**: Identify and remove any rows where the Amount is an outlier, defined as values below the 1st percentile or above the 99th percentile of the Amount column.  
+     **Input**: `step1_filled.csv`  
+     **Output**: `step2_no_outliers.csv` (The DataFrame without outlier rows)
+
+  3. **Normalize Amount**: Normalize the Amount column using Min-Max scaling.  
+     **Input**: `step2_no_outliers.csv`  
+     **Output**: `step3_normalized.csv` (The DataFrame with normalized Amount)
+
+  4. **Format TransactionDate**: Ensure the TransactionDate column is in datetime format.  
+     **Input**: `step3_normalized.csv`  
+     **Output**: `step4_datetime.csv` (The DataFrame with TransactionDate in datetime format)
+
+  5. **One-hot encode Category**: One-hot encode the Category column.  
+     **Input**: `step4_datetime.csv`  
+     **Output**: `final_output.csv` (The final DataFrame with one-hot encoded Category)
+
+  Implement the required data cleaning and preprocessing steps as specified, and provide the outputs for each subtask as listed above.

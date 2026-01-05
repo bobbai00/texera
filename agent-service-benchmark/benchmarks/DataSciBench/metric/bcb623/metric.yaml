@@ -1,0 +1,54 @@
+TMC-list:
+- code: "def data_type_consistency(output, ground_truth):\n    output_flat = output[1]\
+    \  # extract the labels array from tuple\n    ground_truth_flat = ground_truth[1]\n\
+    \    return (output_flat.dtype == ground_truth_flat.dtype) and (len(output_flat)\
+    \ == len(ground_truth_flat))"
+  function: Data Quality Score
+  metric: Data Type Consistency
+  task_name: Data cleaning and preprocessing
+- code: "def cluster_label_homogeneity(output, ground_truth):\n    output_labels =\
+    \ output[1]  # extract the labels array from tuple\n    ground_truth_labels =\
+    \ ground_truth[1]\n    return np.all(np.unique(output_labels) == np.unique(ground_truth_labels))"
+  function: Clustering Validity
+  metric: Cluster Label Homogeneity
+  task_name: Predictive modeling
+- code: "def plot_accuracy(output, ground_truth):\n    output_plot = output[0]  #\
+    \ extract the plot from tuple\n    ground_truth_plot = ground_truth[0]\n    return\
+    \ output_plot.get_title() == ground_truth_plot.get_title() and \\\n          \
+    \ output_plot.collections[0].get_edgecolor() == ground_truth_plot.collections[0].get_edgecolor()"
+  function: Plot Validity
+  metric: Plot Accuracy
+  task_name: Data visualization
+data: 'L=[[12, 22, 32], [45, 55, 65], [150, 160, 170], [200, 210, 220], [80, 90, 100],
+  [300, 310, 320, 330]]
+
+  args =(L,)'
+ground_truth: "from itertools import chain\nimport numpy as np\nfrom sklearn.cluster\
+  \ import KMeans\nimport matplotlib.pyplot as plt\n\ndef task_func(L):\n    # Convert\
+  \ list of lists into a list of integers\n    data = np.array(list(chain.from_iterable(L)))\n\
+  \    \n    # Reshape data for KMeans\n    data = data.reshape(-1, 1)\n    \n   \
+  \ # Apply KMeans clustering\n    kmeans = KMeans(n_clusters=3)  # Adjust number\
+  \ of clusters as needed\n    kmeans.fit(data)\n    \n    # Get cluster labels\n\
+  \    labels = kmeans.labels_\n    \n    # Create scatter plot\n    fig, ax = plt.subplots()\n\
+  \    scatter = ax.scatter(range(len(data)), data, c=labels, cmap='viridis')\n  \
+  \  \n    # Add color bar\n    plt.colorbar(scatter)\n    \n    # Labels and title\n\
+  \    ax.set_title('KMeans Clustering')\n    ax.set_xlabel('Data Points Index')\n\
+  \    ax.set_ylabel('Data Points Value')\n    \n    # Return the axes object and\
+  \ the labels\n    return ax, labels"
+prompt: "Convert a list of lists into a list of integers, apply the KMeans clustering,\
+  \ and return a scatter plot 'matplotlib.axes.Axes' with data points color-coded\
+  \ by their cluster. The function should output with: tuple(cluster_plot: matplotlib.axes.Axes,\
+  \ labels: np.ndarray)\ncluster_plot: An Axes object representing the scatter plot.\
+  \  \nlabels: An array of cluster labels assigned to each data point.  \nYou should\
+  \ write self-contained code starting with:  \n```\nfrom itertools import chain\n\
+  import numpy as np\nfrom sklearn.cluster import KMeans\ndef task_func(L):\n```"
+testcase: "import unittest\nimport matplotlib.pyplot as plt\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        ax, _ = task_func([[1, 2, 3], [50, 60, 70],\
+  \ [100, 110, 120]])\n        self.assertIsInstance(ax, plt.Axes)\n\n    def test_case_2(self):\n\
+  \        ax, _ = task_func([[1, 5], [2, 6], [3, 7]])\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n\n    def test_case_3(self):\n        ax, _ = task_func([[10, 20, 30,\
+  \ 40], [15, 25, 35, 45]])\n        self.assertIsInstance(ax, plt.Axes)\n\n    def\
+  \ test_case_4(self):\n        ax, _ = task_func([[1000, 2000], [3000, 4000], [5000,\
+  \ 6000]])\n        self.assertIsInstance(ax, plt.Axes)\n\n    def test_case_5(self):\n\
+  \        ax, _ = task_func([[-1, -2, -3], [-50, -60, -70], [-100, -110, -120]])\n\
+  \        self.assertIsInstance(ax, plt.Axes)"

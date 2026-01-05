@@ -1,0 +1,122 @@
+TMC-list:
+- code: "def missing_values_percentage(output, ground_truth):\n    output = output[0]\
+    \  # Extract the first element of the output\n    ground_truth = ground_truth[0]\
+    \  # Extract the first element of the ground truth\n    \n    total_keys = len(ground_truth)\n\
+    \    missing_score_sum = 0\n    \n    for key in ground_truth.keys():\n      \
+    \  # Calculate percentage of missing values for each key\n        if key not in\
+    \ output:\n            missing_score_sum += 1  # If key not found, add 1 to the\
+    \ sum\n        else:\n            ground_truth_values = ground_truth[key]\n  \
+    \          if len(ground_truth_values) == 0:\n                continue  # Skip\
+    \ if no values present in ground truth\n            else:\n                output_values\
+    \ = output.get(key, {}).values()  # Get values for the key from output\n     \
+    \           num_missing = len(ground_truth_values) - len(output_values)\n    \
+    \            missing_percentage = (num_missing / len(ground_truth_values))\n \
+    \               missing_score_sum += missing_percentage\n    \n    # Calculate\
+    \ the average missing score across all keys\n    average_missing_score = missing_score_sum\
+    \ / total_keys\n    \n    # Invert the score so that 1 is the best case (no missing\
+    \ values)\n    # and 0 is the worst case (all values missing)\n    score = 1 -\
+    \ average_missing_score\n    \n    # Ensure the score is within [0, 1] range\n\
+    \    score = max(0, min(score, 1))\n    \n    return score\n"
+  function: Data Integrity
+  metric: Missing Values Percentage
+  task_name: Data cleaning and preprocessing
+- code: "def mean_median_correctness(output, ground_truth):\n    output_results =\
+    \ output[0]  # extract the results dictionary from tuple\n    ground_truth_results\
+    \ = ground_truth[0]  # extract the ground truth results dictionary\n    correctness_count\
+    \ = 0\n    \n    for key in output_results.keys():\n        if (output_results[key]['mean']\
+    \ == ground_truth_results[key]['mean']) and \\\n           (output_results[key]['median']\
+    \ == ground_truth_results[key]['median']):\n            correctness_count += 1\n\
+    \            \n    return correctness_count / len(ground_truth_results)"
+  function: Data Accuracy
+  metric: Mean and Median Correctness
+  task_name: Data exploration and statistics understand
+- code: "def box_plot_validity(output, ground_truth):\n    import pandas as pd\n \
+    \   output_ax = output[1]  # extract Axes object from tuple\n    ground_truth_data\
+    \ = pd.DataFrame(list(ground_truth[0].values()))  # expected DataFrame structure\n\
+    \    # Assuming the box plot representation in output_ax should match the ground\
+    \ truth's data distribution\n    return output_ax.patches[0].get_aa() == ground_truth_data.median(axis=0).mean()\
+    \  # check box plot validity\n"
+  function: Plot Validity
+  metric: Box Plot Validity
+  task_name: Data visualization
+- code: "def result_structure_validity(output, ground_truth):\n    output_results\
+    \ = output[0]  # extract results from output tuple\n    expected_keys = set(ground_truth[0].keys())\
+    \  # get keys from ground truth results\n    \n    output_keys = set(output_results.keys())\
+    \  # the keys from the actual output\n    return output_keys == expected_keys\
+    \  # check if the keys match"
+  function: Report Quality
+  metric: Result Structure Validity
+  task_name: Interpretability and report generation
+data: "new_sample_data = [\n    {\"X\": 5, \"Y\": 15, \"Z\": 25},\n    {\"X\": 10,\
+  \ \"Y\": 20, \"Z\": 30},\n    {\"X\": 15, \"Y\": 25, \"Z\": 35},\n    {\"X\": 20,\
+  \ \"Y\": 30, \"Z\": 40},\n    {\"X\": 25, \"Y\": 35, \"Z\": 45},\n    {\"X\": 30,\
+  \ \"Y\": 40, \"Z\": 50},\n    {\"X\": 35, \"Y\": 45, \"Z\": 55},\n]\n\nimport json\n\
+  import tempfile\nimport os\n\n# Setup a temporary directory and write new complex\
+  \ JSON data to a temp file\ntemp_dir = tempfile.TemporaryDirectory()\nnew_sample_data_file\
+  \ = os.path.join(temp_dir.name, \"new_sample_data.json\")\nwith open(new_sample_data_file,\
+  \ \"w\") as f:\n    json.dump(new_sample_data, f)\n\nargs = (new_sample_data_file,)"
+ground_truth: "import json\nimport seaborn as sns\nimport matplotlib.pyplot as plt\n\
+  import pandas as pd\nimport numpy as np\nfrom collections import defaultdict\n\n\
+  def task_func(input_file: str) -> tuple:\n    # Read JSON data from file\n    with\
+  \ open(input_file, 'r') as file:\n        data = json.load(file)\n\n    # Calculate\
+  \ mean and median for each key\n    results = defaultdict(dict)\n    for key in\
+  \ data[0].keys():\n        values = [d[key] for d in data if key in d]\n       \
+  \ if values:  # Ensure there are values to calculate\n            results[key]['mean']\
+  \ = np.mean(values)\n            results[key]['median'] = np.median(values)\n\n\
+  \    # Convert to DataFrame for visualization\n    df = pd.DataFrame(data)\n   \
+  \ df_melted = df.melt(var_name='X_', value_name='Y_')\n\n    # Create box plot\n\
+  \    plt.figure(figsize=(10, 6))\n    ax = sns.boxplot(x='X_', y='Y_', data=df_melted)\n\
+  \    ax.set_title('Box Plot of Values for Each Key')\n    ax.set_xlabel('Keys')\n\
+  \    ax.set_ylabel('Values')\n\n    return results, ax"
+prompt: "Read a list of dictionaries from a JSON file, calculate the results (mean\
+  \ and median for each key) via numpy, convert the input data into a pandas DataFrame\
+  \ with the keys as \"X\" and values as \"Y\" for visualization with a seaborn box\
+  \ plot, then return the results and box plot. The function should output with: tuple(results:\
+  \ dict, ax: plt.Axes)\nresults: Dictionary where each key is a unique key from the\
+  \ original input, and each value is a corresponding dict, with keys 'mean' and 'median'\
+  \ and the statistics as values.  \nax: The box plot of aggregated 'Values for Each\
+  \ Key' in the input data.  \nYou should write self-contained code starting with:\
+  \  \n```\nimport json\nimport seaborn as sns\nimport matplotlib.pyplot as plt\n\
+  import pandas as pd\nimport numpy as np\nfrom collections import defaultdict\ndef\
+  \ task_func(input_file: str) -> plt.Axes:\n```"
+testcase: "import unittest\nimport os\nimport tempfile\nimport matplotlib.pyplot as\
+  \ plt\nimport json\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n\
+  \        # Setup a temporary directory and write sample JSON data to a temp file\n\
+  \        self.temp_dir = tempfile.TemporaryDirectory()\n        self.sample_data_file\
+  \ = os.path.join(self.temp_dir.name, \"sample_data.json\")\n        self.sample_data\
+  \ = [\n            {\"A\": 10, \"B\": 20, \"C\": 30},\n            {\"A\": 15, \"\
+  B\": 25, \"C\": 35},\n            {\"A\": 20, \"B\": 30, \"C\": 40},\n        ]\n\
+  \        with open(self.sample_data_file, \"w\") as f:\n            json.dump(self.sample_data,\
+  \ f)\n        # Create an invalid JSON file for testing\n        self.invalid_json_file\
+  \ = os.path.join(self.temp_dir.name, \"invalid.json\")\n        with open(self.invalid_json_file,\
+  \ \"w\") as f:\n            f.write(\"invalid content\")\n\n    def tearDown(self):\n\
+  \        self.temp_dir.cleanup()\n        plt.close(\"all\")\n\n    def test_case_1(self):\n\
+  \        # Test if the function can read the JSON data file and return a plot\n\
+  \        _, ax = task_func(self.sample_data_file)\n        self.assertIsInstance(ax,\
+  \ plt.Axes, \"The function should return a plot (Axes).\")\n        self.assertTrue(len(ax.get_xticks())\
+  \ > 0, \"The plot should have x-axis ticks.\")\n        self.assertTrue(len(ax.get_yticks())\
+  \ > 0, \"The plot should have y-axis ticks.\")\n        self.assertTrue(ax.get_title(),\
+  \ \"Boxplot of Values for Each Key\")\n\n    def test_case_2(self):\n        # Check\
+  \ result correctness\n        results, _ = task_func(self.sample_data_file)\n  \
+  \      self.assertIn(\"A\", results)\n        self.assertIn(\"B\", results)\n  \
+  \      self.assertIn(\"C\", results)\n        self.assertEqual(results[\"A\"][\"\
+  mean\"], 15.0)\n        self.assertEqual(results[\"A\"][\"median\"], 15.0)\n   \
+  \     self.assertEqual(results[\"B\"][\"mean\"], 25.0)\n        self.assertEqual(results[\"\
+  B\"][\"median\"], 25.0)\n        self.assertEqual(results[\"C\"][\"mean\"], 35.0)\n\
+  \        self.assertEqual(results[\"C\"][\"median\"], 35.0)\n\n    def test_case_3(self):\n\
+  \        # Test the correctness of the x-axis labels\n        _, ax = task_func(self.sample_data_file)\n\
+  \        x_labels = [label.get_text() for label in ax.get_xticklabels()]\n     \
+  \   expected_x_labels = [\"A\", \"B\", \"C\"]\n        self.assertListEqual(\n \
+  \           x_labels, expected_x_labels, \"The x-axis labels are not as expected.\"\
+  \n        )\n\n    def test_case_4(self):\n        # Test the correctness of the\
+  \ y-axis data points\n        _, ax = task_func(self.sample_data_file)\n       \
+  \ # Correctly extract the height of the boxes in the box plot\n        boxes = [\n\
+  \            box.get_height() for box in ax.containers if hasattr(box, \"get_height\"\
+  )\n        ]\n        self.assertTrue(\n            all(height > 0 for height in\
+  \ boxes),\n            \"Each box plot should have y-data points.\",\n        )\n\
+  \n    def test_case_5(self):\n        # Test if the function raises an error for\
+  \ non-existent file\n        with self.assertRaises(FileNotFoundError):\n      \
+  \      task_func(os.path.join(self.temp_dir.name, \"non_existent.json\"))\n\n  \
+  \  def test_case_6(self):\n        # Test if the function raises an error for invalid\
+  \ JSON format\n        with self.assertRaises(json.JSONDecodeError):\n         \
+  \   task_func(os.path.join(self.temp_dir.name, \"invalid.json\"))"

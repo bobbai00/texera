@@ -1,0 +1,53 @@
+TMC-list:
+- code: "def product_of_sums_validation(output, ground_truth):\n    output_product\
+    \ = output[0]  # extract product_of_sums from tuple\n    ground_truth_product\
+    \ = ground_truth[0]\n    return output_product == ground_truth_product"
+  function: Model Accuracy
+  metric: Product of Sums Validation
+  task_name: Predictive modeling
+- code: "def top_n_sums_comparison(output, ground_truth):\n    output_top_n = output[1]\
+    \  # extract top_n_sums from tuple\n    ground_truth_top_n = ground_truth[1]\n\
+    \    return output_top_n.equals(ground_truth_top_n)"
+  function: Data Consistency
+  metric: Top N Sums Comparison
+  task_name: Data exploration and statistics understand
+data: 'elements = (15, 24, 7, 32, 18, 45, 63, 29, 12, 10, 11, 8, 30, 21)
+
+  subset_size = 5
+
+  top_n = 3
+
+
+  args = (elements, subset_size, top_n)'
+ground_truth: "import itertools\nimport math\nfrom pandas import Series\n\ndef task_func(elements,\
+  \ subset_size, top_n=2):\n    if subset_size > len(elements) or subset_size == 0:\n\
+  \        return (1, Series([]))\n    \n    subsets = list(itertools.combinations(elements,\
+  \ subset_size))\n    subset_sums = [sum(subset) for subset in subsets]\n    \n \
+  \   product_of_sums = math.prod(subset_sums)\n    top_n_sums = Series(sorted(subset_sums,\
+  \ reverse=True)[:top_n])\n    \n    return (product_of_sums, top_n_sums)"
+prompt: "Generate all subsets of a given size from a tuple and calculate the product\
+  \ of the sums of the subsets. Additionally, return the top_n sums of the subsets.\
+  \ If the subset size is larger than the tuple length, return 1. If the subset size\
+  \ is 0, return 1. The function should output with: tuple(product_of_sums: int, top_n_sums:\
+  \ list)\nproduct_of_sums: The product of the sums of the subsets.  \ntop_n_sums:\
+  \ The top_n sums of the subsets as a pandas Series.  \nYou should write self-contained\
+  \ code starting with:  \n```\nimport itertools\nimport math\nfrom pandas import\
+  \ Series\ndef task_func(elements, subset_size, top_n=2):\n```"
+testcase: "import unittest\nimport doctest\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        # Default values\n        result, _ = task_func((1,\
+  \ 2, 3, 4, 5, 6, 7, 8, 9, 10), 2)\n        expected = 2781259372192376861719959017613164544000000000\n\
+  \        self.assertEqual(result, expected)\n\n    def test_case_2(self):\n    \
+  \    # Custom tuple and subset size\n        result, sums = task_func((1, 2, 3),\
+  \ 2)\n        expected = 60\n        self.assertEqual(result, expected)\n      \
+  \  # Test the top sums\n        self.assertEqual(list(sums), [5, 4])\n        #\
+  \ Test the type of the top sums\n        self.assertIsInstance(sums, Series)\n\n\
+  \    def test_case_3(self):\n        # Larger subset size than tuple length\n  \
+  \      result, _ = task_func((1, 2, 3), 5)\n        expected = 1  # No subset of\
+  \ size 5 can be formed, so the product will be 1\n        self.assertEqual(result,\
+  \ expected)\n\n    def test_case_4(self):\n        # Subset size of 0\n        result,\
+  \ sums = task_func((1, 2, 3), 0)\n        expected = 1  # No subset of size 0 can\
+  \ be formed, so the product will be 1\n        self.assertEqual(result, expected)\n\
+  \        self.assertEqual(list(sums), [])\n\n    def test_case_5(self):\n      \
+  \  # Larger tuple\n        result, _ = task_func((1, 2, 3, 4, 5, 6, 7, 8, 9, 10,\
+  \ 11, 12, 13), 4)\n        self.assertIsInstance(result, int)  # Ensure the result\
+  \ is an integer"

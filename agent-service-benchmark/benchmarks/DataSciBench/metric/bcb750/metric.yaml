@@ -1,0 +1,98 @@
+TMC-list:
+- code: "def r_squared(output, ground_truth):\n    model = output[0]  # extract the\
+    \ model from the tuple\n    if model is None:\n        raise ValueError(\"Model\
+    \ is None\")\n\n    gt_model = ground_truth[0]\n    r_squared_value = model.rsquared\
+    \  # Calculate the R-squared value from the model\n    gt_r_squared_value = gt_model.rsquared\n\
+    \    return abs(r_squared_value - gt_r_squared_value) < 0.01"
+  function: R-squared Value
+  metric: R-squared Value
+  task_name: Predictive modeling
+data: 'import pandas as pd
+
+  import numpy as np
+
+
+  # Create a new DataFrame with more complex random values
+
+  df = pd.DataFrame(np.random.randint(20, 100, size=(150, 4)), columns=[''Age'', ''Height'',
+  ''Weight'', ''Extra''])
+
+
+  # Setting height and weight with non-trivial values
+
+  height = 65
+
+  weight = 80
+
+
+  # Specifying the columns for the regression
+
+  columns = [''Age'', ''Height'', ''Weight'']
+
+
+  # Merging all assigned input args into a tuple named "args"
+
+  args = (df, height, weight, columns)'
+ground_truth: "import pandas as pd\nimport statsmodels.api as sm\n\ndef task_func(df:\
+  \ pd.DataFrame, height: int, weight: int, columns: list) -> tuple:\n    if df.empty:\n\
+  \        return None, False\n    \n    filtered_df = df[(df[columns[1]] > height)\
+  \ & (df[columns[2]] < weight)]\n    \n    if filtered_df.empty:\n        return\
+  \ None, False\n    \n    X = filtered_df[columns[1:]]\n    y = filtered_df[columns[0]]\n\
+  \    \n    X = sm.add_constant(X)  # Adds a constant term to the predictor\n   \
+  \ \n    model = sm.OLS(y, X).fit()\n    return model, True"
+prompt: 'Performs an OLS linear regression on a subset of the provided DataFrame.
+  The subset is created by filtering rows where the value in the second column of
+  ''columns'' is greater than ''height'' and the value in the third column is less
+  than ''weight''. The first column in ''columns'' is used as the dependent variable
+  / target (y), and the rest as independent variables (X) in the regression. If df
+  is empty, or if no rows match the conditions None is returned. >>> df = pd.DataFrame(np.random.randint(10,98,size=(100,
+  3)), columns=[''Age'', ''Height'', ''Weight'']) >>> model = task_func(df, 45, 72,
+  columns=[''Age'', ''Height'', ''Weight''])
+
+  The function should output with: tuple(model: sm.regression.linear_model.RegressionResultsWrapper,
+  success: bool)
+
+  model: The result of the OLS regression, or None if no rows meet the criteria or
+  DataFrame is empty.
+
+  success: A boolean indicating whether the regression was successfully performed.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import statsmodels.api as sm
+
+  def task_func(df: pd.DataFrame, height: int, weight: int, columns: list) -> tuple:
+
+  ```'
+testcase: "import unittest\nimport numpy as np\nimport pandas as pd\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        np.random.seed(42)  # Set a seed for reproducibility\n\
+  \n    def test_case_1(self):\n        # Test with a DataFrame of random values\n\
+  \        df = pd.DataFrame(np.random.randint(0, 100, size=(100, 3)), columns=['Age',\
+  \ 'Height', 'Weight'])\n        results, _ = task_func(df, 50, 70, columns=['Age',\
+  \ 'Height', 'Weight'])\n        self.assertIsInstance(results, sm.regression.linear_model.RegressionResultsWrapper)\n\
+  \        self.assertEqual(results.params.index.to_list(), ['const', 'Height', 'Weight'])\
+  \  # There should be 3 parameters: const, Height, Weight\n\n    def test_case_2(self):\n\
+  \        # Test with a DataFrame where no rows match the condition\n        df =\
+  \ pd.DataFrame(np.random.randint(30, 40, size=(100, 3)), columns=['Age', 'Height',\
+  \ 'Weight'])\n        results, _ = task_func(df, 50, 70, columns=['Age', 'Height',\
+  \ 'Weight'])\n        self.assertIsNone(results)  # There should be no regression\
+  \ result since no rows match the condition\n\n    def test_case_3(self):\n     \
+  \   # Test with a DataFrame where all rows match the condition\n        df = pd.DataFrame(np.random.randint(60,\
+  \ 80, size=(100, 3)), columns=['Age', 'Height', 'Weight'])\n        results, _ =\
+  \ task_func(df, 50, 70, columns=['Age', 'Height', 'Weight'])\n        self.assertIsInstance(results,\
+  \ sm.regression.linear_model.RegressionResultsWrapper)\n        self.assertEqual(results.params.index.to_list(),\
+  \ ['const', 'Height', 'Weight'])  # There should be 3 parameters: const, Height,\
+  \ Weight\n\n    def test_case_4(self):\n        # Test with a DataFrame with different\
+  \ column names\n        df = pd.DataFrame(np.random.randint(0, 100, size=(100, 3)),\
+  \ columns=['Years', 'Size', 'Mass'])\n        results, _ = task_func(df, 50, 70,\
+  \ columns=['Years', 'Size', 'Mass'])\n        self.assertIsInstance(results, sm.regression.linear_model.RegressionResultsWrapper)\n\
+  \        self.assertEqual(results.params.index.to_list(), ['const', 'Size', 'Mass'])\
+  \  # There should be 3 parameters: const, Size, Mass\n\n    def test_case_5(self):\n\
+  \        # Test with an empty DataFrame\n        df = pd.DataFrame(columns=['Age',\
+  \ 'Height', 'Weight'])\n        results, _ = task_func(df, 50, 70, columns=['Age',\
+  \ 'Height', 'Weight'])\n        self.assertIsNone(results)  # There should be no\
+  \ regression result since DataFrame is empty"

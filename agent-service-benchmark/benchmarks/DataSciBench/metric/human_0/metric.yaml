@@ -1,0 +1,81 @@
+"TMC-list":
+- "code": |-
+    def summary_statistics_comparison(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("most_corr_output.csv")
+        # Assuming ground_truth is a dataframe with expected summary statistics
+        stats_output = output.describe()  # Compute summary statistics of the output
+        return stats_output.equals(pd.read_csv(ground_truth).describe())
+  "function": |-
+    Data Consistency
+  "ground_truth": |-
+    most_corr_output.csv
+  "metric": |-
+    Summary Statistics Comparison
+  "task_name": |-
+    Data exploration and statistics understand
+- "code": |-
+    def model_accuracy(ground_truth):
+        from sklearn.metrics import accuracy_score
+        import pandas as pd
+        output = pd.read_csv("most_corr_output.csv")
+        # Assuming ground_truth contains the expected values of the most correlated tickers
+        predictions = output[['Ticker 1', 'Ticker 2']].values.flatten()
+        ground_truth = pd.read_csv(ground_truth)[['Ticker 1', 'Ticker 2']].values.flatten()
+        return all(predictions == ground_truth)
+  "function": |-
+    Model Accuracy
+  "ground_truth": |-
+    most_corr_output.csv
+  "metric": |-
+    Model Accuracy
+  "task_name": |-
+    Predictive modeling
+"prompt": |-
+  You are given a list of tickers and their daily closing prices for a given period stored in an input file named "data.csv". Implement the most_corr function that, when given the daily closing prices, returns the pair of tickers that are the most highly (linearly) correlated by daily percentage change. The function should follow these specifications:
+
+  1. **Input File**: "data.csv" - A CSV file containing a dataframe with columns representing each ticker's daily closing prices.
+     
+   2. **Output Requirements**: The function should generate the following output:
+     - **Output Format**: A CSV file.
+     - **Output Filename**: "most_corr_output.csv" - This file should contain two columns labeled "Ticker 1" and "Ticker 2", representing the pair of tickers that are most correlated by daily percentage change.
+
+  Here's the starter code for your implementation:
+
+  ```python
+  import pandas as pd
+  import numpy as np
+
+  def most_corr(prices):
+      """
+      :param prices: (pandas.DataFrame) A dataframe containing each ticker's 
+                     daily closing prices.
+      :returns: (container of strings) A container, containing the two tickers that 
+                are the most highly (linearly) correlated by daily percentage change.
+      """
+      return None
+
+  # For example, the code below should print: ('FB', 'MSFT')
+  print(most_corr(pd.DataFrame.from_dict({
+      'GOOG' : [
+          742.66, 738.40, 738.22, 741.16,
+          739.98, 747.28, 746.22, 741.80,
+          745.33, 741.29, 742.83, 750.50
+      ],
+      'FB' : [
+          108.40, 107.92, 109.64, 112.22,
+          109.57, 113.82, 114.03, 112.24,
+          114.68, 112.92, 113.28, 115.40
+      ],
+      'MSFT' : [
+          55.40, 54.63, 54.98, 55.88,
+          54.12, 59.16, 58.14, 55.97,
+          61.20, 57.14, 56.62, 59.25
+      ],
+      'AAPL' : [
+          106.00, 104.66, 104.87, 105.69,
+          104.22, 110.16, 109.84, 108.86,
+          110.14, 107.66, 108.08, 109.90
+      ]
+  }))) 
+  ```

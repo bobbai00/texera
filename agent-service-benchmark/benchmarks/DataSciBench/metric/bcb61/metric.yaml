@@ -1,0 +1,106 @@
+TMC-list:
+- code: "def rounding_accuracy(output, ground_truth):\n    output_values = output[0]\
+    \  # extract the rounded square root values from the output tuple\n    ground_truth_values\
+    \ = ground_truth[0]  # extract the ground truth rounded values from the ground\
+    \ truth tuple\n    return np.allclose(output_values, ground_truth_values, rtol=1e-2)\
+    \  # check if rounded values are close within tolerance"
+  function: Plot Validity
+  metric: Rounding Accuracy
+  task_name: Data visualization
+- code: "def plot_annotation_check(output, ground_truth):\n    plot_ax = output[1]\
+    \  # extract the plot axis from the output tuple\n    ground_truth_ax = ground_truth[1]\
+    \  # extract the ground truth plot axis from the ground truth tuple\n    # Check\
+    \ if the title and x/y labels match with the expected values\n    assert plot_ax.get_title()\
+    \ == PLOT_TITLE, \"Plot title does not match\"\n    assert plot_ax.get_xlabel()\
+    \ == X_LABEL, \"X label does not match\"\n    assert plot_ax.get_ylabel() == Y_LABEL,\
+    \ \"Y label does not match\"\n    # Check if the current date and time is annotated\
+    \ (simplified check)\n    return len(plot_ax.texts) > 0  # return True if there's\
+    \ any text in the plot (indicating an annotation)"
+  function: Data Validity
+  metric: Plot Annotation Check
+  task_name: Data exploration and statistics understand
+data: "args = (\n    [\n        {\"id\": 101, \"from_user\": 256, \"extra_info\":\
+  \ \"sample1\"},\n        {\"id\": 102, \"from_user\": 441, \"comments\": \"sample2\"\
+  },\n        {\"id\": 103, \"from_user\": 625, \"metadata\": {\"source\": \"user_input\"\
+  }},\n        {\"from_user\": 2.25, \"user_data\": [1, 2, 3]},\n        {\"from_user\"\
+  : 10000, \"deprecated_key\": None}\n    ],\n)"
+ground_truth: "import numpy as np\nimport matplotlib.pyplot as plt\nfrom datetime\
+  \ import datetime\n\n# Constants\nPLOT_TITLE = 'Square root plot'\nX_LABEL = 'x'\n\
+  Y_LABEL = 'sqrt(x)'\nTIME_FORMAT = '%Y-%m-%d %H:%M:%S'\n\ndef task_func(result):\n\
+  \    # Extract values associated with the key 'from_user'\n    x_values = [d['from_user']\
+  \ for d in result if 'from_user' in d]\n    \n    # Calculate square root values\
+  \ and round to 2 decimals\n    sqrt_values = np.round(np.sqrt(x_values), 2)\n  \
+  \  \n    # Plotting\n    fig, ax = plt.subplots()\n    ax.plot(x_values, sqrt_values,\
+  \ marker='o')\n    ax.set_title(PLOT_TITLE)\n    ax.set_xlabel(X_LABEL)\n    ax.set_ylabel(Y_LABEL)\n\
+  \    \n    # Annotate with current date and time\n    current_time = datetime.now().strftime(TIME_FORMAT)\n\
+  \    ax.annotate(current_time, xy=(0.5, 0.95), xycoords='axes fraction', ha='center',\
+  \ fontsize=10, color='gray')\n    \n    plt.grid()\n    plt.show()\n    \n    return\
+  \ sqrt_values, ax"
+prompt: 'Plots the square root function for values associated with the key ''from_user''
+  from the input list of dictionaries. Annotates the graph with the current date and
+  time. - Round each square root value to 2 decimals. Constants: - PLOT_TITLE: Title
+  of the plot (default is ''Square root plot''). - X_LABEL: Label for the x-axis (default
+  is ''x''). - Y_LABEL: Label for the y-axis (default is ''sqrt(x)''). - TIME_FORMAT:
+  Format for displaying the current date and time (default is ''%Y-%m-%d %H:%M:%S'').
+
+  The function should output with: tuple(sqrt_values: numpy.ndarray, plot_ax: matplotlib.axes.Axes)
+
+  sqrt_values: List of square root values associated with the key ''from_user'' from
+  the input list of dictionaries, rounded to 2 decimals.
+
+  plot_ax: Plot of square root values, including annotations of the current date and
+  time.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import numpy as np
+
+  import matplotlib.pyplot as plt
+
+  from datetime import datetime
+
+  # Constants
+
+  PLOT_TITLE = ''Square root plot''
+
+  X_LABEL = ''x''
+
+  Y_LABEL = ''sqrt(x)''
+
+  TIME_FORMAT = ''%Y-%m-%d %H:%M:%S''
+
+  def task_func(result):
+
+  ```'
+testcase: "import unittest\nimport matplotlib\nimport numpy as np\nfrom datetime import\
+  \ datetime\n\nclass TestCases(unittest.TestCase):\n    \"\"\"Test cases for the\
+  \ task_func function.\"\"\"\n\n    def test_case_1(self):\n        # Input 1: Normal\
+  \ case with 2 dictionaries with 'from_user' keys.\n        data = [\n          \
+  \  {\"key_1\": 7, \"key_2\": 4, \"from_user\": 16},\n            {\"key_1\": 2,\
+  \ \"key_2\": 4, \"from_user\": 9},\n        ]\n        square_roots, ax = task_func(data)\n\
+  \        self.assertEqual(ax.get_title(), PLOT_TITLE)\n        self.assertEqual(ax.get_xlabel(),\
+  \ X_LABEL)\n        self.assertEqual(ax.get_ylabel(), Y_LABEL)\n        np.testing.assert_array_equal(square_roots,\
+  \ np.array([4.0, 3.0]))\n        annotations = [child for child in ax.get_children()\
+  \ if isinstance(child, matplotlib.text.Annotation)]\n        try:\n            datetime.strptime(annotations[0].get_text(),\
+  \ TIME_FORMAT)\n        except:\n            raise ValueError(f\"The datetime in\
+  \ annotation ({annotations[0]}) does not have the right format ({TIME_FORMAT}).\"\
+  )\n\n    def test_case_2(self):\n        # Input 2: List with 1 dictionary without\
+  \ the 'from_user' key.\n        data = [\n            {\n                \"key_1\"\
+  : 7,\n                \"key_2\": 4\n            }\n        ]\n        square_roots,\
+  \ ax = task_func(data)\n        self.assertEqual(len(square_roots), 0)\n\n    def\
+  \ test_case_3(self):\n        # Input 3: Empty list.\n        data = []\n      \
+  \  square_roots, ax = task_func(data)\n        self.assertEqual(len(square_roots),\
+  \ 0)\n\n    def test_case_4(self):\n        # Input 4: Normal case with 5 dictionaries\
+  \ with 'from_user' keys.\n        data = [\n            {\n                \"from_user\"\
+  : 121,\n                \"unused_key\": 45,\n            },\n            {\n   \
+  \             \"from_user\": 169,\n                \"unused_key\": -1,\n       \
+  \     },\n            {\n                \"from_user\": 225,\n            },\n \
+  \           {\n                \"from_user\": 9,\n            },\n            {\n\
+  \                \"from_user\": 49,\n            },\n        ]\n        square_roots,\
+  \ ax = task_func(data)\n        np.testing.assert_array_equal(square_roots, np.array([11.0,\
+  \ 13.0, 15.0, 3.0, 7.0]))\n\n    def test_case_5(self):\n        # Input 5: List\
+  \ with 1 dictionary with the 'from_user' key.\n        data = [{\"from_user\": 7,\
+  \ \"bye\": 4}]\n        square_roots, ax = task_func(data)\n        np.testing.assert_array_equal(square_roots,\
+  \ np.array([2.65]))"

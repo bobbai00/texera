@@ -1,0 +1,112 @@
+TMC-list:
+- code: "def data_integrity(output, ground_truth):\n    output_shape = output[1].shape[0]\
+    \  # number of rows in importances (features)\n    ground_truth_shape = ground_truth[1].shape[0]\
+    \  # expected number of rows in original dataset\n    return min(1,output_shape\
+    \ / ground_truth_shape)"
+  function: Data Quality Score
+  metric: Data Integrity (Proportion of rows dropped)
+  task_name: Data cleaning and preprocessing
+- code: "def model_accuracy(output, ground_truth):\n    import numpy as np\n    #\
+    \ Assume ground_truth contains true feature importance for validation\n    output_importances\
+    \ = output[1]  # extract the importances from tuple\n    ground_truth_importances\
+    \ = ground_truth[1]\n    correlation = np.corrcoef(output_importances, ground_truth_importances)[0,\
+    \ 1]  # Correlation coefficient\n    return max(0, min(1, (correlation + 1) /\
+    \ 2))\n"
+  function: Model Accuracy
+  metric: Model Accuracy
+  task_name: Predictive modeling
+- code: "def visualization_validity(output, ground_truth):\n    ax = output[0]  #\
+    \ extract the Axes object from tuple\n    import matplotlib.pyplot as plt\n  \
+    \  return isinstance(ax, plt.Axes)  # Check if ax is a valid Axes instance"
+  function: Visualization Completeness
+  metric: Visualization Validity (Check for plot existence)
+  task_name: Data visualization
+data: "import os.path\nimport pandas as pd\n\n\ndef create_dummy_file(file_path):\n\
+  \    df = pd.DataFrame({\n        'Index': [1, 2, 3, 4, 5],\n        'Score1': [10,\
+  \ 20, 15, 25, 30],\n        'Score2': [5, 3, 4, 2, 1],\n        'Score3': [7, 8,\
+  \ 6, 5, 10]\n    })\n    df.to_csv(file_path, index=False)\n\n\nif not os.path.exists('data/task_func'):\n\
+  \    os.makedirs('data/task_func')\nfile_path = 'data/task_func/arena.csv'\ncreate_dummy_file(file_path)\n\
+  target_column = 'Index'\nseed = 123  # Different seed for variability\nargs = (file_path,\
+  \ target_column, seed)"
+ground_truth: "import pandas as pd\nfrom sklearn.ensemble import RandomForestClassifier\n\
+  import seaborn as sns\nimport matplotlib.pyplot as plt\nimport os\nimport numpy\
+  \ as np\n\ndef task_func(file_path='arena.csv', target_column='Index', seed=42):\n\
+  \    if not os.path.isfile(file_path):\n        raise FileNotFoundError(f\"The file\
+  \ at {file_path} does not exist.\")\n    \n    df = pd.read_csv(file_path)\n   \
+  \ \n    if target_column not in df.columns:\n        raise ValueError(f\"The target\
+  \ column '{target_column}' is not found in the CSV file.\")\n    \n    df = df.dropna()\n\
+  \    \n    if df.isin([float('inf'), -float('inf')]).any().any():\n        raise\
+  \ ValueError(\"The input data contains infinity values.\")\n    \n    if (df.select_dtypes(include=['float64',\
+  \ 'int64']) > np.finfo(np.float32).max).any().any():\n        raise ValueError(\"\
+  A value too large for dtype('float32') is present in the input data.\")\n    \n\
+  \    X = df.drop(columns=[target_column])\n    y = df[target_column]\n    \n   \
+  \ model = RandomForestClassifier(random_state=seed)\n    model.fit(X, y)\n    \n\
+  \    importances = model.feature_importances_\n    \n    plt.figure(figsize=(10,\
+  \ 6))\n    sns.barplot(x=importances, y=X.columns)\n    plt.title('Feature Importances')\n\
+  \    plt.xlabel('Importance')\n    plt.ylabel('Features')\n    plt.show()\n    \n\
+  \    ax = plt.gca()\n    \n    return ax, importances"
+prompt: 'Trains a random forest model on data from a CSV file, using one column as
+  the target variable (y) and the rest as features (X), and visualizes the feature
+  importances in a bar plot. This function also handles missing values by dropping
+  rows with any NaN values. >>> file_path = ''arena.csv'' >>> create_dummy_file(file_path)
+  >>> ax, importances = task_func(file_path, ''Index'') # This will train a random
+  forest model predicting ''Index'' from ''Score1'', ''Score2'', and ''Score3'', then
+  plot and return the importances of ''Score1'', ''Score2'', and ''Score3'' as features
+  (X). >>> os.remove(file_path) The function should raise the exception for: FileNotFoundError:
+  Raised if the specified file_path does not lead to a valid file. ValueError: Raised
+  if the specified target_column is not found in the CSV file''s columns, or if the
+  input data contains NaN, infinity or a value too large for dtype(''float32''). The
+  function should output with: tuple(ax: matplotlib.axes.Axes, importances: numpy.ndarray)
+  ax: Axes object displaying the bar plot of feature importances. importances: Array
+  containing the feature importances derived from the random forest model. You should
+  write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  from sklearn.ensemble import RandomForestClassifier
+
+  import seaborn as sns
+
+  import matplotlib.pyplot as plt
+
+  import os
+
+  def task_func(file_path=''arena.csv'', target_column=''Index'', seed=42):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport os\nimport numpy as np\nfrom\
+  \ numpy.testing import assert_array_almost_equal\n\ndef create_dummy_file(file_path):\n\
+  \    data = {\n        'Index': [1, 2, 3],\n        'Score1': [10, 15, 20],\n  \
+  \      'Score2': [20, 25, 30],\n        'Score3': [30, 35, 40]\n    }\n    df =\
+  \ pd.DataFrame(data)\n    df.to_csv(file_path, index=False)\n\nclass TestCases(unittest.TestCase):\
+  \ \n    def setUp(self):\n        # Create a dummy CSV for testing\n        data\
+  \ = {\n            'Index': [1, 2, 3],\n            'Score1': [10, 15, 20],\n  \
+  \          'Score2': [20, 25, 30],\n            'Score3': [30, 35, 40]\n       \
+  \ }\n        df = pd.DataFrame(data)\n        df.to_csv('dummy_arena.csv', index=False)\n\
+  \        \n        # Create a more complex dummy CSV for advanced testing\n    \
+  \    np.random.seed(42) # For reproducibility\n        complex_data = {\n      \
+  \      'Index': np.arange(1, 11),\n            'Feature1': np.random.randint(-10,\
+  \ 50, 10),\n            'Feature2': np.random.normal(0, 5, 10),\n            'Feature3':\
+  \ np.random.uniform(25, 75, 10),\n            'Feature4': np.random.lognormal(0,\
+  \ 1, 10),\n            'Feature5': np.linspace(10, 100, 10),\n            'Outcome':\
+  \ np.random.choice([0, 1], 10) # Binary outcome for classification\n        }\n\
+  \        complex_df = pd.DataFrame(complex_data)\n        # Introduce some missing\
+  \ values\n        complex_df.loc[4:6, 'Feature2'] = np.nan\n        complex_df.loc[2:3,\
+  \ 'Feature4'] = np.nan\n        complex_df.to_csv('complex_dummy_arena.csv', index=False)\n\
+  \n    def tearDown(self):\n        os.remove('dummy_arena.csv')\n        os.remove('complex_dummy_arena.csv')\n\
+  \n    def test_feature_importances(self):\n        # Test the function for normal\
+  \ functionality\n        ax, importances = task_func('dummy_arena.csv', 'Index')\n\
+  \        self.assertEqual(len(importances), 3) # Expecting 3 features\n        self.assertTrue(np.all(importances\
+  \ >= 0)) # Importances should be non-negative\n        expect = np.array([0.35294118,\
+  \ 0.36470588, 0.28235294])\n        assert_array_almost_equal(importances, expect,\
+  \ decimal=6)\n    \n    def test_file_not_found(self):\n        # Test FileNotFoundError\n\
+  \        with self.assertRaises(FileNotFoundError):\n            task_func('nonexistent.csv',\
+  \ 'Index')\n\n    def test_invalid_target_column(self):\n        # Test ValueError\
+  \ for invalid target column\n        with self.assertRaises(ValueError):\n     \
+  \       task_func('dummy_arena.csv', 'NonexistentColumn')\n    \n    def test_feature_importances1(self):\n\
+  \        # Test the function for normal functionality\n        ax, importances =\
+  \ task_func('complex_dummy_arena.csv', 'Index')\n        print(importances)\n  \
+  \      expect = np.array([0.16335979, 0.22973545, 0.15900794, 0.18597884, 0.19796296,\
+  \ 0.06395503])\n        assert_array_almost_equal(importances, expect, decimal=6)"

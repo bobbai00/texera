@@ -1,0 +1,74 @@
+TMC-list:
+- code: "def explained_variance_ratio(output, ground_truth):\n    # Extract PCA results\n\
+    \    pca_results = output[0]\n    pca_results_gt = ground_truth[0]\n    \n   \
+    \ from sklearn.metrics import mean_squared_error\n    \n    # Calculate MSE between\
+    \ PCA results\n    mse = mean_squared_error(pca_results_gt, pca_results)\n   \
+    \ \n    # Assuming that the maximum possible MSE is 1 (this might need to be adjusted\
+    \ based on the actual data)\n    max_possible_mse = 1.0\n    \n    # Normalize\
+    \ MSE to be in the range [0, 1], where 1 is the best\n    # We subtract the normalized\
+    \ MSE from 1 to invert the scale (lower MSE is better)\n    normalized_mse = 1\
+    \ - (mse / max_possible_mse)\n    \n    # Ensure the result is within [0, 1] range\n\
+    \    normalized_mse = max(0, min(normalized_mse, 1))\n    \n    return normalized_mse\n"
+  function: Explained Variance Ratio
+  metric: Explained Variance Ratio
+  task_name: Predictive modeling
+- code: "def figure_integrity_check(output, ground_truth):\n    output_fig = output[1]\
+    \  # extract the figure from output\n    ground_truth_fig = ground_truth[1]  #\
+    \ extract the figure from ground truth\n    return output_fig.get_axes() == ground_truth_fig.get_axes()\
+    \  # Check if both figures have the same number of axes"
+  function: Visualization Completeness
+  metric: Figure Integrity Check
+  task_name: Data visualization
+data: "import numpy as np\nx_data = [\n    np.array([1.5, 2.5, 3.5, 4.5]),\n    np.array([5.5,\
+  \ 6.5, 7.5, 8.5]),\n    np.array([9.5, 10.5, 11.5, 12.5]),\n    np.array([13.5,\
+  \ 14.5, 15.5, 16.5]),\n    np.array([17.5, 18.5, 19.5, 20.5])\n]\n\ny_data = [\n\
+  \    np.array([21.5, 22.5, 23.5, 24.5]),\n    np.array([25.5, 26.5, 27.5, 28.5]),\n\
+  \    np.array([29.5, 30.5, 31.5, 32.5]),\n    np.array([33.5, 34.5, 35.5, 36.5]),\n\
+  \    np.array([37.5, 38.5, 39.5, 40.5])\n]\n\nlabels = ['N2O', 'CCl4', 'CH3', 'NO2',\
+  \ 'Xe']\n\nargs = (x_data, y_data, labels)"
+ground_truth: "import numpy as np\nimport matplotlib.pyplot as plt\nfrom sklearn.decomposition\
+  \ import PCA\n\ndef task_func(x, y, labels):\n    # Combine x and y into a single\
+  \ dataset\n    data = np.column_stack((x, y))\n    \n    # Perform PCA\n    pca\
+  \ = PCA(n_components=2)\n    pca_results = pca.fit_transform(data)\n\n    # Create\
+  \ a scatter plot of the PCA results\n    fig, ax = plt.subplots()\n    scatter =\
+  \ ax.scatter(pca_results[:, 0], pca_results[:, 1], c=np.arange(len(labels)), cmap='viridis')\n\
+  \    \n    # Label each point\n    for i, label in enumerate(labels):\n        ax.annotate(label,\
+  \ (pca_results[i, 0], pca_results[i, 1]))\n    \n    ax.set_title('PCA Results')\n\
+  \    ax.set_xlabel('Principal Component 1')\n    ax.set_ylabel('Principal Component\
+  \ 2')\n    plt.colorbar(scatter)\n    \n    return (pca_results, fig)"
+prompt: "\"Perform Principal Component Analysis (PCA) on 'x' as x-values and 'y' as\
+  \ y-values and record the results with labels. The function should output with:\
+  \ tuple(pca_results: numpy.ndarray, fig: matplotlib.figure.Figure)\npca_results:\
+  \ The PCA results as a 2D numpy array of transformed data.\nfig: Matplotlib figure\
+  \ object displaying the PCA results with labels. \nYou should write self-contained\
+  \ code starting with:\n```\nimport numpy as np\nimport matplotlib.pyplot as plt\n\
+  from sklearn.decomposition import PCA\ndef task_func(x, y, labels):\n```\""
+testcase: "import unittest\nimport numpy as np\nimport matplotlib.pyplot as plt\n\n\
+  class TestCases(unittest.TestCase):\n    def setUp(self):\n        # Generate sample\
+  \ data for testing\n        self.x_data = [\n            np.array([1, 2, 3, 4]),\n\
+  \            np.array([5, 6, 7, 8]),\n            np.array([9, 10, 11, 12]),\n \
+  \           np.array([13, 14, 15, 16]),\n            np.array([17, 18, 19, 20])\n\
+  \        ]\n\n        self.y_data = [\n            np.array([21, 22, 23, 24]),\n\
+  \            np.array([25, 26, 27, 28]),\n            np.array([29, 30, 31, 32]),\n\
+  \            np.array([33, 34, 35, 36]),\n            np.array([37, 38, 39, 40])\n\
+  \        ]\n\n        self.labels = ['H\uFFFD\uFFFD\uFFFDO', 'O\uFFFD\uFFFD\uFFFD\
+  ', 'CO\uFFFD\uFFFD\uFFFD', 'N\uFFFD\uFFFD\uFFFD', 'Ar']\n\n    def test_case_1(self):\n\
+  \        _, fig = task_func(self.x_data, self.y_data, self.labels)\n        # Check\
+  \ if returned object is a matplotlib figure\n        self.assertIsInstance(fig,\
+  \ plt.Figure)\n\n    def test_case_2(self):\n        # Testing with different data\
+  \ lengths\n        x_data = [np.array([1, 2, 3]), np.array([4, 5, 6]), np.array([7,\
+  \ 8, 9])]\n        y_data = [np.array([10, 11, 12]), np.array([13, 14, 15]), np.array([16,\
+  \ 17, 18])]\n        _, fig = task_func(x_data, y_data, self.labels[:3])\n     \
+  \   self.assertIsInstance(fig, plt.Figure)\n\n    def test_case_3(self):\n     \
+  \   # Testing with data of length 2 (to avoid PCA error)\n        x_data = [np.array([1,\
+  \ 2]), np.array([4, 5]), np.array([7, 8])]\n        y_data = [np.array([10, 11]),\
+  \ np.array([13, 14]), np.array([16, 17])]\n        _, fig = task_func(x_data, y_data,\
+  \ self.labels[:3])\n        self.assertIsInstance(fig, plt.Figure)\n\n    def test_case_4(self):\n\
+  \        # Testing with longer data\n        x_data = [np.array(range(10)), np.array(range(10,\
+  \ 20)), np.array(range(20, 30))]\n        y_data = [np.array(range(30, 40)), np.array(range(40,\
+  \ 50)), np.array(range(50, 60))]\n        _, fig = task_func(x_data, y_data, self.labels[:3])\n\
+  \        self.assertIsInstance(fig, plt.Figure)\n\n    def test_case_5(self):\n\
+  \        # Testing with random data\n        x_data = [np.random.randn(10) for _\
+  \ in range(3)]\n        y_data = [np.random.randn(10) for _ in range(3)]\n     \
+  \   _, fig = task_func(x_data, y_data, self.labels[:3])\n        self.assertIsInstance(fig,\
+  \ plt.Figure)"

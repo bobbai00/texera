@@ -1,0 +1,71 @@
+TMC-list:
+- code: "def dataframe_shape(output, ground_truth):\n    output_df = output[0]  #\
+    \ extract the DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n  \
+    \  return output_df.shape == ground_truth_df.shape"
+  function: DataFrame Shape Validation
+  metric: DataFrame Shape
+  task_name: Data cleaning and preprocessing
+- code: "def histogram_generated(output, ground_truth):\n    histogram_output = output[1]\
+    \  # extract the histogram from tuple\n    if histogram_output is not None:\n\
+    \        return True\n    return False"
+  function: Visualization Completeness
+  metric: Histogram Generated
+  task_name: Data visualization
+data: "data = {\n    \"x\": [0, 1, 2, 3, 4.5, 5.1, None, 7.9, 8, 9, 10],\n    \"y\"\
+  : [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110],\n    \"z\": [5, 5, 5, 5, 5, None,\
+  \ 5, 5, 5, 5, 6],\n    \"w\": [15, 25, 35, 30, None, 45, 55, 65, 75, 85, 95]\n}\n\
+  args = (data,)"
+ground_truth: "import numpy as np\nimport pandas as pd\nimport seaborn as sns\nimport\
+  \ matplotlib.pyplot as plt\n\n# Constants\nPLOT_TITLE = \"Value Distribution\"\n\
+  \ndef task_func(data_dict):\n    # Create DataFrame from the input dictionary, excluding\
+  \ None values\n    df = pd.DataFrame(data_dict).dropna()\n    \n    # Check if the\
+  \ DataFrame is empty\n    if df.empty:\n        return df, None\n    \n    # Get\
+  \ the data values in a flat array\n    values = df.values.flatten()\n    \n    #\
+  \ Check for variability\n    if len(set(values)) <= 1:\n        return df, None\n\
+  \    \n    # Calculate the minimum and maximum values\n    min_value = values.min()\n\
+  \    max_value = values.max()\n    \n    # Calculate number of bins\n    num_bins\
+  \ = max(min(len(values) // 2, 11), 2)\n    \n    # Create the histogram\n    plt.figure(figsize=(10,\
+  \ 6))\n    histogram = sns.histplot(values, bins=num_bins, kde=False)\n    histogram.set_title(PLOT_TITLE)\n\
+  \    plt.xlabel('Values')\n    plt.ylabel('Frequency')\n    \n    plt.show()\n \
+  \   \n    return df, histogram"
+prompt: "Processes a dictionary of numerical data to create a pandas DataFrame, removes\
+  \ None values, and generates a histogram of the data values using seaborn. The histogram's\
+  \ bins are dynamically calculated based on the range of the data. Specifically,\
+  \ the number of bins is set to the minimum of 11 and half the number of data points,\
+  \ with a minimum of 2 bins. If the DataFrame is empty or the data lacks variability\
+  \ (all values are the same after removing None values), the function does not generate\
+  \ a plot. Note that: Calculates the minimum and maximum values in the DataFrame.\
+  \ Dynamically sets the number of bins for the histogram based on the number of data\
+  \ points, with a minimum of 2 and a maximum of 11 bins. Create evenly spaced bin\
+  \ edges between the minimum and maximum values. KDE (Kernel Density Estimate) is\
+  \ turned off. Sets the plot title to the predefined constant `PLOT_TITLE`.\n\nThe\
+  \ function should output with: tuple(df: pandas.DataFrame, histogram: Axes or None)\
+  \  \ndf: A pandas DataFrame created from the input dictionary, excluding None values.\
+  \  \nhistogram: A seaborn histogram plot object if the DataFrame contains variable\
+  \ data; None if the DataFrame is empty or if all values are identical. \n\nYou should\
+  \ write self-contained code starting with:\n```\nimport numpy as np\nimport pandas\
+  \ as pd\nimport seaborn as sns\n# Constants\nPLOT_TITLE = \"Value Distribution\"\
+  \ndef task_func(data_dict):\n```"
+testcase: "import unittest\nimport pandas as pd\n\nclass TestCases(unittest.TestCase):\n\
+  \    \"\"\"Test cases for function task_func.\"\"\"\n\n    def test_dataframe_creation(self):\n\
+  \        \"\"\"\n        Test if the function correctly creates a DataFrame from\
+  \ the input dictionary.\n        \"\"\"\n        data = {\"a\": [1, 2, 3, 4], \"\
+  b\": [5, 6, 7, 8]}\n        df, _ = task_func(data)\n        self.assertIsInstance(df,\
+  \ pd.DataFrame)\n        self.assertEqual(df.shape, (4, 2))\n\n    def test_distribution_plot(self):\n\
+  \        \"\"\"\n        Test if the function correctly creates a distribution plot\
+  \ with the correct title and non-empty bars.\n        \"\"\"\n        data = {\"\
+  a\": [1, 2, 3, 4], \"b\": [5, 6, 7, 8]}\n        _, plot = task_func(data)\n   \
+  \     self.assertEqual(plot.get_title(), \"Value Distribution\")\n        self.assertTrue(len(plot.patches)\
+  \ > 0)\n\n    def test_empty_dictionary(self):\n        \"\"\"\n        Test if\
+  \ the function correctly handles an empty dictionary, returning an empty DataFrame\
+  \ and no plot.\n        \"\"\"\n        data = {}\n        df, plot = task_func(data)\n\
+  \        self.assertEqual(df.shape, (0, 0))\n        self.assertIsNone(plot)\n\n\
+  \    def test_number_of_bins(self):\n        \"\"\"\n        Test if the function\
+  \ dynamically calculates the number of bins for the plot based on the data.\n  \
+  \      \"\"\"\n        data = {\"a\": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}\n       \
+  \ _, plot = task_func(data)\n        self.assertTrue(len(plot.patches) <= 11)\n\n\
+  \    def test_dataframe_without_none(self):\n        \"\"\"\n        Test if the\
+  \ function correctly removes rows with None values from the DataFrame.\n       \
+  \ \"\"\"\n        data = {\"a\": [1, 2, None, 4], \"b\": [5, None, 7, 8]}\n    \
+  \    df, _ = task_func(data)\n        self.assertEqual(df.shape, (2, 2))\n     \
+  \   self.assertNotIn(None, df.values.flatten())"

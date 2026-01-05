@@ -1,0 +1,86 @@
+TMC-list:
+- code: "def normalization_range_check(output, ground_truth):\n    output_normalized\
+    \ = output[0]  # extract the normalized DataFrame from tuple\n    ground_truth_normalized\
+    \ = ground_truth[0]\n    return (output_normalized.min().min() >= 0 and output_normalized.max().max()\
+    \ <= 1)"
+  function: Normalization Range Check
+  metric: Normalization Range Check
+  task_name: Data cleaning and preprocessing
+- code: "def heatmap_integrity(output, ground_truth):\n    output_heatmap = output[1]\
+    \  # extract the heatmap plot from tuple\n    # Check if the heatmap plot is an\
+    \ instance of plt.Axes\n    return isinstance(output_heatmap, plt.Axes)"
+  function: Visualization Completeness
+  metric: Heatmap Integrity
+  task_name: Data visualization
+data: "import numpy as np\nimport pandas as pd\n\n# New complex test input data\n\
+  data = pd.DataFrame(\n    np.random.randint(1, 1000, size=(150, 7)),  # 150 rows,\
+  \ 7 features with random integers\n    columns=[\n        \"Height\",      # Feature1\n\
+  \        \"Weight\",      # Feature2\n        \"Age\",         # Feature3\n    \
+  \    \"Salary\",      # Feature4\n        \"Score\",       # Feature5\n        \"\
+  Index\",       # Feature6\n        \"Rating\"       # Feature7\n    ]\n)\n\nargs\
+  \ = (data,)"
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\nimport seaborn\
+  \ as sns\nfrom sklearn.preprocessing import MinMaxScaler\n\ndef task_func(data:\
+  \ pd.DataFrame) -> (pd.DataFrame, plt.Axes):\n    # Normalize the data to a range\
+  \ [0, 1]\n    scaler = MinMaxScaler()\n    normalized_data = pd.DataFrame(scaler.fit_transform(data),\
+  \ columns=data.columns, index=data.index)\n    \n    # Create the heatmap\n    plt.figure(figsize=(10,\
+  \ 8))\n    heatmap_plot = sns.heatmap(normalized_data, cmap=\"YlGnBu\", cbar_kws={'label':\
+  \ 'Normalized Value'})\n    \n    return normalized_data, heatmap_plot"
+prompt: "Normalize the data and visualize it using a heatmap. This function takes\
+  \ a pandas DataFrame, normalizes the data to a range [0, 1], and then visualizes\
+  \ this normalized data using a seaborn heatmap. The heatmap uses the \"YlGnBu\"\
+  \ colormap to represent normalized values and includes a color bar labeled \"Normalized\
+  \ Value\" to indicate the range of data values. It returns both the normalized data\
+  \ and the heatmap plot. The function should output with: tuple(normalized_data:\
+  \ pd.DataFrame, heatmap_plot: plt.Axes)\nnormalized_data: The normalized DataFrame\
+  \ with values scaled to the range [0, 1].  \nheatmap_plot: Axes object containing\
+  \ the heatmap plot of the normalized data.  \nYou should write self-contained code\
+  \ starting with:  \n```\nimport pandas as pd\nimport matplotlib.pyplot as plt\n\
+  import seaborn as sns\nfrom sklearn.preprocessing import MinMaxScaler\ndef task_func(data:\
+  \ pd.DataFrame) -> (pd.DataFrame, plt.Axes):\n```"
+testcase: "import unittest\nimport numpy as np\nimport pandas as pd\nimport matplotlib.pyplot\
+  \ as plt\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n        np.random.seed(0)\n\
+  \        # default columns used for testing, but function is not limited to these\
+  \ options\n        self.expected_columns = [\n            \"Feature1\",\n      \
+  \      \"Feature2\",\n            \"Feature3\",\n            \"Feature4\",\n   \
+  \         \"Feature5\",\n        ]\n\n    def _check_data_structure(self, data,\
+  \ expected_columns):\n        self.assertIsInstance(data, pd.DataFrame)\n      \
+  \  for col in data.columns:\n            self.assertIn(col, expected_columns)\n\n\
+  \    def _check_data_value(self, data):\n        # Check if values in normalized\
+  \ data are between 0 and 1\n        # (allowing a small margin for precision issues)\n\
+  \        self.assertTrue(((data.values >= -1e-10) & (data.values <= 1.00000001)).all())\n\
+  \n    def _check_heatmap(self, ax):\n        # Test visualization\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n        self.assertEqual(len(ax.collections), 1)  # 1 heatmap\n   \
+  \     cbar = ax.collections[0].colorbar\n        self.assertTrue(cbar is not None)\n\
+  \        self.assertTrue(cbar.ax.get_ylabel(), \"Normalized Value\")\n        self.assertEqual(ax.collections[0].cmap.name,\
+  \ \"YlGnBu\")\n\n    def test_case_1(self):\n        # Test with random data\n \
+  \       data = pd.DataFrame(\n            np.random.rand(100, 5),\n            columns=self.expected_columns,\n\
+  \        )\n        normalized_data, ax = task_func(data)\n        self._check_data_structure(normalized_data,\
+  \ self.expected_columns)\n        self._check_data_value(normalized_data)\n    \
+  \    self._check_heatmap(ax)\n\n    def test_case_2(self):\n        # Test with\
+  \ data having all zeros\n        data = pd.DataFrame(\n            np.zeros((100,\
+  \ 5)),\n            columns=self.expected_columns,\n        )\n        normalized_data,\
+  \ ax = task_func(data)\n        self._check_data_structure(normalized_data, self.expected_columns)\n\
+  \        self._check_heatmap(ax)\n        # Check if all values in normalized data\
+  \ are zero\n        self.assertTrue((normalized_data.values == 0).all())\n\n   \
+  \ def test_case_3(self):\n        # Test with data having incremental values\n \
+  \       data = pd.DataFrame(\n            np.arange(500).reshape(100, 5),\n    \
+  \        columns=self.expected_columns,\n        )\n        normalized_data, ax\
+  \ = task_func(data)\n        self._check_data_structure(normalized_data, self.expected_columns)\n\
+  \        self._check_data_value(normalized_data)\n        self._check_heatmap(ax)\n\
+  \n    def test_case_4(self):\n        # Test with data having decremental values\n\
+  \        data = pd.DataFrame(\n            np.arange(500, 0, -1).reshape(100, 5),\n\
+  \            columns=self.expected_columns,\n        )\n        normalized_data,\
+  \ ax = task_func(data)\n        self._check_data_structure(normalized_data, self.expected_columns)\n\
+  \        self._check_data_value(normalized_data)\n        self._check_heatmap(ax)\n\
+  \n    def test_case_5(self):\n        # Test single valid column\n        data =\
+  \ pd.DataFrame(np.random.rand(100, 1), columns=[\"Feature1\"])\n        normalized_data,\
+  \ ax = task_func(data)\n        self._check_data_structure(normalized_data, [\"\
+  Feature1\"])\n        self._check_data_value(normalized_data)\n        self._check_heatmap(ax)\n\
+  \n    def test_case_6(self):\n        # Test should fail when inputs are invalid\
+  \ - string column\n        data = pd.DataFrame(\n            {\"Feature1\": np.random.rand(100),\
+  \ \"Feature2\": [\"string\"] * 100}\n        )\n        with self.assertRaises(ValueError):\n\
+  \            task_func(data)\n\n    def test_case_7(self):\n        # Test should\
+  \ fail when inputs are invalid - empty dataframe\n        data = pd.DataFrame()\n\
+  \        with self.assertRaises(ValueError):\n            task_func(data)\n\n  \
+  \  def tearDown(self):\n        plt.close(\"all\")"

@@ -1,0 +1,43 @@
+"TMC-list":
+- "code": |-
+    def proportion_missing_values(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("missing_values_proportion.csv")
+        gt_output = pd.read_csv(ground_truth)
+        gt_missing_proportion = gt_output['missing_proportion'].sum()
+        first_column = gt_output.iloc[:, 1]
+        if 'missing_proportion' in output.columns:
+            missing_counts = output['missing_proportion'].sum()
+        else:
+            missing_counts = output.isnull().sum()
+
+        return bool(missing_counts == gt_missing_proportion)
+  "function": |-
+    Data Completeness
+  "metric": |-
+    Proportion of Missing Values
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: missing_values_proportion.csv
+- "code": |-
+    def mean_absolute_error_weight_imputation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("updated_data.csv")
+        gt_output = pd.read_csv(ground_truth)
+        actual_weights = gt_output['weight']
+        imputed_weights = output['weight']
+        mae = (abs(actual_weights - imputed_weights)).mean()
+        return bool(mae <= 0.01) 
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Mean Absolute Error for Weight Imputation
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: updated_data.csv
+"prompt": |-
+  Given a dataset with missing values in a file named "data.csv," which records the region, height, weight, age, and salary of 36 individuals, please address the following issues:
+
+  (a) Calculate the proportion of missing values in each column and select the rows with at least two non-missing values in the last three columns. Save your output in a CSV file named "missing_values_proportion.csv."
+
+  (b) Fill in the weight column reasonably by combining the data from the height and region columns. Save this updated dataset in a CSV file named "updated_data.csv."

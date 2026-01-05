@@ -1,0 +1,53 @@
+TMC-list:
+- code: "def flattened_list_length(output, ground_truth):\n    output_length = len(output[1])\
+    \  # extract the flattened list from tuple\n    ground_truth_length = len(ground_truth[1])\
+    \  \n    return output_length == ground_truth_length  # returns True if the lengths\
+    \ match"
+  function: Data Quality Score
+  metric: Flattened List Length
+  task_name: Data cleaning and preprocessing
+- code: "def visualization_object_exists(output, ground_truth):\n    ax_output = output[0]\
+    \  # extract the Axes object from tuple\n    return ax_output is not None  # returns\
+    \ True if the Axes object exists"
+  function: Visualization Completeness
+  metric: Visualization Object Not None
+  task_name: Data visualization
+data: args = ([['Spaghetti', 'Salad'], ['Spaghetti', 'Garlic Bread', 'Salad'], ['Salad',
+  'Water', 'Ice Cream'], ['Pizza', 'Salad', 'Garlic Bread'], ['Burger', 'Fries', 'Coke',
+  'Salad'], ['Coke', 'Fries']],)
+ground_truth: "from collections import Counter\nimport matplotlib.pyplot as plt\n\
+  import pandas as pd\nimport seaborn as sns\n\ndef task_func(list_of_menuitems):\n\
+  \    flattened_items = [item for sublist in list_of_menuitems for item in sublist]\n\
+  \    \n    if not flattened_items:\n        return None, flattened_items\n\n   \
+  \ item_counts = Counter(flattened_items)\n    items_df = pd.DataFrame(item_counts.items(),\
+  \ columns=['Item', 'Frequency'])\n    items_df = items_df.sort_values(by='Frequency',\
+  \ ascending=False)\n\n    plt.figure(figsize=(10, 6))\n    ax = sns.barplot(x='Frequency',\
+  \ y='Item', data=items_df, palette='viridis')\n    plt.title('Menu Item Frequency')\n\
+  \    plt.xlabel('Frequency')\n    plt.ylabel('Menu Item')\n    plt.tight_layout()\n\
+  \n    plt.show()\n    \n    return ax, flattened_items"
+prompt: "Given a nested list of menu items, this function flattens the list and visualizes\
+  \ the frequency of each menu item using a seaborn barplot. The function should output\
+  \ with: tuple(ax: matplotlib.axes.Axes, flattened_items: list)\nax: An Axes object\
+  \ representing the visualization, or None if there are no items to plot.  \nflattened_items:\
+  \ A flattened list of the menu items.  \nYou should write self-contained code starting\
+  \ with:\n```\nfrom collections import Counter\nimport matplotlib.pyplot as plt\n\
+  import pandas as pd\nimport seaborn as sns\ndef task_func(list_of_menuitems):\n\
+  ```"
+testcase: "import unittest\nimport matplotlib\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        # Set up any repeated data here\n        self.menu_items\
+  \ = [['Pizza', 'Burger'], ['Pizza', 'Coke'], ['Pasta', 'Coke']]\n\n    def test_return_type(self):\n\
+  \        \"\"\"Test that the function returns a matplotlib Axes object.\"\"\"\n\
+  \        ax, _ = task_func(self.menu_items)\n        self.assertTrue(isinstance(ax,\
+  \ matplotlib.axes.Axes))\n\n    def test_empty_list(self):\n        \"\"\"Test the\
+  \ function with an empty list, expecting None as there's nothing to plot.\"\"\"\n\
+  \        ax, _ = task_func([])\n        self.assertIsNone(ax)\n\n    def test_single_item_list(self):\n\
+  \        \"\"\"Test the function with a list containing a single menu item.\"\"\"\
+  \n        ax, _ = task_func([['Pizza']])\n        self.assertTrue(isinstance(ax,\
+  \ matplotlib.axes.Axes))\n        # Checks for correct item count can be added if\
+  \ needed\n\n    def test_identical_items_list(self):\n        \"\"\"Test the function\
+  \ with a list where all items are identical.\"\"\"\n        ax, _ = task_func([['Burger'],\
+  \ ['Burger'], ['Burger']])\n        self.assertTrue(isinstance(ax, matplotlib.axes.Axes))\n\
+  \        # Could verify that 'Burger' is the only item and its count is correct\n\
+  \n    def test_multiple_items_same_count(self):\n        \"\"\"Test the function\
+  \ with a list where multiple items have the same count.\"\"\"\n        ax, _ = task_func([['Soda',\
+  \ 'Water'], ['Soda', 'Water']])\n        self.assertTrue(isinstance(ax, matplotlib.axes.Axes))"

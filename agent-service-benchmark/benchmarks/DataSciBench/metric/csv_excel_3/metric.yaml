@@ -1,0 +1,53 @@
+"TMC-list":
+- "code": |-
+    def data_completeness(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output.csv")
+        completeness = output.notnull().sum().sum() / output.size
+        return bool(completeness == 1)
+  "function": |-
+    Data Completeness
+  "metric": |-
+    Data Completeness
+  "task_name": |-
+    Data cleaning and preprocessing
+- "code": |-
+    def descriptive_statistics_accuracy(ground_truth):
+        import pandas as pd
+        gt_output = pd.read_csv(ground_truth)
+        output = pd.read_csv("output.csv")
+        actual_stats = output.describe()
+        expected_stats = gt_output.describe()
+        return bool((actual_stats == expected_stats).all().all())
+  "function": |-
+    Data Accuracy
+  "metric": |-
+    Descriptive Statistics Accuracy
+  "task_name": "Data exploration and statistics understand"
+  ground_truth: "output.csv"
+# - "code": |-
+#     def visualization_clarity(ground_truth):
+#         import pandas as pd
+#         import matplotlib.pyplot as plt
+#         output = pd.read_csv("output.csv")
+#         return len(output) > 0  # Simple metric just checks if visualization was created for clarity.
+#   "function": |-
+#     Visualization Quality
+#   "metric": |-
+#     Visualization Clarity
+#   "task_name": |-
+#     Data visualization
+- "code": |-
+    def report_coherency(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output.csv")
+        report_fields = ['上映年份', '制片地区', '导演', '电影名称', '票房', '评分']
+        return all(field in output.columns for field in report_fields)
+  "function": |-
+    Report Quality
+  "metric": |-
+    Report Coherency
+  "task_name": |-
+    Interpretability and report generation
+"prompt": |-
+  Please write a segment of Python code that uses the `normalize` method in pandas to extract data from a JSON file into a table. The JSON input is as follows:\n\n```json\n{\n  \"data\": [\n    {\n      \"\u4e0a\u6620\u5e74\u4efd\": \"2021\",\n      \"\u5236\u7247\u5730\u533a\": \"\u4e2d\u56fd\",\n      \"\u5bfc\u6f14\": \"\u9648\u51ef\u6b4c *\",\n      \"\u63d0\u4ea4\u4eba\": \"zhchl@fckj\",\n      \"\u7535\u5f71\u540d\u79f0\": \"\u957f\u6d25\u6e56\",\n      \"\u7968\u623f\": \"577524\",\n      \"\u8bc4\u5206\": \"7.6\"\n    },\n    {\n      \"\u4e0a\u6620\u5e74\u4efd\": \"2017\",\n      \"\u5236\u7247\u5730\u533a\": \"\u4e2d\u56fd\",\n      \"\u5bfc\u6f14\": \"\u5434\u4eac\",\n      \"\u63d0\u4ea4\u4eba\": \"zhchl@fckj\",\n      \"\u7535\u5f71\u540d\u79f0\": \"\u6218\u72fc2\",\n      \"\u7968\u623f\": \"569456\",\n      \"\u8bc4\u5206\": \"7.1\"\n    }\n  ]\n}\n```\n\nThe output of the code should be a CSV file named \"output.csv\" containing the normalized data extracted from the JSON input. Ensure that the structure of the CSV file clearly represents each attribute as a column for further evaluation.

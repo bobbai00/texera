@@ -1,0 +1,78 @@
+"TMC-list":
+- "code": |-
+    def data_cleaning_accuracy(ground_truth):
+        import pandas as pd
+        cleaned_data = pd.read_csv("cleaned_data.csv")
+        gt_cleaned_data = pd.read_csv(ground_truth)
+        # Assume ground_truth is also a DataFrame for direct comparison.
+        return bool(cleaned_data.equals(gt_cleaned_data))
+  "function": |-
+    Data Cleaning Completeness
+  "metric": |-
+    Data Cleaning Accuracy
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: cleaned_data.csv
+- "code": |-
+    def statistical_analysis_results(ground_truth):
+        import pandas as pd
+        analysis_results = pd.read_csv("analysis_results.csv")
+        # Count the number of statistics reported
+        num_statistics = len(analysis_results.columns)
+        gt_analysis_results = pd.read_csv(ground_truth)
+        return bool(num_statistics == len(gt_analysis_results.columns))
+  "function": |-
+    Data Integrity
+  "metric": |-
+    Basic Statistical Analysis Completeness
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: analysis_results.csv
+- "code": |-
+    def clustering_validity(ground_truth):
+        import pandas as pd
+        clustering_results = pd.read_csv("clustering_results.csv")
+        pre_len = len(clustering_results.iloc[:, -1].unique())
+        gt_clustering_results = pd.read_csv(ground_truth)
+        gt_len = len(gt_clustering_results.iloc[:, -1].unique())
+        # Check if the output has certain expected properties, such as number of clusters
+        return bool(pre_len == gt_len)
+  "function": |-
+    Clustering Validity
+  "metric": |-
+    Clustering Validity
+  "task_name": |-
+    Data mining
+  ground_truth: clustering_results.csv
+"prompt": |-
+  Please write a script in Python for data crawling, cleaning, analysis, and visualization. The specific requirements are as follows:
+
+  1. **Data Crawling**: 
+     - **Input**: Specify the target website (e.g., Douban).
+     - **Output**: Save the crawled data to a CSV file named "crawled_data.csv".
+
+  2. **Data Cleaning**: 
+     - **Input**: Use the "crawled_data.csv" file from the previous step. 
+     - **Output**: Save the cleaned data to a CSV file named "cleaned_data.csv" that has removed null values and duplicates and formatted the data correctly for analysis.
+
+  3. **Feature Extraction**: 
+     - **Input**: Use the "cleaned_data.csv" file. 
+     - **Output**: Save the structured dataset with extracted features to a CSV file named "structured_data.csv".
+
+  4. **Data Analysis**: 
+     - **Input**: Use the "structured_data.csv" file. 
+     - **Output**: Save the basic statistical analysis results to a CSV file named "analysis_results.csv" and generate visualizations saved as "data_visualization.png".
+
+  5. **Data Correlation Analysis**: 
+     - **Input**: Use the "structured_data.csv" file. 
+     - **Output**: Save the correlation analysis results to a CSV file named "correlation_results.csv".
+
+  6. **Clustering Analysis (optional)**: 
+     - **Input**: Use the "structured_data.csv" file. 
+     - **Output**: Save the clustering results to a CSV file named "clustering_results.csv" and the name of column of cluster is "Cluster".
+
+  7. **Result Visualization**: 
+     - **Input**: Use the results from the data analysis and clustering analysis.
+     - **Output**: Save the visualization of analysis results as "analysis_visualization.png" and the clustering results as "clustering_visualization.png".
+
+  Please provide a complete code implementation and ensure that the code structure is clear with complete comments for understanding and evaluation.

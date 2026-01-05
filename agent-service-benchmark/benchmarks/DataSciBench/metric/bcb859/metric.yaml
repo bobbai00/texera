@@ -1,0 +1,44 @@
+TMC-list:
+- code: "def model_accuracy(output, ground_truth):\n    return output[0]>=ground_truth[0]\
+    \  # Extract the accuracy from the output tuple"
+  function: Model Accuracy
+  metric: Model Accuracy
+  task_name: Predictive modeling
+data: args = ()
+ground_truth: "import warnings\nimport sklearn.model_selection as model_selection\n\
+  import sklearn.svm as svm\nimport sklearn.datasets as datasets\nimport sklearn.metrics\
+  \ as metrics\n\ndef task_func():\n    # Load the iris dataset\n    iris = datasets.load_iris()\n\
+  \    X = iris.data\n    y = iris.target\n    \n    # Split the dataset into a training\
+  \ set and a test set\n    X_train, X_test, y_train, y_test = model_selection.train_test_split(X,\
+  \ y, test_size=0.33, random_state=42)\n    \n    # Create an SVM classifier\n  \
+  \  classifier = svm.SVC()\n    \n    # Fit the classifier on the training data\n\
+  \    classifier.fit(X_train, y_train)\n    \n    # Make predictions on the test\
+  \ data\n    y_pred = classifier.predict(X_test)\n    \n    # Calculate accuracy\n\
+  \    accuracy = metrics.accuracy_score(y_test, y_pred)\n    \n    # Check if accuracy\
+  \ is less than 0.9 and issue a warning if so\n    warning_msg = None\n    if accuracy\
+  \ < 0.9:\n        warnings.warn(\"Accuracy is less than 0.9\", UserWarning)\n  \
+  \      warning_msg = \"Accuracy is less than 0.9\"\n    \n    return (accuracy,\
+  \ warning_msg)"
+prompt: "\"Perform an SVM classification of the iris dataset and warn if the accuracy\
+  \ is less than 0.9. The warning action is set to 'always'. The test size for the\
+  \ train-test split is 0.33. The function should output with: tuple(accuracy: float,\
+  \ warning_msg: str or None)\naccuracy: The accuracy of the SVM classification. \n\
+  warning_msg: A warning message if the accuracy is below 0.9, None otherwise. \n\
+  You should write self-contained code starting with:\n```\nimport warnings\nimport\
+  \ sklearn.model_selection as model_selection\nimport sklearn.svm as svm\nimport\
+  \ sklearn.datasets as datasets\nimport sklearn.metrics as metrics\ndef task_func():\n\
+  ```\""
+testcase: "import unittest\nimport warnings\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_high_accuracy(self):\n        accuracy, warning_msg = task_func()\n\
+  \        self.assertGreaterEqual(accuracy, 0.8)\n        self.assertIsNone(warning_msg)\n\
+  \n    def test_low_accuracy_warning(self):\n        accuracy, warning_msg = task_func()\n\
+  \        if accuracy < 0.9:\n            self.assertEqual(warning_msg, \"The accuracy\
+  \ of the SVM classification is below 0.9.\")\n\n    def test_accuracy_range(self):\n\
+  \        accuracy, _ = task_func()\n        self.assertGreaterEqual(accuracy, 0)\n\
+  \        self.assertLessEqual(accuracy, 1)\n\n    def test_return_type(self):\n\
+  \        result = task_func()\n        self.assertIsInstance(result, tuple)\n  \
+  \      self.assertIsInstance(result[0], float)\n        self.assertIn(result[1],\
+  \ [None, \"The accuracy of the SVM classification is below 0.9.\"])\n\n    def test_warning_setting(self):\n\
+  \        with warnings.catch_warnings(record=True) as w:\n            warnings.simplefilter('always')\n\
+  \            _, _ = task_func()\n            if w:\n                self.assertEqual(str(w[-1].message),\
+  \ \"The accuracy of the SVM classification is below 0.9.\")"

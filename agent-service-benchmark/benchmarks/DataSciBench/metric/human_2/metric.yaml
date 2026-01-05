@@ -1,0 +1,108 @@
+"TMC-list":
+- "code": |-
+    def data_cleaning_completeness(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("cleaned_campaign_data.csv")
+        output_gt = pd.read_csv(ground_truth)
+        # Checking if the number of rows matches the ground truth (total campaigns) and no NaN values
+        return output.shape[0] == output_gt.shape[0] and output.isnull().sum().sum() == 0
+  "function": |-
+    Data Cleaning Completeness
+  "ground_truth": |-
+    cleaned_campaign_data.csv
+  "metric": |-
+    Data Cleaning Completeness
+  "task_name": |-
+    Data cleaning and preprocessing
+- "code": |-
+    def model_performance_r_squared(ground_truth):
+        import pandas as pd
+        from sklearn.metrics import r2_score
+        output = pd.read_csv("model_parameters.csv")
+        output_gt = pd.read_csv(ground_truth)
+        
+        # Read cleaned campaign data for actual units sold
+        cleaned_data = pd.read_csv("cleaned_campaign_data.csv")
+        X = cleaned_data[['Marketing expenditure']]
+        y = cleaned_data['Units sold']
+        
+        # Retrieving model coefficients
+        coefficients = output.iloc[0].tolist()  # Assuming only one row in parameters file
+        model_predictions = X * coefficients[0]  # Assuming single feature linear regression
+
+        coefficients_gt = output_gt.iloc[0].tolist()  # Assuming only one row in parameters file
+        model_predictions_gt = X * coefficients_gt[0]  # Assuming single feature linear regression
+        
+        return bool(r2_score(y, model_predictions) >= r2_score(y, model_predictions_gt))
+  "function": |-
+    R-squared Value
+  "ground_truth": |-
+    model_parameters.csv
+  "metric": |-
+    Model Performance (R-squared)
+  "task_name": |-
+    Predictive modeling
+- "code": |-
+    def expenditure_accuracy(ground_truth):
+        with open("required_expenditure.txt", "r") as file:
+            predicted_expenditure = float(file.readline().strip())
+        with open(ground_truth, "r") as file:
+            predicted_expenditure_gt = float(file.readline().strip())
+        
+        return predicted_expenditure_gt == predicted_expenditure
+  "function": |-
+    Model Accuracy
+  "ground_truth": |-
+    required_expenditure.txt
+  "metric": |-
+    Expenditure Accuracy
+  "task_name": |-
+    Predictive modeling
+"prompt": |-
+  Implement the desired _marketing_ expenditure function, which returns the required amount of money that needs to be invested in a new marketing campaign to sell the desired number of units. 
+
+  ### Subtasks:
+  1. **Data Preparation**:
+     - **Input**: Read the previous campaign data from the file named `campaign_data.csv`, which contains the following columns: Campaign, Marketing expenditure, Units sold.
+     - **Output**: Prepare cleaned data and save it as `cleaned_campaign_data.csv`.
+   
+  2. **Model Training**:
+     - **Input**: Use the cleaned data from `cleaned_campaign_data.csv`.
+     - **Output**: Train a linear regression model and save the model parameters (coefficients) in a file named `model_parameters.csv`.
+
+  3. **Expenditure Calculation**:
+     - **Input**: Use the model parameters from `model_parameters.csv` and the desired number of units to sell.
+     - **Output**: Calculate the required marketing expenditure and save the result as `required_expenditure.txt` containing a single float value.
+   
+  ### Note:
+  Use the following previous campaign data to evaluate how the number of units sold grows linearly as the amount of money invested increases:
+
+  ```
+  Campaign       Marketing expenditure       Units sold
+  #1                                 300,000                  60,000
+  #2                                 200,000                  50,000
+  #3                                 400,000                  90,000
+  #4                                 300,000                  80,000
+  #5                                 100,000                  30,000
+   ```
+
+  Starter Code: 
+  ```python
+  import numpy as np
+  from sklearn import linear_model
+   
+  def desired_marketing_expenditure(marketing_expenditure, units_sold, desired_units_sold):
+      """
+      :param marketing_expenditure: (list) A list of integers with the expenditure for each previous campaign.
+      :param units_sold: (list) A list of integers with the number of units sold for each previous campaign.
+      :param desired_units_sold: (integer) Target number of units to sell in the new campaign.
+      :returns: (float) Required amount of money to be invested.
+      """
+      return None
+
+  #For example, with the parameters below, the function should return 250000.0
+  print(desired_marketing_expenditure(
+      [300000, 200000, 400000, 300000, 100000],
+      [60000, 50000, 90000, 80000, 30000],
+      60000))
+  ```

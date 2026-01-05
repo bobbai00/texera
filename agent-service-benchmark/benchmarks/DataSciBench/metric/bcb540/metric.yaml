@@ -1,0 +1,84 @@
+TMC-list:
+- code: "def unique_items_count(output, ground_truth):\n    item_counts_output = output[1]\
+    \  # extract item counts from the output tuple\n    item_counts_ground_truth =\
+    \ ground_truth[1]\n    return len(item_counts_output)==len(item_counts_ground_truth) "
+  function: Data Quality Score
+  metric: Unique Items Count
+  task_name: Data cleaning and preprocessing
+- code: "def frequency_distribution_correlation(output, ground_truth):\n    item_counts_output\
+    \ = output[1]  # extract item counts from the output tuple\n    item_counts_ground_truth\
+    \ = ground_truth[1]\n    from scipy.stats import spearmanr\n    return spearmanr(list(item_counts_output.values()),\
+    \ list(item_counts_ground_truth.values()))[0]  # return Spearman correlation"
+  function: Data Uniformity
+  metric: Frequency Distribution Correlation
+  task_name: Data exploration and statistics understand
+- code: "def histogram_plotting_test(output, ground_truth):\n    ax_output = output[0]\
+    \  # extract Axes object from output tuple\n    ax_ground_truth = ground_truth[0]\n\
+    \    return ax_output.get_title() == ax_ground_truth.get_title() and ax_output.get_ylabel()\
+    \ == ax_ground_truth.get_ylabel()  # check titles and labels"
+  function: Visualization Completeness
+  metric: Histogram Plotting Test
+  task_name: Data visualization
+data: 'list_of_menuitems = [["Sushi", "Ramen", "Gyoza"], ["Tacos", "Burrito", "Churros"],
+  ["Burger", "Fries", "Soda"], ["Salad", "Soup"]]
+
+  title = "Gourmet Food Distribution"
+
+  color = "green"
+
+  width = 0.5
+
+
+  args = (list_of_menuitems, title, color, width)'
+ground_truth: "from collections import Counter  \nimport numpy as np  \nimport matplotlib.pyplot\
+  \ as plt  \nimport itertools  \n\ndef task_func(list_of_menuitems, title=\"Menu\
+  \ Distribution\", color=\"blue\", width=1.0):  \n    # Flatten the nested list of\
+  \ menu items\n    flattened_items = itertools.chain.from_iterable(list_of_menuitems)\n\
+  \    \n    # Count occurrences of each item\n    item_counts = Counter(flattened_items)\n\
+  \    \n    # Sort items alphabetically\n    sorted_items = sorted(item_counts.items())\n\
+  \    \n    # Separate the items and their counts for plotting\n    items, counts\
+  \ = zip(*sorted_items)\n    \n    # Create the histogram plot\n    fig, ax = plt.subplots()\n\
+  \    ax.bar(items, counts, color=color, width=width)\n    ax.set_title(title)\n\
+  \    ax.set_xlabel('Menu Items')\n    ax.set_ylabel('Frequency')\n    plt.xticks(rotation=45)\n\
+  \    \n    # Return the Axes object and the item counts\n    return ax, dict(item_counts)"
+prompt: "Given a nested list of menu items, flatten the list using itertools.chain,\
+  \ count the occurrences of each item, then plot a histogram with an alphabetically\
+  \ sorted x-axis labeled as \"Menu Items\" and y-axis as \"Frequency\". The function\
+  \ should output with: tuple(ax: object, item_counts: dict)\nax: An Axes object representing\
+  \ the histogram plot.  \nitem_counts: A dictionary containing the frequency of each\
+  \ menu item.  \nYou should write self-contained code starting with:  \n```  \nfrom\
+  \ collections import Counter  \nimport numpy as np  \nimport matplotlib.pyplot as\
+  \ plt  \nimport itertools  \ndef task_func(list_of_menuitems, title=\"Menu Distribution\"\
+  , color=\"blue\", width=1.0):  \n```  "
+testcase: "import unittest\n\nclass TestCases(unittest.TestCase):\n    def test_case_1(self):\n\
+  \        input_data = [[\"Pizza\", \"Burger\"], [\"Pizza\", \"Coke\"], [\"Pasta\"\
+  , \"Coke\"]]\n        ax, _ = task_func(input_data)\n        # Test default plot\
+  \ properties\n        self.assertEqual(ax.get_title(), \"Menu Distribution\")\n\
+  \        self.assertEqual(ax.get_xlabel(), \"Menu Items\")\n        self.assertEqual(ax.get_ylabel(),\
+  \ \"Frequency\")\n        for p in ax.patches:\n            # RGBA color\n     \
+  \       self.assertEqual(p.get_facecolor(), (0.0, 0.0, 1.0, 1.0))\n            #\
+  \ bar width\n            self.assertEqual(p.get_width(), 1.0)\n\n    def test_case_2(self):\n\
+  \        input_data = [[\"Pizza\", \"Burger\"], [\"Pizza\", \"Coke\"], [\"Pasta\"\
+  , \"Coke\"]]\n        ax, _ = task_func(input_data, title=\"Custom Title\", color=\"\
+  red\", width=0.8)\n        # Test custom plot properties\n        self.assertEqual(ax.get_title(),\
+  \ \"Custom Title\")\n        self.assertEqual(ax.get_xlabel(), \"Menu Items\")\n\
+  \        self.assertEqual(ax.get_ylabel(), \"Frequency\")\n        for p in ax.patches:\n\
+  \            # RGBA color\n            self.assertEqual(p.get_facecolor(), (1.0,\
+  \ 0.0, 0.0, 1.0))\n            # bar width\n            self.assertEqual(p.get_width(),\
+  \ 0.8)\n\n    def test_case_3(self):\n        input_data = [[\"Burger\"], [\"Pizza\"\
+  ], [\"Pasta\"]]\n        ax, _ = task_func(input_data)\n        # Test count\n \
+  \       bars = [p.get_height() for p in ax.patches]\n        self.assertEqual(bars,\
+  \ [1, 1, 1])\n\n    def test_case_4(self):\n        input_data = [[\"Carrot\", \"\
+  Apple\"], [\"Apple\", \"Banana\"], [\"Banana\"]]\n        ax, _ = task_func(input_data)\n\
+  \        # Test x-axis order\n        self.assertEqual(\n            [_._text for\
+  \ _ in ax.get_xticklabels() if _._text],\n            [\"Apple\", \"Banana\", \"\
+  Carrot\"],\n        )\n\n    def test_case_5(self):\n        # Test input edge case:\
+  \ some empty elements\n        ax, _ = task_func([[], [\"Apple\"]])\n        self.assertEqual(len(ax.patches),\
+  \ 1)\n        for p in ax.patches:\n            # bar width\n            self.assertEqual(p.get_width(),\
+  \ 1.0)\n            self.assertEqual(p.get_height(), 1)\n\n    def test_case_6(self):\n\
+  \        with self.assertRaises(ValueError):\n            task_func([])\n      \
+  \  with self.assertRaises(ValueError):\n            task_func([[]])\n        with\
+  \ self.assertRaises(ValueError):\n            task_func(\"\")\n        with self.assertRaises(TypeError):\n\
+  \            task_func(None)\n        with self.assertRaises(TypeError):\n     \
+  \       task_func(1)\n        with self.assertRaises(TypeError):\n            task_func([1])\n\
+  \n    def tearDown(self):\n        plt.close(\"all\")"

@@ -1,0 +1,56 @@
+TMC-list:
+- code: "def verify_figure_object(output, ground_truth):\n    output_fig = output[0]\
+    \  # extract the Figure object from tuple\n    ground_truth_fig = ground_truth[0]\n\
+    \    return (isinstance(output_fig, type(ground_truth_fig)) and output_fig.get_size_inches()\
+    \ == ground_truth_fig.get_size_inches()).all()"
+  function: Visualization Completeness
+  metric: Figure Object Verification
+  task_name: Data visualization
+data: "import pandas as pd\ndata = pd.DataFrame({\n    'Name': ['Alice', 'Bob', 'Charlie',\
+  \ 'David', 'Eva', 'Frank', 'Grace', 'Hannah'],\n    'Date': ['05/10/2020', '06/15/2020',\
+  \ '07/20/2020', '08/25/2020', '09/30/2020', '10/05/2020', '11/10/2020', '12/15/2020'],\n\
+  \    'Job': ['Designer', 'Developer', 'Designer', 'Manager', 'Developer', 'Manager',\
+  \ 'Designer', 'Developer']\n})\nargs = (data,)\n"
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\n\ndef task_func(data):\n\
+  \    if not isinstance(data, pd.DataFrame):\n        raise ValueError(\"Input data\
+  \ must be a DataFrame.\")\n    \n    job_counts = data['Job'].value_counts()\n \
+  \   pie_fig, ax = plt.subplots()\n    ax.pie(job_counts, labels=job_counts.index,\
+  \ autopct='%1.1f%%', startangle=90)\n    ax.axis('equal')  # Equal aspect ratio\
+  \ ensures that pie chart is a circle.\n    plt.title('Job Distribution')\n    \n\
+  \    return (pie_fig,)"
+prompt: '"Draw a pie chart that shows the job distribution in the given data and return
+  the plot object. The function should raise the exception for: The function will
+  raise ValueError if the input data is not a DataFrame. The function should output
+  with: tuple(pie_fig: matplotlib.figure.Figure) pie_fig: The Figure object containing
+  the pie chart. You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import matplotlib.pyplot as plt
+
+  def task_func(data):
+
+  ```"'
+testcase: "import unittest\nimport matplotlib.pyplot as plt\nimport pandas as pd\n\
+  \nclass TestCases(unittest.TestCase):\n    def test_empty_data(self):\n        data\
+  \ = pd.DataFrame(columns=['Name', 'Date', 'Job'])\n        fig = task_func(data)\n\
+  \        self.assertIsInstance(fig, plt.Figure)\n        plt.close()\n\n    def\
+  \ test_single_job(self):\n        data = pd.DataFrame({'Name': ['John'], 'Date':\
+  \ ['01/03/2012'], 'Job': ['Engineer']})\n        fig = task_func(data)\n       \
+  \ self.assertIsInstance(fig, plt.Figure)\n        # Check pie sizes\n        sizes\
+  \ = fig.axes[0].patches\n        self.assertEqual(len(sizes), 1)  # There should\
+  \ be only one slice\n        plt.close()\n\n    def test_multiple_jobs(self):\n\
+  \        data = pd.DataFrame({'Name': ['John', 'Jane'], 'Date': ['01/03/2012', '02/05/2013'],\
+  \ 'Job': ['Engineer', 'Doctor']})\n        fig = task_func(data)\n        self.assertIsInstance(fig,\
+  \ plt.Figure)\n        # Check pie sizes\n        sizes = fig.axes[0].patches\n\
+  \        self.assertEqual(len(sizes), 2)  # There should be two slices\n       \
+  \ plt.close()\n\n    def test_repeated_jobs(self):\n        data = pd.DataFrame({'Name':\
+  \ ['John', 'Jane', 'Joe'], 'Date': ['01/03/2012', '02/05/2013', '03/08/2014'], 'Job':\
+  \ ['Engineer', 'Engineer', 'Lawyer']})\n        fig = task_func(data)\n        self.assertIsInstance(fig,\
+  \ plt.Figure)\n        plt.close()\n\n    def test_large_dataset(self):\n      \
+  \  data = pd.DataFrame({'Name': ['Person' + str(i) for i in range(100)], 'Date':\
+  \ ['01/01/2020' for _ in range(100)], 'Job': ['Job' + str(i % 3) for i in range(100)]})\n\
+  \        fig = task_func(data)\n        self.assertIsInstance(fig, plt.Figure)\n\
+  \        plt.close()"

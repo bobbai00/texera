@@ -1,0 +1,82 @@
+TMC-list:
+- code: "def check_dataframe_non_emptiness(output, ground_truth):\n    return output[0]\
+    \ is not None and len(output[0]) > 0"
+  function: Data Integrity
+  metric: DataFrame Non-emptiness
+  task_name: Data exploration and statistics understand
+- code: "def check_correlation_matrix_structure(output, ground_truth):\n    output_corr_matrix\
+    \ = output[1].data.corr()\n    ground_truth_corr_matrix = ground_truth[1].data.corr()\n\
+    \    return output_corr_matrix.shape == ground_truth_corr_matrix.shape"
+  function: Plot Validity
+  metric: Correlation Matrix Structure
+  task_name: Data visualization
+data: "import pandas as pd\nimport numpy as np\n\nargs = (\n    pd.DataFrame({\n \
+  \       \"group\": [\"C\", \"D\", \"C\", \"D\", \"C\", \"D\"],\n        \"date\"\
+  : pd.to_datetime([\"2023-04-01\", \"2023-04-02\", \"2023-04-03\", \"2023-04-04\"\
+  , \"2023-04-05\", \"2023-04-06\"]),\n        \"value\": [45, 55, 65, 75, 85, 95],\n\
+  \        \"category\": [\"X\", \"Y\", \"X\", \"Y\", \"X\", \"Y\"],  # Additional\
+  \ column for complexity\n    }),\n)"
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\nimport seaborn\
+  \ as sns\n\ndef task_func(df):\n    # Check if the dataframe is empty\n    if df.empty:\n\
+  \        raise ValueError(\"The dataframe is empty.\")\n    \n    # Check if 'date'\
+  \ column exists and is in datetime format\n    if 'date' not in df.columns or not\
+  \ pd.api.types.is_datetime64_any_dtype(df['date']):\n        raise ValueError(\"\
+  The 'date' column must be in datetime format and present in the dataframe.\")\n\
+  \    \n    # Check for required columns (assuming the required columns are all numeric\
+  \ except 'date')\n    required_columns = df.select_dtypes(include=['number']).columns.tolist()\n\
+  \    if len(required_columns) == 0:\n        raise ValueError(\"No numeric columns\
+  \ found in the dataframe for correlation analysis.\")\n    \n    # Convert the 'date'\
+  \ column to ordinal format\n    df['date_ordinal'] = df['date'].map(pd.Timestamp.toordinal)\n\
+  \    \n    # Create a correlation matrix\n    corr_matrix = df[required_columns\
+  \ + ['date_ordinal']].corr()\n    \n    # Generate the correlation matrix heatmap\n\
+  \    plt.figure(figsize=(10, 8))\n    corr_matrix_fig = plt.figure()\n    sns.heatmap(corr_matrix,\
+  \ annot=True, fmt=\".2f\", cmap='coolwarm', square=True)\n    plt.title('Correlation\
+  \ Matrix')\n    plt.tight_layout()\n    plt.show()\n    \n    # Generate a pair\
+  \ plot of the dataframe\n    pair_plot = sns.pairplot(df[required_columns + ['date_ordinal']])\n\
+  \    \n    return (corr_matrix_fig, pair_plot)"
+prompt: 'Perform exploratory data analysis on a dataframe. This function converts
+  the ''date'' column to an ordinal format, creates a correlation matrix, and generates
+  a pair plot of the dataframe. The title of the plot is ''Correlation Matrix''. The
+  function should raise the exception for: ValueError: If the dataframe is empty,
+  if required columns are missing, or if ''date'' column is not in datetime format.
+  The function should output with: tuple(corr_matrix_fig: matplotlib.figure.Figure,
+  pair_plot: seaborn.axisgrid.PairGrid) corr_matrix_fig: The figure object for the
+  correlation matrix heatmap. pair_plot: The PairGrid object for the pair plot. You
+  should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import matplotlib.pyplot as plt
+
+  import seaborn as sns
+
+  def task_func(df):
+
+  ```'
+testcase: "import unittest\nimport numpy as np\nimport pandas as pd\nimport matplotlib.pyplot\
+  \ as plt\nimport seaborn as sns\n\nclass TestCases(unittest.TestCase):\n    def\
+  \ setUp(self):\n        self.valid_df = pd.DataFrame({\n            \"group\": [\"\
+  A\", \"A\", \"A\", \"B\", \"B\"],\n            \"date\": pd.to_datetime([\"2022-01-02\"\
+  , \"2022-01-13\", \"2022-02-01\", \"2022-02-23\", \"2022-03-05\"]),\n          \
+  \  \"value\": [10, 20, 16, 31, 56],\n        })\n\n    def test_valid_input(self):\n\
+  \        heatmap_fig, pairplot_grid = task_func(self.valid_df)\n        self.assertIsInstance(heatmap_fig,\
+  \ plt.Figure)\n        self.assertIsInstance(pairplot_grid, sns.axisgrid.PairGrid)\n\
+  \n    def test_empty_dataframe(self):\n        with self.assertRaises(ValueError):\n\
+  \            task_func(pd.DataFrame())\n\n    def test_missing_columns(self):\n\
+  \        incomplete_df = self.valid_df.drop(columns=['date'])\n        with self.assertRaises(ValueError):\n\
+  \            task_func(incomplete_df)\n\n    def test_invalid_date_column(self):\n\
+  \        invalid_df = self.valid_df.copy()\n        invalid_df['date'] = \"not a\
+  \ date\"\n        with self.assertRaises(ValueError):\n            task_func(invalid_df)\n\
+  \n    def test_plot_titles(self):\n        heatmap_fig, pairplot_grid = task_func(self.valid_df)\n\
+  \        self.assertEqual(heatmap_fig.axes[0].get_title(), 'Correlation Matrix')\n\
+  \n    def test_value_consistency(self):\n        df = self.valid_df.copy()\n   \
+  \     df['date'] = df['date'].apply(lambda x: x.toordinal())\n        df_numeric\
+  \ = df.drop(columns=['group'])\n        heatmap_fig, _ = task_func(self.valid_df)\n\
+  \        # Retrieve the correlation matrix data from the heatmap and reshape it\n\
+  \        heatmap_data = heatmap_fig.axes[0].collections[0].get_array().data\n  \
+  \      heatmap_data_reshaped = heatmap_data.reshape(df_numeric.corr().shape)\n \
+  \       expected_corr_matrix = df_numeric.corr().values\n        # Compare the reshaped\
+  \ data in the heatmap with the expected correlation matrix\n        np.testing.assert_array_almost_equal(heatmap_data_reshaped,\
+  \ expected_corr_matrix)"

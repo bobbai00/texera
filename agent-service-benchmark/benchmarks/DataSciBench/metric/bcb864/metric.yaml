@@ -1,0 +1,125 @@
+TMC-list:
+- code: "def total_count_accuracy(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    return output_df['Total Count'].equals(ground_truth_df['Total Count'])  #\
+    \ checks if all total counts are accurate"
+  function: Data Quality Score
+  metric: Total Count Accuracy
+  task_name: Data cleaning and preprocessing
+- code: "def average_count_accuracy(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    return output_df['Average Count'].equals(ground_truth_df['Average Count'])\
+    \  # checks if all average counts are accurate"
+  function: Data Accuracy
+  metric: Average Count Accuracy
+  task_name: Data exploration and statistics understand
+data: "args = ([\n    ('grape', 25),\n    ('banana', 30),\n    ('grape', 15),\n  \
+  \  ('kiwi', 28),\n    ('banana', 22),\n    ('kiwi', 10),\n    ('melon', 18),\n \
+  \   ('melon', 7),\n    ('grape', 5),\n    ('banana', 12)\n],)"
+ground_truth: "import pandas as pd\nimport numpy as np\n\ndef task_func(fruit_data):\n\
+  \    if not fruit_data:\n        return (pd.DataFrame(columns=['Total Count', 'Average\
+  \ Count']),)\n\n    fruit_count = {}\n\n    for fruit, count in fruit_data:\n  \
+  \      if fruit in fruit_count:\n            fruit_count[fruit].append(count)\n\
+  \        else:\n            fruit_count[fruit] = [count]\n\n    results = {fruit:\
+  \ [sum(counts), np.mean(counts)] for fruit, counts in fruit_count.items()}\n\n \
+  \   df = pd.DataFrame.from_dict(results, orient='index', columns=['Total Count',\
+  \ 'Average Count'])\n    return (df,)"
+prompt: 'Calculate and return the total and average counts for each type of fruit.
+  This function takes a list of tuples, each containing a fruit name and its count,
+  then calculates the total count and the average count for each type of fruit. The
+  results are returned as a pandas DataFrame with each row representing a different
+  fruit. If fruit_data is an empty list, an empty DataFrame is returned. >>> fruit
+  = [(''apple'', 1), (''orange'', 25), (''apple'', 111)] >>> df = task_func(fruit)
+  >>> df.sort_index(inplace=True) >>> print(df) Total Count Average Count apple 112
+  56.0 orange 25 25.0
+
+  The function should output with: tuple(df: pandas.DataFrame)
+
+  df: A pandas DataFrame with two columns: ''Total Count'' and ''Average Count''.
+  Each row''s index is the fruit name.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import numpy as np
+
+  def task_func(fruit_data):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    test_data_sets = [\n        [('vote', 19), ('those', 15), ('recent', 4), ('manage',\
+  \ 12), ('again', 13), ('box', 16), ('box', 16), ('box', 16)],\n        [('experience',\
+  \ 14), ('interesting', 8), ('firm', 13), ('enjoy', 19), ('area', 3), ('what', 12),\
+  \ ('along', 1)],\n        [('our', 11), ('then', 2), ('imagine', 6), ('heavy', 17),\
+  \ ('low', 6), ('site', 12), ('nearly', 3), ('organization', 6), ('me', 14), ('eat',\
+  \ 17)],\n        [('involve', 2), ('money', 11), ('use', 15), ('fish', 19), ('boy',\
+  \ 3), ('both', 10)],\n        [('take', 16), ('activity', 12), ('tend', 10), ('take',\
+  \ 2)]\n    ]\n\n    def test_empty(self):\n        report = task_func([])\n    \
+  \    self.assertTrue(report.empty)\n\n    def test_case_1(self):\n        # Using\
+  \ the first set of test data\n        report = task_func(self.test_data_sets[0])\n\
+  \        expected = pd.DataFrame(\n            {\n                'Total Count':\
+  \ {\n                    'vote': 19,\n                    'those': 15,\n       \
+  \             'recent': 4,\n                    'manage': 12,\n                \
+  \    'again': 13,\n                    'box': 48\n                },\n         \
+  \       'Average Count': {\n                    'vote': 19.0,\n                \
+  \    'those': 15.0,\n                    'recent': 4.0,\n                    'manage':\
+  \ 12.0,\n                    'again': 13.0,\n                    'box': 16.0\n \
+  \               }\n            }\n        )\n        # The report should be a DataFrame\
+  \ with the correct columns and index\n        report.sort_index(inplace=True)\n\
+  \        expected.sort_index(inplace=True)\n        self.assertIsInstance(report,\
+  \ pd.DataFrame)\n        self.assertListEqual(list(report.columns), ['Total Count',\
+  \ 'Average Count'])\n        pd.testing.assert_frame_equal(report, expected, check_dtype=False)\n\
+  \n    def test_case_2(self):\n        # Using the second set of test data\n    \
+  \    report = task_func(self.test_data_sets[1])\n        expected = pd.DataFrame(\n\
+  \            {\n                'Total Count': {\n                    'experience':\
+  \ 14.0,\n                    'interesting': 8.0,\n                    'firm': 13.0,\n\
+  \                    'enjoy': 19.0,\n                    'area': 3.0,\n        \
+  \            'what': 12.0,\n                    'along': 1.0\n                },\n\
+  \                'Average Count': {\n                    'experience': 14.0,\n \
+  \                   'interesting': 8.0,\n                    'firm': 13.0,\n   \
+  \                 'enjoy': 19.0,\n                    'area': 3.0,\n           \
+  \         'what': 12.0,\n                    'along': 1.0\n                }\n \
+  \           }\n        )\n        report.sort_index(inplace=True)\n        expected.sort_index(inplace=True)\n\
+  \        # The report should be a DataFrame with the correct columns and index\n\
+  \        self.assertIsInstance(report, pd.DataFrame)\n        self.assertListEqual(list(report.columns),\
+  \ ['Total Count', 'Average Count'])\n        pd.testing.assert_frame_equal(report,\
+  \ expected, check_dtype=False)\n\n    def test_case_3(self):\n        # Using the\
+  \ third set of test data\n        report = task_func(self.test_data_sets[2])\n \
+  \       expected = pd.DataFrame(\n            {\n                'Total Count':\
+  \ {\n                    'our': 11.0,\n                    'then': 2.0,\n      \
+  \              'imagine': 6.0,\n                    'heavy': 17.0,\n           \
+  \         'low': 6.0,\n                    'site': 12.0,\n                    'nearly':\
+  \ 3.0,\n                    'organization': 6.0,\n                    'me': 14.0,\n\
+  \                    'eat': 17.0\n                },\n                'Average Count':\
+  \ {\n                    'our': 11.0,\n                    'then': 2.0,\n      \
+  \              'imagine': 6.0,\n                    'heavy': 17.0,\n           \
+  \         'low': 6.0,\n                    'site': 12.0,\n                    'nearly':\
+  \ 3.0,\n                    'organization': 6.0,\n                    'me': 14.0,\n\
+  \                    'eat': 17.0\n                }\n            }\n        )\n\
+  \        report.sort_index(inplace=True)\n        expected.sort_index(inplace=True)\n\
+  \        self.assertIsInstance(report, pd.DataFrame)\n        self.assertListEqual(list(report.columns),\
+  \ ['Total Count', 'Average Count'])\n        pd.testing.assert_frame_equal(report,\
+  \ expected, check_dtype=False)\n\n    def test_case_4(self):\n        # Using the\
+  \ fourth set of test data\n        report = task_func(self.test_data_sets[3])\n\
+  \        expected = pd.DataFrame(\n            {\n                'Total Count':\
+  \ {\n                    'involve': 2.0,\n                    'money': 11.0,\n \
+  \                   'use': 15.0,\n                    'fish': 19.0,\n          \
+  \          'boy': 3.0,\n                    'both': 10.0\n                },\n \
+  \               'Average Count': {\n                    'involve': 2.0,\n      \
+  \              'money': 11.0,\n                    'use': 15.0,\n              \
+  \      'fish': 19.0,\n                    'boy': 3.0,\n                    'both':\
+  \ 10.0\n                }\n            }\n        )\n        report.sort_index(inplace=True)\n\
+  \        expected.sort_index(inplace=True)\n        self.assertIsInstance(report,\
+  \ pd.DataFrame)\n        self.assertListEqual(list(report.columns), ['Total Count',\
+  \ 'Average Count'])\n        pd.testing.assert_frame_equal(report, expected, check_dtype=False)\n\
+  \n    def test_case_5(self):\n        # Using the fifth set of test data\n     \
+  \   report = task_func(self.test_data_sets[4])\n        expected = pd.DataFrame(\n\
+  \            {\n                'Total Count': {'take': 18.0, 'activity': 12.0,\
+  \ 'tend': 10.0},\n                'Average Count': {'take': 9.0, 'activity': 12.0,\
+  \ 'tend': 10.0}\n            }\n        )\n        report.sort_index(inplace=True)\n\
+  \        expected.sort_index(inplace=True)\n        self.assertIsInstance(report,\
+  \ pd.DataFrame)\n        self.assertListEqual(list(report.columns), ['Total Count',\
+  \ 'Average Count'])\n        pd.testing.assert_frame_equal(report, expected, check_dtype=False)"

@@ -1,0 +1,90 @@
+TMC-list:
+- code: "def plot_object_validity(output, ground_truth):\n    output = output[0] \
+    \ # extract the axes from the tuple\n    # We need to check if the output object\
+    \ is an instance of matplotlib.axes.Axes\n    return isinstance(output, plt.Axes)"
+  function: Visualization Completeness
+  metric: Plot Object Validity
+  task_name: Data visualization
+data: "import pandas as pd\n\ndata = pd.DataFrame({'Status': ['On Hold', 'Completed',\
+  \ 'Pending', 'In Progress', 'Pending',\n                                'Cancelled',\
+  \ 'Pending', 'Pending', 'In Progress', 'Pending',\n                            \
+  \    'Completed', 'Cancelled', 'Completed', 'Failed', 'Completed',\n           \
+  \                     'Pending', 'In Progress', 'Pending', 'Pending', 'On Hold',\n\
+  \                                'Completed', 'In Progress', 'Pending', 'Pending',\
+  \ 'Cancelled',\n                                'In Progress', 'In Progress', 'Failed',\
+  \ 'In Progress',\n                                'In Progress', 'Pending', 'Pending',\
+  \ 'Completed', 'In Progress',\n                                'In Progress', 'Pending',\
+  \ 'In Progress', 'Failed', 'Completed',\n                                'On Hold',\
+  \ 'Failed', 'Pending', 'Pending', 'In Progress',\n                             \
+  \   'On Hold', 'Cancelled', 'On Hold', 'Pending', 'On Hold', 'Pending',\n      \
+  \                          'Pending', 'Failed', 'Cancelled', 'Cancelled', 'On Hold',\n\
+  \                                'In Progress', 'In Progress', 'Pending', 'Completed',\n\
+  \                                'In Progress', 'Completed', 'In Progress', 'Completed',\
+  \ 'Failed',\n                                'Cancelled', 'Completed', 'In Progress',\
+  \ 'Completed',\n                                'In Progress', 'Pending', 'Completed',\
+  \ 'Completed', 'Pending',\n                                'Pending', 'Cancelled',\
+  \ 'Completed', 'In Progress', 'In Progress',\n                                'Pending',\
+  \ 'Completed', 'Cancelled', 'Completed', 'Completed',\n                        \
+  \        'Pending', 'Completed', 'Completed', 'Cancelled', 'In Progress',\n    \
+  \                            'Pending', 'In Progress', 'Pending', 'On Hold', 'Pending',\n\
+  \                                'Pending', 'In Progress', 'Pending', 'Pending',\
+  \ 'Cancelled',\n                                'Pending', 'Cancelled', 'Pending',\
+  \ 'On Hold', 'In Progress',\n                                'In Progress', 'Completed',\
+  \ 'Pending', 'In Progress', 'Completed',\n                                'In Progress',\
+  \ 'Completed', 'In Progress', 'Cancelled',\n                                'Completed',\
+  \ 'Completed', 'Completed', 'Pending', 'Pending',\n                            \
+  \    'In Progress', 'In Progress', 'Completed', 'In Progress',\n               \
+  \                 'On Hold', 'In Progress', 'In Progress', 'Completed', 'On Hold',\n\
+  \                                'In Progress', 'Cancelled', 'Pending', 'Pending',\
+  \ 'In Progress',\n                                'Cancelled', 'In Progress', 'Completed',\
+  \ 'On Hold', 'Cancelled',\n                                'Pending', 'Cancelled',\
+  \ 'Completed', 'Cancelled', 'Pending',\n                                'In Progress',\
+  \ 'Cancelled', 'On Hold', 'Completed', 'Completed',\n                          \
+  \      'Cancelled', 'Cancelled', 'Cancelled', 'In Progress']})\nargs = (data,)"
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\n\ndef task_func(df):\n\
+  \    if not isinstance(df, pd.DataFrame):\n        raise ValueError(\"Input must\
+  \ be a pandas DataFrame.\")\n    if 'Status' not in df.columns:\n        raise ValueError(\"\
+  DataFrame must contain a 'Status' column.\")\n    \n    status_counts = df['Status'].value_counts()\n\
+  \    \n    fig, ax = plt.subplots()\n    ax.pie(status_counts, labels=status_counts.index,\
+  \ autopct='%1.1f%%', startangle=90)\n    ax.axis('equal')  # Equal aspect ratio\
+  \ ensures that pie chart is a circle.\n    \n    plt.title('Status Distribution')\n\
+  \    plt.show()\n    \n    return (ax,)"
+prompt: 'Draws a pie chart of the status distribution from a pandas DataFrame with
+  a ''Status'' column and returns the plot object. The ''Status'' column in the DataFrame
+  is expected to contain categorical data with possible values like ''Pending'', ''In
+  Progress'', ''Completed'', ''Cancelled''. The function should raise the exception
+  for: ValueError: If ''df'' is not a pandas DataFrame or does not contain the ''Status''
+  column. The function should output with: tuple(pie_chart_axes: matplotlib.axes.Axes)
+  pie_chart_axes: The Axes object with the pie chart. You should write self-contained
+  code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import matplotlib.pyplot as plt
+
+  def task_func(df):
+
+  ```'
+testcase: "import unittest\nfrom random import choice\nimport random\nimport pandas\
+  \ as pd\nimport matplotlib.pyplot as plt\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        random.seed(42)\n        self.df = pd.DataFrame({'Status':\
+  \ [choice(['Pending', 'In Progress', 'Completed', 'Cancelled']) for _ in range(100)]})\n\
+  \n    def test_return_value(self):\n        ax = task_func(self.df)\n        # Assuming\
+  \ 'ax' is the Axes object returned by your function 'task_func'\n        # Retrieve\
+  \ the pie chart wedges and texts\n        wedges, texts, autotexts = ax.patches,\
+  \ ax.texts, ax.texts[1::2]\n        # Extract the labels and percentages\n     \
+  \   labels = [text.get_text() for text in texts]\n        status_dict = {labels[i]:\
+  \ labels[i + 1] for i in range(0, len(labels), 2)}\n        expect = {'In Progress':\
+  \ '29.0%', 'Pending': '27.0%', 'Completed': '24.0%', 'Cancelled': '20.0%'}\n   \
+  \     self.assertEqual(status_dict, expect, \"contents should match the expected\
+  \ output\")\n\n    def test_return_type(self):\n        ax = task_func(self.df)\n\
+  \        self.assertIsInstance(ax, plt.Axes)\n\n    def test_invalid_input(self):\n\
+  \        with self.assertRaises(ValueError):\n            task_func(pd.DataFrame({'A':\
+  \ [1, 2], 'B': [3, 4]}))\n\n    def test_plot_title(self):\n        ax = task_func(self.df)\n\
+  \        self.assertEqual(ax.get_title(), 'Status Distribution')\n\n    def test_pie_labels(self):\n\
+  \        ax = task_func(self.df)\n        labels = [text.get_text() for text in\
+  \ ax.texts]\n        for status in ['Pending', 'In Progress', 'Completed', 'Cancelled']:\n\
+  \            self.assertIn(status, labels)\n\n    def test_empty_dataframe(self):\n\
+  \        with self.assertRaises(ValueError):\n            task_func(pd.DataFrame())"

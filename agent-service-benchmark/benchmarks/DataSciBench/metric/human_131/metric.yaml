@@ -1,0 +1,63 @@
+"TMC-list":
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "histograms.png")
+        return float(score)
+  "function": |-
+    Visualization Completeness
+  "metric": |-
+    Histogram Coverage Ratio
+  "task_name": |-
+    Data visualization
+  ground_truth: histograms.png
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "barplots.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Bar Plot Completeness Score
+  "task_name": |-
+    Data visualization
+  ground_truth: barplots.png
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "scatter_income_spending.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "ground_truth": |-
+    scatter_income_spending.png
+  "metric": |-
+    Correlation Coefficient
+  "task_name": |-
+    Data visualization
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "pairplot.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Pairplot Clustering Coefficient
+  "task_name": |-
+    Data visualization
+  ground_truth: pairplot.png
+"prompt": |-
+    You are tasked with an in-depth analysis of the ""Mall Customers"" dataset from Kaggle (input filename: ""data.csv"") to segment customers and identify their spending behaviors. 
+    1. Construct histograms to depict the distribution of numerical features. 
+    - **Output filename:** ""histograms.png""
+
+    2. Create bar plots to illustrate the frequency of categorical variables. 
+    - **Output filename:** ""barplots.png""
+
+    3. Utilize scatter plots to examine the correlation between annual income and spending score. 
+    - **Output filename:** ""scatter_income_spending.png""
+
+    4. Generate a pairplot to investigate the interactions among various numerical features, focusing on potential clusters or patterns. 
+    - **Output filename:** ""pairplot.png""

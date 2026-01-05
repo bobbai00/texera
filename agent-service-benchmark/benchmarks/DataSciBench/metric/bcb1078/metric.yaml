@@ -1,0 +1,58 @@
+TMC-list:
+- code: "def uniformity_check(output, ground_truth):\n    output_uniform = output[0]\
+    \  # extract the uniform_distribution from tuple\n    ground_truth_uniform = ground_truth[0]\n\
+    \    return output_uniform == ground_truth_uniform"
+  function: Plot Validity
+  metric: Uniformity Check
+  task_name: Data exploration and statistics understand
+- code: "def histogram_comparison(output, ground_truth):\n    output_ax = output[1]\
+    \  # extract the Axes object from tuple\n    ground_truth_ax = ground_truth[1]\n\
+    \    \n    # Compare the heights of the bars in the histogram\n    output_heights\
+    \ = output_ax.containers[0].datavalues  # heights of output histogram\n    ground_truth_heights\
+    \ = ground_truth_ax.containers[0].datavalues  # heights of ground truth histogram\n\
+    \    \n    return np.array_equal(output_heights, ground_truth_heights)"
+  function: Plot Validity
+  metric: Histogram Comparison
+  task_name: Data visualization
+data: 'import numpy as np
+
+  arr = np.array(["X", "Y", "Y", "Z", "Z", "W", "W", "W", "V", "V", "U", "U", "T",
+  "T", "T"])
+
+  args = (arr,)'
+ground_truth: "import numpy as np\nimport matplotlib.pyplot as plt\n\ndef task_func(arr):\n\
+  \    unique, counts = np.unique(arr, return_counts=True)\n    uniform_distribution\
+  \ = np.all(counts == counts[0])\n    \n    # Create histogram\n    fig, ax = plt.subplots()\n\
+  \    ax.hist(unique, bins=np.arange(len(unique) + 1) - 0.5, weights=counts, align='mid')\n\
+  \    ax.set_xticks(unique)\n    ax.set_xlabel('Values')\n    ax.set_ylabel('Frequency')\n\
+  \    ax.set_title('Histogram of Value Distribution')\n\n    plt.show()\n    \n \
+  \   return (uniform_distribution, ax)"
+prompt: "Analyzes the distribution of values in a NumPy array to determine if it is\
+  \ uniform and generates a histogram representing this distribution. Note that: The\
+  \ bin is set to `np.arange(len(unique) + 1) - 0.5` to align each bin with its corresponding\
+  \ unique value. The function should output with: tuple(uniform_distribution: bool,\
+  \ ax: matplotlib.axes.Axes) uniform_distribution: A boolean value indicating whether\
+  \ the distribution is uniform. Returns True if every unique value in the array appears\
+  \ the same number of times, indicating a uniform distribution. Returns False otherwise.\
+  \ ax: An Axes object displaying the histogram of the array's value distribution.\
+  \ The histogram's bins correspond to the unique values in the array. The frequency\
+  \ of each unique value is represented by the height of the corresponding bin. You\
+  \ should write self-contained code starting with:\n```\n import numpy as np\n import\
+  \ matplotlib.pyplot as plt\n def task_func(arr):\n```"
+testcase: "import numpy as np\nimport unittest\n\nclass TestCases(unittest.TestCase):\n\
+  \    \"\"\"Test cases for task_func\"\"\"\n\n    def test_uniform_distribution(self):\n\
+  \        \"\"\"Test uniform distribution.\"\"\"\n        arr = np.array([\"A\",\
+  \ \"A\", \"B\", \"B\"])\n        uniform, _ = task_func(arr)\n        self.assertTrue(uniform)\n\
+  \n    def test_non_uniform_distribution(self):\n        \"\"\"Test non-uniform distribution.\"\
+  \"\"\n        arr = np.array([\"A\", \"A\", \"B\", \"B\", \"B\", \"C\", \"C\", \"\
+  C\", \"C\", \"D\", \"E\", \"E\"])\n        uniform, _ = task_func(arr)\n       \
+  \ self.assertFalse(uniform)\n\n    def test_single_value(self):\n        \"\"\"\
+  Test single value.\"\"\"\n        arr = np.array([\"A\", \"A\", \"A\", \"A\"])\n\
+  \        uniform, _ = task_func(arr)\n        self.assertTrue(uniform)\n\n    def\
+  \ test_multiple_equal_values(self):\n        \"\"\"Test multiple equal values.\"\
+  \"\"\n        arr = np.array([\"A\", \"A\", \"B\", \"B\", \"C\", \"C\", \"D\", \"\
+  D\"])\n        uniform, _ = task_func(arr)\n        self.assertTrue(uniform)\n\n\
+  \    def test_varying_values(self):\n        \"\"\"Test varying values.\"\"\"\n\
+  \        arr = np.array([\"A\", \"B\", \"B\", \"C\", \"C\", \"C\", \"D\", \"D\"\
+  , \"D\", \"D\"])\n        uniform, _ = task_func(arr)\n        self.assertFalse(uniform)\n\
+  \n    def tearDown(self):\n        plt.close()"

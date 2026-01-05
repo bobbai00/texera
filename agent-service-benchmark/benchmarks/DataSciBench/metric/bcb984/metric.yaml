@@ -1,0 +1,84 @@
+TMC-list:
+- code: "def scatter_plot_completeness(output, ground_truth):\n    output_ax = output[0]\
+    \  # extract Axes object from output tuple\n    ground_truth_ax = ground_truth[0]\
+    \  # extract ground truth Axes object\n    output_lines = len(output_ax.lines)\
+    \  # count lines in output Axes\n    ground_truth_lines = len(ground_truth_ax.lines)\
+    \  # count lines in ground truth Axes\n    return output_lines == ground_truth_lines\
+    \  # return True if the number of lines matches"
+  function: Visualization Completeness
+  metric: Scatter Plot Completeness
+  task_name: Data visualization
+data: "import pandas as pd\nimport numpy as np\n\n# New complex input data for testing\n\
+  df = pd.DataFrame({\n    \"A\": np.random.randint(1, 100, size=100),\n    \"B\"\
+  : np.random.normal(0, 1, size=100) * np.random.randint(1, 100, size=100) + 50,\n\
+  \    \"C\": [\"cat\", \"dog\", \"elephant\", \"fox\"] * 25,\n    \"D\": np.random.choice([np.nan,\
+  \ \"foo\", \"bar\", \"baz\"], size=100)\n})\n\n# Assigning the required arguments\
+  \ for the function\nx_column = \"A\"\ny_column = \"B\"\nargs = (df, x_column, y_column)"
+ground_truth: "import matplotlib.pyplot as plt\nfrom sklearn.linear_model import LinearRegression\n\
+  import pandas as pd\n\ndef task_func(df, x_column, y_column):\n    # Extracting\
+  \ the data for the specified columns\n    X = df[[x_column]].values.reshape(-1,\
+  \ 1)\n    y = df[y_column].values\n\n    # Creating a LinearRegression model\n \
+  \   model = LinearRegression()\n    model.fit(X, y)\n\n    # Predicting the y values\
+  \ based on the model\n    y_pred = model.predict(X)\n\n    # Creating the scatter\
+  \ plot\n    fig, ax = plt.subplots()\n    ax.scatter(X, y, color='blue', label='Data\
+  \ points')\n    ax.plot(X, y_pred, color='red', label='Regression line')\n    \n\
+  \    # Adding labels and legend\n    ax.set_xlabel(x_column)\n    ax.set_ylabel(y_column)\n\
+  \    ax.legend()\n\n    # Returning the Axes object\n    return (ax,)"
+prompt: '"Draws a scatter plot for the specified columns from a pandas DataFrame and
+  fits a linear regression model to the data. Note that: After plotting the scatterplot,
+  this function overlays the predicted regression line on top in red on the same Axes.
+  The function should output with: tuple(ax: matplotlib.axes._axes.Axes) ax: The Axes
+  object containing the scatter plot and the linear regression line. You should write
+  self-contained code starting with:
+
+  ```
+
+  import matplotlib.pyplot as plt
+
+  from sklearn.linear_model import LinearRegression
+
+  def task_func(df, x_column, y_column):
+
+  ```"'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\nfrom matplotlib.axes\
+  \ import Axes\n\nclass TestCases(unittest.TestCase):\n    def helper_assert_line_correctness(self,\
+  \ ax, expected_slope, expected_intercept):\n        # Helper function to check if\
+  \ linear regression predictions are correct\n        tolerance = 1e-6\n        #\
+  \ Extract line data\n        line = ax.lines[0]\n        x_data, y_data = line.get_xdata(),\
+  \ line.get_ydata()\n        # Calculate slope and intercept of the line plot\n \
+  \       calculated_slope = (y_data[-1] - y_data[0]) / (x_data[-1] - x_data[0])\n\
+  \        calculated_intercept = y_data[0] - calculated_slope * x_data[0]\n     \
+  \   # Assert slope and intercept\n        self.assertAlmostEqual(\n            calculated_slope,\n\
+  \            expected_slope,\n            delta=tolerance,\n            msg=\"Slope\
+  \ did not match expected value\",\n        )\n        self.assertAlmostEqual(\n\
+  \            calculated_intercept,\n            expected_intercept,\n          \
+  \  delta=tolerance,\n            msg=\"Intercept did not match expected value\"\
+  ,\n        )\n\n    def test_plot_attributes(self):\n        # Basic case to test\
+  \ plot is correct\n        df = pd.DataFrame({\"X\": [1, 2, 3, 4], \"Y\": [1, 2,\
+  \ 3, 4]})\n        ax = task_func(df, \"X\", \"Y\")\n        self.assertIsInstance(ax,\
+  \ Axes)\n        self.assertEqual(len(ax.lines), 1)\n        self.assertEqual(len(ax.collections),\
+  \ 1)\n\n    def test_linear_positive_slope(self):\n        # Testing with a dataset\
+  \ that should produce a positive slope\n        df = pd.DataFrame({\"X\": [1, 2,\
+  \ 3, 4], \"Y\": [2, 4, 6, 8]})\n        ax = task_func(df, \"X\", \"Y\")\n     \
+  \   self.helper_assert_line_correctness(ax, expected_slope=2, expected_intercept=0)\n\
+  \n    def test_linear_negative_slope(self):\n        # Testing with a dataset that\
+  \ should produce a negative slope\n        df = pd.DataFrame({\"X\": [1, 2, 3, 4],\
+  \ \"Y\": [8, 6, 4, 2]})\n        ax = task_func(df, \"X\", \"Y\")\n        self.helper_assert_line_correctness(\n\
+  \            ax, expected_slope=-2, expected_intercept=10\n        )\n\n    def\
+  \ test_linear_zero_slope(self):\n        # Testing with a dataset that should produce\
+  \ a zero slope\n        df = pd.DataFrame({\"X\": [1, 2, 3, 4], \"Y\": [5, 5, 5,\
+  \ 5]})\n        ax = task_func(df, \"X\", \"Y\")\n        self.helper_assert_line_correctness(ax,\
+  \ expected_slope=0, expected_intercept=5)\n\n    def test_single_data_point(self):\n\
+  \        # Testing with a DataFrame having a single data point\n        df = pd.DataFrame({\"\
+  X\": [1], \"Y\": [1]})\n        ax = task_func(df, \"X\", \"Y\")\n        self.assertIsInstance(ax,\
+  \ Axes)\n        self.assertEqual(len(ax.lines), 1)\n        self.assertEqual(len(ax.collections),\
+  \ 1)\n\n    def test_missing_values(self):\n        # Testing with missing values\
+  \ in the DataFrame\n        df = pd.DataFrame({\"X\": [1, 2, np.nan, 4], \"Y\":\
+  \ [1, np.nan, 3, 4]})\n        with self.assertRaises(ValueError):\n           \
+  \ task_func(df, \"X\", \"Y\")\n\n    def test_with_categorical_data(self):\n   \
+  \     # Testing with categorical data to ensure it fails\n        df = pd.DataFrame({\"\
+  X\": [\"a\", \"b\", \"c\"], \"Y\": [\"d\", \"e\", \"f\"]})\n        with self.assertRaises(ValueError):\n\
+  \            task_func(df, \"X\", \"Y\")\n\n    def test_incorrect_column_names(self):\n\
+  \        # Testing with incorrect column names\n        df = pd.DataFrame({\"A\"\
+  : [1, 2, 3], \"B\": [4, 5, 6]})\n        with self.assertRaises(KeyError):\n   \
+  \         task_func(df, \"X\", \"Y\")"

@@ -1,0 +1,71 @@
+"TMC-list":
+- "code": |-
+    def missing_value_imputation_accuracy(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("missing_values_handled.csv")
+        gt = pd.read_csv(ground_truth)
+        # Compare the cleaned 'Age', 'BloodPressure', and 'Cholesterol' with the ground truth
+        missing_value_accuracy = bool(output[['Age', 'BloodPressure', 'Cholesterol']].equals(gt[['Age', 'BloodPressure', 'Cholesterol']]))
+        return missing_value_accuracy
+  "function": |-
+    Data Completeness
+  "metric": |-
+    Missing Value Imputation Accuracy
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: missing_values_handled.csv
+- "code": |-
+    def outlier_replacement_consistency(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("outliers_replaced.csv")
+        gt = pd.read_csv(ground_truth)
+        return output[['BloodPressure', 'Cholesterol']].equals(gt[['BloodPressure', 'Cholesterol']])
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Outlier Replacement Consistency
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: outliers_replaced.csv
+- "code": |-
+    def z_score_normalization_check(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("normalized_data.csv")
+        gt = pd.read_csv(ground_truth)
+        return output[['Age', 'BloodPressure', 'Cholesterol']].equals(gt[['Age', 'BloodPressure', 'Cholesterol']])
+  "function": |-
+    Normalization Range Check
+  "metric": |-
+    Z-Score Normalization Check
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: normalized_data.csv
+- "code": |-
+    def encoding_accuracy_diagnosis(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("diagnosis_encoded.csv")
+        gt = pd.read_csv(ground_truth)
+        return bool((output['Diagnosis'].values == gt['Diagnosis'].values).all())
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Encoding Accuracy for Diagnosis
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: diagnosis_encoded.csv
+"prompt": |-
+  Given a dataset of medical records in a DataFrame `df` (input filename: ""data.csv"") with columns: PatientID, Age, BloodPressure, Cholesterol, and Diagnosis, perform the following tasks and output results accordingly:
+
+  1. Handle missing values in the Age, BloodPressure, and Cholesterol columns using the median of each column. Output the cleaned DataFrame as a CSV file named ""missing_values_handled.csv"".
+    
+  2. Detect and replace outliers in the BloodPressure and Cholesterol columns. An outlier is defined as a value below the 5th percentile or above the 95th percentile. Replace these outliers with the corresponding 5th or 95th percentile value. Output the resulting DataFrame as a CSV file named ""outliers_replaced.csv"".
+
+  3. Normalize the Age, BloodPressure, and Cholesterol columns using Z-score normalization. Output the resulting DataFrame as a CSV file named ""normalized_data.csv"".
+   
+  4. Encode the Diagnosis column using label encoding. Output the resulting DataFrame as a CSV file named ""diagnosis_encoded.csv"".
+
+  5. Ensure data consistency by casting PatientID to string type. Output the final cleaned DataFrame as a CSV file named ""final_cleaned_data.csv"".
+
+
+
+  Apply the specified data cleaning and preprocessing steps and output the cleaned DataFrame as the final result."

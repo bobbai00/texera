@@ -1,0 +1,67 @@
+TMC-list:
+- code: "def uniformity_check(output, ground_truth):\n    uniformity_message_output\
+    \ = output[1]  # extract the uniformity message from output\n    uniformity_message_ground_truth\
+    \ = ground_truth[1]\n    return uniformity_message_output == uniformity_message_ground_truth"
+  function: Plot Validity
+  metric: Uniformity Check
+  task_name: Data exploration and statistics understand
+- code: "def histogram_validation(output, ground_truth):\n    hist_axes_output = output[0]\
+    \  # extract the histogram axes from output\n    hist_axes_ground_truth = ground_truth[0]\n\
+    \    output_bins = len(hist_axes_output[2])  # number of bins in output histogram\n\
+    \    ground_truth_bins = len(hist_axes_ground_truth[2])  # number of bins in ground\
+    \ truth histogram\n    return output_bins == ground_truth_bins"
+  function: Plot Validity
+  metric: Histogram Validation
+  task_name: Data visualization
+data: "data_dict = {\n    \"Category_1\": 10,\n    \"Category_2\": 10,\n    \"Category_3\"\
+  : 11,\n    \"Category_4\": 9,\n    \"Category_5\": 10,\n    \"Category_6\": 10,\n\
+  \    \"Category_7\": 10,\n    \"Category_8\": 11,\n    \"Category_9\": 9,\n    \"\
+  Category_10\": 10,\n    \"Category_11\": 10\n}\nargs = (data_dict,)"
+ground_truth: "import collections\nimport numpy as np\nimport matplotlib.pyplot as\
+  \ plt\n\ndef task_func(data_dict):\n    if not data_dict:\n        return None,\
+  \ \"The distribution is uniform.\"\n    \n    counts = np.array(list(data_dict.values()))\n\
+  \    average_count = np.mean(counts)\n    \n    # Check for uniformity\n    uniform\
+  \ = np.all(np.abs(counts - average_count) <= 1e-5)\n    uniformity_message = \"\
+  The distribution is uniform.\" if uniform else \"The distribution is not uniform.\"\
+  \n    \n    # Create histogram\n    num_bins = min(10, len(counts))\n    hist_axes\
+  \ = plt.hist(counts, bins=num_bins)\n    \n    # Set x-ticks to category names\n\
+  \    plt.xticks(ticks=np.arange(len(data_dict)), labels=data_dict.keys(), rotation=45)\n\
+  \    plt.xlabel('Categories')\n    plt.ylabel('Counts')\n    plt.title('Histogram\
+  \ of Counts')\n    plt.tight_layout()\n\n    plt.show()\n    \n    return hist_axes,\
+  \ uniformity_message"
+prompt: "Analyze the uniformity of a distribution represented by a dictionary of categories\
+  \ and their counts, and create a description to introduce this distribution. Note\
+  \ that: If 'data_dict' is empty, the function returns None and a message \"The distribution\
+  \ is uniform.\" indicating that an empty distribution is considered uniform by default.\
+  \ If 'data_dict' is not empty, it calculates the average count of the categories.\
+  \ The distribution is considered uniform if the absolute difference between each\
+  \ count and the average count is less than or equal to 1e-5. If any count's absolute\
+  \ difference with the average count is more than 1e-5, the distribution is considered\
+  \ not uniform. The function then creates a histogram of the counts using matplotlib,\
+  \ with the number of bins being the lesser of 10 or the number of unique counts.\
+  \ The histogram's x-ticks are labeled with the category names. The function should\
+  \ output with: tuple(hist_axes: matplotlib.axes._axes.Axes, uniformity_message:\
+  \ str)\nhist_axes: The axes object of the histogram. \nuniformity_message: A message\
+  \ indicating whether the distribution is uniform (\"The distribution is uniform.\"\
+  ) or not (\"The distribution is not uniform.\"). \nYou should write self-contained\
+  \ code starting with: \n```\nimport collections\nimport numpy as np\nimport matplotlib.pyplot\
+  \ as plt\ndef task_func(data_dict):\n```"
+testcase: "import numpy as np\nimport matplotlib.pyplot as plt\nimport unittest\n\n\
+  class TestCases(unittest.TestCase):\n    \"\"\"Tests for task_func.\"\"\"\n    \n\
+  \    def test_uniform_distribution(self):\n        \"\"\"Test whether the function\
+  \ correctly identifies a uniform distribution.\"\"\"\n        data = {\"A\": 5,\
+  \ \"B\": 5, \"C\": 5}\n        _, message = task_func(data)\n        self.assertEqual(message,\
+  \ \"The distribution is uniform.\")\n    \n    def test_non_uniform_distribution(self):\n\
+  \        \"\"\"Test whether the function correctly identifies a non-uniform distribution.\"\
+  \"\"\n        data = {\"A\": 3, \"B\": 2, \"C\": 4}\n        _, message = task_func(data)\n\
+  \        self.assertEqual(message, \"The distribution is not uniform.\")\n    \n\
+  \    def test_empty_dictionary(self):\n        \"\"\"Test the function with an empty\
+  \ dictionary.\"\"\"\n        data = {}\n        _, message = task_func(data)\n \
+  \       self.assertEqual(message, \"The distribution is uniform.\")\n    \n    def\
+  \ test_single_category(self):\n        \"\"\"Test the function with a single category.\"\
+  \"\"\n        data = {\"A\": 1}\n        _, message = task_func(data)\n        self.assertEqual(message,\
+  \ \"The distribution is uniform.\")\n    \n    def test_large_distribution(self):\n\
+  \        \"\"\"Test the function with a large number of categories.\"\"\"\n    \
+  \    data = {chr(i): i for i in range(65, 91)}  # A to Z with ascending counts\n\
+  \        _, message = task_func(data)\n        self.assertEqual(message, \"The distribution\
+  \ is not uniform.\")"

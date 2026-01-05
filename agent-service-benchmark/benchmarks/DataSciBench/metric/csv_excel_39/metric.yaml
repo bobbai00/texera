@@ -1,0 +1,206 @@
+"TMC-list":
+- "code": |-
+    def indexed_data_validation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output_indexed.csv")
+        gt_output = pd.read_csv(ground_truth)
+        output_indexed = output.set_index('ymd')
+        return bool(output_indexed.equals(gt_output.set_index('ymd')))
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Indexed Data Validation
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: output_indexed.csv
+- "code": |-
+    def weather_lookup_validation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output_march_01_2018.csv")
+        gt_output = pd.read_csv(ground_truth)
+        first_column = gt_output.iloc[:, 0]
+        expected_data = gt_output.loc[first_column == '2018-03-01']
+        return bool(output.equals(expected_data))
+  "function": |-
+    Data Accuracy
+  "metric": |-
+    Weather Lookup Validation
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: output_march_01_2018.csv
+- "code": |-
+    def temperature_cleaning_validation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output_temperature_cleaned.csv")
+        gt_output = pd.read_csv(ground_truth)
+        return bool(output.equals(gt_output))
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Temperature Cleaning Validation
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: output_temperature_cleaned.csv
+- "code": |-
+    def temperature_range_validation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output_august_temperatures.csv")
+        gt_output = pd.read_csv(ground_truth)
+        return bool(output.equals(gt_output))
+  "function": |-
+    Data Accuracy
+  "metric": |-
+    Temperature Range Validation
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: output_august_temperatures.csv
+- "code": |-
+    def below_negative_ten_validation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output_below_negative_10.csv")
+        gt_output = pd.read_csv(ground_truth)
+        return bool(output.equals(gt_output))
+  "function": |-
+    Data Validity
+  "metric": |-
+    Below Negative Temperature Check
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: output_below_negative_10.csv
+- "code": |-
+    def perfect_weather_validation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output_perfect_weather.csv")
+        gt_output = pd.read_csv(ground_truth)
+        return bool(output.equals(gt_output))
+  "function": |-
+    Data Accuracy
+  "metric": |-
+    Perfect Weather Validation
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: output_perfect_weather.csv
+- "code": |-
+    def wencha_calculation_validation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output_wencha_added.csv")
+        gt_output = pd.read_csv(ground_truth)
+        return bool(output.equals(gt_output))
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Wencha Calculation Validation
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: output_wencha_added.csv
+- "code": |-
+    def wendu_type_validation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output_wenduType_added.csv")
+        gt_output = pd.read_csv(ground_truth)
+        return bool(output.equals(gt_output))
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    WenduType Classification Validation
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: output_wenduType_added.csv
+- "code": |-
+    def wind_direction_count_validation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output_fengxiang_counts.csv")
+        gt_output = pd.read_csv(ground_truth)
+        return bool(output.equals(gt_output))
+  "function": |-
+    Data Accuracy
+  "metric": |-
+    Wind Direction Count Validation
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: output_fengxiang_counts.csv
+- "code": |-
+    def correlation_aqi_max_temp_validation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output_corr_aqi_max_temp.csv")
+        gt_output = pd.read_csv(ground_truth)
+        return bool(output.equals(gt_output))
+  "function": |-
+    Data Validity
+  "metric": |-
+    Correlation Aqi Max Temp
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: output_corr_aqi_max_temp.csv
+- "code": |-
+    def correlation_aqi_wencha_validation(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output_corr_aqi_wencha.csv", header=None)
+        gt_output = pd.read_csv(ground_truth, header=None)
+        print(gt_output)
+        return bool(output.equals(gt_output))
+  "function": |-
+    Data Validity
+  "metric": |-
+    Correlation Aqi Wencha
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: output_corr_aqi_wencha.csv
+"prompt": |-
+  Data source for this case: the whole year of Beijing weather in 2018, input file: beijing_tianqi_2018.csv (file encoding: utf-8)
+
+  Attribute description:
+   - ymd: Year, month, day
+  - bWendu: Maximum temperature
+  - yWendu: Minimum temperature
+   - tianqi: Weather status (sunny, sunny to cloudy)
+  - fengxiang: Wind direction (southwest wind, north wind)
+  - fengli: Wind force level
+  - aqi: Air quality
+  - aqiInfo: Air Quality Index (excellent, good, light pollution)
+  - aqiLevel: Air quality score
+   
+  Please complete the following data analysis tasks and provide the specified outputs:
+   
+  1. Set the index to the date for easy filtering by date.
+     - Output: output_indexed.csv (csv)
+     
+  2. Look up the weather conditions on March 1, 2018.
+     - Input: beijing_tianqi_2018.csv (csv)
+     - Output: output_march_01_2018.csv (csv)
+
+  3. Replace the temperature units with ℃ removed.
+     - Input: beijing_tianqi_2018.csv (csv)
+     - Output: output_temperature_cleaned.csv (csv)
+
+  4. Check the maximum and minimum temperatures for the consecutive 7 days starting from August 1, 2018.
+     - Input: beijing_tianqi_2018.csv (csv)
+     - Output: output_august_temperatures.csv (csv)
+
+  5. Check results where the minimum temperature is below -10.
+     - Input: beijing_tianqi_2018.csv (csv)
+     - Output: output_below_negative_10.csv (csv)
+
+  6. Check for "my perfect weather" (maximum temperature less than 30, minimum temperature greater than 15, sunny, air quality excellent).
+     - Input: beijing_tianqi_2018.csv (csv)
+     - Output: output_perfect_weather.csv (csv)
+
+   7. Add a new column 'wencha' (maximum temperature - minimum temperature).
+     - Input: beijing_tianqi_2018.csv (csv)
+     - Output: output_wencha_added.csv (csv)
+   
+  8. Add a new column 'wenduType' (marking high temperature if the maximum temperature is above 30, low temperature if the minimum temperature is below -10, otherwise normal temperature).
+     - Input: beijing_tianqi_2018.csv (csv)
+     - Output: output_wenduType_added.csv (csv)
+
+  9. How many types of 'fengxiang' are there in the whole year of 2018? How many days does each type correspond to?
+     - Input: beijing_tianqi_2018.csv (csv)
+     - Output: output_fengxiang_counts.csv (csv)
+
+  10. What is the correlation coefficient between air quality 'aqi' and maximum temperature?
+      - Input: beijing_tianqi_2018.csv (csv)
+      - Output: output_corr_aqi_max_temp.csv (csv)
+
+  11. What is the correlation coefficient between air quality 'aqi' and temperature difference 'wencha'?
+      - Input: beijing_tianqi_2018.csv (csv)
+      - Output: output_corr_aqi_wencha.csv (csv)

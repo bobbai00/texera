@@ -1,0 +1,86 @@
+TMC-list:
+- code: "def r_squared(output, ground_truth):\n    from sklearn.metrics import r2_score\n\
+    \    predictions = output[1]  # extract the predicted values from the tuple\n\
+    \    ground_truth = ground_truth[1]  # assuming ground_truth also has the same\
+    \ structure\n    return r2_score(ground_truth, predictions)"
+  function: R-squared Value
+  metric: Model R-Squared
+  task_name: Predictive modeling
+- code: "def data_completeness(output, ground_truth):\n    return len(output[1]) ==\
+    \ len(ground_truth[1])  # checking if the number of data in cleaned data matches\
+    \ original data"
+  function: Data Completeness
+  metric: Data Completeness
+  task_name: Data cleaning and preprocessing
+data: "import pandas as pd\nimport numpy as np\nimport tempfile\nimport os\n\n# Create\
+  \ a temporary CSV file to simulate test environments\ntemp_file = tempfile.NamedTemporaryFile(mode='w+',\
+  \ delete=False, suffix='.csv')\ncsv_file_path = temp_file.name\ntemp_file.close()\
+  \  # Close the file immediately after creation\n\n# Utility to create CSV content\n\
+  data = {\n    'feature1': [10, 15, 20, 25, 30, 35, 40, 45, 50, 55],\n    'feature2':\
+  \ [3.2, 4.5, 3.0, 2.0, 5.5, 6.7, 1.1, 0.2, 9.8, 8.3],\n    'feature3': [101, 102,\
+  \ 103, 104, 105, 106, 107, 108, 109, 110],\n    'target': [100, 150, 200, 250, 300,\
+  \ 350, 400, 450, 500, 550]\n}\ndf = pd.DataFrame(data)\ndf.to_csv(csv_file_path,\
+  \ index=False)\n\nattribute = \"target\"\ntest_size = 0.25\nrandom_state = 123\n\
+  \nargs = (csv_file_path, attribute, test_size, random_state)"
+ground_truth: "import pandas as pd\nfrom sklearn.linear_model import LinearRegression\n\
+  from sklearn.model_selection import train_test_split\n\ndef task_func(csv_file_path,\
+  \ attribute, test_size=0.2, random_state=42):\n    # Read the CSV file into a DataFrame\n\
+  \    data = pd.read_csv(csv_file_path)\n    \n    # Separate the features and the\
+  \ target variable\n    X = data.drop(columns=[attribute])\n    y = data[attribute]\n\
+  \    \n    # Split the data into training and testing sets\n    X_train, X_test,\
+  \ y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)\n\
+  \    \n    # Instantiate the linear regression model\n    model = LinearRegression()\n\
+  \    \n    # Fit the model to the training data\n    model.fit(X_train, y_train)\n\
+  \    \n    # Make predictions on the test set\n    predictions = model.predict(X_test)\n\
+  \    \n    return (model, predictions)"
+prompt: 'Train a linear regression model on a dataset and predict the value of a particular
+  attribute. This function reads a CSV file to create a pandas DataFrame, separates
+  the data into training and testing sets, and performs linear regression. It returns
+  the predicted values for the testing set as well as the trained model. Note that:
+  The function assumes that the CSV file is correctly formatted and that the specified
+  attribute exists. The function should output with: tuple(model: LinearRegression,
+  predictions: ndarray) model: The trained linear regression model. predictions: An
+  array of predicted values for the test set. You should write self-contained code
+  starting with:
+
+  ```
+
+  import pandas as pd
+
+  from sklearn.linear_model import LinearRegression
+
+  from sklearn.model_selection import train_test_split
+
+  def task_func(csv_file_path, attribute, test_size=0.2, random_state=42):
+
+  ```'
+testcase: "import unittest\nimport numpy as np\nimport pandas as pd\nimport tempfile\n\
+  import os\nfrom sklearn.linear_model import LinearRegression\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        # Create a temporary CSV file to simulate test environments\n\
+  \        self.temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.csv')\n\
+  \        self.csv_file_path = self.temp_file.name\n        self.temp_file.close()\
+  \  # Close the file immediately after creation\n\n    def tearDown(self):\n    \
+  \    # Remove the temporary file after the test\n        os.unlink(self.csv_file_path)\n\
+  \n    def create_csv(self, data, header=True):\n        # Utility to create CSV\
+  \ content\n        df = pd.DataFrame(data)\n        df.to_csv(self.csv_file_path,\
+  \ index=False, header=header)\n\n    def test_valid_data(self):\n        # Valid\
+  \ CSV and attribute\n        data = {'feature1': [1, 2, 3], 'feature2': [4, 5, 6],\
+  \ 'target': [7, 8, 9]}\n        self.create_csv(data)\n        model, predictions\
+  \ = task_func(self.csv_file_path, \"target\")\n        self.assertIsInstance(model,\
+  \ LinearRegression)\n        self.assertIsInstance(predictions, np.ndarray)\n  \
+  \      self.assertEqual(len(predictions), 1)  # 20% of 3 is 0.6, rounds to 1\n\n\
+  \    def test_different_test_size(self):\n        # Changing the test size\n   \
+  \     data = {'feature1': range(10), 'feature2': range(10, 20), 'target': range(20,\
+  \ 30)}\n        self.create_csv(data)\n        model, predictions = task_func(self.csv_file_path,\
+  \ \"target\", test_size=0.3)\n        self.assertEqual(len(predictions), 3)  # 30%\
+  \ of 10 is 3\n\n    def test_invalid_attribute(self):\n        # Attribute not present\
+  \ in the CSV\n        data = {'feature1': [1, 2], 'feature2': [3, 4]}\n        self.create_csv(data)\n\
+  \        with self.assertRaises(KeyError):\n            task_func(self.csv_file_path,\
+  \ \"nonexistent_target\")\n\n    def test_csv_with_missing_values(self):\n     \
+  \   # CSV containing missing values in features\n        data = {'feature1': [1,\
+  \ np.nan, 3], 'feature2': [4, 5, 6], 'target': [7, 8, 9]}\n        self.create_csv(data)\n\
+  \        with self.assertRaises(ValueError):\n            task_func(self.csv_file_path,\
+  \ \"target\")\n\n    def test_predicting_non_numerical_data(self):\n        # Non-numerical\
+  \ data in target\n        data = {'feature1': [1, 2, 3], 'feature2': [4, 5, 6],\
+  \ 'target': ['a', 'b', 'c']}\n        self.create_csv(data)\n        with self.assertRaises(ValueError):\n\
+  \            task_func(self.csv_file_path, \"target\")"

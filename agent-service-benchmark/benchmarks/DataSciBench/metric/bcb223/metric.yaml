@@ -1,0 +1,80 @@
+TMC-list:
+- code: "def df_integrity_check(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the preprocessed DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    \n    # Check if the output DataFrame has the same shape as the ground truth\n\
+    \    if output_df.shape != ground_truth_df.shape:\n        return False\n    \n\
+    \    # Check if all columns in the output DataFrame are present in the ground\
+    \ truth\n    if not all(col in ground_truth_df.columns for col in output_df.columns):\n\
+    \        return False\n    \n    # Check the data types of the columns\n    for\
+    \ col in output_df.columns:\n        if output_df[col].dtype != ground_truth_df[col].dtype:\n\
+    \            return False\n    \n    return True"
+  function: Data Quality Score
+  metric: DataFrame Integrity Check
+  task_name: Data cleaning and preprocessing
+data: "import pandas as pd\ndf = pd.DataFrame({\n    'category': ['apple', 'banana',\
+  \ 'orange', 'banana', 'apple', 'orange', 'apple'],\n    'value': [10.5, 20.75, 15.0,\
+  \ 22.5, 18.0, 25.0, 10.0],\n    'year': [2020, 2021, 2020, 2021, 2022, 2021, 2022]\n\
+  })\ndct = {\n    'apple': 'fruit',\n    'banana': 'fruit',\n    'orange': 'fruit'\n\
+  }\nargs = (df, dct, ['category', 'year'])"
+ground_truth: "import pandas as pd\nfrom sklearn.preprocessing import LabelEncoder\n\
+  \ndef task_func(df, dct, columns=None):\n    if not isinstance(df, pd.DataFrame):\n\
+  \        raise ValueError(\"Input must be a pandas DataFrame\")\n    \n    # Replace\
+  \ specified values based on the dictionary\n    for col, replacements in dct.items():\n\
+  \        if col in df.columns:\n            df[col] = df[col].replace(replacements)\n\
+  \    \n    # Encode categorical columns\n    if columns is None:\n        columns\
+  \ = df.select_dtypes(include=['object']).columns.tolist()\n    \n    label_encoders\
+  \ = {}\n    for col in columns:\n        if col in df.columns:\n            le =\
+  \ LabelEncoder()\n            df[col] = le.fit_transform(df[col])\n            label_encoders[col]\
+  \ = le\n    \n    # Standardize numerical attributes\n    numeric_cols = df.select_dtypes(include=['float64',\
+  \ 'int']).columns.tolist()\n    for col in numeric_cols:\n        if col in df.columns:\n\
+  \            df[col] = (df[col] - df[col].mean()) / df[col].std()\n    \n    return\
+  \ (df,)"
+prompt: 'This function preprocesses a pandas DataFrame by replacing specified values,
+  encoding categorical attributes, and standardizing numerical attributes. It''s designed
+  to be flexible for data preprocessing in machine learning tasks. Note that: The
+  function assumes that the DataFrame and the dictionary are well-formed and relevant
+  to each other. The encoding of categorical columns is done using LabelEncoder, which
+  encodes labels with value between 0 and n_classes-1. Numerical standardization is
+  performed by subtracting the mean and dividing by the standard deviation of each
+  column. The function should raise the exception for: The function will raise a ValueError
+  if input df is not a DataFrame. The function should output with: tuple(preprocessed_df:
+  pandas.DataFrame) preprocessed_df: The preprocessed DataFrame with encoded categorical
+  attributes and standardized numerical attributes. You should write self-contained
+  code starting with:
+
+  ```
+
+  import pandas as pd
+
+  from sklearn.preprocessing import LabelEncoder
+
+  def task_func(df, dct, columns=None):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    \n    def test_case_1(self):\n        # Testing with a mix of categorical and\
+  \ numerical columns\n        df = pd.DataFrame({'cat': ['a', 'b', 'c'], 'num': [1,\
+  \ 2, 3]})\n        dct = {'a': 'x', 'b': 'y', 'c': 'z'}\n        result = task_func(df,\
+  \ dct)\n        # Assertions\n        self.assertEqual(result.shape, df.shape)\n\
+  \        self.assertTrue('cat' in result.columns)\n        self.assertTrue('num'\
+  \ in result.columns)\n\n    def test_case_2(self):\n        # Testing with only\
+  \ numerical columns\n        df = pd.DataFrame({'num1': [10, 20, 30], 'num2': [40,\
+  \ 50, 60]})\n        dct = {}\n        result = task_func(df, dct)\n        # Assertions\n\
+  \        self.assertEqual(result.shape, df.shape)\n        self.assertAlmostEqual(result['num1'].mean(),\
+  \ 0, places=5)\n        self.assertAlmostEqual(result['num2'].mean(), 0, places=5)\n\
+  \n    def test_case_3(self):\n        # Testing with only categorical columns\n\
+  \        df = pd.DataFrame({'cat1': ['u', 'v', 'w'], 'cat2': ['x', 'y', 'z']})\n\
+  \        dct = {'u': 'a', 'v': 'b', 'w': 'c', 'x': 'd', 'y': 'e', 'z': 'f'}\n  \
+  \      result = task_func(df, dct)\n        # Assertions\n        self.assertEqual(result.shape,\
+  \ df.shape)\n        self.assertIn(result['cat1'].dtype, [np.float64])\n       \
+  \ self.assertIn(result['cat2'].dtype, [np.float64])\n\n    def test_case_4(self):\n\
+  \        # Testing with an empty DataFrame\n        df = pd.DataFrame({})\n    \
+  \    dct = {}\n        result = task_func(df, dct)\n        # Assertions\n     \
+  \   self.assertEqual(result.empty, True)\n\n    def test_case_5(self):\n       \
+  \ # Testing with complex DataFrame and no changes through dictionary\n        df\
+  \ = pd.DataFrame({'num': [100, 200, 300], 'cat': ['alpha', 'beta', 'gamma']})\n\
+  \        dct = {'delta': 400}\n        result = task_func(df, dct)\n        # Assertions\n\
+  \        self.assertEqual(result.shape, df.shape)\n        self.assertAlmostEqual(result['num'].std(),\
+  \ 1, places=5)\n        self.assertIn(result['cat'].dtype, [np.float64])\n\n   \
+  \ def test_case_6(self):\n        with self.assertRaises(ValueError):\n        \
+  \    task_func(\"non_df\", {})"

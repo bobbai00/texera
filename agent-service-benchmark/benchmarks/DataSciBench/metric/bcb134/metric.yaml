@@ -1,0 +1,47 @@
+TMC-list:
+- code: "def histogram_title_presence(output, ground_truth):\n    output_title = output[0].get_title()\
+    \  # extract the title from the axes object\n    expected_title = ground_truth[0].get_title()\
+    \  # ground truth column name\n    return output_title == expected_title"
+  function: Title Verification
+  metric: Histogram Title Presence
+  task_name: Data visualization
+data: "import pandas as pd\nimport numpy as np\n\ndf = pd.DataFrame({\n    'A': np.random.choice([0,\
+  \ 1, 2, 3, 4, 5], size=150, p=[0.1, 0.3, 0.2, 0.25, 0.1, 0.05]),\n    'B': np.random.uniform(0,\
+  \ 100, size=150),\n    'C': np.random.normal(loc=50, scale=15, size=150),\n    'D':\
+  \ np.random.poisson(lam=20, size=150)\n})\n\nbins = 15\nargs = (df, bins)"
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\n\ndef task_func(df,\
+  \ bins=20):\n    if not isinstance(df, pd.DataFrame):\n        raise ValueError(\"\
+  Input is not a DataFrame.\")\n    if df.empty:\n        raise ValueError(\"The DataFrame\
+  \ is empty.\")\n    \n    last_column = df.columns[-1]\n    hist_axes = df[last_column].plot.hist(bins=bins,\
+  \ alpha=0.7)\n    \n    plt.title(f'Histogram of {last_column}')\n    plt.xlabel('Value')\n\
+  \    plt.ylabel('Frequency')\n    \n    plt.show()\n    \n    return (hist_axes,)"
+prompt: '"Draw a histogram of the last column of the DataFrame and return the plot.
+  The function should raise the exception for: ValueError: If the input is not a DataFrame,
+  or if the DataFrame is empty. The function should output with: tuple(hist_axes:
+  matplotlib.axes.Axes) hist_axes: A Matplotlib Axes object representing the histogram
+  of the last column. The histogram includes: Title: ''Histogram of '' followed by
+  the name of the last column. X-axis label: ''Value'' Y-axis label: ''Frequency''
+  You should write self-contained code starting with: ``` import pandas as pd import
+  matplotlib.pyplot as plt def task_func(df, bins=20): ```"'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\nimport matplotlib.pyplot\
+  \ as plt\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n        np.random.seed(42)\n\
+  \n    def test_return_type(self):\n        df = pd.DataFrame(np.random.randint(0,\
+  \ 100, size=(100, 4)), columns=list('ABCD'))\n        ax = task_func(df)\n     \
+  \   self.assertIsInstance(ax, plt.Axes)\n\n    def test_invalid_input_empty_dataframe(self):\n\
+  \        with self.assertRaises(ValueError):\n            task_func(pd.DataFrame())\n\
+  \n    def test_invalid_input_type(self):\n        with self.assertRaises(ValueError):\n\
+  \            task_func(\"not a dataframe\")\n\n    def test_histogram_bins(self):\n\
+  \        df = pd.DataFrame(np.random.randint(0, 100, size=(100, 4)), columns=list('ABCD'))\n\
+  \        ax = task_func(df, bins=10)\n        # plt.hist returns a tuple; to check\
+  \ the number of bins, we need to count the patches of the ax object\n        self.assertEqual(len(ax.patches),\
+  \ 10)\n\n    def test_plot_title_and_labels(self):\n        df = pd.DataFrame(np.random.randint(0,\
+  \ 100, size=(100, 4)), columns=list('ABCD'))\n        ax = task_func(df)\n     \
+  \   self.assertIn('Histogram of ', ax.get_title())\n        self.assertEqual(ax.get_xlabel(),\
+  \ 'Value')\n        self.assertEqual(ax.get_ylabel(), 'Frequency')\n\n    def test_histogram_values(self):\n\
+  \        # Create a DataFrame with fixed values to ensure predictable histogram\
+  \ frequencies\n        df = pd.DataFrame({'A': [1] * 10 + [2] * 20 + [3] * 30})\n\
+  \        ax = task_func(df, bins=3)  # Bins set to 3 to match the distinct values\
+  \ in 'A'\n        n, bins, patches = ax.hist(df['A'], bins=3)\n        # Expected\
+  \ frequencies: 10 for '1', 20 for '2', 30 for '3'\n        expected_frequencies\
+  \ = [10, 20, 30]\n        actual_frequencies = [p.get_height() for p in patches]\n\
+  \        self.assertEqual(actual_frequencies, expected_frequencies)"

@@ -1,0 +1,58 @@
+TMC-list:
+- code: "def data_consistency(output, ground_truth):\n    output_array = output[0]\
+    \  # extract the PCA result from tuple\n    ground_truth_array = ground_truth[0]\n\
+    \    return np.allclose(output_array.shape[0], ground_truth_array.shape[0]) and\
+    \ np.allclose(output_array.shape[1], ground_truth_array.shape[1])"
+  function: Data Consistency
+  metric: Data Consistency
+  task_name: Data cleaning and preprocessing
+- code: "def scatter_plot_presence(output, ground_truth):\n    output_plot = output[1]\
+    \  # extract the scatter plot from tuple\n    return isinstance(output_plot, plt.Axes)"
+  function: Visualization Completeness
+  metric: Scatter Plot Presence
+  task_name: Data visualization
+- code: "def variance_retained(output, ground_truth):\n    import numpy as np\n  \
+    \  from sklearn.decomposition import PCA\n    output_array = output[0]  # extract\
+    \ the PCA result from tuple\n    # Assuming ground truth contains the original\
+    \ data for calculating explained variance\n    ground_truth_array = ground_truth[0]\
+    \  \n    pca = PCA(n_components=output_array.shape[1])\n    pca.fit(ground_truth_array)\n\
+    \    return np.sum(pca.explained_variance_ratio_)"
+  function: Explained Variance Ratio
+  metric: Variance Retained
+  task_name: Predictive modeling
+data: "args = (\n    [\n        [0.5, 2.3, 3.1], \n        [1.2, 1.8, 2.4], \n   \
+  \     [4.5, 5.2, 5.8], \n        [2.1, 3.4, 4.6], \n        [7.0, 8.1, 9.2], \n\
+  \        [10.1, 11.3, 12.4]\n    ],\n)"
+ground_truth: "from sklearn.decomposition import PCA\nimport numpy as np\nimport matplotlib.pyplot\
+  \ as plt\n\n# Constants\nN_COMPONENTS = 2\n\ndef task_func(L):\n    # Convert list\
+  \ of lists to a 2D numpy array\n    data = np.array(L)\n    \n    # Initialize PCA\n\
+  \    pca = PCA(n_components=N_COMPONENTS)\n    \n    # Fit and transform the data\n\
+  \    pca_result = pca.fit_transform(data)\n    \n    # Create scatter plot\n   \
+  \ fig, ax = plt.subplots()\n    ax.scatter(pca_result[:, 0], pca_result[:, 1])\n\
+  \    ax.set_title('PCA Result')\n    ax.set_xlabel('Principal Component 1')\n  \
+  \  ax.set_ylabel('Principal Component 2')\n    \n    # Return PCA result and scatter\
+  \ plot axes\n    return (pca_result, ax)"
+prompt: "Convert a list of lists 'L' into a 2D numeric array, apply PCA to it and\
+  \ return the PCA result and scatter plot.\nThe function should output with: tuple(pca_result:\
+  \ numpy.ndarray, scatter_plot: matplotlib.axes.Axes)  \npca_result: The PCA result\
+  \ as a 2D numeric array.  \nscatter_plot: The scatter plot as a matplotlib Axes\
+  \ object.  \nYou should write self-contained code starting with:  \n```\nfrom sklearn.decomposition\
+  \ import PCA\nimport numpy as np\nimport matplotlib.pyplot as plt\n# Constants\n\
+  N_COMPONENTS = 2\ndef task_func(L):\n```"
+testcase: "import unittest\n\nclass TestCases(unittest.TestCase):\n    def test_case_1(self):\n\
+  \        test_input = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]\n        pca_result, plot\
+  \ = task_func(test_input)\n        self.assertIsInstance(pca_result, np.ndarray)\n\
+  \        self.assertIsInstance(plot, plt.Axes)\n        self.assertEqual(pca_result.shape,\
+  \ (3, 2))\n\n    def test_case_2(self):\n        test_input = [[1, 1], [1, 1], [1,\
+  \ 1]]\n        pca_result, plot = task_func(test_input)\n        self.assertIsInstance(pca_result,\
+  \ np.ndarray)\n        self.assertIsInstance(plot, plt.Axes)\n        self.assertEqual(pca_result.shape,\
+  \ (3, 2))\n\n    def test_case_3(self):\n        test_input = [[1, 2], [3, 4], [5,\
+  \ 6], [7, 8]]\n        pca_result, plot = task_func(test_input)\n        self.assertIsInstance(pca_result,\
+  \ np.ndarray)\n        self.assertIsInstance(plot, plt.Axes)\n        self.assertEqual(pca_result.shape,\
+  \ (4, 2))\n\n    def test_case_4(self):\n        test_input = [[-1, -2], [-3, -4],\
+  \ [-5, -6]]\n        pca_result, plot = task_func(test_input)\n        self.assertIsInstance(pca_result,\
+  \ np.ndarray)\n        self.assertIsInstance(plot, plt.Axes)\n        self.assertEqual(pca_result.shape,\
+  \ (3, 2))\n\n    def test_case_5(self):\n        test_input = [[-1, 2], [3, -4],\
+  \ [5, -6]]\n        pca_result, plot = task_func(test_input)\n        self.assertIsInstance(pca_result,\
+  \ np.ndarray)\n        self.assertIsInstance(plot, plt.Axes)\n        self.assertEqual(pca_result.shape,\
+  \ (3, 2))"

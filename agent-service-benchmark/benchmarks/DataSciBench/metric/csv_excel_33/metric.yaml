@@ -1,0 +1,96 @@
+"TMC-list":
+- "code": |-
+    def silhouette_score(ground_truth):
+        from sklearn.metrics import silhouette_score
+        import pandas as pd
+        from sklearn.cluster import AgglomerativeClustering
+        
+        output = pd.read_csv("1combine_land.csv")
+        clustering_data = output[(output['dt2IC'] == 1) & (output['dt2CIdbz'] == 1) & (output['date_first'] < 20230810000000)]
+        
+        best_silhouette = -1
+        best_n_clusters = 0
+        
+        for n_clusters in range(2, 11):
+            clusterer = AgglomerativeClustering(n_clusters=n_clusters)
+            cluster_labels = clusterer.fit_predict(clustering_data[['feature1', 'feature2', 'feature3']])
+            silhouette_avg = silhouette_score(clustering_data[['feature1', 'feature2', 'feature3']], cluster_labels)
+            
+            if silhouette_avg > best_silhouette:
+                best_silhouette = silhouette_avg
+                best_n_clusters = n_clusters
+
+        # do it again for ground_truth
+        gt_output = pd.read_csv(ground_truth)
+        gt_clustering_data = gt_output[(gt_output['dt2IC'] == 1) & (gt_output['dt2CIdbz'] == 1) & (gt_output['date_first'] < 20230810000000)]
+
+        best_silhouette_gt = -1
+        best_n_clusters_gt = 0
+
+        for n_clusters in range(2, 11):
+            clusterer = AgglomerativeClustering(n_clusters=n_clusters)
+            cluster_labels = clusterer.fit_predict(gt_clustering_data[['feature1', 'feature2', 'feature3']])
+            silhouette_avg = silhouette_score(gt_clustering_data[['feature1', 'feature2', 'feature3']], cluster_labels)
+            
+            if silhouette_avg > best_silhouette_gt:
+                best_silhouette_gt = silhouette_avg
+                best_n_clusters_gt = n_clusters
+        
+        return bool(best_silhouette >= best_silhouette_gt)
+  "function": |-
+    Silhouette Score
+  "metric": |-
+    Silhouette Score for Clustering
+  "task_name": |-
+    Data mining
+  ground_truth: 1combine_land.csv
+- "code": |-
+    def keep_column_accuracy(ground_truth):
+        import pandas as pd
+        
+        output = pd.read_csv("1combine_land.csv")
+        gt_output = pd.read_csv(ground_truth)
+        
+        # Assuming ground_truth is a correct version of the 'keep' column
+        predictions = output['keep'].tolist()
+        gt_pred = gt_output['keep'].tolist()
+        
+        # For simplicity, assuming ground truth is given as a list
+        return bool(sum(1 for gt, pred in zip(gt_pred, predictions) if gt == pred) / len(gt_pred) > 0.95)
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Keep Column Accuracy
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: 1combine_land.csv
+"prompt": |-
+  Task: Clustering Negative Samples Classification
+
+  Input File:  
+  - `combine_land.csv`: This file contains the columns `dt2IC`, `dt2CIdbz`, `date_first`, `feature1`, `feature2`, `feature3` for clustering.
+
+  Output File:  
+  - `combine_land.csv`: This file will include the original data with two additional columns: `clus` and `keep`.
+
+  Subtasks:
+   
+  1. Clustering for 'clus' Column:
+     - Operations: 
+       - For rows where `dt2IC=1`, `dt2CIdbz=1`, and `date_first < 20230810000000`, perform Agglomerative clustering, calculating the number of clusters from 2 to 10.
+       - Select the number of clusters corresponding to the largest Silhouette Index (SI) coefficient as the final number of clusters.
+       - Assign the cluster labels to the `clus` column for the respective rows and leave the rest empty.
+     - Output Format: Append results to `1combine_land.csv`.
+   
+  2. Processing for 'keep' Column:
+     - Operations:
+       - For the updated `clus` column, calculate the count of each cluster.
+       - Determine the median of all counts.
+       - Assign a value of 1 to all clusters with a count less than or equal to the median.
+       - Randomly select a number of rows from clusters with a count higher than the median equivalent to the median itself and assign them a value of 1.
+       - All other rows should be assigned a value of 0.
+       - Maintain the original sorting order of the data in `1combine_land.csv`.
+     - Output Format: The updated `1combine_land.csv` will reflect these changes and contain the `keep` column alongside the `clus` column. 
+
+  Final Outputs:  
+  - The completed `combine_land.csv` will contain the processed data with `clus` and `keep` columns, facilitating further evaluation of the retained negative samples and positive samples from the training, validation, and test datasets.

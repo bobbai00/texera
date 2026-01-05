@@ -1,0 +1,67 @@
+TMC-list:
+- code: "def cleanliness_of_extracted_text(output, ground_truth):\n    extracted_text_output\
+    \ = output[0]\n    extracted_text_ground_truth = ground_truth[0]\n    return extracted_text_output.strip()\
+    \ == extracted_text_ground_truth.strip()"
+  function: Data Quality Score
+  metric: Cleanliness of Extracted Text
+  task_name: Data cleaning and preprocessing
+- code: "def tfidf_dict_integrity(output, ground_truth):\n    tfidf_dict_output =\
+    \ output[1]\n    tfidf_dict_ground_truth = ground_truth[1]\n    return all(word\
+    \ in tfidf_dict_output for word in tfidf_dict_ground_truth.keys()) and len(tfidf_dict_output)\
+    \ == len(tfidf_dict_ground_truth)"
+  function: Data Consistency
+  metric: TF-IDF Dictionary Integrity
+  task_name: Data exploration and statistics understand
+- code: "def consistency_of_tfidf_scores(output, ground_truth):\n    tfidf_dict_output\
+    \ = output[1]\n    tfidf_dict_ground_truth = ground_truth[1]\n    for word, score\
+    \ in tfidf_dict_ground_truth.items():\n        if word in tfidf_dict_output:\n\
+    \            if not np.isclose(tfidf_dict_output[word], score):\n            \
+    \    return False\n    return True"
+  function: Model Accuracy
+  metric: Consistency of TF-IDF Scores
+  task_name: Predictive modeling
+data: 'input_str = "Advanced [data] analysis [in the field] of [machine learning]
+  provides insights into [complex datasets]."
+
+  args = (input_str,)'
+ground_truth: "import numpy as np\nfrom sklearn.feature_extraction.text import TfidfVectorizer\n\
+  import re\n\ndef task_func(example_str):\n    # Extract text not enclosed in square\
+  \ brackets\n    extracted_text = re.sub(r'\\[.*?\\]', '', example_str).strip()\n\
+  \    \n    # If no valid text, return empty results\n    if not extracted_text:\n\
+  \        return (extracted_text, {})\n    \n    # Create TF-IDF vectorizer\n   \
+  \ vectorizer = TfidfVectorizer()\n    tfidf_matrix = vectorizer.fit_transform([extracted_text])\n\
+  \    \n    # Get feature names and their corresponding TF-IDF scores\n    feature_names\
+  \ = vectorizer.get_feature_names_out()\n    tfidf_scores = tfidf_matrix.toarray()[0]\n\
+  \    \n    # Create a dictionary of words and their TF-IDF scores\n    tfidf_dict\
+  \ = {feature_names[i]: tfidf_scores[i] for i in range(len(feature_names))}\n   \
+  \ \n    return (extracted_text, tfidf_dict)"
+prompt: "Extract all texts not enclosed in square brackets into a string and calculate\
+  \ the TF-IDF values which are returned as a dictionary. The function should output\
+  \ with: tuple(extracted_text: str, tfidf_dict: dict)\nextracted_text: The string\
+  \ containing all texts not enclosed in square brackets.  \ntfidf_dict: A dictionary\
+  \ with words as keys and TF-IDF scores as values.  \nYou should write self-contained\
+  \ code starting with:\n```\nimport numpy as np\nfrom sklearn.feature_extraction.text\
+  \ import TfidfVectorizer\nimport re\ndef task_func(example_str):\n```"
+testcase: "import unittest\nimport doctest\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        input_str = \"Adversarial ] input ][[][ i[s\
+  \ []] a [ problem ] in [ machine learning ]\"\n        _, output = task_func(input_str)\n\
+  \        expected_output = {\n            'adversarial': 0.5773502691896258, \n\
+  \            'in': 0.5773502691896258, \n            'input': 0.5773502691896258\n\
+  \        }\n        self.assertDictEqual(output, expected_output)\n\n    def test_case_2(self):\n\
+  \        input_str = \"Alice [1234 Street, City, State] Bob Charlie [5678 Street,\
+  \ AnotherCity, State]\"\n        _, output = task_func(input_str)\n        expected_output\
+  \ = {\n            'alice': 0.5773502691896258, \n            'bob': 0.5773502691896258,\
+  \ \n            'charlie': 0.5773502691896258\n        }\n        self.assertDictEqual(output,\
+  \ expected_output)\n\n    def test_case_3(self):\n        input_str = \"No brackets\
+  \ here at all\"\n        _, output = task_func(input_str)\n        expected_output\
+  \ = {\n            'all': 0.4472135954999579, \n            'at': 0.4472135954999579,\
+  \ \n            'brackets': 0.4472135954999579, \n            'here': 0.4472135954999579,\
+  \ \n            'no': 0.4472135954999579\n        }\n        self.assertDictEqual(output,\
+  \ expected_output)\n\n    def test_case_4(self):\n        input_str = \"Mix [bracketed\
+  \ content] (and non-bracketed) content\"\n        _, output = task_func(input_str)\n\
+  \        expected_output = {\n            'and': 0.4472135954999579, \n        \
+  \    'bracketed': 0.4472135954999579, \n            'content': 0.4472135954999579,\
+  \ \n            'mix': 0.4472135954999579, \n            'non': 0.4472135954999579\n\
+  \        }\n        self.assertDictEqual(output, expected_output)\n\n    def test_case_5(self):\n\
+  \        input_str = \"[Only bracketed content]\"\n        _, output = task_func(input_str)\n\
+  \        expected_output = {}\n        self.assertDictEqual(output, expected_output)"

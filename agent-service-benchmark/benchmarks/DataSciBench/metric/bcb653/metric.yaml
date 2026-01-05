@@ -1,0 +1,70 @@
+TMC-list:
+- code: "def dataframe_completeness(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the boolean DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    return output_df.equals(ground_truth_df)"
+  function: Data Completeness
+  metric: DataFrame Completeness
+  task_name: Data cleaning and preprocessing
+- code: "def heatmap_visualization_integrity(output, ground_truth):\n    heatmap_axes\
+    \ = output[1]  # extract the heatmap axes from tuple\n    ground_truth_axes =\
+    \ ground_truth[1]\n    return (heatmap_axes.get_title() == ground_truth_axes.get_title())\
+    \ and \\\n           (heatmap_axes.get_xlim() == ground_truth_axes.get_xlim())\
+    \ and \\\n           (heatmap_axes.get_ylim() == ground_truth_axes.get_ylim())"
+  function: Visualization Completeness
+  metric: Heatmap Visualization Integrity
+  task_name: Data visualization
+data: "import pandas as pd\n\ndataframe = pd.DataFrame({\n    'A': ['foo', 'bar',\
+  \ 'baz', 'qux', '332'],\n    'B': ['hello', '332', 'world', 'foo', 'aaa'],\n   \
+  \ 'C': ['test', '332', 'test2', 'test3', '332'],\n    'D': ['data', 'info', '332',\
+  \ 'more', 'text']\n})\n\ntarget_value = 'foo'\n\nargs = (dataframe, target_value)"
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\nimport seaborn\
+  \ as sns\n\ndef task_func(dataframe, target_value='332'):\n    # Create a boolean\
+  \ DataFrame indicating presence of the target value\n    bool_df = dataframe ==\
+  \ target_value\n\n    # Create a heatmap to visualize occurrences\n    fig, heatmap_axes\
+  \ = plt.subplots()\n    sns.heatmap(bool_df, ax=heatmap_axes, cmap='YlGnBu', cbar=False,\
+  \ linewidths=0.5, linecolor='black')\n\n    # Set labels and title for better readability\n\
+  \    heatmap_axes.set_title('Heatmap of Target Value Occurrences')\n    heatmap_axes.set_xlabel('Columns')\n\
+  \    heatmap_axes.set_ylabel('Index')\n\n    plt.show()\n\n    return bool_df, heatmap_axes"
+prompt: '"Searches a given DataFrame for occurrences of a specified target value and
+  visualizes these occurrences using a heatmap.
+
+  The function should output with: tuple(bool_df: pd.DataFrame, heatmap_axes: matplotlib.axes._axes.Axes)
+
+  bool_df: A DataFrame with Boolean values indicating the presence of the target value
+  in the input DataFrame.
+
+  heatmap_axes: The Axes object of the heatmap.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import matplotlib.pyplot as plt
+
+  import seaborn as sns
+
+  def task_func(dataframe, target_value=''332''):
+
+  ```"'
+testcase: "import unittest\nimport pandas as pd\n\nclass TestCases(unittest.TestCase):\n\
+  \n    def setUp(self):\n        \"\"\"Create a sample DataFrame for testing.\"\"\
+  \"\n        self.df = pd.DataFrame({\n            'Column1': ['0', 'a', '332', '33'],\n\
+  \            'Column2': ['1', 'bb', '33', '22'],\n            'Column3': ['2', 'ccc',\
+  \ '2', '332']\n        })\n\n    def test_target_value_occurrence(self):\n     \
+  \   \"\"\"Test if the function correctly identifies the target value.\"\"\"\n  \
+  \      mask, _ = task_func(self.df, '332')\n        self.assertTrue(mask.iloc[2,\
+  \ 0], \"Mask should be True where target value '332' exists.\")\n\n    def test_target_value_absence(self):\n\
+  \        \"\"\"Test if the function correctly identifies absence of the target value.\"\
+  \"\"\n        mask, _ = task_func(self.df, '332')\n        self.assertFalse(mask.iloc[0,\
+  \ 0], \"Mask should be False where target value '332' does not exist.\")\n\n   \
+  \ def test_return_type(self):\n        \"\"\"Test the return type of the function.\"\
+  \"\"\n        mask, ax = task_func(self.df, '332')\n        self.assertIsInstance(mask,\
+  \ pd.DataFrame, \"First return value should be a DataFrame.\")\n        self.assertTrue(hasattr(ax,\
+  \ 'get_figure'), \"Second return value should be an Axes object with a 'get_figure'\
+  \ method.\")\n\n    def test_default_target_value(self):\n        \"\"\"Test the\
+  \ function with the default target value.\"\"\"\n        mask, _ = task_func(self.df)\n\
+  \        self.assertEqual(mask.sum().sum(), 2, \"There should be exactly 2 occurrences\
+  \ of the default target value '332'.\")\n\n    def test_custom_target_value(self):\n\
+  \        \"\"\"Test the function with a custom target value.\"\"\"\n        mask,\
+  \ _ = task_func(self.df, 'a')\n        self.assertEqual(mask.sum().sum(), 1, \"\
+  There should be exactly 1 occurrence of the custom target value 'a'.\")"

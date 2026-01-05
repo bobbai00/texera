@@ -1,0 +1,103 @@
+"TMC-list":
+- "code": |-
+    def analysis_completeness(ground_truth):
+        with open(ground_truth, 'r') as file:
+            gt_analysis = file.read()
+        with open("data_analysis.txt", 'r') as file:
+            analysis = file.read()
+        # Compare the content of the analysis with the ground truth
+        return bool((len(set(analysis.split()).intersection(gt_analysis.split())) / len(set(gt_analysis.split()))) > 0.5)
+  "function": |-
+    Data Integrity
+  "metric": |-
+    Analysis Completeness
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: data_analysis.txt
+- "code": |-
+    def outlier_removal_rate(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("filtered_train.csv")
+        # Assume ground truth contains the original number of samples
+        gt_count = len(pd.read_csv(ground_truth))
+        filtered_count = len(output)
+        return bool(((gt_count - filtered_count) / gt_count) < 0.05)
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Outlier Removal Rate
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: filtered_train.csv
+- "code": |-
+    def spectral_image_clarity(ground_truth):
+        import pandas as pd
+        import numpy as np
+        output = pd.read_csv("spectral_images_train.csv")
+        gt_output = pd.read_csv(ground_truth)
+        # Measure the variance in spectral images; higher variance indicates clarity
+        gt_variance = np.var(gt_output.values)
+        clarity_score = np.var(output.values)
+        return bool(clarity_score <= gt_variance)
+  "function": |-
+    Data Validity
+  "metric": |-
+    Spectral Image Clarity
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: spectral_images_train.csv
+# - "code": |-
+#     def model_training_loss(ground_truth):
+#         from keras.models import load_model
+#         from keras.losses import MeanSquaredError
+#         import numpy as np
+#         import pandas as pd
+#         spectral_images = np.loadtxt("spectral_images_train.csv", delimiter=",")
+#         gt_model = load_model(ground_truth)
+#         model = load_model("cnn_model.h5")
+#         predictions = model.predict(spectral_images)
+#         print(type(predictions))
+#         # Calculate the loss based on ground truth labels (assumed to be in the same format)
+#         loss = MeanSquaredError()(ground_truth, predictions).numpy()
+#         return loss
+#   "function": |-
+#     Model Accuracy
+#   "metric": |-
+#     Model Training Loss
+#   "task_name": |-
+#     Predictive modeling
+#   ground_truth: cnn_model.h5
+- "code": |-
+    def model_accuracy(ground_truth):
+        import os
+        import pandas as pd
+        ground_truth_dir = os.path.join(ground_truth, "../test.csv")
+        gt_output = pd.read_csv(ground_truth_dir)['label'].tolist()
+        from sklearn.metrics import accuracy_score
+
+        pred_dir = os.path.join(ground_truth, "model_evaluation_results.csv")
+        pred_output = pd.read_csv(pred_dir)
+        gt_pred = pred_output[pred_output.keys()[-1]].tolist()
+
+        output = pd.read_csv("model_evaluation_results.csv")
+        predictions = output[output.keys()[-1]].tolist()
+        acc = accuracy_score(gt_output, predictions)
+
+        gt_acc = accuracy_score(gt_output, gt_pred)
+        return bool(acc >= gt_acc)
+  "function": |-
+    Model Accuracy
+  "metric": |-
+    Model Accuracy
+  "task_name": |-
+    Predictive modeling
+  ground_truth: ''
+"prompt": |-
+  Complete the following task based on Python:
+  Task requirements: Use Short-Time Fourier Transform (STFT) to process time series data (training set "train.csv" and test set "test.csv") to obtain spectral images, and then classify the spectral images using a Convolutional Neural Network (CNN).
+  Suggested steps:
+  (1) Data feature analysis: Analyze the dataset (input: "train.csv", output: "data_analysis.txt"). Each sample is a one-dimensional time series, which can be directly plotted as a time series curve to observe the features from the curve. In practice, the sample curves of class 0 tend to have a stable period and amplitude, while the samples of class 1 do not converge.
+  (2) Sample filtering: Remove any abnormal training samples (input: "train.csv", output: "filtered_train.csv").
+  (3) Time series feature extraction: Use STFT to process the sample data and obtain spectral images (input: "filtered_train.csv", output: "spectral_images_train.csv"). In the spectrum, the samples of class 0 present clear banded patterns due to their stable period and amplitude, while the samples of class 1 are chaotic.
+  (4) Model training: Train the CNN with the spectral images from the training data to obtain the trained model (input: "spectral_images_train.csv", output: "cnn_model.h5").
+  (5) Model testing: Evaluate the model's output on the test set (input: "test.csv" and "cnn_model.h5", output: "model_evaluation_results.csv").

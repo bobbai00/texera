@@ -1,0 +1,108 @@
+TMC-list:
+- code: "def model_accuracy(output, ground_truth):\n    from sklearn.metrics import\
+    \ auc\n    model, ax = output\n    gt_model, gt_ax = ground_truth\n\n    # Retrieve\
+    \ the precision and recall values from the output Axes object\n    lines = ax.get_lines()\n\
+    \    if len(lines) == 0:\n        return None  # Return None if no lines are found\
+    \ (invalid plot)\n\n    # Extract precision and recall from the plot\n    recall\
+    \ = lines[0].get_xdata()\n    precision = lines[0].get_ydata()\n\n    # Calculate\
+    \ the AUC for Precision-Recall curve\n    pr_auc = auc(recall, precision)\n  \
+    \  \n    # Optionally, you can compare with the ground truth model's performance\
+    \ if needed\n    # For now, we return the AUC score which is a good metric to\
+    \ evaluate\n\n    return pr_auc"
+  function: Model Accuracy
+  metric: Model Performance (Accuracy)
+  task_name: Predictive modeling
+- code: "def pr_curve_quality(output, ground_truth):\n    import numpy as np\n   \
+    \ lines_output = output[1].get_lines()\n    if not lines_output:\n        return\
+    \ 0  # If no lines, return the worst case scenario\n\n    precision_output, recall_output\
+    \ = lines_output[0].get_data()\n\n    # Extract precision and recall data from\
+    \ the ground_truth\n    lines_gt = ground_truth[1].get_lines()\n    if not lines_gt:\n\
+    \        return 0  # If no lines, return the worst case scenario\n\n    precision_gt,\
+    \ recall_gt = lines_gt[0].get_data()\n\n    # Ensure both precision-recall curves\
+    \ have the same recall points for comparison\n    combined_recall = np.union1d(recall_output,\
+    \ recall_gt)\n    precision_output_interpolated = np.interp(combined_recall, recall_output,\
+    \ precision_output)\n    precision_gt_interpolated = np.interp(combined_recall,\
+    \ recall_gt, precision_gt)\n\n    # Compute the area between the precision-recall\
+    \ curves (for simplicity, use absolute difference)\n    area_between_curves =\
+    \ np.trapz(np.abs(precision_output_interpolated - precision_gt_interpolated),\
+    \ combined_recall)\n\n    # Compute the maximum possible area (area under a perfect\
+    \ precision-recall curve)\n    max_possible_area = np.trapz(np.ones_like(combined_recall),\
+    \ combined_recall)\n\n    # Convert the area between curves to a value between\
+    \ 0 and 1\n    quality_score = 1 - (area_between_curves / max_possible_area)\n\
+    \    \n    # Ensure the quality score is within the range [0, 1]\n    quality_score\
+    \ = max(0, min(1, quality_score))\n    \n    return quality_score\n"
+  function: Visualization Quality
+  metric: Precision-Recall Curve Quality
+  task_name: Data visualization
+data: 'import numpy as np
+
+
+  # New complex input data
+
+  X = np.random.rand(100, 5)  # 100 samples, 5 features
+
+  Y = np.random.randint(0, 2, size=(100,))  # 100 binary labels
+
+
+  args = (X, Y)'
+ground_truth: "from sklearn.model_selection import train_test_split\nfrom sklearn.metrics\
+  \ import precision_recall_curve\nfrom tensorflow import keras\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(X, Y):\n    # Split the data into training (70%) and test\
+  \ (30%) sets\n    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.3,\
+  \ random_state=42)\n\n    # Construct a Keras Sequential model\n    model = keras.Sequential()\n\
+  \    model.add(keras.layers.Dense(10, activation='sigmoid', input_dim=X.shape[1]))\n\
+  \    model.add(keras.layers.Dense(1, activation='sigmoid'))\n\n    # Compile the\
+  \ model using binary cross-entropy loss and SGD optimizer\n    model.compile(loss='binary_crossentropy',\
+  \ optimizer='sgd', metrics=['accuracy'])\n\n    # Fit the model to the training\
+  \ data in a non-verbose mode\n    model.fit(X_train, y_train, epochs=100, batch_size=32,\
+  \ verbose=0)\n\n    # Predict probabilities for the test set\n    y_scores = model.predict(X_test).ravel()\n\
+  \n    # Calculate precision and recall\n    precision, recall, _ = precision_recall_curve(y_test,\
+  \ y_scores)\n\n    # Plot the Precision-Recall curve\n    fig, ax = plt.subplots()\n\
+  \    ax.plot(recall, precision, marker='.')\n    ax.set_xlabel('Recall')\n    ax.set_ylabel('Precision')\n\
+  \    ax.set_title('Precision-Recall Curve')\n\n    # Return the trained model and\
+  \ the axes object\n    return model, ax"
+prompt: 'This function should: - Splits the input data into training (70%) and test
+  (30%) sets. - Constructs a Keras Sequential model with one hidden dense layer and
+  sigmoid activation. The input dimension is determined based on the first feature
+  set of X. - Compiles the model using binary cross-entropy loss and SGD optimizer.
+  - Fits the model to the training data in a non-verbose mode. - Plots the Precision-Recall
+  curve for the model based on the test set data. Note that: The plot''s x-axis is
+  labeled ''Recall'', and the y-axis is labeled ''Precision''. The title of the axes
+  is set to ''Precision-Recall Curve''. The axes object allows for further customization
+  of the plot outside the function. The function should output with: tuple(trained_model:
+  keras.models.Sequential, pr_curve_axes: matplotlib.axes._axes.Axes) trained_model:
+  The trained Keras model. pr_curve_axes: The matplotlib Axes object for the Precision-Recall
+  curve plot. You should write self-contained code starting with: ``` from sklearn.model_selection
+  import train_test_split from sklearn.metrics import precision_recall_curve from
+  tensorflow import keras import matplotlib.pyplot as plt def task_func(X, Y): ```'
+testcase: "import unittest\nimport numpy as np\nfrom tensorflow.keras.models import\
+  \ Sequential\nfrom tensorflow.keras.optimizers import SGD\nfrom matplotlib.axes\
+  \ import Axes\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n   \
+  \     # Initialize common test data used in multiple test cases.\n        self.X\
+  \ = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])\n        self.Y = np.array([0, 1,\
+  \ 1, 0])\n\n    def test_model_and_axes_types(self):\n        # Verify if the returned\
+  \ objects include a Keras Sequential model and a matplotlib Axes.\n        model,\
+  \ ax = task_func(self.X, self.Y)\n        self.assertIsInstance(model, Sequential,\
+  \ \"The function should return a Sequential model.\")\n        self.assertIsInstance(ax,\
+  \ Axes, \"The function should return a matplotlib Axes object.\")\n\n    def test_model_output_shape(self):\n\
+  \        # Ensure the model's output shape is correct based on the input data.\n\
+  \        model, _ = task_func(self.X, self.Y)\n        self.assertEqual(model.output_shape,\
+  \ (None, 1), \"The model's output shape should have one dimension for binary classification.\"\
+  )\n\n    def test_model_loss(self):\n        # Confirm that the model uses binary\
+  \ cross-entropy as its loss function.\n        model, _ = task_func(self.X, self.Y)\n\
+  \        self.assertEqual(model.loss, 'binary_crossentropy', \"Binary cross-entropy\
+  \ should be the loss function for the model.\")\n\n    def test_model_optimizer(self):\n\
+  \        # Check if the model's optimizer is an instance of SGD.\n        model,\
+  \ _ = task_func(self.X, self.Y)\n        self.assertIsNotNone(model.optimizer)\n\
+  \        self.assertIsInstance(model.optimizer, SGD, \"The optimizer for the model\
+  \ should be SGD.\")\n\n    def test_input_dimension_flexibility(self):\n       \
+  \ # Test the model's ability to handle inputs with varying feature dimensions.\n\
+  \        X_varied = np.array([[0], [1], [2], [3]])\n        Y_varied = np.array([0,\
+  \ 1, 0, 1])\n        model, _ = task_func(X_varied, Y_varied)\n        self.assertEqual(model.input_shape[1],\
+  \ X_varied.shape[1], \"The model should dynamically adapt to the input feature size.\"\
+  )\n\n    def test_axes_labels_and_title(self):\n        # Test if the Axes object\
+  \ has the correct title and labels as specified.\n        _, ax = task_func(self.X,\
+  \ self.Y)\n        self.assertEqual(ax.get_title(), 'Precision-Recall Curve', \"\
+  The plot's title should be 'Precision-Recall Curve'.\")\n        self.assertEqual(ax.get_xlabel(),\
+  \ 'Recall', \"The plot's x-axis label should be 'Recall'.\")\n        self.assertEqual(ax.get_ylabel(),\
+  \ 'Precision', \"The plot's y-axis label should be 'Precision'.\")"

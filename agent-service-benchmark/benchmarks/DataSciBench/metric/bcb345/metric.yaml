@@ -1,0 +1,85 @@
+TMC-list:
+- code: "def visualization_integrity(output, ground_truth):\n    import matplotlib.pyplot\
+    \ as plt\n    ax_output = output[0]  # extract the axes object from the output\
+    \ tuple\n    ax_ground_truth = ground_truth[0]  # extract the axes object from\
+    \ the ground truth tuple\n    output_data = ax_output.collections[0].get_offsets()\
+    \  # get scatter plot data from ax_output\n    ground_truth_data = ax_ground_truth.collections[0].get_offsets()\
+    \  # get scatter plot data from ax_ground_truth\n    return len(output_data) ==\
+    \ len(ground_truth_data) and all((point in output_data) for point in ground_truth_data)"
+  function: Visualization Completeness
+  metric: Visualization Integrity
+  task_name: Data visualization
+data: "import pandas as pd\n\n# Create a complex DataFrame with mixed numeric values\
+  \ and more rows\ndf = pd.DataFrame({\n    'A': [1.1, 2.2, 3.3, 4.4, 5.5, 1.5, 2.5,\
+  \ 3.5],\n    'B': [10.0, 9.9, 8.8, 7.7, 6.6, None, 5.5, 4.4],\n    'C': ['Category1',\
+  \ 'Category2', 'Category3', 'Category4', 'Category5', 'Category1', 'Category2',\
+  \ 'Category3']  # Additional non-relevant column\n})\n\ncol1 = 'A'\ncol2 = 'B'\n\
+  args = (df, col1, col2)"
+ground_truth: "import pandas as pd\nimport seaborn as sns\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(df, col1, col2):\n    if not isinstance(df, pd.DataFrame):\n\
+  \        raise ValueError(\"Input must be a DataFrame.\")\n    if df.empty:\n  \
+  \      raise ValueError(\"DataFrame is empty.\")\n    if col1 not in df.columns\
+  \ or col2 not in df.columns:\n        raise ValueError(f\"DataFrame must contain\
+  \ columns: {col1} and {col2}.\")\n    \n    if not pd.api.types.is_numeric_dtype(df[col1])\
+  \ or not pd.api.types.is_numeric_dtype(df[col2]):\n        raise TypeError(\"Columns\
+  \ must contain numeric data.\")\n    \n    plt.figure(figsize=(10, 6))\n    ax =\
+  \ sns.regplot(x=col1, y=col2, data=df)\n    plt.show()\n    \n    return (ax,)"
+prompt: 'Draw a scatter plot with a regression line for two columns from a DataFrame.
+  The function should raise the exception for: Raise ValueError if the input df is
+  not a DataFrame, empty, or does not contain the specified columns. Raise TypeError
+  if df uses non-numeric data. The function should output with: tuple(ax: seaborn.axisgrid.Axes)
+
+  ax: A seaborn axes object containing the scatter plot with the regression line.
+  You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import seaborn as sns
+
+  def task_func(df, col1, col2):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport seaborn as sns\nimport matplotlib\n\
+  import matplotlib.pyplot as plt\n\nclass TestCases(unittest.TestCase):\n    def\
+  \ test_numeric_data(self):\n        # Create a DataFrame with numeric data\n   \
+  \     df = pd.DataFrame({\n            'A': [1, 2, 3, 4, 5],\n            'B': [5,\
+  \ 4, 3, 2, 1]\n        })\n        # Call the function with the DataFrame\n    \
+  \    ax = task_func(df, 'A', 'B')\n\n        # Assertions to validate the output\n\
+  \        self.assertIsInstance(ax, matplotlib.axes._axes.Axes, \"The returned object\
+  \ should be a seaborn FacetGrid.\")\n        plt.close()\n\n    def test_non_numeric_data(self):\n\
+  \        # Create a DataFrame with non-numeric data\n        df = pd.DataFrame({\n\
+  \            'A': ['one', 'two', 'three', 'four', 'five'],\n            'B': ['five',\
+  \ 'four', 'three', 'two', 'one']\n        })\n        # We expect a TypeError because\
+  \ non-numeric data can't be used to plot a regression line\n        with self.assertRaises(TypeError,\
+  \ msg=\"The function should raise a TypeError for non-numeric data.\"):\n      \
+  \      task_func(df, 'A', 'B')\n        plt.close()\n\n    def test_missing_data(self):\n\
+  \        # Create a DataFrame with missing data\n        df = pd.DataFrame({\n \
+  \           'A': [1, 2, None, 4, 5],\n            'B': [5, None, 3, 2, 1]\n    \
+  \    })\n        # Call the function with the DataFrame\n        ax = task_func(df,\
+  \ 'A', 'B')\n        # Assertions to validate the output\n        # We expect the\
+  \ function to handle missing data according to seaborn's default behavior\n    \
+  \    self.assertIsInstance(ax, matplotlib.axes._axes.Axes, \"The returned object\
+  \ should be a seaborn FacetGrid.\")\n        # Check if the data plotted is the\
+  \ same length as the original minus the NaNs\n        non_na_length = df.dropna().shape[0]\n\
+  \        self.assertEqual(len(ax.collections[0].get_offsets().data), non_na_length)\
+  \  # Check if there's only one data point in the collection\n        plt.close()\n\
+  \n    def test_large_dataset(self):\n        # Create a large DataFrame\n      \
+  \  df = pd.DataFrame({\n            'A': range(10000),\n            'B': range(10000,\
+  \ 20000)\n        })\n        # Call the function with the DataFrame\n        ax\
+  \ = task_func(df, 'A', 'B')\n        # Assertions to validate the output\n     \
+  \   self.assertIsInstance(ax, matplotlib.axes._axes.Axes, \"The returned object\
+  \ should be a seaborn FacetGrid.\")\n        plt.close()\n\n    def test_single_data_point(self):\n\
+  \        # Create a DataFrame with a single data point\n        df = pd.DataFrame({\n\
+  \            'A': [1],\n            'B': [1]\n        })\n        # Call the function\
+  \ with the DataFrame\n        ax = task_func(df, 'A', 'B')\n        # Assertions\
+  \ to validate the output\n        self.assertIsInstance(ax, matplotlib.axes._axes.Axes,\
+  \ \"The returned object should be a seaborn FacetGrid.\")\n        self.assertEqual(len(ax.collections),\
+  \ 1)  # Check if there's only one collection of points in the plot\n        self.assertEqual(len(ax.collections[0].get_offsets()),\
+  \ 1)  # Check if there's only one data point in the collection\n        plt.close()\n\
+  \n    def test_non_df(self):\n        with self.assertRaises(ValueError):\n    \
+  \        task_func(\"non_df\", 'A', 'B')\n\n    def test_empty_df(self):\n     \
+  \   with self.assertRaises(ValueError):\n            task_func(pd.DataFrame(), 'A',\
+  \ 'B')\n\n    def test_column_df(self):\n        with self.assertRaises(ValueError):\n\
+  \            task_func(pd.DataFrame({'A': [1]}), 'A', 'B')"

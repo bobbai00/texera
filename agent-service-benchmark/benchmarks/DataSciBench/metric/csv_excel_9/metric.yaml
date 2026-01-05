@@ -1,0 +1,83 @@
+"TMC-list":
+- "code": |-
+    def strong_stock_accuracy(ground_truth):
+        import pandas as pd
+        from sklearn.metrics import accuracy_score
+        gt_output = pd.read_csv(ground_truth)
+        output = pd.read_csv('strong_stocks_by_industry_count.csv')
+        strong_stocks = output['count'].tolist()
+        gt_stocks = gt_output['count'].tolist()
+        return bool(accuracy_score(gt_stocks, strong_stocks) >= 0.9)
+  "function": |-
+    Model Accuracy
+  "metric": |-
+    Strong Stock Identification Accuracy
+  "task_name": |-
+    Predictive modeling
+  ground_truth: strong_stocks_by_industry_count.csv
+- "code": |-
+    def industry_count_consistency(ground_truth):
+        import pandas as pd
+        from sklearn.metrics import mean_squared_error
+        output = pd.read_csv('all_stocks_by_industry_count.csv')
+        gt_output = pd.read_csv(ground_truth)
+        gt_counts = gt_output['total_count'].tolist()
+        total_counts = output['total_count'].tolist()
+        return bool(gt_counts == total_counts)
+  "function": |-
+    Data Consistency
+  "metric": |-
+    Industry Count Consistency
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: all_stocks_by_industry_count.csv
+# - "code": |-
+#     def strong_stocks_group_accuracy(ground_truth):
+#         import pandas as pd
+#         output = pd.read_csv('strong_stocks_by_industry_count.csv')
+#         predicted_counts = output['count'].tolist()
+#         return accuracy_score(ground_truth, predicted_counts)
+#   "function": |-
+#     Data Accuracy
+#   "metric": |-
+#     Strong Stocks Group Accuracy
+#   "task_name": |-
+#     Data exploration and statistics understand
+#   ground_truth: strong_stocks_by_industry_count.csv
+# - "code": |-
+#     def visualization_comparison_metric(ground_truth):
+#         import pandas as pd
+#         # Assuming a CSV file 'visualization_data.csv' containing the visualization counts
+#         output = pd.read_csv('visualization_data.csv')
+#         visualization_counts = output['count'].tolist()
+#         return correlation_coefficient(ground_truth, visualization_counts)
+#   "function": |-
+#     Visualization Quality
+#   "metric": |-
+#     Visualization Comparison Metric
+#   "task_name": |-
+#     Data visualization
+# - "code": |-
+#     def visualization_representation_metric(ground_truth):
+#         import pandas as pd
+#         output = pd.read_csv('visualization_data.csv')
+#         representation_counts = output['count'].tolist()
+#         return mean_absolute_error(ground_truth, representation_counts)
+#   "function": |-
+#     Visualization Quality
+#   "metric": |-
+#     Visualization Representation Metric
+#   "task_name": |-
+#     Data visualization
+"prompt": |-
+  The file 'stock_trading_data_close.csv' contains the closing price data of each individual stock for the past two years, and the file 'stock_info_data.csv' contains industry classification information for each individual stock. Please implement the following in Python:
+
+  1. Define a strong stock: The closing price on a given day is greater than the 60-day moving average of the closing price, and the value of the 5-day moving average of the closing price is greater than the 20-day moving average value.  
+
+  2. Set the analysis date to the last trading day. 
+
+  3. Find the strong stocks on the analysis date. 
+
+  4. Group the strong stocks by industry and count the number of strong stocks in each industry. Output: 'strong_stocks_by_industry_count.csv' (columns: industry, count)
+
+  5. Group all stocks by industry and count the number of stocks in each industry.  Output: 'all_stocks_by_industry_count.csv' (columns: industry, total_count)

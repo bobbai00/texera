@@ -1,0 +1,78 @@
+TMC-list:
+- code: "def standardized_value_check(output, ground_truth):\n    output_scaled =\
+    \ output[0].axes[0].get_lines()[0].get_ydata()  # extract scaled y values from\
+    \ the figure\n    ground_truth_scaled = ground_truth[0].axes[0].get_lines()[0].get_ydata()\
+    \  # extract ground truth scaled y values\n    return np.allclose(output_scaled,\
+    \ ground_truth_scaled, rtol=1e-05, atol=1e-08)  # check if outputs match within\
+    \ tolerance"
+  function: Normalization Range Check
+  metric: Standardized Value Check
+  task_name: Data cleaning and preprocessing
+- code: "def plot_element_length_check(output, ground_truth):\n    output_fig = output[0]\n\
+    \    ground_truth_fig = ground_truth[0]\n    return len(output_fig.axes) == len(ground_truth_fig.axes)\
+    \  # ensure the number of plot axes matches the ground truth"
+  function: Visualization Completeness
+  metric: Plot Elements Length Check
+  task_name: Data visualization
+data: 'import numpy as np
+
+  x = [np.array([10, 20, 30, 40]), np.array([5, 15, 25, 35, 45])]
+
+  y = [np.array([50, 60, 70, 80]), np.array([90, 100, 110, 120, 130])]
+
+  labels = [''Experiment A'', ''Experiment B'']
+
+
+  args = (x, y, labels)'
+ground_truth: "import matplotlib.pyplot as plt\nimport numpy as np\nfrom sklearn.preprocessing\
+  \ import StandardScaler\n\ndef task_func(x, y, labels):\n    scaler = StandardScaler()\n\
+  \    plot_fig, ax = plt.subplots()\n\n    for i in range(len(x)):\n        x_scaled\
+  \ = scaler.fit_transform(x[i].reshape(-1, 1)).flatten()\n        y_scaled = scaler.fit_transform(y[i].reshape(-1,\
+  \ 1)).flatten()\n        ax.plot(x_scaled, y_scaled, label=labels[i])\n\n    ax.set_xlabel('Scaled\
+  \ X')\n    ax.set_ylabel('Scaled Y')\n    ax.legend()\n    plt.show()\n    \n  \
+  \  return (plot_fig,)"
+prompt: 'Scale the "x" and "y" arrays using the standard scaler of sklearn and plot
+  them with given labels. Each pair of x and y arrays are scaled independently and
+  plotted as a separate series with a label. The function should output with: tuple(plot_fig:
+  matplotlib.figure.Figure)
+
+  plot_fig: The figure object containing the plot.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import matplotlib.pyplot as plt
+
+  import numpy as np
+
+  from sklearn.preprocessing import StandardScaler
+
+  def task_func(x, y, labels):
+
+  ```'
+testcase: "import unittest\nimport numpy.testing as npt\nimport numpy as np\nfrom\
+  \ sklearn.preprocessing import StandardScaler\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        # Sample data for testing\n        self.x = [np.array([1,\
+  \ 2, 3]), np.array([4, 5, 6])]\n        self.y = [np.array([4, 5, 6]), np.array([7,\
+  \ 8, 9])]\n        self.labels = ['Group 1', 'Group 2']\n\n    def test_figure_type(self):\n\
+  \        \"\"\"Test that the function returns a matplotlib figure.\"\"\"\n     \
+  \   fig = task_func(self.x, self.y, self.labels)\n        self.assertTrue(str(type(fig)).endswith(\"\
+  matplotlib.figure.Figure'>\"))\n\n    def test_plot_labels(self):\n        \"\"\"\
+  Test that the correct number of labels are in the legend.\"\"\"\n        fig = task_func(self.x,\
+  \ self.y, self.labels)\n        ax = fig.axes[0]\n        self.assertEqual(len(ax.get_legend_handles_labels()[1]),\
+  \ len(self.labels))\n\n    def test_non_empty_plot(self):\n        \"\"\"Test that\
+  \ the plot is not empty.\"\"\"\n        fig = task_func(self.x, self.y, self.labels)\n\
+  \        ax = fig.axes[0]\n        self.assertTrue(len(ax.lines) > 0)\n\n    def\
+  \ test_scaled_values_range(self):\n        \"\"\"Test that the scaled values have\
+  \ a mean close to 0 and a standard deviation close to 1.\"\"\"\n        scaler =\
+  \ StandardScaler()\n        for xy in zip(self.x, self.y):\n            xy_scaled\
+  \ = scaler.fit_transform(np.vstack(xy).T)\n            self.assertTrue(np.allclose(np.mean(xy_scaled,\
+  \ axis=0), 0, atol=1e-7))\n            self.assertTrue(np.allclose(np.std(xy_scaled,\
+  \ axis=0), 1, atol=1e-7))\n\n    def test_input_unchanged(self):\n        \"\"\"\
+  Test that the original input arrays are unchanged after scaling.\"\"\"\n       \
+  \ x_original = [arr.copy() for arr in self.x]\n        y_original = [arr.copy()\
+  \ for arr in self.y]\n        task_func(self.x, self.y, self.labels)\n        for\
+  \ orig, after in zip(x_original, self.x):\n            npt.assert_array_equal(orig,\
+  \ after)\n        for orig, after in zip(y_original, self.y):\n            npt.assert_array_equal(orig,\
+  \ after)"

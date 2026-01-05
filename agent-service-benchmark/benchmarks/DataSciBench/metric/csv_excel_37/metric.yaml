@@ -1,0 +1,86 @@
+"TMC-list":
+# - "code": |-
+#     def percentage_missing_values(ground_truth):
+#         import pandas as pd
+#         output = pd.read_csv("data.csv")
+#         total_cells = output.size
+#         missing_cells = output.isnull().sum().sum()
+#         return (missing_cells / total_cells) * 100
+#   "function": |-
+#     Data Completeness
+#   "metric": |-
+#     Percentage of Missing Values
+#   "task_name": |-
+#     Data cleaning and preprocessing
+#   ground_truth: data.csv
+- "code": |-
+    def mean_absolute_error(ground_truth):
+        import re
+
+        def extract_scores(file_path):
+            with open(file_path, 'r') as file:
+                content = file.read()
+
+            # Regular expressions to extract the Mean Squared Error and R^2 Score
+            mse_match = re.search(r"Mean Squared Error:\s*([\d.]+)", content)
+            r2_match = re.search(r"R\^2 Score:\s*([\d.]+)", content)
+
+            # Extract the values
+            mse = float(mse_match.group(1)) if mse_match else None
+            r2 = float(r2_match.group(1)) if r2_match else None
+
+            return mse, r2
+
+        # Example usage
+        mse, r2 = extract_scores('results/acc.txt')
+        gt_mse, gt_r2 = extract_scores(ground_truth)
+        return bool(mse <= gt_mse)
+        # import pandas as pd
+        # from sklearn.metrics import mean_absolute_error as mae
+        # output = pd.read_csv("results/predictions.csv")  # Assuming predictions are saved here
+        # predictions = output[['ff', 'ft', 'tt', 'tf']].values
+        # return mae(ground_truth, predictions)
+  "function": |-
+    Mean Absolute Error
+  "metric": |-
+    Mean Absolute Error (MAE)
+  "task_name": |-
+    Predictive modeling
+  ground_truth: results/acc.txt
+- "code": |-
+    def r_squared_score(ground_truth):
+        # import pandas as pd
+        # from sklearn.metrics import r2_score
+        # output = pd.read_csv("results/predictions.csv")  # Assuming predictions are saved here
+        # predictions = output[['ff', 'ft', 'tt', 'tf']].values
+        # return r2_score(ground_truth, predictions)
+    # def mean_absolute_error(ground_truth):
+        import re
+
+        def extract_scores(file_path):
+            with open(file_path, 'r') as file:
+                content = file.read()
+
+            # Regular expressions to extract the Mean Squared Error and R^2 Score
+            mse_match = re.search(r"Mean Squared Error:\s*([\d.]+)", content)
+            r2_match = re.search(r"R\^2 Score:\s*([\d.]+)", content)
+
+            # Extract the values
+            mse = float(mse_match.group(1)) if mse_match else None
+            r2 = float(r2_match.group(1)) if r2_match else None
+
+            return mse, r2
+
+        # Example usage
+        mse, r2 = extract_scores('results/acc.txt')
+        gt_mse, gt_r2 = extract_scores(ground_truth)
+        return bool(r2 >= gt_r2)
+  "function": |-
+    Result Quality
+  "metric": |-
+    R-squared Score
+  "task_name": |-
+    Interpretability and report generation
+  ground_truth: results/acc.txt
+"prompt": |-
+  I currently have a structured dataset named date.csv with 6 columns and 5960 rows of data. The first column is named X, the second column is named Y, both of which are structural parameters set for simulation. The following four columns, ff, ft, tt, and tf, represent the simulation results. Now, I need to train a model that can accurately predict the four simulation results for other structural parameters. The model and related content will be saved in the results folder. The model should be saved as "model.pkl" and the final accuracy should be saved in "acc.txt".

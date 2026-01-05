@@ -1,0 +1,90 @@
+TMC-list:
+- code: "def z_score_correctness(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the z_scores_df DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    return (output_df.equals(ground_truth_df))  # Check if both DataFrames are\
+    \ identical"
+  function: Normalization Range Check
+  metric: Z-Score Calculation Correctness
+  task_name: Data cleaning and preprocessing
+- code: "def mean_calculation_accuracy(output, ground_truth):\n    output_df = output[0]\n\
+    \    ground_truth_df = ground_truth[0]\n    output_mean = output_df['Mean']\n\
+    \    ground_truth_mean = ground_truth_df['Mean']\n    return output_mean.equals(ground_truth_mean)\
+    \  # Check if mean values are the same"
+  function: Data Accuracy
+  metric: Mean Calculation Accuracy
+  task_name: Data exploration and statistics understand
+- code: "import matplotlib\n\ndef heatmap_integrity(output, ground_truth):\n    heatmap_ax\
+    \ = output[1]  # extract the heatmap_ax Axes object from tuple\n    # Heatmap\
+    \ integrity can be evaluated by checking if `heatmap_ax` is an instance of Axes\n\
+    \    return isinstance(heatmap_ax, matplotlib.axes.Axes)  # Check if the heatmap\
+    \ Axes is valid"
+  function: Visualization Completeness
+  metric: Heatmap Integrity
+  task_name: Data visualization
+data: "import numpy as np\n\ndata = np.array([[10, 20, 30, 40, 50],\n            \
+  \     [5, 25, 35, 45, 55],\n                 [100, 200, 300, 400, 500],\n      \
+  \           [-10, -20, -30, -40, -50],\n                 [0, 0, 0, 0, 0]])\nargs\
+  \ = (data,)"
+ground_truth: "import pandas as pd\nimport seaborn as sns\nfrom scipy.stats import\
+  \ zscore\nimport matplotlib.pyplot as plt\n\ndef task_func(data_matrix):\n    #\
+  \ Calculate Z-scores for the data matrix\n    z_scores = zscore(data_matrix, axis=1)\n\
+  \    z_scores_df = pd.DataFrame(z_scores, columns=[f'Feature {i+1}' for i in range(z_scores.shape[1])])\n\
+  \    \n    # Calculate mean of Z-scores for each row\n    z_scores_df['Mean'] =\
+  \ z_scores_df.mean(axis=1)\n    \n    # Visualize the correlation matrix with a\
+  \ heatmap\n    correlation_matrix = z_scores_df.corr()\n    plt.figure(figsize=(10,\
+  \ 8))\n    heatmap_ax = sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm',\
+  \ fmt=\".2f\", square=True, linewidths=.5)\n    plt.title('Correlation Matrix of\
+  \ Z-scores')\n    \n    return (z_scores_df, heatmap_ax)"
+prompt: 'Calculate the Z-values of a 2D data matrix, calculate the mean value of each
+  row and then visualize the correlation matrix of the Z-values with a heatmap. The
+  function should output with: tuple(z_scores_df: pandas.DataFrame, heatmap_ax: matplotlib.axes.Axes)
+
+  z_scores_df: A DataFrame with columns ''Feature 1'', ''Feature 2'', ..., ''Feature
+  n'' containing the Z-scores (per matrix row) and an additional column ''Mean'' for
+  the mean of z-score per row.
+
+  heatmap_ax: The Axes object of the plotted heatmap. You should write self-contained
+  code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import seaborn as sns
+
+  from scipy.stats import zscore
+
+  def task_func(data_matrix):
+
+  ```'
+testcase: "import unittest\nimport numpy as np\nimport matplotlib\nimport pandas as\
+  \ pd\nfrom scipy.stats import zscore\n\nclass TestCases(unittest.TestCase):\n  \
+  \  \"\"\"Test cases for the task_func function.\"\"\"\n\n    def test_case_1(self):\n\
+  \        data = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])\n        df, ax = task_func(data)\n\
+  \        self.assertTrue(isinstance(df, pd.DataFrame))\n        self.assertTrue(isinstance(ax,\
+  \ matplotlib.axes.Axes))\n        np.testing.assert_array_equal(\n            df.loc[:,\
+  \ [col for col in df.columns if col.startswith(\"Feature\")]].values,\n        \
+  \    zscore(data, axis=1),\n        )\n        self.assertTrue(\"Mean\" in df.columns)\n\
+  \n    def test_case_2(self):\n        data = np.array([[0, 0, 1], [0, 1, 0], [1,\
+  \ 0, 0]])\n        df, ax = task_func(data)\n        self.assertTrue(isinstance(df,\
+  \ pd.DataFrame))\n        self.assertTrue(isinstance(ax, matplotlib.axes.Axes))\n\
+  \        np.testing.assert_array_equal(\n            df.loc[:, [col for col in df.columns\
+  \ if col.startswith(\"Feature\")]].values,\n            zscore(data, axis=1),\n\
+  \        )\n        self.assertTrue(\"Mean\" in df.columns)\n\n    def test_case_3(self):\n\
+  \        data = np.array([[3, 5, 7, 1000], [200, 5, 7, 1], [1, -9, 14, 700]])\n\
+  \        df, ax = task_func(data)\n        self.assertTrue(isinstance(df, pd.DataFrame))\n\
+  \        self.assertTrue(isinstance(ax, matplotlib.axes.Axes))\n        np.testing.assert_array_equal(\n\
+  \            df.loc[:, [col for col in df.columns if col.startswith(\"Feature\"\
+  )]].values,\n            zscore(data, axis=1),\n        )\n        self.assertTrue(\"\
+  Mean\" in df.columns)\n\n    def test_case_4(self):\n        data = np.array(\n\
+  \            [\n                [1, 2, 3, 4, 5, 4, 3, 2, 1],\n            ]\n  \
+  \      )\n        df, ax = task_func(data)\n        self.assertTrue(isinstance(df,\
+  \ pd.DataFrame))\n        self.assertTrue(isinstance(ax, matplotlib.axes.Axes))\n\
+  \        np.testing.assert_array_equal(\n            df.loc[:, [col for col in df.columns\
+  \ if col.startswith(\"Feature\")]].values,\n            zscore(data, axis=1),\n\
+  \        )\n        self.assertTrue(\"Mean\" in df.columns)\n\n    def test_case_5(self):\n\
+  \        data = np.array([[1], [1], [1]])\n        df, ax = task_func(data)\n  \
+  \      self.assertTrue(isinstance(df, pd.DataFrame))\n        self.assertTrue(isinstance(ax,\
+  \ matplotlib.axes.Axes))\n        np.testing.assert_array_equal(\n            df.loc[:,\
+  \ [col for col in df.columns if col.startswith(\"Feature\")]].values,\n        \
+  \    zscore(data, axis=1),\n        )\n        self.assertTrue(\"Mean\" in df.columns)"

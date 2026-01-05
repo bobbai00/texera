@@ -1,0 +1,71 @@
+TMC-list:
+- code: "def skewness_correctness(output, ground_truth):\n    output_skew = output[0]['Skewness'].values\
+    \  # extract the skewness column from the DataFrame\n    ground_truth_skew = ground_truth[0]['Skewness'].values\n\
+    \    return (output_skew == ground_truth_skew).all()"
+  function: Data Accuracy
+  metric: Skewness Calculation Correctness
+  task_name: Data exploration and statistics understand
+- code: "def visualization_presence(output, ground_truth):\n    ax = output[1]  #\
+    \ extract the Axes object from the output\n    return isinstance(ax, plt.Axes)\
+    \ and ax.get_lines() != []"
+  function: Visualization Completeness
+  metric: Visualization Presence
+  task_name: Data visualization
+data: 'import numpy as np
+
+
+  data = np.array([[3, 5, 7, 1000, 2], [200, 5, 7, 1, 700], [1, -9, 14, 700, 100],
+  [2, 3, 4, 5, 6]])
+
+  args = (data,)'
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\nfrom scipy.stats\
+  \ import skew\n\ndef task_func(data_matrix):\n    # Convert the input data_matrix\
+  \ to a DataFrame\n    df = pd.DataFrame(data_matrix)\n    \n    # Calculate skewness\
+  \ for each row\n    df['Skewness'] = df.apply(skew, axis=1)\n    \n    # Plot the\
+  \ distribution of skewness values\n    fig, ax = plt.subplots()\n    df['Skewness'].hist(ax=ax,\
+  \ bins=10)\n    ax.set_title('Distribution of Skewness')\n    ax.set_xlabel('Skewness')\n\
+  \    ax.set_ylabel('Frequency')\n    \n    return (df[['Skewness']], ax)"
+prompt: '"Calculate the skew of each row in a 2D data matrix and plot the distribution.
+  The function should output with: tuple(skew_df: pandas.DataFrame, ax: matplotlib.axes.Axes)
+  skew_df: A DataFrame containing the skewness of each row. The skewness is stored
+  in a new column which name is ''Skewness''. ax: The Axes object of the plotted distribution.
+  You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import matplotlib.pyplot as plt
+
+  from scipy.stats import skew
+
+  def task_func(data_matrix):
+
+  ```"'
+testcase: "import unittest\nimport os\nimport numpy as np\nimport pandas as pd\nimport\
+  \ matplotlib.pyplot as plt\nfrom scipy.stats import skew\n\nclass TestCases(unittest.TestCase):\n\
+  \    \"\"\"Test cases for the task_func function.\"\"\"\n    \n    def setUp(self):\n\
+  \        self.test_dir = \"data/task_func\"\n        os.makedirs(self.test_dir,\
+  \ exist_ok=True)\n    \n    def test_case_1(self):\n        data = np.array([[1,\
+  \ 2, 3], [4, 5, 6], [7, 8, 9]])\n        df, ax = task_func(data)\n        self.verify_output(df,\
+  \ ax, data.shape[0], data)\n    \n    def test_case_2(self):\n        data = np.array([[0,\
+  \ 0, 1], [0, 1, 0], [1, 0, 0]])\n        df, ax = task_func(data)\n        self.verify_output(df,\
+  \ ax, data.shape[0], data)\n    \n    def test_case_3(self):\n        data = np.array([[3,\
+  \ 5, 7, 1000], [200, 5, 7, 1], [1, -9, 14, 700]])\n        df, ax = task_func(data)\n\
+  \        self.verify_output(df, ax, data.shape[0], data)\n    \n    def test_case_4(self):\n\
+  \        data = np.array(\n            [\n                [1, 2, 3, 4, 5, 4, 3,\
+  \ 2, 1],\n            ]\n        )\n        df, ax = task_func(data)\n        self.verify_output(df,\
+  \ ax, data.shape[0], data)\n    \n    def test_case_5(self):\n        data = np.array([[1,\
+  \ 1], [1, 1], [1, 1]])\n        df, ax = task_func(data)\n        # Check if DataFrame\
+  \ is returned with correct values\n        self.assertIsInstance(df, pd.DataFrame)\n\
+  \        self.assertEqual(df.shape, (3, 1))\n        self.assertIn(\"Skewness\"\
+  , df.columns)\n        # Check if Axes object is returned for the plot\n       \
+  \ self.assertIsInstance(ax, plt.Axes)\n        self.assertEqual(ax.get_title(),\
+  \ \"Distribution of Skewness\")\n    \n    def verify_output(self, df, ax, expected_rows,\
+  \ data):\n        # Check if DataFrame is returned with correct values\n       \
+  \ self.assertIsInstance(df, pd.DataFrame)\n        self.assertEqual(df.shape, (expected_rows,\
+  \ 1))\n        self.assertIn(\"Skewness\", df.columns)\n        # Check if Axes\
+  \ object is returned for the plot\n        self.assertIsInstance(ax, plt.Axes)\n\
+  \        self.assertEqual(ax.get_title(), \"Distribution of Skewness\")\n      \
+  \  # Check skewness values\n        skewness = skew(data, axis=1)\n        self.assertListEqual(df[\"\
+  Skewness\"].tolist(), list(skewness))"

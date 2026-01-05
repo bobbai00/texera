@@ -1,0 +1,81 @@
+"TMC-list":
+- "code": |-
+    def missing_values_percentage(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("results.csv")
+        total_cells = output.size
+        missing_cells = output.isnull().sum().sum()
+        return bool((missing_cells / total_cells) * 100 == 0)
+  "function": |-
+    Data Completeness
+  "metric": |-
+    Data Quality - Missing Values Percentage
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: results.csv
+# - "code": |-
+#     def unique_values_count(ground_truth):
+#         import pandas as pd
+#         output = pd.read_csv("results.csv")
+#         return output.nunique().sum()
+#   "function": |-
+#     Data Integrity
+#   "metric": |-
+#     Unique Values Count
+#   "task_name": |-
+#     Data exploration and statistics understand
+#   ground_truth: results.csv
+- "code": |-
+    def unique_values_count(ground_truth):
+        import pandas as pd
+        gt_output = pd.read_csv(ground_truth)
+        output = pd.read_csv("results.csv")
+        return bool(output.equals(gt_output))
+  "function": |-
+    Data Accuracy
+  "metric": |-
+    Data Accuracy
+  "task_name": |-
+    Data exploration and statistics understand
+  ground_truth: results.csv
+# - "code": |-
+#     def visualization_coverage_ratio(ground_truth):
+#         import pandas as pd
+#         output = pd.read_csv("results.csv")
+#         # Assuming we want to visualize the Jaccard similarity here
+#         jaccard_values = output['Jaccard'].dropna()
+#         coverage_ratio = (jaccard_values.count() / len(jaccard_values)) * 100
+#         return coverage_ratio
+#   "function": |-
+#     Visualization Completeness
+#   "metric": |-
+#     Visualization Coverage Ratio
+#   "task_name": |-
+#     Data visualization
+- "code": |-
+    # def report_completeness_score(ground_truth):
+    #     import pandas as pd
+    #     output = pd.read_csv("results.csv")
+    #     expected_columns = ['Jaccard', 'Sorensen Dice', 'Levenshtein', 'Cosine']
+    #     completeness = all(col in output.columns for col in expected_columns)
+    #     return bool(1.0 if completeness else 0.0)
+    def report_completeness_score(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("results.csv")
+        
+        expected_columns = ['Jaccard', 'Sorensen Dice', 'Levenshtein', 'Cosine']
+        
+        # Check if each expected column partially matches any of the output columns
+        completeness = all(any(expected_col in col for col in output.columns) for expected_col in expected_columns)
+        
+        return bool(1.0 if completeness else 0.0)
+  "function": |-
+    Report Completeness
+  "metric": |-
+    Report Completeness Score
+  "task_name": |-
+    Interpretability and report generation
+"prompt": |-
+  There are three sets of strings: "230203199611020216" and "230203196201020236", "g7amms3t" and "ms3t", "9ojhg65t6754" and "ijg8g65t67ui". For each pair of strings, calculate their similarity using Jaccard, Sorensen Dice, Levenshtein, and cosine similarity, expressed as a percentage. The results should be organized in a table format and saved in the output file named "results.csv". 
+
+  Output format: "results.csv" containing a table with columns for each similarity measure and corresponding similarity percentages for each pair.

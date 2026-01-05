@@ -1,0 +1,76 @@
+"TMC-list":
+- "code": |-
+    def column_integrity_check(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output.csv")
+        ground_truth = pd.read_csv(ground_truth)
+        expected_columns = ground_truth.columns.tolist()
+        actual_columns = output.columns.tolist()
+        return set(expected_columns) == set(actual_columns)
+  "function": |-
+    Data Quality Score
+  "ground_truth": |-
+    output.csv
+  "metric": |-
+    Column Integrity Check
+  "task_name": |-
+    Data cleaning and preprocessing
+- "code": |-
+    def row_count_comparison(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("output.csv")
+        ground_truth = pd.read_csv(ground_truth)
+        return len(output) == len(ground_truth)
+  "function": |-
+    Data Consistency
+  "ground_truth": |-
+    output.csv
+  "metric": |-
+    Row Count Comparison
+  "task_name": |-
+    Data exploration and statistics understand
+"prompt": |-
+  A company stores login data and passwords in two different containers:
+
+   1. Input: `id_name_verified` (DataFrame stored in ""data.csv"") with columns: Id, Login, Verified.
+  2. Input: `id_password` (NumPy array stored in ""passwords.npy"") where each element is an array containing: Id and Password. Elements on the same row/index have the same Id.
+
+  Implement the function `login_table` that accepts these two containers and modifies the `id_name_verified` DataFrame in-place, so that:
+
+  - The Verified column should be removed.
+  - The Password from the NumPy array should be added as the last column with the name ""Password"" to the DataFrame.
+   
+  Output: The modified `id_name_verified` DataFrame should be saved to ""output.csv"".
+
+  For example, the following code snippet:
+  ```python
+  id_name_verified = pd.DataFrame([[1, ""JohnDoe"", True], [2, ""AnnFranklin"", False]], columns=['Id', 'Login', 'Verified'])
+  id_password = np.array([[1, 987340123], [2, 187031122]], np.int32)
+   login_table(id_name_verified, id_password)
+  print(id_name_verified)
+  ```
+  Should yield:
+  ```
+  Id                Login       Password
+  0   1           JohnDoe    987340123
+  1    2     AnnFranklin    187031122
+  ```
+
+  Below is the starter code:
+   ```python
+  import pandas as pd
+  import numpy as np
+   
+  def login_table(id_name_verified, id_password):
+  # :param id_name_verified: (DataFrame) DataFrame with columns: Id, Login, Verified.
+  # :param id_password: (numpy.array) Two-dimensional NumPy array where each element
+  #                     is an array that contains: Id and Password
+   # :returns: (None) The function should modify id_name_verified DataFrame in-place.
+  #           It should not return anything.
+  pass
+   
+  id_name_verified = pd.read_csv(""data.csv"")
+  id_password = np.load(""passwords.npy"")
+  login_table(id_name_verified, id_password)
+  id_name_verified.to_csv(""output.csv"", index=False)
+  ```"

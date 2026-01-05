@@ -1,0 +1,103 @@
+TMC-list:
+- code: "def data_cleaning_accuracy(output, ground_truth):\n    import numpy as np\n\
+    \    output_means = output[0]\n    ground_truth_means = ground_truth[0]\n    correct_cleaned_data\
+    \ = np.sum(~np.isnan(ground_truth_means))  # count of non-NaN means\n    cleaned_data_matched\
+    \ = np.sum(np.isclose(output_means, ground_truth_means, equal_nan=True))  # count\
+    \ of matching means\n    return cleaned_data_matched / correct_cleaned_data if\
+    \ correct_cleaned_data > 0 else 1.0"
+  function: Data Cleaning Completeness
+  metric: Data Cleaning Accuracy
+  task_name: Data cleaning and preprocessing
+- code: "def position_mean_correctness(output, ground_truth):\n    output_means =\
+    \ output[0]\n    ground_truth_means = ground_truth[0]\n    return all(np.isclose(output_means,\
+    \ ground_truth_means, equal_nan=True))"
+  function: Data Accuracy
+  metric: Position Mean Calculation Correctness
+  task_name: Data exploration and statistics understand
+- code: "def file_creation_confirmation(output, ground_truth):\n    return output[1]\
+    \ == ground_truth[1]  # compare the file_created boolean values"
+  function: Result Completeness
+  metric: File Creation Confirmation
+  task_name: Interpretability and report generation
+data: "import numpy as np\ndata_list = [\n    ('alpha', 5, 10.5, None),\n    ('beta',\
+  \ np.nan, 15, 20.5),\n    ('gamma', 7, -3.5, 30),\n    ('delta', 9, 0, 42.5),\n\
+  \    ('epsilon', 4, 25.0, np.nan),\n    ('zeta', 'text', 30.5, -10)  # Non-numeric\
+  \ entry\n]\nfile_name = \"complex_output.txt\"\n\nargs = (data_list, file_name)"
+ground_truth: "import numpy as np\nimport itertools\n\ndef task_func(data_list, file_name):\n\
+  \    if not data_list:\n        with open(file_name, 'w') as f:\n            pass\
+  \  # Create an empty file\n        return [], True\n\n    # Transpose the data to\
+  \ separate positions\n    transposed = list(itertools.zip_longest(*data_list, fillvalue=np.nan))\n\
+  \n    mean_values = []\n    for position_data in transposed[1:]:  # Skip the first\
+  \ item in tuples\n        numeric_data = [x for x in position_data if isinstance(x,\
+  \ (int, float))]\n        mean_value = np.nanmean(numeric_data) if numeric_data\
+  \ else np.nan\n        mean_values.append(mean_value)\n\n    with open(file_name,\
+  \ 'w') as f:\n        for i, mean in enumerate(mean_values, start=1):\n        \
+  \    f.write(f\"Position {i}: {mean}\\n\")\n\n    return mean_values, True"
+prompt: 'This function takes a list of tuples. The first value of each tuple is a
+  string, the other values are numeric. E.g. (''test'', 2, 12.4, -2) It calculates
+  the mean over all tuples of the numerical values for each tuple position excluding
+  the first position, and writes the results into a specified text file. The content
+  in the text file is formatted as follows: ''Position ''x'': ''mean'', where x is
+  the current tuple position and ''mean'' denotes the computed mean value. Each Position
+  is written in a new line. It returns a list of the calculated mean values. Missing
+  values and non-numeric values at positions other than the first are filled/replaced
+  with np.nan. If an empty list is handed to the function an empty list is returned
+  and an empty file is created. The function utilizes the ''numpy'' library for numerical
+  operations and the ''itertools'' library to handle the iteration through the data
+  structure. The function should output with: tuple(mean_values: list, file_created:
+  bool)
+
+  mean_values: A list of mean values calculated from the numerical data in the tuples.
+
+  file_created: A boolean indicating whether the specified text file was created.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import numpy as np
+
+  import itertools
+
+  def task_func(data_list, file_name):
+
+  ```'
+testcase: "import unittest\nimport os\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        # Variables for the tests\n        self.data_list\
+  \ = [('a', 1, 2), ('b', 2, 3), ('c', 3, 4), ('d', 4, 5), ('e', 5, 6)]\n        self.file_name\
+  \ = \"test_output.txt\"\n\n    def tearDown(self) -> None:\n        if os.path.isfile(self.file_name):\n\
+  \            os.remove(self.file_name)\n\n    def read_file_content(self, file_path):\n\
+  \        # Read the content of the file and return it as a list of lines\n     \
+  \   with open(file_path, 'r') as file:\n            return file.readlines()\n\n\
+  \    def test_mean_values_with_valid_data(self):\n        expected_means = [3.0,\
+  \ 4.0]  # Expected mean values\n        expected_file_content = [\"Position 1: 3.0\\\
+  n\", \"Position 2: 4.0\\n\"]\n        result, _ = task_func(self.data_list, self.file_name)\n\
+  \        self.assertEqual(result, expected_means)\n        self.assertTrue(os.path.isfile(self.file_name))\
+  \  # Check file creation\n        # Verify the content of the created file\n   \
+  \     actual_file_content = self.read_file_content(self.file_name)\n        self.assertEqual(actual_file_content,\
+  \ expected_file_content)\n\n    def test_function_with_empty_data(self):\n     \
+  \   result, _ = task_func([], self.file_name)\n        self.assertEqual(result,\
+  \ [])  # Should return an empty list\n        self.assertTrue(os.path.isfile(self.file_name))\
+  \  # Check file creation\n        expected_file_content = []\n        actual_file_content\
+  \ = self.read_file_content(self.file_name)\n        self.assertEqual(actual_file_content,\
+  \ expected_file_content)\n\n    def test_function_with_non_numeric_data(self):\n\
+  \        data_with_non_numeric = [('a', 'x', 'y'), ('b', 'p', 'q')]\n        result,\
+  \ _ = task_func(data_with_non_numeric, self.file_name)\n        self.assertEqual(result,\
+  \ [np.nan, np.nan])\n        self.assertTrue(os.path.isfile(self.file_name))  #\
+  \ Check file creation\n        expected_file_content = [\"Position 1: nan\\n\",\
+  \ \"Position 2: nan\\n\"]\n        actual_file_content = self.read_file_content(self.file_name)\n\
+  \        self.assertEqual(actual_file_content, expected_file_content)\n\n    def\
+  \ test_function_with_incomplete_tuples(self):\n        inconsistent_data = [('a',\
+  \ 1), ('b',), ('c', 2, 3)]\n        expected_means = [1.5, 3.0]  # Expected means\n\
+  \        result, _ = task_func(inconsistent_data, self.file_name)\n        self.assertEqual(result,\
+  \ expected_means)\n        self.assertTrue(os.path.isfile(self.file_name))  # Check\
+  \ file creation\n        expected_file_content = [\"Position 1: 1.5\\n\", \"Position\
+  \ 2: 3.0\\n\"]\n        actual_file_content = self.read_file_content(self.file_name)\n\
+  \        self.assertEqual(actual_file_content, expected_file_content)\n\n    def\
+  \ test_function_with_all_nan_values(self):\n        data_all_nan = [('a', np.nan,\
+  \ np.nan) for _ in range(5)]\n        expected_means = [np.nan, np.nan]\n      \
+  \  result, _ = task_func(data_all_nan, self.file_name)\n        # Check if all values\
+  \ are 'nan'\n        self.assertTrue(result, expected_means)\n        self.assertTrue(os.path.isfile(self.file_name))\
+  \  # Check file creation\n        expected_file_content = [\"Position 1: nan\\n\"\
+  , \"Position 2: nan\\n\"]\n        actual_file_content = self.read_file_content(self.file_name)\n\
+  \        self.assertEqual(actual_file_content, expected_file_content)"

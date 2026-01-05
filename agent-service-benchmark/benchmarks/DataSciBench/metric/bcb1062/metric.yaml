@@ -1,0 +1,97 @@
+TMC-list:
+- code: "def row_sum_accuracy(output, ground_truth):\n    output_df = output[0]\n\
+    \    ground_truth_df = ground_truth[0]\n    ground_truth_sum = ground_truth_df['Row\
+    \ Sum'].tolist()\n    for col_name in output_df.columns:\n        if 'Sum' in\
+    \ col_name or 'sum' in col_name:\n            output_sum = output_df[col_name].tolist()\n\
+    \            return np.allclose(ground_truth_sum, output_sum)\n    return False"
+  function: Plot Validity
+  metric: Row Sum Accuracy
+  task_name: Data cleaning and preprocessing
+- code: "def plot_integrity_check(output, ground_truth):\n    from matplotlib import\
+    \ pyplot as plt\n    output_plot = output[1]  # extract the plot object\n    if\
+    \ not isinstance(output_plot, plt.Axes):\n        return False\n    # Check the\
+    \ title of the plot\n    return output_plot.get_title() == \"Time Series of Row\
+    \ Sums\""
+  function: Visualization Completeness
+  metric: Plot Integrity Check
+  task_name: Data visualization
+data: "import numpy as np\n\n# New test input data\narr = np.array([\n    [5, 10,\
+  \ -3, 7],\n    [-1, 2, 4, -2],\n    [0, 0, 0, 0],\n    [2, 3, 5, 1],\n    [-10,\
+  \ 15, 20, -5],\n    [3, -20, 10, 5]\n])\n\nargs = (arr,)"
+ground_truth: "import pandas as pd\nfrom matplotlib import pyplot as plt\nimport numpy\
+  \ as np\n\ndef task_func(arr):\n    if arr.size == 0:\n        # Create an empty\
+  \ plot\n        fig, ax = plt.subplots()\n        ax.set_title('Time Series of Row\
+  \ Sums')\n        return pd.DataFrame(), ax\n        \n    # Calculate the sum of\
+  \ each row\n    row_sums = arr.sum(axis=1)\n    \n    # Create a Pandas DataFrame\
+  \ with dates starting from January 1, 2020\n    dates = pd.date_range(start='2020-01-01',\
+  \ periods=len(row_sums))\n    row_sums_df = pd.DataFrame({\n        'Date': dates,\n\
+  \        'Row Sum': row_sums\n    }).set_index('Date')\n    \n    # Plot the row\
+  \ sums as a time series\n    fig, ax = plt.subplots()\n    ax.plot(row_sums_df.index,\
+  \ row_sums_df['Row Sum'], marker='o')\n    ax.set_title('Time Series of Row Sums')\n\
+  \    ax.set_xlabel('Date')\n    ax.set_ylabel('Row Sum')\n    plt.xticks(rotation=45)\n\
+  \    plt.tight_layout()\n    \n    return row_sums_df, ax"
+prompt: 'Calculate the sum of each row in a 2D numpy array and plot these sums as
+  a time series. This function takes a 2D numpy array and computes the sum of elements
+  in each row. It then creates a Pandas DataFrame with these row sums and plots them
+  as a time series, using dates starting from January 1, 2020, for each row. Handling
+  Scenarios: - For non-empty arrays: The function computes the sum of elements for
+  each row, stores these sums in a Pandas DataFrame, and then plots them. Each row
+  in the plot represents the sum for a specific day, starting from January 1, 2020.
+  - For empty arrays: The function creates an empty plot with the title ''Time Series
+  of Row Sums'' but without data. This is achieved by checking if the array size is
+  zero (empty array) and if so, creating a subplot without any data. Note that: The
+  function uses ''pandas'' for DataFrame creation and ''matplotlib.pyplot'' for plotting.
+  The dates in the plot start from January 1, 2020, and each subsequent row represents
+  the next day. The function should output with: tuple(row_sums_df: pandas.DataFrame,
+  time_series_plot: matplotlib.axes._axes.Axes) row_sums_df: A Pandas DataFrame containing
+  the sums of each row. time_series_plot: A plot representing the time series of row
+  sums. You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  from matplotlib import pyplot as plt
+
+  def task_func(arr):
+
+  ```'
+testcase: "import unittest\nimport numpy as np\nimport matplotlib.pyplot as plt\n\n\
+  class TestCases(unittest.TestCase):\n    \"\"\"Test cases for the function task_func.\"\
+  \"\"\n    \n    def test_basic_functionality(self):\n        \"\"\"Test the basic\
+  \ functionality of the function.\"\"\"\n        arr = np.array([[i + j for i in\
+  \ range(3)] for j in range(5)])\n        _, ax = task_func(arr)\n        # Check\
+  \ if the function returns Axes object\n        self.assertIsInstance(ax, plt.Axes)\n\
+  \        # Check the title of the plot\n        self.assertEqual(ax.get_title(),\
+  \ \"Time Series of Row Sums\")\n        # Check if the data plotted matches the\
+  \ expected sum of rows\n        y_data = [line.get_ydata() for line in ax.get_lines()][0]\n\
+  \        expected_sums = arr.sum(axis=1)\n        np.testing.assert_array_equal(y_data,\
+  \ expected_sums)\n\n    def test_empty_array(self):\n        \"\"\"Test the function\
+  \ with an empty array.\"\"\"\n        arr = np.array([])\n        _, ax = task_func(arr)\n\
+  \        # Check if the function returns Axes object\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n        # Check the title of the plot\n        self.assertEqual(ax.get_title(),\
+  \ \"Time Series of Row Sums\")\n        # Check if the data plotted is empty\n \
+  \       lines = ax.get_lines()\n        self.assertEqual(len(lines), 0)\n\n    def\
+  \ test_single_row_array(self):\n        \"\"\"Test the function with a single row\
+  \ array.\"\"\"\n        arr = np.array([[1, 2, 3]])\n        _, ax = task_func(arr)\n\
+  \        # Check if the function returns Axes object\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n        # Check the title of the plot\n        self.assertEqual(ax.get_title(),\
+  \ \"Time Series of Row Sums\")\n        # Check if the data plotted matches the\
+  \ expected sum of the single row\n        y_data = [line.get_ydata() for line in\
+  \ ax.get_lines()][0]\n        expected_sum = arr.sum(axis=1)\n        np.testing.assert_array_equal(y_data,\
+  \ expected_sum)\n\n    def test_negative_values(self):\n        \"\"\"Test the function\
+  \ with negative values.\"\"\"\n        arr = np.array([[-1, -2, -3], [-4, -5, -6]])\n\
+  \        _, ax = task_func(arr)\n        # Check if the function returns Axes object\n\
+  \        self.assertIsInstance(ax, plt.Axes)\n        # Check the title of the plot\n\
+  \        self.assertEqual(ax.get_title(), \"Time Series of Row Sums\")\n       \
+  \ # Check if the data plotted matches the expected sum of rows\n        y_data =\
+  \ [line.get_ydata() for line in ax.get_lines()][0]\n        expected_sums = arr.sum(axis=1)\n\
+  \        np.testing.assert_array_equal(y_data, expected_sums)\n\n    def test_zero_values(self):\n\
+  \        \"\"\"Test the function with zero values.\"\"\"\n        arr = np.array([[0,\
+  \ 0, 0], [0, 0, 0], [0, 0, 0]])\n        _, ax = task_func(arr)\n        # Check\
+  \ if the function returns Axes object\n        self.assertIsInstance(ax, plt.Axes)\n\
+  \        # Check the title of the plot\n        self.assertEqual(ax.get_title(),\
+  \ \"Time Series of Row Sums\")\n        # Check if the data plotted matches the\
+  \ expected sum of rows\n        y_data = [line.get_ydata() for line in ax.get_lines()][0]\n\
+  \        expected_sums = arr.sum(axis=1)\n        np.testing.assert_array_equal(y_data,\
+  \ expected_sums)\n\n    def tearDown(self):\n        plt.close()"

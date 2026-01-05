@@ -1,0 +1,97 @@
+"TMC-list":
+- "code": |-
+    def association_rules_validity(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("association_rules.csv")
+        output_rules = set(list(zip(output['antecedents'].tolist(),output['consequents'].tolist())))
+
+        output_gt = pd.read_csv(ground_truth)
+        output_gt_rules = set(list(zip(output_gt['antecedents'].tolist(),output_gt['consequents'].tolist())))
+
+        valid_rule_count = len(output_rules.intersection(output_gt_rules))
+        total_rules = len(output_rules)
+        return (valid_rule_count / total_rules if total_rules > 0 else 0) >= 0.9
+  "function": |-
+    Clustering Validity
+  "ground_truth": |-
+    association_rules.csv
+  "metric": |-
+    Association Rules Validity
+  "task_name": |-
+    Data mining
+- "code": |-
+    def frequent_itemsets_validity(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("frequent_itemsets.csv")
+        output_itemsets = set(output['itemsets'].tolist())
+
+        output_gt = pd.read_csv(ground_truth)
+        output_gt_itemsets = set(output_gt['itemsets'].tolist())
+
+        valid_itemset_count = len(output_itemsets.intersection(output_gt_itemsets))
+        total_itemsets = len(output_itemsets)
+        return (valid_itemset_count / total_itemsets if total_itemsets > 0 else 0) >= 0.9
+  "function": |-
+    Clustering Validity
+  "ground_truth": |-
+    frequent_itemsets.csv
+  "metric": |-
+    Frequent Itemsets Validity
+  "task_name": |-
+    Data mining
+- "code": |-
+    def pattern_analysis_completeness(ground_truth):
+        return os.path.exists("pattern_analysis_report.pdf")
+  "function": |-
+    Completeness
+  "metric": |-
+    Pattern Analysis Completeness Ratio
+  "task_name": |-
+    Pattern recognition
+- "code": |-
+    def client_segments_description_cohesion(ground_truth):
+        return os.path.exists("client_segments_analysis.pdf")
+  "function": |-
+    Report Quality
+  "metric": |-
+    Client Segments Description Cohesion
+  "task_name": |-
+    Interpretability and report generation
+- "code": |-
+    def report_completeness(ground_truth):
+        return os.path.exists("customer_segmentation_analysis.pdf")
+  "function": |-
+    Report Completeness
+  "metric": |-
+    Report Completeness
+  "task_name": |-
+    Interpretability and report generation
+"prompt": |-
+    You are required to analyze the "Credit Card Default" dataset from the UCI Machine Learning Repository (https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients), which contains information on Taiwanese customers' credit card payment defaults. Your tasks are as follows:
+
+    1. **Data Mining**:
+      - Conduct association rule mining to discover relationships between different features and the default status.  
+        Input: "default of credit card clients.xls"  
+        Output: "association_rules.csv" (format: csv)
+
+      - Identify frequent itemsets and association rules that reveal how certain combinations of features are related to higher default rates.  
+        Input: "default of credit card clients.xls"  
+        Output: "frequent_itemsets.csv" (format: csv)
+
+    2. **Clustering**:
+      - Apply K-means clustering to group clients into distinct segments based on features such as credit limit, bill amounts, and payment history.  
+        Input: "default of credit card clients.xls"  
+        Output: "kmeans_clusters.csv" (format: csv)
+
+      - Determine the optimal number of clusters using the Elbow method and present the results.  
+        Input: "default of credit card clients.xls"  
+        Output: "elbow_method.png" (format: image)
+
+    3. **Pattern Analysis and Interpretation**:
+      - Analyze and interpret the identified patterns, discussing features most strongly associated with defaults, notable trends, and outliers.  
+        Output: "pattern_analysis_report.pdf" (format: pdf)
+
+      - Describe the characteristics of different client segments identified through clustering and their potential risk levels.  
+        Output: "client_segments_analysis.pdf" (format: pdf)
+
+    Ensure the outputs reflect the quality of your analysis and allow for further evaluation of the results.

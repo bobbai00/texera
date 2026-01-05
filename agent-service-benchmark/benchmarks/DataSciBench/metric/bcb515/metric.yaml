@@ -1,0 +1,76 @@
+TMC-list:
+- code: "def validate_dataframe_shape(output, ground_truth):\n    output_df = output[0]\
+    \  # extract DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n   \
+    \ return output_df.shape == ground_truth_df.shape"
+  function: DataFrame Shape Validation
+  metric: DataFrame Shape Validation
+  task_name: Data cleaning and preprocessing
+- code: "def correlation_coefficient(output, ground_truth):\n    output_df = output[0]\
+    \  # extract DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n   \
+    \ output_corr = output_df.corr().values.flatten()\n    ground_truth_corr = ground_truth_df.corr().values.flatten()\n\
+    \    return (output_corr == ground_truth_corr).all()"
+  function: Data Consistency
+  metric: Correlation Coefficient Comparison
+  task_name: Data exploration and statistics understand
+- code: "def check_heatmap_type(output, ground_truth):\n    import matplotlib.pyplot\
+    \ as plt\n    heatmap_output = output[1]  # extract heatmap from tuple\n    return\
+    \ isinstance(heatmap_output, plt.Axes)"
+  function: Plot Validity
+  metric: Heatmap Object Type Check
+  task_name: Data visualization
+data: "args = ([[15, 29, 35, 48, 72], \n          [18, 22, 39, 45, 61], \n       \
+  \   [10, 13, 28, 50, 65], \n          [19, 26, 44, 57, 80], \n          [24, 33,\
+  \ 40, 52, 67]],)"
+ground_truth: "import pandas as pd\nimport seaborn as sns\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(array):\n    # Validate input\n    if not array or any(len(sublist)\
+  \ != 5 for sublist in array):\n        raise ValueError(\"Input array must be non-empty\
+  \ and all sublists must have length 5.\")\n        \n    # Create DataFrame\n  \
+  \  df = pd.DataFrame(array, columns=['A', 'B', 'C', 'D', 'E'])\n    \n    # Compute\
+  \ correlation matrix\n    correlation_matrix = df.corr()\n    \n    # Generate heatmap\n\
+  \    plt.figure(figsize=(8, 6))\n    heatmap = sns.heatmap(correlation_matrix, annot=True,\
+  \ cmap='coolwarm', fmt=\".2f\")\n    plt.title('Heatmap of Correlation Matrix')\n\
+  \    plt.show()\n    \n    return df, heatmap"
+prompt: 'Generates a DataFrame and heatmap from a 2D list. This function takes a 2D
+  list and returns a pandas DataFrame and a seaborn heatmap representing the correlation
+  matrix of the DataFrame. Assumes sublists of length 5. Also assumes DataFrame columns:
+  ''A'', ''B'', ''C'', ''D'', ''E''. The function should raise the exception for:
+  ValueError: If the input array is empty or contains sublists of varying lengths.
+  The function should output with: tuple(df: pandas.DataFrame, heatmap: seaborn.axisgrid.Heatmap)
+
+  df: Constructed from the input 2D list.
+
+  heatmap: Seaborn heatmap of the DataFrame''s correlation matrix.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import seaborn as sns
+
+  def task_func(array):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\nimport matplotlib.pyplot\
+  \ as plt\nimport random\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n\
+  \        random.seed(42)\n        self.mock_data = [[random.randint(1, 100) for\
+  \ _ in range(5)] for _ in range(5)]\n\n    def test_case_1(self):\n        # Test\
+  \ dataframe creation with valid input\n        df, _ = task_func(self.mock_data)\n\
+  \        self.assertIsInstance(df, pd.DataFrame)\n        self.assertEqual(df.shape,\
+  \ (5, 5))\n\n    def test_case_2(self):\n        # Test heatmap creation with valid\
+  \ input\n        _, heatmap = task_func(self.mock_data)\n        self.assertIsNotNone(heatmap)\n\
+  \n    def test_case_3(self):\n        # Test correlation accuracy with known data\n\
+  \        correlated_data = [[1, 2, 3, 4, 5], [5, 4, 3, 2, 1]]\n        df, _ = task_func(correlated_data)\n\
+  \        corr_matrix = df.corr()\n        np.testing.assert_array_almost_equal(\n\
+  \            corr_matrix, np.corrcoef(correlated_data, rowvar=False)\n        )\n\
+  \n    def test_case_4(self):\n        # Test handling of non-numeric data\n    \
+  \    with self.assertRaises(ValueError):\n            task_func([[\"a\", \"b\",\
+  \ \"c\", \"d\", \"e\"], [1, 2, 3, 4, 5]])\n\n    def test_case_5(self):\n      \
+  \  # Test with empty list\n        with self.assertRaises(ValueError):\n       \
+  \     task_func([])\n\n    def test_case_6(self):\n        # Test with single sublist\n\
+  \        single_sublist = [[1, 2, 3, 4, 5]]\n        df, _ = task_func(single_sublist)\n\
+  \        self.assertEqual(df.shape, (1, 5))\n\n    def test_case_7(self):\n    \
+  \    # Test handling sublists of varying lengths\n        with self.assertRaises(ValueError):\n\
+  \            task_func([[1, 2, 3], [4, 5, 6, 7, 8]])\n\n    def tearDown(self):\n\
+  \        plt.close(\"all\")"

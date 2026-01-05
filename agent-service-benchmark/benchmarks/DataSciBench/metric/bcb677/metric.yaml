@@ -1,0 +1,67 @@
+TMC-list:
+- code: "def r_squared(output, ground_truth):\n    import numpy as np    \n    # \u63D0\
+    \u53D6\u9884\u6D4B\u503C\u548C\u771F\u5B9E\u503C\n    output=output[0]\n    ground_truth=ground_truth[0]\n\
+    \    predicted = output.iloc[:, 1]\n    true_values = ground_truth.iloc[:, 1]\n\
+    \    \n    # \u8BA1\u7B97\u603B\u5E73\u65B9\u548C\uFF08Total Sum of Squares, TSS\uFF09\
+    \n    mean_true = np.mean(true_values)\n    tss = np.sum((true_values - mean_true)\
+    \ ** 2)\n    \n    # \u8BA1\u7B97\u56DE\u5F52\u5E73\u65B9\u548C\uFF08Regression\
+    \ Sum of Squares, RSS\uFF09\n    rss = np.sum((predicted - true_values) ** 2)\n\
+    \    \n    # \u8BA1\u7B97\u51B3\u5B9A\u7CFB\u6570 R\xB2\n    r_squared = 1 - (rss\
+    \ / tss)\n    \n    return r_squared"
+  function: R-squared Value
+  metric: R-squared Value
+  task_name: Predictive modeling
+- code: "def missing_values_count(output, ground_truth):\n    predicted_df = output[0]\
+    \  # extract the DataFrame from tuple\n    return predicted_df.isnull().sum().sum()\
+    \  # returns the total count of missing values in the DataFrame"
+  function: Data Completeness
+  metric: Missing Values Count
+  task_name: Data cleaning and preprocessing
+data: "import numpy as np\nargs = (pd.DataFrame({'var1': np.random.randint(0, 100,\
+  \ size=20),\n                      'var2': np.random.normal(loc=50, scale=10, size=20)}),)"
+ground_truth: "import numpy as np\nimport pandas as pd\nfrom scipy.stats import linregress\n\
+  \ndef task_func(df):\n    # Ensure the DataFrame has exactly two columns\n    if\
+  \ df.shape[1] != 2:\n        raise ValueError(\"DataFrame must contain exactly two\
+  \ columns.\")\n    \n    # Extract the two variables\n    x = df.iloc[:, 0]\n  \
+  \  y = df.iloc[:, 1]\n    \n    # Perform linear regression\n    slope, intercept,\
+  \ r_value, p_value, std_err = linregress(x, y)\n    \n    # Calculate predicted\
+  \ values\n    df['predicted'] = slope * x + intercept\n    \n    return (df,)"
+prompt: 'Analyze the relationship between two variables in a DataFrame. The function
+  performs a linear regression on the two variables and adds a ''predicted'' column
+  to the DataFrame. The function should output with: tuple(predicted_df: pandas.DataFrame)
+  predicted_df: The DataFrame with the added ''predicted'' column. You should write
+  self-contained code starting with:
+
+  ```
+
+  import numpy as np
+
+  import pandas as pd
+
+  from scipy.stats import linregress
+
+  def task_func(df):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        df = pd.DataFrame({'var1': np.random.randn(10),\n\
+  \                           'var2': np.random.randn(10)})\n        df = task_func(df)\n\
+  \        self.assertTrue('predicted' in df.columns)\n        self.assertEqual(len(df),\
+  \ 10)\n        self.assertEqual(len(df.columns), 3)\n\n    def test_case_2(self):\n\
+  \        df = pd.DataFrame({'var1': [1, 2, 3, 4, 5],\n                         \
+  \  'var2': [1, 2, 3, 4, 5]})\n        df = task_func(df)\n        self.assertTrue('predicted'\
+  \ in df.columns)\n        self.assertEqual(len(df), 5)\n        self.assertEqual(len(df.columns),\
+  \ 3)\n        self.assertTrue(np.all(df['predicted'] == df['var2']))\n\n    def\
+  \ test_case_3(self):\n        df = pd.DataFrame({'var1': [1, 2, 3, 4, 5],\n    \
+  \                       'var2': [5, 4, 3, 2, 1]})\n        df = task_func(df)\n\
+  \        self.assertTrue('predicted' in df.columns)\n        self.assertEqual(len(df),\
+  \ 5)\n        self.assertEqual(len(df.columns), 3)\n        self.assertTrue(np.all(df['predicted']\
+  \ == df['var2']))\n\n    def test_case_4(self):\n        df = pd.DataFrame({'var1':\
+  \ [1, 2, 3, 4, 5],\n                           'var2': [1, 1, 1, 1, 1]})\n     \
+  \   df = task_func(df)\n        self.assertTrue('predicted' in df.columns)\n   \
+  \     self.assertEqual(len(df), 5)\n        self.assertEqual(len(df.columns), 3)\n\
+  \        self.assertTrue(np.all(df['predicted'] == df['var2']))\n\n    def test_case_5(self):\n\
+  \        df = pd.DataFrame({'var1': [0, 1, 2, 3, 4, 5],\n                      \
+  \     'var2': [1, 1, 1, 1, 1, 1]})\n        df = task_func(df)\n        self.assertTrue('predicted'\
+  \ in df.columns)\n        self.assertEqual(len(df), 6)\n        self.assertEqual(len(df.columns),\
+  \ 3)\n        self.assertTrue(np.all(df['predicted'] == df['var2']))"

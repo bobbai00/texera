@@ -1,0 +1,115 @@
+TMC-list:
+- code: "def dataframe_integrity(output, ground_truth):\n    output_df = output[0].coef_\
+    \  # extract Linear Regression model coefficients from the output tuple\n    #\
+    \ Check if any coefficients are non-zero, indicating that preprocessing was performed\n\
+    \    return np.all(output_df != 0)"
+  function: Data Quality Score
+  metric: Dataframe Integrity
+  task_name: Data cleaning and preprocessing
+- code: "def model_variance(output, ground_truth):\n    model_o = output[0]  # extract\
+    \ the Linear Regression model from the output tuple\n    model_g = ground_truth[0]\n\
+    \    rel_diff = np.abs(model_o.coef_ - model_g.coef_)/np.abs(model_g.coef_)\n\
+    \    return np.mean(rel_diff) < 0.01"
+  function: Explained Variance Ratio
+  metric: Model Variance
+  task_name: Predictive modeling
+data: 'import numpy as np
+
+  import pandas as pd
+
+
+  rng = np.random.default_rng(seed=42)
+
+  df = pd.DataFrame(rng.integers(0, 200, size=(1500, 6)), columns=[''A'', ''B'', ''C'',
+  ''D'', ''E'', ''predict''])
+
+  df[''predict''] = df.apply(lambda row: row[''A''] * 1.5 + row[''B''] * 2.2 - row[''C'']
+  * 0.5 + 3, axis=1)
+
+  target_column = ''predict''
+
+  args = (df, target_column, None)'
+ground_truth: "import numpy as np\nimport pandas as pd\nfrom sklearn.linear_model\
+  \ import LinearRegression\n\ndef task_func(df, target_column, target_values=None):\n\
+  \    if not isinstance(df, pd.DataFrame):\n        raise ValueError(\"df must be\
+  \ a DataFrame\")\n    if not isinstance(target_column, str):\n        raise ValueError(\"\
+  target_column must be a string\")\n    if target_values is not None and not (isinstance(target_values,\
+  \ (list, np.ndarray))):\n        raise ValueError(\"target_values must be array-like\"\
+  )\n\n    # Replace elements not in target_values with zeros\n    if target_values\
+  \ is not None:\n        df[df.columns] = df[df.columns].where(df[df.columns].isin(target_values),\
+  \ 0)\n\n    # Prepare data for linear regression\n    X = df.drop(columns=[target_column])\n\
+  \    y = df[target_column]\n\n    # Train linear regression model\n    model = LinearRegression()\n\
+  \    model.fit(X, y)\n\n    return (model,)"
+prompt: 'Replace all elements in DataFrame columns that are not present in the target_values
+  array with zeros, and then perform a linear regression using the target column.
+  >>> rng = np.random.default_rng(seed=0) >>> df = pd.DataFrame(rng.integers(0, 100,
+  size=(1000, 5)), columns=[''A'', ''B'', ''C'', ''D'', ''predict'']) >>> model =
+  task_func(df, ''predict'') >>> print(model.coef_) [-0.00173703 -0.02190392 -0.03304266
+  0.00759771] >>> print(model.intercept_) 53.362739257681035 The function should raise
+  the exception for: ValueError: If df is not a DataFrame or if target_column is not
+  a string or if target_values is not an array-like object. The function should output
+  with: tuple(model: LinearRegression) model: The trained Linear Regression model.
+  You should write self-contained code starting with: ``` import numpy as np import
+  pandas as pd from sklearn.linear_model import LinearRegression def task_func(df,
+  target_column, target_values=None): ```'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\nfrom sklearn.linear_model\
+  \ import LinearRegression\n\nclass TestCases(unittest.TestCase):\n\n    def lin_relation_1d(self,\
+  \ x, w0, w1):\n        '''1-d linear relation for testing'''\n        return w0\
+  \ + w1 * x\n\n    def lin_relation_nd(self, row, w0, w):\n        '''n-dimension\
+  \ linear relation for testing'''\n        result = 0\n        for i, x in enumerate(row.values):\n\
+  \            result += x * w[i]\n        return w0 + result \n\n    def test_case_df(self):\n\
+  \        '''non DataFrame input'''\n        df = 3\n        target_column = 'test'\n\
+  \        self.assertRaises(Exception, task_func, df, target_column)\n\n    def test_case_target_column(self):\n\
+  \        '''target column not in DataFrame'''\n        rng = np.random.default_rng(seed=0)\n\
+  \        df = pd.DataFrame(rng.integers(0, 10, size=(5, 2)), columns=['test', 'python'])\n\
+  \        target_column = 'not'\n        self.assertRaises(Exception, task_func,\
+  \ df, target_column)\n\n    def test_case_empty_df(self):\n        '''empty df as\
+  \ input'''\n        df = pd.DataFrame(columns=['A', 'B'])\n        target_column\
+  \ = 'A'\n        self.assertRaises(Exception, task_func, df, target_column)\n\n\
+  \    def test_case_non_numeric_values(self):\n        '''df not numeric'''\n   \
+  \     data = {\n            'A': [1, 2, 'test'],\n            'B': [3, 3, 3]\n \
+  \       }\n        df = pd.DataFrame(data)\n        target_column = 'A'\n      \
+  \  self.assertRaises(Exception, task_func, df, target_column)\n\n    def test_case_1(self):\n\
+  \        '''prediction for one column'''\n        rng = np.random.default_rng(seed=0)\n\
+  \        df = pd.DataFrame(rng.integers(0, 100, size=(1000, 1)), columns=list('A'))\n\
+  \        df['predict'] = df.apply(self.lin_relation_1d, args=(2, 4))\n        model\
+  \ = task_func(df, 'predict')\n        self.assertIsInstance(model, LinearRegression,\
+  \ \"Returned value is not a LinearRegression model.\")\n        # make sure predictions\
+  \ work as expected\n        pred = model.predict(df.drop('predict', axis=1))\n \
+  \       self.assertTrue(np.allclose(pred.tolist(), df['predict'].tolist()))\n  \
+  \      # assert model params\n        self.assertAlmostEqual(model.coef_[0], 4,\
+  \ places=4)\n        self.assertAlmostEqual(model.intercept_, 2, places=4)\n\n \
+  \   def test_case_2(self):\n        '''multiple column prediction'''\n        rng\
+  \ = np.random.default_rng(seed=0)\n        df = pd.DataFrame(rng.integers(0, 100,\
+  \ size=(1000, 5)), columns=list('ABCDE'))\n        df['predict'] = df.apply(self.lin_relation_nd,\
+  \ axis=1, args=(4, [2.5, 5.8, 6, 4, -1]))\n        model = task_func(df, 'predict')\n\
+  \        self.assertIsInstance(model, LinearRegression, \"Returned value is not\
+  \ a LinearRegression model.\")\n        # make sure predictions work as expected\n\
+  \        pred = model.predict(df.drop('predict', axis=1))\n        self.assertTrue(np.allclose(pred.tolist(),\
+  \ df['predict'].tolist()))\n        # assert model params\n        self.assertTrue(np.allclose(model.coef_,\
+  \ [2.5, 5.8, 6, 4, -1]))\n        self.assertAlmostEqual(model.intercept_, 4, places=4)\n\
+  \n    def test_case_3(self):\n        '''test working target value --> with target\
+  \ value linear regression can't deliver good results'''\n        rng = np.random.default_rng(seed=0)\n\
+  \        df = pd.DataFrame(rng.integers(0, 10, size=(1000, 1)), columns=list('A'))\n\
+  \        df['predict'] = df.apply(self.lin_relation_1d, args=(0, 2))\n        model\
+  \ = task_func(df, 'predict', target_values=[1, 2, 4, 8])\n        self.assertIsInstance(model,\
+  \ LinearRegression, \"Returned value is not a LinearRegression model.\")\n\n   \
+  \     # make sure predictions work as expected\n        masked_df = df.applymap(lambda\
+  \ x: x if x in [1, 2, 4, 8] else 0)\n        masked_predict = masked_df['predict']\n\
+  \        pred = model.predict(masked_df.drop('predict', axis=1))\n        self.assertTrue(not\
+  \ np.allclose(pred.tolist(), masked_predict.tolist()))\n        # assert model params\n\
+  \        self.assertAlmostEqual(model.coef_[0], 0.2921456, places=2)\n        self.assertAlmostEqual(model.intercept_,\
+  \ 0.81175, places=4)\n\n    def test_case_4(self):\n        '''df with constant\
+  \ values'''\n        df = pd.DataFrame(np.full((10, 10), 3), columns=list('ABCDEFGHIJ'))\n\
+  \        model = task_func(df, 'J')\n        self.assertTrue(all(coef == 0 for coef\
+  \ in model.coef_), \"Model coefficients are not correct.\")\n        self.assertAlmostEqual(model.intercept_,\
+  \ 3, places=4)\n\n    def test_case_5(self):\n        '''df filled with random floats'''\n\
+  \        rng = np.random.default_rng(seed=0)\n        df = pd.DataFrame(rng.random(size=(1000,\
+  \ 5)) * 10, columns=list('ABCDE'))\n        df['predict'] = df.apply(self.lin_relation_nd,\
+  \ axis=1, args=(-1, [15, -4.8, 12, 40.2, -2]))\n        model = task_func(df, 'predict')\n\
+  \        self.assertIsInstance(model, LinearRegression, \"Returned value is not\
+  \ a LinearRegression model.\")\n        # make sure predictions work as expected\n\
+  \        pred = model.predict(df.drop('predict', axis=1))\n        self.assertTrue(np.allclose(pred.tolist(),\
+  \ df['predict'].tolist()))\n        # assert model params\n        self.assertTrue(np.allclose(model.coef_,\
+  \ [15, -4.8, 12, 40.2, -2]))\n        self.assertAlmostEqual(model.intercept_, -1,\
+  \ places=4)"

@@ -1,0 +1,59 @@
+TMC-list:
+- code: "def count_match(output, ground_truth):  \n    output_counts = output[0] \
+    \ # extract the counts dictionary from tuple  \n    ground_truth_counts = ground_truth[0]\
+    \  \n    match_counts = {key: output_counts[key] == ground_truth_counts[key] for\
+    \ key in ['x', 'y', 'z']}  \n    return all(match_counts.values())  # return True\
+    \ if all counts match"
+  function: Data Quality Score
+  metric: Count Match for X, Y, Z
+  task_name: Data cleaning and preprocessing
+- code: "def total_occurrences_sum(output, ground_truth):  \n    output_counts = output[0]\
+    \  # extract the counts dictionary from tuple  \n    ground_truth_counts = ground_truth[0]\
+    \  \n    output_total = [sum(output_counts[key].values()) for key in ['x', 'y',\
+    \ 'z']]\n    ground_truth_total = [sum(ground_truth_counts[key].values()) for\
+    \ key in ['x', 'y', 'z']]\n    return output_total == ground_truth_total  # return\
+    \ True if total occurrences match"
+  function: Data Integrity
+  metric: Total Occurrences Sum
+  task_name: Data exploration and statistics understand
+data: "args = ([{'x': 2, 'y': 'b', 'z': 4.5},\n          {'x': 2, 'y': 3, 'z': 4.5},\
+  \ \n          {'y': 'b', 'z': 4.5}, \n          {'x': 5, 'y': 5, 'z': 5}, \n   \
+  \       {'x': 2, 'y': 3}],)"
+ground_truth: "import pandas as pd\nfrom collections import Counter\n\ndef task_func(d):\n\
+  \    counts = {\n        'x': Counter(),\n        'y': Counter(),\n        'z':\
+  \ Counter()\n    }\n    \n    for item in d:\n        if 'x' in item:\n        \
+  \    counts['x'][item['x']] += 1\n        if 'y' in item:\n            counts['y'][item['y']]\
+  \ += 1\n        if 'z' in item:\n            counts['z'][item['z']] += 1\n     \
+  \       \n    return (counts,)"
+prompt: '"Count the occurrence of values with the keys ''x,'' ''y'' and ''z'' from
+  a list of dictionaries ''d.'' The function should output with: tuple(counts: dict)
+
+  counts: A dictionary with keys as ''x'', ''y'', and ''z'' and values as Counter
+  objects.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  from collections import Counter
+
+  def task_func(d):
+
+  ```"'
+testcase: "import unittest\nfrom collections import Counter\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_empty_list(self):\n        self.assertEqual(task_func([]), {'x': Counter(),\
+  \ 'y': Counter(), 'z': Counter()})\n\n    def test_all_keys_present(self):\n   \
+  \     data = [{'x': 1, 'y': 2, 'z': 3}, {'x': 1, 'y': 3, 'z': 2}]\n        expected\
+  \ = {'x': Counter({1: 2}), 'y': Counter({2: 1, 3: 1}), 'z': Counter({3: 1, 2: 1})}\n\
+  \        self.assertEqual(task_func(data), expected)\n\n    def test_missing_keys(self):\n\
+  \        data = [{'x': 1}, {'y': 2}, {'z': 3}]\n        expected = {'x': Counter({1:\
+  \ 1}), 'y': Counter({2: 1}), 'z': Counter({3: 1})}\n        self.assertEqual(task_func(data),\
+  \ expected)\n\n    def test_duplicate_values(self):\n        data = [{'x': 1, 'y':\
+  \ 2, 'z': 3}, {'x': 1, 'y': 2, 'z': 3}, {'x': 1, 'y': 2}]\n        expected = {'x':\
+  \ Counter({1: 3}), 'y': Counter({2: 3}), 'z': Counter({3: 2})}\n        self.assertEqual(task_func(data),\
+  \ expected)\n\n    def test_mixed_data_types(self):\n        data = [{'x': 1, 'y':\
+  \ 'a', 'z': 3.5}, {'x': '1', 'y': 'a', 'z': 3.5}]\n        expected = {'x': Counter({1:\
+  \ 1, '1': 1}), 'y': Counter({'a': 2}), 'z': Counter({3.5: 2})}\n        self.assertEqual(task_func(data),\
+  \ expected)"

@@ -1,0 +1,65 @@
+TMC-list:
+- code: "def bar_chart_integrity(output, ground_truth):\n    output_axes = output[0]\
+    \  # extract the axes object from tuple\n    ground_truth_axes = ground_truth[0]\n\
+    \n    # Check if the plotted values in output are non-empty and match expected\
+    \ behavior\n    output_patches = output_axes.patches\n    ground_truth_patches\
+    \ = ground_truth_axes.patches\n\n    # Return True if the count of patches in\
+    \ both axes matches, else return False\n    return len(output_patches) == len(ground_truth_patches)"
+  function: Visualization Completeness
+  metric: Bar Chart Integrity
+  task_name: Data visualization
+data: "import pandas as pd\ndf = pd.DataFrame({\n    'id': [1, 1, 2, 3, 4, 4, 5, 5,\
+  \ 5, 6],\n    'value': ['X', 'Y', 'X', 'Z', 'X', 'Y', 'Y', 'Z', 'Z', 'W']\n})\n\
+  args = (df,)"
+ground_truth: "import pandas as pd\nimport matplotlib.pyplot as plt\n\ndef task_func(df):\n\
+  \    if not isinstance(df, pd.DataFrame):\n        raise ValueError(\"Input must\
+  \ be a pandas DataFrame.\")\n    \n    value_counts = df['value'].value_counts()\n\
+  \    fig, ax = plt.subplots()\n    \n    if not value_counts.empty:\n        value_counts.plot(kind='bar',\
+  \ ax=ax)\n    \n    ax.set_title(\"Value Distribution\")\n    ax.set_xlabel(\"Value\"\
+  )\n    ax.set_ylabel(\"Count\")\n    \n    return (ax,)"
+prompt: 'Draw a bar chart of the counts of each unique value in the ''value'' column
+  of a pandas DataFrame and return the Axes object. Empty DataFrame will return an
+  empty bar chart. Note that: This function uses "Value Distribution" for the plot
+  title. This function uses "Value" and "Count" as the xlabel and ylabel respectively.
+  The function should raise a ValueError if the input df is not a DataFrame. The function
+  should output with: tuple(axes: matplotlib.axes._axes.Axes) axes: The matplotlib
+  Axes object of the bar chart. You should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  import matplotlib.pyplot as plt
+
+  def task_func(df):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport matplotlib.pyplot as plt\n\
+  \nclass TestCases(unittest.TestCase):\n    def test_normal_dataframe(self):\n  \
+  \      df = pd.DataFrame({\n            'id': [1, 1, 2, 2, 3, 3],\n            'value':\
+  \ ['A', 'B', 'A', 'B', 'A', 'B']\n        })\n        ax = task_func(df)\n     \
+  \   self.assertIsInstance(ax, plt.Axes, \"Should return an Axes object\")\n    \
+  \    self.assertEqual(len(ax.patches), 2, \"Should have 2 bars for values 'A' and\
+  \ 'B'\")\n        self.assertEqual(ax.get_title(), \"Value Distribution\", \"Incorrect\
+  \ title\")\n        plt.close()\n\n    def test_empty_dataframe(self):\n       \
+  \ df = pd.DataFrame(columns=['id', 'value'])\n        ax = task_func(df)\n     \
+  \   self.assertIsInstance(ax, plt.Axes, \"Should handle empty DataFrame\")\n   \
+  \     self.assertEqual(len(ax.patches), 0, \"Should have no bars for an empty DataFrame\"\
+  )\n        plt.close()\n\n    def test_numeric_values(self):\n        df = pd.DataFrame({\n\
+  \            'id': [1, 2, 3],\n            'value': [100, 200, 300]\n        })\n\
+  \        ax = task_func(df)\n        self.assertIsInstance(ax, plt.Axes, \"Should\
+  \ handle numeric values in 'value' column\")\n        plt.close()\n\n    def test_plot_attributes(self):\n\
+  \        df = pd.DataFrame({\n            'id': [1, 2, 3],\n            'value':\
+  \ [100, 200, 300]\n        })\n        ax = task_func(df)\n        self.assertEqual(ax.get_title(),\
+  \ 'Value Distribution')\n        self.assertEqual(ax.get_xlabel(), 'Value')\n  \
+  \      self.assertEqual(ax.get_ylabel(), 'Count')\n        plt.close()\n\n    def\
+  \ test_plot_point(self):\n        df = pd.DataFrame({\n            'id': [1, 1,\
+  \ 2, 2],\n            'value': ['A', 'B', 'A', 'B']\n        })\n        ax = task_func(df)\n\
+  \        # Get the actual value counts from the DataFrame\n        actual_value_counts\
+  \ = df['value'].value_counts()\n        # Get the patches from the bar plot\n  \
+  \      patches = ax.patches\n        # Ensure that each patch (bar) has the correct\
+  \ height (count)\n        for i, patch in enumerate(patches):\n            # The\
+  \ height of each bar should match the count of its corresponding value\n       \
+  \     expected_height = actual_value_counts.iloc[i]\n            self.assertAlmostEqual(patch.get_height(),\
+  \ expected_height, delta=0.1, msg=f\"Bar {i+1} does not have the correct height\"\
+  )\n        plt.close()"

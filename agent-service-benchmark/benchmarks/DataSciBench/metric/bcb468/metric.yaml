@@ -1,0 +1,87 @@
+TMC-list:
+- code: "def dataframe_structure(output, ground_truth):\n    output_df = output[0]\
+    \  # extract DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n   \
+    \ return output_df.shape == ground_truth_df.shape  # Check if structures match"
+  function: DataFrame Shape Validation
+  metric: DataFrame Structure
+  task_name: Data cleaning and preprocessing
+- code: "def visualization_integrity(output, ground_truth):\n    output_ax = output[1]\
+    \  # extract Axes from tuple\n    ground_truth_ax = ground_truth[1]\n    # This\
+    \ could check for properties or characteristics of the plot\n    return output_ax.get_title()\
+    \ == ground_truth_ax.get_title()  # Compare titles as a simple check"
+  function: Visualization Completeness
+  metric: Visualization Integrity
+  task_name: Data visualization
+- code: "def cube_root_accuracy(output, ground_truth):\n    output_series = output[2]\
+    \  # extract Series from tuple\n    ground_truth_series = ground_truth[2]\n  \
+    \  return np.allclose(output_series, ground_truth_series)  # Check if all elements\
+    \ are close"
+  function: Data Accuracy
+  metric: Cube-root Calculation Accuracy
+  task_name: Data exploration and statistics understand
+data: "import pandas as pd\nimport numpy as np\n\n# New input data for the function\n\
+  file_path = \"complex_data.csv\"\ncolumns = [\"NumericColumn1\", \"NumericColumn2\"\
+  , \"NumericStringColumn\"]\n\n# Creating a more complex DataFrame\ncomplex_data\
+  \ = pd.DataFrame({\n    \"NumericColumn1\": [10, 20, 30, 40, 50],\n    \"NumericColumn2\"\
+  : [5.5, 6.6, 7.7, 8.8, 9.9],\n    \"NumericStringColumn\": [\"3\", \"8\", \"27\"\
+  , \"64\", \"125\"]\n})\n\n# Saving the DataFrame to a CSV for the function to read\n\
+  complex_data.to_csv(file_path, index=False)\n\nargs = (file_path, columns)"
+ground_truth: "import pandas as pd\nimport numpy as np\nimport matplotlib.pyplot as\
+  \ plt\n\ndef task_func(file_path=\"data.csv\", columns=[\"A\", \"B\", \"C\"]):\n\
+  \    # Read the CSV file into a DataFrame\n    df = pd.read_csv(file_path)\n\n \
+  \   # Convert numeric values to floats\n    df[columns] = df[columns].astype(float)\n\
+  \n    # Compute the cube-root of the data\n    cube_root = df[columns].apply(np.cbrt)\n\
+  \n    # Draw a line chart of the specified columns\n    ax = df[columns].plot.line()\n\
+  \n    # Return the required output\n    return (df, ax, cube_root)"
+prompt: "Read a CSV file into a Pandas DataFrame, convert numeric values into floats,\
+  \ and draw a line chart of data in the specified columns. In addition, compute the\
+  \ cube-root of the data. The function should output with: tuple(df: pandas.DataFrame,\
+  \ ax: matplotlib.axes.Axes, cube_root: pandas.Series)\ndf: A pandas DataFrame of\
+  \ the data in the CSV file. \nax: A matplotlib Axes object showing the plotted data.\
+  \ \ncube_root: A pandas Series containing the cube-root of the data. \nYou should\
+  \ write self-contained code starting with:\n```\nimport pandas as pd\nimport numpy\
+  \ as np\ndef task_func(file_path=\"data.csv\", columns=[\"A\", \"B\", \"C\"]):\n\
+  ```"
+testcase: "import unittest\nimport tempfile\nimport pandas as pd\nimport matplotlib.pyplot\
+  \ as plt\nimport os\n\ndef round_dict(d, digits):\n    return {k: {i: round(v, digits)\
+  \ for i, v in subdict.items()} for k, subdict in d.items()}\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        self.test_dir = tempfile.TemporaryDirectory()\n \
+  \       self.temp_files = {}\n        # Data setups for different scenarios\n  \
+  \      self.data_sets = {\n            \"int\": pd.DataFrame({\"A\": [1, 2, 3],\
+  \ \"B\": [4, 5, 6], \"C\": [7, 8, 9]}),\n            \"varied\": pd.DataFrame(\n\
+  \                {\n                    \"IntColumn\": [1, 2, 3],\n            \
+  \        \"FloatColumn\": [1.1, 2.2, 3.3],\n                    \"StringColumn\"\
+  : [\"4\", \"5\", \"6\"],\n                }\n            ),\n            \"varied_invalid\"\
+  : pd.DataFrame(\n                {\n                    \"IntColumn\": [1, 2, 3],\n\
+  \                    \"FloatColumn\": [1.1, 2.2, 3.3],\n                    \"StringColumn\"\
+  : [\"a\", \"b\", \"c\"],\n                }\n            ),\n        }\n       \
+  \ # Write data sets to temporary files\n        for key, df in self.data_sets.items():\n\
+  \            temp_file_path = os.path.join(self.test_dir.name, f\"{key}.csv\")\n\
+  \            df.to_csv(temp_file_path, index=False, header=True)\n            self.temp_files[key]\
+  \ = temp_file_path\n\n    def tearDown(self):\n        self.test_dir.cleanup()\n\
+  \        plt.close(\"all\")\n\n    def test_case_1(self):\n        file_path = self.temp_files[\"\
+  int\"]\n        df, ax, croot = task_func(file_path=file_path, columns=[\"A\", \"\
+  B\", \"C\"])\n        self.assertIsInstance(df, pd.DataFrame)\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n        self.assertEqual(df.columns.tolist(), [\"A\", \"B\", \"C\"\
+  ])\n        self.assertTrue((df[\"A\"].tolist() == [1, 2, 3]))\n        self.assertTrue((df[\"\
+  B\"].tolist() == [4, 5, 6]))\n        self.assertTrue((df[\"C\"].tolist() == [7,\
+  \ 8, 9]))\n        rounded_croot = round_dict(croot.to_dict(), 6)\n        self.assertEqual(rounded_croot,\n\
+  \                         {'A': {0: 1.0, 1: 1.259921, 2: 1.44225},\n           \
+  \               'B': {0: 1.587401, 1: 1.709976, 2: 1.817121},\n                \
+  \          'C': {0: 1.912931, 1: 2.0, 2: 2.080084}})\n\n    def test_case_2(self):\n\
+  \        file_path = self.temp_files[\"int\"]\n        with self.assertRaises(KeyError):\n\
+  \            task_func(file_path=file_path, columns=[\"A\", \"B\", \"Nonexistent\"\
+  ])\n\n    def test_case_3(self):\n        file_path = self.temp_files[\"varied\"\
+  ]\n        df, ax, croot = task_func(\n            file_path=file_path, columns=[\"\
+  IntColumn\", \"FloatColumn\", \"StringColumn\"]\n        )\n        self.assertIsInstance(df,\
+  \ pd.DataFrame)\n        self.assertIsInstance(ax, plt.Axes)\n        self.assertTrue(df[\"\
+  IntColumn\"].equals(pd.Series([1.0, 2.0, 3.0])))\n        self.assertTrue(df[\"\
+  FloatColumn\"].equals(pd.Series([1.1, 2.2, 3.3])))\n        self.assertTrue(df[\"\
+  StringColumn\"].equals(pd.Series([4.0, 5.0, 6.0])))\n        rounded_croot = round_dict(croot.to_dict(),\
+  \ 6)\n        self.assertEqual(rounded_croot, {\n            'IntColumn': {0: 1.0,\
+  \ 1: 1.259921, 2: 1.44225},\n            'FloatColumn': {0: 1.03228, 1: 1.300591,\
+  \ 2: 1.488806},\n            'StringColumn': {0: 1.587401, 1: 1.709976, 2: 1.817121}\n\
+  \        })\n\n    def test_case_4(self):\n        file_path = self.temp_files[\"\
+  varied_invalid\"]\n        with self.assertRaises(Exception):\n            task_func(file_path=file_path,\
+  \ columns=[\"StringColumn\"])\n\n    def test_case_5(self):\n        with self.assertRaises(FileNotFoundError):\n\
+  \            task_func(file_path=\"nonexistent_file.csv\")"

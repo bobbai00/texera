@@ -1,0 +1,101 @@
+TMC-list:
+- code: "def histogram_mae(output, ground_truth):\n    import numpy as np\n\n    fig_output\
+    \ = output[0]  \n    ax_output = fig_output.get_axes()[0]\n    hist_output_values\
+    \ = ax_output.hist([], bins='auto')[0]\n    mean_output_hist = np.mean(hist_output_values)\
+    \ if hist_output_values.size > 0 else 0\n\n    fig_ground_truth = ground_truth[0]\
+    \ \n    ax_ground_truth = fig_ground_truth.get_axes()[0]\n    hist_ground_truth_values\
+    \ = ax_ground_truth.hist([], bins='auto')[0]\n    mean_ground_truth_hist = np.mean(hist_ground_truth_values)\
+    \ if hist_ground_truth_values.size > 0 else 0\n\n    return np.abs(mean_output_hist\
+    \ - mean_ground_truth_hist)"
+  function: Plot Validity
+  metric: Histogram Mean Absolute Error
+  task_name: Data visualization
+- code: "def qq_plot_correlation(output, ground_truth):\n    import numpy as np\n\
+    \    # \u63D0\u53D6 output \u4E2D\u7684 matplotlib Figure \u5BF9\u8C61\n    fig_output\
+    \ = output[0]\n    ax_qq_output = fig_output.get_axes()[1]\n\n    # \u4ECE Q-Q\
+    \ \u56FE\u7684 Line2D \u5BF9\u8C61\u4E2D\u63D0\u53D6\u6570\u636E\n    if not ax_qq_output.lines:\n\
+    \        return None  # \u5982\u679C\u6CA1\u6709\u6570\u636E\uFF0C\u76F4\u63A5\
+    \u8FD4\u56DE None\n\n    qq_line = ax_qq_output.lines[0]  # \u83B7\u53D6 Q-Q \u56FE\
+    \u7684\u7EBF\n    x_qq_output, y_qq_output = qq_line.get_data()  # \u63D0\u53D6\
+    \ (x, y) \u6570\u636E\n\n    if len(x_qq_output) == 0 or len(y_qq_output) == 0:\n\
+    \        return None  # \u5982\u679C\u6570\u636E\u4E3A\u7A7A\uFF0C\u8FD4\u56DE\
+    \ None\n\n    # \u8BA1\u7B97 output \u7684 Q-Q \u56FE\u76F8\u5173\u7CFB\u6570\n\
+    \    correlation_coefficient = np.corrcoef(x_qq_output, y_qq_output)[0, 1]\n\n\
+    \    # \u63D0\u53D6 ground truth \u4E2D\u7684 Q-Q \u56FE\u6570\u636E\n    fig_ground_truth\
+    \ = ground_truth[0]\n    ax_qq_ground_truth = fig_ground_truth.get_axes()[1]\n\
+    \    if not ax_qq_ground_truth.lines:\n        return None  # \u5982\u679C\u6CA1\
+    \u6709\u6570\u636E\uFF0C\u76F4\u63A5\u8FD4\u56DE None\n\n    qq_line_ground_truth\
+    \ = ax_qq_ground_truth.lines[0]\n    x_qq_ground_truth, y_qq_ground_truth = qq_line_ground_truth.get_data()\n\
+    \n    if len(x_qq_ground_truth) == 0 or len(y_qq_ground_truth) == 0:\n       \
+    \ return None  # \u5982\u679C\u6570\u636E\u4E3A\u7A7A\uFF0C\u8FD4\u56DE None\n\
+    \n    # \u8BA1\u7B97 ground truth \u7684 Q-Q \u56FE\u76F8\u5173\u7CFB\u6570\n\
+    \    ground_truth_correlation = np.corrcoef(x_qq_ground_truth, y_qq_ground_truth)[0,\
+    \ 1]\n\n    # \u8FD4\u56DE\u4E24\u8005\u76F8\u5173\u7CFB\u6570\u7684\u7EDD\u5BF9\
+    \u5DEE\u503C\n    difference = np.abs(correlation_coefficient - ground_truth_correlation)\n\
+    \n    # \u5C06\u5DEE\u503C\u8F6C\u6362\u4E3A [0,1] \u8303\u56F4\u5185\u7684\u6570\
+    \u503C\uFF0C1 \u8868\u793A\u6700\u597D\u7684\u7ED3\u679C\n    score = 1 - difference\n\
+    \    score = np.clip(score, 0, 1)  # \u786E\u4FDD\u7ED3\u679C\u5728 [0,1] \u8303\
+    \u56F4\u5185\n\n    return score"
+  function: Data Accuracy
+  metric: Q-Q Plot Correlation Coefficient
+  task_name: Data exploration and statistics understand
+data: 'mu = 10
+
+  sigma = 3.5
+
+  num_samples = 2500
+
+  seed = 42
+
+  args = (mu, sigma, num_samples, seed)'
+ground_truth: "import numpy as np\nimport matplotlib.pyplot as plt\nfrom scipy import\
+  \ stats\n\ndef task_func(mu, sigma, num_samples=1000, seed=77):\n    np.random.seed(seed)\n\
+  \    samples = np.random.normal(mu, sigma, num_samples)\n    \n    fig, axs = plt.subplots(1,\
+  \ 2, figsize=(12, 6))\n    \n    # Histogram\n    axs[0].hist(samples, bins=30,\
+  \ density=True, alpha=0.6, color='g')\n    xmin, xmax = axs[0].get_xlim()\n    x\
+  \ = np.linspace(xmin, xmax, 100)\n    p = stats.norm.pdf(x, mu, sigma)\n    axs[0].plot(x,\
+  \ p, 'k', linewidth=2)\n    axs[0].set_title('Histogram of Samples')\n    axs[0].set_xlabel('Value')\n\
+  \    axs[0].set_ylabel('Density')\n\n    # Q-Q plot\n    stats.probplot(samples,\
+  \ dist=\"norm\", plot=axs[1])\n    axs[1].set_title('Q-Q Plot')\n\n    plt.tight_layout()\n\
+  \    return (fig,)"
+prompt: "Generate a normal distribution with the given mean and standard deviation.\
+  \ Creates a figure containing a histogram and a Q-Q plot of the generated samples.\n\
+  The function should output with: tuple(fig: matplotlib.figure.Figure)  \nfig: A\
+  \ matplotlib figure containing the histogram and Q-Q plot.  \nYou should write self-contained\
+  \ code starting with:  \n```\nimport numpy as np\nimport matplotlib.pyplot as plt\n\
+  from scipy import stats\ndef task_func(mu, sigma, num_samples=1000, seed=77):\n\
+  ```"
+testcase: "import unittest\nfrom matplotlib import colors as mcolors\nfrom matplotlib.figure\
+  \ import Figure\nimport doctest\n\nclass TestCases(unittest.TestCase):\n    def\
+  \ test_standard_normal_distribution(self):\n        \"\"\"Test with standard normal\
+  \ distribution parameters (mu=0, sigma=1).\"\"\"\n        fig = task_func(0, 1)\n\
+  \        self.assertIsInstance(fig, Figure)\n        self.assertEqual(len(fig.axes),\
+  \ 2)  # Should contain two subplots\n        self._test_histogram_attributes(fig.axes[0],\
+  \ expected_bins=30, color='g')\n        self._test_qq_plot_attributes(fig.axes[1])\n\
+  \n    def test_nonzero_mean(self):\n        \"\"\"Test with a nonzero mean.\"\"\"\
+  \n        mu = 5\n        sigma = 1\n        fig = task_func(mu, sigma)\n      \
+  \  self.assertIsInstance(fig, Figure)\n        self.assertEqual(len(fig.axes), 2)\n\
+  \        self._test_histogram_attributes(fig.axes[0], expected_bins=30, color='g')\n\
+  \        self._test_qq_plot_attributes(fig.axes[1])\n\n    def test_different_standard_deviation(self):\n\
+  \        \"\"\"Test with a different standard deviation.\"\"\"\n        mu = 0\n\
+  \        sigma = 2\n        fig = task_func(mu, sigma)\n        self.assertIsInstance(fig,\
+  \ Figure)\n        self.assertEqual(len(fig.axes), 2)\n        self._test_histogram_attributes(fig.axes[0],\
+  \ expected_bins=30, color='g')\n        self._test_qq_plot_attributes(fig.axes[1])\n\
+  \n    def test_negative_mean(self):\n        \"\"\"Test with a negative mean.\"\"\
+  \"\n        mu = -5\n        sigma = 1\n        fig = task_func(mu, sigma)\n   \
+  \     self.assertIsInstance(fig, Figure)\n        self.assertEqual(len(fig.axes),\
+  \ 2)\n        self._test_histogram_attributes(fig.axes[0], expected_bins=30, color='g')\n\
+  \        self._test_qq_plot_attributes(fig.axes[1])\n\n    def test_large_standard_deviation(self):\n\
+  \        \"\"\"Test with a large standard deviation.\"\"\"\n        mu = 0\n   \
+  \     sigma = 5\n        fig = task_func(mu, sigma)\n        self.assertIsInstance(fig,\
+  \ Figure)\n        self.assertEqual(len(fig.axes), 2)\n        self._test_histogram_attributes(fig.axes[0],\
+  \ expected_bins=30, color='g')\n        self._test_qq_plot_attributes(fig.axes[1])\n\
+  \n    def _test_histogram_attributes(self, ax, expected_bins, color):\n        \"\
+  \"\"Helper function to test histogram attributes.\"\"\"\n        n, bins, patches\
+  \ = ax.hist([], bins=expected_bins, color=color)  # Dummy histogram to get attributes\n\
+  \        self.assertEqual(expected_bins, len(patches))  # The number of bars should\
+  \ match the number of bins\n        self.assertEqual(patches[0].get_facecolor(),\
+  \ mcolors.to_rgba(color))  # Checking the color of the bars\n\n    def _test_qq_plot_attributes(self,\
+  \ ax):\n        \"\"\"Helper function to test Q-Q plot attributes.\"\"\"\n     \
+  \   self.assertTrue(len(ax.get_lines()) > 0)  # Check if there are lines in the\
+  \ Q-Q plot"

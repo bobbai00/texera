@@ -1,0 +1,125 @@
+"TMC-list":
+- "code": |-
+    def missing_value_ratio(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("cleaned_data.csv")
+        total_cells = output.size
+        total_missing = output.isnull().sum().sum()
+        output_gd = pd.read_csv(ground_truth)
+        total_cells_gd = output_gd.size
+        total_missing_gd = output_gd.isnull().sum().sum()
+        return total_missing / total_cells == total_missing_gd / total_cells_gd
+  "function": |-
+    Data Cleaning Completeness
+  "ground_truth": |-
+    cleaned_data.csv
+  "metric": |-
+    Missing Value Ratio
+  "task_name": |-
+    Data cleaning and preprocessing
+- "code": |-
+    def duplicate_rows_removed(ground_truth):
+        import pandas as pd
+        cleaned_count = len(pd.read_csv("cleaned_data.csv"))
+        cleaned_count_gd = len(pd.read_csv(ground_truth))
+        return cleaned_count == cleaned_count_gd
+  "function": |-
+    Data Cleaning Completeness
+  "metric": |-
+    Duplicate Rows Removed
+  "task_name": |-
+    Data cleaning and preprocessing
+  "ground_truth": |-
+    cleaned_data.csv
+- "code": |-
+    def summary_statistics_consistency(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("eda_statistics.csv")
+        output_gt = pd.read_csv(ground_truth)
+        return output.equals(output_gt)
+  "function": |-
+    Data Consistency
+  "metric": |-
+    Summary Statistics Consistency
+  "task_name": |-
+    Data exploration and statistics understand
+  "ground_truth": |-
+    eda_statistics.csv
+- "code": |-
+    def visualization_completeness(ground_truth):
+        import os
+        return os.path.exists("visualizations.pdf")
+  "function": |-
+    Visualization Completeness
+  "metric": |-
+    Visualization Completeness
+  "task_name": |-
+    Data visualization
+- "code": |-
+    def pattern_recognition_validity(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("patterns_analysis.csv")
+        output_gd = pd.read_csv(ground_truth)
+        return output.equals(output_gd)
+  "function": |-
+    Pattern Recognition Validity
+  "metric": |-
+    Pattern Recognition Validity
+  "task_name": |-
+    Pattern recognition
+  "ground_truth": |-
+    patterns_analysis.csv
+- "code": |-
+    def clustering_silhouette_score(ground_truth):
+        from sklearn.metrics import silhouette_score
+        import pandas as pd
+        from sklearn.cluster import KMeans
+        output = pd.read_csv("clustering_results.csv")
+        features = output.iloc[:, :-1].values
+        labels = output.iloc[:, -1].values
+        output_gd = pd.read_csv(ground_truth)
+        features_gd = output_gd.iloc[:, :-1].values
+        labels_gd = output_gd.iloc[:, -1].values
+        return silhouette_score(features, labels) >= silhouette_score(features_gd, labels_gd)
+  "function": |-
+    Silhouette Score
+  "metric": |-
+    Clustering Silhouette Score
+  "task_name": |-
+    Data mining
+  "ground_truth": |-
+    clustering_results.csv
+"prompt": |-
+  You are required to analyze and visualize the "Heart Disease UCI" dataset from the UCI Machine Learning Repository (https://archive.ics.uci.edu/ml/datasets/heart+disease). Please follow the subtasks outlined below and ensure to use the specified input and output formats for each task:
+
+  1. **Load the dataset**  
+     - **Input file**: `heart_disease.csv`  
+     - **Output file**: `dataset_loaded.csv` (contains the dataset loaded into a DataFrame)
+
+  2. **Data Cleaning**  
+     - Handle missing values, encode categorical variables, and remove duplicates.  
+     - **Input file**: `heart_disease.csv`  
+     - **Output file**: `cleaned_data.csv` (cleaned dataset ready for analysis)
+
+  3. **Exploratory Data Analysis (EDA)**  
+     - Calculate and report basic statistical indicators (mean, median, standard deviation) for numerical features like age, cholesterol, and max heart rate achieved.  
+     - Provide summary statistics for categorical features like sex, chest pain type, and target (presence of heart disease).  
+     - **Input file**: `cleaned_data.csv`  
+     - **Output file**: `eda_statistics.csv` (CSV file containing basic statistical indicators)
+
+  4. **Generate Visualizations**  
+     - Create histograms for numerical features, bar plots for categorical features, box plots to visualize distribution across patient groups (e.g., by sex or chest pain type), and correlation heatmaps.  
+     - **Input file**: `cleaned_data.csv`  
+     - **Output file**: `visualizations.pdf` (PDF file containing all plots)
+
+  5. **Identify Patterns Related to Heart Disease**  
+     - Analyze relationships between features (e.g., age, cholesterol level, exercise-induced angina) and heart disease presence.  
+     - **Input file**: `cleaned_data.csv`  
+     - **Output file**: `patterns_analysis.csv` (CSV file detailing observed patterns)
+
+  6. **Clustering Techniques**  
+     - Use K-means clustering to identify patterns and group similar patients.  
+     - **Input file**: `cleaned_data.csv`  
+     - **Output file**: `clustering_results.csv` (CSV file with clustering results and patient groups)
+
+  Ensure each output file reflects the quality of completion for the respective subtask, allowing for further evaluation of your analysis and findings.

@@ -1,0 +1,51 @@
+TMC-list:
+- code: "def standardization_mse(output, ground_truth):\n    import numpy as np\n\
+    \    output_standardized = output[0]  # extract the standardized list from tuple\n\
+    \    ground_truth_standardized = ground_truth[0]\n    \n    mse = np.mean((np.array(ground_truth_standardized)\
+    \ - np.array(output_standardized))**2)\n    \n    # Assuming the data is standardized\
+    \ to have a mean of 0 and a standard deviation of 1,\n    # the maximum possible\
+    \ MSE is 1 (when all predictions are the exact opposite of the true values).\n\
+    \    max_possible_mse = 1\n    \n    # Normalize the MSE to be within [0, 1],\
+    \ where 0 is the worst and 1 is the best\n    normalized_mse = 1 - mse / max_possible_mse\n\
+    \    \n    # Ensure the normalized score is within [0, 1] range\n    normalized_mse\
+    \ = max(0, min(normalized_mse, 1))\n    \n    return normalized_mse\n"
+  function: Normalization Range Check
+  metric: Standardization Mean Squared Error
+  task_name: Data cleaning and preprocessing
+- code: "def plot_validity_check(output, ground_truth):\n    output_plot_axes = output[1]\
+    \  # extract the plot axes from tuple\n    return output_plot_axes.has_data()\
+    \  # check if the plot contains data"
+  function: Plot Validity
+  metric: Plot Validity Check
+  task_name: Data visualization
+data: args = ([[10, 15, 20], [25, 30, 35, 40], [-5, -10, -15], [100, 200]],)
+ground_truth: "from itertools import chain\nimport numpy as np\nfrom sklearn.preprocessing\
+  \ import StandardScaler\nimport matplotlib.pyplot as plt\n\ndef task_func(L):\n\
+  \    # Flatten the list of lists into a single list of integers\n    flat_list =\
+  \ list(chain.from_iterable(L))\n    \n    # Convert the list to a numpy array for\
+  \ standardization\n    data = np.array(flat_list).reshape(-1, 1)\n    \n    # Standardize\
+  \ the integers\n    scaler = StandardScaler()\n    standardized_data = scaler.fit_transform(data)\n\
+  \    \n    # Convert standardized data back to a list\n    standardized_list = standardized_data.flatten().tolist()\n\
+  \    \n    # Plotting the standardized values\n    fig, ax = plt.subplots()\n  \
+  \  ax.plot(standardized_list, marker='o', linestyle='-', color='b')\n    ax.set_title('Standardized\
+  \ Values')\n    ax.set_xlabel('Index')\n    ax.set_ylabel('Standardized Value')\n\
+  \    \n    # Providing output as required\n    return (standardized_list, ax)"
+prompt: "Convert a list of lists 'L' into a single list of integers, standardize the\
+  \ integers, and plot the standardized values. The function should output with: tuple(standardized_list:\
+  \ list, plot_axes: matplotlib.axes._axes.Axes)\nstandardized_list: A list of standardized\
+  \ integers obtained from the original list of lists.  \nplot_axes: A plot displaying\
+  \ the standardized values.  \nYou should write self-contained code starting with:\
+  \  \n```\nfrom itertools import chain\nimport numpy as np\nfrom sklearn.preprocessing\
+  \ import StandardScaler\nimport matplotlib.pyplot as plt\ndef task_func(L):\n```"
+testcase: "import unittest\n\nclass TestCases(unittest.TestCase):\n    def test_case_1(self):\n\
+  \        _, ax = task_func([[1, 2, 3], [4, 5, 6], [7, 8, 9]])\n        self.assertIsInstance(ax,\
+  \ plt.Axes)\n        self.assertEqual(len(ax.lines[0].get_ydata()), 9)\n\n    def\
+  \ test_case_2(self):\n        _, ax = task_func([[-1, -2, -3], [-4, -5, -6], [-7,\
+  \ -8, -9]])\n        self.assertIsInstance(ax, plt.Axes)\n        self.assertEqual(len(ax.lines[0].get_ydata()),\
+  \ 9)\n\n    def test_case_3(self):\n        _, ax = task_func([[1, -2, 3], [-4,\
+  \ 5, -6], [7, -8, 9]])\n        self.assertIsInstance(ax, plt.Axes)\n        self.assertEqual(len(ax.lines[0].get_ydata()),\
+  \ 9)\n\n    def test_case_4(self):\n        _, ax = task_func([[1, 2, 3, 4, 5]])\n\
+  \        self.assertIsInstance(ax, plt.Axes)\n        self.assertEqual(len(ax.lines[0].get_ydata()),\
+  \ 5)\n\n    def test_case_5(self):\n        _, ax = task_func([[1, 2], [3, 4, 5,\
+  \ 6], [7]])\n        self.assertIsInstance(ax, plt.Axes)\n        self.assertEqual(len(ax.lines[0].get_ydata()),\
+  \ 7)"

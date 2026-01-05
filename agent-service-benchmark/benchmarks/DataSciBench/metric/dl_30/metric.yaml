@@ -1,0 +1,47 @@
+"TMC-list":
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "training_results.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Visualization Validation (Image Similarity)
+  "task_name": |-
+    Data visualization
+  ground_truth: training_results.png
+- "code": |-
+    def report_completeness(ground_truth_text):
+        import PyPDF2  
+        pdfobj = open('experimental_report.pdf', 'rb') 
+        pdfreader = PyPDF2.PdfReader(pdfobj) 
+        return bool(len(pdfreader.pages) > 0)
+  "function": |-
+    Report Completeness
+  "metric": |-
+    Report Completeness Score (Content Verification)
+  "task_name": |-
+    Interpretability and report generation
+"prompt": |-
+  "Conduct a simple linear regression problem and solve it using the gradient descent method. Please generate code and write an experimental report based on the following requirements:
+
+
+  - **Input Filename**: ""data.csv""  
+
+  1. **Code Implementation**: The code should implement the basic functions and include the following content:  
+  - Perform simple linear regression using the gradient descent method.  
+  - **Output Filename**: ""linear_regression_code.py""  
+  - Visualize the training data and regression results.  
+  - **Output Filename**: ""training_results.png""  
+  - Plot the relationship between the cost function and the number of iterations.  
+  - **Output Filename**: ""cost_function_plot.png""  
+  - Plot the 3D relationship graph of parameters (w, b) and the cost function, as well as the 2D contour graph.  
+  - **Output Filename**: ""3D_contour_plot.png""  
+
+  2. **Experimental Report**: Write an experimental report with a detailed description of:  
+  - The selection and processing of the dataset.  
+  - The implementation steps of the gradient descent method.  
+  - Analysis and discussion of the regression results.  
+  - Interpretation of the visualization charts.  
+  - **Output Filename**: ""experimental_report.pdf""  

@@ -1,0 +1,92 @@
+TMC-list:
+- code: "def visualization_completeness(output, ground_truth):\n    empty_plot_output\
+    \ = output[1]\n    empty_plot_ground_truth = ground_truth[1]\n    return empty_plot_output\
+    \ == empty_plot_ground_truth"
+  function: Visualization Completeness
+  metric: Visualization Completeness
+  task_name: Data visualization
+- code: "def feature_count_consistency(output, ground_truth):\n    output_feature_count\
+    \ = len(output[0].patches)  # number of features in the output plot\n    ground_truth_feature_count\
+    \ = len(ground_truth[0].patches)  # number of features expected in ground truth\n\
+    \    return output_feature_count == ground_truth_feature_count"
+  function: Data Quality Score
+  metric: Feature Count Consistency
+  task_name: Data cleaning and preprocessing
+data: "import pandas as pd\n\n# New complex sample data for testing\nnew_data = {\n\
+  \    'Title': [\n        'How to analyze data effectively?',\n        'What are\
+  \ the best practices for Python coding?',\n        'An in-depth guide to machine\
+  \ learning',\n        'How does one become a successful chef?',\n        'What makes\
+  \ a great leader in technology?',\n        'Exploring the universe: What do we know?',\n\
+  \        'How to build scalable web applications?',\n        'Understanding AI:\
+  \ What is the future?',\n        'Cooking with spices: How it enhances flavors?',\n\
+  \        'What is the impact of technology on society?'\n    ],\n    'Content':\
+  \ [\n        'Data analysis involves various techniques including statistics and\
+  \ machine learning...',\n        'Best practices in Python involve writing readable\
+  \ code and using proper documentation...',\n        'Machine learning is reshaping\
+  \ industries with its ability to analyze large datasets...',\n        'Becoming\
+  \ a successful chef requires not only skill but also creativity in culinary arts...',\n\
+  \        'Great leaders in technology inspire teams while driving innovation and\
+  \ efficiency...',\n        'The universe is vast, and we have only scratched the\
+  \ surface of our understanding...',\n        'Building scalable web applications\
+  \ requires attention to architecture and user experience...',\n        'AI has the\
+  \ potential to revolutionize industries, but ethical considerations are crucial...',\n\
+  \        'Spices are essential in cooking as they bring depth and flavor to the\
+  \ dishes...',\n        'Technology impacts society in countless ways, shaping communication,\
+  \ education, and work...'\n    ]\n}\ndf_new_sample = pd.DataFrame(new_data)\n\n\
+  args = (df_new_sample,)"
+ground_truth: "import re\nimport matplotlib.pyplot as plt\nfrom sklearn.feature_extraction.text\
+  \ import TfidfVectorizer\nimport numpy as np\nimport pandas as pd\n\ndef task_func(df):\n\
+  \    if 'Title' not in df.columns or 'Content' not in df.columns:\n        fig,\
+  \ ax = plt.subplots()\n        ax.set_title('Empty Plot')\n        ax.set_xticks([])\n\
+  \        ax.set_yticks([])\n        return ax, True\n\n    filtered_df = df[df['Title'].str.contains(r'\\\
+  b(how|what)\\b', case=False, na=False)]\n    if filtered_df.empty:\n        fig,\
+  \ ax = plt.subplots()\n        ax.set_title('Empty Plot')\n        ax.set_xticks([])\n\
+  \        ax.set_yticks([])\n        return ax, True\n    \n    vectorizer = TfidfVectorizer()\n\
+  \    tfidf_matrix = vectorizer.fit_transform(filtered_df['Content'])\n    feature_names\
+  \ = vectorizer.get_feature_names_out()\n\n    sum_tfidf = tfidf_matrix.sum(axis=0).A1\n\
+  \    tfidf_scores = dict(zip(feature_names, sum_tfidf))\n    \n    sorted_items\
+  \ = sorted(tfidf_scores.items(), key=lambda x: x[1], reverse=True)\n    labels,\
+  \ scores = zip(*sorted_items)\n\n    fig, ax = plt.subplots()\n    ax.bar(labels,\
+  \ scores)\n    ax.set_ylabel('TF-IDF Score')\n    ax.set_xticklabels(labels, rotation=90)\n\
+  \    plt.tight_layout()\n\n    return ax, False"
+prompt: "Analyzes a given DataFrame containing article titles and content to identify\
+  \ articles with titles that include the words \"how\" or \"what\". It calculates\
+  \ the TF-IDF scores for the words in the content of these articles and visualizes\
+  \ these scores in a bar plot. Note that: If the DataFrame does not contain 'Title'\
+  \ and 'Content' columns, the function returns an empty plot. If no articles have\
+  \ titles containing \"how\" or \"what,\" the function also returns an empty plot.\
+  \ Set the name of the y-axis to 'TF-IDF Score'. Set xticks to display the feature\
+  \ names vertically. The function should output with: tuple(ax: matplotlib.axes.Axes,\
+  \ empty_plot: bool) ax: A matplotlib Axes object displaying a bar plot of the TF-IDF\
+  \ scores. empty_plot: A boolean indicating if the plotted result is an empty plot\
+  \ (True) or contains data (False). You should write self-contained code starting\
+  \ with:\n```\n import re\n import matplotlib.pyplot as plt\n from sklearn.feature_extraction.text\
+  \ import TfidfVectorizer\n import numpy as np\n def task_func(df):\n```"
+testcase: "import unittest\nimport pandas as pd\nimport matplotlib\nmatplotlib.use('Agg')\n\
+  \nclass TestCases(unittest.TestCase):\n    def setUp(self):\n        # Sample data\
+  \ for testing\n        self.DATA = {\n            'Title': ['How to code?', 'What\
+  \ is Python?', 'The art of programming', 'How to cook?', 'What is life?'],\n   \
+  \         'Content': ['This is a tutorial about coding...', 'Python is a programming\
+  \ language...',\n                        'Programming is an art...', 'This is a\
+  \ cooking tutorial...', 'Life is complicated...']\n        }\n        self.df_sample\
+  \ = pd.DataFrame(self.DATA)\n\n    def test_case_1(self):\n        # Test with original\
+  \ data\n        ax, _ = task_func(self.df_sample)\n        self.assertEqual(len(ax.patches),\
+  \ 11)  # Adjusting based on actual data\n        self.assertEqual(ax.get_ylabel(),\
+  \ \"TF-IDF Score\")\n\n    def test_case_2(self):\n        # Test with no interesting\
+  \ articles\n        df_no_interesting = self.df_sample.copy()\n        df_no_interesting['Title']\
+  \ = ['Coding 101', 'Python tutorial', 'Programming basics', 'Cooking basics',\n\
+  \                                       'Life basics']\n        ax, _ = task_func(df_no_interesting)\n\
+  \        self.assertEqual(len(ax.patches), 0)  # No bars in the plot as no interesting\
+  \ articles\n\n    def test_case_3(self):\n        # Test with only one interesting\
+  \ article\n        df_one_interesting = self.df_sample.copy()\n        df_one_interesting['Title']\
+  \ = ['How to play guitar?', 'Python tutorial', 'Programming basics', \n        \
+  \                                'Cooking basics', 'Life basics']\n        ax, _\
+  \ = task_func(df_one_interesting)\n        self.assertEqual(len(ax.patches), 5)\
+  \  # 5 unique words in the interesting article\n\n    def test_case_4(self):\n \
+  \       # Test with data not containing columns 'Title' and 'Content'\n        df_empty\
+  \ = pd.DataFrame(columns=['Title', 'Description'])\n        ax, _ = task_func(df_empty)\n\
+  \        self.assertEqual(len(ax.patches), 0)  # No bars in the plot as dataframe\
+  \ is empty\n\n    def test_case_5(self):\n        # Test with empty dataframe\n\
+  \        df_empty = pd.DataFrame(columns=['Title', 'Content'])\n        ax, _ =\
+  \ task_func(df_empty)\n        self.assertEqual(len(ax.patches), 0)  # No bars in\
+  \ the plot as dataframe is empty"

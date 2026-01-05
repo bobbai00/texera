@@ -1,0 +1,42 @@
+TMC-list:
+- code: "def r2_score_metric(output, ground_truth):\n    from sklearn.metrics import\
+    \ r2_score\n    model = output[0]  # extract the fitted model from tuple\n   \
+    \ coefficients = output[1]  # extract the coefficients from tuple\n    y_true\
+    \ = ground_truth['Y']  # assuming ground_truth is a DataFrame\n    y_pred = model.predict(ground_truth[['X']])\
+    \  # predict using the fitted model\n    return r2_score(y_true, y_pred)"
+  function: R-squared Value
+  metric: Coefficient Determination (R^2 Score)
+  task_name: Predictive modeling
+data: "import numpy as np\nimport pandas as pd\n\nROWS = 100\nCOLUMNS = ['X', 'Y']\n\
+  np.random.seed(42)  # For reproducibility\ndf = pd.DataFrame({\n    'X': np.random.uniform(-10,\
+  \ 10, size=ROWS) + np.random.normal(0, 1, size=ROWS),\n    'Y': 2 * np.random.uniform(-10,\
+  \ 10, size=ROWS) + np.random.normal(0, 5, size=ROWS)\n})\n\nargs = (df,)"
+ground_truth: "import pandas as pd\nfrom sklearn.linear_model import LinearRegression\n\
+  import numpy as np\n\ndef task_func(df):\n    model = LinearRegression()\n    X\
+  \ = df[['X']]\n    y = df['Y']\n    model.fit(X, y)\n    coefficients = model.coef_\n\
+  \    return (model, coefficients)"
+prompt: "Given a Pandas DataFrame with random numeric values and columns X & Y, use\
+  \ sklearn's linear regression to match the data to a linear model. The function\
+  \ should output with: tuple(model: LinearRegression, coefficients: np.ndarray)\n\
+  model: The fitted linear model.  \ncoefficients: The coefficients of the fitted\
+  \ model for the features.  \nYou should write self-contained code starting with:\
+  \  \n```\nimport pandas as pd\nfrom sklearn.linear_model import LinearRegression\n\
+  ROWS = 100\nCOLUMNS = ['X', 'Y']\ndef task_func(df):\n```"
+testcase: "import unittest\nimport numpy as np\nimport pandas as pd\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        df = pd.DataFrame(np.random.normal(size=(ROWS,\
+  \ len(COLUMNS))), columns=COLUMNS)\n        model, _ = task_func(df)\n        self.assertTrue(model\
+  \ is not None)\n\n    def test_case_2(self):\n        df = pd.DataFrame(np.random.normal(size=(ROWS,\
+  \ len(COLUMNS))), columns=COLUMNS)\n        model, _ = task_func(df)\n        self.assertTrue(model\
+  \ is not None)\n        self.assertTrue(model.coef_ is not None)\n\n    def test_case_3(self):\n\
+  \        df = pd.DataFrame(np.random.normal(size=(ROWS, len(COLUMNS))), columns=COLUMNS)\n\
+  \        model, _ = task_func(df)\n        self.assertTrue(model is not None)\n\
+  \        self.assertTrue(model.coef_ is not None)\n        self.assertTrue(model.intercept_\
+  \ is not None)\n\n    def test_case_4(self):\n        df = pd.DataFrame(np.random.normal(size=(ROWS,\
+  \ len(COLUMNS))), columns=COLUMNS)\n        model, _ = task_func(df)\n        self.assertTrue(model\
+  \ is not None)\n        self.assertTrue(model.coef_ is not None)\n        self.assertTrue(model.intercept_\
+  \ is not None)\n        self.assertTrue(model.score(df[['X']], df['Y']) is not None)\n\
+  \n    def test_case_5(self):\n        df = pd.DataFrame(np.random.normal(size=(ROWS,\
+  \ len(COLUMNS))), columns=COLUMNS)\n        model, _ = task_func(df)\n        self.assertTrue(model\
+  \ is not None)\n        self.assertTrue(model.coef_ is not None)\n        self.assertTrue(model.intercept_\
+  \ is not None)\n        self.assertTrue(model.score(df[['X']], df['Y']) is not None)\n\
+  \        self.assertTrue(model.score(df[['X']], df['Y']) >= 0)"

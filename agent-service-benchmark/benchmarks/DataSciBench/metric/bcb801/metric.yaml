@@ -1,0 +1,82 @@
+TMC-list:
+- code: "def most_common_values_correctness(output, ground_truth):\n    output_dict\
+    \ = output[0]  # extract the most common values dictionary from tuple\n    ground_truth_dict\
+    \ = ground_truth[0]\n    correct_count = 0\n    for key in ground_truth_dict:\n\
+    \        if key in output_dict and output_dict[key] == ground_truth_dict[key]:\n\
+    \            correct_count += 1\n    return correct_count / len(ground_truth_dict)\
+    \ if ground_truth_dict else 1.0"
+  function: Data Quality Score
+  metric: Correctness of Most Common Values
+  task_name: Data cleaning and preprocessing
+- code: "def number_of_columns_processed(output, ground_truth):\n    output_dict =\
+    \ output[0]\n    ground_truth_dict = ground_truth[0]\n    return len(output_dict)\
+    \ == len(ground_truth_dict)  # returns True if output has the same number of columns\
+    \ as ground truth"
+  function: Data Integrity
+  metric: Number of Columns Processed
+  task_name: Data exploration and statistics understand
+data: "# Generating new complex input data for testing\nimport os\nimport shutil\n\
+  import tempfile\nimport csv\n\n# Create a temporary directory to house the CSV files\n\
+  test_dir = tempfile.mkdtemp()\n\n# Helper function to create a CSV file\ndef create_csv(file_name,\
+  \ headers, data):\n    path = os.path.join(test_dir, file_name)\n    with open(path,\
+  \ 'w', newline='') as csvfile:\n        writer = csv.DictWriter(csvfile, fieldnames=headers)\n\
+  \        writer.writeheader()\n        for row in data:\n            writer.writerow(row)\n\
+  \    return path\n\n# Test case data\ncolumns = ['Product', 'Quantity', 'Location']\n\
+  data = [\n    {'Product': 'Widget A', 'Quantity': '15', 'Location': 'Warehouse 1'},\n\
+  \    {'Product': 'Widget B', 'Quantity': '15', 'Location': 'Warehouse 2'},\n   \
+  \ {'Product': 'Widget C', 'Quantity': '20', 'Location': 'Warehouse 1'},\n    {'Product':\
+  \ 'Widget A', 'Quantity': '15', 'Location': 'Warehouse 3'},\n    {'Product': 'Widget\
+  \ B', 'Quantity': '10', 'Location': 'Warehouse 1'},\n    {'Product': 'Widget A',\
+  \ 'Quantity': '15', 'Location': 'Warehouse 1'},\n    {'Product': 'Widget C', 'Quantity':\
+  \ '20', 'Location': 'Warehouse 3'},\n    {'Product': 'Widget D', 'Quantity': '25',\
+  \ 'Location': 'Warehouse 1'},\n]\n\n# Create the CSV file with complex data\nfile_path\
+  \ = create_csv('complex_data.csv', columns, data)\n\n# Assign values to args\nargs\
+  \ = (file_path,)"
+ground_truth: "import collections\nimport numpy as np\nimport pandas as pd\n\ndef\
+  \ task_func(file_name):\n    if file_name.endswith('.csv'):\n        df = pd.read_csv(file_name)\n\
+  \        if df.empty:\n            return ({},)\n\n        most_common_values =\
+  \ {}\n        for column in df.columns:\n            if df[column].dtype == 'object':\n\
+  \                # Get value counts and sort\n                counts = df[column].value_counts()\n\
+  \                most_common = counts.idxmax()\n                most_common_values[column]\
+  \ = most_common\n            else:\n                # For numeric types, we treat\
+  \ the same way\n                counts = df[column].value_counts()\n           \
+  \     most_common = counts.idxmax()\n                most_common_values[column]\
+  \ = most_common\n\n        return (most_common_values,)\n    return ({},)"
+prompt: "Find the most common value in each column of a csv file with column names.\
+  \ If some values occur the same number of times, the values are sorted alphabetically\
+  \ and the first is considered most common. If an empty csv is passed, an empty dictionary\
+  \ is returned.\nThe function should output with: tuple(most_common_values: dict)\n\
+  most_common_values: A dictionary with column names as keys and most common values\
+  \ as values. \nYou should write self-contained code starting with:\n```\nimport\
+  \ collections\nimport numpy as np\ndef task_func(file_name):\n```"
+testcase: "import unittest\nimport os\nimport shutil\nimport tempfile\nimport csv\n\
+  \nclass TestCases(unittest.TestCase):\n    def setUp(self):\n        # Create a\
+  \ temporary directory to house the CSV files\n        self.test_dir = tempfile.mkdtemp()\n\
+  \n    def tearDown(self):\n        # Remove the temporary directory after the test\n\
+  \        shutil.rmtree(self.test_dir)\n\n    def create_csv(self, file_name, headers,\
+  \ data):\n        # Helper function to create a CSV file\n        path = os.path.join(self.test_dir,\
+  \ file_name)\n        with open(path, 'w', newline='') as csvfile:\n           \
+  \ writer = csv.DictWriter(csvfile, fieldnames=headers)\n            writer.writeheader()\n\
+  \            for row in data:\n                writer.writerow(row)\n        return\
+  \ path\n\n    def test_empty_csv(self):\n        # Test for an empty CSV file\n\
+  \        file_path = self.create_csv('empty.csv', ['Name', 'Age'], [])\n       \
+  \ result = task_func(file_path)\n        self.assertEqual(result, {})\n\n    def\
+  \ test_single_entry(self):\n        # Test for a CSV file with a single entry\n\
+  \        file_path = self.create_csv('single.csv', ['Name', 'Age'], [{'Name': 'John',\
+  \ 'Age': '30'}])\n        result = task_func(file_path)\n        self.assertEqual(result,\
+  \ {'Name': 'John', 'Age': 30})\n\n    def test_common_values_sorted(self):\n   \
+  \     # Test for common values, ensuring alphabetical sorting\n        file_path\
+  \ = self.create_csv('common_values.csv', ['Fruit'], [{'Fruit': 'Apple'}, {'Fruit':\
+  \ 'Banana'}, {'Fruit': 'Apple'}, {'Fruit': 'Banana'}, {'Fruit': 'Cherry'}])\n  \
+  \      result = task_func(file_path)\n        self.assertEqual(result, {'Fruit':\
+  \ 'Apple'})\n\n    def test_multiple_columns(self):\n        # Test for multiple\
+  \ columns and entries\n        data = [{'Name': 'Alice', 'Age': '25', 'Country':\
+  \ 'USA'},\n                {'Name': 'Bob', 'Age': '30', 'Country': 'USA'},\n   \
+  \             {'Name': 'Alice', 'Age': '25', 'Country': 'Canada'}]\n        file_path\
+  \ = self.create_csv('multi_columns.csv', ['Name', 'Age', 'Country'], data)\n   \
+  \     result = task_func(file_path)\n        expected = {'Name': 'Alice', 'Age':\
+  \ 25, 'Country': 'USA'}\n        self.assertEqual(result, expected)\n\n    def test_tie_breaking(self):\n\
+  \        # Test for tie-breaking in value counts\n        data = [{'Name': 'Alice'},\
+  \ {'Name': 'Bob'}, {'Name': 'Alice'}, {'Name': 'Bob'}]\n        file_path = self.create_csv('tie.csv',\
+  \ ['Name'], data)\n        result = task_func(file_path)\n        self.assertEqual(result,\
+  \ {'Name': 'Alice'})"

@@ -1,0 +1,85 @@
+TMC-list:
+- code: "def correctness_of_max_tuple(output, ground_truth):\n    max_tuple_output\
+    \ = output[1]  # extract the max tuple from output\n    max_tuple_ground_truth\
+    \ = ground_truth[1]\n    return max_tuple_output == max_tuple_ground_truth"
+  function: Plot Validity
+  metric: Correctness of Max Tuple
+  task_name: Data visualization
+- code: "def axes_properties_validation(output, ground_truth):\n    ax_output = output[0]\
+    \  # extract the Axes object from output\n    ax_ground_truth = ground_truth[0]\n\
+    \    return (ax_output.get_title() == ax_ground_truth.get_title() and\n      \
+    \      ax_output.get_xlabel() == ax_ground_truth.get_xlabel() and\n          \
+    \  ax_output.get_ylabel() == ax_ground_truth.get_ylabel() and\n            ax_output.get_legend()\
+    \ == ax_ground_truth.get_legend())"
+  function: DataFrame Shape Validation
+  metric: Axes Properties Validation
+  task_name: Data cleaning and preprocessing
+data: 'data = [(25, 45), (35, 55), (92, 15), (50, 85), (60, 77), (15, 95)]
+
+  args = (data,)'
+ground_truth: "import numpy as np\nfrom operator import itemgetter\nimport matplotlib.pyplot\
+  \ as plt\n\ndef task_func(data):\n    # Ensure data is not empty\n    if not data:\n\
+  \        raise ValueError(\"Data must not be empty.\")\n    \n    # Find the tuple\
+  \ with the maximum value at index 1\n    max_tuple = max(data, key=itemgetter(1))\n\
+  \    \n    # Create a scatter plot\n    fig, ax = plt.subplots()\n    x_values =\
+  \ [x[0] for x in data]\n    y_values = [x[1] for x in data]\n    \n    # Scatter\
+  \ plot\n    ax.scatter(x_values, y_values, label='Data Points')\n    \n    # Highlight\
+  \ the max tuple\n    ax.scatter(max_tuple[0], max_tuple[1], color='red', label='Max\
+  \ Tuple', s=100)\n    \n    # Set title and labels\n    ax.set_title('Max Tuple\
+  \ Highlighted')\n    ax.set_xlabel('x')\n    ax.set_ylabel('y')\n    ax.legend()\n\
+  \    \n    plt.show()\n    \n    return ax, max_tuple"
+prompt: "Plot a scatter graph of tuples and highlight the tuple with the maximum value\
+  \ at index 1. The function should output with: tuple(ax: matplotlib.axes.Axes, max_tuple:\
+  \ tuple)\nax: The Axes object of the plot for further manipulation and testing,\
+  \ with the title 'Max Tuple Highlighted', x-axis labeled 'x', y-axis labeled 'y',\
+  \ and a legend. \nmax_tuple: The tuple that has the maximum value at index 1. \n\
+  You should write self-contained code starting with: \n```\nimport numpy as np\n\
+  from operator import itemgetter\nimport matplotlib.pyplot as plt\ndef task_func(data):\n\
+  ```"
+testcase: "import unittest\nimport doctest\n\nclass TestCases(unittest.TestCase):\n\
+  \n    def test_case_1(self):\n        data = [(10, 20), (30, 50), (60, 25), (80,\
+  \ 65)]\n        ax,_ = task_func(data)\n\n        # Check the title of the plot\n\
+  \        self.assertEqual(ax.get_title(), \"Max Tuple Highlighted\")\n\n       \
+  \ # Check the x and y axis labels\n        self.assertEqual(ax.get_xlabel(), \"\
+  x\")\n        self.assertEqual(ax.get_ylabel(), \"y\")\n\n        # Check the data\
+  \ points\n        x_data, y_data = ax.collections[0].get_offsets().T\n        self.assertTrue(np.array_equal(x_data,\
+  \ [10, 30, 60, 80]))\n        self.assertTrue(np.array_equal(y_data, [20, 50, 25,\
+  \ 65]))\n\n        # Check the highlighted point (Max Tuple)\n        x_max, y_max\
+  \ = ax.collections[1].get_offsets().T\n        self.assertEqual(x_max, 80)\n   \
+  \     self.assertEqual(y_max, 65)\n\n    def test_case_2(self):\n        data =\
+  \ [(5, 10), (15, 35), (40, 55), (70, 30)]\n        ax,_ = task_func(data)\n\n  \
+  \      # Check the title of the plot\n        self.assertEqual(ax.get_title(), \"\
+  Max Tuple Highlighted\")\n\n        # Check the x and y axis labels\n        self.assertEqual(ax.get_xlabel(),\
+  \ \"x\")\n        self.assertEqual(ax.get_ylabel(), \"y\")\n\n        # Check the\
+  \ data points\n        x_data, y_data = ax.collections[0].get_offsets().T\n    \
+  \    self.assertTrue(np.array_equal(x_data, [5, 15, 40, 70]))\n        self.assertTrue(np.array_equal(y_data,\
+  \ [10, 35, 55, 30]))\n\n        # Check the highlighted point (Max Tuple)\n    \
+  \    x_max, y_max = ax.collections[1].get_offsets().T\n        self.assertEqual(x_max,\
+  \ 40)\n        self.assertEqual(y_max, 55)\n\n    def test_case_3(self):\n     \
+  \   data = [(3, 7), (9, 11), (13, 17), (19, 23)]\n        ax,_ = task_func(data)\n\
+  \n        # Check the title of the plot\n        self.assertEqual(ax.get_title(),\
+  \ \"Max Tuple Highlighted\")\n\n        # Check the x and y axis labels\n      \
+  \  self.assertEqual(ax.get_xlabel(), \"x\")\n        self.assertEqual(ax.get_ylabel(),\
+  \ \"y\")\n\n        # Check the data points\n        x_data, y_data = ax.collections[0].get_offsets().T\n\
+  \        self.assertTrue(np.array_equal(x_data, [3, 9, 13, 19]))\n        self.assertTrue(np.array_equal(y_data,\
+  \ [7, 11, 17, 23]))\n\n        # Check the highlighted point (Max Tuple)\n     \
+  \   x_max, y_max = ax.collections[1].get_offsets().T\n        self.assertEqual(x_max,\
+  \ 19)\n        self.assertEqual(y_max, 23)\n\n    def test_case_4(self):\n     \
+  \   data = [(2, 3), (4, 5), (6, 7), (8, 9)]\n        ax,_ = task_func(data)\n\n\
+  \        # Check the title of the plot\n        self.assertEqual(ax.get_title(),\
+  \ \"Max Tuple Highlighted\")\n\n        # Check the x and y axis labels\n      \
+  \  self.assertEqual(ax.get_xlabel(), \"x\")\n        self.assertEqual(ax.get_ylabel(),\
+  \ \"y\")\n\n        # Check the data points\n        x_data, y_data = ax.collections[0].get_offsets().T\n\
+  \        self.assertTrue(np.array_equal(x_data, [2, 4, 6, 8]))\n        self.assertTrue(np.array_equal(y_data,\
+  \ [3, 5, 7, 9]))\n\n        # Check the highlighted point (Max Tuple)\n        x_max,\
+  \ y_max = ax.collections[1].get_offsets().T\n        self.assertEqual(x_max, 8)\n\
+  \        self.assertEqual(y_max, 9)\n\n    def test_case_5(self):\n        data\
+  \ = [(20, 30), (40, 50), (60, 10), (80, 90)]\n        ax,_ = task_func(data)\n\n\
+  \        # Check the title of the plot\n        self.assertEqual(ax.get_title(),\
+  \ \"Max Tuple Highlighted\")\n\n        # Check the x and y axis labels\n      \
+  \  self.assertEqual(ax.get_xlabel(), \"x\")\n        self.assertEqual(ax.get_ylabel(),\
+  \ \"y\")\n\n        # Check the data points\n        x_data, y_data = ax.collections[0].get_offsets().T\n\
+  \        self.assertTrue(np.array_equal(x_data, [20, 40, 60, 80]))\n        self.assertTrue(np.array_equal(y_data,\
+  \ [30, 50, 10, 90]))\n\n        # Check the highlighted point (Max Tuple)\n    \
+  \    x_max, y_max = ax.collections[1].get_offsets().T\n        self.assertEqual(x_max,\
+  \ 80)\n        self.assertEqual(y_max, 90)"

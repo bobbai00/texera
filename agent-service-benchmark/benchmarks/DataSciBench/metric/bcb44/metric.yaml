@@ -1,0 +1,85 @@
+TMC-list:
+- code: "def imputation_accuracy(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the normalized DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    missing_values_output = output_df.isnull().sum()\n    missing_values_ground_truth\
+    \ = ground_truth_df.isnull().sum()\n    return (missing_values_output == 0).all()\
+    \ and (missing_values_ground_truth == 0).all()  # checks if both have no missing\
+    \ values"
+  function: Data Completeness
+  metric: Missing Value Imputation Accuracy
+  task_name: Data cleaning and preprocessing
+- code: "def boxplot_comparison(output, ground_truth):\n    import numpy as np\n \
+    \   boxplot_axes = output[1]  # extract the boxplot axes from tuple\n    ground_truth_axes\
+    \ = ground_truth[1]\n    comparison_results = [\n        np.array_equal(o.get_path().vertices,\
+    \ g.get_path().vertices)\n        for o, g in zip(boxplot_axes.patches, ground_truth_axes.patches)\n\
+    \    ]\n    return all(comparison_results)"
+  function: Plot Validity
+  metric: Boxplot Comparison
+  task_name: Data visualization
+data: "import pandas as pd\nimport numpy as np\n\ndf = pd.DataFrame(\n    [\n    \
+  \    [np.nan, 15, 3.5, 2.1],\n        [12, 20, np.nan, 4.2],\n        [14, np.nan,\
+  \ 7.1, 1.8],\n        [18, 10, 6.0, 3.5],\n        [20, 25, 8.4, np.nan],\n    \
+  \    [np.nan, np.nan, np.nan, 6.0]\n    ],\n    columns=[\"c1\", \"c2\", \"c3\"\
+  , \"c4\"]\n)\n\nargs = (df,)"
+ground_truth: "from sklearn.preprocessing import MinMaxScaler\nimport matplotlib.pyplot\
+  \ as plt\nimport pandas as pd\n\ndef task_func(df):\n    # Replace missing values\
+  \ with column's average\n    df.fillna(df.mean(), inplace=True)\n    \n    # Normalize\
+  \ numeric columns\n    scaler = MinMaxScaler()\n    norm_data = scaler.fit_transform(df.select_dtypes(include=['float64',\
+  \ 'int']))\n    norm_df = pd.DataFrame(norm_data, columns=df.select_dtypes(include=['float64',\
+  \ 'int']).columns)\n\n    # Draw box plots for each normalized column\n    boxplot_axes\
+  \ = norm_df.plot.box(figsize=(10, 6), return_type='axes')\n    plt.title('Box Plots\
+  \ of Normalized Numeric Columns')\n    plt.tight_layout()\n\n    return norm_df,\
+  \ boxplot_axes"
+prompt: 'Normalize numeric columns in a DataFrame and draw a box plot for each column.
+  Missing values are replaced by column''s average.
+
+  The function should output with: tuple(norm_df: pandas.DataFrame, boxplot_axes:
+  matplotlib.axes.Axes)
+
+  norm_df: A pandas DataFrame after normalization.
+
+  boxplot_axes: A matplotlib Axes displaying a box plot for each column.
+
+  You should write self-contained code starting with:
+
+  ```
+
+  from sklearn.preprocessing import MinMaxScaler
+
+  import matplotlib.pyplot as plt
+
+  def task_func(df):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\nimport matplotlib.pyplot\
+  \ as plt\n\nclass TestCases(unittest.TestCase):\n    \"\"\"Test cases for the task_func\
+  \ function.\"\"\"\n\n    def test_case_1(self):\n        df = pd.DataFrame(\n  \
+  \          [[1, 2, 3], [4, 5, 6], [7.0, np.nan, 9.0]], columns=[\"c1\", \"c2\",\
+  \ \"c3\"]\n        )\n        normalized_df, ax = task_func(df)\n        self.assertTrue(np.allclose(normalized_df[\"\
+  c1\"].tolist(), [0.0, 0.5, 1.0]))\n        self.assertTrue(np.allclose(normalized_df[\"\
+  c2\"].tolist(), [0.0, 1.0, 0.5]))\n        self.assertTrue(np.allclose(normalized_df[\"\
+  c3\"].tolist(), [0.0, 0.5, 1.0]))\n        self.assertIsInstance(ax, plt.Axes)\n\
+  \n    def test_case_2(self):\n        df = pd.DataFrame([[1, 2, 3], [4, 5, 6], [7,\
+  \ 8, 9]], columns=[\"c1\", \"c2\", \"c3\"])\n        normalized_df, ax = task_func(df)\n\
+  \        self.assertTrue(np.allclose(normalized_df[\"c1\"].tolist(), [0.0, 0.5,\
+  \ 1.0]))\n        self.assertTrue(np.allclose(normalized_df[\"c2\"].tolist(), [0.0,\
+  \ 0.5, 1.0]))\n        self.assertTrue(np.allclose(normalized_df[\"c3\"].tolist(),\
+  \ [0.0, 0.5, 1.0]))\n        self.assertIsInstance(ax, plt.Axes)\n\n    def test_case_3(self):\n\
+  \        df = pd.DataFrame(\n            [[1, 2, 3, 4, 5], [None, None, None, None,\
+  \ None]],\n            columns=[\"c1\", \"c2\", \"c3\", \"c4\", \"c5\"],\n     \
+  \   )\n        normalized_df, ax = task_func(df)\n        for col in df.columns:\n\
+  \            self.assertTrue(normalized_df[col].max() <= 1.0)\n            self.assertTrue(normalized_df[col].min()\
+  \ >= 0.0)\n        self.assertIsInstance(ax, plt.Axes)\n\n    def test_case_4(self):\n\
+  \        df = pd.DataFrame(\n            [[11, 2, 13, 7], [1, 5, 6, 16], [15, 3,\
+  \ 14, 9], [8, 10, 4, 12]],\n            columns=[\"c1\", \"c2\", \"c3\", \"c4\"\
+  ],\n        )\n        normalized_df, ax = task_func(df)\n        for col in df.columns:\n\
+  \            self.assertTrue(normalized_df[col].max() <= 1.0)\n            self.assertTrue(normalized_df[col].min()\
+  \ >= 0.0)\n        self.assertIsInstance(ax, plt.Axes)\n\n    def test_case_5(self):\n\
+  \        df = pd.DataFrame(\n            [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]],\
+  \ columns=[\"c1\", \"c2\"]\n        )\n        normalized_df, ax = task_func(df)\n\
+  \        for col in df.columns:\n            self.assertTrue(np.isclose(normalized_df[col].max(),\
+  \ 1.0, atol=1e-5))\n            self.assertTrue(normalized_df[col].min() >= 0.0)\n\
+  \        self.assertListEqual(\n            normalized_df.loc[:, \"c1\"].tolist(),\
+  \ [0.0, 0.25, 0.5, 0.75, 1.0]\n        )\n        self.assertListEqual(\n      \
+  \      normalized_df.loc[:, \"c2\"].tolist(), [0.0, 0.25, 0.5, 0.75, 1.0]\n    \
+  \    )\n        self.assertIsInstance(ax, plt.Axes)"

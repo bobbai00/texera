@@ -1,0 +1,39 @@
+"TMC-list":
+# - "code": |-
+#     def model_accuracy(ground_truth):
+#         from sklearn.metrics import accuracy_score
+#         import pandas as pd
+#         output = pd.read_csv("predictions.csv")  # Assuming 'predictions.csv' contains a column 'Predictions'
+#         predictions = output['Predictions'].tolist()
+#         return accuracy_score(ground_truth, predictions)
+#   "function": |-
+#     Model Accuracy
+#   "metric": |-
+#     Model Accuracy
+#   "task_name": |-
+#     Predictive modeling
+#   ground_truth: 
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "roc_curve.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    AUC-ROC Score
+  "task_name": |-
+    Data visualization
+  ground_truth: roc_curve.png
+"prompt": |-
+  Use PyTorch, with datasets 'positive.csv' and 'negative.csv', each with 200 positive and negative samples, to perform binary classification with a BP neural network. Requirements are as follows:
+
+  1. Design a BP neural network with 3 hidden layers, where the input layer dimension is the sample dimension; the hidden layer dimensions are 128, 32, and 2 respectively.  
+
+  2. Use the ReLU activation function for the hidden layers; the output layer has a dimension of 1 and uses the sigmoid activation function.  
+
+  3. Train the model using 'positive.csv' and 'negative.csv' as inputs.  
+
+  4. Evaluate the model on a test set (to be prepared from the input datasets).  
+
+  5. Generate confusion matrix and ROC curve for model performance visualization. Output: Confusion matrix image in 'confusion_matrix.png' and ROC curve image in 'roc_curve.png'.

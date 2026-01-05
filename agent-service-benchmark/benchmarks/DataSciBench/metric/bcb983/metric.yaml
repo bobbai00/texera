@@ -1,0 +1,55 @@
+TMC-list:
+- code: "def covariance_matrix_shape(output, ground_truth):\n    output_shape = output[0].shape\n\
+    \    ground_truth_shape = ground_truth[0].shape\n    return output_shape == ground_truth_shape"
+  function: Plot Validity
+  metric: Covariance Matrix Shape
+  task_name: Data visualization
+- code: "def is_pair_plot_instance(output, ground_truth):\n    return isinstance(output[1],\
+    \ sns.axisgrid.PairGrid) and isinstance(ground_truth[1], sns.axisgrid.PairGrid)"
+  function: Data Integrity
+  metric: Pair Plot Type
+  task_name: Data exploration and statistics understand
+- code: "def covariance_matrix_match(output, ground_truth):\n    output_ = output[0]\n\
+    \    ground_truth_ = ground_truth[0]\n    return output_.equals(ground_truth_)"
+  function: Prediction Accuracy
+  metric: Covariance Matrix Match
+  task_name: Data Mining
+data: "import pandas as pd\nimport numpy as np\n\ndf = pd.DataFrame({\n    \"Height\"\
+  : [5.5, 6.1, 5.8, 5.9, 6.0],\n    \"Weight\": [150, 180, 165, 175, 160],\n    \"\
+  Age\": [25, 30, 22, 28, 32],\n    \"Income\": [50000, 60000, 45000, 55000, 70000]\n\
+  })\n\nargs = (df,)"
+ground_truth: "import seaborn as sns\nimport numpy as np\nimport pandas as pd\nimport\
+  \ matplotlib.pyplot as plt\n\ndef task_func(df):\n    if df.empty:\n        raise\
+  \ ValueError(\"DataFrame is empty.\")\n    \n    if not all(pd.api.types.is_numeric_dtype(df[col])\
+  \ for col in df.columns):\n        raise TypeError(\"DataFrame contains non-numeric\
+  \ data types.\")\n\n    covariance_df = df.cov()\n    pair_plot = sns.pairplot(df)\n\
+  \    plt.show()\n    \n    return covariance_df, pair_plot"
+prompt: "Generates a pair plot from a numeric DataFrame and calculates its covariance\
+  \ matrix.\nThe function should raise the exception for: ValueError: If the DataFrame\
+  \ is empty. TypeError: If the DataFrame contains non-numeric data types. \nThe function\
+  \ should output with: tuple(covariance_df: pandas.DataFrame, pair_plot: sns.axisgrid.PairGrid)\
+  \ \ncovariance_df: The covariance matrix of the input DataFrame. \npair_plot: Pair\
+  \ plot of the input DataFrame. \nYou should write self-contained code starting with:\n\
+  ```\nimport seaborn as sns\nimport numpy as np\ndef task_func(df):\n```"
+testcase: "import unittest\nimport pandas as pd\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_covariance_one(self):\n        \"\"\"Test basic case with expected\
+  \ covariance of 1.0\"\"\"\n        df = pd.DataFrame({\"A\": [1, 2, 3], \"B\": [4,\
+  \ 5, 6], \"C\": [7, 8, 9]})\n        covariance_df, _ = task_func(df)\n        self.assertTrue((covariance_df\
+  \ == 1).all().all())\n\n    def test_identical_values_dataframe(self):\n       \
+  \ \"\"\"Test DataFrame where all rows have identical values.\"\"\"\n        df =\
+  \ pd.DataFrame({\"A\": [1, 1, 1], \"B\": [2, 2, 2]})\n        covariance_df, _ =\
+  \ task_func(df)\n        self.assertTrue((covariance_df == 0).all().all())\n\n \
+  \   def test_with_empty_dataframe(self):\n        \"\"\"Test handling empty input\
+  \ (should raise error).\"\"\"\n        df = pd.DataFrame()\n        with self.assertRaises(ValueError):\n\
+  \            task_func(df)\n\n    def test_with_non_numeric_dataframe(self):\n \
+  \       \"\"\"Test handling unsupported data types.\"\"\"\n        df = pd.DataFrame({\"\
+  A\": [\"a\", \"b\", \"c\"], \"B\": [\"d\", \"e\", \"f\"]})\n        with self.assertRaises(TypeError):\n\
+  \            task_func(df)\n\n    def test_plot_attributes(self):\n        \"\"\"\
+  Test plot attributes.\"\"\"\n        df = pd.DataFrame({\"X\": [10, 20, 30], \"\
+  Y\": [15, 25, 35]})\n        _, pair_plot = task_func(df)\n        self.assertIsInstance(pair_plot,\
+  \ sns.axisgrid.PairGrid)\n        self.assertEqual(len(pair_plot.axes), 2)  # Should\
+  \ have 2x2 grid for pair plot\n\n    def test_single_column_dataframe(self):\n \
+  \       \"\"\"Test handling of DataFrame with a single numeric column.\"\"\"\n \
+  \       df = pd.DataFrame({\"A\": [1, 2, 3]})\n        covariance_df, _ = task_func(df)\n\
+  \        self.assertEqual(covariance_df.loc[\"A\"].item(), 1.0)\n        self.assertEqual(covariance_df.shape,\
+  \ (1, 1))"

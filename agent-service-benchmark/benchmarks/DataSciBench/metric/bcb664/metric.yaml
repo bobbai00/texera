@@ -1,0 +1,68 @@
+TMC-list:
+- code: "def plot_completeness(output, ground_truth):\n    import numpy as np\n  \
+    \  output_ax = output[0]  # extract the Axes object from the tuple\n    ground_truth_data\
+    \ = ground_truth[0]  # assumed to hold the expected data structure\n    \n   \
+    \ # Check if the number of lines plotted matches the expected number of products\n\
+    \    lines = output_ax.lines\n    expected_lines = len(ground_truth_data.lines)\
+    \  # ground truth should contain data for each product\n    \n    return len(lines)\
+    \ == expected_lines"
+  function: Visualization Completeness
+  metric: Plot Completeness
+  task_name: Data visualization
+data: "import pandas as pd\nimport numpy as np\n\n# Creating a more complex sales\
+  \ DataFrame\nsales_data = pd.DataFrame({\n    'Month': range(1, 13),\n    'Product\
+  \ A': np.random.randint(90, 300, size=12) + np.random.normal(0, 15, 12).astype(int),\n\
+  \    'Product B': np.random.randint(100, 400, size=12) + np.random.normal(0, 20,\
+  \ 12).astype(int),\n    'Product C': np.random.randint(80, 350, size=12) + np.random.normal(0,\
+  \ 10, 12).astype(int),\n    'Product D': np.random.randint(150, 450, size=12) +\
+  \ np.random.normal(0, 25, 12).astype(int),\n    'Product E': np.random.randint(200,\
+  \ 500, size=12) + np.random.normal(0, 30, 12).astype(int)\n})\n\nargs = (sales_data,)"
+ground_truth: "import statistics\nimport matplotlib.pyplot as plt\n\ndef task_func(sales_data):\n\
+  \    months = list(range(1, 13))  # Represents the months from January to December\n\
+  \    products = ['Product A', 'Product B', 'Product C', 'Product D', 'Product E']\n\
+  \    \n    # Prepare data for plotting\n    sales_means = [statistics.mean(sales_data[product])\
+  \ for product in products]\n    sales_stdevs = [statistics.stdev(sales_data[product])\
+  \ for product in products]\n\n    # Create the plot\n    fig, ax = plt.subplots()\n\
+  \    \n    # Plotting each product's sales trend\n    for i, product in enumerate(products):\n\
+  \        ax.plot(months, sales_data[product], label=product)\n        ax.fill_between(months,\
+  \ \n                        [s - sales_stdevs[i] for s in sales_data[product]],\
+  \ \n                        [s + sales_stdevs[i] for s in sales_data[product]],\
+  \ \n                        alpha=0.1)\n\n    # Adding labels and title\n    ax.set_xlabel('Month')\n\
+  \    ax.set_ylabel('Sales')\n    ax.set_title('Sales Trends for Five Products Over\
+  \ a Year')\n    ax.set_xticks(months)\n    ax.set_xticklabels([f'Month {m}' for\
+  \ m in months])\n    ax.legend()\n    \n    return (ax,)"
+prompt: '"Plot sales trends for five products over a year, highlighting variability
+  with standard deviation shading with ''Month'' on x-axis and ''Sales'' on y-axis.
+  The function should output with: tuple(ax: matplotlib.axes.Axes) ax: Axes object
+  with the sales trends plot. You should write self-contained code starting with:
+  ``` import statistics import matplotlib.pyplot as plt def task_func(sales_data):
+  ```"'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        # Generating a sample sales DataFrame\n        self.sales_data\
+  \ = pd.DataFrame({\n            'Month': range(1, 13),\n            'Product A':\
+  \ np.random.randint(100, 200, size=12),\n            'Product B': np.random.randint(150,\
+  \ 250, size=12),\n            'Product C': np.random.randint(120, 220, size=12),\n\
+  \            'Product D': np.random.randint(130, 230, size=12),\n            'Product\
+  \ E': np.random.randint(140, 240, size=12)\n        })\n\n    def test_plot_labels(self):\n\
+  \        \"\"\"Ensure all product labels are present in the plot legend.\"\"\"\n\
+  \        ax = task_func(self.sales_data)\n        legend_labels = [text.get_text()\
+  \ for text in ax.get_legend().get_texts()]\n        self.assertEqual(set(legend_labels),\
+  \ set(self.sales_data.columns[1:]),\n                         \"Not all product\
+  \ labels are present in the plot legend.\")\n\n    def test_plot_lines(self):\n\
+  \        \"\"\"Check if the plot contains lines for each product.\"\"\"\n      \
+  \  ax = task_func(self.sales_data)\n        self.assertEqual(len(ax.lines), len(self.sales_data.columns)\
+  \ - 1,\n                         \"Plot does not contain the correct number of lines.\"\
+  )\n\n    def test_monthly_ticks(self):\n        \"\"\"Verify that all months are\
+  \ correctly plotted as x-ticks.\"\"\"\n        ax = task_func(self.sales_data)\n\
+  \        # Convert x-ticks to integers for comparison\n        x_ticks = [int(tick)\
+  \ for tick in ax.get_xticks() if isinstance(tick, (int, np.integer))]\n        expected_ticks\
+  \ = self.sales_data['Month'].tolist()\n        self.assertListEqual(x_ticks, expected_ticks,\
+  \ \"Not all months are correctly plotted as x-ticks.\")\n\n    def test_positive_sales(self):\n\
+  \        \"\"\"Ensure all plotted sales values are positive.\"\"\"\n        ax =\
+  \ task_func(self.sales_data)\n        for line in ax.lines:\n            self.assertTrue(all(y\
+  \ >= 0 for y in line.get_ydata()),\n                            \"Plotted sales\
+  \ values should be positive.\")\n\n    def test_std_dev_shading(self):\n       \
+  \ \"\"\"Check for standard deviation shading around each product line.\"\"\"\n \
+  \       ax = task_func(self.sales_data)\n        self.assertGreaterEqual(len(ax.collections),\
+  \ len(self.sales_data.columns) - 1,\n                                \"Missing standard\
+  \ deviation shading for one or more products.\")"

@@ -1,0 +1,68 @@
+"TMC-list":
+- "code": |-
+    def data_completeness_percentage(ground_truth):
+        import pandas as pd
+        output = pd.read_excel("cleaned_data.xlsx")
+        complete_data_count = output.notnull().sum().sum()  # Count of non-null values
+        total_data_count = output.size  # Total number of values
+        per = (complete_data_count / total_data_count) * 100
+        gt_output = pd.read_excel(ground_truth)
+        gt_complete_data_count = gt_output.notnull().sum().sum()  # Count of non-null values
+        gt_total_data_count = gt_output.size  # Total number of values
+        gt_per = (gt_complete_data_count / gt_total_data_count) * 100
+        return bool(per == gt_per)  # Percentage of complete data
+  "function": |-
+    Data Completeness
+  "metric": |-
+    Data Completeness Percentage
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: cleaned_data.xlsx
+- "code": |-
+    def model_mean_absolute_error(ground_truth):
+        from sklearn.metrics import mean_absolute_error
+        import pandas as pd
+        output = pd.read_csv("model_parameters.csv")
+        predictions = output.iloc[:, 0].tolist()  # Assuming the predictions are stored there
+        gt_output = pd.read_csv(ground_truth)
+        gt = gt_output.iloc[:, 0].tolist()
+        return bool(mean_absolute_error(gt_output, predictions)<=0.1)  # MAE calculation
+  "function": |-
+    Mean Absolute Error
+  "metric": |-
+    Model Mean Absolute Error (MAE)
+  "task_name": |-
+    Predictive modeling
+  ground_truth: model_parameters.csv
+- "code": |-
+    def r_squared(ground_truth):
+        from sklearn.metrics import r2_score
+        import pandas as pd
+        output = pd.read_csv("model_parameters.csv")
+        predictions = output.iloc[:, 0].tolist()  # Assuming the predictions are stored there
+        gt_output = pd.read_csv(ground_truth)
+        gt = gt_output.iloc[:, 0].tolist()
+        return bool(r2_score(gt, predictions)>=0.9)  # R-squared calculation
+  "function": |-
+    Result Quality
+  "metric": |-
+    R-squared Value
+  "task_name": |-
+    Interpretability and report generation
+  ground_truth: model_parameters.csv
+"prompt": |-
+  "Please write a SSA-BP Sparrow Algorithm in Python to optimize the code of a BP neural network for multivariate regression prediction. The specific requirements are as follows:
+
+  1. **Dataset**: Use an Excel file named ""data.xlsx"" as the dataset, which includes 7 input features and 1 output variable.
+
+
+  2. **Model Optimization**: Employ the SSA-BP Sparrow Algorithm to optimize the weights and biases of the BP neural network.
+  - **Output**: Save the optimized model parameters in a CSV file named ""model_parameters.csv"".
+
+  3. **Performance Evaluation**: Output the model's evaluation metrics such as RMSE, MAPE, MAE, and R2 in the command window.
+  - **Output**: Save these evaluation metrics in a text file named ""performance_metrics.txt"".
+
+  4. **File Organization**: Make sure all program codes, including the SSA-BP Sparrow Algorithm implementation, are stored in the same folder as the dataset ""data.xlsx"".
+  - **Output**: Organize the code in a Python script named ""ssa_bp_sparrow.py"".
+
+  Please provide a complete code implementation and ensure that the code structure is clear with complete comments for understanding and evaluation."

@@ -1,0 +1,79 @@
+"TMC-list":
+- "code": |-
+    def feature_selection_impact(ground_truth):
+        import pandas as pd
+        from sklearn.model_selection import train_test_split
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.metrics import accuracy_score
+
+        output = pd.read_csv("data/train_set.csv")
+        output_gt = pd.read_csv(ground_truth)
+
+        return output.shape[1] == output_gt.shape[1]
+  "function": |-
+    Data Validity
+  "ground_truth": |-
+    data/train_set.csv
+  "metric": |-
+    Feature Selection Impact
+  "task_name": |-
+    Data exploration and statistics understand
+- "code": |-
+    def model_accuracy(ground_truth):
+        import pandas as pd
+
+        output = pd.read_csv("results/evaluation_metrics.csv")['Accuracy']
+        output_gt = pd.read_csv(ground_truth)['Accuracy']
+        return output_gt.equals(output)
+  "function": |-
+    Model Accuracy
+  "ground_truth": |-
+    results/evaluation_metrics.csv
+  "metric": |-
+    Model Accuracy
+  "task_name": |-
+    Predictive modeling
+- "code": |-
+    def f1_score_metric(ground_truth):
+        import pandas as pd
+
+        output = pd.read_csv("results/evaluation_metrics.csv")['F1 Score']
+        output_gt = pd.read_csv(ground_truth)['F1 Score']
+        return output_gt.equals(output)
+  "function": |-
+    Model Accuracy
+  "ground_truth": |-
+    results/evaluation_metrics.csv
+  "metric": |-
+    F1 Score
+  "task_name": |-
+    Predictive modeling
+- "code": |-
+    def report_completeness_score(ground_truth):
+        import os
+
+        report_path = "reports/model_report.pdf"
+        if os.path.exists(report_path):
+            return 1.0  # Complete report exists
+        return 0.0  # Report is missing
+  "function": |-
+    Report Completeness
+  "metric": |-
+    Report Completeness Score
+  "task_name": |-
+    Interpretability and report generation
+"prompt": |-
+
+  You are required to solve an employee churn prediction task using the IBM HR Analytics Employee Attrition & Performance dataset from Kaggle
+
+  1. **Input:** Load the dataset from the file `WA_Fn-UseC_-HR-Employee-Attrition.csv`. Identify any missing or anomalous values, and handle them appropriately through imputation or other means. Perform necessary data transformations, including encoding categorical variables, scaling numerical features, and addressing class imbalance using techniques like SMOTE.
+
+  2. **Feature Engineering:** Conduct feature engineering to select relevant features and create new ones that may aid in predicting employee churn. 
+
+  3. **Dataset Splitting:** Split the dataset into training and testing sets, saving them as `data/train_set.csv` and `data/test_set.csv`.
+
+  4. **Model Building:** Use the Random Forest algorithm to build a predictive model. Optimize the model through hyperparameter tuning using grid search or random search methods to find the best combination of parameters.
+   
+  5. **Evaluation:** Evaluate the model on the test set using metrics such as accuracy, precision, recall, F1-score, and ROC-AUC. Save the model's predictions in a CSV file at `results/predictions.csv` and the evaluation results in a CSV file at `results/evaluation_metrics.csv`. Save the trained model checkpoint at `models/random_forest_model.pkl`.
+
+  6. **Reporting:** Generate a comprehensive report detailing the data preprocessing steps, feature engineering process, model selection and tuning, and evaluation results. Include visualizations such as feature importance plots, ROC curves, and confusion matrices to illustrate the model's performance. Discuss the potential business implications of the model's predictions. Save the report as a PDF file at `reports/model_report.pdf`.

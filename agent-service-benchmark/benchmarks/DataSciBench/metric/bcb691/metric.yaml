@@ -1,0 +1,57 @@
+TMC-list:
+- code: "def cluster_label_consistency(output, ground_truth):\n    from sklearn.metrics\
+    \ import adjusted_rand_score\n    output_labels = output[0]  # extract the labels\
+    \ from the output tuple\n    ground_truth_labels = ground_truth[0]\n    return\
+    \ adjusted_rand_score(ground_truth_labels, output_labels)"
+  function: Clustering Validity
+  metric: Cluster Label Consistency
+  task_name: Predictive modeling
+data: 'import pandas as pd
+
+  import numpy as np
+
+
+  df = pd.DataFrame(np.random.rand(1000, 5) * 100, columns=[''A'', ''B'', ''C'', ''D'',
+  ''E''])
+
+  args = (df,)'
+ground_truth: "import pandas as pd\nfrom sklearn.cluster import KMeans\nfrom sklearn.preprocessing\
+  \ import StandardScaler\nimport numpy as np\n\ndef task_func(df):\n    # Standardize\
+  \ the features\n    scaler = StandardScaler()\n    scaled_data = scaler.fit_transform(df)\n\
+  \n    # Run KMeans clustering\n    kmeans = KMeans(n_clusters=3, random_state=42)\
+  \  # Assuming 3 clusters\n    kmeans.fit(scaled_data)\n\n    # Get the labels\n\
+  \    labels = kmeans.labels_\n    \n    return (labels,)"
+prompt: 'Given a pandas DataFrame with random numeric values, run KMeans clusters
+  on the data and return the labels. The function should output with: tuple(labels:
+  np.array)
+
+  labels: The labels from the KMeans clustering. You should write self-contained code
+  starting with:
+
+  ```
+
+  import pandas as pd
+
+  from sklearn.cluster import KMeans
+
+  from sklearn.preprocessing import StandardScaler
+
+  def task_func(df):
+
+  ```'
+testcase: "import unittest\nimport numpy as np\nimport pandas as pd\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        df = pd.DataFrame(np.random.rand(500, 2) *\
+  \ 100, columns=['A', 'B'])\n        labels = task_func(df)\n        self.assertEqual(len(labels),\
+  \ 500)\n        self.assertTrue(np.all(np.isin(labels, [0, 1, 2])))\n\n    def test_case_2(self):\n\
+  \        df = pd.DataFrame(np.random.rand(10, 2) * 100, columns=['A', 'B'])\n  \
+  \      labels = task_func(df)\n        self.assertEqual(len(labels), 10)\n     \
+  \   self.assertTrue(np.all(np.isin(labels, [0, 1, 2])))\n\n    def test_case_3(self):\n\
+  \        df = pd.DataFrame(np.random.rand(5, 4) * 100, columns=['A', 'B', 'C', 'D'])\n\
+  \        labels = task_func(df)\n        self.assertEqual(len(labels), 5)\n    \
+  \    self.assertTrue(np.all(np.isin(labels, [0, 1, 2])))\n\n    def test_case_4(self):\n\
+  \        df = pd.DataFrame(np.random.rand(20, 3) * 100, columns=['A', 'B', 'C'])\n\
+  \        labels = task_func(df)\n        self.assertEqual(len(labels), 20)\n   \
+  \     self.assertTrue(np.all(np.isin(labels, [0, 1, 2])))\n\n    def test_case_5(self):\n\
+  \        df = pd.DataFrame(np.random.rand(42, 1) * 100, columns=['A'])\n       \
+  \ labels = task_func(df)\n        self.assertEqual(len(labels), 42)\n        self.assertTrue(np.all(np.isin(labels,\
+  \ [0, 1, 2])))"

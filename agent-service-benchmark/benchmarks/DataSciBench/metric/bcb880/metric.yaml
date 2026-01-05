@@ -1,0 +1,76 @@
+TMC-list:
+- code: "def cluster_accuracy(output, ground_truth):\n    import numpy as np\n   \
+    \ output_arr = output[0]  # extract the DataFrame from tuple\n    ground_truth_arr\
+    \ = ground_truth[0]\n    equals = np.equal(output_arr, ground_truth_arr)\n   \
+    \ return np.sum(equals)/len(equals)"
+  function: Model Accuracy
+  metric: Clustering Accuracy
+  task_name: Predictive modeling
+data: "data = pd.DataFrame({\n    'a': [15, 22, 28, 35, 44, 1000, 67, 88, 90, 11],\n\
+  \    'b': [1.5, 2.2, 3.8, 4.1, 5.0, 6.4, 7.9, 8.5, 9.2, 10.3],\n    'c': [2, 45,\
+  \ 12, 42, 31, 11, 22, 33, 27, 8]\n})\nargs = (data, 5, 75)"
+ground_truth: "import pandas as pd\nfrom sklearn.cluster import KMeans\n\ndef task_func(data,\
+  \ n_clusters=3, seed=None):\n    if not all(data.dtypes.apply(lambda x: pd.api.types.is_numeric_dtype(x))):\n\
+  \        raise ValueError(\"The DataFrame contains non-numeric entries.\")\n\n \
+  \   model = KMeans(n_clusters=n_clusters, n_init=10, random_state=seed)\n    model.fit(data)\n\
+  \    labels = model.predict(data)\n    \n    return labels, model"
+prompt: 'Perform K-Means clustering on the given DataFrame using the sklearn KMeans
+  algorithm. The function expects a DataFrame with numerical values, as KMeans cannot
+  handle categorical data. It applies standard KMeans clustering from the sklearn
+  library to form clusters. The number of clusters is configurable via the ''n_clusters''
+  parameter, defaulting to 3. The Number of times the k-means algorithm is run with
+  different centroid seeds (n_init) is set to 10. The function returns an array of
+  cluster labels corresponding to each data point in the input as well as the fitted
+  KMeans model. >>> data = pd.DataFrame({ ... ''a'': [1, 20, 2, 22, 100], ... ''b'':
+  [1, 20, 2, 22, 100] ... }) >>> labels, model = task_func(data, seed=213) >>> print(labels)
+  [2 0 2 0 1] >>> print(model) KMeans(n_clusters=3, n_init=10, random_state=213).
+  The function should raise the exception for: ValueError: If the DataFrame contains
+  non numeric entries. The function should output with: tuple(labels: numpy.ndarray,
+  model: sklearn.cluster.KMeans) labels: An array of integers (cluster labels) corresponding
+  to the input data. Each label is an integer representing the cluster to which a
+  row of data has been assigned. model: The fitted KMeans Model. You should write
+  self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  from sklearn.cluster import KMeans
+
+  def task_func(data, n_clusters=3, seed=None):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_nonnumeric(self):\n        data = pd.DataFrame({\n            'a':\
+  \ [1, 2, 3],\n            'b': ['a', 2, 4]\n        })\n        self.assertRaises(Exception,\
+  \ task_func, data)\n\n    def test_case_1(self):\n        np.random.seed(12)\n \
+  \       data = pd.DataFrame(np.random.randint(0, 20, size=(20, 4)), columns=list('ABCD'))\n\
+  \        labels, kmeans = task_func(data, n_clusters=4, seed=1)\n        unique_labels\
+  \ = np.unique(labels)\n        assert all(label in range(4) for label in unique_labels)\n\
+  \        self.assertTrue(isinstance(labels, np.ndarray))\n        self.assertIsInstance(kmeans,\
+  \ KMeans)\n        np.testing.assert_equal(labels, [3, 0, 3, 1, 2, 1, 2, 0, 2, 1,\
+  \ 1, 3, 3, 1, 0, 0, 0, 0, 1, 3])\n\n    def test_case_2(self):\n        data = pd.DataFrame(np.zeros((100,\
+  \ 4)), columns=list('ABCD'))\n        labels, kmeans = task_func(data, n_clusters=3,\
+  \ seed=12)\n        self.assertIsInstance(kmeans, KMeans)\n        assert len(np.unique(labels))\
+  \ == 1\n        self.assertTrue(isinstance(labels, np.ndarray))\n        self.assertCountEqual(labels,\
+  \ np.zeros(100))\n\n    def test_case_3(self):\n        data = pd.DataFrame({'A':\
+  \ range(100), 'B': range(100), 'C': range(100)})\n        labels, kmeans = task_func(data,\
+  \ seed=42)\n        self.assertIsInstance(kmeans, KMeans)\n        expected = [1,\
+  \ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,\n             \
+  \       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,\n    \
+  \                2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,\
+  \ 2,\n                    2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,\
+  \ 0, 0, 0, 0,\n                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n       \
+  \ np.testing.assert_equal(labels, expected)\n        self.assertTrue(isinstance(labels,\
+  \ np.ndarray))\n\n    def test_case_4(self):\n        np.random.seed(5)\n      \
+  \  data = pd.DataFrame(np.random.rand(100, 20))\n        labels, kmeans = task_func(data,\
+  \ n_clusters=12, seed=12)\n        self.assertIsInstance(kmeans, KMeans)\n     \
+  \   expected = [4, 5, 5, 9, 10, 1, 0, 3, 4, 7, 7, 2, 11, 11, 3, 0, 4,\n        \
+  \            2, 3, 2, 2, 10, 10, 8, 5, 9, 11, 5, 0, 8, 11, 5, 7, 0,\n          \
+  \          8, 11, 7, 11, 6, 1, 1, 7, 0, 9, 3, 7, 8, 0, 4, 1, 7,\n              \
+  \      2, 10, 3, 11, 9, 1, 1, 7, 4, 5, 7, 6, 9, 8, 6, 5, 9, 0,\n               \
+  \     11, 1, 1, 4, 2, 1, 0, 7, 5, 1, 9, 6, 7, 10, 10, 4, 4, 9,\n               \
+  \     1, 9, 5, 6, 3, 10, 7, 11, 8, 1, 8, 6, 11]\n        np.testing.assert_equal(labels,\
+  \ expected)\n        self.assertTrue(isinstance(labels, np.ndarray))\n\n    def\
+  \ test_case_5(self):\n        data = pd.DataFrame([])\n        self.assertRaises(Exception,\
+  \ task_func, data)"

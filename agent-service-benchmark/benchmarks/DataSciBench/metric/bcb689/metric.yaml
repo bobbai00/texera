@@ -1,0 +1,57 @@
+TMC-list:
+- code: "def p_value_correctness(output, ground_truth):\n    output_p_values = output[0]\
+    \  # extract p-values dict from tuple\n    ground_truth_p_values = ground_truth[0]\n\
+    \    return all(np.isclose(output_p_values[col], ground_truth_p_values[col], atol=1e-8)\
+    \ for col in output_p_values)"
+  function: Data Validity
+  metric: p-value correctness
+  task_name: Data exploration and statistics understand
+- code: "def normality_correctness(output, ground_truth):\n    output_test_results\
+    \ = output[1]  # extract test results dict from tuple\n    ground_truth_test_results\
+    \ = ground_truth[1]\n    return all(output_test_results[col] == ground_truth_test_results[col]\
+    \ for col in output_test_results)"
+  function: Result Quality
+  metric: normality correctness
+  task_name: Interpretability and report generation
+data: "import pandas as pd\nimport numpy as np\n\ndf = pd.DataFrame({\n    'x': np.random.lognormal(mean=0,\
+  \ sigma=1, size=200),\n    'y': np.random.poisson(lam=5, size=200),\n    'z': np.random.chisquare(df=2,\
+  \ size=200),\n    'w': np.random.randint(1, 100, size=200),\n    'v': np.random.binomial(n=10,\
+  \ p=0.5, size=200)\n})\n\nargs = (df,)"
+ground_truth: "import numpy as np\nimport pandas as pd\nfrom scipy import stats\n\n\
+  def task_func(df):\n    p_values = {}\n    test_results = {}\n    \n    for column\
+  \ in df.columns:\n        stat, p_value = stats.shapiro(df[column])\n        p_values[column]\
+  \ = p_value\n        test_results[column] = p_value > 0.05\n    \n    return (p_values,\
+  \ test_results)"
+prompt: "Given a Pandas DataFrame with random numeric values, test if the data in\
+  \ each column is normally distributed using the Shapiro-Wilk test. The function\
+  \ should output with: tuple(p_values: dict, test_results: dict)\np_values: A dictionary\
+  \ with p-values from the Shapiro-Wilk test for each column.  \ntest_results: A dictionary\
+  \ with boolean values indicating whether each column is normally distributed (True\
+  \ if p-value > 0.05, False otherwise).  \nYou should write self-contained code starting\
+  \ with:  \n```\nimport numpy as np\nfrom scipy import stats\ndef task_func(df):\n\
+  ```"
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    def setUp(self):\n        np.random.seed(42)\n\n    def test_case_1(self):\n\
+  \        df = pd.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})\n        p_values,\
+  \ _ = task_func(df)\n        self.assertEqual(len(p_values), 2)\n        self.assertTrue('a'\
+  \ in p_values)\n        self.assertTrue('b' in p_values)\n        self.assertTrue(p_values['a']\
+  \ > 0.05)\n        self.assertTrue(p_values['b'] > 0.05)\n\n    def test_case_2(self):\n\
+  \        df = pd.DataFrame({'a': [-1, 0, 1], 'b': [4, 5, 6]})\n        p_values,\
+  \ _ = task_func(df)\n        self.assertEqual(len(p_values), 2)\n        self.assertTrue('a'\
+  \ in p_values)\n        self.assertTrue('b' in p_values)\n        self.assertTrue(p_values['a']\
+  \ > 0.05)\n        self.assertTrue(p_values['b'] > 0.05)\n\n    def test_case_3(self):\n\
+  \        df = pd.DataFrame(np.random.normal(size=(100, 5)))\n        p_values, _\
+  \ = task_func(df)\n        self.assertEqual(len(p_values), 5)\n        for col in\
+  \ df.columns:\n            self.assertTrue(col in p_values)\n            self.assertTrue(p_values[col]\
+  \ > 0.05)\n\n    def test_case_4(self):\n        df = pd.DataFrame(np.random.normal(size=(100,\
+  \ 5)))\n        df['a'] = np.random.uniform(size=100)\n        p_values, _ = task_func(df)\n\
+  \        self.assertEqual(len(p_values), 6)\n        for col in df.columns:\n  \
+  \          self.assertTrue(col in p_values)\n            if col == 'a':\n      \
+  \          self.assertTrue(p_values[col] < 0.05)\n            else:\n          \
+  \      self.assertTrue(p_values[col] > 0.05)\n\n    def test_case_5(self):\n   \
+  \     df = pd.DataFrame(np.random.normal(size=(100, 5)))\n        df['a'] = np.random.uniform(size=100)\n\
+  \        df['b'] = np.random.uniform(size=100)\n        p_values, _ = task_func(df)\n\
+  \        self.assertEqual(len(p_values), 7)\n        for col in df.columns:\n  \
+  \          self.assertTrue(col in p_values)\n            if col in ['a', 'b']:\n\
+  \                self.assertTrue(p_values[col] < 0.05)\n            else:\n    \
+  \            self.assertTrue(p_values[col] > 0.05)"

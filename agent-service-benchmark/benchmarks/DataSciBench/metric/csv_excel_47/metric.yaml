@@ -1,0 +1,41 @@
+"TMC-list":
+- "code": |-
+    def sample_counts(ground_truth):
+        import pandas as pd
+        output = pd.read_csv("sample_counts.csv")
+        gt_output = pd.read_csv(ground_truth)
+        training_samples = output['Sample Count'].iloc[0]
+        test_samples = output['Sample Count'].iloc[1]
+        gt_training_samples = gt_output['Sample Count'].iloc[0]
+        gt_test_samples = gt_output['Sample Count'].iloc[1]
+        # expected_training_samples, expected_test_samples = gt_output
+        return bool((training_samples == gt_training_samples) and (test_samples == gt_test_samples))
+  "function": |-
+    Data Quality Score
+  "metric": |-
+    Number of Samples in Sets
+  "task_name": |-
+    Data cleaning and preprocessing
+  ground_truth: sample_counts.csv
+- "code": |-
+    def classification_accuracy(ground_truth):
+        from sklearn.metrics import accuracy_score
+        import pandas as pd
+        output = pd.read_csv("classification_results.csv")
+        gt_output = pd.read_csv(ground_truth)
+        gt_acc = accuracy_score(gt_output['True Species Code'], gt_output['Predicted Species Code'])
+        acc = accuracy_score(output['True Species Code'], output['Predicted Species Code'])
+        # predictions = output['Predictions'].tolist()
+        # return accuracy_score(ground_truth, predictions)
+        return bool(acc >= gt_acc)
+  "function": |-
+    Model Accuracy
+  "metric": |-
+    Classification Accuracy
+  "task_name": |-
+    Predictive modeling
+  ground_truth: classification_results.csv
+"prompt": |-
+  Read the dataset (input file: "Fish.csv"). Encode the dataset to divide it into training and test sets. From the dataset's four categories of Bream, Roach, Parkki, and Perch, randomly select 2 samples from each category for the test set. The remaining samples will be used as the training set. Output the number of samples in the training and test sets in a CSV file named "sample_counts.csv".
+
+  Next, implement the KNN algorithm with K values of 1, 5, 15, and 100 to classify all samples in the test set. Output the classification results of the test samples to a CSV file named "classification_results.csv".

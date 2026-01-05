@@ -1,0 +1,94 @@
+TMC-list:
+- code: "def normalization_range_check(output, ground_truth):\n    output_df = output[0]\
+    \  # extract the normalized DataFrame from tuple\n    ground_truth_df = ground_truth[0]\n\
+    \    # Check if all numeric columns in output are within the range [0, 1]\n  \
+    \  for col in output_df.select_dtypes(include=['float64', 'int64']).columns:\n\
+    \        if not ((output_df[col] >= 0).all() and (output_df[col] <= 1).all()):\n\
+    \            return False\n    return True"
+  function: Normalization Range Check
+  metric: Normalization Range Check
+  task_name: Data cleaning and preprocessing
+- code: "def non_numeric_column_preservation(output, ground_truth):\n    output_df\
+    \ = output[0]  # extract the normalized DataFrame from tuple\n    ground_truth_df\
+    \ = ground_truth[0]\n    # Check if non-numeric columns are preserved (i.e., remain\
+    \ unchanged)\n    for col in ground_truth_df.select_dtypes(exclude=['float64',\
+    \ 'int64']).columns:\n        if not output_df[col].equals(ground_truth_df[col]):\n\
+    \            return False\n    return True"
+  function: Data Integrity
+  metric: Non-numeric Column Preservation
+  task_name: Data exploration and statistics understand
+data: "import pandas as pd\n\n# Creating a more complex DataFrame for testing\ncomplex_df\
+  \ = pd.DataFrame({\n    \"EmployeeID\": [101, 102, 103, 104],\n    \"Name\": [\"\
+  Alice Smith\", \"Bob Johnson\", \"Charlie Brown\", \"Diana Prince\"],\n    \"Age\"\
+  : [28, 34, 45, 29],\n    \"Salary\": [75000, 88000, 94000, 65000],\n    \"Department\"\
+  : [\"HR\", \"IT\", \"Finance\", \"Marketing\"],\n    \"JoiningDate\": pd.to_datetime([\"\
+  2020-01-15\", \"2019-03-23\", \"2018-05-30\", \"2021-07-01\"]),\n    \"PerformanceScore\"\
+  : [4.5, 3.8, 4.9, 4.2]\n})\n\ncsv_path = 'complex_data.csv'  # This will be created\
+  \ as a temporary file in the test case\ncomplex_df.to_csv(csv_path, index=False)\n\
+  \nargs = (csv_path,)"
+ground_truth: "import pandas as pd\nfrom sklearn.preprocessing import MinMaxScaler\n\
+  \ndef task_func(file_name: str) -> pd.DataFrame:\n    df = pd.read_csv(file_name)\n\
+  \    \n    # Select numeric columns\n    numeric_cols = df.select_dtypes(include=['float64',\
+  \ 'int64']).columns\n    \n    if len(numeric_cols) == 0:\n        raise ValueError(\"\
+  The input does not have numeric columns.\")\n    \n    scaler = MinMaxScaler()\n\
+  \    df[numeric_cols] = scaler.fit_transform(df[numeric_cols])\n    \n    return\
+  \ (df,)"
+prompt: 'Normalize data in a csv file using MinMaxScaler from sklearn. Only numeric
+  columns are normalized. Columns with other dtypes are left as they are. The function
+  should raise the exception for: ValueError: If input does not have numeric columns.
+  The function should output with: tuple(normalized_df: pandas.DataFrame) normalized_df:
+  A pandas DataFrame with normalized data. You should write self-contained code starting
+  with:
+
+  ```
+
+  import pandas as pd
+
+  from sklearn.preprocessing import MinMaxScaler
+
+  def task_func(file_name: str) -> pd.DataFrame:
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport tempfile\nimport os\nimport\
+  \ shutil\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n        #\
+  \ Set up a temporary directory\n        self.test_dir = tempfile.mkdtemp()\n\n \
+  \   def tearDown(self):\n        # Clean up by removing the directory\n        shutil.rmtree(self.test_dir)\n\
+  \n    def create_csv(self, filename, data):\n        # Helper function to create\
+  \ a CSV file with the given data\n        full_path = os.path.join(self.test_dir,\
+  \ filename)\n        data.to_csv(full_path, index=False)\n        return full_path\n\
+  \n    def test_non_numeric_and_empty(self):\n        # Test with non-numeric and\
+  \ empty data\n        non_numeric_df = pd.DataFrame({\n            \"Name\": [\"\
+  Alice\", \"Bob\"],\n            \"City\": [\"New York\", \"Los Angeles\"]\n    \
+  \    })\n        empty_df = pd.DataFrame()\n        non_numeric_path = self.create_csv(\"\
+  non_numeric.csv\", non_numeric_df)\n        empty_path = self.create_csv(\"empty.csv\"\
+  , empty_df)\n        self.assertRaises(ValueError, task_func, non_numeric_path)\n\
+  \        self.assertRaises(ValueError, task_func, empty_path)\n\n    def test_single_row(self):\n\
+  \        # Test with a single row of numeric data\n        single_row_df = pd.DataFrame({\n\
+  \            \"Name\": [\"Olivia Anderson\"],\n            \"Age\": [35],\n    \
+  \        \"Salary\": [58000]\n        })\n        csv_path = self.create_csv(\"\
+  single_row.csv\", single_row_df)\n        df = task_func(csv_path)\n        self.assertIsInstance(df,\
+  \ pd.DataFrame)\n        self.assertTrue((df['Age'] == 0).all() and (df['Salary']\
+  \ == 0).all())\n\n    def test_multiple_rows(self):\n        # Test multiple rows\
+  \ with numeric data\n        data_df = pd.DataFrame({\n            \"Name\": [\"\
+  Alice\", \"Bob\", \"Charlie\"],\n            \"Age\": [25, 35, 45],\n          \
+  \  \"Salary\": [50000, 60000, 70000]\n        })\n        csv_path = self.create_csv(\"\
+  multiple_rows.csv\", data_df)\n        df = task_func(csv_path)\n        self.assertIsInstance(df,\
+  \ pd.DataFrame)\n        self.assertTrue((df['Age'] >= 0).all() and (df['Age'] <=\
+  \ 1).all())\n        self.assertTrue((df['Salary'] >= 0).all() and (df['Salary']\
+  \ <= 1).all())\n\n    def test_mixed_columns(self):\n        # Test with a mix of\
+  \ numeric and non-numeric columns\n        mixed_df = pd.DataFrame({\n         \
+  \   \"Name\": [\"Alice\", \"Bob\", \"Charlie\"],\n            \"Age\": [25, 35,\
+  \ 45],\n            \"Salary\": [50000, 60000, 70000],\n            \"City\": [\"\
+  New York\", \"Chicago\", \"San Francisco\"]\n        })\n        csv_path = self.create_csv(\"\
+  mixed_columns.csv\", mixed_df)\n        df = task_func(csv_path)\n        self.assertIsInstance(df,\
+  \ pd.DataFrame)\n        self.assertTrue((df['Age'] >= 0).all() and (df['Age'] <=\
+  \ 1).all())\n        self.assertTrue((df['Salary'] >= 0).all() and (df['Salary']\
+  \ <= 1).all())\n        self.assertTrue('City' in df.columns and df['City'].equals(mixed_df['City']))\n\
+  \n    def test_large_dataset(self):\n        # Test with a large dataset to ensure\
+  \ scalability\n        large_df = pd.DataFrame({\n            \"Age\": range(10000),\
+  \  # Large range of ages\n            \"Salary\": range(10000, 20000)  # Large range\
+  \ of salaries\n        })\n        csv_path = self.create_csv(\"large_dataset.csv\"\
+  , large_df)\n        df = task_func(csv_path)\n        self.assertIsInstance(df,\
+  \ pd.DataFrame)\n        self.assertTrue((df['Age'] >= 0).all() and (df['Age'] <=\
+  \ 1).all())\n        self.assertTrue((df['Salary'] >= 0).all() and (df['Salary']\
+  \ <= 1).all())"

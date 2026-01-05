@@ -1,0 +1,69 @@
+TMC-list:
+- code: "def plot_title_verification(output, ground_truth):\n    output_title = output[0].set_title\
+    \  # extract the title setting from Axes object\n    expected_title = ground_truth[0].set_title\
+    \  # extract the title setting from Axes object\n    return output_title == expected_title"
+  function: Title Verification
+  metric: Plot Title Verification
+  task_name: Data visualization
+data: "import pandas as pd\nimport numpy as np\n\n# Generating complex test data\n\
+  complex_df = pd.DataFrame({\n    'Group': np.random.choice(['A', 'B', 'C', 'D',\
+  \ 'E', 'F'], size=150),\n    'Value': np.random.randint(0, 500, size=150)\n})\n\n\
+  # Assigning new values to the function arguments\ndf = complex_df\ngroup_col = 'Group'\n\
+  value_col = 'Value'\ngroup_name = 'E'\n\n# Merging input args into a tuple\nargs\
+  \ = (df, group_col, value_col, group_name)"
+ground_truth: "import numpy as np\nimport matplotlib.pyplot as plt\n\n# Constants\n\
+  COLORS = ['r', 'g', 'b']\n\ndef task_func(df, group_col, value_col, group_name):\n\
+  \    if group_name not in df[group_col].values:\n        raise ValueError(f\"Group\
+  \ '{group_name}' does not exist in the provided DataFrame.\")\n        \n    group_data\
+  \ = df[df[group_col] == group_name]\n\n    fig, ax = plt.subplots()\n    ax.bar(group_data[group_col],\
+  \ group_data[value_col], color=COLORS)\n    \n    ax.set_title(f'Bar chart of {value_col}\
+  \ for {group_name}')\n    ax.set_xlabel(group_col)\n    ax.set_ylabel(value_col)\n\
+  \    \n    plt.show()\n    \n    return (ax,)"
+prompt: 'Create a bar subplot of a specific group from the input dataframe. Note that:
+  The title of the plot will be ''Bar chart of [value_col] for [group_name]''. The
+  x-axis label will be the name of the grouping column [group_col]. The y-axis label
+  will be the name of the value column [value_col]. The function should raise the
+  exception for: Raise ValueError if the group_name does not exist in df. The function
+  should output with: tuple(ax: matplotlib.axes.Axes)
+
+  ax: A matplotlib axes object with the bar chart. You should write self-contained
+  code starting with:
+
+  ```
+
+  import numpy as np
+
+  import matplotlib.pyplot as plt
+
+  # Constants
+
+  COLORS = [''r'', ''g'', ''b'']
+
+  def task_func(df, group_col, value_col, group_name):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport numpy as np\nimport matplotlib.pyplot\
+  \ as plt\nfrom faker import Faker\n\nfaker = Faker()\n\n# Constants\nCOLORS = ['r',\
+  \ 'g', 'b']\n\nclass TestCases(unittest.TestCase):\n    def setUp(self):\n     \
+  \   self.df = pd.DataFrame({'Group': ['A', 'B', 'C'], 'Value': [10, 20, 30]})\n\n\
+  \    def test_single_group_bar_chart(self):\n        ax = task_func(self.df, 'Group',\
+  \ 'Value', 'B')\n        num_bars = len(ax.containers[0])  # Number of bars in the\
+  \ plot\n        self.assertEqual(num_bars, 1)  # There should be 1 bar in the plot\
+  \ for group 'B'\n        plt.close()\n\n    def test_missing_group(self):\n    \
+  \    with self.assertRaises(ValueError):\n            ax = task_func(self.df, 'Group',\
+  \ 'Value', 'D')  # Group 'D' does not exist in the DataFrame\n        plt.close()\n\
+  \n    def test_correct_labels(self):\n        ax = task_func(self.df, 'Group', 'Value',\
+  \ 'B')\n        self.assertEqual(ax.get_xlabel(), 'Group')  # x-axis label should\
+  \ be 'Group'\n        self.assertEqual(ax.get_ylabel(), 'Value')  # y-axis label\
+  \ should be 'Value'\n        plt.close()\n\n    def test_inline_points(self):\n\
+  \        ax = task_func(self.df, 'Group', 'Value', 'B')\n        bars = ax.containers[0]\n\
+  \        for bar in bars:\n            self.assertAlmostEqual(bar.get_height(),\
+  \ 20, delta=0.01)  # Check if points are inline\n        plt.close()\n\n    def\
+  \ test_inline_points(self):\n        ax = task_func(self.df, 'Group', 'Value', 'C')\n\
+  \        bars = ax.containers[0]\n        for bar in bars:\n            self.assertAlmostEqual(bar.get_height(),\
+  \ 30, delta=0.01)  # Check if points are inline\n        plt.close()\n\ndef generate_complex_test_data(num_rows=100):\n\
+  \    \"\"\"Generate a DataFrame with a mix of numeric and text data, including some\
+  \ potential outliers.\"\"\"\n    data = {\n        'Group': [faker.random_element(elements=('A',\
+  \ 'B', 'C', 'D')) for _ in range(num_rows)],\n        'Value': [faker.random_int(min=0,\
+  \ max=1000) for _ in range(num_rows)]\n    }\n    complex_df = pd.DataFrame(data)\n\
+  \    return complex_df"

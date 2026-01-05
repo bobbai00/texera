@@ -1,0 +1,83 @@
+TMC-list:
+- code: "def centroid_distance(output, ground_truth):\n    import numpy as np\n  \
+    \  output_centroids = output[1]  # extract centroids from output tuple\n    ground_truth_centroids\
+    \ = ground_truth[1]\n    \n    # Calculate the average Euclidean distance between\
+    \ the centroids\n    avg_distance = np.mean(np.linalg.norm(output_centroids -\
+    \ ground_truth_centroids, axis=1))\n    \n    # Assuming the maximum possible\
+    \ distance is the distance between the furthest points in the ground truth centroids\n\
+    \    max_possible_distance = np.max(np.linalg.norm(ground_truth_centroids - np.mean(ground_truth_centroids,\
+    \ axis=0), axis=1))\n    \n    # Normalize the average distance to be in the range\
+    \ [0, 1], where 0 is the best\n    normalized_distance = avg_distance / max_possible_distance\n\
+    \    \n    # Since we want 1 to be the best, we need to invert the normalized\
+    \ distance\n    quality_score = 1 - normalized_distance\n    \n    # Ensure the\
+    \ quality score is within the [0, 1] range\n    quality_score = max(0, min(1,\
+    \ quality_score))\n    \n    return quality_score\n"
+  function: Clustering Validity
+  metric: Centroid Distance
+  task_name: Predictive modeling
+- code: "def visual_validation(output, ground_truth):\n    output_ax = output[0] \
+    \ # extract axes object from output tuple\n    ground_truth_ax = ground_truth[0]\n\
+    \    return output_ax.collections[0].get_offsets() == ground_truth_ax.collections[0].get_offsets()\
+    \  # Checks if the plotted points are the same"
+  function: Visualization Quality
+  metric: Visual Validation
+  task_name: Data visualization
+data: 'myList = [[-1, -2], [-2, -3], [-1, -4], [2, 3], [3, 2], [4, 4], [5, 5], [10,
+  10], [10, -10], [0, 0]]
+
+  n_clusters = 4
+
+  args = (myList, n_clusters)'
+ground_truth: "import numpy as np\nimport matplotlib.pyplot as plt\nfrom sklearn.cluster\
+  \ import KMeans\n\ndef task_func(myList, n_clusters):\n    if not isinstance(myList,\
+  \ list) or not all(isinstance(point, (list, tuple)) and len(point) == 2 for point\
+  \ in myList):\n        raise ValueError(\"Input must be a list of 2D points.\")\n\
+  \    if not isinstance(n_clusters, int) or n_clusters <= 0:\n        raise ValueError(\"\
+  Number of clusters must be a positive integer.\")\n    \n    data = np.array(myList)\n\
+  \    \n    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)\n\
+  \    kmeans.fit(data)\n    centroids = kmeans.cluster_centers_\n    \n    plt.figure()\n\
+  \    plt.scatter(data[:, 0], data[:, 1], c=kmeans.labels_, cmap='viridis')\n   \
+  \ plt.scatter(centroids[:, 0], centroids[:, 1], color='red', marker='x', s=100,\
+  \ label='Centroids')\n    plt.legend()\n    ax = plt.gca()\n    \n    return ax,\
+  \ centroids"
+prompt: 'Cluster a list of 2D points using KMeans and visualize the clusters. Note
+  that: This function raises ValueError if it encounters invalid inputs. KMeans is
+  performed with random_state = 42 and n_init = 10. Scatterplot uses red ''x'' markers
+  for cluster centers. The function should output with: tuple(ax: matplotlib.axes._axes.Axes,
+  centroids: numpy.ndarray) ax: Axes object with the plotted clusters. centroids:
+  Array of cluster center coordinates. You should write self-contained code starting
+  with:
+
+  ```
+
+  import matplotlib.pyplot as plt
+
+  from sklearn.cluster import KMeans
+
+  def task_func(myList, n_clusters):
+
+  ```'
+testcase: "import unittest\nimport numpy as np\nimport matplotlib.pyplot as plt\n\n\
+  class TestCases(unittest.TestCase):\n    def setUp(self):\n        self.test_list\
+  \ = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]]\n\n    def test_case_1(self):\n  \
+  \      # Test single cluster\n        myList = [[1, 1], [1, 1], [1, 1], [1, 1]]\n\
+  \        ax, _ = task_func(myList, 1)\n        self.assertEqual(len(set(ax.collections[0].get_array())),\
+  \ 1)\n\n    def test_case_2(self):\n        # Test arbitrary number of clusters\n\
+  \        myList = self.test_list\n        for n in range(1, 6):\n            ax,\
+  \ _ = task_func(myList, n)\n            self.assertEqual(len(set(ax.collections[0].get_array())),\
+  \ n)\n\n    def test_case_3(self):\n        # Test visualization\n        myList\
+  \ = self.test_list\n        ax, _ = task_func(myList, 2)\n        red_collection\
+  \ = next(\n            coll\n            for coll in ax.collections\n          \
+  \  if (\n                coll.get_facecolor()[0][0] == 1.0\n                and\
+  \ coll.get_facecolor()[0][1] == 0.0\n                and coll.get_facecolor()[0][2]\
+  \ == 0.0\n            )\n        )\n        red_x_markers_count = len(red_collection.get_offsets())\n\
+  \        self.assertEqual(red_x_markers_count, 2)\n\n    def test_case_4(self):\n\
+  \        # Test handling invalid inputs\n        with self.assertRaises(ValueError):\n\
+  \            task_func([], 1)\n        with self.assertRaises(ValueError):\n   \
+  \         task_func([[1, 1], [2, 2]], 0)\n        with self.assertRaises(ValueError):\n\
+  \            task_func(self.test_list, len(self.test_list) + 1)\n\n    def test_case_5(self):\n\
+  \        # Test consistency across runs with built-in random seed\n        myList\
+  \ = self.test_list\n        ax1, _ = task_func(myList, 2)\n        ax2, _ = task_func(myList,\
+  \ 2)\n        colors1 = ax1.collections[0].get_array()\n        colors2 = ax2.collections[0].get_array()\n\
+  \        self.assertTrue(all(c1 == c2 for c1, c2 in zip(colors1, colors2)))\n\n\
+  \    def tearDown(self):\n        plt.close(\"all\")"

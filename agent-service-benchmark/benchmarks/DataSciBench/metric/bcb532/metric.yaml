@@ -1,0 +1,92 @@
+TMC-list:
+- code: "def duplicate_count_accuracy(output, ground_truth):\n    # Extracting the\
+    \ Counter object from the output and ground truth tuples\n    output_counts =\
+    \ output[0]\n    ground_truth_counts = ground_truth[0]\n    # Checking for correct\
+    \ counts of duplicates\n    correct_count = sum((output_counts[key] == ground_truth_counts[key])\
+    \ for key in output_counts)\n    return correct_count == len(ground_truth_counts)"
+  function: Data Quality Score
+  metric: Duplicate Count Accuracy
+  task_name: Data cleaning and preprocessing
+- code: "def histogram_plot_validation(output, ground_truth):\n    # Assuming that\
+    \ the ground truth is structured as expected, we'll check for the histogram plotting\n\
+    \    output_axes = output[1]\n    # Check title and labels\n    title_check =\
+    \ output_axes.get_title() == \"Distribution\"\n    xlabel_check = output_axes.get_xlabel()\
+    \ == \"Value\"\n    ylabel_check = output_axes.get_ylabel() == \"Frequency\"\n\
+    \    return title_check and xlabel_check and ylabel_check"
+  function: Plot Validity
+  metric: Histogram Plot Validation
+  task_name: Data visualization
+- code: "def normal_distribution_fit_check(output, ground_truth):\n    import numpy\
+    \ as np\n    # Unpack the output and ground truth\n    output_counter, output_axes\
+    \ = output\n    gt_counter, gt_axes = ground_truth\n    \n    # Check if the Counter\
+    \ objects are the same\n    counters_equal = output_counter == gt_counter\n  \
+    \  \n    # Check if the histograms are similar by comparing the bins and frequencies\n\
+    \    output_hist_data = output_axes.patches\n    gt_hist_data = gt_axes.patches\n\
+    \    \n    if len(output_hist_data) != len(gt_hist_data):\n        return False\
+    \  # The number of bins doesn't match, so they are not similar\n    \n    # Compare\
+    \ each bin's height (frequency)\n    for o_patch, gt_patch in zip(output_hist_data,\
+    \ gt_hist_data):\n        if not np.isclose(o_patch.get_height(), gt_patch.get_height(),\
+    \ rtol=1e-2):\n            return False  # Bin heights differ too much\n    \n\
+    \    # If both the counters and histograms are close, return True\n    return\
+    \ counters_equal\n"
+  function: Model Accuracy
+  metric: Normal Distribution Fit Check
+  task_name: Data exploration and statistics understand
+data: "import pandas as pd\nimport numpy as np\nfrom collections import Counter\n\n\
+  # Generate new input data for testing\ndata = {\n    \"value\": [1.5, 2.3, 2.3,\
+  \ 3.1, 4.0, 4.0, 4.0, 5.5, 5.5, 5.5, 6.0, 7.8, \n              8.1, 8.1, 9.9, 10.0,\
+  \ 10.0, 10.0, 10.0, 10.0]\n}\ndf = pd.DataFrame(data)\nbins = 12\n\nargs = (df,\
+  \ bins)"
+ground_truth: "import numpy as np\nfrom collections import Counter\nfrom scipy.stats\
+  \ import norm\nimport matplotlib.pyplot as plt\nimport pandas as pd\n\ndef task_func(df,\
+  \ bins=4):\n    # Count duplicates\n    duplicates_count = Counter(df['value'])\n\
+  \    \n    # Filter to keep only duplicates\n    duplicates_count = {k: v for k,\
+  \ v in duplicates_count.items() if v > 1}\n    \n    # Plotting the histogram\n\
+  \    histogram_axes = plt.axes()\n    counts, bins, patches = histogram_axes.hist(df['value'],\
+  \ bins=bins, color='green', alpha=0.6, edgecolor='black')\n    \n    # Fit a normal\
+  \ distribution to the data\n    mu, std = norm.fit(df['value'])\n    \n    # Plot\
+  \ the normal distribution curve\n    xmin, xmax = histogram_axes.get_xlim()\n  \
+  \  x = np.linspace(xmin, xmax, 100)\n    p = norm.pdf(x, mu, std)\n    \n    histogram_axes.plot(x,\
+  \ p * len(df) * (bins[1] - bins[0]), 'k', linewidth=2)\n    \n    # Setting titles\
+  \ and labels\n    histogram_axes.set_title(\"Distribution\")\n    histogram_axes.set_xlabel(\"\
+  Value\")\n    histogram_axes.set_ylabel(\"Frequency\")\n    \n    plt.show()\n \
+  \   \n    return (Counter(duplicates_count), histogram_axes)"
+prompt: "Identify and count duplicate values in a DataFrame's 'value' column. This\
+  \ function also plots a histogram for all values in the 'value' column and overlays\
+  \ a normal distribution curve on the histogram.\nThe function should output with:\
+  \ tuple(duplicates_count: Counter, histogram_axes: matplotlib.axes.Axes)  \nduplicates_count:\
+  \ A Counter object with the count of each duplicate value.  \nhistogram_axes: A\
+  \ matplotlib.axes.Axes object that represents the plot of the histogram with the\
+  \ 'value' column data. If applicable, a normal distribution curve fitted to the\
+  \ data is overlaid. The histogram's bars are green with 60% opacity, and the normal\
+  \ distribution curve is black with a linewidth of 2. The plot is titled \"Distribution\"\
+  , with \"Value\" as the x-axis label and \"Frequency\" as the y-axis label.  \n\
+  You should write self-contained code starting with:  \n```\nimport numpy as np\n\
+  from collections import Counter\nfrom scipy.stats import norm\nimport matplotlib.pyplot\
+  \ as plt\ndef task_func(df, bins=4):\n```"
+testcase: "import unittest\nimport pandas as pd\nfrom collections import Counter\n\
+  import matplotlib.pyplot as plt\nimport numpy as np\n\nclass TestCases(unittest.TestCase):\n\
+  \    def _check_plot(self, ax):\n        self.assertIsInstance(ax, plt.Axes)\n \
+  \       self.assertEqual(ax.get_title(), \"Distribution\")\n        self.assertEqual(ax.get_xlabel(),\
+  \ \"Value\")\n        self.assertEqual(ax.get_ylabel(), \"Frequency\")\n\n    def\
+  \ test_case_1(self):\n        # Basic case - no repeated value\n        df = pd.DataFrame({\"\
+  value\": [1, 2, 3, 4, 5]})\n        counter, ax = task_func(df)\n        self._check_plot(ax)\n\
+  \        self.assertEqual(counter, Counter())\n\n    def test_case_2(self):\n  \
+  \      # Basic case - all repeated values\n        df = pd.DataFrame({\"value\"\
+  : [1, 1, 1, 1, 1]})\n        counter, ax = task_func(df)\n        self._check_plot(ax)\n\
+  \        self.assertEqual(counter, Counter({1: 5}))\n\n    def test_case_3(self):\n\
+  \        # Basic case - test empty\n        df = pd.DataFrame({\"value\": []})\n\
+  \        counter, ax = task_func(df)\n        self.assertIsInstance(ax, plt.Axes)\n\
+  \        self.assertEqual(counter, Counter())\n\n    def test_case_4(self):\n  \
+  \      # Basic case with more diverse data distribution\n        df = pd.DataFrame({\"\
+  value\": [5, 5, 5, 5, 1, 1, 1, 1, 2, 2, 2, 3, 3, 4]})\n        counter, ax = task_func(df)\n\
+  \        self._check_plot(ax)\n        self.assertEqual(counter, Counter({5: 4,\
+  \ 1: 4, 2: 3, 3: 2}))\n\n    def test_case_5(self):\n        # Test bins explicitly\n\
+  \        np.random.seed(0)\n        df = pd.DataFrame({\"value\": np.random.rand(100)})\n\
+  \        for bins in [2, 10, 20]:\n            _, ax = task_func(df, bins=bins)\n\
+  \            self.assertEqual(\n                len(ax.patches), bins, f\"Expected\
+  \ {bins} bins in the histogram.\"\n            )\n\n    def test_case_6(self):\n\
+  \        # Test handling non-numeric value\n        df = pd.DataFrame({\"value\"\
+  : [\"a\", \"b\", \"c\", \"a\", \"b\", \"b\"]})\n        with self.assertRaises(TypeError):\n\
+  \            task_func(df)\n\n    def tearDown(self):\n        plt.close(\"all\"\
+  )"

@@ -1,0 +1,56 @@
+TMC-list:
+- code: "def plot_integrity(output, ground_truth):\n    output_counts = output[0]\
+    \  # extract the counts dictionary from tuple\n    ground_truth_counts = ground_truth[0]\n\
+    \    FRUITS = ['Apple', 'Banana', 'Cherry', 'Date', 'Elderberry', 'Fig', 'Grape',\
+    \ 'Honeydew', 'Indian Prune', 'Jackfruit']\n    return all(output_counts.get(fruit,\
+    \ 0) == ground_truth_counts.get(fruit, 0) for fruit in FRUITS)"
+  function: Visualization Completeness
+  metric: Plot Integrity
+  task_name: Data visualization
+- code: "def axes_object_validity(output, ground_truth):\n    ax_output = output[1]\
+    \  # extract the axes object from tuple\n    import matplotlib.pyplot as plt\n\
+    \    return isinstance(ax_output, plt.Axes)"
+  function: Data Accuracy
+  metric: Axes Object Validity
+  task_name: Data exploration and statistics understand
+data: "fruit_dict = {\n    'Emily': 'Fig', \n    'Michael': 'Banana', \n    'Sara':\
+  \ 'Cherry', \n    'David': 'Grape', \n    'Nina': 'Elderberry', \n    'Paul': 'Apple',\
+  \ \n    'Nina': 'Honeydew', \n    'Tom': 'Fig', \n    'Alice': 'Date', \n    'Jack':\
+  \ 'Banana', \n    'Lucia': 'Fig'\n}\nargs = (fruit_dict,)"
+ground_truth: "import matplotlib.pyplot as plt\nfrom collections import Counter\n\n\
+  FRUITS = ['Apple', 'Banana', 'Cherry', 'Date', 'Elderberry', 'Fig', 'Grape', 'Honeydew',\
+  \ 'Indian Prune', 'Jackfruit']\n\ndef task_func(fruit_dict):\n    # Count the occurrences\
+  \ of each fruit\n    counts_dict = Counter()\n    for fruit in fruit_dict.values():\n\
+  \        if fruit in FRUITS:\n            counts_dict[fruit] += 1\n\n    # Prepare\
+  \ data for plotting\n    fruit_names = list(counts_dict.keys())\n    fruit_counts\
+  \ = list(counts_dict.values())\n    \n    # Create bar chart\n    fig, ax = plt.subplots()\n\
+  \    ax.bar(fruit_names, fruit_counts, color='skyblue')\n    ax.set_title('Favorite\
+  \ Fruits Count')\n    ax.set_xlabel('Fruits')\n    ax.set_ylabel('Counts')\n   \
+  \ plt.xticks(rotation=45)\n    \n    # Return the counts dictionary and the axes\
+  \ object\n    return counts_dict, ax"
+prompt: "Given a constant list of fruits in FRUITS, and a dictionary 'fruit_dict'\
+  \ with keys as people's names and values as their favorite fruit names, record the\
+  \ frequency of each fruit's occurrence. Return a bar chart of the number of fruits\
+  \ for each fruit type and return the dictionary with fruit names as keys and their\
+  \ counts as values. The function should output with: tuple(counts_dict: dict, ax:\
+  \ matplotlib.axes.Axes)\ncounts_dict: A dictionary with fruit names as keys and\
+  \ their counts as values. \nax: The axes object of the plot. \nYou should write\
+  \ self-contained code starting with:\n```\nimport matplotlib.pyplot as plt\nfrom\
+  \ collections import Counter\nFRUITS = ['Apple', 'Banana', 'Cherry', 'Date', 'Elderberry',\
+  \ 'Fig', 'Grape', 'Honeydew', 'Indian Prune', 'Jackfruit']\ndef task_func(fruit_dict):\n\
+  ```"
+testcase: "import unittest\nimport matplotlib.axes\nimport doctest\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        fruit_dict = {'John': 'Apple', 'Alice': 'Banana',\
+  \ 'Bob': 'Cherry'}\n        count_dict, ax = task_func(fruit_dict)\n        self.assertEqual(count_dict,\
+  \ {'Apple': 1, 'Banana': 1, 'Cherry': 1})\n        self.assertIsInstance(ax, matplotlib.axes.Axes)\n\
+  \n    def test_case_2(self):\n        fruit_dict = {'John': 'Apple', 'Alice': 'Banana',\
+  \ 'Bob': 'Apple'}\n        count_dict, ax = task_func(fruit_dict)\n        self.assertEqual(count_dict,\
+  \ {'Apple': 2, 'Banana': 1})\n        self.assertIsInstance(ax, matplotlib.axes.Axes)\n\
+  \n    def test_case_3(self):\n        fruit_dict = {}\n        count_dict, ax =\
+  \ task_func(fruit_dict)\n        self.assertEqual(count_dict, {})\n        self.assertIsInstance(ax,\
+  \ matplotlib.axes.Axes)\n\n    def test_case_4(self):\n        fruit_dict = {'John':\
+  \ 'Apple'}\n        count_dict, ax = task_func(fruit_dict)\n        self.assertEqual(count_dict,\
+  \ {'Apple': 1})\n        self.assertIsInstance(ax, matplotlib.axes.Axes)\n\n   \
+  \ def test_case_5(self):\n        fruit_dict = {'John': 123, 'Alice': None, 'Bob':\
+  \ 'Apple'}\n        count_dict, ax = task_func(fruit_dict)\n        self.assertEqual(count_dict,\
+  \ {'Apple': 1})\n        self.assertIsInstance(ax, matplotlib.axes.Axes)"

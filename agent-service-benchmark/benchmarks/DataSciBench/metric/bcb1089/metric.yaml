@@ -1,0 +1,65 @@
+TMC-list:
+- code: "def sum_correctness(output, ground_truth):\n    output_sum = output[0]  #\
+    \ extract the sum_numeric from tuple\n    ground_truth_sum = ground_truth[0]\n\
+    \    return abs(output_sum - ground_truth_sum) < 1e-6  # check if the summed values\
+    \ are approximately equal"
+  function: Data Quality Score
+  metric: Correctness of Sum Calculation
+  task_name: Data cleaning and preprocessing
+- code: "def category_counts_correctness(output, ground_truth):\n    output_counts\
+    \ = output[1]  # extract the category_counts from tuple\n    ground_truth_counts\
+    \ = ground_truth[1]\n    return output_counts == ground_truth_counts  # check\
+    \ if the category counts match exactly"
+  function: Data Accuracy
+  metric: Correctness of Category Counts
+  task_name: Data exploration and statistics understand
+data: "args = [\n    [(12.3, 'Cereals'), (-7.5, 'Fruits'), (15.7, 'Dairy'), (2.4,\
+  \ 'Vegetables'), (0, 'Meat'), (-2.2, 'Cereals')],\n]"
+ground_truth: "import numpy as np\nfrom collections import Counter\n\ndef task_func(list_of_tuples):\n\
+  \    # Calculate the sum of numeric values\n    sum_numeric = sum(value for value,\
+  \ category in list_of_tuples)\n    \n    # Count occurrences of each category\n\
+  \    categories = [category for value, category in list_of_tuples]\n    category_counts\
+  \ = Counter(categories)\n    \n    return (sum_numeric, dict(category_counts))"
+prompt: "Computes the sum of numeric values and counts the occurrences of categories\
+  \ in a list of tuples. Each tuple in the input list contains a numeric value and\
+  \ a category. This function calculates the sum of all the numeric values and also\
+  \ counts how many times each category appears in the list. The function should output\
+  \ with: tuple(sum_numeric: float, category_counts: dict) where:\nsum_numeric: The\
+  \ sum of the numeric values.\ncategory_counts: A dictionary with categories as keys\
+  \ and their counts as values. \nYou should write self-contained code starting with:\n\
+  ```\nimport numpy as np\nfrom collections import Counter\ndef task_func(list_of_tuples):\n\
+  ```"
+testcase: "import unittest\n\nclass TestCases(unittest.TestCase):\n    def test_case_1(self):\n\
+  \        # Regular list of tuples with different categories\n        input_data\
+  \ = [(5, 'Fruits'), (9, 'Vegetables'), (-1, 'Dairy'), (-2, 'Bakery'), (4, 'Meat')]\n\
+  \        sum_values, count_values = task_func(input_data)\n        self.assertEqual(sum_values,\
+  \ 15)\n        self.assertEqual(count_values, {'Fruits': 1, 'Vegetables': 1, 'Dairy':\
+  \ 1, 'Bakery': 1, 'Meat': 1})\n\n    def test_case_2(self):\n        # List of tuples\
+  \ with all the same categories\n        input_data = [(5, 'Fruits'), (9, 'Fruits'),\
+  \ (-1, 'Fruits'), (-2, 'Fruits')]\n        sum_values, count_values = task_func(input_data)\n\
+  \        self.assertEqual(sum_values, 11)\n        self.assertEqual(count_values,\
+  \ {'Fruits': 4})\n\n    def test_case_3(self):\n        # List of tuples with all\
+  \ negative numeric values\n        input_data = [(-5, 'Fruits'), (-9, 'Vegetables'),\
+  \ (-1, 'Dairy')]\n        sum_values, count_values = task_func(input_data)\n   \
+  \     self.assertEqual(sum_values, -15)\n        self.assertEqual(count_values,\
+  \ {'Fruits': 1, 'Vegetables': 1, 'Dairy': 1})\n\n    def test_case_4(self):\n  \
+  \      # Empty list\n        input_data = []\n        sum_values, count_values =\
+  \ task_func(input_data)\n        self.assertEqual(sum_values, 0)\n        self.assertEqual(count_values,\
+  \ {})\n\n    def test_case_5(self):\n        # List of tuples with mixed positive\
+  \ and negative numeric values for the same category\n        input_data = [(5, 'Fruits'),\
+  \ (-5, 'Fruits'), (3, 'Fruits')]\n        sum_values, count_values = task_func(input_data)\n\
+  \        self.assertEqual(sum_values, 3)\n        self.assertEqual(count_values,\
+  \ {'Fruits': 3})\n\n    def test_empty_list(self):\n        \"\"\"Test with an empty\
+  \ list.\"\"\"\n        self.assertEqual(task_func([]), (0, {}))\n\n    def test_all_negative_values(self):\n\
+  \        \"\"\"Test with all negative numeric values.\"\"\"\n        list_of_tuples\
+  \ = [(-5, 'Fruits'), (-2, 'Vegetables')]\n        self.assertEqual(task_func(list_of_tuples),\
+  \ (-7, {'Fruits': 1, 'Vegetables': 1}))\n\n    def test_duplicate_categories(self):\n\
+  \        \"\"\"Test with duplicate categories.\"\"\"\n        list_of_tuples = [(1,\
+  \ 'Fruits'), (2, 'Fruits'), (3, 'Vegetables')]\n        self.assertEqual(task_func(list_of_tuples),\
+  \ (6, {'Fruits': 2, 'Vegetables': 1}))\n\n    def test_single_tuple_in_list(self):\n\
+  \        \"\"\"Test with a single tuple in the list.\"\"\"\n        list_of_tuples\
+  \ = [(10, 'Meat')]\n        self.assertEqual(task_func(list_of_tuples), (10, {'Meat':\
+  \ 1}))\n\n    def test_float_numeric_values(self):\n        \"\"\"Test with non-integer\
+  \ numeric values (floats).\"\"\"\n        list_of_tuples = [(1.5, 'Fruits'), (2.5,\
+  \ 'Vegetables')]\n        self.assertEqual(task_func(list_of_tuples), (4.0, {'Fruits':\
+  \ 1, 'Vegetables': 1}))"

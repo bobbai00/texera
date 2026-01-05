@@ -1,0 +1,76 @@
+TMC-list:
+- code: "def df_sorting_validity(output, ground_truth):\n    sorted_df_output = output[0].reset_index(drop=True)\n\
+    \    sorted_df_ground_truth = ground_truth[0].reset_index(drop=True)\n    return\
+    \ sorted_df_output.equals(sorted_df_ground_truth)"
+  function: DataFrame Shape Validation
+  metric: DataFrame Sorting Validity
+  task_name: Data cleaning and preprocessing
+- code: "def avg_score_calculation(output, ground_truth):\n    avg_scores_output =\
+    \ output[1]\n    avg_scores_ground_truth = ground_truth[1]\n    return avg_scores_output.equals(avg_scores_ground_truth)"
+  function: Data Accuracy
+  metric: Average Score Calculation
+  task_name: Data exploration and statistics understand
+- code: "def common_age_verification(output, ground_truth):\n    common_age_output\
+    \ = output[2]\n    common_age_ground_truth = ground_truth[2]\n    return common_age_output\
+    \ == common_age_ground_truth"
+  function: Plot Validity
+  metric: Most Common Age Verification
+  task_name: Data visualization
+data: "data = {\n    'Name': ['Zara', 'Liam', 'Noah', 'Mia', 'Emma', 'Sophia'],\n\
+  \    'Age': [22, 23, 22, 24, 23, 22],\n    'Score': [95, 78, 88, 93, 85, 90]\n}\n\
+  \nargs = (data,)"
+ground_truth: "import pandas as pd\nfrom collections import Counter\n\ndef task_func(data):\n\
+  \    required_keys = {'Name', 'Age', 'Score'}\n    \n    if not required_keys.issubset(data.keys()):\n\
+  \        raise ValueError(\"The dictionary does not have the required keys.\")\n\
+  \    \n    df = pd.DataFrame(data)\n    \n    sorted_df = df.sort_values(by=['Name',\
+  \ 'Age'], ascending=True)\n    avg_scores = df.groupby('Name')['Score'].mean()\n\
+  \    \n    age_counts = Counter(df['Age'])\n    common_age = age_counts.most_common(1)[0][0]\
+  \ if age_counts else None\n    \n    return sorted_df, avg_scores, common_age"
+prompt: 'Analyze a dictionary of student data to return a dataframe sorted by name
+  and age in ascending order, the average score per student as a pandas Series, and
+  the most common age as an integer. The function should raise the exception for:
+  ValueError: If the dictionary does not have the required keys. The function should
+  output with: tuple(sorted_df: pd.DataFrame, avg_scores: pd.Series, common_age: int
+  or None) sorted_df: A dataframe sorted by ''Name'' and ''Age'' in ascending order.
+  avg_scores: A series representing average scores indexed by student names. common_age:
+  An integer representing the most common age or None if no data is available. You
+  should write self-contained code starting with:
+
+  ```
+
+  import pandas as pd
+
+  from collections import Counter
+
+  def task_func(data):
+
+  ```'
+testcase: "import unittest\nimport pandas as pd\nimport os\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_wrong_keys(self):\n        # Testing with incorrect dictionary keys\n\
+  \        data = {\n            'Names': ['Tom', 'Nick'],\n            'Ages': [20,\
+  \ 21],\n            'Scores': [85, 79]\n        }\n        with self.assertRaises(ValueError):\n\
+  \            task_func(data)\n\n    def test_correct_processing(self):\n       \
+  \ # Testing with correctly formatted data\n        data = {\n            'Name':\
+  \ ['Tom', 'Nick', 'Tom', 'John'],\n            'Age': [20, 21, 20, 19],\n      \
+  \      'Score': [85, 79, 88, 92]\n        }\n        df, avg_scores, common_age\
+  \ = task_func(data)\n        self.assertEqual(df.iloc[0]['Name'], 'John')\n    \
+  \    self.assertAlmostEqual(avg_scores['Tom'], 86.5)\n        self.assertEqual(common_age,\
+  \ 20)\n\n    def test_empty_data(self):\n        # Testing with empty lists\n  \
+  \      data = {'Name': [], 'Age': [], 'Score': []}\n        df, avg_scores, common_age\
+  \ = task_func(data)\n        self.assertTrue(df.empty)\n        self.assertTrue(avg_scores.empty)\n\
+  \        self.assertIsNone(common_age)\n\n    def test_all_same_age(self):\n   \
+  \     # Testing with all students having the same age\n        data = {\n      \
+  \      'Name': ['Alice', 'Bob', 'Cindy'],\n            'Age': [25, 25, 25],\n  \
+  \          'Score': [88, 92, 85]\n        }\n        df, avg_scores, common_age\
+  \ = task_func(data)\n        self.assertEqual(common_age, 25)\n\n    def test_no_common_age(self):\n\
+  \        # Testing with no common age, each student has a unique age\n        data\
+  \ = {\n            'Name': ['Alice', 'Bob', 'Cindy'],\n            'Age': [24, 25,\
+  \ 26],\n            'Score': [88, 92, 85]\n        }\n        df, avg_scores, common_age\
+  \ = task_func(data)\n        self.assertEqual(common_age, 24)  # Assuming the first\
+  \ element is taken if all are equally common\n\n    def test_duplicate_names_different_ages(self):\n\
+  \        # Testing with duplicate names but different ages\n        data = {\n \
+  \           'Name': ['Tom', 'Tom', 'Nick'],\n            'Age': [20, 21, 21],\n\
+  \            'Score': [85, 88, 79]\n        }\n        df, avg_scores, common_age\
+  \ = task_func(data)\n        self.assertEqual(len(df[df['Name'] == 'Tom']), 2)\n\
+  \        self.assertNotEqual(df.iloc[0]['Age'], df.iloc[1]['Age'])\n        self.assertTrue(df[df['Name']\
+  \ == 'Tom'].Age.isin([20, 21]).all())"

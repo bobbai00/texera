@@ -1,0 +1,63 @@
+TMC-list:
+- code: "def letter_frequency_accuracy(output, ground_truth):\n    output_freq = output[0]\
+    \  # extract the letter frequency dictionary from tuple\n    ground_truth_freq\
+    \ = ground_truth[0]\n    # Compare the two dictionaries\n    return output_freq\
+    \ == ground_truth_freq"
+  function: Data Accuracy
+  metric: Letter Frequency Accuracy
+  task_name: Data exploration and statistics understand
+- code: "def bar_chart_comparison(output, ground_truth):\n    output_subplot = output[1]\
+    \  # extract the bar subplot from tuple\n    ground_truth_subplot = ground_truth[1]\n\
+    \    # Optional: Compare properties of the two subplots (e.g., titles, labels)\n\
+    \    return output_subplot.get_title() == ground_truth_subplot.get_title() and\
+    \ \\\n           output_subplot.get_xlabel() == ground_truth_subplot.get_xlabel()\
+    \ and \\\n           output_subplot.get_ylabel() == ground_truth_subplot.get_ylabel()"
+  function: Plot Validity
+  metric: Bar Chart Comparison
+  task_name: Data visualization
+data: 's = "The Quick Brown Fox Jumps Over the Lazy Dog! 12345... #Amazing"
+
+  args = (s,)'
+ground_truth: "import string\nimport matplotlib.pyplot as plt\n\ndef task_func(s):\n\
+  \    if not isinstance(s, str):\n        raise ValueError(\"Input must be a string\"\
+  )\n\n    # Convert string to lowercase and filter out non-letter characters\n  \
+  \  s = s.lower()\n    letter_freq = {letter: 0 for letter in string.ascii_lowercase}\n\
+  \    \n    for char in s:\n        if char in letter_freq:\n            letter_freq[char]\
+  \ += 1\n\n    # Create the bar chart\n    letters = list(letter_freq.keys())\n \
+  \   frequencies = list(letter_freq.values())\n    \n    fig, ax = plt.subplots()\n\
+  \    ax.bar(letters, frequencies, color='blue')\n    ax.set_title('Letter Frequencies')\n\
+  \    ax.set_xlabel('Letters')\n    ax.set_ylabel('Frequency')\n    \n    plt.xticks(rotation=45)\n\
+  \    plt.tight_layout()\n\n    return letter_freq, ax"
+prompt: "Calculate the frequency of each letter in a string and return a bar chart\
+  \ of frequencies. Results are case-insensitive. If non-string input is provided,\
+  \ function will throw an error. The function should output with: tuple(letter_freq:\
+  \ dict, bar_subplot: Axes)\nletter_freq: A dictionary with the frequency of each\
+  \ letter.  \nbar_subplot: The bar subplot of 'Letter Frequencies' with 'Letters'\
+  \ on the x-axis and 'Frequency' on the y-axis.  \nYou should write self-contained\
+  \ code starting with:  \n```\nimport string\nimport matplotlib.pyplot as plt\ndef\
+  \ task_func(s):\n```"
+testcase: "import unittest\nimport string\n\nclass TestCases(unittest.TestCase):\n\
+  \    def test_case_1(self):\n        # Test with a simple sentence\n        s =\
+  \ \"This is a test string.\"\n        expected_output = {\n            letter: s.lower().count(letter)\
+  \ for letter in string.ascii_lowercase\n        }\n        result, ax = task_func(s)\n\
+  \        self.assertEqual(result, expected_output)\n        self.assertEqual(ax.get_title(),\
+  \ \"Letter Frequencies\")\n        self.assertEqual(ax.get_xlabel(), \"Letters\"\
+  )\n        self.assertEqual(ax.get_ylabel(), \"Frequency\")\n\n    def test_case_2(self):\n\
+  \        # Test with a string having all alphabets\n        s = \"abcdefghijklmnopqrstuvwxyz\"\
+  \n        expected_output = {letter: 1 for letter in string.ascii_lowercase}\n \
+  \       result, ax = task_func(s)\n        self.assertEqual(result, expected_output)\n\
+  \        self.assertEqual(ax.get_title(), \"Letter Frequencies\")\n        self.assertEqual(ax.get_xlabel(),\
+  \ \"Letters\")\n        self.assertEqual(ax.get_ylabel(), \"Frequency\")\n\n   \
+  \ def test_case_3(self):\n        # Test with a string having no alphabets\n   \
+  \     s = \"1234567890!@#$%^&*()\"\n        expected_output = {letter: 0 for letter\
+  \ in string.ascii_lowercase}\n        result, ax = task_func(s)\n        self.assertEqual(result,\
+  \ expected_output)\n        self.assertEqual(ax.get_title(), \"Letter Frequencies\"\
+  )\n        self.assertEqual(ax.get_xlabel(), \"Letters\")\n        self.assertEqual(ax.get_ylabel(),\
+  \ \"Frequency\")\n\n    def test_case_4(self):\n        # Test with an empty string\n\
+  \        s = \"\"\n        expected_output = {letter: 0 for letter in string.ascii_lowercase}\n\
+  \        result, ax = task_func(s)\n        self.assertEqual(result, expected_output)\n\
+  \        self.assertEqual(ax.get_title(), \"Letter Frequencies\")\n        self.assertEqual(ax.get_xlabel(),\
+  \ \"Letters\")\n        self.assertEqual(ax.get_ylabel(), \"Frequency\")\n\n   \
+  \ def test_case_5(self):\n        # Test error handling\n        for invalid in\
+  \ [123, []]:\n            with self.assertRaises(Exception):\n                task_func(invalid)\n\
+  \n    def tearDown(self):\n        plt.close(\"all\")"

@@ -1,0 +1,68 @@
+"TMC-list":
+- "code": |-
+    def gaussian_model_accuracy(ground_truth):
+        from sklearn.metrics import accuracy_score
+        import pandas as pd
+        output = pd.read_csv("gaussian_model_accuracy.csv")
+        gt_output = pd.read_csv(ground_truth)
+        gt_acc = gt_output['Accuracy'].values[0]
+        predictions = output['Accuracy'].tolist()  # Assuming 'Accuracy' is the column in the output file
+        acc = sum(predictions) / len(predictions)
+        # return accuracy_score(ground_truth, predictions)
+        return bool(acc >= gt_acc)
+  "function": |-
+    Model Accuracy
+  "metric": |-
+    Gaussian Naive Bayes Model Accuracy
+  "task_name": |-
+    Predictive modeling
+  ground_truth: gaussian_model_accuracy.csv
+- "code": |-
+    def multinomial_model_accuracy(ground_truth):
+        from sklearn.metrics import accuracy_score
+        import pandas as pd
+        output = pd.read_csv("multinomial_model_accuracy.csv")
+        gt_output = pd.read_csv(ground_truth)
+        gt_acc = gt_output['Accuracy'].values[0]
+        predictions = output['Accuracy'].tolist()  # Assuming 'Accuracy' is the column in the output file
+        # return accuracy_score(ground_truth, predictions)
+        return bool((sum(predictions)/len(predictions)) >= gt_acc)
+  "function": |-
+    Model Accuracy
+  "metric": |-
+    Multinomial Naive Bayes Model Accuracy
+  "task_name": |-
+    Predictive modeling
+  ground_truth: multinomial_model_accuracy.csv
+- "code": |-
+    def vlm_judge(ground_truth):
+        from src.vlm_utils import vlm_vis_quality
+        score = vlm_vis_quality(ground_truth, "model_comparison.png")
+        return float(score)
+  "function": |-
+    Visualization Quality
+  "metric": |-
+    Comparison of Model Accuracy Visualization
+  "task_name": |-
+    Data visualization
+  ground_truth: model_comparison.png
+"prompt": |-
+  Using the dataset of house prices and economic indicators provided below, please complete the following subtasks. Each subtask should generate an output file for evaluation, with specific input files where applicable.
+
+  Dataset: `data.csv`
+   
+  Subtasks:
+
+  1. Gaussian Naive Bayes Training: Train a Gaussian Naive Bayes model on the cleaned dataset and evaluate its accuracy.  
+     Input: `data.csv`  
+     Output: `gaussian_model_accuracy.csv` (contains accuracy metrics)
+
+  2. Multinomial Naive Bayes Training: Train a Multinomial Naive Bayes model on the cleaned dataset and evaluate its accuracy.  
+     Input: `data.csv`  
+     Output: `multinomial_model_accuracy.csv` (contains accuracy metrics)
+
+  3. Comparison of Models: Generate a comparative analysis of the accuracy of both models in a visual format.  
+     Input: `gaussian_model_accuracy.csv`, `multinomial_model_accuracy.csv`  
+     Output: `model_comparison.png` 
+
+  Please ensure that the outputs contain necessary details for further evaluation.
