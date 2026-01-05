@@ -34,7 +34,7 @@ import {
   OperatorResultSerializationMode,
   AgentMode,
 } from "../types/agent";
-import { BASE_SYSTEM_PROMPT, buildGeneralModeSystemPrompt } from "./prompts";
+import { BASE_SYSTEM_PROMPT, buildGeneralModeSystemPrompt, buildCodeModeSystemPrompt } from "./prompts";
 import {
   createGetCurrentWorkflowTool,
   createAddLinkTool,
@@ -229,15 +229,15 @@ export class TexeraAgent {
   /**
    * Rebuild system prompt based on current agent mode.
    * GENERAL mode: includes operator schemas in the prompt
-   * CODE mode: uses a simpler prompt without operator schemas
+   * CODE mode: uses structured prompt with examples
    */
   private rebuildSystemPrompt(): void {
     if (this.settings.agentMode === AgentMode.GENERAL) {
       // GENERAL mode: include operator schemas in prompt
       this.systemPrompt = buildGeneralModeSystemPrompt(this.metadataStore);
     } else {
-      // CODE mode: use base prompt without operator schemas
-      this.systemPrompt = BASE_SYSTEM_PROMPT;
+      // CODE mode: use structured prompt with examples
+      this.systemPrompt = buildCodeModeSystemPrompt();
     }
     this.settings.systemPrompt = this.systemPrompt;
   }
