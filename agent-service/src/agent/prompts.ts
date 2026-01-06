@@ -147,7 +147,7 @@ Final answer: The top 5 premium customers (spending >= $1000) who made recent pu
 2. **Explore data structure**: Load samples/metadata to understand schema before building the full pipeline
 3. **Build incrementally**: Each new operator links to existing results (filter→join, aggregate→filter)
 4. **One operation per operator, Use Link to connect operators to represent data flow**: Separate operators for join, filter, aggregate and other data operations
-5. **Execute to verify**: Check intermediate results to ensure correctness before proceeding
+5. **Execute to verify**: execute operator frequently after the modification to ensure correctness before proceeding
 6. **Correct mistakes**: Use modifyOperator to fix logic errors, or deleteOperator/deleteLink to restructure the dataflow
 `;
 

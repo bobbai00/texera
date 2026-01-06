@@ -66,8 +66,8 @@ interface CodeBlockParseResult {
 /**
  * Parses a Python code block to determine its type and extract function info.
  *
- * DataLoading: def load() or def load_data() - no parameters, source operator
- * DataProcessing: def process(table1, table2) - parameters become input ports
+ * DataLoading: def load() - EXACTLY "load", no parameters, source operator
+ * DataProcessing: def process(table1, table2) - EXACTLY "process", parameters become input ports
  */
 function parseCodeBlock(code: string): CodeBlockParseResult | { error: string } {
   // Match function definition: def func_name(params) or def func_name(params) -> ReturnType:
@@ -75,7 +75,7 @@ function parseCodeBlock(code: string): CodeBlockParseResult | { error: string } 
   const match = funcPattern.exec(code);
 
   if (!match) {
-    return { error: "No valid Python function definition found. Expected: def function_name(parameters):" };
+    return { error: "No valid Python function definition found. Expected: def load() or def process(...):" };
   }
 
   const functionName = match[1];
@@ -90,14 +90,16 @@ function parseCodeBlock(code: string): CodeBlockParseResult | { error: string } 
         .filter(p => p.length > 0)
     : [];
 
-  // Determine type based on function name and parameters
-  // DataLoading: typically "load" function with no parameters
-  // DataProcessing: "process" function with parameters
-  const isLoadingFunction =
-    (functionName.toLowerCase().includes("load") || functionName.toLowerCase() === "generate") &&
-    parameters.length === 0;
-
-  if (isLoadingFunction) {
+  // Strict function name validation
+  // DataLoading: MUST be exactly "load" with no parameters
+  // DataProcessing: MUST be exactly "process" with at least one parameter
+  if (functionName === "load") {
+    if (parameters.length > 0) {
+      return {
+        error: `Function "load" must have no parameters. Found parameters: [${parameters.join(", ")}]. ` +
+          `For data processing with inputs, use "def process(${parameters.join(", ")})".`,
+      };
+    }
     return {
       type: "DataLoading",
       functionName,
@@ -106,18 +108,26 @@ function parseCodeBlock(code: string): CodeBlockParseResult | { error: string } 
     };
   }
 
-  // DataProcessing requires at least one input
-  if (parameters.length === 0) {
+  if (functionName === "process") {
+    if (parameters.length === 0) {
+      return {
+        error: `Function "process" must have at least one parameter representing input data. ` +
+          `Example: def process(data) -> pd.DataFrame: ...`,
+      };
+    }
     return {
-      error: `Function "${functionName}" has no parameters. For DataProcessing, parameters define input ports. For DataLoading, use a function like "load()" with no parameters.`,
+      type: "DataProcessing",
+      functionName,
+      parameters,
+      numInputPorts: parameters.length,
     };
   }
 
+  // Invalid function name
   return {
-    type: "DataProcessing",
-    functionName,
-    parameters,
-    numInputPorts: parameters.length,
+    error: `Invalid function name "${functionName}". Function name must be exactly "load" or "process".\n` +
+      `- Use "def load() -> pd.DataFrame:" for data loading (no input ports)\n` +
+      `- Use "def process(input1, input2, ...) -> pd.DataFrame:" for data processing (with input ports)`,
   };
 }
 
@@ -266,16 +276,18 @@ Examples:
 ## def process(input1, input2, ...) -> pd.DataFrame
 Purpose: Transform input data. Each parameter becomes an input port and represents the dataframe from that input port.
 - Use when: Filtering, joining, aggregating, or transforming data from upstream operators
-- File IO is FORBIDDEN
-- Do NOT do File IO in this function, ONLY focus on data processing
+- IMPORTANT: Focus SOLELY on transforming the variables declared in the parameter list
+- File IO is FORBIDDEN - all data must come from input parameters
+- Do NOT access external data sources, files, or APIs
 - Do NOT use print statements
+- Return exactly ONE DataFrame
 
 Examples:
   # process a single input dataframe
   def process(users) -> pd.DataFrame:
       filtered = users[users['age'] > 18]
       return filtered[['name', 'age', 'city']]
-  
+
   # process two input dataframes from two input ports
   def process(orders, customers) -> pd.DataFrame:
       return orders.merge(customers, on='customer_id')`,
@@ -372,8 +384,10 @@ export function createModifyCodeOperatorTool(workflowState: WorkflowState, conte
   return tool({
     description:
       "Modify the Python code of an existing DataProcessing or DataLoading operator. " +
+      "The function name MUST be exactly 'load' or 'process'. " +
       "The new code must be of the same type as the existing operator. " +
-      "For def process function, the number of input ports will be updated based on function parameters.",
+      "For def process function: focus SOLELY on the parameter variables (no file I/O), " +
+      "the number of input ports will be updated based on function parameters.",
     inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to modify"),
       code: z.string().describe("New Python function code (must match the operator type - load() or process(...))"),
