@@ -18,7 +18,6 @@
 import os
 import sys
 import traceback
-import pandas
 from loguru import logger
 from threading import Event
 from typing import Iterator, List, Optional
@@ -28,7 +27,7 @@ from core.data_processing_config import DataProcessingConfig
 from core.models import ExceptionInfo, State, TupleLike, InternalMarker, Tuple, Schema
 from core.models.internal_marker import StartChannel, EndChannel
 from core.models.schema.attribute_type import AttributeType, FROM_PYOBJECT_MAPPING
-from core.models.table import all_output_to_tuple, Table
+from core.models.table import all_output_to_tuple
 from core.util import Stoppable
 from core.util.console_message.replace_print import replace_print
 from core.util.console_message.timestamp import current_time_in_local_timezone
@@ -144,31 +143,26 @@ class DataProcessor(Runnable, Stoppable):
         """
         Set the output tuple after processing by the executor.
 
-        Schema inference strategy (simple):
-        1. If output is a DataFrame, infer schema from df.dtypes (reliable, analyzes all rows)
-        2. Otherwise, infer from the first tuple's values (fallback)
+        Uses batched context switching to reduce overhead:
+        - When batch_size=1: Original behavior (context switch per tuple)
+        - When batch_size>1: Accumulate tuples before switching to reduce overhead
 
-        For DataFrame outputs (Table API), this is reliable because pandas dtypes
-        are determined by analyzing ALL values in each column.
+        On the first non-None output tuple, performs schema inference to detect
+        mismatches between declared and actual output schema.
         """
         batch_size = DataProcessingConfig.output_batch_size
         output_batch: List[Optional[Tuple]] = []
 
         for output in output_iterator:
-            # If output is a DataFrame, infer schema from df.dtypes FIRST
-            # This is reliable because pandas analyzes ALL rows to determine dtype
-            if not self._schema_inferred and self._is_dataframe_like(output):
-                self._infer_schema_from_dataframe(output)
-
-            # Convert output to tuples and process
+            # output could be a None, a TupleLike, or a TableLike.
             for output_tuple in all_output_to_tuple(output):
                 if output_tuple is not None:
-                    # Get schema (infer from first tuple if not yet inferred)
+                    # For the first non-None tuple, check and potentially update schema
                     if not self._schema_inferred:
-                        self._check_and_update_schema(output_tuple)
-                    schema = self._context.output_manager.get_port().get_schema()
+                        schema = self._check_and_update_schema(output_tuple)
+                    else:
+                        schema = self._context.output_manager.get_port().get_schema()
                     output_tuple.finalize(schema)
-
                 output_batch.append(output_tuple)
 
                 # Flush batch when it reaches the configured size
@@ -198,108 +192,6 @@ class DataProcessor(Runnable, Stoppable):
         Set the output state after processing by the executor.
         """
         self._context.state_processing_manager.current_output_state = output_state
-
-    def _is_dataframe_like(self, output) -> bool:
-        """
-        Check if the output is a DataFrame-like object.
-        """
-        return isinstance(output, (pandas.DataFrame, Table))
-
-    def _infer_schema_from_dataframe(self, df: pandas.DataFrame) -> None:
-        """
-        Infer schema from a pandas DataFrame using dtypes.
-        This is more reliable than inferring from a single tuple because
-        pandas analyzes ALL rows to determine the dtype.
-
-        :param df: The DataFrame to infer schema from
-        """
-        if self._schema_inferred:
-            return
-
-        self._schema_inferred = True
-        inferred_schema = Schema()
-
-        for col_name in df.columns:
-            dtype = df[col_name].dtype
-            attr_type = self._pandas_dtype_to_attribute_type(dtype, df[col_name])
-            inferred_schema.add(str(col_name), attr_type)
-
-        declared_schema = self._context.output_manager.get_port().get_schema()
-
-        if not self._schemas_are_equal(declared_schema, inferred_schema):
-            self._emit_schema_info(declared_schema, inferred_schema)
-            self._context.output_manager.get_port().set_schema(inferred_schema)
-
-            for port_id in self._context.output_manager.get_port_ids():
-                self._context.output_manager.recreate_port_storage_writer(
-                    port_id, inferred_schema
-                )
-
-            logger.info(
-                f"Schema inferred from DataFrame dtypes: {inferred_schema}"
-            )
-
-    def _pandas_dtype_to_attribute_type(
-        self, dtype, column: pandas.Series
-    ) -> AttributeType:
-        """
-        Convert a pandas dtype to AttributeType.
-
-        :param dtype: The pandas dtype
-        :param column: The column Series (for additional inspection if needed)
-        :return: The corresponding AttributeType
-        """
-        import numpy as np
-
-        dtype_str = str(dtype)
-
-        # Handle object dtype - could be string, mixed types, or complex objects
-        if dtype == object:
-            # Sample non-null values to determine actual type
-            non_null = column.dropna()
-            if len(non_null) == 0:
-                return AttributeType.STRING  # Default for all-null columns
-
-            # Check first non-null value type
-            sample_value = non_null.iloc[0]
-            if isinstance(sample_value, str):
-                return AttributeType.STRING
-            elif isinstance(sample_value, list):
-                return AttributeType.LIST
-            elif isinstance(sample_value, dict):
-                return AttributeType.STRUCT
-            elif isinstance(sample_value, bytes):
-                return AttributeType.BINARY
-            else:
-                # For mixed or unknown types, use STRING as it's most permissive
-                return AttributeType.STRING
-
-        # Handle numeric types
-        elif np.issubdtype(dtype, np.integer):
-            # Use LONG for all integers to avoid overflow
-            return AttributeType.LONG
-        elif np.issubdtype(dtype, np.floating):
-            return AttributeType.DOUBLE
-        elif np.issubdtype(dtype, np.bool_):
-            return AttributeType.BOOL
-
-        # Handle datetime types
-        elif np.issubdtype(dtype, np.datetime64):
-            return AttributeType.TIMESTAMP
-        elif dtype_str.startswith("datetime"):
-            return AttributeType.TIMESTAMP
-
-        # Handle string types (pandas StringDtype)
-        elif dtype_str in ("string", "String"):
-            return AttributeType.STRING
-
-        # Handle categorical as string
-        elif dtype_str == "category":
-            return AttributeType.STRING
-
-        # Default to STRING for unknown types
-        else:
-            return AttributeType.STRING
 
     def _switch_context(self) -> None:
         """
@@ -408,11 +300,7 @@ class DataProcessor(Runnable, Stoppable):
     def _check_and_update_schema(self, first_tuple: TupleLike) -> Schema:
         """
         Check if the first output tuple's schema matches the declared schema.
-        If not, update the output port's schema (in-memory only).
-
-        Note: Storage writer is NOT recreated here because schema may still
-        change due to type widening. Storage writer recreation is deferred
-        to _stabilize_schema_and_flush_pending() when schema is finalized.
+        If not, update the output port's schema and emit a warning.
 
         :param first_tuple: The first tuple produced by the operator
         :return: The schema to use for finalization
@@ -434,7 +322,7 @@ class DataProcessor(Runnable, Stoppable):
             # Update the output port's schema to the inferred one
             self._context.output_manager.get_port().set_schema(inferred_schema)
 
-            # Recreate storage writers with the new schema
+            # Recreate the port storage writers with the new schema
             for port_id in self._context.output_manager.get_port_ids():
                 self._context.output_manager.recreate_port_storage_writer(
                     port_id, inferred_schema
