@@ -204,16 +204,6 @@ Purpose: Load data from files or external sources. No input ports.
 - Do NOT use print statements
 - Do NOT load the entire large data files directly, load its metadata and samples for understanding; Only load the entire file during processing time
 Examples:
-  # Load CSV file metadata and sample rows
-  def load() -> pd.DataFrame:
-      path = '/path/to/payments.csv'
-      df = pd.read_csv(path, nrows=2)
-      return pd.DataFrame([{
-          'file': path,
-          'columns': df.columns.tolist(),
-          'shape': str(df.shape),
-          'sample': df.to_dict('records')
-      }])
 
   # Load JSON file metadata and structure
   def load() -> pd.DataFrame:
