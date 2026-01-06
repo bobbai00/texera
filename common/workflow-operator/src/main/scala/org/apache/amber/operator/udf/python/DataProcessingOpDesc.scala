@@ -232,7 +232,7 @@ class DataProcessingOpDesc extends LogicalOp {
       OperatorGroupConstants.PYTHON_GROUP,
       inputPortInfo,
       outputPortInfo,
-      dynamicInputPorts = true,
+      dynamicInputPorts = false,
       dynamicOutputPorts = true,
       supportReconfiguration = true,
       allowPortCustomization = true
