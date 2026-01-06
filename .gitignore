@@ -38,6 +38,7 @@ query-results/
 
 # Ignoring Mac OSX specific files
 .DS_Store
+__MACOSX/
 
 # Ignoring jenv related files
 .java-version

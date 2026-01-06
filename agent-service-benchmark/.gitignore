@@ -40,6 +40,7 @@ runs/
 # OS files
 .DS_Store
 Thumbs.db
+__MACOSX/
 
 # DataSciBench benchmark data (downloaded via setup command)
 # Keep task definitions (data/, metric/) but ignore downloaded/extracted files
@@ -48,3 +49,12 @@ benchmarks/DataSciBench/DataSciBench-data/
 benchmarks/DataSciBench/DataSciBench_GroundTruth_Data.zip
 benchmarks/DataSciBench/gt_data/
 benchmarks/DataSciBench/.data_downloaded
+
+# DSBench benchmark data
+# Keep task definitions and eval scripts, ignore downloaded/extracted data
+benchmarks/DSBench/data/
+benchmarks/DSBench/data_analysis/data/
+benchmarks/DSBench/data_analysis/data_old.zip
+benchmarks/DSBench/data_analysis/.data_extracted
+benchmarks/DSBench/data_modeling/output_model/
+benchmarks/DSBench/data_modeling/save_performance/
