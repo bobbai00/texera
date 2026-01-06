@@ -104,12 +104,6 @@ For example, if the task asks you to save "output.csv", save it as:
 
 Task:
 {prompt}
-
-Instructions:
-1. Analyze the task requirements carefully
-2. Write and execute code to complete the task
-3. Save ALL outputs to the directory specified above (use the full absolute path)
-4. Verify that the output files are created correctly
 """
 
 # Prompt template for DataSciBench tasks (type 2/3 - with input data)
