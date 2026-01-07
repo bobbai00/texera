@@ -12,8 +12,11 @@ Usage:
     # Start a new run (default split - 450 tasks)
     python -m benchmarks.dabstep run --split default
 
-    # Resume an interrupted run
+    # Resume an interrupted run (runs tasks without result.json)
     python -m benchmarks.dabstep resume runs/dabstep/20260103_120000_default
+
+    # Retry errored tasks (detects and re-runs tasks with errors)
+    python -m benchmarks.dabstep retry runs/dabstep/20260103_120000_default
 
     # Collect results from a run into submission.jsonl
     python -m benchmarks.dabstep collect runs/dabstep/20260103_120000_default
@@ -177,6 +180,33 @@ def get_completed_task_ids(run_dir: Path) -> Set[str]:
             except:
                 pass
     return completed
+
+
+def get_errored_task_ids(run_dir: Path) -> Set[str]:
+    """Get set of task IDs that have errors from run directory."""
+    errored = set()
+    for task_dir in run_dir.iterdir():
+        if not task_dir.is_dir() or not task_dir.name.startswith("task_"):
+            continue
+        result_file = task_dir / "result.json"
+        if result_file.exists():
+            try:
+                with open(result_file) as f:
+                    result = json.load(f)
+                    if result.get("error"):
+                        errored.add(str(result["task_id"]))
+            except:
+                pass
+    return errored
+
+
+def delete_task_results(run_dir: Path, task_ids: Set[str]):
+    """Delete result files for specified task IDs so they can be re-run."""
+    import shutil
+    for task_id in task_ids:
+        task_dir = run_dir / f"task_{task_id}"
+        if task_dir.exists():
+            shutil.rmtree(task_dir)
 
 
 def save_task_result(run_dir: Path, task_id: str, result: Dict):
@@ -606,6 +636,80 @@ def cmd_resume(args):
     _print_summary(run_dir)
 
 
+def cmd_retry(args):
+    """Retry errored tasks from a benchmark run."""
+    run_dir = Path(args.run_dir)
+    if not run_dir.exists():
+        print(f"[DABstep] Error: Run directory not found: {run_dir}")
+        sys.exit(1)
+
+    # Load config
+    config = load_run_config(run_dir)
+
+    # Get errored tasks
+    errored = get_errored_task_ids(run_dir)
+    if not errored:
+        print(f"[DABstep] No errored tasks found in {run_dir}")
+        return
+
+    print("=" * 60)
+    print(f"DABstep Benchmark - Retry Errored Tasks")
+    print(f"Run directory: {run_dir}")
+    print(f"Split: {config['split']} | Model: {config['model']}")
+    print(f"Errored tasks to retry: {len(errored)}")
+    print(f"Task IDs: {sorted(errored, key=lambda x: int(x))}")
+    print("=" * 60)
+
+    # Delete errored task directories so they can be re-run
+    print(f"[DABstep] Deleting {len(errored)} errored task directories...")
+    delete_task_results(run_dir, errored)
+
+    # Get remaining completed tasks (to skip)
+    completed = get_completed_task_ids(run_dir)
+    print(f"[DABstep] Skipping {len(completed)} successfully completed tasks")
+
+    # Cleanup
+    if not args.no_cleanup and not config.get("baseline"):
+        cleanup_agents()
+
+    # Download context files
+    data_dir = config.get("data_dir", DATA_DIR)
+    context_files = download_context_files(data_dir)
+
+    # Load full dataset
+    dataset = load_dataset(config["split"], config.get("max_tasks"))
+
+    # Build agent kwargs from config
+    baseline = config.get("baseline", False)
+    agent_kwargs = {
+        "model_type": config.get("model", AGENT_MODEL_TYPE),
+        "max_steps": config.get("max_steps", AGENT_MAX_STEPS),
+        "verbosity": args.verbosity,
+    }
+    if not baseline:
+        agent_kwargs.update({
+            "agent_mode": config.get("agent_mode", AGENT_MODE),
+            "result_format": config.get("result_format", AGENT_OPERATOR_RESULT_SERIALIZATION_MODE),
+            "max_result_chars": config.get("max_result_chars", AGENT_MAX_OPERATOR_RESULT_CHAR_LIMIT),
+            "max_cell_chars": config.get("max_cell_chars", AGENT_MAX_OPERATOR_RESULT_CELL_CHAR_LIMIT),
+            "tool_timeout": config.get("tool_timeout", AGENT_TOOL_TIMEOUT_SECONDS),
+            "exec_timeout": config.get("exec_timeout", AGENT_EXECUTION_TIMEOUT_MINUTES),
+            "retain": False,
+            "relational_only": True,
+        })
+
+    # Run benchmark, skipping completed (successful) tasks
+    results = run_benchmark(
+        dataset, context_files, run_dir,
+        baseline=baseline,
+        skip_task_ids=completed,
+        **agent_kwargs,
+    )
+
+    # Summary
+    _print_summary(run_dir)
+
+
 def cmd_collect(args):
     """Collect results from a run directory into submission.jsonl."""
     run_dir = Path(args.run_dir)
@@ -726,6 +830,12 @@ Examples:
     resume_parser.add_argument("--no-cleanup", action="store_true", help="Skip initial cleanup")
     resume_parser.add_argument("--verbosity", type=int, default=1, help="0=quiet, 1=normal, 2=verbose")
 
+    # === retry command ===
+    retry_parser = subparsers.add_parser("retry", help="Retry errored tasks from a run")
+    retry_parser.add_argument("run_dir", help="Path to run directory")
+    retry_parser.add_argument("--no-cleanup", action="store_true", help="Skip initial cleanup")
+    retry_parser.add_argument("--verbosity", type=int, default=1, help="0=quiet, 1=normal, 2=verbose")
+
     # === collect command ===
     collect_parser = subparsers.add_parser("collect", help="Collect results into submission.jsonl")
     collect_parser.add_argument("run_dir", help="Path to run directory")
@@ -737,6 +847,8 @@ Examples:
         cmd_run(args)
     elif args.command == "resume":
         cmd_resume(args)
+    elif args.command == "retry":
+        cmd_retry(args)
     elif args.command == "collect":
         cmd_collect(args)
     else:
