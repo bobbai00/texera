@@ -17,6 +17,7 @@ from collections import defaultdict
 import statistics
 
 from .workflow_analyzer import WorkflowMetrics, analyze_workflow
+from .trace_analyzer import TraceMetrics, AggregatedTokenMetrics, analyze_trace, aggregate_trace_metrics
 
 
 # Task difficulty threshold: tasks 1-72 are "easy", 73+ are "hard"
@@ -73,6 +74,25 @@ class DifficultyMetrics:
     # Shape distribution
     shape_counts: Dict[str, int] = field(default_factory=dict)
 
+    # Input token stats (output tokens are unreliable in traces)
+    total_input_tokens: int = 0
+    avg_input_tokens: float = 0.0
+    min_input_tokens: int = 0
+    max_input_tokens: int = 0
+
+    # Step stats
+    total_steps: int = 0
+    avg_steps: float = 0.0
+    min_steps: int = 0
+    max_steps: int = 0
+
+    # Tool usage stats
+    total_tool_calls: int = 0
+    avg_tool_calls: float = 0.0
+    min_tool_calls: int = 0
+    max_tool_calls: int = 0
+    tool_usage_totals: Dict[str, int] = field(default_factory=dict)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -95,6 +115,19 @@ class DifficultyMetrics:
             "min_elapsed": self.min_elapsed,
             "max_elapsed": self.max_elapsed,
             "shape_counts": self.shape_counts,
+            "total_input_tokens": self.total_input_tokens,
+            "avg_input_tokens": self.avg_input_tokens,
+            "min_input_tokens": self.min_input_tokens,
+            "max_input_tokens": self.max_input_tokens,
+            "total_steps": self.total_steps,
+            "avg_steps": self.avg_steps,
+            "min_steps": self.min_steps,
+            "max_steps": self.max_steps,
+            "total_tool_calls": self.total_tool_calls,
+            "avg_tool_calls": self.avg_tool_calls,
+            "min_tool_calls": self.min_tool_calls,
+            "max_tool_calls": self.max_tool_calls,
+            "tool_usage_totals": self.tool_usage_totals,
         }
 
 
@@ -108,6 +141,7 @@ class TaskAnalysis:
     elapsed: float = 0.0
     score: Optional[float] = None
     workflow_metrics: Optional[WorkflowMetrics] = None
+    trace_metrics: Optional[TraceMetrics] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -119,6 +153,7 @@ class TaskAnalysis:
             "elapsed": self.elapsed,
             "score": self.score,
             "workflow_metrics": self.workflow_metrics.to_dict() if self.workflow_metrics else None,
+            "trace_metrics": self.trace_metrics.to_dict() if self.trace_metrics else None,
         }
 
 
@@ -165,6 +200,28 @@ class AggregatedMetrics:
     avg_components: float = 0.0
     max_components: int = 0
 
+    # Input token stats (output tokens are unreliable in traces)
+    total_input_tokens: int = 0
+    avg_input_tokens: float = 0.0
+    min_input_tokens: int = 0
+    max_input_tokens: int = 0
+    median_input_tokens: float = 0.0
+
+    # Step stats
+    total_steps: int = 0
+    avg_steps: float = 0.0
+    min_steps: int = 0
+    max_steps: int = 0
+    avg_input_tokens_per_step: float = 0.0
+
+    # Tool usage stats
+    total_tool_calls: int = 0
+    avg_tool_calls: float = 0.0
+    min_tool_calls: int = 0
+    max_tool_calls: int = 0
+    tool_usage_totals: Dict[str, int] = field(default_factory=dict)
+    tool_usage_avg: Dict[str, float] = field(default_factory=dict)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -192,6 +249,22 @@ class AggregatedMetrics:
             "max_max_depth": self.max_max_depth,
             "avg_components": self.avg_components,
             "max_components": self.max_components,
+            "total_input_tokens": self.total_input_tokens,
+            "avg_input_tokens": self.avg_input_tokens,
+            "min_input_tokens": self.min_input_tokens,
+            "max_input_tokens": self.max_input_tokens,
+            "median_input_tokens": self.median_input_tokens,
+            "total_steps": self.total_steps,
+            "avg_steps": self.avg_steps,
+            "min_steps": self.min_steps,
+            "max_steps": self.max_steps,
+            "avg_input_tokens_per_step": self.avg_input_tokens_per_step,
+            "total_tool_calls": self.total_tool_calls,
+            "avg_tool_calls": self.avg_tool_calls,
+            "min_tool_calls": self.min_tool_calls,
+            "max_tool_calls": self.max_tool_calls,
+            "tool_usage_totals": self.tool_usage_totals,
+            "tool_usage_avg": self.tool_usage_avg,
         }
 
 
@@ -206,6 +279,10 @@ class ExtremeInstances:
     longest_elapsed: List[Tuple[str, float]] = field(default_factory=list)
     shortest_elapsed: List[Tuple[str, float]] = field(default_factory=list)
     most_components: List[Tuple[str, int]] = field(default_factory=list)
+    most_input_tokens: List[Tuple[str, int]] = field(default_factory=list)  # (task_id, input_tokens)
+    fewest_input_tokens: List[Tuple[str, int]] = field(default_factory=list)
+    most_steps: List[Tuple[str, int]] = field(default_factory=list)
+    most_tool_calls: List[Tuple[str, int]] = field(default_factory=list)  # (task_id, tool_calls)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -218,6 +295,10 @@ class ExtremeInstances:
             "longest_elapsed": [{"task_id": t, "elapsed": e} for t, e in self.longest_elapsed],
             "shortest_elapsed": [{"task_id": t, "elapsed": e} for t, e in self.shortest_elapsed],
             "most_components": [{"task_id": t, "count": c} for t, c in self.most_components],
+            "most_input_tokens": [{"task_id": t, "input_tokens": c} for t, c in self.most_input_tokens],
+            "fewest_input_tokens": [{"task_id": t, "input_tokens": c} for t, c in self.fewest_input_tokens],
+            "most_steps": [{"task_id": t, "steps": c} for t, c in self.most_steps],
+            "most_tool_calls": [{"task_id": t, "tool_calls": c} for t, c in self.most_tool_calls],
         }
 
 
@@ -335,6 +416,15 @@ class DABstepAnalyzer:
                     # Create empty metrics with error
                     task_analysis.workflow_metrics = WorkflowMetrics(error=str(e))
 
+            # Analyze trace
+            trace_file = task_dir / "trace.json"
+            if trace_file.exists():
+                try:
+                    task_analysis.trace_metrics = analyze_trace(str(trace_file))
+                except Exception as e:
+                    # Create empty metrics with error
+                    task_analysis.trace_metrics = TraceMetrics(parse_error=str(e))
+
             self.task_analyses.append(task_analysis)
 
     def _compute_aggregated(self) -> AggregatedMetrics:
@@ -355,6 +445,10 @@ class DABstepAnalyzer:
         operator_type_totals: Dict[str, int] = defaultdict(int)
         shape_counts: Dict[str, int] = defaultdict(int)
         scores = []
+        input_tokens_list = []
+        steps_list = []
+        tool_calls_list = []
+        tool_usage_totals: Dict[str, int] = {}
 
         for ta in self.task_analyses:
             # Error tracking
@@ -385,6 +479,18 @@ class DABstepAnalyzer:
 
                 for op_type, count in wm.operator_counts.items():
                     operator_type_totals[op_type] += count
+
+            # Trace metrics (focus on input tokens as output tokens are unreliable)
+            if ta.trace_metrics and not ta.trace_metrics.parse_error:
+                tm = ta.trace_metrics
+                if tm.input_tokens > 0:
+                    input_tokens_list.append(tm.input_tokens)
+                if tm.step_count > 0:
+                    steps_list.append(tm.step_count)
+                if tm.total_tool_calls > 0:
+                    tool_calls_list.append(tm.total_tool_calls)
+                for tool_name, count in tm.tool_usage.items():
+                    tool_usage_totals[tool_name] = tool_usage_totals.get(tool_name, 0) + count
 
         # Time stats
         if elapsed_times:
@@ -425,6 +531,39 @@ class DABstepAnalyzer:
             agg.avg_components = statistics.mean(component_counts)
             agg.max_components = max(component_counts)
 
+        # Input token stats (output tokens are unreliable)
+        if input_tokens_list:
+            agg.total_input_tokens = sum(input_tokens_list)
+            agg.avg_input_tokens = statistics.mean(input_tokens_list)
+            agg.min_input_tokens = min(input_tokens_list)
+            agg.max_input_tokens = max(input_tokens_list)
+            agg.median_input_tokens = statistics.median(input_tokens_list)
+
+        # Step stats
+        if steps_list:
+            agg.total_steps = sum(steps_list)
+            agg.avg_steps = statistics.mean(steps_list)
+            agg.min_steps = min(steps_list)
+            agg.max_steps = max(steps_list)
+
+        # Input tokens per step
+        if agg.total_steps > 0:
+            agg.avg_input_tokens_per_step = agg.total_input_tokens / agg.total_steps
+
+        # Tool usage stats
+        if tool_calls_list:
+            agg.total_tool_calls = sum(tool_calls_list)
+            agg.avg_tool_calls = statistics.mean(tool_calls_list)
+            agg.min_tool_calls = min(tool_calls_list)
+            agg.max_tool_calls = max(tool_calls_list)
+
+        agg.tool_usage_totals = tool_usage_totals
+        tasks_with_tools = len(tool_calls_list) if tool_calls_list else 1
+        agg.tool_usage_avg = {
+            tool: count / tasks_with_tools
+            for tool, count in tool_usage_totals.items()
+        }
+
         return agg
 
     def _compute_difficulty_metrics(self) -> Tuple[DifficultyMetrics, DifficultyMetrics]:
@@ -442,6 +581,11 @@ class DABstepAnalyzer:
         easy_scores, hard_scores = [], []
         easy_shapes: Dict[str, int] = defaultdict(int)
         hard_shapes: Dict[str, int] = defaultdict(int)
+        easy_input_tokens, hard_input_tokens = [], []
+        easy_steps, hard_steps = [], []
+        easy_tool_calls, hard_tool_calls = [], []
+        easy_tool_usage: Dict[str, int] = {}
+        hard_tool_usage: Dict[str, int] = {}
 
         for ta in self.task_analyses:
             difficulty = get_task_difficulty(ta.task_id)
@@ -451,6 +595,10 @@ class DABstepAnalyzer:
             elapsed_list = easy_elapsed if difficulty == "easy" else hard_elapsed
             scores_list = easy_scores if difficulty == "easy" else hard_scores
             shapes_dict = easy_shapes if difficulty == "easy" else hard_shapes
+            input_tokens_list = easy_input_tokens if difficulty == "easy" else hard_input_tokens
+            steps_list = easy_steps if difficulty == "easy" else hard_steps
+            tool_calls_list = easy_tool_calls if difficulty == "easy" else hard_tool_calls
+            tool_usage_dict = easy_tool_usage if difficulty == "easy" else hard_tool_usage
 
             metrics.task_count += 1
 
@@ -474,6 +622,17 @@ class DABstepAnalyzer:
                 links_list.append(wm.num_links)
                 shapes_dict[wm.shape] += 1
 
+            if ta.trace_metrics and not ta.trace_metrics.parse_error:
+                tm = ta.trace_metrics
+                if tm.input_tokens > 0:
+                    input_tokens_list.append(tm.input_tokens)
+                if tm.step_count > 0:
+                    steps_list.append(tm.step_count)
+                if tm.total_tool_calls > 0:
+                    tool_calls_list.append(tm.total_tool_calls)
+                for tool_name, count in tm.tool_usage.items():
+                    tool_usage_dict[tool_name] = tool_usage_dict.get(tool_name, 0) + count
+
         # Compute stats for easy tasks
         if easy_ops:
             easy.total_operators = sum(easy_ops)
@@ -492,6 +651,24 @@ class DABstepAnalyzer:
         if easy_scores:
             easy.accuracy = sum(easy_scores) / len(easy_scores)
         easy.shape_counts = dict(easy_shapes)
+        # Token stats for easy tasks (focus on input tokens as output tokens are unreliable)
+        if easy_input_tokens:
+            easy.total_input_tokens = sum(easy_input_tokens)
+            easy.avg_input_tokens = statistics.mean(easy_input_tokens)
+            easy.min_input_tokens = min(easy_input_tokens)
+            easy.max_input_tokens = max(easy_input_tokens)
+        if easy_steps:
+            easy.total_steps = sum(easy_steps)
+            easy.avg_steps = statistics.mean(easy_steps)
+            easy.min_steps = min(easy_steps)
+            easy.max_steps = max(easy_steps)
+        # Tool usage for easy tasks
+        if easy_tool_calls:
+            easy.total_tool_calls = sum(easy_tool_calls)
+            easy.avg_tool_calls = statistics.mean(easy_tool_calls)
+            easy.min_tool_calls = min(easy_tool_calls)
+            easy.max_tool_calls = max(easy_tool_calls)
+        easy.tool_usage_totals = easy_tool_usage
 
         # Compute stats for hard tasks
         if hard_ops:
@@ -511,6 +688,24 @@ class DABstepAnalyzer:
         if hard_scores:
             hard.accuracy = sum(hard_scores) / len(hard_scores)
         hard.shape_counts = dict(hard_shapes)
+        # Token stats for hard tasks (focus on input tokens as output tokens are unreliable)
+        if hard_input_tokens:
+            hard.total_input_tokens = sum(hard_input_tokens)
+            hard.avg_input_tokens = statistics.mean(hard_input_tokens)
+            hard.min_input_tokens = min(hard_input_tokens)
+            hard.max_input_tokens = max(hard_input_tokens)
+        if hard_steps:
+            hard.total_steps = sum(hard_steps)
+            hard.avg_steps = statistics.mean(hard_steps)
+            hard.min_steps = min(hard_steps)
+            hard.max_steps = max(hard_steps)
+        # Tool usage for hard tasks
+        if hard_tool_calls:
+            hard.total_tool_calls = sum(hard_tool_calls)
+            hard.avg_tool_calls = statistics.mean(hard_tool_calls)
+            hard.min_tool_calls = min(hard_tool_calls)
+            hard.max_tool_calls = max(hard_tool_calls)
+        hard.tool_usage_totals = hard_tool_usage
 
         return easy, hard
 
@@ -527,6 +722,9 @@ class DABstepAnalyzer:
         depths = []
         elapsed = []
         components = []
+        input_tokens = []
+        steps = []
+        tool_calls = []
 
         for ta in self.task_analyses:
             if ta.workflow_metrics and not ta.workflow_metrics.error:
@@ -538,6 +736,15 @@ class DABstepAnalyzer:
 
             if ta.elapsed > 0 and not ta.error:
                 elapsed.append((ta.task_id, ta.elapsed))
+
+            if ta.trace_metrics and not ta.trace_metrics.parse_error:
+                tm = ta.trace_metrics
+                if tm.input_tokens > 0:
+                    input_tokens.append((ta.task_id, tm.input_tokens))
+                if tm.step_count > 0:
+                    steps.append((ta.task_id, tm.step_count))
+                if tm.total_tool_calls > 0:
+                    tool_calls.append((ta.task_id, tm.total_tool_calls))
 
         n = self.top_n
 
@@ -568,6 +775,20 @@ class DABstepAnalyzer:
             extremes.most_components = sorted(
                 components, key=lambda x: x[1], reverse=True
             )[:n]
+
+        # Most/fewest input tokens
+        if input_tokens:
+            input_tokens_sorted = sorted(input_tokens, key=lambda x: x[1], reverse=True)
+            extremes.most_input_tokens = input_tokens_sorted[:n]
+            extremes.fewest_input_tokens = sorted(input_tokens, key=lambda x: x[1])[:n]
+
+        # Most steps
+        if steps:
+            extremes.most_steps = sorted(steps, key=lambda x: x[1], reverse=True)[:n]
+
+        # Most tool calls
+        if tool_calls:
+            extremes.most_tool_calls = sorted(tool_calls, key=lambda x: x[1], reverse=True)[:n]
 
         return extremes
 
@@ -653,6 +874,31 @@ def print_analysis(analysis: DABstepAnalysis, detailed: bool = False):
             pct = count / agg.total_tasks * 100
             print(f"    {shape}: {count} ({pct:.1f}%)")
 
+    # Token stats (focus on input tokens as output tokens are unreliable)
+    if agg.total_input_tokens > 0:
+        print(f"\n{'='*30} Input Token Stats {'='*30}")
+        print(f"  Total input:      {agg.total_input_tokens:,}")
+        print(f"  Avg per task:     {agg.avg_input_tokens:,.1f}")
+        print(f"  Min/Max:          {agg.min_input_tokens:,} / {agg.max_input_tokens:,}")
+        print(f"  Median:           {agg.median_input_tokens:,.1f}")
+        print(f"  Total steps:      {agg.total_steps:,}")
+        print(f"  Avg steps:        {agg.avg_steps:.1f}")
+        print(f"  Min/Max steps:    {agg.min_steps} / {agg.max_steps}")
+        if agg.avg_input_tokens_per_step > 0:
+            print(f"  Tokens/step:      {agg.avg_input_tokens_per_step:,.1f}")
+
+    # Tool usage stats
+    if agg.total_tool_calls > 0:
+        print(f"\n{'='*30} Tool Usage Stats {'='*30}")
+        print(f"  Total calls:      {agg.total_tool_calls:,}")
+        print(f"  Avg per task:     {agg.avg_tool_calls:.1f}")
+        print(f"  Min/Max:          {agg.min_tool_calls} / {agg.max_tool_calls}")
+        if agg.tool_usage_totals:
+            print(f"  By tool type:")
+            for tool_name, count in sorted(agg.tool_usage_totals.items(), key=lambda x: -x[1]):
+                avg = agg.tool_usage_avg.get(tool_name, 0)
+                print(f"    {tool_name}: {count:,} (avg {avg:.1f}/task)")
+
     # Extreme instances
     print(f"\n{'='*30} Extreme Instances {'='*30}")
     if ext.most_operators:
@@ -671,6 +917,18 @@ def print_analysis(analysis: DABstepAnalysis, detailed: bool = False):
         print(f"  Longest elapsed:")
         for task_id, elapsed in ext.longest_elapsed[:3]:
             print(f"    Task {task_id}: {elapsed:.1f}s")
+    if ext.most_input_tokens:
+        print(f"  Most input tokens:")
+        for task_id, tokens in ext.most_input_tokens[:3]:
+            print(f"    Task {task_id}: {tokens:,} tokens")
+    if ext.most_steps:
+        print(f"  Most steps:")
+        for task_id, steps in ext.most_steps[:3]:
+            print(f"    Task {task_id}: {steps} steps")
+    if ext.most_tool_calls:
+        print(f"  Most tool calls:")
+        for task_id, calls in ext.most_tool_calls[:3]:
+            print(f"    Task {task_id}: {calls} calls")
 
     # Difficulty-based metrics
     easy = analysis.easy_metrics
@@ -692,6 +950,14 @@ def print_analysis(analysis: DABstepAnalysis, detailed: bool = False):
                 for s, c in sorted(easy.shape_counts.items(), key=lambda x: -x[1])
             )
             print(f"    Shapes:         {shapes_str}")
+        if easy.total_input_tokens > 0:
+            print(f"    Input tokens:   total={easy.total_input_tokens:,}, avg={easy.avg_input_tokens:,.1f}, min={easy.min_input_tokens:,}, max={easy.max_input_tokens:,}")
+            print(f"    Steps:          total={easy.total_steps}, avg={easy.avg_steps:.1f}, min={easy.min_steps}, max={easy.max_steps}")
+        if easy.total_tool_calls > 0:
+            print(f"    Tool calls:     total={easy.total_tool_calls:,}, avg={easy.avg_tool_calls:.1f}, min={easy.min_tool_calls}, max={easy.max_tool_calls}")
+            if easy.tool_usage_totals:
+                tools_str = ", ".join(f"{t}={c}" for t, c in sorted(easy.tool_usage_totals.items(), key=lambda x: -x[1]))
+                print(f"    Tools by type:  {tools_str}")
 
     print(f"\n  HARD Tasks ({EASY_TASK_THRESHOLD + 1}+):")
     print(f"    Count:          {hard.task_count} ({hard.successful_tasks} ok, {hard.errored_tasks} err)")
@@ -708,6 +974,14 @@ def print_analysis(analysis: DABstepAnalysis, detailed: bool = False):
                 for s, c in sorted(hard.shape_counts.items(), key=lambda x: -x[1])
             )
             print(f"    Shapes:         {shapes_str}")
+        if hard.total_input_tokens > 0:
+            print(f"    Input tokens:   total={hard.total_input_tokens:,}, avg={hard.avg_input_tokens:,.1f}, min={hard.min_input_tokens:,}, max={hard.max_input_tokens:,}")
+            print(f"    Steps:          total={hard.total_steps}, avg={hard.avg_steps:.1f}, min={hard.min_steps}, max={hard.max_steps}")
+        if hard.total_tool_calls > 0:
+            print(f"    Tool calls:     total={hard.total_tool_calls:,}, avg={hard.avg_tool_calls:.1f}, min={hard.min_tool_calls}, max={hard.max_tool_calls}")
+            if hard.tool_usage_totals:
+                tools_str = ", ".join(f"{t}={c}" for t, c in sorted(hard.tool_usage_totals.items(), key=lambda x: -x[1]))
+                print(f"    Tools by type:  {tools_str}")
 
     print("=" * 70)
 
@@ -716,9 +990,13 @@ def print_analysis(analysis: DABstepAnalysis, detailed: bool = False):
         print(f"\n{'='*30} Per-Task Details {'='*30}")
         for ta in analysis.task_analyses:
             wm = ta.workflow_metrics
+            tm = ta.trace_metrics
             status = "ERROR" if ta.error else "OK"
             score_str = f" score={ta.score}" if ta.score is not None else ""
             wm_str = ""
             if wm and not wm.error:
                 wm_str = f" ops={wm.num_operators} links={wm.num_links} shape={wm.shape}"
-            print(f"  Task {ta.task_id}: {status}{score_str} elapsed={ta.elapsed:.1f}s{wm_str}")
+            tm_str = ""
+            if tm and not tm.parse_error and tm.input_tokens > 0:
+                tm_str = f" input_tokens={tm.input_tokens:,} steps={tm.step_count}"
+            print(f"  Task {ta.task_id}: {status}{score_str} elapsed={ta.elapsed:.1f}s{wm_str}{tm_str}")
