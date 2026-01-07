@@ -590,6 +590,12 @@ def cmd_resume(args):
     print(f"Split: {config['split']} | Model: {config['model']}")
     print("=" * 60)
 
+    # Handle --rerun-tasks: delete specified tasks so they will be re-run
+    if args.rerun_tasks:
+        rerun_ids = set(args.rerun_tasks.split(","))
+        print(f"[DABstep] Deleting {len(rerun_ids)} tasks to re-run: {sorted(rerun_ids, key=lambda x: int(x))}")
+        delete_task_results(run_dir, rerun_ids)
+
     # Get completed tasks
     completed = get_completed_task_ids(run_dir)
     print(f"[DABstep] Found {len(completed)} completed tasks")
@@ -865,6 +871,7 @@ Examples:
     # === resume command ===
     resume_parser = subparsers.add_parser("resume", help="Resume an interrupted run")
     resume_parser.add_argument("run_dir", help="Path to run directory")
+    resume_parser.add_argument("--rerun-tasks", help="Comma-separated task IDs to delete and re-run (e.g., '65,1280,1302')")
     resume_parser.add_argument("--no-cleanup", action="store_true", help="Skip initial cleanup")
     resume_parser.add_argument("--verbosity", type=int, default=1, help="0=quiet, 1=normal, 2=verbose")
 
