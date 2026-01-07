@@ -20,6 +20,9 @@ Usage:
 
     # Collect results from a run into submission.jsonl
     python -m benchmarks.dabstep collect runs/dabstep/20260103_120000_default
+
+    # Analyze workflow DAG structure and metrics
+    python -m benchmarks.dabstep analyze runs/dabstep/20260103_120000_default
 """
 
 import os
@@ -53,6 +56,9 @@ from agents.dataflow_agent import (
 )
 from agents.code_agent import (
     CodeAgentWrapper, CodeAgentResult, CODE_AGENT_MODEL_TYPE, CODE_AGENT_MAX_STEPS,
+)
+from analyzer.dabstep_analyzer import (
+    DABstepAnalyzer, analyze_run, print_analysis,
 )
 
 # =============================================================================
@@ -754,6 +760,38 @@ def cmd_collect(args):
     _print_summary(run_dir, results)
 
 
+def cmd_analyze(args):
+    """Analyze workflow results from a benchmark run."""
+    run_dir = Path(args.run_dir)
+    if not run_dir.exists():
+        print(f"[DABstep] Error: Run directory not found: {run_dir}")
+        sys.exit(1)
+
+    print("=" * 60)
+    print(f"DABstep Benchmark - Analyze Workflows")
+    print(f"Run directory: {run_dir}")
+    print("=" * 60)
+
+    # Run analysis
+    analysis = analyze_run(str(run_dir), top_n=args.top_n)
+
+    # Print results
+    print_analysis(analysis, detailed=args.detailed)
+
+    # Optionally save to file
+    if args.output:
+        output_file = Path(args.output)
+        with open(output_file, 'w') as f:
+            json.dump(analysis.to_dict(), f, indent=2)
+        print(f"\n[DABstep] Analysis saved to: {output_file}")
+    else:
+        # Save to run directory by default
+        output_file = run_dir / "analysis.json"
+        with open(output_file, 'w') as f:
+            json.dump(analysis.to_dict(), f, indent=2)
+        print(f"\n[DABstep] Analysis saved to: {output_file}")
+
+
 def _print_summary(run_dir: Path, results: List[Dict] = None):
     """Print run summary."""
     if results is None:
@@ -841,6 +879,13 @@ Examples:
     collect_parser.add_argument("run_dir", help="Path to run directory")
     collect_parser.add_argument("--evaluate", action="store_true", help="Evaluate results against ground truth")
 
+    # === analyze command ===
+    analyze_parser = subparsers.add_parser("analyze", help="Analyze workflow DAG structure and metrics")
+    analyze_parser.add_argument("run_dir", help="Path to run directory")
+    analyze_parser.add_argument("--detailed", action="store_true", help="Show per-task details")
+    analyze_parser.add_argument("--top-n", type=int, default=5, help="Number of extreme instances to show")
+    analyze_parser.add_argument("--output", "-o", help="Output file for JSON analysis (default: run_dir/analysis.json)")
+
     args = parser.parse_args()
 
     if args.command == "run":
@@ -851,6 +896,8 @@ Examples:
         cmd_retry(args)
     elif args.command == "collect":
         cmd_collect(args)
+    elif args.command == "analyze":
+        cmd_analyze(args)
     else:
         parser.print_help()
         sys.exit(1)
