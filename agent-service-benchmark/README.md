@@ -18,6 +18,10 @@ agent-service-benchmark/
 │   ├── __init__.py
 │   ├── dataflow_agent.py     # Texera Agent Service client
 │   └── code_agent.py         # Baseline smolagents wrapper
+├── analyzer/                  # Result analysis tools
+│   ├── __init__.py
+│   ├── workflow_analyzer.py  # General workflow DAG analysis
+│   └── dabstep_analyzer.py   # DABstep-specific analysis
 ├── benchmarks/               # Benchmark runners
 │   ├── __init__.py
 │   ├── dabstep.py           # DABstep benchmark runner
@@ -117,29 +121,59 @@ uv run python -m benchmarks.dabstep \
 
 ```bash
 # Run 10 tasks with verbose output
-uv run python -m benchmarks.dabstep --max-tasks 10 --verbosity 2
+uv run python -m benchmarks.dabstep run --max-tasks 10 --verbosity 2
 
 # Run with a different model and more steps
-uv run python -m benchmarks.dabstep --model claude-sonnet-4-5 --max-steps 100
+uv run python -m benchmarks.dabstep run --model claude-sonnet-4-5 --max-steps 100
 
 # Run in general mode (uses all operators instead of code operators)
-uv run python -m benchmarks.dabstep --agent-mode general
+uv run python -m benchmarks.dabstep run --agent-mode general
 
 # Run with JSON result format and higher character limits
-uv run python -m benchmarks.dabstep --result-format json --max-result-chars 40000 --max-cell-chars 8000
+uv run python -m benchmarks.dabstep run --result-format json --max-result-chars 40000 --max-cell-chars 8000
 
 # Run in parallel with 8 workers
-uv run python -m benchmarks.dabstep --parallel --max-workers 8
+uv run python -m benchmarks.dabstep run --parallel --max-workers 8
 
 # Run full benchmark with evaluation
-uv run python -m benchmarks.dabstep --split default --max-tasks 0 --evaluate
+uv run python -m benchmarks.dabstep run --split default --max-tasks 0 --evaluate
 
 # Skip download and retain agents for debugging
-uv run python -m benchmarks.dabstep --skip-download --retain --max-tasks 3
+uv run python -m benchmarks.dabstep run --skip-download --retain --max-tasks 3
 
 # Run baseline code agent (smolagents) for comparison
-uv run python -m benchmarks.dabstep --baseline --max-tasks 10
+uv run python -m benchmarks.dabstep run --baseline --max-tasks 10
 ```
+
+### Resume, Retry, Collect, and Analyze Commands
+
+```bash
+# Resume an interrupted run (re-runs tasks without result.json)
+uv run python -m benchmarks.dabstep resume runs/dabstep/20260103_120000_default_dataflow
+
+# Retry errored tasks (detects and re-runs only tasks with errors)
+uv run python -m benchmarks.dabstep retry runs/dabstep/20260103_120000_default_dataflow
+
+# Collect results into submission.jsonl format
+uv run python -m benchmarks.dabstep collect runs/dabstep/20260103_120000_default_dataflow
+
+# Collect and evaluate results against ground truth
+uv run python -m benchmarks.dabstep collect runs/dabstep/20260103_120000_default_dataflow --evaluate
+
+# Analyze workflow results (DAG structure, operator usage, etc.)
+uv run python -m benchmarks.dabstep analyze runs/dabstep/20260103_120000_default_dataflow
+
+# Analyze with detailed per-task output
+uv run python -m benchmarks.dabstep analyze runs/dabstep/20260103_120000_default_dataflow --detailed
+```
+
+| Command | Description |
+|---------|-------------|
+| `run` | Start a new benchmark run |
+| `resume` | Resume an interrupted run (re-runs tasks without result.json) |
+| `retry` | Retry only errored tasks (detects tasks with error field set) |
+| `collect` | Collect results into submission.jsonl for leaderboard submission |
+| `analyze` | Analyze workflow DAG structure and operator usage |
 
 ## Output
 
