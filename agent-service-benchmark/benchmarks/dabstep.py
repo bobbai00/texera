@@ -462,6 +462,7 @@ def run_benchmark(
     run_dir: Path,
     baseline: bool = False,
     skip_task_ids: Set[str] = None,
+    reverse: bool = False,
     **agent_kwargs,
 ) -> List[Dict]:
     """Run the benchmark sequentially, skipping completed tasks."""
@@ -471,10 +472,15 @@ def run_benchmark(
 
     # Filter tasks
     tasks_to_run = [t for t in dataset if str(t["task_id"]) not in skip_task_ids]
+
+    # Reverse order if requested
+    if reverse:
+        tasks_to_run = list(reversed(tasks_to_run))
     total = len(dataset)
     skipped = len(skip_task_ids)
 
-    print(f"\n[DABstep] Running {len(tasks_to_run)} tasks ({mode})")
+    order_str = " (reverse order)" if reverse else ""
+    print(f"\n[DABstep] Running {len(tasks_to_run)} tasks ({mode}){order_str}")
     if skipped:
         print(f"[DABstep] Skipping {skipped} already completed tasks")
 
@@ -568,6 +574,7 @@ def cmd_run(args):
     results = run_benchmark(
         dataset, context_files, run_dir,
         baseline=args.baseline,
+        reverse=args.reverse,
         **agent_kwargs,
     )
 
@@ -641,6 +648,7 @@ def cmd_resume(args):
         dataset, context_files, run_dir,
         baseline=baseline,
         skip_task_ids=completed,
+        reverse=args.reverse,
         **agent_kwargs,
     )
 
@@ -715,6 +723,7 @@ def cmd_retry(args):
         dataset, context_files, run_dir,
         baseline=baseline,
         skip_task_ids=completed,
+        reverse=args.reverse,
         **agent_kwargs,
     )
 
@@ -867,6 +876,7 @@ Examples:
     run_parser.add_argument("--retain", action="store_true", help="Keep agents after tasks")
     run_parser.add_argument("--no-cleanup", action="store_true", help="Skip initial cleanup")
     run_parser.add_argument("--verbosity", type=int, default=1, help="0=quiet, 1=normal, 2=verbose")
+    run_parser.add_argument("--reverse", action="store_true", help="Run tasks in reverse order")
 
     # === resume command ===
     resume_parser = subparsers.add_parser("resume", help="Resume an interrupted run")
@@ -874,12 +884,14 @@ Examples:
     resume_parser.add_argument("--rerun-tasks", help="Comma-separated task IDs to delete and re-run (e.g., '65,1280,1302')")
     resume_parser.add_argument("--no-cleanup", action="store_true", help="Skip initial cleanup")
     resume_parser.add_argument("--verbosity", type=int, default=1, help="0=quiet, 1=normal, 2=verbose")
+    resume_parser.add_argument("--reverse", action="store_true", help="Run tasks in reverse order")
 
     # === retry command ===
     retry_parser = subparsers.add_parser("retry", help="Retry errored tasks from a run")
     retry_parser.add_argument("run_dir", help="Path to run directory")
     retry_parser.add_argument("--no-cleanup", action="store_true", help="Skip initial cleanup")
     retry_parser.add_argument("--verbosity", type=int, default=1, help="0=quiet, 1=normal, 2=verbose")
+    retry_parser.add_argument("--reverse", action="store_true", help="Run tasks in reverse order")
 
     # === collect command ===
     collect_parser = subparsers.add_parser("collect", help="Collect results into submission.jsonl")
