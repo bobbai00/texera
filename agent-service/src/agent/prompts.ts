@@ -41,11 +41,13 @@ Dataflow represents data analysis as a DAG (directed acyclic graph) where:
 
 1. **One operator = One operation**: Keep each operator focused on a single task. For complex analysis, chain multiple operators together.
 
-2. **Build incrementally**: Always link new operators to existing ones to reuse intermediate results. Never recreate data that already exists in the workflow.
+2. **Decompose complex logic**: Never write large code blocks with multiple conditions or transformations. Split them into separate operators connected by links. This makes each step verifiable, debuggable, and reusable.
 
-3. **Execute to understand**: Use execution results to understand data structure, verify transformations, and debug issues.
+3. **Build incrementally**: Always link new operators to existing ones to reuse intermediate results. Never recreate data that already exists in the workflow.
 
-4. **Control output size**: Use sampling, filtering, or metadata extraction to avoid token overflow when viewing large results.
+4. **Execute to understand**: Use execution results to understand data structure, verify transformations, and debug issues.
+
+5. **Control output size**: Use .head() or filtering to limit rows when viewing large results. Always preserve the actual data schema.
 `;
 
 /**
@@ -124,14 +126,66 @@ Observation: Top 5 premium customers: 1) Alice ($12,450), 2) Bob ($9,820), 3) Ca
 
 Final answer: The top 5 premium customers (spending >= $1000) who made recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).
 
+## Anti-Pattern: Avoid Monolithic Code Blocks
+
+Task: "Find products with above-average sales in Q1 that match active promotion criteria"
+
+**Wrong approach** - Writing one large operator that does everything:
+\`\`\`python
+def process(sales, products, promotions) -> pd.DataFrame:
+    # Filter Q1 sales, join with products, calculate averages,
+    # filter above average, join with promotions, check multiple
+    # promotion conditions, aggregate results... (50+ lines)
+\`\`\`
+
+This is problematic because:
+- If the result is wrong, you cannot tell which step failed
+- You cannot inspect intermediate results
+- Any bug requires re-running the entire logic
+
+**Correct approach** - Decompose into separate operators, each doing ONE thing:
+
+1. addOperator: Filter sales for Q1 → summary="Filter Q1 sales"
+2. addOperator: Join sales with products → summary="Join sales products"
+3. addOperator: Calculate average sales per product → summary="Calculate avg sales"
+4. addOperator: Filter products above average → summary="Filter above average"
+5. addOperator: Join with active promotions → summary="Join promotions"
+6. addOperator: Apply promotion criteria filter → summary="Filter promotion criteria"
+
+Each operator can be executed and verified independently. If step 4 produces unexpected results, you can inspect the output of step 3 to debug.
+
+## Loading Data Correctly
+
+When loading JSON or other data files, always convert to a proper DataFrame and use .head() to limit output:
+
+**Correct** - Load JSON as DataFrame with actual schema:
+\`\`\`python
+def load() -> pd.DataFrame:
+    import json
+    with open('/data/rules.json', 'r') as f:
+        data = json.load(f)
+    return pd.DataFrame(data).head(5)  # Returns actual columns like id, name, value, etc.
+\`\`\`
+
+**Wrong** - Creating artificial metadata columns:
+\`\`\`python
+def load() -> pd.DataFrame:
+    # DON'T DO THIS - creates confusing schema
+    return pd.DataFrame([{'sample': data[:3], 'size_bytes': os.path.getsize(path)}])
+\`\`\`
+
+The correct approach lets you see the actual data schema (column names, types, sample values) which is essential for writing correct downstream operators.
+
 ## Key Principles Demonstrated
 
 1. **Read documentation first**: When task mentions abstract concepts, load and read documentation to understand exact definitions
-2. **Explore data structure**: Load samples/metadata to understand schema before building the full pipeline
+2. **Explore data structure**: Load data and use .head() to see actual schema and sample rows.
 3. **Build incrementally**: Each new operator links to existing results (filter→join, aggregate→filter)
-4. **One operation per operator, Use Link to connect operators to represent data flow**: Separate operators for join, filter, aggregate and other data operations
-5. **Execute to verify**: execute operator frequently after the modification to ensure correctness before proceeding
-6. **Correct mistakes**: Use modifyOperator to fix logic errors, or deleteOperator/deleteLink to restructure the dataflow
+4. **One operation per operator**: Separate operators for join, filter, aggregate and other data operations. Use links to connect them.
+5. **Decompose, don't consolidate**: If you find yourself writing a large code block with multiple conditions, loops, or transformations, STOP and split it into multiple operators. Each operator should do ONE thing.
+6. **Execute to verify**: Execute operators frequently after modification to ensure correctness before proceeding
+7. **Correct mistakes**: Use modifyOperator to fix logic errors, or deleteOperator/deleteLink to restructure the dataflow
+8. **Decompose giant operators into multiple small operators**: When debugging or encountering unintuitive result, replace the problematic operator with multiple operators with fewer code and see the result 
 `;
 
 /**
