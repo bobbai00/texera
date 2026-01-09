@@ -227,9 +227,16 @@ export function buildAllowedOperatorSchemas(metadataStore: OperatorMetadataStore
  */
 export function buildGeneralModeSystemPrompt(metadataStore: OperatorMetadataStore): string {
   const operatorSchemas = buildAllowedOperatorSchemas(metadataStore);
-  return (
-    BASE_SYSTEM_PROMPT +
-    "\n## Available Operators\nYou have the following operators available:\n" +
-    operatorSchemas
-  );
+
+  return `${BASE_SYSTEM_PROMPT}
+## Available Operators
+
+You have the following operators available:
+
+${operatorSchemas}
+
+**IMPORTANT**: You MUST try to use the native operators (e.g. Projection, Aggregate, Filter) as much as possible, 
+if not possible then use the python to define your own logic.
+
+`;
 }

@@ -73,7 +73,10 @@ export const ALLOWED_OPERATOR_TYPES = [
   "Union",
   "Intersect",
   "CartesianProduct",
-  "CSVFileScan"
+  "CSVFileScan",
+  "Scatterplot",
+  "LineChart",
+  "BarChart"
 ] as const;
 
 // ============================================================================
