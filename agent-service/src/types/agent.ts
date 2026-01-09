@@ -203,7 +203,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   toolTimeoutMs: 240000, // 4 minutes
   executionTimeoutMs: 240000, // 4 minutes
   maxSteps: 100,
-  agentMode: AgentMode.CODE, // Default to CODE mode
+  agentMode: AgentMode.GENERAL, // Default to GENERAL mode
 };
 
 // ============================================================================

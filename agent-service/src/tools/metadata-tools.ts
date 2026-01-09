@@ -65,7 +65,15 @@ export interface CompactOperatorSchema {
 
 export const ALLOWED_OPERATOR_TYPES = [
   "DataProcessing", // Simple function for processing data (file IO blocked)
-  "DataLoading", // Simple function for loading data from files (file IO allowed)
+  // "DataLoading", // Simple function for loading data from files (file IO allowed)
+  "Aggregate",
+  "Projection",
+  "HashJoin",
+  "Sort",
+  "Union",
+  "Intersect",
+  "CartesianProduct",
+  "CSVFileScan"
 ] as const;
 
 // ============================================================================
