@@ -25,6 +25,7 @@
 import { z } from "zod";
 import { tool } from "ai";
 import { WorkflowState } from "../workflow/workflow-state";
+import { autoLayoutWorkflow } from "../workflow/auto-layout";
 import { WorkflowUtilService } from "../workflow/workflow-util";
 import {
   createToolResult,
@@ -137,6 +138,9 @@ export function createAddOperatorTool(
         if (args.numInputPorts !== undefined && args.numInputPorts > 1) {
           workflowState.updateOperatorInputPorts(operator.operatorID, args.numInputPorts);
         }
+
+        // Auto-layout the workflow after adding the operator
+        autoLayoutWorkflow(workflowState);
 
         const updatedOperator = workflowState.getOperator(operator.operatorID);
         const afterContent = workflowState.getWorkflowContent();

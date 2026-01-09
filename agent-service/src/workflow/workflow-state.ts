@@ -258,6 +258,33 @@ export class WorkflowState {
   }
 
   // ============================================================================
+  // Position Operations
+  // ============================================================================
+
+  /**
+   * Update the position of an operator on the canvas.
+   * @param operatorId The operator ID to update
+   * @param position The new position (x, y coordinates)
+   * @returns true if successful, false if operator not found
+   */
+  updateOperatorPosition(operatorId: string, position: Point): boolean {
+    if (!this.operators.has(operatorId)) {
+      return false;
+    }
+    this.operatorPositions.set(operatorId, position);
+    return true;
+  }
+
+  /**
+   * Get the position of an operator.
+   * @param operatorId The operator ID
+   * @returns The position or undefined if not found
+   */
+  getOperatorPosition(operatorId: string): Point | undefined {
+    return this.operatorPositions.get(operatorId);
+  }
+
+  // ============================================================================
   // Link Operations
   // ============================================================================
 

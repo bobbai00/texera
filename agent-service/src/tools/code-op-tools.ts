@@ -25,6 +25,7 @@
 import { z } from "zod";
 import { tool } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
+import { autoLayoutWorkflow } from "../workflow/auto-layout";
 import { WorkflowUtilService } from "../workflow/workflow-util";
 import {
   createToolResult,
@@ -337,6 +338,9 @@ Examples:
         if (type === "DataProcessing" && numInputPorts > 1) {
           workflowState.updateOperatorInputPorts(operator.operatorID, numInputPorts);
         }
+
+        // Auto-layout the workflow after adding the operator
+        autoLayoutWorkflow(workflowState);
 
         const updatedOperator = workflowState.getOperator(operator.operatorID);
         const afterContent = workflowState.getWorkflowContent();
