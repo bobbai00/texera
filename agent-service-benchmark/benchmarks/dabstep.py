@@ -598,6 +598,7 @@ def cmd_resume(args):
     print("=" * 60)
 
     # Handle --rerun-tasks: delete specified tasks so they will be re-run
+    rerun_ids = None
     if args.rerun_tasks:
         rerun_ids = set(args.rerun_tasks.split(","))
         print(f"[DABstep] Deleting {len(rerun_ids)} tasks to re-run: {sorted(rerun_ids, key=lambda x: int(x))}")
@@ -617,6 +618,16 @@ def cmd_resume(args):
 
     # Load full dataset
     dataset = load_dataset(config["split"], config.get("max_tasks"))
+
+    # Handle --only: skip all tasks except those specified in --rerun-tasks
+    if args.only:
+        if not rerun_ids:
+            print("[DABstep] Error: --only requires --rerun-tasks to specify which tasks to run")
+            sys.exit(1)
+        # Skip all tasks except the specified ones
+        all_task_ids = set(str(t["task_id"]) for t in dataset)
+        completed = all_task_ids - rerun_ids
+        print(f"[DABstep] --only mode: will run only {len(rerun_ids)} specified tasks")
 
     # Check if already complete
     if len(completed) >= len(dataset):
@@ -882,6 +893,7 @@ Examples:
     resume_parser = subparsers.add_parser("resume", help="Resume an interrupted run")
     resume_parser.add_argument("run_dir", help="Path to run directory")
     resume_parser.add_argument("--rerun-tasks", help="Comma-separated task IDs to delete and re-run (e.g., '65,1280,1302')")
+    resume_parser.add_argument("--only", action="store_true", help="Only run tasks specified by --rerun-tasks (ignore other incomplete tasks)")
     resume_parser.add_argument("--no-cleanup", action="store_true", help="Skip initial cleanup")
     resume_parser.add_argument("--verbosity", type=int, default=1, help="0=quiet, 1=normal, 2=verbose")
     resume_parser.add_argument("--reverse", action="store_true", help="Run tasks in reverse order")
