@@ -636,6 +636,20 @@ export class TexeraCopilotManagerService {
   }
 
   /**
+   * Get all agents that are currently actively connected (have open WebSocket).
+   * @returns Array of agent IDs that are actively connected
+   */
+  public getActivelyConnectedAgentIds(): string[] {
+    const connectedIds: string[] = [];
+    for (const [agentId, tracking] of this.agentStateTracking) {
+      if (tracking.isActive && tracking.websocket?.readyState === WebSocket.OPEN) {
+        connectedIds.push(agentId);
+      }
+    }
+    return connectedIds;
+  }
+
+  /**
    * Get the workflow ID associated with an agent.
    */
   public getAgentWorkflowId(agentId: string): number | undefined {

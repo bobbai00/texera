@@ -39,7 +39,7 @@ export class AgentInteractionComponent implements OnInit {
   @Input() operatorDisplayName?: string;
   @Input() compact: boolean = true;
 
-  public availableAgents: Array<{ id: string; name: string }> = [];
+  public availableAgents: Array<{ id: string; name: string; isConnected: boolean }> = [];
   public selectedAgentId: string | null = null;
   public feedbackMessage: string = "";
 
@@ -62,12 +62,19 @@ export class AgentInteractionComponent implements OnInit {
       .getAllAgents()
       .pipe(untilDestroyed(this))
       .subscribe(agents => {
+        const connectedAgentIds = new Set(this.copilotManagerService.getActivelyConnectedAgentIds());
+
         this.availableAgents = agents.map(agent => ({
           id: agent.id,
           name: agent.name,
+          isConnected: connectedAgentIds.has(agent.id),
         }));
 
-        if (this.availableAgents.length === 1) {
+        // Auto-select: prefer connected agent, then first agent if only one
+        const connectedAgent = this.availableAgents.find(a => a.isConnected);
+        if (connectedAgent) {
+          this.selectedAgentId = connectedAgent.id;
+        } else if (this.availableAgents.length === 1) {
           this.selectedAgentId = this.availableAgents[0].id;
         }
 
@@ -75,8 +82,22 @@ export class AgentInteractionComponent implements OnInit {
       });
   }
 
+  /**
+   * Check if the selected agent is connected.
+   */
+  public isSelectedAgentConnected(): boolean {
+    if (!this.selectedAgentId) return false;
+    return this.copilotManagerService.isAgentActivelyConnected(this.selectedAgentId);
+  }
+
   public sendFeedbackToAgent(): void {
     if (!this.selectedAgentId || !this.feedbackMessage.trim() || !this.operatorId) {
+      return;
+    }
+
+    // Check if agent is connected before sending
+    if (!this.isSelectedAgentConnected()) {
+      this.notificationService.error("Agent is not connected. Please open the agent chat panel first.");
       return;
     }
 

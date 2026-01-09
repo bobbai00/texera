@@ -32,15 +32,31 @@
   <div class="controls-row">
     <nz-select
       [(ngModel)]="selectedAgentId"
-      nzPlaceHolder="Agent"
+      nzPlaceHolder="Select agent"
       class="agent-select"
-      nzSize="small">
+      nzSize="small"
+      [nzCustomTemplate]="selectedAgentTemplate">
       <nz-option
         *ngFor="let agent of availableAgents"
         [nzValue]="agent.id"
-        [nzLabel]="agent.name">
+        [nzLabel]="agent.name"
+        nzCustomContent>
+        <span
+          class="agent-status-dot"
+          [class.connected]="agent.isConnected"
+          nz-tooltip
+          [nzTooltipTitle]="agent.isConnected ? 'Connected' : 'Not connected'">
+        </span>
+        {{ agent.name }}
       </nz-option>
     </nz-select>
+    <ng-template #selectedAgentTemplate let-selected>
+      <span
+        class="agent-status-dot"
+        [class.connected]="isSelectedAgentConnected()">
+      </span>
+      {{ selected.nzLabel }}
+    </ng-template>
 
     <button
       nz-button
@@ -48,7 +64,9 @@
       nzSize="small"
       [disabled]="!canSend()"
       (click)="sendFeedbackToAgent()"
-      class="send-btn">
+      class="send-btn"
+      nz-tooltip
+      [nzTooltipTitle]="!isSelectedAgentConnected() && selectedAgentId ? 'Agent not connected - open agent chat first' : ''">
       <i
         nz-icon
         nzType="send"
