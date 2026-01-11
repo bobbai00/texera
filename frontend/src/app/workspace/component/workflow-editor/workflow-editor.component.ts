@@ -116,15 +116,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   private agentActionPreviewActive: boolean = false;
   private beforeWorkflowOperatorCodes: Map<string, string> = new Map();
 
-  // Operator types that support property panel display
-  private static readonly PROPERTY_PANEL_OPERATOR_TYPES = new Set([
-    "Projection",
-    "Sort",
-    "Limit",
-    "CSVScanSource",
-    "HashJoin",
-  ]);
-
   constructor(
     private workflowActionService: WorkflowActionService,
     private dynamicSchemaService: DynamicSchemaService,
@@ -1539,10 +1530,8 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
         // Highlight the operator first so that code editor dialog works correctly
         this.workflowActionService.getJointGraphWrapper().highlightOperators(operatorId);
 
-        // Toggle panel for Python UDF operators or property panel operators
-        if (isPythonUdf(operator) || this.isPropertyPanelOperator(operator)) {
-          this.togglePanel(operatorId);
-        }
+        // Toggle panel for all operators (Python UDF shows code panel, others show property panel)
+        this.togglePanel(operatorId);
       });
 
     // Subscribe to preview state changes for diff mode
@@ -1619,13 +1608,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
           this.updatePanelPositions();
         }
       });
-  }
-
-  /**
-   * Check if an operator supports property panel display.
-   */
-  private isPropertyPanelOperator(operator: OperatorPredicate): boolean {
-    return WorkflowEditorComponent.PROPERTY_PANEL_OPERATOR_TYPES.has(operator.operatorType);
   }
 
   /**
@@ -1718,10 +1700,8 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
       originalCode?: string;
     }[];
 
-    // Filter to property panel operators that have their panel open
-    const openPropertyOps = operators.filter(
-      op => this.isPropertyPanelOperator(op) && this.openPanelIds.has(op.operatorID)
-    );
+    // Filter to non-Python UDF operators that have their panel open (show property panel)
+    const openPropertyOps = operators.filter(op => !isPythonUdf(op) && this.openPanelIds.has(op.operatorID));
 
     this.propertyOperators = openPropertyOps
       .map(op => {

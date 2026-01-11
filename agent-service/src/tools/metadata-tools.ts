@@ -76,7 +76,8 @@ export const ALLOWED_OPERATOR_TYPES = [
   "CSVFileScan",
   "Scatterplot",
   "LineChart",
-  "BarChart"
+  "BarChart",
+  "Limit"
 ] as const;
 
 // ============================================================================
