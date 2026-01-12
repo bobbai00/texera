@@ -1,7 +1,7 @@
 [project]
 name = "agent-service-benchmark"
 version = "0.1.0"
-description = "Benchmarking client for Texera Agent Service using DABstep, Spider2-DBT, and KramaBench benchmarks"
+description = "Benchmarking client for Texera Agent Service using DABstep and Spider2-DBT benchmarks"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -15,10 +15,6 @@ dependencies = [
     # Spider2-DBT benchmark
     "duckdb>=1.0.0",
     "gdown>=5.0.0",
-    # KramaBench benchmark
-    "rouge-score>=0.1.2",
-    "typeguard>=4.0.0",  # Required by KramaBench metrics
-    "nltk>=3.8.0",       # Required by KramaBench metrics
 ]
 
 [tool.uv.sources]
