@@ -136,10 +136,11 @@ class SourceOperator(TupleOperatorV2):
         yield
 
     @overrides.final
-    def on_finish(self, port: int) -> Iterator[Optional[TupleLike]]:
-        # TODO: change on_finish to output Iterator[Union[TupleLike, TableLike, None]]
-        for i in self.produce():
-            yield from all_output_to_tuple(i)
+    def on_finish(self, port: int) -> Iterator[Union[TupleLike, TableLike, None]]:
+        # Yield directly from produce() without converting to tuples.
+        # Conversion to tuples happens in DataProcessor._set_output_tuple()
+        # which also handles schema inference from DataFrame dtypes.
+        yield from self.produce()
 
     @overrides.final
     def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
