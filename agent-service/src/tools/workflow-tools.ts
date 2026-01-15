@@ -25,7 +25,6 @@
 import { z } from "zod";
 import { tool } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
-import { generateLinkId } from "../workflow/workflow-state";
 import { autoLayoutWorkflow } from "../workflow/auto-layout";
 import type { OperatorLink } from "../types/workflow";
 import {
@@ -176,7 +175,7 @@ export function createAddLinkTool(workflowState: WorkflowState, context?: ToolCo
 
         const beforeContent = workflowState.getWorkflowContent();
 
-        const linkId = generateLinkId();
+        const linkId = workflowState.generateLinkId();
         const link: OperatorLink = {
           linkID: linkId,
           source: { operatorID: args.sourceOperatorId, portID: sourcePortId },

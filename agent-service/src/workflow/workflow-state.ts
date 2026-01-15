@@ -48,20 +48,6 @@ export interface ValidationOutput {
   workflowEmpty: boolean;
 }
 
-// ============================================================================
-// ID Generation
-// ============================================================================
-
-let operatorIdCounter = 0;
-let linkIdCounter = 0;
-
-export function generateOperatorId(): string {
-  return `operator-${++operatorIdCounter}-${Date.now()}`;
-}
-
-export function generateLinkId(): string {
-  return `link-${++linkIdCounter}-${Date.now()}`;
-}
 
 // ============================================================================
 // Workflow State Class
@@ -88,6 +74,10 @@ export class WorkflowState {
   private commentBoxes: CommentBox[] = [];
   private settings: WorkflowSettings = { ...DEFAULT_WORKFLOW_SETTINGS };
   private operatorsToViewResult: Set<string> = new Set();
+
+  // Per-agent ID counters (each WorkflowState instance has its own counters)
+  private operatorIdCounter: number = 0;
+  private linkIdCounter: number = 0;
 
   // ============================================================================
   // RxJS Subjects for workflow change events (similar to frontend WorkflowGraph)
@@ -148,6 +138,26 @@ export class WorkflowState {
       this.linkDeleteSubject,
       this.disabledOperatorChangedSubject
     );
+  }
+
+  // ============================================================================
+  // ID Generation (per-agent counters)
+  // ============================================================================
+
+  /**
+   * Generate a unique operator ID for this workflow/agent.
+   * Format: {operatorType}-operator-{counter}
+   */
+  generateOperatorId(operatorType: string): string {
+    return `${operatorType}-operator-${++this.operatorIdCounter}`;
+  }
+
+  /**
+   * Generate a unique link ID for this workflow/agent.
+   * Format: link-{counter}
+   */
+  generateLinkId(): string {
+    return `link-${++this.linkIdCounter}`;
   }
 
   // ============================================================================

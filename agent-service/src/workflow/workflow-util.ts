@@ -32,6 +32,7 @@ import type {
   OperatorPortSchemaMap,
 } from "../types/workflow";
 import type { OperatorMetadataStore } from "../tools/metadata-tools";
+import type { WorkflowState } from "./workflow-state";
 
 // ============================================================================
 // Port Identity Serialization Utilities
@@ -203,17 +204,6 @@ interface OutputPortInfo {
 }
 
 /**
- * Generate a random UUID for operator IDs
- */
-function generateUUID(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
-/**
  * Convert input port info to port description
  */
 function inputPortToPortDescription(portID: string, inputPortInfo: InputPortInfo): PortDescription {
@@ -244,10 +234,12 @@ function outputPortToPortDescription(portID: string, outputPortInfo: OutputPortI
  */
 export class WorkflowUtilService {
   private metadataStore: OperatorMetadataStore;
+  private workflowState: WorkflowState;
   private ajv: Ajv;
 
-  constructor(metadataStore: OperatorMetadataStore) {
+  constructor(metadataStore: OperatorMetadataStore, workflowState: WorkflowState) {
     this.metadataStore = metadataStore;
+    this.workflowState = workflowState;
     this.ajv = new Ajv({ useDefaults: true, strict: false });
   }
 
@@ -267,7 +259,7 @@ export class WorkflowUtilService {
       throw new Error(`operatorType ${operatorType} doesn't exist in operator metadata`);
     }
 
-    const operatorId = operatorType + "-operator-" + generateUUID();
+    const operatorId = this.workflowState.generateOperatorId(operatorType);
     const operatorProperties: Record<string, any> = {};
 
     // Remove the ID field for the schema to prevent warning messages from Ajv

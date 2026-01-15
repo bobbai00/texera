@@ -190,7 +190,7 @@ export function createAddCodeOperatorTool(
   operatorSchemas: Map<string, any>,
   context?: ToolContext
 ) {
-  const workflowUtil = context?.metadataStore ? new WorkflowUtilService(context.metadataStore) : null;
+  const workflowUtil = context?.metadataStore ? new WorkflowUtilService(context.metadataStore, workflowState) : null;
 
   return tool({
     description: `Add a Python function as an operator to the dataflow.
