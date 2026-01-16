@@ -701,13 +701,8 @@ export class TexeraAgent {
           this.addStep(agentStep);
 
           isFirstStep = false;
-
-          // Update stats - accumulate per-step usage (onStepFinish provides per-step tokens, not cumulative)
-          if (usage) {
-            stats.totalInputTokens = usage.inputTokens || 0;
-            stats.totalOutputTokens += usage.outputTokens || 0;
-            stats.totalTokens = stats.totalInputTokens + stats.totalOutputTokens;
-          }
+          // Note: per-step usage is stored in each ReActStep.usage
+          // Final totals are computed from result.totalUsage after generateText completes
         },
       });
 
@@ -722,10 +717,19 @@ export class TexeraAgent {
       // Add the response messages to history
       this.messages.push(...result.response.messages);
 
-      // Update final stats (token counts already accumulated in onStepFinish)
+      // Update final stats - use totalUsage from result (aggregate across all steps)
+      // Note: result.usage is only the final step, result.totalUsage is the aggregate
       stats.endTime = Date.now();
       stats.stepCount = stepIndex;
       stats.status = "completed";
+
+      // Prefer totalUsage (aggregate) over accumulated values
+      const finalUsage = (result as any).totalUsage || result.usage;
+      if (finalUsage) {
+        stats.totalInputTokens = finalUsage.inputTokens || finalUsage.promptTokens || 0;
+        stats.totalOutputTokens = finalUsage.outputTokens || finalUsage.completionTokens || 0;
+        stats.totalTokens = finalUsage.totalTokens || 0;
+      }
 
       return {
         response: result.text,
