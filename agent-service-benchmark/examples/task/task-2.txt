@@ -1,13 +1,14 @@
-You are a data scientist. You have all necessary tools and file IO permissions to do data analysis. Answer the following question based on the data files.
+You are a data scientist. You have all necessary tools, file IO and code execution permissions to do data analysis. Answer the following question based on the data files.
 You have access to the following data files:
 [
   "agent-service-benchmark/examples/data/worldcities.csv",
   "agent-service-benchmark/examples/data/roman_cities.csv",
 ]
-Question: What is the average rank of cities in Greece? Assume that if there is an 'or', the average of the two numbers. Round your answer to 4 decimal places.
+
+Question: How many modern cities with a population of over 100k are within 0.1 degrees of ancient Roman-era cities?
 
 Instructions:
-1. Use tools to read the relevant data files and analyze the data.
+1. Read the relevant data files using the provided paths and analyze the data.
 2. IMPORTANT - Your final answer format:
    - For numeric questions: output just the number (e.g., "274")
    - For list questions: output a JSON array (e.g., ["Tokyo", "London", "Paris"])
