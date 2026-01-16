@@ -11,7 +11,7 @@ from smolagents.models import OpenAIServerModel
 # Configuration
 OPENAI_API_BASE = "http://localhost:9096/api"
 OPENAI_API_KEY = "dummy"
-MODEL_TYPE = "o3"
+MODEL_TYPE = "claude-haiku-4.5"
 
 # Authorized imports for code execution
 AUTHORIZED_IMPORTS = [
@@ -26,6 +26,11 @@ AUTHORIZED_IMPORTS = [
     "collections",
     "math",
     "statistics",
+    "openpyxl",
+    "lxml",
+    "bs4",
+    "geopandas",
+    "cdflib",
 ]
 
 
@@ -44,6 +49,7 @@ def main():
         additional_authorized_imports=AUTHORIZED_IMPORTS,
         max_steps=50,
         verbosity_level=1,
+        executor_kwargs={'additional_functions': {'open': open}}
     )
 
     # Launch Gradio UI
