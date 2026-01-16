@@ -567,7 +567,7 @@ object AttributeTypeUtils extends Serializable {
     attrType match {
       case AttributeType.INTEGER   => java.lang.Integer.valueOf(Integer.MIN_VALUE)
       case AttributeType.LONG      => java.lang.Long.valueOf(java.lang.Long.MIN_VALUE)
-      case AttributeType.DOUBLE    => java.lang.Double.valueOf(java.lang.Double.MIN_VALUE)
+      case AttributeType.DOUBLE    => java.lang.Double.valueOf(-java.lang.Double.MAX_VALUE)
       case AttributeType.TIMESTAMP => new Timestamp(0L)
       case AttributeType.BINARY    => Array.emptyByteArray
       case _ =>

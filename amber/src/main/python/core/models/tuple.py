@@ -402,10 +402,20 @@ class Tuple:
     __repr__ = __str__
 
     def __eq__(self, other: Any) -> bool:
+        def fields_equal(a: Any, b: Any) -> bool:
+            """Compare fields, handling float NaN correctly."""
+            if isinstance(a, float) and isinstance(b, float):
+                # Handle NaN: NaN == NaN should be True for tuple equality
+                import math
+                if math.isnan(a) and math.isnan(b):
+                    return True
+                return a == b
+            return a == b
+
         return (
             isinstance(other, Tuple)
             and self.get_field_names() == other.get_field_names()
-            and all(self[i] == other[i] for i in self.get_field_names())
+            and all(fields_equal(self[i], other[i]) for i in self.get_field_names())
         )
 
     def __ne__(self, other) -> bool:

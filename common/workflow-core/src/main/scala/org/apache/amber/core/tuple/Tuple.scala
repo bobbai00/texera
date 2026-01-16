@@ -106,6 +106,8 @@ case class Tuple @JsonCreator() (
           this.getFields.zip(that.getFields).forall {
             case (field1: Array[Byte], field2: Array[Byte]) =>
               field1.sameElements(field2) // for Binary, use sameElements instead of == to compare
+            case (d1: java.lang.Double, d2: java.lang.Double) =>
+              java.lang.Double.compare(d1, d2) == 0 // handles NaN correctly (NaN == NaN)
             case (field1, field2) =>
               field1 == field2
           }
