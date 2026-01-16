@@ -1,0 +1,24 @@
+You are a data scientist. Answer the following question based on the data files.
+Data files available (use these relative paths to read the data):
+[
+  "agent-service-benchmark/examples/data/worldcities.csv",
+  "agent-service-benchmark/examples/data/roman_cities.csv",
+]
+Question: What is the average rank of cities in Greece? Assume that if there is an 'or', the average of the two numbers. Round your answer to 4 decimal places.
+
+Instructions:
+1. Read the relevant data files using the provided paths and analyze the data.
+2. Compute the answer step by step.
+3. IMPORTANT - Your final answer format:
+   - For numeric questions: output just the number (e.g., "274")
+   - For list questions: output a JSON array (e.g., ["Tokyo", "London", "Paris"])
+   - For descriptive/analytical questions: output a complete sentence summarizing your findings (e.g., "The average period is 11 years, with maxima in 1968, 1979, 1989, 2000, and 2014.")
+   - For simple string questions: output just the value (e.g., "California")
+
+Example final answers:
+- Numeric: "274"
+- List: ["Tokyo", "London", "Paris"]
+- Descriptive: "The correlation coefficient is 0.85, indicating a strong positive relationship between temperature and sales."
+- String: "California"
+
+Your last line MUST BE: **Final Answer: <value>**
