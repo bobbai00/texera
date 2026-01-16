@@ -60,6 +60,13 @@ from agents.code_agent import (
 from analyzer.dabstep_analyzer import (
     DABstepAnalyzer, analyze_run, print_analysis,
 )
+from benchmarks.utils.dabstep_utils import (
+    get_submission,
+    get_task_scores,
+    list_submissions,
+    get_submission_details,
+    DABSTEP_REPO_ID,
+)
 
 # =============================================================================
 # Constants
@@ -818,6 +825,80 @@ def cmd_analyze(args):
         print(f"\n[DABstep] Analysis saved to: {output_file}")
 
 
+def cmd_submissions(args):
+    """Retrieve and display submission data from DABstep leaderboard."""
+    print("=" * 60)
+    print("DABstep Benchmark - Submission Lookup")
+    print(f"Repository: {DABSTEP_REPO_ID}")
+    print("=" * 60)
+
+    if args.list:
+        # List all submissions
+        print("\n[DABstep] Listing all submissions...")
+        submissions_df = list_submissions(
+            repo_id=DABSTEP_REPO_ID,
+            organisation=args.organisation,
+        )
+        print(f"\n[DABstep] Found {len(submissions_df)} submissions")
+        if not submissions_df.empty:
+            print("\n" + "=" * 60)
+            print("SUBMISSIONS:")
+            print("=" * 60)
+            pd.set_option('display.max_columns', None)
+            pd.set_option('display.width', None)
+            pd.set_option('display.max_colwidth', None)
+            print(submissions_df.to_string())
+        return
+
+    # Get specific submission
+    if not args.agent_name or not args.organisation:
+        print("[DABstep] Error: --agent-name and --organisation are required")
+        print("  Use --list to see all available submissions")
+        sys.exit(1)
+
+    submission_id = f"{args.organisation}-{args.agent_name}"
+    print(f"\n[DABstep] Looking up submission: {submission_id}")
+
+    # Get full details
+    details = get_submission_details(
+        agent_name=args.agent_name,
+        organisation=args.organisation,
+        repo_id=DABSTEP_REPO_ID,
+    )
+
+    # Print submission info
+    print("\n" + "=" * 60)
+    print(f"SUBMISSION: {details['submission_id']}")
+    print("=" * 60)
+
+    if details["submission"].empty:
+        print("[DABstep] No submission found with this ID")
+    else:
+        pd.set_option('display.max_columns', None)
+        pd.set_option('display.width', None)
+        pd.set_option('display.max_colwidth', None)
+        print("\nSubmission Data:")
+        print(details["submission"].to_string())
+
+    # Print summary
+    if details["summary"]:
+        print("\n" + "-" * 40)
+        print("SUMMARY:")
+        print(f"  Total tasks: {details['summary'].get('total_tasks', 'N/A')}")
+        print(f"  Correct: {details['summary'].get('correct', 'N/A')}")
+        print(f"  Accuracy: {details['summary'].get('accuracy', 0):.1%}")
+
+    # Print task scores
+    if not details["task_scores"].empty:
+        print("\n" + "-" * 40)
+        print("TASK SCORES:")
+        print(details["task_scores"].to_string())
+    else:
+        print("\n[DABstep] No task scores found")
+
+    print("\n" + "=" * 60)
+
+
 def _print_summary(run_dir: Path, results: List[Dict] = None):
     """Print run summary."""
     if results is None:
@@ -917,6 +998,12 @@ Examples:
     analyze_parser.add_argument("--top-n", type=int, default=5, help="Number of extreme instances to show")
     analyze_parser.add_argument("--output", "-o", help="Output file for JSON analysis (default: run_dir/analysis.json)")
 
+    # === submissions command ===
+    submissions_parser = subparsers.add_parser("submissions", help="Retrieve submission data from DABstep leaderboard")
+    submissions_parser.add_argument("--agent-name", help="Agent name from submission form")
+    submissions_parser.add_argument("--organisation", help="Organisation name from submission form")
+    submissions_parser.add_argument("--list", action="store_true", help="List all submissions")
+
     args = parser.parse_args()
 
     if args.command == "run":
@@ -929,6 +1016,8 @@ Examples:
         cmd_collect(args)
     elif args.command == "analyze":
         cmd_analyze(args)
+    elif args.command == "submissions":
+        cmd_submissions(args)
     else:
         parser.print_help()
         sys.exit(1)
