@@ -49,7 +49,7 @@ def main():
     # Launch Gradio UI
     print(f"Launching Gradio UI with model: {MODEL_TYPE}")
     gradio_ui = GradioUI(agent, file_upload_folder=None)  # Disable file uploads to avoid bug
-    gradio_ui.launch()
+    gradio_ui.launch(share=False)
 
 
 if __name__ == "__main__":
