@@ -702,11 +702,11 @@ export class TexeraAgent {
 
           isFirstStep = false;
 
-          // Update stats
+          // Update stats - accumulate per-step usage (onStepFinish provides per-step tokens, not cumulative)
           if (usage) {
             stats.totalInputTokens = usage.inputTokens || 0;
-            stats.totalOutputTokens = usage.outputTokens || 0;
-            stats.totalTokens = usage.totalTokens || 0;
+            stats.totalOutputTokens += usage.outputTokens || 0;
+            stats.totalTokens = stats.totalInputTokens + stats.totalOutputTokens;
           }
         },
       });
@@ -722,15 +722,10 @@ export class TexeraAgent {
       // Add the response messages to history
       this.messages.push(...result.response.messages);
 
-      // Update final stats
+      // Update final stats (token counts already accumulated in onStepFinish)
       stats.endTime = Date.now();
       stats.stepCount = stepIndex;
       stats.status = "completed";
-      if (result.usage) {
-        stats.totalInputTokens = result.usage.inputTokens || 0;
-        stats.totalOutputTokens = result.usage.outputTokens || 0;
-        stats.totalTokens = result.usage.totalTokens || 0;
-      }
 
       return {
         response: result.text,
