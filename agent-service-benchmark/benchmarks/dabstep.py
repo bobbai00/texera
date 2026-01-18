@@ -403,6 +403,7 @@ def run_baseline_task(
     start = time.time()
     result = {"task_id": task_id, "answer": "", "error": None, "elapsed": 0}
 
+    code_result = None
     try:
         agent.setup()
         code_result = agent.run(prompt)
@@ -414,6 +415,18 @@ def run_baseline_task(
             f.write(prompt)
         with open(task_dir / "answer.txt", 'w') as f:
             f.write(result["answer"])
+        with open(task_dir / "expected.txt", 'w') as f:
+            f.write(str(task.get("answer", "")))
+
+        # Save trace (reasoning steps from CodeAgent)
+        if code_result and code_result.reasoning_trace:
+            with open(task_dir / "trace.json", 'w') as f:
+                json.dump({
+                    "response": code_result.response,
+                    "reasoning_trace": code_result.reasoning_trace,
+                    "elapsed_seconds": code_result.elapsed_seconds,
+                    "error": code_result.error,
+                }, f, indent=2)
     except Exception as e:
         result["answer"] = f"ERROR: {e}"
         result["error"] = str(e)
