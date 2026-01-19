@@ -261,7 +261,9 @@ class CodeAgentWrapper:
         )
 
         # Give agent power to open files (like in quickstart.py)
-        self._agent.python_executor.static_tools.update({"open": open})
+        # Note: We must use additional_functions, not static_tools, because
+        # static_tools gets overwritten when CodeAgent.run() calls send_tools()
+        self._agent.python_executor.additional_functions["open"] = open
 
         self._log("Code agent setup complete")
         return self
@@ -326,7 +328,7 @@ class CodeAgentWrapper:
                 max_steps=self.settings.max_steps,
                 verbosity_level=self.settings.verbosity_level,
             )
-            self._agent.python_executor.static_tools.update({"open": open})
+            self._agent.python_executor.additional_functions["open"] = open
             self._last_result = None
             self._log("Agent reset complete")
 
