@@ -113,6 +113,9 @@ class RegionExecutionCoordinator(
     Unexecuted
   )
 
+  // Track whether output port storage objects have been created to avoid duplicate creation
+  private var outputStorageCreated: Boolean = false
+
   /**
     * Sync the status of `RegionExecution` and transition this coordinator's phase to `Completed` only when the
     * coordinator is currently in `ExecutingNonDependeePortsPhase` and all the ports of this region are completed.
@@ -342,25 +345,56 @@ class RegionExecutionCoordinator(
     }
     val ops = region.getOperators.filter(_.dependeeInputs.nonEmpty)
 
-    launchPhaseExecutionInternal(
-      ops,
-      () => assignPorts(region, isDependeePhase = true),
-      () => Future.value(Seq.empty),
-      () => sendStarts(region, isDependeePhase = true)
-    )
+    // Check if all inputs for operators with dependee ports come from materialized storage.
+    // If so, assign ALL ports (not just dependee ports) so the worker knows about all ports
+    // before it starts. This is necessary because when reading from materialization,
+    // the worker needs to know about all input ports upfront to properly trigger on_finish
+    // for each port in the correct order.
+    val allInputsFromMaterialization = ops.forall { op =>
+      op.inputPorts.keys.forall { portId =>
+        val globalPortId = GlobalPortIdentity(op.id, portId, input = true)
+        region.resourceConfig.exists { config =>
+          config.portConfigs.get(globalPortId) match {
+            case Some(cfg: InputPortConfig) => cfg.storagePairs.nonEmpty
+            case _                          => false
+          }
+        }
+      }
+    }
+
+    if (allInputsFromMaterialization) {
+      // When all inputs are from materialization, the worker will process all inputs in Phase 1
+      // and produce output before Phase 2 starts. So we need to:
+      // 1. Create output port storage objects now
+      // 2. Assign ALL ports (input and output) so the worker can process and produce output
+      val outputPortConfigs = region.resourceConfig.get.portConfigs.collect {
+        case (id, cfg: OutputPortConfig) => id -> cfg
+      }
+      createOutputPortStorageObjects(outputPortConfigs)
+
+      launchPhaseExecutionInternal(
+        ops,
+        () => assignAllPortsIncludingOutput(region, ops),
+        () => connectChannels(region.getLinks),
+        () => sendStarts(region, isDependeePhase = true)
+      )
+    } else {
+      launchPhaseExecutionInternal(
+        ops,
+        () => assignPorts(region, isDependeePhase = true),
+        () => Future.value(Seq.empty),
+        () => sendStarts(region, isDependeePhase = true)
+      )
+    }
   }
 
   private def executeNonDependeePortPhase(): Future[Unit] = {
     setPhase(ExecutingNonDependeePortsPhase)
-    // Allocate output port storage objects
-    region.resourceConfig.get.portConfigs
-      .collect {
-        case (id, cfg: OutputPortConfig) => id -> cfg
-      }
-      .foreach {
-        case (pid, cfg) =>
-          createOutputPortStorageObjects(Map(pid -> cfg))
-      }
+    // Allocate output port storage objects (if not already created in executeDependeePortPhase)
+    val outputPortConfigs = region.resourceConfig.get.portConfigs.collect {
+      case (id, cfg: OutputPortConfig) => id -> cfg
+    }
+    createOutputPortStorageObjects(outputPortConfigs)
 
     val ops = region.getOperators.filter(_.dependeeInputs.isEmpty)
 
@@ -568,6 +602,84 @@ class RegionExecutionCoordinator(
     )
   }
 
+  /**
+    * Assign ALL ports (input AND output) for the specified operators.
+    * This is used when all inputs come from materialized storage, allowing the worker to know
+    * about all ports before it starts processing and produce output in the same phase.
+    */
+  private def assignAllPortsIncludingOutput(
+      region: Region,
+      operators: Set[PhysicalOp]
+  ): Future[Seq[EmptyReturn]] = {
+    val resourceConfig = region.resourceConfig.get
+    Future.collect(
+      operators
+        .flatMap { physicalOp: PhysicalOp =>
+          // assign ALL input ports (not filtered by phase)
+          val inputPortMapping = physicalOp.inputPorts
+            .flatMap {
+              case (inputPortId, (_, _, Right(schema))) =>
+                val globalInputPortId = GlobalPortIdentity(physicalOp.id, inputPortId, input = true)
+                val (storageURIs, partitionings) =
+                  resourceConfig.portConfigs.get(globalInputPortId) match {
+                    case Some(cfg: InputPortConfig) =>
+                      (cfg.storagePairs.map(_._1.toString), cfg.storagePairs.map(_._2))
+                    case _ => (List.empty[String], List.empty[Partitioning])
+                  }
+                Some(globalInputPortId -> (storageURIs, partitionings, schema))
+              case _ => None
+            }
+
+          // assign ALL output ports
+          val outputPortMapping = physicalOp.outputPorts
+            .filter {
+              case (outputPortId, _) =>
+                val globalOutputPortId = GlobalPortIdentity(physicalOp.id, outputPortId)
+                region.getPorts.contains(globalOutputPortId)
+            }
+            .flatMap {
+              case (outputPortId, (_, _, Right(schema))) =>
+                val storageURI = resourceConfig.portConfigs
+                  .collectFirst {
+                    case (gid, cfg: OutputPortConfig)
+                        if gid == GlobalPortIdentity(
+                          opId = physicalOp.id,
+                          portId = outputPortId
+                        ) =>
+                      cfg.storageURI.toString
+                  }
+                  .getOrElse("")
+                Some(
+                  GlobalPortIdentity(physicalOp.id, outputPortId) -> (List(
+                    storageURI
+                  ), List.empty[Partitioning], schema)
+                )
+              case _ => None
+            }
+
+          inputPortMapping ++ outputPortMapping
+        }
+        // Issue AssignPort control messages to each worker.
+        .flatMap {
+          case (globalPortId, (storageUris, partitionings, schema)) =>
+            resourceConfig.operatorConfigs(globalPortId.opId).workerConfigs.map(_.workerId).map {
+              workerId =>
+                asyncRPCClient.workerInterface.assignPort(
+                  AssignPortRequest(
+                    globalPortId.portId,
+                    globalPortId.input,
+                    schema.toRawSchema,
+                    storageUris,
+                    partitionings
+                  ),
+                  asyncRPCClient.mkContext(workerId)
+                )
+            }
+        }
+        .toSeq
+    )
+  }
+
   private def connectChannels(links: Set[PhysicalLink]): Future[Seq[EmptyReturn]] = {
     Future.collect(
       links.map { link: PhysicalLink =>
@@ -636,6 +748,12 @@ class RegionExecutionCoordinator(
   private def createOutputPortStorageObjects(
       portConfigs: Map[GlobalPortIdentity, OutputPortConfig]
   ): Unit = {
+    // Skip if output storage has already been created (e.g., in executeDependeePortPhase)
+    if (outputStorageCreated) {
+      return
+    }
+    outputStorageCreated = true
+
     portConfigs.foreach {
       case (outputPortId, portConfig) =>
         val storageUriToAdd = portConfig.storageURI

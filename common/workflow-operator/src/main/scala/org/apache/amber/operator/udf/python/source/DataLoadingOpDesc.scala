@@ -161,7 +161,7 @@ class DataLoadingOpDesc extends SourceOperatorDescriptor {
         |""".stripMargin,
       OperatorGroupConstants.PYTHON_GROUP,
       List.empty, // No input ports for a source operator
-      List(OutputPort()),
+      List(OutputPort(blocking = true)),
       supportReconfiguration = true
     )
   }

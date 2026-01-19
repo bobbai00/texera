@@ -98,6 +98,10 @@ class MainLoop(StoppableQueueBlockingRunnable):
         self.context.executor_manager.executor.close()
         # stop the data processing thread
         self.data_processor.stop()
+        # Handle the case where no data was ever processed (empty input).
+        # State must transition through RUNNING before COMPLETED.
+        if self.context.state_manager.confirm_state(WorkerState.READY):
+            self.context.state_manager.transit_to(WorkerState.RUNNING)
         self.context.state_manager.transit_to(WorkerState.COMPLETED)
         self.context.statistics_manager.update_total_execution_time(time.time_ns())
         controller_interface = self._async_rpc_client.controller_stub()

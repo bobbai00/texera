@@ -180,6 +180,7 @@ class DataProcessingOpDesc extends LogicalOp {
     val inputPortInfo = if (inputPorts != null && inputPorts.nonEmpty) {
       inputPorts.zipWithIndex.map {
         case (portDesc: PortDescription, idx) =>
+          // Port dependencies ensure data is processed in order (port 0 before port 1, etc.)
           val previousPortDependencies = (0 until idx).map(PortIdentity(_)).toList
           InputPort(
             PortIdentity(idx),
@@ -192,6 +193,7 @@ class DataProcessingOpDesc extends LogicalOp {
       // Create input ports based on parsed parameters
       params.zipWithIndex.map {
         case (paramName, idx) =>
+          // Port dependencies ensure data is processed in order
           val previousPortDependencies = (0 until idx).map(PortIdentity(_)).toList
           InputPort(
             PortIdentity(idx),
@@ -204,10 +206,10 @@ class DataProcessingOpDesc extends LogicalOp {
 
     val outputPortInfo = if (outputPorts != null) {
       outputPorts.zipWithIndex.map {
-        case (portDesc, idx) => OutputPort(PortIdentity(idx), displayName = portDesc.displayName)
+        case (portDesc, idx) => OutputPort(PortIdentity(idx), displayName = portDesc.displayName, blocking = true)
       }
     } else {
-      List(OutputPort())
+      List(OutputPort(blocking = true))
     }
 
     OperatorInfo(
