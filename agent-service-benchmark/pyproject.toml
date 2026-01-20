@@ -8,7 +8,7 @@ dependencies = [
     # DABstep benchmark
     "dabstep-benchmark",
     "datasets==3.2.0",
-    "smolagents[litellm]==1.6.0",
+    "smolagents[litellm]==1.23.0",
     "requests>=2.31.0",
     "pandas>=2.0.0",
     "huggingface-hub>=0.20.0",

@@ -11,7 +11,7 @@ from typing import Optional, Any
 from dataclasses import dataclass, field
 
 from smolagents import CodeAgent
-from smolagents.agents import ActionStep
+# ActionStep import removed - no longer needed with smolagents 1.23.0+
 from smolagents.models import OpenAIServerModel
 
 # ============================================================================
@@ -86,7 +86,7 @@ def clean_reasoning_trace(trace: list) -> list[dict]:
     Removes memory objects to reduce size.
 
     Args:
-        trace: List of ActionStep objects from the agent
+        trace: List of step objects from the agent (TaskStep, ActionStep)
 
     Returns:
         List of dictionaries with cleaned trace information
@@ -95,25 +95,39 @@ def clean_reasoning_trace(trace: list) -> list[dict]:
     for step in trace:
         step_dict = {}
 
+        # Get step number
         if hasattr(step, "step_number"):
             step_dict["step"] = step.step_number
 
-        if isinstance(step, ActionStep):
-            # Remove memory from logs to make them more compact
-            if hasattr(step, "memory"):
-                step.memory = None
-            if hasattr(step, "agent_memory"):
-                step.agent_memory = None
+        # Handle TaskStep (the initial task)
+        if hasattr(step, "task") and not hasattr(step, "code_action"):
+            step_dict["task"] = str(step.task)[:500]
+            if step_dict:
+                cleaned.append(step_dict)
+            continue
 
-            if hasattr(step, "tool_calls") and step.tool_calls:
-                step_dict["tool_calls"] = str(step.tool_calls)
-            if hasattr(step, "observations") and step.observations:
-                step_dict["observations"] = str(step.observations)[:500]  # Truncate
-            if hasattr(step, "error") and step.error:
-                step_dict["error"] = str(step.error)
+        # Handle ActionStep (smolagents 1.23.0+)
+        if hasattr(step, "code_action") and step.code_action:
+            step_dict["code"] = str(step.code_action)[:1000]
+        if hasattr(step, "model_output") and step.model_output:
+            step_dict["model_output"] = str(step.model_output)[:1000]
+        if hasattr(step, "observations") and step.observations:
+            step_dict["observations"] = str(step.observations)[:500]
+        if hasattr(step, "action_output") and step.action_output is not None:
+            step_dict["output"] = str(step.action_output)[:500]
+        if hasattr(step, "error") and step.error:
+            step_dict["error"] = str(step.error)
+        if hasattr(step, "token_usage") and step.token_usage:
+            step_dict["token_usage"] = {
+                "input": getattr(step.token_usage, "input_tokens", 0),
+                "output": getattr(step.token_usage, "output_tokens", 0),
+            }
 
+        # Legacy support for older smolagents versions
+        if hasattr(step, "tool_calls") and step.tool_calls:
+            step_dict["tool_calls"] = str(step.tool_calls)[:500]
         if hasattr(step, "llm_output") and step.llm_output:
-            step_dict["llm_output"] = str(step.llm_output)[:1000]  # Truncate
+            step_dict["llm_output"] = str(step.llm_output)[:1000]
 
         if step_dict:
             cleaned.append(step_dict)
@@ -299,10 +313,10 @@ class CodeAgentWrapper:
 
         elapsed = time.time() - start_time
 
-        # Get reasoning trace
+        # Get reasoning trace from memory.steps (smolagents 1.23.0+)
         reasoning_trace = []
-        if hasattr(self._agent, "logs") and self._agent.logs:
-            reasoning_trace = clean_reasoning_trace(self._agent.logs)
+        if hasattr(self._agent, "memory") and hasattr(self._agent.memory, "steps"):
+            reasoning_trace = clean_reasoning_trace(self._agent.memory.steps)
 
         result = CodeAgentResult(
             response=response,

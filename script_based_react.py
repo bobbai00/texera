@@ -11,7 +11,7 @@ from smolagents.models import OpenAIServerModel
 # Configuration
 OPENAI_API_BASE = "http://localhost:9096/api"
 OPENAI_API_KEY = "dummy"
-MODEL_TYPE = "claude-haiku-4.5"
+MODEL_TYPE = "o4-mini"
 
 # Authorized imports for code execution
 AUTHORIZED_IMPORTS = [
