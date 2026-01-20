@@ -94,11 +94,7 @@ Question: {question}
 
 Guidelines: {guidelines}
 
-Instructions:
-1. Read relevant documentation files first
-2. Analyze the data to find the answer
-3. Follow the guidelines exactly for your answer format
-4. Your final message must be ONLY the answer in the required format
+Reference documentation before answering. Your final output must be ONLY the answer.
 """
 
 BASELINE_PROMPT = """You are an expert data analyst. Answer factoid questions by loading and analyzing files.
