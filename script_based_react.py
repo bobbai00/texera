@@ -5,13 +5,14 @@ Minimal Code Agent with Gradio UI.
 Connects to LiteLLM service and launches interactive chat interface.
 """
 
-from smolagents import CodeAgent, GradioUI
+from smolagents import CodeAgent
 from smolagents.models import OpenAIServerModel
+from extended_gradio_ui import ExtendedGradioUI
 
 # Configuration
 OPENAI_API_BASE = "http://localhost:9096/api"
 OPENAI_API_KEY = "dummy"
-MODEL_TYPE = "o4-mini"
+MODEL_TYPE = "gpt-4.1"
 
 # Authorized imports for code execution
 AUTHORIZED_IMPORTS = [
@@ -52,9 +53,9 @@ def main():
         executor_kwargs={'additional_functions': {'open': open}}
     )
 
-    # Launch Gradio UI
+    # Launch Extended Gradio UI with import/export capabilities
     print(f"Launching Gradio UI with model: {MODEL_TYPE}")
-    gradio_ui = GradioUI(agent, file_upload_folder=None)  # Disable file uploads to avoid bug
+    gradio_ui = ExtendedGradioUI(agent, file_upload_folder=None)  # Disable file uploads to avoid bug
     gradio_ui.launch(share=False)
 
 
