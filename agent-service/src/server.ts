@@ -48,6 +48,7 @@ import type {
   AgentSettingsApi,
   ReActStep,
   AgentAction,
+  TraceContent,
 } from "./types/agent";
 import { OperatorResultSerializationMode, AgentMode } from "./types/agent";
 
@@ -487,8 +488,9 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 // ============================================================================
 
 interface WsMessage {
-  type: "message" | "stop";
+  type: "message" | "stop" | "replay";
   content?: string;
+  trace?: TraceContent;
 }
 
 interface WsOutgoingMessage {
@@ -625,6 +627,41 @@ const app = new Elysia()
           broadcastToAgent(agentId, { type: "error", error: error.message });
         }
       }
+
+      // Handle replay message - replay a trace by executing tool calls step by step
+      if (msg.type === "replay") {
+        if (!msg.trace || !msg.trace.messages || !Array.isArray(msg.trace.messages)) {
+          ws.send(JSON.stringify({ type: "error", error: "Invalid trace format: messages array is required" }));
+          return;
+        }
+
+        console.log(`[WS] Agent ${agentId} starting trace replay with ${msg.trace.messages.length} messages`);
+
+        // Broadcast GENERATING state
+        broadcastToAgent(agentId, { type: "state", state: "GENERATING" });
+
+        // Replay the trace
+        await agent.replayTrace(
+          msg.trace,
+          // onStep callback - broadcast each step
+          (step: ReActStep) => {
+            broadcastToAgent(agentId, { type: "step", step });
+          },
+          // onError callback - broadcast error and abort
+          (errorMessage: string) => {
+            console.error(`[WS] Agent ${agentId} replay error: ${errorMessage}`);
+            broadcastToAgent(agentId, { type: "error", error: errorMessage });
+          }
+        );
+
+        // Broadcast completion with final state
+        broadcastToAgent(agentId, {
+          type: "complete",
+          state: agent.getState(),
+        });
+
+        console.log(`[WS] Agent ${agentId} replay completed`);
+      }
     },
 
     close(ws) {
@@ -698,6 +735,7 @@ function printStartupMessage() {
     }
     console.log("         Send: { type: 'message', content: '...' }");
     console.log("         Send: { type: 'stop' }");
+    console.log("         Send: { type: 'replay', trace: { response: '...', messages: [...] } }");
     console.log("         Recv: { type: 'step' | 'state' | 'complete' | 'error' | 'init', ... }");
   }
 

@@ -197,13 +197,13 @@ export interface AgentSettings {
  */
 export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   disabledTools: new Set(),
-  maxOperatorResultCharLimit: 20000, // 20,000 characters (matches smolagents)
-  maxOperatorResultCellCharLimit: 4000, // 4,000 characters per cell
+  maxOperatorResultCharLimit: 40000, // 20,000 characters (matches smolagents)
+  maxOperatorResultCellCharLimit: 20000, // 4,000 characters per cell
   operatorResultSerializationMode: OperatorResultSerializationMode.TABLE,
   toolTimeoutMs: 240000, // 4 minutes
   executionTimeoutMs: 240000, // 4 minutes
   maxSteps: 100,
-  agentMode: AgentMode.GENERAL, // Default to GENERAL mode
+  agentMode: AgentMode.CODE, // Default to GENERAL mode
 };
 
 // ============================================================================
@@ -310,3 +310,36 @@ export interface UpdateAgentSettingsRequest {
   /** Agent operating mode: "code" or "general" */
   agentMode?: "code" | "general";
 }
+
+// ============================================================================
+// Trace Replay Types
+// ============================================================================
+
+/**
+ * Content structure of a trace file (exported from agent conversation)
+ */
+export interface TraceContent {
+  /** Final response text from the agent */
+  response: string;
+  /** Full conversation messages in Vercel AI SDK ModelMessage format */
+  messages: any[];
+}
+
+/**
+ * WebSocket message for replaying a trace
+ */
+export interface ReplayTraceMessage {
+  type: "replay";
+  trace: TraceContent;
+}
+
+/**
+ * Tools that should be skipped during replay (execution-related tools)
+ */
+export const REPLAY_SKIP_TOOLS = new Set([
+  "executeWorkflow",
+  "getExecutionState",
+  "killWorkflow",
+  "getExecutionResult",
+  "getOperatorResult",
+]);

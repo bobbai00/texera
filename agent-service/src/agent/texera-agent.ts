@@ -27,12 +27,21 @@ import { debounceTime } from "rxjs/operators";
 import { WorkflowState } from "../workflow/workflow-state";
 import { OperatorMetadataStore } from "../tools/metadata-tools";
 import { AgentActionManager } from "./agent-action-manager";
-import type { AgentSettings, ReActStep, AgentMessageStats, TokenUsage, AgentAction, UserInfo } from "../types/agent";
+import type {
+  AgentSettings,
+  ReActStep,
+  AgentMessageStats,
+  TokenUsage,
+  AgentAction,
+  UserInfo,
+  TraceContent,
+} from "../types/agent";
 import {
   AgentState as AgentStateEnum,
   DEFAULT_AGENT_SETTINGS,
   OperatorResultSerializationMode,
   AgentMode,
+  REPLAY_SKIP_TOOLS,
 } from "../types/agent";
 import { BASE_SYSTEM_PROMPT, buildGeneralModeSystemPrompt, buildCodeModeSystemPrompt } from "./prompts";
 import {
@@ -871,5 +880,253 @@ export class TexeraAgent {
     // Clear conversation history
     this.messages = [];
     this.reActSteps = [];
+  }
+
+  // ============================================================================
+  // Trace Replay Methods
+  // ============================================================================
+
+  /**
+   * Set the agent state (public method for replay).
+   */
+  setState(state: AgentStateEnum): void {
+    this.state = state;
+  }
+
+  /**
+   * Set the conversation messages directly (for loading trace).
+   */
+  setMessages(messages: ModelMessage[]): void {
+    this.messages = [...messages];
+  }
+
+  /**
+   * Append a single message to the conversation history.
+   */
+  appendMessage(message: ModelMessage): void {
+    this.messages.push(message);
+  }
+
+  /**
+   * Add a ReActStep publicly (for replay).
+   */
+  addReActStepPublic(step: ReActStep): void {
+    this.addStep(step);
+  }
+
+  /**
+   * Execute a single tool by name with the given input.
+   * Returns the tool result as a string.
+   * @throws Error if tool not found or execution fails
+   */
+  async executeTool(toolName: string, input: any): Promise<any> {
+    const toolDef = this.tools[toolName];
+    if (!toolDef) {
+      throw new Error(`Tool '${toolName}' not found`);
+    }
+    if (!toolDef.execute) {
+      throw new Error(`Tool '${toolName}' does not have an execute function`);
+    }
+    return await toolDef.execute(input);
+  }
+
+  /**
+   * Check if a tool should be skipped during replay.
+   * Execution-related tools are skipped.
+   */
+  shouldSkipToolDuringReplay(toolName: string): boolean {
+    return REPLAY_SKIP_TOOLS.has(toolName);
+  }
+
+  /**
+   * Replay a trace by executing tool calls step by step.
+   * This reconstructs the workflow and conversation history.
+   *
+   * @param trace - The trace content containing messages
+   * @param onStep - Callback for each ReActStep generated
+   * @param onError - Callback for errors
+   * @returns Promise that resolves when replay is complete
+   */
+  async replayTrace(
+    trace: TraceContent,
+    onStep: (step: ReActStep) => void,
+    onError: (error: string) => void
+  ): Promise<void> {
+    const messages = trace.messages;
+    let stepId = 0;
+    let currentMessageId = "";
+
+    this.state = AgentStateEnum.GENERATING;
+
+    try {
+      for (const message of messages) {
+        if (message.role === "user") {
+          // Generate new message ID for this user message
+          currentMessageId = `replay-${Date.now()}-${stepId}`;
+
+          // Extract user content
+          const userContent =
+            typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+
+          // Create user step
+          const userStep: ReActStep = {
+            messageId: currentMessageId,
+            stepId: stepId++,
+            timestamp: Date.now(),
+            role: "user",
+            content: userContent,
+            isBegin: true,
+            isEnd: true,
+          };
+
+          this.addStep(userStep);
+          onStep(userStep);
+
+          // Add to message history
+          this.messages.push(message);
+        } else if (message.role === "assistant") {
+          // Parse assistant message content
+          const { textContent, toolCalls } = this.parseAssistantMessage(message);
+
+          // If there's text content, create a text step
+          if (textContent) {
+            const textStep: ReActStep = {
+              messageId: currentMessageId,
+              stepId: stepId++,
+              timestamp: Date.now(),
+              role: "agent",
+              content: textContent,
+              isBegin: true,
+              isEnd: toolCalls.length === 0,
+            };
+            this.addStep(textStep);
+            onStep(textStep);
+          }
+
+          // Execute each tool call
+          for (let i = 0; i < toolCalls.length; i++) {
+            const toolCall = toolCalls[i];
+            const isLastToolCall = i === toolCalls.length - 1;
+
+            // Check if this tool should be skipped during replay
+            if (this.shouldSkipToolDuringReplay(toolCall.toolName)) {
+              // Create step showing tool was skipped
+              const skippedStep: ReActStep = {
+                messageId: currentMessageId,
+                stepId: stepId++,
+                timestamp: Date.now(),
+                role: "agent",
+                content: "",
+                isBegin: false,
+                isEnd: isLastToolCall,
+                toolCalls: [
+                  {
+                    toolName: toolCall.toolName,
+                    toolCallId: toolCall.toolCallId,
+                    input: toolCall.input,
+                  },
+                ],
+                toolResults: [
+                  {
+                    toolCallId: toolCall.toolCallId,
+                    output: `[Skipped during replay: ${toolCall.toolName}]`,
+                    isError: false,
+                  },
+                ],
+              };
+              this.addStep(skippedStep);
+              onStep(skippedStep);
+              continue;
+            }
+
+            // Execute the tool
+            let toolResult: any;
+            let isError = false;
+
+            try {
+              toolResult = await this.executeTool(toolCall.toolName, toolCall.input);
+            } catch (error: any) {
+              toolResult = { error: error.message || String(error) };
+              isError = true;
+              // Abort on error
+              onError(`Tool execution failed: ${toolCall.toolName} - ${error.message || String(error)}`);
+              this.state = AgentStateEnum.AVAILABLE;
+              return;
+            }
+
+            // Create step with tool call and result
+            const toolStep: ReActStep = {
+              messageId: currentMessageId,
+              stepId: stepId++,
+              timestamp: Date.now(),
+              role: "agent",
+              content: "",
+              isBegin: false,
+              isEnd: isLastToolCall,
+              toolCalls: [
+                {
+                  toolName: toolCall.toolName,
+                  toolCallId: toolCall.toolCallId,
+                  input: toolCall.input,
+                },
+              ],
+              toolResults: [
+                {
+                  toolCallId: toolCall.toolCallId,
+                  output: toolResult,
+                  isError,
+                },
+              ],
+            };
+
+            this.addStep(toolStep);
+            onStep(toolStep);
+          }
+
+          // Add assistant message to history
+          this.messages.push(message);
+        } else if (message.role === "tool") {
+          // Tool results are handled during assistant message processing
+          // Just add to message history for completeness
+          this.messages.push(message);
+        }
+      }
+
+      this.state = AgentStateEnum.AVAILABLE;
+    } catch (error: any) {
+      this.state = AgentStateEnum.AVAILABLE;
+      onError(`Replay failed: ${error.message || String(error)}`);
+    }
+  }
+
+  /**
+   * Parse an assistant message to extract text content and tool calls.
+   */
+  private parseAssistantMessage(message: any): {
+    textContent: string;
+    toolCalls: Array<{ toolName: string; toolCallId: string; input: any }>;
+  } {
+    let textContent = "";
+    const toolCalls: Array<{ toolName: string; toolCallId: string; input: any }> = [];
+
+    const content = message.content;
+
+    if (typeof content === "string") {
+      textContent = content;
+    } else if (Array.isArray(content)) {
+      for (const part of content) {
+        if (part.type === "text") {
+          textContent += part.text || "";
+        } else if (part.type === "tool-call") {
+          toolCalls.push({
+            toolName: part.toolName,
+            toolCallId: part.toolCallId,
+            input: part.input || part.args || {},
+          });
+        }
+      }
+    }
+
+    return { textContent, toolCalls };
   }
 }

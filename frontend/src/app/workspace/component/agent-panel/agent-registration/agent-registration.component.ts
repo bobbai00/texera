@@ -21,7 +21,19 @@ import { Component, EventEmitter, OnDestroy, OnInit, Output } from "@angular/cor
 import { TexeraCopilotManagerService, ModelType } from "../../../service/copilot/texera-copilot-manager.service";
 import { NotificationService } from "../../../../common/service/notification/notification.service";
 import { WorkflowActionService } from "../../../service/workflow-graph/model/workflow-action.service";
+import { WorkflowPersistService } from "../../../../common/service/workflow-persist/workflow-persist.service";
+import { GuiConfigService } from "../../../../common/service/gui-config.service";
+import { WorkflowContent } from "../../../../common/type/workflow";
 import { Subject, takeUntil } from "rxjs";
+import { NzUploadFile } from "ng-zorro-antd/upload";
+
+/**
+ * Trace content structure (exported from agent conversation)
+ */
+interface TraceContent {
+  response: string;
+  messages: any[];
+}
 
 @Component({
   selector: "texera-agent-registration",
@@ -38,12 +50,18 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
   public isLoadingModels: boolean = false;
   public hasLoadingError: boolean = false;
 
+  // Trace import properties
+  public traceFileList: NzUploadFile[] = [];
+  public traceContent: TraceContent | null = null;
+
   private destroy$ = new Subject<void>();
 
   constructor(
     private copilotManagerService: TexeraCopilotManagerService,
     private notificationService: NotificationService,
-    private workflowActionService: WorkflowActionService
+    private workflowActionService: WorkflowActionService,
+    private workflowPersistService: WorkflowPersistService,
+    private guiConfigService: GuiConfigService
   ) {}
 
   ngOnInit(): void {
@@ -83,7 +101,42 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
   public isCreating: boolean = false;
 
   /**
+   * Handle file upload before it starts.
+   * Parses the JSON file and stores its content.
+   */
+  public beforeUpload = (file: NzUploadFile): boolean => {
+    const reader = new FileReader();
+    reader.onload = (e: ProgressEvent<FileReader>) => {
+      try {
+        const content = JSON.parse(e.target?.result as string) as TraceContent;
+        if (!content.messages || !Array.isArray(content.messages)) {
+          this.notificationService.error("Invalid trace file: missing messages array");
+          return;
+        }
+        this.traceContent = content;
+        this.traceFileList = [file];
+        this.notificationService.success(`Trace loaded: ${content.messages.length} messages`);
+      } catch (error) {
+        this.notificationService.error("Invalid JSON file");
+        this.traceContent = null;
+        this.traceFileList = [];
+      }
+    };
+    reader.readAsText(file as unknown as File);
+    return false; // Prevent auto upload
+  };
+
+  /**
+   * Clear the loaded trace.
+   */
+  public clearTrace(): void {
+    this.traceContent = null;
+    this.traceFileList = [];
+  }
+
+  /**
    * Create a new agent with the selected model type.
+   * If a trace is loaded, creates a new workflow and initiates replay.
    */
   public createAgent(): void {
     if (!this.selectedModelType || this.isCreating) {
@@ -92,26 +145,99 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
 
     this.isCreating = true;
 
+    // If trace is loaded, create a new workflow and then create agent with replay
+    if (this.traceContent) {
+      this.createAgentWithReplay();
+      return;
+    }
+
+    // Normal agent creation (no trace)
     // Get current workflow ID for delegate mode
     const workflowMetadata = this.workflowActionService.getWorkflowMetadata();
     const workflowId = workflowMetadata?.wid;
 
     this.copilotManagerService
-      .createAgent(this.selectedModelType, this.customAgentName || undefined, this.isBaselineMode, workflowId)
+      .createAgent(this.selectedModelType!, this.customAgentName || undefined, this.isBaselineMode, workflowId)
       .pipe(takeUntil(this.destroy$))
       .subscribe({
         next: agentInfo => {
           this.agentCreated.emit(agentInfo.id);
-          this.selectedModelType = null;
-          this.customAgentName = "";
-          this.isBaselineMode = false;
-          this.isCreating = false;
+          this.resetForm();
         },
         error: (error: unknown) => {
           this.notificationService.error(`Failed to create agent: ${error}`);
           this.isCreating = false;
         },
       });
+  }
+
+  /**
+   * Create a new workflow and agent, then initiate trace replay.
+   */
+  private createAgentWithReplay(): void {
+    // Generate workflow name
+    const workflowName = `Imported - ${new Date().toISOString().split("T")[0]}`;
+
+    // Create empty workflow content
+    const emptyWorkflowContent: WorkflowContent = {
+      operators: [],
+      commentBoxes: [],
+      links: [],
+      operatorPositions: {},
+      settings: {
+        dataTransferBatchSize: this.guiConfigService.env.defaultDataTransferBatchSize,
+      },
+    };
+
+    // Step 1: Create a new empty workflow
+    this.workflowPersistService
+      .createWorkflow(emptyWorkflowContent, workflowName)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: createdWorkflow => {
+          const workflowId = createdWorkflow.workflow.wid;
+
+          // Step 2: Create agent bound to the new workflow
+          this.copilotManagerService
+            .createAgent(this.selectedModelType!, this.customAgentName || undefined, this.isBaselineMode, workflowId)
+            .pipe(takeUntil(this.destroy$))
+            .subscribe({
+              next: agentInfo => {
+                // Step 3: Activate agent and initiate replay
+                this.copilotManagerService.activateAgent(agentInfo.id);
+
+                // Small delay to ensure WebSocket is connected
+                setTimeout(() => {
+                  if (this.traceContent) {
+                    this.copilotManagerService.sendReplayMessage(agentInfo.id, this.traceContent);
+                  }
+                  this.agentCreated.emit(agentInfo.id);
+                  this.resetForm();
+                }, 500);
+              },
+              error: (error: unknown) => {
+                this.notificationService.error(`Failed to create agent: ${error}`);
+                this.isCreating = false;
+              },
+            });
+        },
+        error: (error: unknown) => {
+          this.notificationService.error(`Failed to create workflow: ${error}`);
+          this.isCreating = false;
+        },
+      });
+  }
+
+  /**
+   * Reset the form after successful creation.
+   */
+  private resetForm(): void {
+    this.selectedModelType = null;
+    this.customAgentName = "";
+    this.isBaselineMode = false;
+    this.traceContent = null;
+    this.traceFileList = [];
+    this.isCreating = false;
   }
 
   public canCreate(): boolean {

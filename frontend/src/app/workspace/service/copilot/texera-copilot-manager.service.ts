@@ -894,6 +894,41 @@ export class TexeraCopilotManagerService {
   }
 
   /**
+   * Send a replay message to an agent via WebSocket.
+   * This initiates trace replay, where the agent executes tool calls step by step
+   * to reconstruct the workflow.
+   * @param agentId - The agent to send the replay message to
+   * @param trace - The trace content containing messages to replay
+   */
+  public sendReplayMessage(agentId: string, trace: { response: string; messages: any[] }): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      this.notificationService.error(`Agent with ID ${agentId} not found`);
+      return;
+    }
+
+    const tracking = this.agentStateTracking.get(agentId);
+    if (!tracking || !tracking.websocket || tracking.websocket.readyState !== WebSocket.OPEN) {
+      this.notificationService.error("WebSocket connection not available for replay");
+      return;
+    }
+
+    // Send replay message via WebSocket
+    const wsMessage = {
+      type: "replay",
+      trace: trace,
+    };
+
+    try {
+      tracking.websocket.send(JSON.stringify(wsMessage));
+      console.log(`[CopilotManager] Sent replay message to agent ${agentId}: ${trace.messages.length} messages`);
+    } catch (error) {
+      console.error("[CopilotManager] Failed to send replay message:", error);
+      this.notificationService.error("Failed to send replay message");
+    }
+  }
+
+  /**
    * Get the ReActSteps observable stream.
    */
   public getReActStepsObservable(agentId: string): Observable<ReActStep[]> {
