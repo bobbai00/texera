@@ -25,7 +25,6 @@
 import { z } from "zod";
 import { tool } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
-import type { OperatorPredicate, OperatorLink } from "../types/workflow";
 import { autoLayoutWorkflow } from "../workflow/auto-layout";
 import { WorkflowUtilService } from "../workflow/workflow-util";
 import {
@@ -63,42 +62,6 @@ interface CodeBlockParseResult {
   functionName: string;
   parameters: string[];
   numInputPorts: number;
-}
-
-/**
- * Python reserved keywords that cannot be used as variable names.
- */
-const PYTHON_KEYWORDS = new Set([
-  "False", "None", "True", "and", "as", "assert", "async", "await",
-  "break", "class", "continue", "def", "del", "elif", "else", "except",
-  "finally", "for", "from", "global", "if", "import", "in", "is",
-  "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
-  "while", "with", "yield"
-]);
-
-/**
- * Validates if a string is a valid Python variable name.
- * Returns null if valid, error message if invalid.
- */
-function validatePythonVariableName(name: string): string | null {
-  if (!name || name.length === 0) {
-    return "Variable name cannot be empty";
-  }
-
-  // Check if it matches Python identifier pattern: starts with letter or underscore,
-  // followed by letters, digits, or underscores
-  const validPattern = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-  if (!validPattern.test(name)) {
-    return `'${name}' is not a valid Python variable name. ` +
-      `Must start with a letter or underscore, followed by letters, digits, or underscores.`;
-  }
-
-  // Check if it's a Python keyword
-  if (PYTHON_KEYWORDS.has(name)) {
-    return `'${name}' is a Python reserved keyword and cannot be used as a variable name.`;
-  }
-
-  return null; // Valid
 }
 
 /**
@@ -170,23 +133,6 @@ function parseCodeBlock(code: string): CodeBlockParseResult | { error: string } 
 }
 
 /**
- * Find an operator by its ID (variable name) in the workflow.
- * Returns the operator if found, undefined otherwise.
- */
-function findOperatorByName(workflowState: WorkflowState, operatorName: string): OperatorPredicate | undefined {
-  return workflowState.getOperator(operatorName);
-}
-
-/**
- * Format operator content for error messages.
- */
-function formatOperatorContent(operator: OperatorPredicate): string {
-  const props = operator.operatorProperties || {};
-  const code = props.code ? `\n  code: ${props.code.substring(0, 100)}...` : "";
-  return `{type: ${operator.operatorType}, displayName: "${operator.customDisplayName || operator.operatorID}"${code}}`;
-}
-
-/**
  * Validates Python syntax using the Python interpreter.
  * Returns null if valid, error message if invalid.
  */
@@ -249,74 +195,100 @@ export function createAddCodeOperatorTool(
   return tool({
     description: `Add a Python function as an operator to the dataflow.
 
-IMPORTANT RULES:
-1. operatorId is REQUIRED - this becomes the operator's unique ID
-2. Function name MUST be exactly "load" or "process"
-3. For process(): each parameter MUST match an existing operator's operatorId - links are auto-created
-
-## Parameters:
-- operatorId: REQUIRED. The unique ID for this operator (must be valid Python variable name)
-- code: The Python function code
-- summary: Optional display name
+IMPORTANT: The function name MUST be exactly "load" or "process" following the below signatures.
 
 ## def load() -> pd.DataFrame
 Purpose: Load data from files or external sources. No input ports.
+- Use when: Reading the metadata of the files from the disk
 - File I/O is allowed
-- Do NOT do data processing, ONLY data loading
+- Do NOT do data processing in this operator, ONLY do data loading
+- Do NOT use print statements
+- Do NOT load the entire large data files directly, load its metadata and samples for understanding; Only load the entire file during processing time
+Examples:
 
-Example: operatorId="roman_cities"
+  # Load JSON file metadata and structure
   def load() -> pd.DataFrame:
-      return pd.read_csv('/path/to/roman_cities.csv')
+      import json
+      path = '/path/to/fees.json'
+      with open(path, 'r') as f:
+          data = json.load(f)
+      if isinstance(data, dict):
+          return pd.DataFrame([{
+              'file': path,
+              'type': 'dict',
+              'keys': list(data.keys())[:10],
+              'sample': str(data)[:500]
+          }])
+      elif isinstance(data, list):
+          return pd.DataFrame([{
+              'file': path,
+              'type': 'list',
+              'length': len(data),
+              'first_item': data[0] if data else None
+          }])
 
-Example: operatorId="world_cities"
+  # Load sample and metadata for a large CSV file
   def load() -> pd.DataFrame:
-      return pd.read_csv('/path/to/worldcities.csv')
+      import os
+      path = '/path/to/large_data.csv'
+      file_size = os.path.getsize(path)
+      sample = pd.read_csv(path, nrows=5)
+      return pd.DataFrame([{
+          'file': path,
+          'size_bytes': file_size,
+          'columns': list(sample.columns),
+          'sample_rows': sample.to_dict()
+      }])
+
+  # Load first 10 records from a CSV file
+  def load() -> pd.DataFrame:
+      return pd.read_csv('/path/to/data.csv', nrows=10)
+
+  # Load entire CSV file for downstream processing
+  def load() -> pd.DataFrame:
+      return pd.read_csv('/path/to/data.csv')
+
+  # Load md file and emit the dataframe
+  def load() -> pd.DataFrame:
+      with open('/path/to/readme.md', 'r') as f:
+          content = f.read()
+      return pd.DataFrame([{'filename': 'readme.md', 'content': content}])
+
+  # Search for keywords in a file using system command and show matching lines
+  def load() -> pd.DataFrame:
+      import subprocess
+      result = subprocess.run(
+          ['grep', '-n', 'keyword', '/path/to/file.txt'],
+          capture_output=True, text=True
+      )
+      lines = result.stdout.strip().split('\\n') if result.stdout else []
+      return pd.DataFrame([{'line': l} for l in lines])
 
 ## def process(input1, input2, ...) -> pd.DataFrame
-Purpose: Transform input data. Each parameter references an existing operator by its operatorId.
-- CRITICAL: Each parameter name MUST match an existing operator's operatorId
-- Links from input operators to this operator are AUTO-CREATED
-- File IO is FORBIDDEN
+Purpose: Transform input data. Each parameter becomes an input port and represents the dataframe from that input port.
+- Use when: Filtering, joining, aggregating, or transforming data from upstream operators
+- IMPORTANT: Focus SOLELY on transforming the variables declared in the parameter list
+- File IO is FORBIDDEN - all data must come from input parameters
+- Do NOT access external data sources, files, or APIs
+- Do NOT use print statements
+- Return exactly ONE DataFrame
 
-Example: operatorId="filtered_users" (requires operator "users" to exist)
+Examples:
+  # process a single input dataframe
   def process(users) -> pd.DataFrame:
-      return users[users['age'] > 18]
-  # Creates link: users-->filtered_users
+      filtered = users[users['age'] > 18]
+      return filtered[['name', 'age', 'city']]
 
-Example: operatorId="nearby_cities" (requires "roman_cities" AND "world_cities")
-  def process(roman_cities, world_cities) -> pd.DataFrame:
-      return world_cities[world_cities['population'] > 100000]
-  # Creates links: roman_cities-->nearby_cities, world_cities-->nearby_cities
-
-ERROR CONDITIONS:
-- If operatorId is not a valid Python variable name: error with details
-- If operatorId already exists as an operator: error with existing operator details
-- If any process() parameter doesn't match an existing operator: error listing missing operators`,
+  # process two input dataframes from two input ports
+  def process(orders, customers) -> pd.DataFrame:
+      return orders.merge(customers, on='customer_id')`,
     inputSchema: z.object({
-      operatorId: z.string().describe(
-        "REQUIRED: The unique ID for this operator (must be a valid Python variable name). " +
-        "For process() functions, other operators will reference this ID as an input parameter."
-      ),
       code: z.string().describe("Python function code defining either a load() or process(...) function"),
       summary: z.string().optional().describe("Brief summary that becomes the operator's display name"),
     }),
-    execute: async (args: { operatorId: string; code: string; summary?: string }) => {
+    execute: async (args: { code: string; summary?: string }) => {
       try {
-        const { operatorId, code, summary } = args;
-
-        // Validate operatorId is a valid Python variable name
-        const nameValidationError = validatePythonVariableName(operatorId);
-        if (nameValidationError) {
-          return createErrorResult(`Invalid operatorId: ${nameValidationError}`);
-        }
-
-        // Check if operator with this name already exists
-        const existingOperator = findOperatorByName(workflowState, operatorId);
-        if (existingOperator) {
-          return createErrorResult(
-            `'${operatorId}' already exists: ${formatOperatorContent(existingOperator)}`
-          );
-        }
+        const { code, summary } = args;
 
         // Parse the code block to determine type and parameters
         const parseResult = parseCodeBlock(code);
@@ -324,29 +296,8 @@ ERROR CONDITIONS:
           return createErrorResult(parseResult.error);
         }
 
-        const { type, functionName, numInputPorts, parameters } = parseResult;
+        const { type, functionName, numInputPorts } = parseResult;
         const operatorType = type === "DataLoading" ? DATA_LOADING_OPERATOR_TYPE : DATA_PROCESSING_OPERATOR_TYPE;
-
-        // For process() functions: validate that all input parameters exist as operators
-        const inputOperators: OperatorPredicate[] = [];
-        if (type === "DataProcessing" && parameters.length > 0) {
-          const missingParams: string[] = [];
-          for (const param of parameters) {
-            const inputOp = findOperatorByName(workflowState, param);
-            if (!inputOp) {
-              missingParams.push(param);
-            } else {
-              inputOperators.push(inputOp);
-            }
-          }
-
-          if (missingParams.length > 0) {
-            return createErrorResult(
-              `Input parameter(s) not found as operators: [${missingParams.join(", ")}]. ` +
-              `Each parameter in def process(${parameters.join(", ")}) must reference an existing operator by its variable name.`
-            );
-          }
-        }
 
         // Check if operator type is available
         const schemaEntry = operatorSchemas.get(operatorType);
@@ -368,14 +319,13 @@ ERROR CONDITIONS:
 
         const beforeContent = workflowState.getWorkflowContent();
 
-        // Use summary as display name if provided, otherwise use operatorId
-        const displayName = summary || operatorId;
+        // Use summary as display name if provided, otherwise use function name
+        const displayName = summary || functionName;
 
-        // Create the operator with the code property and custom operator ID
+        // Create the operator with the code property
         let operator = workflowUtil.getNewOperatorPredicate(operatorType, displayName);
         operator = {
           ...operator,
-          operatorID: operatorId, // Use variable name as operator ID
           operatorProperties: {
             ...operator.operatorProperties,
             code: code,
@@ -386,37 +336,13 @@ ERROR CONDITIONS:
 
         // Set up input ports for DataProcessing operators
         if (type === "DataProcessing" && numInputPorts > 1) {
-          workflowState.updateOperatorInputPorts(operatorId, numInputPorts);
+          workflowState.updateOperatorInputPorts(operator.operatorID, numInputPorts);
         }
 
-        // Auto-create links from input operators to this new operator
-        const createdLinkIds: string[] = [];
-        if (type === "DataProcessing" && inputOperators.length > 0) {
-          for (let i = 0; i < inputOperators.length; i++) {
-            const sourceOp = inputOperators[i];
-            const linkId = `${sourceOp.operatorID}-->${operatorId}`;
-
-            const link: OperatorLink = {
-              linkID: linkId,
-              source: {
-                operatorID: sourceOp.operatorID,
-                portID: sourceOp.outputPorts[0]?.portID || "output-0",
-              },
-              target: {
-                operatorID: operatorId,
-                portID: `input-${i}`,
-              },
-            };
-
-            workflowState.addLink(link);
-            createdLinkIds.push(linkId);
-          }
-        }
-
-        // Auto-layout the workflow after adding the operator and links
+        // Auto-layout the workflow after adding the operator
         autoLayoutWorkflow(workflowState);
 
-        const updatedOperator = workflowState.getOperator(operatorId);
+        const updatedOperator = workflowState.getOperator(operator.operatorID);
         const afterContent = workflowState.getWorkflowContent();
 
         // Create agent action for tracking
@@ -424,8 +350,8 @@ ERROR CONDITIONS:
           context.agentActionManager.createAgentAction(
             context.agentId,
             context.agentName || `Agent-${context.agentId}`,
-            summary || `Added ${type} code operator: ${operatorId}`,
-            { add: { operatorIds: [operatorId], linkIds: createdLinkIds } },
+            summary || `Added ${type} code operator: ${functionName}`,
+            { add: { operatorIds: [operator.operatorID], linkIds: [] } },
             context.workflowMetadata || {},
             beforeContent,
             afterContent
@@ -434,13 +360,9 @@ ERROR CONDITIONS:
 
         const finalOperator = updatedOperator || operator;
 
-        // Build result message
-        let resultMsg = formatAddOperatorResult(operatorId, finalOperator.inputPorts.length, finalOperator.outputPorts.length);
-        if (createdLinkIds.length > 0) {
-          resultMsg += `\nAuto-created links: [${createdLinkIds.join(", ")}]`;
-        }
-
-        return createToolResult(resultMsg);
+        return createToolResult(
+          formatAddOperatorResult(operator.operatorID, finalOperator.inputPorts.length, finalOperator.outputPorts.length)
+        );
       } catch (error: any) {
         return createErrorResult(error.message || String(error));
       }
@@ -458,8 +380,8 @@ export function createModifyCodeOperatorTool(workflowState: WorkflowState, conte
       "Modify the Python code of an existing DataProcessing or DataLoading operator. " +
       "The function name MUST be exactly 'load' or 'process'. " +
       "The new code must be of the same type as the existing operator. " +
-      "For def process(): each parameter MUST match an existing operator's ID. " +
-      "Links are automatically updated based on parameters.",
+      "For def process function: focus SOLELY on the parameter variables (no file I/O), " +
+      "the number of input ports will be updated based on function parameters.",
     inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to modify"),
       code: z.string().describe("New Python function code (must match the operator type - load() or process(...))"),
@@ -493,7 +415,7 @@ export function createModifyCodeOperatorTool(workflowState: WorkflowState, conte
           return createErrorResult(parseResult.error);
         }
 
-        const { type: newType, numInputPorts, parameters } = parseResult;
+        const { type: newType, numInputPorts } = parseResult;
 
         // Check type consistency
         const expectedType = isDataLoading ? "DataLoading" : "DataProcessing";
@@ -503,27 +425,6 @@ export function createModifyCodeOperatorTool(workflowState: WorkflowState, conte
               `but the provided code is for ${newType}. ` +
               `Use a ${expectedType === "DataLoading" ? "load()" : "process(...)"} function.`
           );
-        }
-
-        // For process() functions: validate that all input parameters exist as operators
-        const inputOperators: OperatorPredicate[] = [];
-        if (isDataProcessing && parameters.length > 0) {
-          const missingParams: string[] = [];
-          for (const param of parameters) {
-            const inputOp = findOperatorByName(workflowState, param);
-            if (!inputOp) {
-              missingParams.push(param);
-            } else {
-              inputOperators.push(inputOp);
-            }
-          }
-
-          if (missingParams.length > 0) {
-            return createErrorResult(
-              `Input parameter(s) not found as operators: [${missingParams.join(", ")}]. ` +
-              `Each parameter in def process(${parameters.join(", ")}) must reference an existing operator by its ID.`
-            );
-          }
         }
 
         // Validate Python syntax
@@ -551,43 +452,6 @@ export function createModifyCodeOperatorTool(workflowState: WorkflowState, conte
           }
         }
 
-        // Handle link updates for DataProcessing operators
-        const deletedLinkIds: string[] = [];
-        const createdLinkIds: string[] = [];
-
-        if (isDataProcessing) {
-          // Get current incoming links to this operator
-          const currentLinks = workflowState.getLinksConnectedToOperator(operatorId)
-            .filter(link => link.target.operatorID === operatorId);
-
-          // Delete all existing incoming links
-          for (const link of currentLinks) {
-            workflowState.deleteLink(link.linkID);
-            deletedLinkIds.push(link.linkID);
-          }
-
-          // Create new links based on parameters
-          for (let i = 0; i < inputOperators.length; i++) {
-            const sourceOp = inputOperators[i];
-            const linkId = `${sourceOp.operatorID}-->${operatorId}`;
-
-            const link: OperatorLink = {
-              linkID: linkId,
-              source: {
-                operatorID: sourceOp.operatorID,
-                portID: sourceOp.outputPorts[0]?.portID || "output-0",
-              },
-              target: {
-                operatorID: operatorId,
-                portID: `input-${i}`,
-              },
-            };
-
-            workflowState.addLink(link);
-            createdLinkIds.push(linkId);
-          }
-        }
-
         const afterContent = workflowState.getWorkflowContent();
 
         // Create agent action for tracking
@@ -596,27 +460,14 @@ export function createModifyCodeOperatorTool(workflowState: WorkflowState, conte
             context.agentId,
             context.agentName || `Agent-${context.agentId}`,
             summary || `Modified code operator: ${operatorId}`,
-            {
-              modify: { operatorIds: [operatorId] },
-              add: { operatorIds: [], linkIds: createdLinkIds },
-              delete: { operatorIds: [], linkIds: deletedLinkIds },
-            },
+            { modify: { operatorIds: [operatorId] } },
             context.workflowMetadata || {},
             beforeContent,
             afterContent
           );
         }
 
-        // Build result message
-        let resultMsg = formatModifyOperatorResult(operatorId);
-        if (deletedLinkIds.length > 0) {
-          resultMsg += `\nDeleted links: [${deletedLinkIds.join(", ")}]`;
-        }
-        if (createdLinkIds.length > 0) {
-          resultMsg += `\nCreated links: [${createdLinkIds.join(", ")}]`;
-        }
-
-        return createToolResult(resultMsg);
+        return createToolResult(formatModifyOperatorResult(operatorId));
       } catch (error: any) {
         return createErrorResult(formatOperatorError(args.operatorId, error.message || String(error)));
       }

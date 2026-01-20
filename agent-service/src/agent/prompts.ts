@@ -61,66 +61,66 @@ Task: "I have customers.csv and orders.csv files. Find the top 5 premium custome
 
 Thought: The task mentions "premium customers" and "recent purchases" - these are abstract concepts that may have specific definitions. I should first check if there's documentation that defines these terms.
 Tool calls:
-1. addOperator: operatorId="readme", code=\`def load() -> pd.DataFrame:
+1. addOperator: code=\`def load() -> pd.DataFrame:
        with open('/data/readme.md', 'r') as f:
            content = f.read()
        return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
    summary="Load documentation"
-2. executeWorkflow: operatorId="readme"
+2. executeWorkflow: operatorId="<readme-loader-id>"
 
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
 Thought: Now I understand both the definitions and the schema. I'll build the pipeline: load data → join → identify premium customers (total spending >= $1000) → filter recent purchases (last 30 days) → get top 5.
 Tool calls:
-1. addOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
+1. addOperator: code=\`def load() -> pd.DataFrame:
        return pd.read_csv('/data/customers.csv')\`
    summary="Load customers"
-2. addOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
+2. addOperator: code=\`def load() -> pd.DataFrame:
        return pd.read_csv('/data/orders.csv')\`
    summary="Load orders"
-3. addOperator: operatorId="customer_orders", code=\`def process(customers, orders) -> pd.DataFrame:
+3. addOperator: code=\`def process(customers, orders) -> pd.DataFrame:
        return customers.merge(orders, on='customer_id', how='inner')\`
    summary="Join customers orders"
-   # Links auto-created: customers-->customer_orders, orders-->customer_orders
-4. executeWorkflow: operatorId="customer_orders"
+4. addLink: sourceOperatorId="<customers-loader-id>", targetOperatorId="<join-id>", targetPortIndex=0
+5. addLink: sourceOperatorId="<orders-loader-id>", targetOperatorId="<join-id>", targetPortIndex=1
+6. executeWorkflow: operatorId="<join-id>"
 
 Observation: Joined data has 15,000 rows with columns ['customer_id', 'name', 'email', 'signup_date', 'order_id', 'amount', 'order_date']
 
 Thought: Good, the join worked. Now I'll add a filter for last 30 days, linking to the existing join result.
 Tool calls:
-1. addOperator: operatorId="recent_orders", code=\`def process(customer_orders) -> pd.DataFrame:
+1. addOperator: code=\`def process(data) -> pd.DataFrame:
        from datetime import datetime, timedelta
        cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-       return customer_orders[customer_orders['order_date'] >= cutoff]\`
+       return data[data['order_date'] >= cutoff]\`
    summary="Filter last 30 days"
-   # Link auto-created: customer_orders-->recent_orders
-2. executeWorkflow: operatorId="recent_orders"
+2. addLink: sourceOperatorId="<join-id>", targetOperatorId="<filter-id>", targetPortIndex=0
+3. executeWorkflow: operatorId="<filter-id>"
 
 Observation: Filtered to 1,247 orders in the last 30 days.
 
 Thought: Now I'll aggregate by customer and get top 5, linking to the filtered result.
 Tool calls:
-1. addOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
-       spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+1. addOperator: code=\`def process(data) -> pd.DataFrame:
+       spending = data.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
        spending.columns = ['customer_id', 'name', 'total_spending']
        return spending.nlargest(5, 'total_spending')\`
    summary="Top 5 spenders"
-   # Link auto-created: recent_orders-->top5
-2. executeWorkflow: operatorId="top5"
+2. addLink: sourceOperatorId="<filter-id>", targetOperatorId="<top5-id>", targetPortIndex=0
+3. executeWorkflow: operatorId="<top5-id>"
 
 Observation: Top 5 customers: 1) Alice ($12,450), 2) Bob ($9,820), 3) Carol ($8,150), 4) David ($7,340), 5) Eve ($6,290)
 
 Thought: Wait, I need to verify these are all "premium customers" (total spending >= $1000). Looking at the results, all have spending > $1000, but my current logic only filters recent purchases and gets top 5 - it doesn't explicitly enforce the premium threshold. I should modify the aggregation operator to add the premium filter for correctness.
 Tool calls:
-1. modifyOperator: operatorId="top5"
-   code=\`def process(recent_orders) -> pd.DataFrame:
-       spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+1. modifyOperator: operatorId="<top5-id>"
+   code=\`def process(data) -> pd.DataFrame:
+       spending = data.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
        spending.columns = ['customer_id', 'name', 'total_spending']
        premium = spending[spending['total_spending'] >= 1000]  # Filter premium customers
        return premium.nlargest(5, 'total_spending')\`
    summary="Top 5 premium spenders"
-   # Links auto-updated based on parameters
-2. executeWorkflow: operatorId="top5"
+2. executeWorkflow: operatorId="<top5-id>"
 
 Observation: Top 5 premium customers: 1) Alice ($12,450), 2) Bob ($9,820), 3) Carol ($8,150), 4) David ($7,340), 5) Eve ($6,290)
 
