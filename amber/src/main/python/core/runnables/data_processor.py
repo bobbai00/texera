@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import datetime
 import os
 import sys
 import traceback
@@ -334,6 +335,7 @@ class DataProcessor(Runnable, Stoppable):
         for column_name in df.columns:
             column = df[column_name]
             dtype = column.dtype
+            logger.info(f"Pandas {column_name}; dtype: {dtype}")
 
             # For object dtype, sample first non-null value to distinguish
             # between STRING, LIST, and STRUCT
@@ -348,30 +350,58 @@ class DataProcessor(Runnable, Stoppable):
 
     def _infer_type_from_object_column(self, column: pandas.Series) -> AttributeType:
         """
-        Infer AttributeType from an object dtype column by sampling values.
+        Infer AttributeType from an object dtype column.
 
-        Object dtype in pandas is used for str, list, dict, and other Python objects.
-        We sample the first non-null value to determine the actual type.
+        Object dtype in pandas is used for various cases:
+        1. Basic types mixed with None (e.g., [1, None, 2] -> object dtype)
+        2. String columns
+        3. Complex types like list/dict
+        4. Truly mixed types (e.g., [1, 'hello', 3.5])
+
+        This method uses pandas' infer_dtype for basic types (which handles nulls
+        correctly), and samples values for list/dict detection. Falls back to
+        STRING for truly mixed types as the safest option.
 
         :param column: A pandas Series with object dtype
         :return: Inferred AttributeType
         """
-        # Get non-null values
-        non_null = column.dropna()
+        # Use pandas' infer_dtype which scans the column and handles nulls
+        inferred = pandas.api.types.infer_dtype(column, skipna=True)
 
+        # Basic types - pandas can reliably detect these even with nulls
+        if inferred == 'integer':
+            return AttributeType.LONG
+        elif inferred == 'floating':
+            return AttributeType.DOUBLE
+        elif inferred == 'boolean':
+            return AttributeType.BOOL
+        elif inferred == 'string':
+            return AttributeType.STRING
+        elif inferred == 'bytes':
+            return AttributeType.BINARY
+        elif inferred in ('datetime', 'datetime64'):
+            return AttributeType.TIMESTAMP
+        elif inferred == 'mixed-integer-float':
+            # Floats can represent ints, so use DOUBLE
+            return AttributeType.DOUBLE
+
+        # For 'mixed' or other cases, check if it's homogeneous list/dict
+        # by sampling non-null values
+        non_null = column.dropna()
         if len(non_null) == 0:
-            # All values are null, default to STRING
             return AttributeType.STRING
 
-        # Sample first non-null value
-        first_value = non_null.iloc[0]
+        # Sample up to 100 values to check for list/dict consistency
+        sample_size = min(100, len(non_null))
+        sample = non_null.head(sample_size)
+        types_seen = set(type(v) for v in sample)
 
-        if isinstance(first_value, list):
+        if types_seen == {list}:
             return AttributeType.LIST
-        elif isinstance(first_value, dict):
+        elif types_seen == {dict}:
             return AttributeType.STRUCT
         else:
-            # Default to STRING for str and other types
+            # Truly mixed or unknown types - STRING is the safest option
             return AttributeType.STRING
 
     def _map_pandas_dtype_to_attribute_type(self, dtype) -> AttributeType:

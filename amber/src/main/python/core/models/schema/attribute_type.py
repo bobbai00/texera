@@ -111,3 +111,87 @@ FROM_PYOBJECT_MAPPING = {
     list: AttributeType.LIST,
     dict: AttributeType.STRUCT,
 }
+
+
+def coerce_value_to_type(value, target_type: AttributeType):
+    """
+    Coerce a value to match the target AttributeType.
+
+    This is useful when schema inference doesn't match the actual data types,
+    allowing values to be converted rather than causing validation errors.
+
+    :param value: The value to coerce
+    :param target_type: The target AttributeType
+    :return: The coerced value
+    :raises ValueError: If the value cannot be coerced to the target type
+    """
+    import json
+
+    if value is None:
+        return None
+
+    expected_py_type = TO_PYOBJECT_MAPPING.get(target_type)
+    if expected_py_type is None:
+        return value
+
+    # Already the correct type
+    if isinstance(value, expected_py_type):
+        return value
+
+    try:
+        if target_type == AttributeType.STRING:
+            if isinstance(value, (list, dict)):
+                return json.dumps(value)
+            return str(value)
+
+        elif target_type == AttributeType.BOOL:
+            if isinstance(value, str):
+                lower = value.lower()
+                if lower in ("true", "1", "yes"):
+                    return True
+                elif lower in ("false", "0", "no", ""):
+                    return False
+            return bool(value)
+
+        elif target_type in (AttributeType.INT, AttributeType.LONG):
+            if isinstance(value, bool):
+                # bool is subclass of int, but we want explicit conversion
+                return 1 if value else 0
+            return int(value)
+
+        elif target_type == AttributeType.DOUBLE:
+            return float(value)
+
+        elif target_type == AttributeType.BINARY:
+            if isinstance(value, str):
+                return value.encode("utf-8")
+            return bytes(value)
+
+        elif target_type == AttributeType.TIMESTAMP:
+            if isinstance(value, str):
+                # Try parsing ISO format
+                return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            elif isinstance(value, (int, float)):
+                # Assume Unix timestamp
+                return datetime.datetime.fromtimestamp(value)
+            return value
+
+        elif target_type == AttributeType.LIST:
+            if isinstance(value, str):
+                # Try parsing as JSON
+                return json.loads(value)
+            return list(value)
+
+        elif target_type == AttributeType.STRUCT:
+            if isinstance(value, str):
+                # Try parsing as JSON
+                return json.loads(value)
+            return dict(value)
+
+        return value
+
+    except (ValueError, TypeError, json.JSONDecodeError) as e:
+        raise ValueError(
+            f"Cannot coerce value {value!r} ({type(value).__name__}) "
+            f"to {target_type}: {e}"
+        )

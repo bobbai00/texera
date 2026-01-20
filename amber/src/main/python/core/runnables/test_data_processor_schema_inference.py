@@ -428,3 +428,234 @@ class TestDataFrameVsTupleInference:
 
         # Should be DOUBLE because pandas sees the whole column
         assert schema.get_attr_type("mixed") == AttributeType.DOUBLE
+
+
+class TestInferTypeFromObjectColumn:
+    """Tests for the _infer_type_from_object_column method.
+
+    This method uses pandas.api.types.infer_dtype to detect the actual type
+    of values in object dtype columns, properly handling nulls and detecting
+    truly mixed types.
+    """
+
+    @pytest.fixture
+    def data_processor(self):
+        """Create a DataProcessor with a minimal mock context."""
+        mock_context = MagicMock()
+        return DataProcessor(mock_context)
+
+    # ==================== Basic types in object dtype columns ====================
+    #
+    # Note: This method is only called for columns with dtype='object'.
+    # When pandas has [1, None, 2], it converts to float64, NOT object.
+    # But when loaded from JSON or other sources, basic types can end up
+    # in object dtype columns. We test those scenarios here.
+
+    def test_integer_in_object_column(self, data_processor):
+        """Integer values in object dtype column should be detected as LONG.
+
+        Note: To create an object dtype column with integers, we need to
+        explicitly set dtype=object or load from JSON-like sources.
+        """
+        # Force object dtype to simulate JSON loading
+        column = pd.Series([1, 2, 3], dtype=object)
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.LONG
+
+    def test_float_in_object_column(self, data_processor):
+        """Float values in object dtype column should be detected as DOUBLE."""
+        column = pd.Series([1.5, 2.5, 3.5], dtype=object)
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.DOUBLE
+
+    def test_boolean_with_nulls(self, data_processor):
+        """Boolean column with None values should be detected as BOOL.
+
+        Unlike int/float, booleans with None stay as object dtype in pandas.
+        """
+        column = pd.Series([True, None, False, None, True])
+        # Verify it's actually object dtype
+        assert column.dtype == object
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.BOOL
+
+    def test_string_with_nulls(self, data_processor):
+        """String column with None values should be detected as STRING."""
+        column = pd.Series(["hello", None, "world", None, "test"])
+        assert column.dtype == object
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRING
+
+    def test_bytes_with_nulls(self, data_processor):
+        """Bytes column with None values should be detected as BINARY."""
+        column = pd.Series([b"hello", None, b"world", None])
+        assert column.dtype == object
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.BINARY
+
+    def test_datetime_in_object_column(self, data_processor):
+        """Datetime values in object dtype column should be detected as TIMESTAMP."""
+        # When datetimes are mixed with None in certain ways, they can be object dtype
+        column = pd.Series([
+            datetime.datetime(2023, 1, 1),
+            None,
+            datetime.datetime(2023, 1, 2),
+            None
+        ], dtype=object)
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.TIMESTAMP
+
+    # ==================== List and Struct types ====================
+
+    def test_list_column(self, data_processor):
+        """Column of lists should be detected as LIST."""
+        column = pd.Series([[1, 2], [3, 4], [5, 6]])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.LIST
+
+    def test_list_with_nulls(self, data_processor):
+        """List column with None values should be detected as LIST."""
+        column = pd.Series([[1, 2], None, [3, 4], None, [5, 6]])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.LIST
+
+    def test_dict_column(self, data_processor):
+        """Column of dicts should be detected as STRUCT."""
+        column = pd.Series([{"a": 1}, {"b": 2}, {"c": 3}])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRUCT
+
+    def test_dict_with_nulls(self, data_processor):
+        """Dict column with None values should be detected as STRUCT."""
+        column = pd.Series([{"a": 1}, None, {"b": 2}, None])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRUCT
+
+    def test_empty_list_column(self, data_processor):
+        """Column of empty lists should be detected as LIST."""
+        column = pd.Series([[], [], []])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.LIST
+
+    def test_empty_dict_column(self, data_processor):
+        """Column of empty dicts should be detected as STRUCT."""
+        column = pd.Series([{}, {}, {}])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRUCT
+
+    # ==================== Mixed types (should return STRING) ====================
+
+    def test_mixed_int_and_string(self, data_processor):
+        """Mixed int and string should fall back to STRING."""
+        column = pd.Series([1, "hello", 2, "world"])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRING
+
+    def test_mixed_int_float_string(self, data_processor):
+        """Mixed int, float, and string should fall back to STRING."""
+        column = pd.Series([1, 2.5, "hello"])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRING
+
+    def test_mixed_list_and_dict(self, data_processor):
+        """Mixed list and dict should fall back to STRING."""
+        column = pd.Series([[1, 2], {"a": 1}, [3, 4]])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRING
+
+    def test_mixed_list_and_string(self, data_processor):
+        """Mixed list and string should fall back to STRING."""
+        column = pd.Series([[1, 2], "hello", [3, 4]])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRING
+
+    def test_mixed_bool_and_string(self, data_processor):
+        """Mixed bool and string should fall back to STRING."""
+        column = pd.Series([True, "hello", False])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRING
+
+    # ==================== Special cases ====================
+
+    def test_mixed_integer_float(self, data_processor):
+        """Mixed int and float in object column should be detected as DOUBLE."""
+        # Force object dtype to test the method directly
+        column = pd.Series([1, 2.5, 3, 4.5], dtype=object)
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.DOUBLE
+
+    def test_all_nulls(self, data_processor):
+        """Column with all nulls should default to STRING."""
+        column = pd.Series([None, None, None])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRING
+
+    def test_empty_column(self, data_processor):
+        """Empty column should default to STRING."""
+        column = pd.Series([], dtype=object)
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRING
+
+    def test_single_value_integer(self, data_processor):
+        """Single integer value should be detected as LONG."""
+        column = pd.Series([42])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.LONG
+
+    def test_single_value_list(self, data_processor):
+        """Single list value should be detected as LIST."""
+        column = pd.Series([[1, 2, 3]])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.LIST
+
+    # ==================== Real-world JSON data scenarios ====================
+
+    def test_json_boolean_field_with_nulls(self, data_processor):
+        """Simulates is_credit field from JSON: boolean with null values."""
+        # This is the original problem case
+        column = pd.Series([True, False, None, True, None, False])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.BOOL
+
+    def test_json_list_field_with_nulls(self, data_processor):
+        """Simulates merchant_category_code field from JSON: list with nulls."""
+        column = pd.Series([
+            [8000, 8011, 8021],
+            None,
+            [7299, 9399],
+            [],
+            None
+        ])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.LIST
+
+    def test_json_nested_dict_field(self, data_processor):
+        """Simulates a nested object field from JSON."""
+        column = pd.Series([
+            {"name": "Alice", "age": 30},
+            {"name": "Bob", "age": 25},
+            None,
+            {"name": "Charlie", "age": 35}
+        ])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.STRUCT
+
+    def test_large_sample_list_consistency(self, data_processor):
+        """Test that sampling works correctly for large columns of lists."""
+        # Create a column with 200 lists (more than sample size of 100)
+        column = pd.Series([[i, i+1] for i in range(200)])
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.LIST
+
+    def test_large_sample_with_trailing_mixed(self, data_processor):
+        """Test that sampling only checks first 100, so trailing mixed types may not be detected.
+
+        Note: This is a known limitation - we sample first 100 values for performance.
+        If the first 100 are all lists but value 101+ are different types, we still return LIST.
+        """
+        # First 100 are lists, then strings
+        data = [[i] for i in range(100)] + ["string" + str(i) for i in range(50)]
+        column = pd.Series(data)
+        # Since we sample first 100, all are lists, so result is LIST
+        result = data_processor._infer_type_from_object_column(column)
+        assert result == AttributeType.LIST  # Known limitation

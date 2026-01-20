@@ -30,7 +30,7 @@ from pympler import asizeof
 from typing import Any, List, Iterator, Callable
 from typing_extensions import Protocol, runtime_checkable
 
-from .schema.attribute_type import TO_PYOBJECT_MAPPING, AttributeType
+from .schema.attribute_type import TO_PYOBJECT_MAPPING, AttributeType, coerce_value_to_type
 from .schema.field import Field
 from .schema.schema import Schema
 
@@ -289,10 +289,11 @@ class Tuple:
         """
         Safely cast each field value to match the target schema.
         If failed, the value will stay not changed.
-        This current conducts three kinds of casts:
+        This conducts the following casts:
             1. cast NaN to None;
-            2. cast list/dict to native LIST/STRUCT types;
-            3. cast any other unsupported object to bytes (using pickle) - legacy.
+            2. coerce values to match the schema type (e.g., bool to str, str to int);
+            3. cast list/dict to native LIST/STRUCT types;
+            4. cast any other unsupported object to bytes (using pickle) - legacy.
         :param schema: The target Schema that describes the target AttributeType to
             cast.
         :return:
@@ -304,9 +305,17 @@ class Tuple:
                 # convert NaN to None to support null value conversion
                 if checknull(field_value):
                     self[field_name] = None
+                    continue
 
                 if field_value is not None:
                     field_type = schema.get_attr_type(field_name)
+
+                    # Use coerce_value_to_type for general type coercion
+                    # This handles conversions like bool->str, str->int, etc.
+                    coerced_value = coerce_value_to_type(field_value, field_type)
+                    if coerced_value is not field_value:
+                        self[field_name] = coerced_value
+                        continue
 
                     # Native LIST type - ensure value is a list
                     if field_type == AttributeType.LIST:
@@ -373,6 +382,25 @@ class Tuple:
                     f"Unmatched type for field '{field_name}', expected {expected}, "
                     f"got {field_value} ({type(field_value)}) instead."
                 )
+
+    def coerce_to_schema(self, schema: Schema) -> "Tuple":
+        """
+        Create a new Tuple with values coerced to match the given schema types.
+
+        This is useful when the tuple's values don't exactly match the schema types
+        (e.g., a boolean value when schema expects string). Rather than failing
+        validation, this method attempts to convert each value to the expected type.
+
+        :param schema: The schema to coerce values to match
+        :return: A new Tuple with coerced values and the given schema
+        :raises ValueError: If a value cannot be coerced to the expected type
+        """
+        coerced_data = OrderedDict()
+        for field_name, field_value in self.as_key_value_pairs():
+            expected_type = schema.get_attr_type(field_name)
+            coerced_value = coerce_value_to_type(field_value, expected_type)
+            coerced_data[field_name] = coerced_value
+        return Tuple(coerced_data, schema=schema)
 
     def get_partial_tuple(self, attribute_names: List[str]) -> "Tuple":
         """
