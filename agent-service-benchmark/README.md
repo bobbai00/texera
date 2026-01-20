@@ -68,18 +68,18 @@ uv run python -m benchmarks.dabstep --max-tasks 10
 Run the dataflow agent with all configurable parameters:
 
 ```bash
-uv run python -m benchmarks.dabstep \
-      --split dev \
-      --max-tasks 10 \
-      --model claude-haiku-4.5 \
-      --max-steps 50 \
-      --max-result-chars 20000 \
-      --max-cell-chars 4000 \
-      --result-format table \
-      --tool-timeout 240 \
-      --execution-timeout 4 \
-      --agent-mode code \
-      --verbosity 1
+uv run python -m benchmarks.dabstep run \                                                           
+      --split dev \                                                                                   
+      --max-tasks 10 \                                                                                
+      --model o4-mini \                                                                               
+      --max-steps 100 \                                                                               
+      --max-result-chars 40000 \                                                                      
+      --max-cell-chars 20000 \                                                                        
+      --result-format table \                                                                         
+      --tool-timeout 240 \                                                                            
+      --exec-timeout 4 \                                                                              
+      --agent-mode code \                                                                             
+      --verbosity 
 ```
 
 ### Command Line Options
@@ -324,3 +324,10 @@ AGENT_MODE = "code"
 ```
 
 Modify these values to match your environment, or override via CLI arguments.
+
+## Example commands
+
+```shell
+uv run python -m benchmarks.dabstep run --split dev --max-tasks 10 --model o4-mini --max-steps 100 --max-result-chars 40000
+  --max-cell-chars 20000 --result-format table --tool-timeout 240 --exec-timeout 4 --agent-mode code --verbosity 1
+```
