@@ -594,19 +594,43 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   }
 
   /**
-   * Export the model messages as a JSON file.
+   * Export the ReActSteps (conversation history) as a JSON file.
    */
   public exportMessages(): void {
     try {
-      const messages = this.copilotManagerService.getMessages(this.agentInfo.id);
-      const jsonString = JSON.stringify(messages, null, 2);
+      if (this.agentResponses.length === 0) {
+        this.notificationService.warning("No messages to export");
+        return;
+      }
+
+      // Export ReActSteps which contain the full conversation history
+      const exportData = {
+        agentId: this.agentInfo.id,
+        agentName: this.agentInfo.name,
+        modelType: this.agentInfo.modelType,
+        exportedAt: new Date().toISOString(),
+        steps: this.agentResponses.map(step => ({
+          messageId: step.messageId,
+          stepId: step.stepId,
+          timestamp: step.timestamp,
+          role: step.role,
+          content: step.content,
+          isBegin: step.isBegin,
+          isEnd: step.isEnd,
+          toolCalls: step.toolCalls,
+          toolResults: step.toolResults,
+          usage: step.usage,
+        })),
+      };
+
+      const jsonString = JSON.stringify(exportData, null, 2);
       const blob = new Blob([jsonString], { type: "application/json" });
       const url = URL.createObjectURL(blob);
 
       // Create a temporary link and trigger download
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${this.agentInfo.name}-messages-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
+      link.download = `${this.agentInfo.name}-chat-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -614,7 +638,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       // Clean up the URL object
       URL.revokeObjectURL(url);
 
-      this.notificationService.success("Messages exported successfully");
+      this.notificationService.success(`Exported ${this.agentResponses.length} steps`);
     } catch (error) {
       console.error("Failed to export messages:", error);
       this.notificationService.error("Failed to export messages");

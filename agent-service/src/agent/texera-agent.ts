@@ -615,14 +615,30 @@ export class TexeraAgent {
    * Process a user message and return the agent's response.
    * ReActSteps are accumulated internally and streamed via the callback if set.
    * Before processing, loads the latest workflow from backend.
+   *
+   * @param userMessage - The user's message
+   * @param contextOperatorIds - Optional operator IDs to filter context.
+   *                             If provided, relevant ReActSteps are prepended as text context.
    */
-  async sendMessage(userMessage: string): Promise<AgentMessageResult> {
+  async sendMessage(userMessage: string, contextOperatorIds?: string[]): Promise<AgentMessageResult> {
     const messageId = `msg-${this.agentId}-${++this.messageCounter}-${Date.now()}`;
     const startTime = Date.now();
     let stepIndex = 0;
 
     // Load latest workflow from backend
     await this.refreshWorkflowFromBackend();
+
+    // Build the actual message to send - prepend relevant context if operator IDs provided
+    let actualUserMessage = userMessage;
+    if (contextOperatorIds && contextOperatorIds.length > 0) {
+      const contextText = this.buildContextText(contextOperatorIds);
+      if (contextText) {
+        actualUserMessage = `${contextText}\n\n${userMessage}`;
+        console.log(
+          `[TexeraAgent ${this.agentId}] Prepended context for operators [${contextOperatorIds.join(", ")}]`
+        );
+      }
+    }
 
     // Initialize stats
     const stats: AgentMessageStats = {
@@ -643,19 +659,19 @@ export class TexeraAgent {
     this.state = AgentStateEnum.GENERATING;
 
     try {
-      // Add user message to history
+      // Add user message to history (with context prepended if applicable)
       this.messages.push({
         role: "user",
-        content: userMessage,
+        content: actualUserMessage,
       });
 
-      // Create user message step (stepId 0)
+      // Create user message step (stepId 0) - show original message for display
       const userStep: ReActStep = {
         messageId,
         stepId: 0,
         timestamp: Date.now(),
         role: "user",
-        content: userMessage,
+        content: userMessage, // Original message for display
         isBegin: true,
         isEnd: true,
       };
@@ -663,7 +679,7 @@ export class TexeraAgent {
 
       let isFirstStep = true;
 
-      // Call the model with tools
+      // Call the model with tools - uses full message history
       const result = await generateText({
         model: this.model,
         system: this.systemPrompt,
@@ -849,6 +865,155 @@ export class TexeraAgent {
     this.messages = [];
     this.reActSteps = [];
     this.workflowState.reset();
+  }
+
+  // ============================================================================
+  // Context Filtering Methods (ReActStep-based)
+  // ============================================================================
+
+  /**
+   * Extract operator IDs that were affected by a ReActStep.
+   * Looks at tool results to find operator IDs (added/modified).
+   *
+   * @param step - The ReActStep to analyze
+   * @returns Object with added and modified operator IDs
+   */
+  private getOperatorIdsFromStep(step: ReActStep): { added: string[]; modified: string[] } {
+    const added: string[] = [];
+    const modified: string[] = [];
+
+    if (!step.toolResults) {
+      return { added, modified };
+    }
+
+    for (const result of step.toolResults) {
+      if (result.isError || !result.output) continue;
+
+      // Find the corresponding tool call to determine the operation type
+      const toolCall = step.toolCalls?.find(tc => tc.toolCallId === result.toolCallId);
+      const toolName = toolCall?.toolName || "";
+
+      const outputStr = typeof result.output === "string" ? result.output : JSON.stringify(result.output);
+
+      // Extract operator ID from string patterns like:
+      // - "Added operator op-123, number of input ports: 1, number of output ports: 1"
+      // - "Operator op-123 modified"
+      // Pattern matches operator IDs like "operator-uuid-123" or "op-123"
+      const addedMatch = outputStr.match(/Added operator ([a-zA-Z0-9_-]+)/);
+      if (addedMatch && (toolName === "addOperator" || toolName.toLowerCase().includes("add"))) {
+        added.push(addedMatch[1]);
+        continue;
+      }
+
+      const modifiedMatch = outputStr.match(/Operator ([a-zA-Z0-9_-]+) modified/);
+      if (modifiedMatch && (toolName === "modifyOperator" || toolName.toLowerCase().includes("modify"))) {
+        modified.push(modifiedMatch[1]);
+        continue;
+      }
+
+      // Try JSON parsing as fallback for structured outputs
+      try {
+        const output = JSON.parse(outputStr);
+        if (output.operatorId) {
+          if (toolName === "addOperator" || toolName === "addCodeOperator") {
+            added.push(output.operatorId);
+          } else if (toolName === "modifyOperator" || toolName === "modifyCodeOperator") {
+            modified.push(output.operatorId);
+          }
+        }
+      } catch {
+        // Not JSON, already handled string patterns above
+      }
+    }
+
+    return { added, modified };
+  }
+
+  /**
+   * Get ReActSteps that affected the specified operator IDs.
+   *
+   * @param operatorIds - The operator IDs to filter by
+   * @returns Array of relevant ReActSteps
+   */
+  public getReActStepsByOperatorIds(operatorIds: string[]): ReActStep[] {
+    if (!operatorIds || operatorIds.length === 0) {
+      return [...this.reActSteps];
+    }
+
+    const operatorIdSet = new Set(operatorIds);
+    const relevantSteps: ReActStep[] = [];
+
+    for (const step of this.reActSteps) {
+      const { added, modified } = this.getOperatorIdsFromStep(step);
+
+      // Check if any of the step's operators match the requested IDs
+      const affectsOperator = [...added, ...modified].some(id => operatorIdSet.has(id));
+
+      if (affectsOperator) {
+        relevantSteps.push(step);
+      }
+    }
+
+    return relevantSteps;
+  }
+
+  /**
+   * Build context text from relevant ReActSteps for the specified operator IDs.
+   * This text is prepended to the user message.
+   *
+   * @param operatorIds - The operator IDs to filter by
+   * @returns Context text string, or empty string if no relevant context
+   */
+  private buildContextText(operatorIds: string[]): string {
+    const relevantSteps = this.getReActStepsByOperatorIds(operatorIds);
+
+    if (relevantSteps.length === 0) {
+      return "";
+    }
+
+    // Serialize relevant steps to text
+    const stepsText = relevantSteps
+      .map(step => {
+        let text = "";
+
+        // User message
+        if (step.role === "user") {
+          text = `[User]: ${step.content}`;
+        } else {
+          // Agent step
+          text = `[Agent Step ${step.stepId}]`;
+          if (step.content) {
+            text += `\nThinking: ${step.content}`;
+          }
+          if (step.toolCalls && step.toolCalls.length > 0) {
+            for (const tc of step.toolCalls) {
+              text += `\nTool: ${tc.toolName}`;
+              // Only include minimal input info to keep context concise
+              if (tc.input) {
+                const inputStr = JSON.stringify(tc.input);
+                if (inputStr.length < 200) {
+                  text += ` - Input: ${inputStr}`;
+                }
+              }
+            }
+          }
+          if (step.toolResults && step.toolResults.length > 0) {
+            for (const tr of step.toolResults) {
+              if (!tr.isError && tr.output) {
+                const outputStr = typeof tr.output === "string" ? tr.output : JSON.stringify(tr.output);
+                // Truncate long outputs
+                const truncated = outputStr.length > 300 ? outputStr.substring(0, 300) + "..." : outputStr;
+                text += `\nResult: ${truncated}`;
+              }
+            }
+          }
+        }
+
+        return text;
+      })
+      .join("\n\n");
+
+    return `Here is the relevant conversation history for the operators you're asking about:\n\n${stepsText}\n\n---`;
   }
 
   /**

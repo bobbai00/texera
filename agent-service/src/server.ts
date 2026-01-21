@@ -384,6 +384,21 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     return { messages: agent.getMessages() };
   })
 
+  // Get ReActSteps filtered by operator IDs (for context preview)
+  .post(
+    "/:id/steps-by-operators",
+    ({ params: { id }, body }) => {
+      const agent = getAgent(id);
+      const { operatorIds } = body;
+      return { steps: agent.getReActStepsByOperatorIds(operatorIds || []) };
+    },
+    {
+      body: t.Object({
+        operatorIds: t.Array(t.String()),
+      }),
+    }
+  )
+
   // Get system info (system prompt and tools)
   .get("/:id/system-info", ({ params: { id } }) => {
     const agent = getAgent(id);
@@ -490,6 +505,8 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 interface WsMessage {
   type: "message" | "stop" | "replay";
   content?: string;
+  /** Optional operator IDs for context filtering - only messages that affected these operators will be included */
+  contextOperatorIds?: string[];
   trace?: TraceContent;
 }
 
@@ -591,6 +608,9 @@ const app = new Elysia()
         }
 
         console.log(`[WS] Agent ${agentId} received message: ${msg.content.substring(0, 50)}...`);
+        if (msg.contextOperatorIds && msg.contextOperatorIds.length > 0) {
+          console.log(`[WS] Context filter with operators: [${msg.contextOperatorIds.join(", ")}]`);
+        }
 
         // Set up step callback to stream steps in real-time
         agent.setStepCallback((step: ReActStep) => {
@@ -602,7 +622,7 @@ const app = new Elysia()
         broadcastToAgent(agentId, { type: "state", state: "GENERATING" });
 
         try {
-          const result = await agent.sendMessage(msg.content);
+          const result = await agent.sendMessage(msg.content, msg.contextOperatorIds);
 
           // Clear the callback
           agent.setStepCallback(null);

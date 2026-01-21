@@ -864,8 +864,13 @@ export class TexeraCopilotManagerService {
   /**
    * Send a message to an agent via WebSocket.
    * The message is sent through the WebSocket connection for real-time streaming.
+   *
+   * @param agentId - The agent to send the message to
+   * @param message - The message content
+   * @param contextOperatorIds - Optional operator IDs for context filtering.
+   *                             If provided, only messages that affected these operators will be included as context.
    */
-  public sendMessage(agentId: string, message: string, relevantOperatorIds: string[] = []): void {
+  public sendMessage(agentId: string, message: string, contextOperatorIds: string[] = []): void {
     const agent = this.agents.get(agentId);
     if (!agent) {
       this.notificationService.error(`Agent with ID ${agentId} not found`);
@@ -878,15 +883,23 @@ export class TexeraCopilotManagerService {
       return;
     }
 
-    // Send message via WebSocket
-    const wsMessage = {
+    // Send message via WebSocket with optional context operator IDs
+    const wsMessage: { type: string; content: string; contextOperatorIds?: string[] } = {
       type: "message",
       content: message,
     };
 
+    // Only include contextOperatorIds if it's a non-empty array
+    if (contextOperatorIds.length > 0) {
+      wsMessage.contextOperatorIds = contextOperatorIds;
+    }
+
     try {
       tracking.websocket.send(JSON.stringify(wsMessage));
       console.log(`[CopilotManager] Sent message to agent ${agentId}: ${message.substring(0, 50)}...`);
+      if (contextOperatorIds.length > 0) {
+        console.log(`[CopilotManager] Context filter with operators: [${contextOperatorIds.join(", ")}]`);
+      }
     } catch (error) {
       console.error("[CopilotManager] Failed to send message:", error);
       this.notificationService.error("Failed to send message");
@@ -1213,5 +1226,32 @@ export class TexeraCopilotManagerService {
         return throwError(() => new Error(errorMsg));
       })
     );
+  }
+
+  // ============================================================================
+  // Context Filtering Methods
+  // ============================================================================
+
+  /**
+   * Get ReActSteps relevant to the specified operator IDs.
+   * Fetches from the backend which filters steps based on which operators they affected.
+   *
+   * @param agentId - The agent ID
+   * @param operatorIds - The operator IDs to filter by
+   * @returns Observable with filtered ReActSteps
+   */
+  public getStepsByOperatorIds(agentId: string, operatorIds: string[]): Observable<{ steps: ReActStep[] }> {
+    return this.http
+      .post<{ steps: ReActStep[] }>(`${this.AGENT_API_BASE}/agents/${agentId}/steps-by-operators`, { operatorIds })
+      .pipe(
+        map(response => ({
+          steps: response.steps.map((s: any) => this.convertApiReActStep(s)),
+        })),
+        catchError(() =>
+          of({
+            steps: [],
+          })
+        )
+      );
   }
 }
