@@ -110,6 +110,8 @@ export interface ReActStep {
   timestamp: number;
   role: "user" | "agent";
   content: string;
+  /** For user messages: the actual content sent to the model (may include prepended context) */
+  actualContent?: string;
   isBegin: boolean;
   isEnd: boolean;
   toolCalls?: Array<{

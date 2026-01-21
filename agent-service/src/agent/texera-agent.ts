@@ -666,14 +666,22 @@ export class TexeraAgent {
       });
 
       // Create user message step (stepId 0) - show original message for display
+      // Estimate input tokens for the user message (rough approximation: ~4 chars per token)
+      const estimatedInputTokens = Math.ceil(actualUserMessage.length / 4);
       const userStep: ReActStep = {
         messageId,
         stepId: 0,
         timestamp: Date.now(),
         role: "user",
         content: userMessage, // Original message for display
+        actualContent: actualUserMessage !== userMessage ? actualUserMessage : undefined, // Full message with context if different
         isBegin: true,
         isEnd: true,
+        usage: {
+          inputTokens: estimatedInputTokens,
+          outputTokens: 0,
+          totalTokens: estimatedInputTokens,
+        },
       };
       this.addStep(userStep);
 

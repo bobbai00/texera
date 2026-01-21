@@ -223,9 +223,9 @@
               Execute {{ response.toolCalls.length }} tool{{ response.toolCalls.length > 1 ? 's' : '' }}
             </div>
 
-            <!-- Details button (shown on hover) - only for agent messages with details -->
+            <!-- Details button (shown on hover) - for any message with details -->
             <button
-              *ngIf="response.role === 'agent' && hoveredMessageIndex === i && (response.toolCalls?.length || response.usage)"
+              *ngIf="hoveredMessageIndex === i && (response.toolCalls?.length || response.usage || response.actualContent)"
               nz-button
               nzType="text"
               nzSize="small"
