@@ -286,8 +286,6 @@ export class TexeraAgent {
     // Common tools for both modes
     const tools: Record<string, any> = {
       [TOOL_NAME_GET_CURRENT_WORKFLOW]: createGetCurrentWorkflowTool(this.workflowState),
-      [TOOL_NAME_ADD_LINK]: createAddLinkTool(this.workflowState, context),
-      [TOOL_NAME_DELETE_LINK]: createDeleteLinkTool(this.workflowState, context),
       [TOOL_NAME_DELETE_OPERATOR]: createDeleteOperatorTool(this.workflowState, context),
     };
 
@@ -302,6 +300,8 @@ export class TexeraAgent {
       tools[TOOL_NAME_MODIFY_OPERATOR] = createModifyOperatorTool(this.workflowState, context);
       tools[TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES] = createListAllAvailableOperatorTypesTool(this.metadataStore);
       tools[TOOL_NAME_GET_OPERATOR_SCHEMA] = createGetOperatorSchemaTool(this.metadataStore);
+      tools[TOOL_NAME_ADD_LINK] = createAddLinkTool(this.workflowState, context);
+      tools[TOOL_NAME_DELETE_LINK] = createDeleteLinkTool(this.workflowState, context);
     }
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
@@ -1104,16 +1104,16 @@ export class TexeraAgent {
   }
 
   /**
-   * Check if a tool should be skipped during replay.
-   * Execution-related tools are skipped.
-   */
-  shouldSkipToolDuringReplay(toolName: string): boolean {
-    return REPLAY_SKIP_TOOLS.has(toolName);
-  }
-
-  /**
-   * Replay a trace by executing tool calls step by step.
-   * This reconstructs the workflow and conversation history.
+   * Replay a trace in two phases:
+   *
+   * Phase 1: Parse all messages and emit ReActSteps
+   *   - Tool results are looked up from trace (not executed yet)
+   *   - Each assistant message becomes ONE ReActStep
+   *   - stepId resets for each user message
+   *
+   * Phase 2: Execute tool calls to build workflow
+   *   - Skip execution tools (executeWorkflow, getOperatorResult, etc.)
+   *   - Abort on any error (no rollback needed)
    *
    * @param trace - The trace content containing messages
    * @param onStep - Callback for each ReActStep generated
@@ -1126,150 +1126,150 @@ export class TexeraAgent {
     onError: (error: string) => void
   ): Promise<void> {
     const messages = trace.messages;
+
+    // ========================================================================
+    // Phase 1: Build tool results map and emit ReActSteps
+    // ========================================================================
+
+    // Build a map of toolCallId -> tool result from all tool messages
+    const toolResultsMap = new Map<string, { output: any; isError: boolean }>();
+    for (const message of messages) {
+      if (message.role === "tool") {
+        const content = message.content;
+        if (Array.isArray(content)) {
+          for (const part of content) {
+            if (part.type === "tool-result" && part.toolCallId) {
+              toolResultsMap.set(part.toolCallId, {
+                output: part.output || part.result || part.content,
+                isError: part.isError || false,
+              });
+            }
+          }
+        } else if (message.tool_call_id) {
+          // Alternative format: tool message with tool_call_id at message level
+          toolResultsMap.set(message.tool_call_id, {
+            output: content,
+            isError: false,
+          });
+        }
+      }
+    }
+
+    // Collect all tool calls for Phase 2 execution
+    const allToolCalls: Array<{ toolName: string; toolCallId: string; input: any }> = [];
+
     let stepId = 0;
     let currentMessageId = "";
 
     this.state = AgentStateEnum.GENERATING;
 
-    try {
-      for (const message of messages) {
-        if (message.role === "user") {
-          // Generate new message ID for this user message
-          currentMessageId = `replay-${Date.now()}-${stepId}`;
+    // Emit all ReActSteps
+    for (const message of messages) {
+      if (message.role === "user") {
+        // Generate new message ID and reset stepId for this user message
+        currentMessageId = `replay-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+        stepId = 0; // Reset stepId for each user message
 
-          // Extract user content
-          const userContent =
-            typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+        // Extract user content
+        const userContent =
+          typeof message.content === "string" ? message.content : JSON.stringify(message.content);
 
-          // Create user step
-          const userStep: ReActStep = {
-            messageId: currentMessageId,
-            stepId: stepId++,
-            timestamp: Date.now(),
-            role: "user",
-            content: userContent,
-            isBegin: true,
-            isEnd: true,
-          };
+        // Create user step (stepId 0)
+        const userStep: ReActStep = {
+          messageId: currentMessageId,
+          stepId: stepId++,
+          timestamp: Date.now(),
+          role: "user",
+          content: userContent,
+          isBegin: true,
+          isEnd: true,
+        };
 
-          this.addStep(userStep);
-          onStep(userStep);
+        this.addStep(userStep);
+        onStep(userStep);
 
-          // Add to message history
-          this.messages.push(message);
-        } else if (message.role === "assistant") {
-          // Parse assistant message content
-          const { textContent, toolCalls } = this.parseAssistantMessage(message);
+        // Add to message history
+        this.messages.push(message);
+      } else if (message.role === "assistant") {
+        // Parse assistant message content
+        const { textContent, toolCalls } = this.parseAssistantMessage(message);
 
-          // If there's text content, create a text step
-          if (textContent) {
-            const textStep: ReActStep = {
-              messageId: currentMessageId,
-              stepId: stepId++,
-              timestamp: Date.now(),
-              role: "agent",
-              content: textContent,
-              isBegin: true,
-              isEnd: toolCalls.length === 0,
-            };
-            this.addStep(textStep);
-            onStep(textStep);
-          }
+        // Look up tool results from the map and collect for execution
+        const toolCallsForStep: Array<{ toolName: string; toolCallId: string; input: any }> = [];
+        const toolResultsForStep: Array<{ toolCallId: string; output: any; isError?: boolean }> = [];
 
-          // Execute each tool call
-          for (let i = 0; i < toolCalls.length; i++) {
-            const toolCall = toolCalls[i];
-            const isLastToolCall = i === toolCalls.length - 1;
+        for (const toolCall of toolCalls) {
+          toolCallsForStep.push({
+            toolName: toolCall.toolName,
+            toolCallId: toolCall.toolCallId,
+            input: toolCall.input,
+          });
 
-            // Check if this tool should be skipped during replay
-            if (this.shouldSkipToolDuringReplay(toolCall.toolName)) {
-              // Create step showing tool was skipped
-              const skippedStep: ReActStep = {
-                messageId: currentMessageId,
-                stepId: stepId++,
-                timestamp: Date.now(),
-                role: "agent",
-                content: "",
-                isBegin: false,
-                isEnd: isLastToolCall,
-                toolCalls: [
-                  {
-                    toolName: toolCall.toolName,
-                    toolCallId: toolCall.toolCallId,
-                    input: toolCall.input,
-                  },
-                ],
-                toolResults: [
-                  {
-                    toolCallId: toolCall.toolCallId,
-                    output: `[Skipped during replay: ${toolCall.toolName}]`,
-                    isError: false,
-                  },
-                ],
-              };
-              this.addStep(skippedStep);
-              onStep(skippedStep);
-              continue;
-            }
+          // Look up the result from the trace
+          const result = toolResultsMap.get(toolCall.toolCallId);
+          toolResultsForStep.push({
+            toolCallId: toolCall.toolCallId,
+            output: result?.output ?? "[Result not found in trace]",
+            isError: result?.isError ?? false,
+          });
 
-            // Execute the tool
-            let toolResult: any;
-            let isError = false;
-
-            try {
-              toolResult = await this.executeTool(toolCall.toolName, toolCall.input);
-            } catch (error: any) {
-              toolResult = { error: error.message || String(error) };
-              isError = true;
-              // Abort on error
-              onError(`Tool execution failed: ${toolCall.toolName} - ${error.message || String(error)}`);
-              this.state = AgentStateEnum.AVAILABLE;
-              return;
-            }
-
-            // Create step with tool call and result
-            const toolStep: ReActStep = {
-              messageId: currentMessageId,
-              stepId: stepId++,
-              timestamp: Date.now(),
-              role: "agent",
-              content: "",
-              isBegin: false,
-              isEnd: isLastToolCall,
-              toolCalls: [
-                {
-                  toolName: toolCall.toolName,
-                  toolCallId: toolCall.toolCallId,
-                  input: toolCall.input,
-                },
-              ],
-              toolResults: [
-                {
-                  toolCallId: toolCall.toolCallId,
-                  output: toolResult,
-                  isError,
-                },
-              ],
-            };
-
-            this.addStep(toolStep);
-            onStep(toolStep);
-          }
-
-          // Add assistant message to history
-          this.messages.push(message);
-        } else if (message.role === "tool") {
-          // Tool results are handled during assistant message processing
-          // Just add to message history for completeness
-          this.messages.push(message);
+          // Collect for Phase 2 execution
+          allToolCalls.push(toolCall);
         }
+
+        // Create ONE ReActStep for this assistant message
+        // stepId 0 = user, stepId 1 = first assistant step, etc.
+        const isFirstAssistantStep = stepId === 1;
+
+        const assistantStep: ReActStep = {
+          messageId: currentMessageId,
+          stepId: stepId++,
+          timestamp: Date.now(),
+          role: "agent",
+          content: textContent,
+          isBegin: isFirstAssistantStep,
+          isEnd: true,
+          toolCalls: toolCallsForStep.length > 0 ? toolCallsForStep : undefined,
+          toolResults: toolResultsForStep.length > 0 ? toolResultsForStep : undefined,
+        };
+
+        this.addStep(assistantStep);
+        onStep(assistantStep);
+
+        // Add assistant message to history
+        this.messages.push(message);
+      } else if (message.role === "tool") {
+        // Tool messages are already processed into the map
+        // Just add to message history for completeness
+        this.messages.push(message);
+      }
+    }
+
+    // ========================================================================
+    // Phase 2: Execute tool calls to build workflow
+    // ========================================================================
+
+    for (const toolCall of allToolCalls) {
+      // Skip execution tools
+      if (REPLAY_SKIP_TOOLS.has(toolCall.toolName)) {
+        console.log(`[Replay] Skipping execution tool: ${toolCall.toolName}`);
+        continue;
       }
 
-      this.state = AgentStateEnum.AVAILABLE;
-    } catch (error: any) {
-      this.state = AgentStateEnum.AVAILABLE;
-      onError(`Replay failed: ${error.message || String(error)}`);
+      try {
+        console.log(`[Replay] Executing tool: ${toolCall.toolName}`);
+        await this.executeTool(toolCall.toolName, toolCall.input);
+      } catch (error: any) {
+        const errorMsg = `Replay aborted: ${toolCall.toolName} failed - ${error.message || String(error)}`;
+        console.error(`[Replay] ${errorMsg}`);
+        onError(errorMsg);
+        this.state = AgentStateEnum.AVAILABLE;
+        return; // Abort without rollback
+      }
     }
+
+    this.state = AgentStateEnum.AVAILABLE;
+    console.log(`[Replay] Completed successfully. Executed ${allToolCalls.length} tool calls.`);
   }
 
   /**

@@ -131,13 +131,6 @@ Final answer: The top 5 premium customers (spending >= $1000) who made recent pu
 Task: "Find products with above-average sales in Q1 that match active promotion criteria"
 
 **Wrong approach** - Writing one large operator that does everything:
-\`\`\`python
-def process(sales, products, promotions) -> pd.DataFrame:
-    # Filter Q1 sales, join with products, calculate averages,
-    # filter above average, join with promotions, check multiple
-    # promotion conditions, aggregate results... (50+ lines)
-\`\`\`
-
 This is problematic because:
 - If the result is wrong, you cannot tell which step failed
 - You cannot inspect intermediate results

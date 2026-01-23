@@ -254,11 +254,6 @@ IMPORTANT RULES:
 2. Function name MUST be exactly "load" or "process"
 3. For process(): each parameter MUST match an existing operator's operatorId - links are auto-created
 
-## Parameters:
-- operatorId: REQUIRED. The unique ID for this operator (must be valid Python variable name)
-- code: The Python function code
-- summary: Optional display name
-
 ## def load() -> pd.DataFrame
 Purpose: Load data from files or external sources. No input ports.
 - File I/O is allowed
@@ -294,11 +289,11 @@ ERROR CONDITIONS:
 - If any process() parameter doesn't match an existing operator: error listing missing operators`,
     inputSchema: z.object({
       operatorId: z.string().describe(
-        "REQUIRED: The unique ID for this operator (must be a valid Python variable name). " +
-        "For process() functions, other operators will reference this ID as an input parameter."
+        "The unique name for this operator (must be a valid Python variable name). You can use this name to uniquely describe the operator's output" +
+        "Other operators will reference this ID as an input parameter."
       ),
       code: z.string().describe("Python function code defining either a load() or process(...) function"),
-      summary: z.string().optional().describe("Brief summary that becomes the operator's display name"),
+      summary: z.string().optional().describe("Brief summary of the behavior of this operator"),
     }),
     execute: async (args: { operatorId: string; code: string; summary?: string }) => {
       try {
@@ -463,7 +458,7 @@ export function createModifyCodeOperatorTool(workflowState: WorkflowState, conte
     inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to modify"),
       code: z.string().describe("New Python function code (must match the operator type - load() or process(...))"),
-      summary: z.string().optional().describe("Brief summary that becomes the operator's display name"),
+      summary: z.string().optional().describe("Brief summary of the behavior of this operator"),
     }),
     execute: async (args: { operatorId: string; code: string; summary?: string }) => {
       try {
