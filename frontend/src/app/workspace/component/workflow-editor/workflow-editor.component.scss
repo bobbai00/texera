@@ -29,6 +29,16 @@
   display: none;
 }
 
+// Message region highlighting (for user message operator highlighting)
+// Uses transparent fill with dashed blue border so step badges remain visible
+::ng-deep .message-region {
+  pointer-events: none;
+  fill: transparent;
+  stroke: #1890ff;
+  stroke-width: 2;
+  stroke-dasharray: 8, 4;
+}
+
 ::ng-deep .agent-action {
   // Agent action highlights - temporary 5-second visual indicators
   // Styles are defined inline in JointJS element, but this provides a hook for customization
@@ -69,4 +79,48 @@
   max-height: 180px;
   pointer-events: auto;
   z-index: 10;
+}
+
+// Step badges overlay container
+.step-badges-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 15;
+}
+
+// Individual step badge - matches the message step ID badge style
+.step-badge {
+  position: absolute;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: monospace;
+  color: white;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+
+  // Default color - matches message badge (#1890ff blue)
+  background-color: #1890ff;
+
+  &:hover {
+    transform: scale(1.15);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  &:active {
+    transform: scale(1.05);
+  }
 }

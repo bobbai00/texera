@@ -60,4 +60,23 @@
         (closePanel)="closePanel($event)"></texera-inline-property-panel>
     </div>
   </div>
+
+  <!-- Step Badge Overlay Container -->
+  <div
+    class="step-badges-container"
+    *ngIf="showStepBadges && stepBadges.length > 0">
+    <div
+      *ngFor="let badge of stepBadges"
+      class="step-badge"
+      [class.added]="badge.action === 'added'"
+      [class.modified]="badge.action === 'modified'"
+      [style.left.px]="badge.position.x"
+      [style.top.px]="badge.position.y"
+      (click)="onStepBadgeClick(badge)"
+      nz-tooltip
+      [nzTooltipTitle]="'Step ' + badge.stepId + ' (' + badge.action + ')'"
+      nzTooltipPlacement="top">
+      {{ badge.stepId }}
+    </div>
+  </div>
 </div>

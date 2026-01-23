@@ -119,6 +119,12 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   // Tool panel state
   public expandedToolName: string | null = null;
 
+  // Step badge toggle state (legacy - kept for compatibility)
+  public showStepBadges = false;
+
+  // Message highlighting state
+  public highlightedMessageId: string | null = null;
+
   // Track if we disabled auto-persist so we can re-enable it on destroy
   private disabledAutoPersist = false;
 
@@ -265,6 +271,25 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     if (this.isActive) {
       this.startWorkflowSubscription();
     }
+
+    // Subscribe to step badge toggle state (legacy - kept for compatibility)
+    this.copilotManagerService.showStepBadges$.pipe(untilDestroyed(this)).subscribe(show => {
+      this.showStepBadges = show;
+      this.cdr.detectChanges();
+    });
+
+    // Subscribe to scroll-to-step requests
+    this.copilotManagerService.scrollToStep$.pipe(untilDestroyed(this)).subscribe(({ agentId, messageId, stepId }) => {
+      if (agentId === this.agentInfo.id) {
+        this.scrollToStep(messageId, stepId);
+      }
+    });
+
+    // Subscribe to message highlighting state
+    this.copilotManagerService.highlightedMessageId$.pipe(untilDestroyed(this)).subscribe(messageId => {
+      this.highlightedMessageId = messageId;
+      this.cdr.detectChanges();
+    });
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -594,55 +619,68 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   }
 
   /**
-   * Export the ReActSteps (conversation history) as a JSON file.
+   * Export the conversation history as a JSON file in TraceContent format.
+   * This format is compatible with the import/replay functionality.
    */
   public exportMessages(): void {
-    try {
-      if (this.agentResponses.length === 0) {
-        this.notificationService.warning("No messages to export");
-        return;
-      }
-
-      // Export ReActSteps which contain the full conversation history
-      const exportData = {
-        agentId: this.agentInfo.id,
-        agentName: this.agentInfo.name,
-        modelType: this.agentInfo.modelType,
-        exportedAt: new Date().toISOString(),
-        steps: this.agentResponses.map(step => ({
-          messageId: step.messageId,
-          stepId: step.stepId,
-          timestamp: step.timestamp,
-          role: step.role,
-          content: step.content,
-          isBegin: step.isBegin,
-          isEnd: step.isEnd,
-          toolCalls: step.toolCalls,
-          toolResults: step.toolResults,
-          usage: step.usage,
-        })),
-      };
-
-      const jsonString = JSON.stringify(exportData, null, 2);
-      const blob = new Blob([jsonString], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-
-      // Create a temporary link and trigger download
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${this.agentInfo.name}-chat-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      // Clean up the URL object
-      URL.revokeObjectURL(url);
-
-      this.notificationService.success(`Exported ${this.agentResponses.length} steps`);
-    } catch (error) {
-      console.error("Failed to export messages:", error);
-      this.notificationService.error("Failed to export messages");
+    if (this.agentResponses.length === 0) {
+      this.notificationService.warning("No messages to export");
+      return;
     }
+
+    // Fetch raw AI SDK messages from the backend for proper export format
+    this.copilotManagerService
+      .getMessages(this.agentInfo.id)
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: (response: { messages: any[] }) => {
+          const messages = response.messages;
+          // Find the last assistant response text for the "response" field
+          let lastResponse = "";
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i];
+            if (msg.role === "assistant") {
+              if (typeof msg.content === "string") {
+                lastResponse = msg.content;
+                break;
+              } else if (Array.isArray(msg.content)) {
+                const textPart = msg.content.find((p: any) => p.type === "text");
+                if (textPart) {
+                  lastResponse = textPart.text;
+                  break;
+                }
+              }
+            }
+          }
+
+          // Export in TraceContent format (compatible with import/replay)
+          const exportData = {
+            response: lastResponse,
+            messages: messages,
+          };
+
+          const jsonString = JSON.stringify(exportData, null, 2);
+          const blob = new Blob([jsonString], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+
+          // Create a temporary link and trigger download
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `${this.agentInfo.name}-trace-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+
+          // Clean up the URL object
+          URL.revokeObjectURL(url);
+
+          this.notificationService.success(`Exported ${messages.length} messages`);
+        },
+        error: (err: unknown) => {
+          console.error("Failed to export messages:", err);
+          this.notificationService.error("Failed to export messages");
+        },
+      });
   }
 
   public isGenerating(): boolean {
@@ -1253,5 +1291,57 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     }
 
     return result;
+  }
+
+  // =====================
+  // Step Badge Feature Methods
+  // =====================
+
+  /**
+   * Toggle step badges visibility on operators.
+   */
+  public toggleStepBadges(): void {
+    this.showStepBadges = !this.showStepBadges;
+    this.copilotManagerService.toggleStepBadges(this.showStepBadges);
+  }
+
+  /**
+   * Scroll to a specific step in the chat by messageId and stepId.
+   */
+  private scrollToStep(messageId: string, stepId: number): void {
+    // Find the step index in agentResponses
+    const stepIndex = this.agentResponses.findIndex(step => step.messageId === messageId && step.stepId === stepId);
+
+    if (stepIndex >= 0) {
+      this.scrollToMessage(stepIndex);
+      // Highlight the message briefly
+      this.setHoveredMessage(stepIndex);
+    }
+  }
+
+  // =====================
+  // Message Highlighting Methods
+  // =====================
+
+  /**
+   * Check if a message is currently highlighted for region display.
+   */
+  public isMessageHighlighted(messageId: string): boolean {
+    return this.highlightedMessageId === messageId;
+  }
+
+  /**
+   * Toggle highlighting for a message.
+   * When highlighted, all operators affected by this message's steps
+   * will be shown with a region highlight on the canvas.
+   */
+  public toggleMessageHighlight(messageId: string): void {
+    if (this.highlightedMessageId === messageId) {
+      // Toggle off
+      this.copilotManagerService.setHighlightedMessage(null);
+    } else {
+      // Toggle on - highlight this message
+      this.copilotManagerService.setHighlightedMessage(messageId);
+    }
   }
 }

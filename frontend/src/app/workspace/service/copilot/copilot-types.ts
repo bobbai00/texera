@@ -84,3 +84,15 @@ export interface CopilotMessageStats {
   status: "running" | "completed" | "error" | "stopped";
   errorMessage?: string;
 }
+
+/**
+ * Reference to a step that affected an operator.
+ * Used for step badge feature - shows which steps created/modified operators.
+ */
+export interface OperatorStepRef {
+  messageId: string;
+  stepId: number;
+  timestamp: Date;
+  action: "added" | "modified" | "executed";
+  agentId: string;
+}

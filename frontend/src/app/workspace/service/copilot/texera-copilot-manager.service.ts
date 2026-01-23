@@ -37,7 +37,7 @@ import { NotificationService } from "../../../common/service/notification/notifi
 import { WorkflowPersistService } from "../../../common/service/workflow-persist/workflow-persist.service";
 import { AppSettings } from "../../../common/app-setting";
 import { AuthService } from "../../../common/service/user/auth.service";
-import { CopilotState, ReActStep, ModelMessage, CopilotMessageStats } from "./copilot-types";
+import { CopilotState, ReActStep, ModelMessage, CopilotMessageStats, OperatorStepRef } from "./copilot-types";
 import { Workflow, WorkflowContent } from "../../../common/type/workflow";
 import { AgentAction } from "../agent-action/agent-action.service";
 import { ComputingUnitStatusService } from "../computing-unit-status/computing-unit-status.service";
@@ -189,6 +189,26 @@ export class TexeraCopilotManagerService {
 
   /** Cached model types */
   private modelTypes$: Observable<ModelType[]> | null = null;
+
+  // ============================================================================
+  // Step Badge Feature State
+  // ============================================================================
+
+  /** Whether to show step badges on operators */
+  private showStepBadgesSubject = new BehaviorSubject<boolean>(false);
+  public showStepBadges$ = this.showStepBadgesSubject.asObservable();
+
+  /** Map from operatorId to array of steps that affected it */
+  private operatorStepsMapSubject = new BehaviorSubject<Map<string, OperatorStepRef[]>>(new Map());
+  public operatorStepsMap$ = this.operatorStepsMapSubject.asObservable();
+
+  /** Subject emitting scroll-to-step requests */
+  private scrollToStepSubject = new Subject<{ agentId: string; messageId: string; stepId: number }>();
+  public scrollToStep$ = this.scrollToStepSubject.asObservable();
+
+  /** Currently highlighted message ID for region highlighting (null = no message highlighted) */
+  private highlightedMessageIdSubject = new BehaviorSubject<string | null>(null);
+  public highlightedMessageId$ = this.highlightedMessageIdSubject.asObservable();
 
   constructor(
     private http: HttpClient,
@@ -473,6 +493,8 @@ export class TexeraCopilotManagerService {
         if (message.steps && Array.isArray(message.steps)) {
           const steps = message.steps.map((s: any) => this.convertApiReActStep(s));
           tracking.reActStepsSubject.next(steps);
+          // Update operator steps map so it's ready for highlighting
+          this.updateOperatorStepsMap();
         }
         // Handle initial agent actions
         if (message.agentActions && Array.isArray(message.agentActions)) {
@@ -500,6 +522,8 @@ export class TexeraCopilotManagerService {
             // Append new step
             tracking.reActStepsSubject.next([...currentSteps, convertedStep]);
           }
+          // Update operator steps map so it's ready for highlighting
+          this.updateOperatorStepsMap();
         }
         break;
 
@@ -769,6 +793,7 @@ export class TexeraCopilotManagerService {
 
   /**
    * Get all agents.
+   * Also syncs local cache with backend - removes any stale agents that no longer exist on the backend.
    */
   public getAllAgents(): Observable<AgentInfo[]> {
     return this.http.get<ApiAgentListResponse>(`${this.AGENT_API_BASE}/agents`).pipe(
@@ -790,7 +815,21 @@ export class TexeraCopilotManagerService {
           settings: a.settings,
         }));
 
-        // Update local cache
+        // Build a set of backend agent IDs for quick lookup
+        const backendAgentIds = new Set(agents.map(a => a.id));
+
+        // Remove any local agents that don't exist on the backend
+        // This handles the case when agent-service restarts
+        const localAgentIds = Array.from(this.agents.keys());
+        for (const localId of localAgentIds) {
+          if (!backendAgentIds.has(localId)) {
+            console.log(`[CopilotManager] Removing stale agent ${localId} (not found on backend)`);
+            this.agents.delete(localId);
+            this.stopStatePolling(localId);
+          }
+        }
+
+        // Update local cache with agents from backend
         for (const agent of agents) {
           this.agents.set(agent.id, agent);
         }
@@ -1127,12 +1166,18 @@ export class TexeraCopilotManagerService {
   }
 
   /**
-   * Get all model messages for an agent.
+   * Get raw AI SDK messages for an agent (for export/replay).
+   * Returns the messages in Vercel AI SDK ModelMessage format.
    */
-  public getMessages(agentId: string): ModelMessage[] {
-    // Messages are managed on the server
-    // This would require an API call
-    return [];
+  public getMessages(agentId: string): Observable<{ messages: any[] }> {
+    return this.http.get<{ messages: any[] }>(`${this.AGENT_API_BASE}/agents/${agentId}/messages`).pipe(
+      catchError((error: unknown) => {
+        const err = error as { error?: { error?: string }; message?: string };
+        const errorMsg = err.error?.error || err.message || "Failed to get messages";
+        this.notificationService.error(errorMsg);
+        return throwError(() => new Error(errorMsg));
+      })
+    );
   }
 
   /**
@@ -1253,5 +1298,276 @@ export class TexeraCopilotManagerService {
           })
         )
       );
+  }
+
+  // ============================================================================
+  // Step Badge Feature Methods
+  // ============================================================================
+
+  /**
+   * Toggle whether step badges are shown on operators.
+   * When enabled, updates the operator steps map from current steps.
+   */
+  public toggleStepBadges(show: boolean): void {
+    this.showStepBadgesSubject.next(show);
+    if (show) {
+      this.updateOperatorStepsMap();
+    }
+  }
+
+  /**
+   * Get current step badges visibility state.
+   */
+  public getShowStepBadges(): boolean {
+    return this.showStepBadgesSubject.getValue();
+  }
+
+  /**
+   * Request scrolling to a specific step in the agent chat.
+   */
+  public requestScrollToStep(agentId: string, messageId: string, stepId: number): void {
+    this.scrollToStepSubject.next({ agentId, messageId, stepId });
+  }
+
+  /**
+   * Update the operator steps map from the current steps of all active agents.
+   * This builds a mapping from operatorId to the steps that affected it.
+   * Extracts operator IDs from tool calls and results.
+   */
+  public updateOperatorStepsMap(): void {
+    const newMap = new Map<string, OperatorStepRef[]>();
+
+    // Tool names that add operators
+    const addToolNames = new Set(["addOperator", "addCodeOperator"]);
+    // Tool names that modify operators
+    const modifyToolNames = new Set(["modifyOperator", "modifyCodeOperator"]);
+    // Tool names that execute workflows (affects all operators in result)
+    const executeToolNames = new Set(["executeWorkflow"]);
+
+    // Iterate over all agent state tracking
+    for (const [agentId, tracking] of this.agentStateTracking) {
+      const steps = tracking.reActStepsSubject.getValue();
+
+      for (const step of steps) {
+        // First check operatorAccess if available (from backend)
+        if (step.operatorAccess) {
+          step.operatorAccess.forEach(access => {
+            // Process added operators
+            for (const opId of access.addedOperatorIds) {
+              this.addStepRef(newMap, opId, step, "added", agentId);
+            }
+            // Process modified operators
+            for (const opId of access.modifiedOperatorIds) {
+              this.addStepRef(newMap, opId, step, "modified", agentId);
+            }
+          });
+        }
+
+        // Also extract from tool calls and results directly
+        if (step.toolCalls && step.toolResults) {
+          for (let i = 0; i < step.toolCalls.length; i++) {
+            const toolCall = step.toolCalls[i];
+            const toolResult = step.toolResults[i];
+            const toolName = toolCall.toolName || toolCall.name;
+
+            // Determine action type based on tool name
+            let action: "added" | "modified" | "executed" | null = null;
+            if (addToolNames.has(toolName)) {
+              action = "added";
+            } else if (modifyToolNames.has(toolName)) {
+              action = "modified";
+            } else if (executeToolNames.has(toolName)) {
+              action = "executed";
+            }
+
+            if (action) {
+              // Extract operator ID from tool result
+              const operatorIds = this.extractOperatorIdsFromToolResult(toolResult, toolCall);
+              for (const opId of operatorIds) {
+                this.addStepRef(newMap, opId, step, action, agentId);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    this.operatorStepsMapSubject.next(newMap);
+  }
+
+  /**
+   * Helper to add a step ref to the map, avoiding duplicates.
+   */
+  private addStepRef(
+    map: Map<string, OperatorStepRef[]>,
+    opId: string,
+    step: ReActStep,
+    action: "added" | "modified" | "executed",
+    agentId: string
+  ): void {
+    const refs = map.get(opId) || [];
+    // Check if this step is already recorded
+    if (!refs.some(r => r.messageId === step.messageId && r.stepId === step.stepId && r.agentId === agentId)) {
+      refs.push({
+        messageId: step.messageId,
+        stepId: step.stepId,
+        timestamp: step.timestamp,
+        action,
+        agentId,
+      });
+      map.set(opId, refs);
+    }
+  }
+
+  /**
+   * Extract operator IDs from a tool result.
+   * Handles various result formats (string, object, JSON).
+   */
+  private extractOperatorIdsFromToolResult(toolResult: any, toolCall: any): string[] {
+    const operatorIds: string[] = [];
+
+    // Try to get result data
+    const resultData = toolResult?.result || toolResult?.output || toolResult;
+
+    if (!resultData) {
+      return operatorIds;
+    }
+
+    // If result is a string, try to parse it or extract operator ID patterns
+    if (typeof resultData === "string") {
+      // Try JSON parse
+      try {
+        const parsed = JSON.parse(resultData);
+        this.extractOperatorIdsFromObject(parsed, operatorIds);
+      } catch {
+        // Not JSON, try regex for operator-XXX pattern
+        const matches = resultData.match(/operator-[a-f0-9-]+/gi);
+        if (matches) {
+          operatorIds.push(...matches);
+        }
+      }
+    } else if (typeof resultData === "object") {
+      this.extractOperatorIdsFromObject(resultData, operatorIds);
+    }
+
+    // Also check tool call input for operatorId (for modify tools)
+    const input = toolCall?.input || toolCall?.args;
+    if (input) {
+      const inputData = typeof input === "string" ? this.tryParseJson(input) : input;
+      if (inputData?.operatorId) {
+        operatorIds.push(inputData.operatorId);
+      }
+    }
+
+    return [...new Set(operatorIds)]; // Dedupe
+  }
+
+  /**
+   * Recursively extract operator IDs from an object.
+   * Handles execution results which have operator IDs as keys.
+   */
+  private extractOperatorIdsFromObject(obj: any, operatorIds: string[]): void {
+    if (!obj || typeof obj !== "object") {
+      return;
+    }
+
+    // Direct operatorId field
+    if (obj.operatorId) {
+      operatorIds.push(obj.operatorId);
+    }
+
+    // Array of operatorIds
+    if (obj.operatorIds && Array.isArray(obj.operatorIds)) {
+      operatorIds.push(...obj.operatorIds);
+    }
+
+    // Check if object keys are operator IDs (common in execution results)
+    // Format: { "operator-xxx": { ... results ... } }
+    for (const key of Object.keys(obj)) {
+      if (/^operator-[a-f0-9-]+$/i.test(key)) {
+        operatorIds.push(key);
+      }
+    }
+
+    // Check results object (execution results format)
+    if (obj.results && typeof obj.results === "object") {
+      for (const key of Object.keys(obj.results)) {
+        if (/^operator-[a-f0-9-]+$/i.test(key)) {
+          operatorIds.push(key);
+        }
+      }
+    }
+
+    // Check operatorResults array (another common format)
+    if (obj.operatorResults && Array.isArray(obj.operatorResults)) {
+      for (const result of obj.operatorResults) {
+        if (result.operatorId) {
+          operatorIds.push(result.operatorId);
+        }
+      }
+    }
+  }
+
+  /**
+   * Safely try to parse JSON, return null on failure.
+   */
+  private tryParseJson(str: string): any {
+    try {
+      return JSON.parse(str);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get step refs for a specific operator.
+   */
+  public getOperatorStepRefs(operatorId: string): OperatorStepRef[] {
+    return this.operatorStepsMapSubject.getValue().get(operatorId) || [];
+  }
+
+  // ============================================================================
+  // Message Region Highlighting Methods
+  // ============================================================================
+
+  /**
+   * Set the highlighted message for region highlighting.
+   * When a message is highlighted, all operators affected by that message's steps
+   * will be shown with a region highlight on the canvas, along with step badges.
+   * @param messageId The message ID to highlight, or null to clear highlighting
+   */
+  public setHighlightedMessage(messageId: string | null): void {
+    if (messageId) {
+      // First update the operator steps map so it's ready before we emit the messageId
+      this.updateOperatorStepsMap();
+    }
+    // Emit the messageId after the map is updated
+    this.highlightedMessageIdSubject.next(messageId);
+  }
+
+  /**
+   * Get the currently highlighted message ID.
+   */
+  public getHighlightedMessageId(): string | null {
+    return this.highlightedMessageIdSubject.getValue();
+  }
+
+  /**
+   * Get all operator IDs that were affected by a specific message.
+   * This includes operators added, modified, or executed by any step with this messageId.
+   * @param messageId The message ID to look up
+   * @returns Array of operator IDs affected by the message
+   */
+  public getOperatorsForMessage(messageId: string): string[] {
+    const operatorStepsMap = this.operatorStepsMapSubject.getValue();
+    const operatorIds: string[] = [];
+
+    for (const [opId, refs] of operatorStepsMap) {
+      if (refs.some(ref => ref.messageId === messageId)) {
+        operatorIds.push(opId);
+      }
+    }
+
+    return operatorIds;
   }
 }
