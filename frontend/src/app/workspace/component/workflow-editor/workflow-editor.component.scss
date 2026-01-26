@@ -124,3 +124,70 @@
     transform: scale(1.05);
   }
 }
+
+// Chat popover container for operator chat button
+.chat-popover-container {
+  position: absolute;
+  pointer-events: auto;
+  z-index: 20;
+}
+
+.chat-popover {
+  width: 400px;
+  max-height: 500px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-popover-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #1890ff;
+  color: white;
+  font-weight: 500;
+  font-size: 13px;
+
+  i {
+    font-size: 16px;
+  }
+
+  .chat-popover-title {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chat-popover-close {
+    background: transparent;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+
+    &:hover {
+      background-color: rgba(255, 255, 255, 0.2);
+    }
+
+    i {
+      font-size: 14px;
+    }
+  }
+}
+
+.chat-popover-content {
+  padding: 12px;
+  overflow-y: auto;
+  max-height: 450px;
+}

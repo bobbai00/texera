@@ -45,7 +45,8 @@ import { line, curveCatmullRomClosed } from "d3-shape";
 import concaveman from "concaveman";
 import { AgentActionService } from "../../service/agent-action/agent-action.service";
 import { TexeraCopilotManagerService } from "../../service/copilot/texera-copilot-manager.service";
-import { OperatorStepRef } from "../../service/copilot/copilot-types";
+import { OperatorStepRef, ReActStep } from "../../service/copilot/copilot-types";
+import { ContextHighlightEvent } from "../agent-interaction/agent-interaction.component";
 import { isPythonUdf } from "../../service/workflow-graph/model/workflow-graph";
 
 // jointjs interactive options for enabling and disabling interactivity
@@ -119,6 +120,25 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
 
   // Step badge overlay state
   public showStepBadges = false;
+
+  // Chat popover state (operator chat button)
+  public chatPopoverOperator: {
+    operatorId: string;
+    displayName: string;
+    position: { x: number; y: number };
+  } | null = null;
+
+  // Chat context highlight state (badges and region for chat popover)
+  // Uses the same structure as stepBadges for consistency
+  public chatContextBadges: Array<{
+    operatorId: string;
+    stepId: number;
+    messageId: string;
+    position: { x: number; y: number };
+  }> = [];
+  private chatContextOperatorIds: string[] = [];
+  private chatContextRegionElement: joint.dia.Element | null = null;
+  private chatContextSteps: ReActStep[] = [];
 
   // Message region highlighting state
   private messageRegionElement: joint.dia.Element | null = null;
@@ -223,6 +243,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     this.handleCenterEvent();
     this.handleStepBadges();
     this.handleMessageRegion();
+    this.handleOperatorChatButton();
   }
 
   ngOnDestroy(): void {
@@ -1984,6 +2005,294 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
       "body/d",
       line().curve(curveCatmullRomClosed)(concaveman(points, 2, 0) as [number, number][])
     );
+  }
+
+  /**
+   * Handle the chat button click on operators.
+   * Opens a chat popover for the operator to interact with agents.
+   */
+  private handleOperatorChatButton(): void {
+    fromJointPaperEvent(this.paper, "element:chat")
+      .pipe(
+        map(value => value[0]),
+        untilDestroyed(this)
+      )
+      .subscribe(elementView => {
+        const operatorId = elementView.model.id.toString();
+        if (!this.workflowActionService.getTexeraGraph().hasOperator(operatorId)) {
+          return;
+        }
+
+        // Toggle chat popover for this operator
+        if (this.chatPopoverOperator?.operatorId === operatorId) {
+          // Close if clicking the same operator
+          this.chatPopoverOperator = null;
+        } else {
+          // Open chat popover for this operator
+          const operator = this.workflowActionService.getTexeraGraph().getOperator(operatorId);
+          const operatorSchema = this.dynamicSchemaService.getDynamicSchema(operatorId);
+          const displayName =
+            operator.customDisplayName ?? operatorSchema?.additionalMetadata.userFriendlyName ?? operator.operatorType;
+
+          const position = this.getOperatorChatPopoverPosition(operatorId);
+          if (position) {
+            this.chatPopoverOperator = {
+              operatorId,
+              displayName,
+              position,
+            };
+          }
+        }
+        this.changeDetectorRef.detectChanges();
+      });
+
+    // Close chat popover when clicking on blank area
+    fromJointPaperEvent(this.paper, "blank:pointerdown")
+      .pipe(untilDestroyed(this))
+      .subscribe(() => {
+        if (this.chatPopoverOperator) {
+          this.closeChatPopover();
+        }
+      });
+
+    // Update chat popover and context positions when operator moves
+    this.paper.model.on("change:position", (cell: joint.dia.Cell) => {
+      const cellId = cell.id.toString();
+
+      // Update popover position if the chat operator moves
+      if (this.chatPopoverOperator && cellId === this.chatPopoverOperator.operatorId) {
+        const position = this.getOperatorChatPopoverPosition(this.chatPopoverOperator.operatorId);
+        if (position) {
+          this.chatPopoverOperator = { ...this.chatPopoverOperator, position };
+        }
+      }
+
+      // Update context region and badges if any context operator moves
+      if (this.chatContextOperatorIds.includes(cellId)) {
+        this.drawChatContextRegion(this.chatContextOperatorIds);
+        this.updateChatContextBadges(this.chatContextSteps, this.chatContextOperatorIds);
+      }
+
+      this.changeDetectorRef.detectChanges();
+    });
+
+    // Update position on zoom/pan
+    this.wrapper
+      .getWorkflowEditorZoomStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(() => {
+        if (this.chatPopoverOperator) {
+          const position = this.getOperatorChatPopoverPosition(this.chatPopoverOperator.operatorId);
+          if (position) {
+            this.chatPopoverOperator = { ...this.chatPopoverOperator, position };
+          }
+        }
+
+        // Update context badges positions on zoom
+        if (this.chatContextOperatorIds.length > 0) {
+          this.updateChatContextBadges(this.chatContextSteps, this.chatContextOperatorIds);
+        }
+
+        this.changeDetectorRef.detectChanges();
+      });
+  }
+
+  /**
+   * Get the screen position for the chat popover relative to an operator.
+   */
+  private getOperatorChatPopoverPosition(operatorId: string): { x: number; y: number } | null {
+    const jointCell = this.paper.getModelById(operatorId);
+    if (!jointCell) {
+      return null;
+    }
+
+    const bbox = jointCell.getBBox();
+    const scale = this.paper.scale();
+    const translate = this.paper.translate();
+
+    // Position popover to the right of the operator (where the chat button is at top-right)
+    const screenX = (bbox.x + bbox.width) * scale.sx + translate.tx + 30;
+    const screenY = bbox.y * scale.sy + translate.ty - 20;
+
+    return { x: screenX, y: screenY };
+  }
+
+  /**
+   * Close the chat popover.
+   */
+  closeChatPopover(): void {
+    // Clear highlight FIRST before destroying the component
+    this.clearChatContextHighlight();
+    this.chatPopoverOperator = null;
+    this.changeDetectorRef.detectChanges();
+  }
+
+  /**
+   * Handle context highlight change from the chat panel.
+   * Shows badges and region for the operators in the chat context.
+   */
+  onChatContextHighlightChange(event: ContextHighlightEvent | null): void {
+    if (!event || event.operatorIds.length === 0) {
+      this.clearChatContextHighlight();
+      return;
+    }
+
+    this.chatContextOperatorIds = event.operatorIds;
+    this.chatContextSteps = event.steps;
+
+    // Draw region around all context operators
+    this.drawChatContextRegion(event.operatorIds);
+
+    // Create badges for each step (showing the actual stepId)
+    this.updateChatContextBadges(event.steps, event.operatorIds);
+
+    this.changeDetectorRef.detectChanges();
+  }
+
+  /**
+   * Draw a region around all chat context operators.
+   */
+  private drawChatContextRegion(operatorIds: string[]): void {
+    // Remove existing region
+    if (this.chatContextRegionElement) {
+      this.chatContextRegionElement.remove();
+      this.chatContextRegionElement = null;
+    }
+
+    if (operatorIds.length === 0) {
+      return;
+    }
+
+    // Collect all operator bounding boxes
+    const points: [number, number][] = [];
+    const padding = 30;
+
+    operatorIds.forEach(opId => {
+      const cell = this.paper.getModelById(opId);
+      if (cell) {
+        const bbox = cell.getBBox();
+        // Add corners with padding
+        points.push([bbox.x - padding, bbox.y - padding]);
+        points.push([bbox.x + bbox.width + padding, bbox.y - padding]);
+        points.push([bbox.x + bbox.width + padding, bbox.y + bbox.height + padding]);
+        points.push([bbox.x - padding, bbox.y + bbox.height + padding]);
+      }
+    });
+
+    if (points.length < 3) {
+      return;
+    }
+
+    // Use concaveman to create a hull around the operators
+    const hull = concaveman(points, 2, 10);
+
+    // Create SVG path from hull
+    const pathData = hull.map((p, i) => (i === 0 ? `M ${p[0]} ${p[1]}` : `L ${p[0]} ${p[1]}`)).join(" ") + " Z";
+
+    // Create a JointJS element for the region
+    const Region = joint.dia.Element.define(
+      "custom.ChatContextRegion",
+      {
+        attrs: {
+          region: {
+            d: pathData,
+            fill: "rgba(24, 144, 255, 0.08)",
+            stroke: "#1890ff",
+            strokeWidth: 2,
+            strokeDasharray: "8,4",
+          },
+        },
+      },
+      {
+        markup: [{ tagName: "path", selector: "region" }],
+      }
+    );
+
+    this.chatContextRegionElement = new Region();
+    this.chatContextRegionElement.addTo(this.paper.model);
+    this.chatContextRegionElement.toBack();
+  }
+
+  /**
+   * Update badges for chat context based on steps.
+   * Uses operatorStepsMap to properly map steps to operators (same as updateStepBadgePositions).
+   */
+  private updateChatContextBadges(steps: ReActStep[], operatorIds: string[]): void {
+    this.chatContextBadges = [];
+
+    if (steps.length === 0 || operatorIds.length === 0) {
+      return;
+    }
+
+    // Get the operator steps map to properly map steps to operators
+    const operatorStepsMap = this.copilotManagerService.getOperatorStepsMap();
+
+    // Create a set of step identifiers for quick lookup
+    const relevantStepKeys = new Set(steps.map(s => `${s.messageId}-${s.stepId}`));
+
+    // Iterate through operatorStepsMap (same approach as updateStepBadgePositions)
+    for (const [operatorId, stepRefs] of operatorStepsMap) {
+      // Only consider operators that are in our upstream context
+      if (!operatorIds.includes(operatorId)) {
+        continue;
+      }
+
+      // Filter to only show badges for steps that are in our relevant steps
+      const filteredRefs = stepRefs.filter(ref => relevantStepKeys.has(`${ref.messageId}-${ref.stepId}`));
+      if (filteredRefs.length === 0) {
+        continue;
+      }
+
+      const jointCell = this.paper.getModelById(operatorId);
+      if (!jointCell) {
+        continue;
+      }
+
+      const bbox = jointCell.getBBox();
+      const scale = this.paper.scale();
+      const translate = this.paper.translate();
+
+      // Position badges at top-left corner of operator
+      // Each badge is offset horizontally to stack them (same as updateStepBadgePositions)
+      const BADGE_SIZE = 22;
+      const BADGE_GAP = 4;
+
+      filteredRefs.forEach((stepRef, index) => {
+        const screenX = bbox.x * scale.sx + translate.tx - 8 + index * (BADGE_SIZE + BADGE_GAP);
+        const screenY = bbox.y * scale.sy + translate.ty - 8;
+
+        this.chatContextBadges.push({
+          operatorId,
+          stepId: stepRef.stepId,
+          messageId: stepRef.messageId,
+          position: { x: screenX, y: screenY },
+        });
+      });
+    }
+  }
+
+  /**
+   * Clear chat context highlighting (region and badges).
+   */
+  private clearChatContextHighlight(): void {
+    // Remove region element from the graph
+    if (this.chatContextRegionElement) {
+      try {
+        // Use graph's removeCells for more reliable removal
+        this.paper.model.removeCells([this.chatContextRegionElement]);
+      } catch (e) {
+        // Fallback to direct removal
+        try {
+          this.chatContextRegionElement.remove();
+        } catch {
+          // Element might already be removed
+        }
+      }
+      this.chatContextRegionElement = null;
+    }
+    this.chatContextBadges = [];
+    this.chatContextOperatorIds = [];
+    this.chatContextSteps = [];
   }
 
   /**

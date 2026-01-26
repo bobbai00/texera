@@ -1526,6 +1526,14 @@ export class TexeraCopilotManagerService {
     return this.operatorStepsMapSubject.getValue().get(operatorId) || [];
   }
 
+  /**
+   * Get the current operator steps map (snapshot).
+   * Maps operatorId to array of steps that affected it.
+   */
+  public getOperatorStepsMap(): Map<string, OperatorStepRef[]> {
+    return this.operatorStepsMapSubject.getValue();
+  }
+
   // ============================================================================
   // Message Region Highlighting Methods
   // ============================================================================

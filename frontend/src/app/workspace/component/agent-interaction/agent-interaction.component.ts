@@ -17,13 +17,22 @@
  * under the License.
  */
 
-import { ChangeDetectorRef, Component, Input, OnChanges, OnInit, SimpleChanges } from "@angular/core";
+import { ChangeDetectorRef, Component, EventEmitter, Input, OnChanges, OnInit, Output, SimpleChanges } from "@angular/core";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { TexeraCopilotManagerService } from "../../service/copilot/texera-copilot-manager.service";
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
 import { NotificationService } from "../../../common/service/notification/notification.service";
 import { ReActStep } from "../../service/copilot/copilot-types";
 import { WorkflowGraphReadonly } from "../../service/workflow-graph/model/workflow-graph";
+
+/**
+ * Event emitted when context highlight should change.
+ * Contains the operators to highlight and the relevant steps.
+ */
+export interface ContextHighlightEvent {
+  operatorIds: string[];
+  steps: ReActStep[];
+}
 
 /**
  * AgentInteractionComponent provides a compact interface for users to send feedback
@@ -40,6 +49,10 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
   @Input() operatorId!: string;
   @Input() operatorDisplayName?: string;
   @Input() compact: boolean = true;
+  @Input() showContextExpanded: boolean = false; // When true, shows context inline without popover
+
+  /** Emitted when operators should be highlighted (on panel open) or unhighlighted (on panel close) */
+  @Output() contextHighlightChange = new EventEmitter<ContextHighlightEvent | null>();
 
   public availableAgents: Array<{ id: string; name: string; isConnected: boolean }> = [];
   public selectedAgentId: string | null = null;
@@ -63,10 +76,21 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
     this.copilotManagerService.agentChange$.pipe(untilDestroyed(this)).subscribe(() => {
       this.loadAvailableAgents();
     });
+
+    // If showContextExpanded is true, load context immediately
+    if (this.showContextExpanded) {
+      this.computeUpstreamOperators();
+      this.loadRelevantContext();
+    }
   }
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes["operatorId"] || changes["selectedAgentId"]) {
+      this.computeUpstreamOperators();
+      this.loadRelevantContext();
+    }
+    // When showContextExpanded changes to true, load context
+    if (changes["showContextExpanded"]?.currentValue === true) {
       this.computeUpstreamOperators();
       this.loadRelevantContext();
     }
@@ -149,12 +173,14 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
   private loadRelevantContext(): void {
     if (!this.operatorId || !this.selectedAgentId) {
       this.relevantSteps = [];
+      this.emitContextHighlight();
       return;
     }
 
     // Check if agent is connected before making API call
     if (!this.copilotManagerService.isAgentActivelyConnected(this.selectedAgentId)) {
       this.relevantSteps = [];
+      this.emitContextHighlight();
       return;
     }
 
@@ -164,16 +190,47 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
       .pipe(untilDestroyed(this))
       .subscribe({
         next: response => {
-          this.relevantSteps = response.steps;
+          // Sort steps by stepId in ascending order (oldest first)
+          this.relevantSteps = [...response.steps].sort((a, b) => a.stepId - b.stepId);
           this.isLoadingContext = false;
+          this.emitContextHighlight();
           this.changeDetectorRef.detectChanges();
         },
         error: () => {
           this.relevantSteps = [];
           this.isLoadingContext = false;
+          this.emitContextHighlight();
           this.changeDetectorRef.detectChanges();
         },
       });
+  }
+
+  /**
+   * Emit context highlight event when in expanded mode.
+   */
+  private emitContextHighlight(): void {
+    if (this.showContextExpanded && this.upstreamOperatorIds.length > 0) {
+      this.contextHighlightChange.emit({
+        operatorIds: this.upstreamOperatorIds,
+        steps: this.relevantSteps,
+      });
+    }
+  }
+
+  /**
+   * Clear the context highlight (call when panel closes).
+   */
+  public clearContextHighlight(): void {
+    this.contextHighlightChange.emit(null);
+  }
+
+  /**
+   * Get the step label for display (messageId.stepId format).
+   */
+  public getStepLabel(step: ReActStep): string {
+    // Show abbreviated messageId (first 8 chars) + stepId
+    const shortMessageId = step.messageId.substring(0, 8);
+    return `${shortMessageId}#${step.stepId}`;
   }
 
   /**

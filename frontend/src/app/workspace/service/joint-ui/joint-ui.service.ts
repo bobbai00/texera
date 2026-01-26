@@ -102,6 +102,18 @@ export const removeOutputPortButtonSVG = `
 `;
 
 /**
+ * Defines the SVG for the chat button (message icon)
+ * This button allows users to send feedback to agents about this operator
+ */
+export const chatButtonSVG = `
+  <svg class="chat-button" height="20" width="20" viewBox="0 0 24 24">
+    <rect x="0" y="0" width="24" height="24" fill="transparent" pointer-events="visible" />
+    <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+    <title>Chat with agent about this operator</title>
+  </svg>
+`;
+
+/**
  * Defines the handle (the square at the end) of the source operator for a link
  */
 export const sourceOperatorHandle = "M 0 0 L 0 8 L 8 8 L 8 0 z";
@@ -153,6 +165,7 @@ class TexeraCustomJointElement extends joint.shapes.devs.Model {
       <path class="left-boundary"></path>
       <path class="right-boundary"></path>
       ${deleteButtonSVG}
+      ${chatButtonSVG}
       ${dynamicInputPorts ? addInputPortButtonSVG : ""}
       ${dynamicInputPorts ? removeInputPortButtonSVG : ""}
       ${dynamicOutputPorts ? addOutputPortButtonSVG : ""}
@@ -370,6 +383,7 @@ export class JointUIService {
       [`.${operatorStateClass}`]: { visibility: "hidden" },
       [`.${operatorPortMetricsClass}`]: { visibility: "hidden" },
       ".delete-button": { visibility: "hidden" },
+      ".chat-button": { visibility: "hidden" },
       ".add-input-port-button": { visibility: "hidden" },
       ".add-output-port-button": { visibility: "hidden" },
       ".remove-input-port-button": { visibility: "hidden" },
@@ -382,6 +396,7 @@ export class JointUIService {
       [`.${operatorStateClass}`]: { visibility: "visible" },
       [`.${operatorPortMetricsClass}`]: { visibility: "visible" },
       ".delete-button": { visibility: "visible" },
+      ".chat-button": { visibility: "visible" },
       ".add-input-port-button": { visibility: "visible" },
       ".add-output-port-button": { visibility: "visible" },
       ".remove-input-port-button": { visibility: "visible" },
@@ -832,6 +847,14 @@ export class JointUIService {
         cursor: "pointer",
         fill: "#D8656A",
         event: "element:delete",
+        visibility: "hidden",
+      },
+      ".chat-button": {
+        x: 85,
+        y: -20,
+        cursor: "pointer",
+        fill: "#1890ff",
+        event: "element:chat",
         visibility: "hidden",
       },
       ".add-input-port-button": {

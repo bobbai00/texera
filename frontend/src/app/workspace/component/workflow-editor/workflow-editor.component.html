@@ -79,4 +79,56 @@
       {{ badge.stepId }}
     </div>
   </div>
+
+  <!-- Chat Context Badges (shown when chat popover is open) -->
+  <!-- Uses same style as step badges for consistency -->
+  <div
+    class="step-badges-container"
+    *ngIf="chatContextBadges.length > 0">
+    <div
+      *ngFor="let badge of chatContextBadges"
+      class="step-badge"
+      [style.left.px]="badge.position.x"
+      [style.top.px]="badge.position.y"
+      nz-tooltip
+      [nzTooltipTitle]="'Step ' + badge.stepId + ' (Message: ' + badge.messageId.substring(0, 8) + '...)'"
+      nzTooltipPlacement="top">
+      {{ badge.stepId }}
+    </div>
+  </div>
+
+  <!-- Chat Popover for Operator -->
+  <div
+    class="chat-popover-container"
+    *ngIf="chatPopoverOperator"
+    [style.left.px]="chatPopoverOperator.position.x"
+    [style.top.px]="chatPopoverOperator.position.y">
+    <div class="chat-popover">
+      <div class="chat-popover-header">
+        <i
+          nz-icon
+          nzType="message"
+          nzTheme="outline"></i>
+        <span class="chat-popover-title">Agent Chat: {{ chatPopoverOperator.displayName }}</span>
+        <button
+          class="chat-popover-close"
+          (click)="closeChatPopover()"
+          title="Close">
+          <i
+            nz-icon
+            nzType="close"
+            nzTheme="outline"></i>
+        </button>
+      </div>
+      <div class="chat-popover-content">
+        <texera-agent-interaction
+          [operatorId]="chatPopoverOperator.operatorId"
+          [operatorDisplayName]="chatPopoverOperator.displayName"
+          [compact]="false"
+          [showContextExpanded]="true"
+          (contextHighlightChange)="onChatContextHighlightChange($event)">
+        </texera-agent-interaction>
+      </div>
+    </div>
+  </div>
 </div>
