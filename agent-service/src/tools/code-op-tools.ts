@@ -437,6 +437,12 @@ ERROR CONDITIONS:
           resultMsg += `\nAuto-created links: [${createdLinkIds.join(", ")}]`;
         }
 
+        // Auto-execute if configured
+        if (context?.settings?.autoExecuteOnChange && context?.executeOperator) {
+          const executionResult = await context.executeOperator(operatorId);
+          resultMsg += `\n\n--- Execution Result ---\n${executionResult}`;
+        }
+
         return createToolResult(resultMsg);
       } catch (error: any) {
         return createErrorResult(error.message || String(error));
@@ -610,6 +616,12 @@ export function createModifyCodeOperatorTool(workflowState: WorkflowState, conte
         }
         if (createdLinkIds.length > 0) {
           resultMsg += `\nCreated links: [${createdLinkIds.join(", ")}]`;
+        }
+
+        // Auto-execute if configured
+        if (context?.settings?.autoExecuteOnChange && context?.executeOperator) {
+          const executionResult = await context.executeOperator(operatorId);
+          resultMsg += `\n\n--- Execution Result ---\n${executionResult}`;
         }
 
         return createToolResult(resultMsg);

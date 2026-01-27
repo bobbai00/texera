@@ -51,7 +51,15 @@ export interface ToolContext {
     maxOperatorResultCharLimit?: number;
     toolTimeoutMs?: number;
     executionTimeoutMs?: number;
+    autoExecuteOnChange?: boolean;
   };
+  /**
+   * Execute a specific operator and return formatted result.
+   * Available when execution is configured for the agent.
+   * @param operatorId - The operator to execute
+   * @returns Formatted result string or null if execution is not available
+   */
+  executeOperator?: (operatorId: string) => Promise<string>;
 }
 
 // ============================================================================

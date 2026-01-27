@@ -192,6 +192,8 @@ export interface AgentSettings {
   maxSteps: number;
   /** Agent operating mode (code or general) */
   agentMode: AgentMode;
+  /** Auto-execute operator after add/modify in code mode (default: false) */
+  autoExecuteOnChange: boolean;
 }
 
 /**
@@ -205,7 +207,8 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   toolTimeoutMs: 240000, // 4 minutes
   executionTimeoutMs: 240000, // 4 minutes
   maxSteps: 100,
-  agentMode: AgentMode.CODE, // Default to GENERAL mode
+  agentMode: AgentMode.CODE, // Default to CODE mode
+  autoExecuteOnChange: true, // Auto-execute after add/modify in code mode
 };
 
 // ============================================================================
@@ -258,6 +261,8 @@ export interface AgentSettingsApi {
   maxSteps?: number;
   /** Agent operating mode: "code" or "general" */
   agentMode?: "code" | "general";
+  /** Auto-execute operator after add/modify in code mode */
+  autoExecuteOnChange?: boolean;
 }
 
 /**
@@ -311,6 +316,8 @@ export interface UpdateAgentSettingsRequest {
   maxSteps?: number;
   /** Agent operating mode: "code" or "general" */
   agentMode?: "code" | "general";
+  /** Auto-execute operator after add/modify in code mode */
+  autoExecuteOnChange?: boolean;
 }
 
 // ============================================================================

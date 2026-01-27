@@ -62,6 +62,8 @@ export interface AgentSettingsApi {
   maxSteps?: number;
   /** Agent mode: "code" for Python code operators, "general" for all operators with schema hints */
   agentMode?: "code" | "general";
+  /** Auto-execute operator after add/modify in code mode */
+  autoExecuteOnChange?: boolean;
 }
 
 /**
@@ -1245,6 +1247,7 @@ export class TexeraCopilotManagerService {
           disabledTools: [],
           maxSteps: 10,
           agentMode: "code" as const,
+          autoExecuteOnChange: true,
         })
       )
     );

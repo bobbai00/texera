@@ -73,7 +73,12 @@ import {
   TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES,
   TOOL_NAME_GET_OPERATOR_SCHEMA,
 } from "../tools/metadata-tools";
-import { createExecuteWorkflowTool, TOOL_NAME_EXECUTE_WORKFLOW, type ExecutionConfig } from "../tools/execution-tools";
+import {
+  createExecuteWorkflowTool,
+  executeOperatorAndFormat,
+  TOOL_NAME_EXECUTE_WORKFLOW,
+  type ExecutionConfig,
+} from "../tools/execution-tools";
 
 // ============================================================================
 // Constants
@@ -267,6 +272,19 @@ export class TexeraAgent {
       }
     }
 
+    // Build execution config getter for auto-execute feature
+    const getExecutionConfig = this.delegateConfig
+      ? (): ExecutionConfig => ({
+          userToken: this.delegateConfig!.userToken,
+          workflowId: this.delegateConfig!.workflowId,
+          computingUnitId: this.delegateConfig!.computingUnitId,
+          maxOperatorResultCharLimit: this.settings.maxOperatorResultCharLimit,
+          maxOperatorResultCellCharLimit: this.settings.maxOperatorResultCellCharLimit,
+          serializationMode: this.settings.operatorResultSerializationMode,
+          executionTimeoutMs: this.settings.executionTimeoutMs,
+        })
+      : undefined;
+
     // Build tool context for agent action tracking
     const context: ToolContext = {
       metadataStore: this.metadataStore,
@@ -280,7 +298,12 @@ export class TexeraAgent {
         maxOperatorResultCharLimit: this.settings.maxOperatorResultCharLimit,
         toolTimeoutMs: this.settings.toolTimeoutMs,
         executionTimeoutMs: this.settings.executionTimeoutMs,
+        autoExecuteOnChange: this.settings.autoExecuteOnChange,
       },
+      // Provide execution helper when execution is configured
+      executeOperator: getExecutionConfig
+        ? (operatorId: string) => executeOperatorAndFormat(this.workflowState, getExecutionConfig(), operatorId)
+        : undefined,
     };
 
     // Common tools for both modes
@@ -305,19 +328,7 @@ export class TexeraAgent {
     }
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
-    if (this.delegateConfig) {
-      // Use a getter function so the tool reads current settings at execution time
-      const delegateConfig = this.delegateConfig;
-      const settings = this.settings;
-      const getExecutionConfig = (): ExecutionConfig => ({
-        userToken: delegateConfig.userToken,
-        workflowId: delegateConfig.workflowId,
-        computingUnitId: delegateConfig.computingUnitId,
-        maxOperatorResultCharLimit: settings.maxOperatorResultCharLimit,
-        maxOperatorResultCellCharLimit: settings.maxOperatorResultCellCharLimit,
-        serializationMode: settings.operatorResultSerializationMode,
-        executionTimeoutMs: settings.executionTimeoutMs,
-      });
+    if (getExecutionConfig) {
       tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, getExecutionConfig);
     }
 
@@ -471,6 +482,7 @@ export class TexeraAgent {
     disabledTools?: Set<string>;
     maxSteps?: number;
     agentMode?: AgentMode;
+    autoExecuteOnChange?: boolean;
   }): void {
     let modeChanged = false;
 
@@ -498,6 +510,9 @@ export class TexeraAgent {
     if (updates.agentMode !== undefined && updates.agentMode !== this.settings.agentMode) {
       this.settings.agentMode = updates.agentMode;
       modeChanged = true;
+    }
+    if (updates.autoExecuteOnChange !== undefined) {
+      this.settings.autoExecuteOnChange = updates.autoExecuteOnChange;
     }
 
     // If mode changed, rebuild system prompt

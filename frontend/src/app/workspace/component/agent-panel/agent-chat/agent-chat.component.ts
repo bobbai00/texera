@@ -113,6 +113,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
   public settingsMaxSteps = 10; // Default max steps per message
   public settingsAgentMode: "code" | "general" = "code"; // Agent operating mode
+  public settingsAutoExecuteOnChange = true; // Auto-execute after add/modify in code mode
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -420,6 +421,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsExecutionTimeoutMinutes = settings.executionTimeoutMinutes ?? 10;
         this.settingsMaxSteps = settings.maxSteps ?? 10;
         this.settingsAgentMode = settings.agentMode ?? "code";
+        this.settingsAutoExecuteOnChange = settings.autoExecuteOnChange ?? true;
       });
 
     // Also load agent internal state
@@ -1192,6 +1194,24 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         next: () =>
           this.notificationService.success(
             this.settingsAgentMode === "code" ? "Code mode enabled" : "General mode enabled"
+          ),
+        error: () => {}, // Error already handled by service
+      });
+  }
+
+  /**
+   * Save the auto-execute on change setting.
+   */
+  public saveAutoExecuteOnChange(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        autoExecuteOnChange: this.settingsAutoExecuteOnChange,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsAutoExecuteOnChange ? "Auto-execute enabled" : "Auto-execute disabled"
           ),
         error: () => {}, // Error already handled by service
       });

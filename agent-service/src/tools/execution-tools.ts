@@ -475,6 +475,130 @@ function jsonToToonFormat(jsonResult: Record<string, any>[]): string {
 }
 
 // ============================================================================
+// Common Execution Function
+// ============================================================================
+
+/**
+ * Execute a workflow for a specific operator and return the formatted result.
+ * This is the core execution logic shared by the executeWorkflow tool and auto-execute feature.
+ *
+ * @param workflowState - The workflow state
+ * @param config - Execution configuration
+ * @param operatorId - The operator to execute and get results for
+ * @param options - Optional abort signal
+ * @returns Formatted result string or error message
+ */
+export async function executeOperatorAndFormat(
+  workflowState: WorkflowState,
+  config: ExecutionConfig,
+  operatorId: string,
+  options: { abortSignal?: AbortSignal } = {}
+): Promise<string> {
+  // Acquire mutex to serialize executions for this workflow
+  // This prevents ConcurrentModificationException on the backend
+  const release = await getWorkflowMutex(config.workflowId).acquire();
+
+  try {
+    // Build logical plan for the single operator (sub-DAG up to this operator)
+    const logicalPlan = buildLogicalPlan(workflowState, [operatorId]);
+
+    if (logicalPlan.operators.length === 0) {
+      return createErrorResult("Cannot execute: workflow has no operators.");
+    }
+
+    const validationResult = validateWorkflow(workflowState);
+    if (!validationResult.isValid) {
+      return createErrorResult(formatWorkflowValidationErrors(validationResult));
+    }
+
+    const result = await executeWorkflowHttp(config, logicalPlan, {
+      abortSignal: options.abortSignal,
+    });
+
+    // Handle execution failure
+    if (!result.success) {
+      const compilationErrors =
+        result.state === "CompilationFailed" || result.state === "ValidationFailed"
+          ? result.compilationErrors
+          : undefined;
+
+      const operatorErrors =
+        result.state === "Failed"
+          ? Object.entries(result.operators)
+              .filter(([_, op]) => op.error)
+              .map(([opId, op]) => ({ operatorId: opId, error: op.error! }))
+          : undefined;
+
+      const generalErrors =
+        result.state === "Killed" ? ["Workflow execution was killed (timeout)."] : result.errors;
+
+      return createErrorResult(formatExecutionError(compilationErrors, operatorErrors, generalErrors));
+    }
+
+    // Check operator result
+    const opInfo = result.operators[operatorId];
+    if (!opInfo) {
+      return createErrorResult(
+        formatExecutionError(undefined, undefined, [`No result found for operator: ${operatorId}`])
+      );
+    }
+
+    if (opInfo.error) {
+      return createErrorResult(formatExecutionError(undefined, [{ operatorId, error: opInfo.error }]));
+    }
+
+    // Get result info - backend always returns JSON array, agent-service serializes
+    const serializationMode = config.serializationMode ?? OperatorResultSerializationMode.TABLE;
+
+    if (!opInfo.result || !Array.isArray(opInfo.result)) {
+      return "(no result data)";
+    }
+
+    // Backend returns JSON array - serialize based on configured mode
+    const jsonArray = opInfo.result as Record<string, any>[];
+    const columns = jsonArray.length > 0 ? Object.keys(jsonArray[0]).length : 0;
+
+    let dataString: string;
+    let modeLabel: string;
+
+    switch (serializationMode) {
+      case OperatorResultSerializationMode.TABLE:
+        dataString = jsonToTableFormat(jsonArray);
+        modeLabel = "table";
+        break;
+      case OperatorResultSerializationMode.TOON:
+        dataString = jsonToToonFormat(jsonArray);
+        modeLabel = "toon";
+        break;
+      case OperatorResultSerializationMode.JSON:
+      default:
+        dataString = JSON.stringify(jsonArray);
+        modeLabel = "json";
+        break;
+    }
+
+    // Backend returns data row counts. For tabular formats (table/toon),
+    // add 1 for the header row since the displayed output includes it.
+    const headerOffset = (modeLabel === "table" || modeLabel === "toon") ? 1 : 0;
+    const rawDisplayedRows = opInfo.displayedRows ?? 0;
+    const rawTotalRows = opInfo.totalRowCount ?? rawDisplayedRows;
+    const displayedRows = rawDisplayedRows + headerOffset;
+    const totalRows = rawTotalRows + headerOffset;
+    const truncated = opInfo.truncated ?? rawDisplayedRows < rawTotalRows;
+
+    const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
+    return `${meta}\n${dataString}`;
+  } catch (error: any) {
+    if (error.name === "AbortError") {
+      throw error;
+    }
+    return createErrorResult(`Execution failed: ${error.message || String(error)}`);
+  } finally {
+    release();
+  }
+}
+
+// ============================================================================
 // Tool Creator
 // ============================================================================
 
@@ -492,111 +616,7 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, getConfi
     execute: async (args: { operatorId: string }, options: { abortSignal?: AbortSignal }) => {
       // Get current config at execution time (allows settings updates to take effect)
       const config = getConfig();
-
-      // Acquire mutex to serialize executions for this workflow
-      // This prevents ConcurrentModificationException on the backend
-      const release = await getWorkflowMutex(config.workflowId).acquire();
-
-      try {
-        const { operatorId } = args;
-
-        // Build logical plan for the single operator (sub-DAG up to this operator)
-        const logicalPlan = buildLogicalPlan(workflowState, [operatorId]);
-
-        if (logicalPlan.operators.length === 0) {
-          return createErrorResult("Cannot execute: workflow has no operators.");
-        }
-
-        const validationResult = validateWorkflow(workflowState);
-        if (!validationResult.isValid) {
-          return createErrorResult(formatWorkflowValidationErrors(validationResult));
-        }
-
-        const result = await executeWorkflowHttp(config, logicalPlan, {
-          abortSignal: options.abortSignal,
-        });
-
-        // Handle execution failure
-        if (!result.success) {
-          const compilationErrors =
-            result.state === "CompilationFailed" || result.state === "ValidationFailed"
-              ? result.compilationErrors
-              : undefined;
-
-          const operatorErrors =
-            result.state === "Failed"
-              ? Object.entries(result.operators)
-                  .filter(([_, op]) => op.error)
-                  .map(([opId, op]) => ({ operatorId: opId, error: op.error! }))
-              : undefined;
-
-          const generalErrors =
-            result.state === "Killed" ? ["Workflow execution was killed (timeout)."] : result.errors;
-
-          return createErrorResult(formatExecutionError(compilationErrors, operatorErrors, generalErrors));
-        }
-
-        // Check operator result
-        const opInfo = result.operators[operatorId];
-        if (!opInfo) {
-          return createErrorResult(
-            formatExecutionError(undefined, undefined, [`No result found for operator: ${operatorId}`])
-          );
-        }
-
-        if (opInfo.error) {
-          return createErrorResult(formatExecutionError(undefined, [{ operatorId, error: opInfo.error }]));
-        }
-
-        // Get result info - backend always returns JSON array, agent-service serializes
-        const serializationMode = config.serializationMode ?? OperatorResultSerializationMode.TABLE;
-
-        if (!opInfo.result || !Array.isArray(opInfo.result)) {
-          return "(no result data)";
-        }
-
-        // Backend returns JSON array - serialize based on configured mode
-        const jsonArray = opInfo.result as Record<string, any>[];
-        const columns = jsonArray.length > 0 ? Object.keys(jsonArray[0]).length : 0;
-
-        let dataString: string;
-        let modeLabel: string;
-
-        switch (serializationMode) {
-          case OperatorResultSerializationMode.TABLE:
-            dataString = jsonToTableFormat(jsonArray);
-            modeLabel = "table";
-            break;
-          case OperatorResultSerializationMode.TOON:
-            dataString = jsonToToonFormat(jsonArray);
-            modeLabel = "toon";
-            break;
-          case OperatorResultSerializationMode.JSON:
-          default:
-            dataString = JSON.stringify(jsonArray);
-            modeLabel = "json";
-            break;
-        }
-
-        // Backend returns data row counts. For tabular formats (table/toon),
-        // add 1 for the header row since the displayed output includes it.
-        const headerOffset = (modeLabel === "table" || modeLabel === "toon") ? 1 : 0;
-        const rawDisplayedRows = opInfo.displayedRows ?? 0;
-        const rawTotalRows = opInfo.totalRowCount ?? rawDisplayedRows;
-        const displayedRows = rawDisplayedRows + headerOffset;
-        const totalRows = rawTotalRows + headerOffset;
-        const truncated = opInfo.truncated ?? rawDisplayedRows < rawTotalRows;
-
-        const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
-        return `${meta}\n${dataString}`;
-      } catch (error: any) {
-        if (error.name === "AbortError") {
-          throw error;
-        }
-        return createErrorResult(`Execution failed: ${error.message || String(error)}`);
-      } finally {
-        release();
-      }
+      return executeOperatorAndFormat(workflowState, config, args.operatorId, options);
     },
   });
 }
