@@ -206,7 +206,8 @@ class DataProcessingOpDesc extends LogicalOp {
 
     val outputPortInfo = if (outputPorts != null) {
       outputPorts.zipWithIndex.map {
-        case (portDesc, idx) => OutputPort(PortIdentity(idx), displayName = portDesc.displayName, blocking = true)
+        case (portDesc, idx) =>
+          OutputPort(PortIdentity(idx), displayName = portDesc.displayName, blocking = true)
       }
     } else {
       List(OutputPort(blocking = true))

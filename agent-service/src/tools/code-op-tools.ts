@@ -368,13 +368,15 @@ ERROR CONDITIONS:
 
         // Create the operator with the code property and custom operator ID
         let operator = workflowUtil.getNewOperatorPredicate(operatorType, displayName);
+        const operatorProps: Record<string, any> = {
+          ...operator.operatorProperties,
+          code: code,
+        };
+
         operator = {
           ...operator,
           operatorID: operatorId, // Use variable name as operator ID
-          operatorProperties: {
-            ...operator.operatorProperties,
-            code: code,
-          },
+          operatorProperties: operatorProps,
         };
 
         workflowState.addOperator(operator);
@@ -529,9 +531,8 @@ export function createModifyCodeOperatorTool(workflowState: WorkflowState, conte
 
         const beforeContent = workflowState.getWorkflowContent();
 
-        // Update the code property and optionally the display name
-        const propertiesToUpdate: Record<string, any> = { code };
-        workflowState.updateOperatorProperties(operatorId, propertiesToUpdate);
+        // Update the code property
+        workflowState.updateOperatorProperties(operatorId, { code });
 
         // Update display name if summary is provided
         if (summary) {

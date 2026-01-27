@@ -72,8 +72,11 @@ class Table(pandas.DataFrame):
         following their row index order.
         :return:
         """
+        # Convert column names to strings to handle RangeIndex (from header=None)
+        # This ensures consistency with schema inference which uses str(column_name)
+        str_columns = [str(col) for col in self.columns]
         for raw_tuple in self.itertuples(index=False, name=None):
-            yield Tuple(dict(zip(self.columns, raw_tuple)))
+            yield Tuple(dict(zip(str_columns, raw_tuple)))
 
     def __eq__(self, other: "Table") -> bool:
         if isinstance(other, Table):

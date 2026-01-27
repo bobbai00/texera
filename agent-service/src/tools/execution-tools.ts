@@ -555,10 +555,6 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, getConfi
           return "(no result data)";
         }
 
-        const displayedRows = opInfo.displayedRows ?? 0;
-        const totalRows = opInfo.totalRowCount ?? displayedRows;
-        const truncated = opInfo.truncated ?? displayedRows < totalRows;
-
         // Backend returns JSON array - serialize based on configured mode
         const jsonArray = opInfo.result as Record<string, any>[];
         const columns = jsonArray.length > 0 ? Object.keys(jsonArray[0]).length : 0;
@@ -581,6 +577,15 @@ export function createExecuteWorkflowTool(workflowState: WorkflowState, getConfi
             modeLabel = "json";
             break;
         }
+
+        // Backend returns data row counts. For tabular formats (table/toon),
+        // add 1 for the header row since the displayed output includes it.
+        const headerOffset = (modeLabel === "table" || modeLabel === "toon") ? 1 : 0;
+        const rawDisplayedRows = opInfo.displayedRows ?? 0;
+        const rawTotalRows = opInfo.totalRowCount ?? rawDisplayedRows;
+        const displayedRows = rawDisplayedRows + headerOffset;
+        const totalRows = rawTotalRows + headerOffset;
+        const truncated = opInfo.truncated ?? rawDisplayedRows < rawTotalRows;
 
         const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
         return `${meta}\n${dataString}`;
