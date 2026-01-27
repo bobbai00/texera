@@ -189,7 +189,7 @@ class DataProcessor(Runnable, Stoppable):
             # For DataFrame outputs, infer schema from dtypes BEFORE converting to tuples
             # This is more reliable because DataFrame dtypes are consistent across all rows
             if not self._schema_inferred and isinstance(output, pandas.DataFrame):
-                schema, output = self._infer_and_apply_schema_from_dataframe(output)
+                schema = self._infer_and_apply_schema_from_dataframe(output)
             else:
                 schema = None  # Will be determined per-tuple if needed
 
@@ -215,28 +215,17 @@ class DataProcessor(Runnable, Stoppable):
 
         self._context.tuple_processing_manager.finished_current.set()
 
-    def _infer_and_apply_schema_from_dataframe(
-        self, df: pandas.DataFrame
-    ) -> tuple[Schema, pandas.DataFrame]:
+    def _infer_and_apply_schema_from_dataframe(self, df: pandas.DataFrame) -> Schema:
         """
         Infer schema from DataFrame and apply it to the output port.
 
         :param df: The DataFrame to infer schema from
-        :return: Tuple of (inferred schema, potentially modified DataFrame)
+        :return: The inferred schema
         """
         self._schema_inferred = True
 
-        # First infer column types (before normalizing column names)
-        # This avoids duplicate type inference in _column_names_look_like_data
-        column_types = self._infer_column_types_from_dataframe(df)
-
-        # Check if DataFrame appears to be missing a header and normalize columns if needed
-        # This may also restore a lost first row for headerless CSVs
-        df = self._normalize_dataframe_columns_if_needed(df, column_types)
-
-        # Build the full schema with correct column names (after normalization)
         declared_schema = self._context.output_manager.get_port().get_schema()
-        inferred_schema = self._build_schema_from_types(df, column_types)
+        inferred_schema = self._infer_schema_from_dataframe(df)
 
         # Check if schemas match
         if not self._schemas_are_equal(declared_schema, inferred_schema):
@@ -256,171 +245,7 @@ class DataProcessor(Runnable, Stoppable):
                 f"Schema inferred from DataFrame dtypes: {inferred_schema}"
             )
 
-        return inferred_schema, df
-
-    def _normalize_dataframe_columns_if_needed(
-        self, df: pandas.DataFrame, column_types: List[AttributeType]
-    ) -> pandas.DataFrame:
-        """
-        Check if DataFrame appears to be missing a proper header and normalize
-        column names if needed.
-
-        This handles two cases:
-        1. User correctly used header=None, so columns are RangeIndex (0, 1, 2, ...)
-           → Rename to "column-0", "column-1", etc.
-        2. User forgot header=None on a headerless CSV, so the first data row
-           became column names → Detect this and rename columns, but we can't
-           recover the lost first row.
-
-        Detection heuristic for case 2:
-        - If ALL column names can be parsed as the same type as their column's data,
-          it's likely the column names are actually data values.
-        - E.g., column "25" with integer data suggests "25" was data, not a header.
-
-        :param df: The DataFrame to check and potentially modify
-        :param column_types: Pre-inferred AttributeTypes for each column
-        :return: The DataFrame with normalized column names (may be the same object)
-        """
-        if len(df.columns) == 0:
-            return df
-
-        # Case 1: Columns are already integer indices (user used header=None)
-        if isinstance(df.columns, pandas.RangeIndex):
-            new_columns = [f"column-{i}" for i in range(len(df.columns))]
-            df.columns = new_columns
-            logger.info(
-                f"DataFrame has RangeIndex columns, renamed to: {new_columns}"
-            )
-            return df
-
-        # Case 1b: All columns are integers (another form of no header)
-        if all(isinstance(col, (int, np.integer)) for col in df.columns):
-            new_columns = [f"column-{i}" for i in range(len(df.columns))]
-            df.columns = new_columns
-            logger.info(
-                f"DataFrame has integer columns, renamed to: {new_columns}"
-            )
-            return df
-
-        # Case 2: Check if column names look like data values
-        # This uses a heuristic: if ALL column names can be parsed as the
-        # inferred type of their respective columns, they're likely data
-        if self._column_names_look_like_data(df, column_types):
-            # Save old column names (which are actually data values)
-            old_columns = list(df.columns)
-
-            # Rename current DataFrame columns first
-            new_columns = [f"column-{i}" for i in range(len(df.columns))]
-            df.columns = new_columns
-
-            # Create a new row from the old column names, converting to match types
-            first_row_data = {}
-            for i, (col_name, old_val) in enumerate(zip(new_columns, old_columns)):
-                attr_type = column_types[i]
-                try:
-                    # Try to convert the old column name to the column's type
-                    if attr_type in (AttributeType.INT, AttributeType.LONG, AttributeType.DOUBLE):
-                        converted_val = pandas.to_numeric(old_val, errors='coerce')
-                        # If conversion failed (NaN), keep original string
-                        if pandas.isna(converted_val):
-                            converted_val = old_val
-                    elif attr_type == AttributeType.TIMESTAMP:
-                        converted_val = pandas.to_datetime(old_val, errors='coerce')
-                        if pandas.isna(converted_val):
-                            converted_val = old_val
-                    elif attr_type == AttributeType.BOOL:
-                        converted_val = str(old_val).lower() in ('true', '1', 'yes')
-                    else:
-                        converted_val = old_val
-                except Exception:
-                    converted_val = old_val
-                first_row_data[col_name] = [converted_val]
-
-            first_row_df = pandas.DataFrame(first_row_data)
-
-            # Concatenate: first row + rest of data
-            df = pandas.concat([first_row_df, df], ignore_index=True)
-
-            logger.warning(
-                f"DataFrame column names appear to be data values (headerless CSV?). "
-                f"Restored first row {old_columns} and renamed columns to {new_columns}. "
-                f"Consider using header=None in pd.read_csv() to avoid this auto-detection."
-            )
-            return df
-
-        # Columns look like proper headers, keep them
-        return df
-
-    def _column_names_look_like_data(
-        self, df: pandas.DataFrame, column_types: List[AttributeType]
-    ) -> bool:
-        """
-        Heuristic to detect if column names are actually data values.
-
-        Returns True if ALL column names can be successfully parsed as the
-        same type as their column's data, suggesting the "header" row was
-        actually data.
-
-        :param df: The DataFrame to check
-        :param column_types: Pre-inferred AttributeTypes for each column
-        :return: True if column names appear to be data values
-        """
-        if len(df) == 0:
-            # Empty DataFrame, can't determine
-            return False
-
-        for i, col_name in enumerate(df.columns):
-            # Skip if column name is not a string (already handled above)
-            if not isinstance(col_name, str):
-                continue
-
-            attr_type = column_types[i]
-
-            # For numeric columns, check if column name looks numeric
-            if attr_type in (AttributeType.INT, AttributeType.LONG, AttributeType.DOUBLE):
-                if not self._looks_like_number(col_name):
-                    # This column name doesn't look like a number,
-                    # so it's probably a real header
-                    return False
-
-            # For datetime columns, check if column name looks like a date
-            elif attr_type == AttributeType.TIMESTAMP:
-                if not self._looks_like_datetime(col_name):
-                    return False
-
-            # For boolean columns, check if column name looks like a boolean
-            elif attr_type == AttributeType.BOOL:
-                if col_name.lower() not in ('true', 'false', '0', '1'):
-                    return False
-
-            # For string, binary, list, and struct columns, we can't reliably
-            # distinguish between a header and data, so assume it's a header
-            elif attr_type in (
-                AttributeType.STRING,
-                AttributeType.BINARY,
-                AttributeType.LIST,
-                AttributeType.STRUCT,
-            ):
-                return False
-
-        # All columns passed the check - names look like data
-        return True
-
-    def _looks_like_number(self, s: str) -> bool:
-        """Check if a string looks like a numeric value."""
-        try:
-            float(s.replace(',', ''))  # Handle comma-formatted numbers
-            return True
-        except (ValueError, AttributeError):
-            return False
-
-    def _looks_like_datetime(self, s: str) -> bool:
-        """Check if a string looks like a datetime value."""
-        try:
-            pandas.to_datetime(s)
-            return True
-        except (ValueError, TypeError):
-            return False
+        return inferred_schema
 
     def _flush_output_batch(self, output_batch: List[Optional[Tuple]]) -> None:
         """
@@ -490,52 +315,6 @@ class DataProcessor(Runnable, Stoppable):
 
         return inferred_schema
 
-    def _infer_column_types_from_dataframe(
-        self, df: pandas.DataFrame
-    ) -> List[AttributeType]:
-        """
-        Infer just the column types from a pandas DataFrame.
-
-        This is used before column normalization to avoid duplicate type inference.
-
-        :param df: A pandas DataFrame
-        :return: List of AttributeTypes for each column
-        """
-        column_types = []
-
-        for column_name in df.columns:
-            column = df[column_name]
-            dtype = column.dtype
-
-            # For object dtype, sample first non-null value to distinguish
-            # between STRING, LIST, and STRUCT
-            if dtype == np.dtype("object"):
-                attr_type = self._infer_type_from_object_column(column)
-            else:
-                attr_type = self._map_pandas_dtype_to_attribute_type(dtype)
-
-            column_types.append(attr_type)
-
-        return column_types
-
-    def _build_schema_from_types(
-        self, df: pandas.DataFrame, column_types: List[AttributeType]
-    ) -> Schema:
-        """
-        Build a Schema from DataFrame column names and pre-inferred types.
-
-        :param df: A pandas DataFrame (for column names)
-        :param column_types: Pre-inferred AttributeTypes for each column
-        :return: Schema with column names and types
-        """
-        inferred_schema = Schema()
-
-        for column_name, attr_type in zip(df.columns, column_types):
-            logger.info(f"Pandas {column_name}; type: {attr_type}")
-            inferred_schema.add(str(column_name), attr_type)
-
-        return inferred_schema
-
     def _infer_schema_from_dataframe(self, df: pandas.DataFrame) -> Schema:
         """
         Infer schema from a pandas DataFrame using its dtypes.
@@ -551,8 +330,23 @@ class DataProcessor(Runnable, Stoppable):
         :param df: A pandas DataFrame
         :return: Inferred Schema
         """
-        column_types = self._infer_column_types_from_dataframe(df)
-        return self._build_schema_from_types(df, column_types)
+        inferred_schema = Schema()
+
+        for column_name in df.columns:
+            column = df[column_name]
+            dtype = column.dtype
+            logger.info(f"Pandas {column_name}; dtype: {dtype}")
+
+            # For object dtype, sample first non-null value to distinguish
+            # between STRING, LIST, and STRUCT
+            if dtype == np.dtype("object"):
+                attr_type = self._infer_type_from_object_column(column)
+            else:
+                attr_type = self._map_pandas_dtype_to_attribute_type(dtype)
+
+            inferred_schema.add(str(column_name), attr_type)
+
+        return inferred_schema
 
     def _infer_type_from_object_column(self, column: pandas.Series) -> AttributeType:
         """
