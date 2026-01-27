@@ -112,8 +112,25 @@
   transition: transform 0.15s ease, box-shadow 0.15s ease;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 
-  // Default color - matches message badge (#1890ff blue)
+  // Default color - Execute group (Blue #1890ff)
   background-color: #1890ff;
+
+  // Action-based colors matching tool group colors
+  // Modify group - added/modified operators (Orange #fa8c16)
+  &.added,
+  &.modified {
+    background-color: #fa8c16;
+  }
+
+  // Execute group - executed workflows (Blue #1890ff)
+  &.executed {
+    background-color: #1890ff;
+  }
+
+  // Observe group - viewed operators (Green #52c41a)
+  &.viewed {
+    background-color: #52c41a;
+  }
 
   &:hover {
     transform: scale(1.15);

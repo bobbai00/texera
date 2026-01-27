@@ -134,6 +134,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     operatorId: string;
     stepId: number;
     messageId: string;
+    action: "added" | "modified" | "executed";
     position: { x: number; y: number };
   }> = [];
   private chatContextOperatorIds: string[] = [];
@@ -2265,6 +2266,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
           operatorId,
           stepId: stepRef.stepId,
           messageId: stepRef.messageId,
+          action: stepRef.action,
           position: { x: screenX, y: screenY },
         });
       });

@@ -70,6 +70,7 @@
       class="step-badge"
       [class.added]="badge.action === 'added'"
       [class.modified]="badge.action === 'modified'"
+      [class.executed]="badge.action === 'executed'"
       [style.left.px]="badge.position.x"
       [style.top.px]="badge.position.y"
       (click)="onStepBadgeClick(badge)"
@@ -88,10 +89,13 @@
     <div
       *ngFor="let badge of chatContextBadges"
       class="step-badge"
+      [class.added]="badge.action === 'added'"
+      [class.modified]="badge.action === 'modified'"
+      [class.executed]="badge.action === 'executed'"
       [style.left.px]="badge.position.x"
       [style.top.px]="badge.position.y"
       nz-tooltip
-      [nzTooltipTitle]="'Step ' + badge.stepId + ' (Message: ' + badge.messageId.substring(0, 8) + '...)'"
+      [nzTooltipTitle]="'Step ' + badge.stepId + ' (' + badge.action + ')'"
       nzTooltipPlacement="top">
       {{ badge.stepId }}
     </div>
