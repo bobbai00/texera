@@ -1154,8 +1154,15 @@ export class TexeraAgent {
         if (Array.isArray(content)) {
           for (const part of content) {
             if (part.type === "tool-result" && part.toolCallId) {
+              // Handle both formats:
+              // 1. Direct output: { output: "string" } or { output: {...} }
+              // 2. Wrapped output: { output: { type: "text", value: "string" } }
+              let rawOutput = part.output || part.result || part.content;
+              if (rawOutput && typeof rawOutput === "object" && rawOutput.type === "text" && rawOutput.value !== undefined) {
+                rawOutput = rawOutput.value;
+              }
               toolResultsMap.set(part.toolCallId, {
-                output: part.output || part.result || part.content,
+                output: rawOutput,
                 isError: part.isError || false,
               });
             }

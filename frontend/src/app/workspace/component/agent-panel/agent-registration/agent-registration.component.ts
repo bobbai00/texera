@@ -103,16 +103,33 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
   /**
    * Handle file upload before it starts.
    * Parses the JSON file and stores its content.
+   * Supports two formats:
+   * 1. Wrapped format: { response: string, messages: any[] }
+   * 2. Plain array format: [ { role: "user", content: "..." }, ... ]
    */
   public beforeUpload = (file: NzUploadFile): boolean => {
     const reader = new FileReader();
     reader.onload = (e: ProgressEvent<FileReader>) => {
       try {
-        const content = JSON.parse(e.target?.result as string) as TraceContent;
-        if (!content.messages || !Array.isArray(content.messages)) {
-          this.notificationService.error("Invalid trace file: missing messages array");
+        const parsed = JSON.parse(e.target?.result as string);
+
+        let content: TraceContent;
+
+        // Check if it's a plain array of messages (new format)
+        if (Array.isArray(parsed)) {
+          // Wrap it in the expected TraceContent structure
+          content = {
+            response: "", // Will be extracted from the last assistant message if needed
+            messages: parsed,
+          };
+        } else if (parsed.messages && Array.isArray(parsed.messages)) {
+          // Already in wrapped format
+          content = parsed as TraceContent;
+        } else {
+          this.notificationService.error("Invalid trace file: expected array of messages or object with messages array");
           return;
         }
+
         this.traceContent = content;
         this.traceFileList = [file];
         this.notificationService.success(`Trace loaded: ${content.messages.length} messages`);
