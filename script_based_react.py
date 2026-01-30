@@ -12,7 +12,7 @@ from extended_gradio_ui import ExtendedGradioUI
 # Configuration
 OPENAI_API_BASE = "http://localhost:9096/api"
 OPENAI_API_KEY = "dummy"
-MODEL_TYPE = "gpt-4.1"
+MODEL_TYPE = "claude-haiku-4.5"
 
 # Authorized imports for code execution
 AUTHORIZED_IMPORTS = [
