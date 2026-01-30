@@ -115,19 +115,23 @@
   // Default color - Execute group (Blue #1890ff)
   background-color: #1890ff;
 
-  // Action-based colors matching tool group colors
-  // Modify group - added/modified operators (Orange #fa8c16)
-  &.added,
+  // Action-based colors
+  // Create - addOperator, addCodeOperator (Purple #722ed1)
+  &.added {
+    background-color: #722ed1;
+  }
+
+  // Modify - modifyOperator, modifyCodeOperator (Orange #fa8c16)
   &.modified {
     background-color: #fa8c16;
   }
 
-  // Execute group - executed workflows (Blue #1890ff)
+  // Execute - executeWorkflow (Blue #1890ff)
   &.executed {
     background-color: #1890ff;
   }
 
-  // Observe group - viewed operators (Green #52c41a)
+  // Observe - viewed operators (Green #52c41a)
   &.viewed {
     background-color: #52c41a;
   }
