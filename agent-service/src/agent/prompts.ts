@@ -60,69 +60,55 @@ export const CODE_MODE_SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}
 Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
 
 Thought: The task mentions "premium customers" and "recent purchases" - these are abstract concepts that may have specific definitions. I should first check if there's documentation that defines these terms.
-Tool calls:
-1. addOperator: operatorId="readme", code=\`def load() -> pd.DataFrame:
-       with open('/data/readme.md', 'r') as f:
-           content = f.read()
-       return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
-   summary="Load documentation"
-2. executeWorkflow: operatorId="readme"
-
+Tool call: coding: operatorId="readme", code=\`def load() -> pd.DataFrame:
+    with open('/data/readme.md', 'r') as f:
+        content = f.read()
+    return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
+  summary="Load documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
-Thought: Now I understand both the definitions and the schema. I'll build the pipeline: load data → join → identify premium customers (total spending >= $1000) → filter recent purchases (last 30 days) → get top 5.
-Tool calls:
-1. addOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
-       return pd.read_csv('/data/customers.csv')\`
-   summary="Load customers"
-2. addOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
-       return pd.read_csv('/data/orders.csv')\`
-   summary="Load orders"
-3. addOperator: operatorId="customer_orders", code=\`def process(customers, orders) -> pd.DataFrame:
-       return customers.merge(orders, on='customer_id', how='inner')\`
-   summary="Join customers orders"
-   # Links auto-created: customers-->customer_orders, orders-->customer_orders
-4. executeWorkflow: operatorId="customer_orders"
+Thought: Now I understand the definitions. First, I'll load the customers data.
+Tool call: coding: operatorId="customers", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/customers.csv')\`
+  summary="Load customers"
+Observation: Added operator "customers" with 5 columns: customer_id, name, email, signup_date, tier
 
-Observation: Joined data has 15,000 rows with columns ['customer_id', 'name', 'email', 'signup_date', 'order_id', 'amount', 'order_date']
+Thought: Now I'll load the orders data.
+Tool call: coding: operatorId="orders", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/orders.csv')\`
+  summary="Load orders"
+Observation: Added operator "orders" with 4 columns: order_id, customer_id, amount, order_date
 
-Thought: Good, the join worked. Now I'll add a filter for last 30 days, linking to the existing join result.
-Tool calls:
-1. addOperator: operatorId="recent_orders", code=\`def process(customer_orders) -> pd.DataFrame:
-       from datetime import datetime, timedelta
-       cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-       return customer_orders[customer_orders['order_date'] >= cutoff]\`
-   summary="Filter last 30 days"
-   # Link auto-created: customer_orders-->recent_orders
-2. executeWorkflow: operatorId="recent_orders"
+Thought: Now I'll join customers with orders.
+Tool call: coding: operatorId="customer_orders", code=\`def process(customers, orders) -> pd.DataFrame:
+    return customers.merge(orders, on='customer_id', how='inner')\`
+  summary="Join customers orders"
+Observation: Added operator "customer_orders". Auto-created links: [customers-->customer_orders, orders-->customer_orders]. Result: 15,000 rows.
 
-Observation: Filtered to 1,247 orders in the last 30 days.
+Thought: Good, the join worked. Now I'll filter for orders in the last 30 days.
+Tool call: coding: operatorId="recent_orders", code=\`def process(customer_orders) -> pd.DataFrame:
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+    return customer_orders[customer_orders['order_date'] >= cutoff]\`
+  summary="Filter last 30 days"
+Observation: Added operator "recent_orders". Auto-created links: [customer_orders-->recent_orders]. Filtered to 1,247 orders.
 
-Thought: Now I'll aggregate by customer and get top 5, linking to the filtered result.
-Tool calls:
-1. addOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
-       spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
-       spending.columns = ['customer_id', 'name', 'total_spending']
-       return spending.nlargest(5, 'total_spending')\`
-   summary="Top 5 spenders"
-   # Link auto-created: recent_orders-->top5
-2. executeWorkflow: operatorId="top5"
+Thought: Now I'll aggregate by customer and get top 5.
+Tool call: coding: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
+    spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+    spending.columns = ['customer_id', 'name', 'total_spending']
+    return spending.nlargest(5, 'total_spending')\`
+  summary="Top 5 spenders"
+Observation: Added operator "top5". Auto-created links: [recent_orders-->top5]. Top 5: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
 
-Observation: Top 5 customers: 1) Alice ($12,450), 2) Bob ($9,820), 3) Carol ($8,150), 4) David ($7,340), 5) Eve ($6,290)
-
-Thought: Wait, I need to verify these are all "premium customers" (total spending >= $1000). Looking at the results, all have spending > $1000, but my current logic only filters recent purchases and gets top 5 - it doesn't explicitly enforce the premium threshold. I should modify the aggregation operator to add the premium filter for correctness.
-Tool calls:
-1. modifyOperator: operatorId="top5"
-   code=\`def process(recent_orders) -> pd.DataFrame:
-       spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
-       spending.columns = ['customer_id', 'name', 'total_spending']
-       premium = spending[spending['total_spending'] >= 1000]  # Filter premium customers
-       return premium.nlargest(5, 'total_spending')\`
-   summary="Top 5 premium spenders"
-   # Links auto-updated based on parameters
-2. executeWorkflow: operatorId="top5"
-
-Observation: Top 5 premium customers: 1) Alice ($12,450), 2) Bob ($9,820), 3) Carol ($8,150), 4) David ($7,340), 5) Eve ($6,290)
+Thought: Wait, I need to verify these are all "premium customers" (total spending >= $1000). My current logic doesn't explicitly enforce the premium threshold. I should modify the operator to add the premium filter.
+Tool call: coding: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
+    spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+    spending.columns = ['customer_id', 'name', 'total_spending']
+    premium = spending[spending['total_spending'] >= 1000]  # Filter premium customers
+    return premium.nlargest(5, 'total_spending')\`
+  summary="Top 5 premium spenders"
+Observation: Modified operator "top5". Top 5 premium customers: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
 
 Final answer: The top 5 premium customers (spending >= $1000) who made recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).
 
@@ -138,12 +124,12 @@ This is problematic because:
 
 **Correct approach** - Decompose into separate operators, each doing ONE thing:
 
-1. addOperator: Filter sales for Q1 → summary="Filter Q1 sales"
-2. addOperator: Join sales with products → summary="Join sales products"
-3. addOperator: Calculate average sales per product → summary="Calculate avg sales"
-4. addOperator: Filter products above average → summary="Filter above average"
-5. addOperator: Join with active promotions → summary="Join promotions"
-6. addOperator: Apply promotion criteria filter → summary="Filter promotion criteria"
+1. coding: operatorId="q1_sales" → summary="Filter Q1 sales"
+2. coding: operatorId="sales_products" → summary="Join sales products"
+3. coding: operatorId="avg_sales" → summary="Calculate avg sales"
+4. coding: operatorId="above_avg" → summary="Filter above average"
+5. coding: operatorId="with_promotions" → summary="Join promotions"
+6. coding: operatorId="final_result" → summary="Filter promotion criteria"
 
 Each operator can be executed and verified independently. If step 4 produces unexpected results, you can inspect the output of step 3 to debug.
 
@@ -176,9 +162,9 @@ The correct approach lets you see the actual data schema (column names, types, s
 3. **Build incrementally**: Each new operator links to existing results (filter→join, aggregate→filter)
 4. **One operation per operator**: Separate operators for join, filter, aggregate and other data operations. Use links to connect them.
 5. **Decompose, don't consolidate**: If you find yourself writing a large code block with multiple conditions, loops, or transformations, STOP and split it into multiple operators. Each operator should do ONE thing.
-6. **Execute to verify**: Execute operators frequently after modification to ensure correctness before proceeding
-7. **Correct mistakes**: Use modifyOperator to fix logic errors, or deleteOperator/deleteLink to restructure the dataflow
-8. **Decompose giant operators into multiple small operators**: When debugging or encountering unintuitive result, replace the problematic operator with multiple operators with fewer code and see the result 
+6. **Verify results**: Check execution results to ensure correctness before proceeding to next step.
+7. **Correct mistakes**: If the coding tool returns an error or the logic issue in data, use it again with the same operatorId to fix the logic, or use deleteOperator/deleteLink to restructure the dataflow.
+8. **Decompose giant operators**: When debugging or encountering unintuitive results, replace the problematic operator with multiple smaller operators to isolate the issue.
 `;
 
 /**

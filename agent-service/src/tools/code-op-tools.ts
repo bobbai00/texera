@@ -41,8 +41,7 @@ import type { ToolContext } from "./workflow-tools";
 // Tool Name Constants
 // ============================================================================
 
-export const TOOL_NAME_ADD_CODE_OPERATOR = "addOperator";
-export const TOOL_NAME_MODIFY_CODE_OPERATOR = "modifyOperator";
+export const TOOL_NAME_CODING = "coding";
 
 // ============================================================================
 // Operator Types for Code Blocks
@@ -236,10 +235,72 @@ except SyntaxError as e:
 }
 
 // ============================================================================
-// Add Code Operator Tool
+// Unified Coding Tool (Add or Modify)
 // ============================================================================
 
-export function createAddCodeOperatorTool(
+/**
+ * Validates input parameters for process() functions and returns input operators.
+ */
+function validateInputParameters(
+  workflowState: WorkflowState,
+  parameters: string[]
+): { inputOperators: OperatorPredicate[] } | { error: string } {
+  const inputOperators: OperatorPredicate[] = [];
+  const missingParams: string[] = [];
+
+  for (const param of parameters) {
+    const inputOp = findOperatorByName(workflowState, param);
+    if (!inputOp) {
+      missingParams.push(param);
+    } else {
+      inputOperators.push(inputOp);
+    }
+  }
+
+  if (missingParams.length > 0) {
+    return {
+      error: `Input parameter(s) not found as operators: [${missingParams.join(", ")}]. ` +
+        `Each parameter in def process(${parameters.join(", ")}) must reference an existing operator.`,
+    };
+  }
+
+  return { inputOperators };
+}
+
+/**
+ * Creates links from input operators to target operator.
+ */
+function createInputLinks(
+  workflowState: WorkflowState,
+  operatorId: string,
+  inputOperators: OperatorPredicate[]
+): string[] {
+  const createdLinkIds: string[] = [];
+
+  for (let i = 0; i < inputOperators.length; i++) {
+    const sourceOp = inputOperators[i];
+    const linkId = `${sourceOp.operatorID}-->${operatorId}`;
+
+    const link: OperatorLink = {
+      linkID: linkId,
+      source: {
+        operatorID: sourceOp.operatorID,
+        portID: sourceOp.outputPorts[0]?.portID || "output-0",
+      },
+      target: {
+        operatorID: operatorId,
+        portID: `input-${i}`,
+      },
+    };
+
+    workflowState.addLink(link);
+    createdLinkIds.push(linkId);
+  }
+
+  return createdLinkIds;
+}
+
+export function createCodingTool(
   workflowState: WorkflowState,
   operatorSchemas: Map<string, any>,
   context?: ToolContext
@@ -247,109 +308,54 @@ export function createAddCodeOperatorTool(
   const workflowUtil = context?.metadataStore ? new WorkflowUtilService(context.metadataStore, workflowState) : null;
 
   return tool({
-    description: `Add a Python function as an operator to the dataflow.
+    description: `Add or modify a Python function as an operator in the dataflow.
+- If operatorId does NOT exist: creates a new operator
+- If operatorId exists: modifies the existing operator (must keep same type)
 
-IMPORTANT RULES:
-1. operatorId is REQUIRED - this becomes the operator's unique ID
+RULES:
+1. operatorId must be a valid Python variable name
 2. Function name MUST be exactly "load" or "process"
-3. For process(): each parameter MUST match an existing operator's operatorId - links are auto-created
+3. For process(): each parameter MUST match an existing operator's operatorId - links are auto-created/updated
 
 ## def load() -> pd.DataFrame
-Purpose: Load data from files or external sources. No input ports.
-- File I/O is allowed
-- Do NOT do data processing, ONLY data loading
+Load data from files. No input parameters. File I/O allowed.
 
-Example: operatorId="roman_cities"
+Example: operatorId="customers"
   def load() -> pd.DataFrame:
-      return pd.read_csv('/path/to/roman_cities.csv')
+      return pd.read_csv('/data/customers.csv')
 
-Example: operatorId="world_cities"
-  def load() -> pd.DataFrame:
-      return pd.read_csv('/path/to/worldcities.csv')
+## def process(opId1, opId2, ...) -> pd.DataFrame
+Transform input data. Each parameter references an existing operator id. Links between operators will be auto-created.
 
-## def process(input1, input2, ...) -> pd.DataFrame
-Purpose: Transform input data. Each parameter references an existing operator by its operatorId.
-- CRITICAL: Each parameter name MUST match an existing operator's operatorId
-- Links from input operators to this operator are AUTO-CREATED
-- File IO is FORBIDDEN
-
-Example: operatorId="filtered_users" (requires operator "users" to exist)
-  def process(users) -> pd.DataFrame:
-      return users[users['age'] > 18]
-  # Creates link: users-->filtered_users
-
-Example: operatorId="nearby_cities" (requires "roman_cities" AND "world_cities")
-  def process(roman_cities, world_cities) -> pd.DataFrame:
-      return world_cities[world_cities['population'] > 100000]
-  # Creates links: roman_cities-->nearby_cities, world_cities-->nearby_cities
-
-ERROR CONDITIONS:
-- If operatorId is not a valid Python variable name: error with details
-- If operatorId already exists as an operator: error with existing operator details
-- If any process() parameter doesn't match an existing operator: error listing missing operators`,
+Example: operatorId="filtered" (requires "customers" to exist)
+  def process(customers) -> pd.DataFrame:
+      return customers[customers['age'] > 18]
+  # Creates link: customers-->filtered`,
     inputSchema: z.object({
       operatorId: z.string().describe(
-        "The unique name for this operator (must be a valid Python variable name). You can use this name to uniquely describe the operator's output" +
-        "Other operators will reference this ID as an input parameter."
+        "Unique operator name (valid Python variable). Other operators reference this as input parameter."
       ),
-      code: z.string().describe("Python function code defining either a load() or process(...) function"),
-      summary: z.string().optional().describe("Brief summary of the behavior of this operator"),
+      code: z.string().describe("Python function: def load() or def process(...)"),
+      summary: z.string().optional().describe("Brief summary of operator behavior"),
     }),
     execute: async (args: { operatorId: string; code: string; summary?: string }) => {
       try {
         const { operatorId, code, summary } = args;
 
-        // Validate operatorId is a valid Python variable name
+        // Validate operatorId
         const nameValidationError = validatePythonVariableName(operatorId);
         if (nameValidationError) {
           return createErrorResult(`Invalid operatorId: ${nameValidationError}`);
         }
 
-        // Check if operator with this name already exists
-        const existingOperator = findOperatorByName(workflowState, operatorId);
-        if (existingOperator) {
-          return createErrorResult(
-            `'${operatorId}' already exists: ${formatOperatorContent(existingOperator)}`
-          );
-        }
-
-        // Parse the code block to determine type and parameters
+        // Parse code block
         const parseResult = parseCodeBlock(code);
         if ("error" in parseResult) {
           return createErrorResult(parseResult.error);
         }
 
-        const { type, functionName, numInputPorts, parameters } = parseResult;
-        const operatorType = type === "DataLoading" ? DATA_LOADING_OPERATOR_TYPE : DATA_PROCESSING_OPERATOR_TYPE;
-
-        // For process() functions: validate that all input parameters exist as operators
-        const inputOperators: OperatorPredicate[] = [];
-        if (type === "DataProcessing" && parameters.length > 0) {
-          const missingParams: string[] = [];
-          for (const param of parameters) {
-            const inputOp = findOperatorByName(workflowState, param);
-            if (!inputOp) {
-              missingParams.push(param);
-            } else {
-              inputOperators.push(inputOp);
-            }
-          }
-
-          if (missingParams.length > 0) {
-            return createErrorResult(
-              `Input parameter(s) not found as operators: [${missingParams.join(", ")}]. ` +
-              `Each parameter in def process(${parameters.join(", ")}) must reference an existing operator by its variable name.`
-            );
-          }
-        }
-
-        // Check if operator type is available
-        const schemaEntry = operatorSchemas.get(operatorType);
-        if (!schemaEntry) {
-          return createErrorResult(
-            `Operator type "${operatorType}" is not available. Please ensure the operator is registered.`
-          );
-        }
+        const { type, numInputPorts, parameters } = parseResult;
+        const isDataProcessing = type === "DataProcessing";
 
         // Validate Python syntax
         const syntaxError = await validatePythonSyntax(code);
@@ -357,265 +363,138 @@ ERROR CONDITIONS:
           return createErrorResult(`Python syntax error: ${syntaxError}`);
         }
 
-        if (!workflowUtil) {
-          return createErrorResult("Metadata store not available for operator creation");
+        // Validate input parameters for process() functions
+        let inputOperators: OperatorPredicate[] = [];
+        if (isDataProcessing && parameters.length > 0) {
+          const validation = validateInputParameters(workflowState, parameters);
+          if ("error" in validation) {
+            return createErrorResult(validation.error);
+          }
+          inputOperators = validation.inputOperators;
         }
 
+        const existingOperator = findOperatorByName(workflowState, operatorId);
         const beforeContent = workflowState.getWorkflowContent();
-
-        // Use summary as display name if provided, otherwise use operatorId
         const displayName = summary || operatorId;
 
-        // Create the operator with the code property and custom operator ID
-        let operator = workflowUtil.getNewOperatorPredicate(operatorType, displayName);
-        const operatorProps: Record<string, any> = {
-          ...operator.operatorProperties,
-          code: code,
-        };
+        let resultMsg: string;
+        let createdLinkIds: string[] = [];
+        let deletedLinkIds: string[] = [];
 
-        operator = {
-          ...operator,
-          operatorID: operatorId, // Use variable name as operator ID
-          operatorProperties: operatorProps,
-        };
+        if (!existingOperator) {
+          // === ADD NEW OPERATOR ===
+          const operatorType = isDataProcessing ? DATA_PROCESSING_OPERATOR_TYPE : DATA_LOADING_OPERATOR_TYPE;
 
-        workflowState.addOperator(operator);
-
-        // Set up input ports for DataProcessing operators
-        if (type === "DataProcessing" && numInputPorts > 1) {
-          workflowState.updateOperatorInputPorts(operatorId, numInputPorts);
-        }
-
-        // Auto-create links from input operators to this new operator
-        const createdLinkIds: string[] = [];
-        if (type === "DataProcessing" && inputOperators.length > 0) {
-          for (let i = 0; i < inputOperators.length; i++) {
-            const sourceOp = inputOperators[i];
-            const linkId = `${sourceOp.operatorID}-->${operatorId}`;
-
-            const link: OperatorLink = {
-              linkID: linkId,
-              source: {
-                operatorID: sourceOp.operatorID,
-                portID: sourceOp.outputPorts[0]?.portID || "output-0",
-              },
-              target: {
-                operatorID: operatorId,
-                portID: `input-${i}`,
-              },
-            };
-
-            workflowState.addLink(link);
-            createdLinkIds.push(linkId);
+          const schemaEntry = operatorSchemas.get(operatorType);
+          if (!schemaEntry) {
+            return createErrorResult(`Operator type "${operatorType}" is not available.`);
           }
-        }
 
-        // Auto-layout the workflow after adding the operator and links
-        autoLayoutWorkflow(workflowState);
+          if (!workflowUtil) {
+            return createErrorResult("Metadata store not available for operator creation");
+          }
 
-        const updatedOperator = workflowState.getOperator(operatorId);
-        const afterContent = workflowState.getWorkflowContent();
+          let operator = workflowUtil.getNewOperatorPredicate(operatorType, displayName);
+          operator = {
+            ...operator,
+            operatorID: operatorId,
+            operatorProperties: { ...operator.operatorProperties, code },
+          };
 
-        // Create agent action for tracking
-        if (context?.agentActionManager && context.agentId) {
-          context.agentActionManager.createAgentAction(
-            context.agentId,
-            context.agentName || `Agent-${context.agentId}`,
-            summary || `Added ${type} code operator: ${operatorId}`,
-            { add: { operatorIds: [operatorId], linkIds: createdLinkIds } },
-            context.workflowMetadata || {},
-            beforeContent,
-            afterContent
-          );
-        }
+          workflowState.addOperator(operator);
 
-        const finalOperator = updatedOperator || operator;
+          if (isDataProcessing && numInputPorts > 1) {
+            workflowState.updateOperatorInputPorts(operatorId, numInputPorts);
+          }
 
-        // Build result message
-        let resultMsg = formatAddOperatorResult(operatorId, finalOperator.inputPorts.length, finalOperator.outputPorts.length);
-        if (createdLinkIds.length > 0) {
-          resultMsg += `\nAuto-created links: [${createdLinkIds.join(", ")}]`;
-        }
+          if (isDataProcessing && inputOperators.length > 0) {
+            createdLinkIds = createInputLinks(workflowState, operatorId, inputOperators);
+          }
 
-        // Auto-execute if configured
-        if (context?.settings?.autoExecuteOnChange && context?.executeOperator) {
-          const executionResult = await context.executeOperator(operatorId);
-          resultMsg += `\n\n--- Execution Result ---\n${executionResult}`;
-        }
+          autoLayoutWorkflow(workflowState);
 
-        return createToolResult(resultMsg);
-      } catch (error: any) {
-        return createErrorResult(error.message || String(error));
-      }
-    },
-  });
-}
+          const finalOperator = workflowState.getOperator(operatorId) || operator;
+          resultMsg = formatAddOperatorResult(operatorId, finalOperator.inputPorts.length, finalOperator.outputPorts.length);
 
-// ============================================================================
-// Modify Code Operator Tool
-// ============================================================================
+          if (context?.agentActionManager && context.agentId) {
+            context.agentActionManager.createAgentAction(
+              context.agentId,
+              context.agentName || `Agent-${context.agentId}`,
+              summary || `Added ${type} operator: ${operatorId}`,
+              { add: { operatorIds: [operatorId], linkIds: createdLinkIds } },
+              context.workflowMetadata || {},
+              beforeContent,
+              workflowState.getWorkflowContent()
+            );
+          }
+        } else {
+          // === MODIFY EXISTING OPERATOR ===
+          const isExistingDataLoading = existingOperator.operatorType === DATA_LOADING_OPERATOR_TYPE;
+          const isExistingDataProcessing = existingOperator.operatorType === DATA_PROCESSING_OPERATOR_TYPE;
 
-export function createModifyCodeOperatorTool(workflowState: WorkflowState, context?: ToolContext) {
-  return tool({
-    description:
-      "Modify the Python code of an existing DataProcessing or DataLoading operator. " +
-      "The function name MUST be exactly 'load' or 'process'. " +
-      "The new code must be of the same type as the existing operator. " +
-      "For def process(): each parameter MUST match an existing operator's ID. " +
-      "Links are automatically updated based on parameters.",
-    inputSchema: z.object({
-      operatorId: z.string().describe("ID of the operator to modify"),
-      code: z.string().describe("New Python function code (must match the operator type - load() or process(...))"),
-      summary: z.string().optional().describe("Brief summary of the behavior of this operator"),
-    }),
-    execute: async (args: { operatorId: string; code: string; summary?: string }) => {
-      try {
-        const { operatorId, code, summary } = args;
+          if (!isExistingDataLoading && !isExistingDataProcessing) {
+            return createErrorResult(
+              `Operator ${operatorId} is not a code operator. ` +
+              `Expected: ${DATA_LOADING_OPERATOR_TYPE} or ${DATA_PROCESSING_OPERATOR_TYPE}, got: ${existingOperator.operatorType}`
+            );
+          }
 
-        // Get the existing operator
-        const operator = workflowState.getOperator(operatorId);
-        if (!operator) {
-          return createErrorResult(`Operator ${operatorId} not found`);
-        }
+          const expectedType = isExistingDataLoading ? "DataLoading" : "DataProcessing";
+          if (type !== expectedType) {
+            return createErrorResult(
+              `Type mismatch: ${operatorId} is ${expectedType}, but code is ${type}. ` +
+              `Use ${expectedType === "DataLoading" ? "load()" : "process(...)"}.`
+            );
+          }
 
-        // Check if operator is a code block type
-        const isDataLoading = operator.operatorType === DATA_LOADING_OPERATOR_TYPE;
-        const isDataProcessing = operator.operatorType === DATA_PROCESSING_OPERATOR_TYPE;
+          workflowState.updateOperatorProperties(operatorId, { code });
+          if (summary) {
+            workflowState.updateOperatorDisplayName(operatorId, summary);
+          }
 
-        if (!isDataLoading && !isDataProcessing) {
-          return createErrorResult(
-            `Operator ${operatorId} is not a code operator. ` +
-              `Expected type: ${DATA_LOADING_OPERATOR_TYPE} or ${DATA_PROCESSING_OPERATOR_TYPE}, ` +
-              `got: ${operator.operatorType}`
-          );
-        }
+          if (isExistingDataProcessing) {
+            if (numInputPorts !== existingOperator.inputPorts.length) {
+              workflowState.updateOperatorInputPorts(operatorId, numInputPorts);
+            }
 
-        // Parse the new code block
-        const parseResult = parseCodeBlock(code);
-        if ("error" in parseResult) {
-          return createErrorResult(parseResult.error);
-        }
+            // Delete existing incoming links and create new ones
+            const currentLinks = workflowState.getLinksConnectedToOperator(operatorId)
+              .filter(link => link.target.operatorID === operatorId);
+            for (const link of currentLinks) {
+              workflowState.deleteLink(link.linkID);
+              deletedLinkIds.push(link.linkID);
+            }
 
-        const { type: newType, numInputPorts, parameters } = parseResult;
-
-        // Check type consistency
-        const expectedType = isDataLoading ? "DataLoading" : "DataProcessing";
-        if (newType !== expectedType) {
-          return createErrorResult(
-            `Code type mismatch. Operator ${operatorId} is a ${expectedType} operator, ` +
-              `but the provided code is for ${newType}. ` +
-              `Use a ${expectedType === "DataLoading" ? "load()" : "process(...)"} function.`
-          );
-        }
-
-        // For process() functions: validate that all input parameters exist as operators
-        const inputOperators: OperatorPredicate[] = [];
-        if (isDataProcessing && parameters.length > 0) {
-          const missingParams: string[] = [];
-          for (const param of parameters) {
-            const inputOp = findOperatorByName(workflowState, param);
-            if (!inputOp) {
-              missingParams.push(param);
-            } else {
-              inputOperators.push(inputOp);
+            if (inputOperators.length > 0) {
+              createdLinkIds = createInputLinks(workflowState, operatorId, inputOperators);
             }
           }
 
-          if (missingParams.length > 0) {
-            return createErrorResult(
-              `Input parameter(s) not found as operators: [${missingParams.join(", ")}]. ` +
-              `Each parameter in def process(${parameters.join(", ")}) must reference an existing operator by its ID.`
+          resultMsg = formatModifyOperatorResult(operatorId);
+
+          if (context?.agentActionManager && context.agentId) {
+            context.agentActionManager.createAgentAction(
+              context.agentId,
+              context.agentName || `Agent-${context.agentId}`,
+              summary || `Modified operator: ${operatorId}`,
+              {
+                modify: { operatorIds: [operatorId] },
+                add: { operatorIds: [], linkIds: createdLinkIds },
+                delete: { operatorIds: [], linkIds: deletedLinkIds },
+              },
+              context.workflowMetadata || {},
+              beforeContent,
+              workflowState.getWorkflowContent()
             );
           }
         }
 
-        // Validate Python syntax
-        const syntaxError = await validatePythonSyntax(code);
-        if (syntaxError) {
-          return createErrorResult(`Python syntax error: ${syntaxError}`);
-        }
-
-        const beforeContent = workflowState.getWorkflowContent();
-
-        // Update the code property
-        workflowState.updateOperatorProperties(operatorId, { code });
-
-        // Update display name if summary is provided
-        if (summary) {
-          workflowState.updateOperatorDisplayName(operatorId, summary);
-        }
-
-        // Update input ports for DataProcessing if needed
-        if (isDataProcessing) {
-          const currentInputPorts = operator.inputPorts.length;
-          if (numInputPorts !== currentInputPorts) {
-            workflowState.updateOperatorInputPorts(operatorId, numInputPorts);
-          }
-        }
-
-        // Handle link updates for DataProcessing operators
-        const deletedLinkIds: string[] = [];
-        const createdLinkIds: string[] = [];
-
-        if (isDataProcessing) {
-          // Get current incoming links to this operator
-          const currentLinks = workflowState.getLinksConnectedToOperator(operatorId)
-            .filter(link => link.target.operatorID === operatorId);
-
-          // Delete all existing incoming links
-          for (const link of currentLinks) {
-            workflowState.deleteLink(link.linkID);
-            deletedLinkIds.push(link.linkID);
-          }
-
-          // Create new links based on parameters
-          for (let i = 0; i < inputOperators.length; i++) {
-            const sourceOp = inputOperators[i];
-            const linkId = `${sourceOp.operatorID}-->${operatorId}`;
-
-            const link: OperatorLink = {
-              linkID: linkId,
-              source: {
-                operatorID: sourceOp.operatorID,
-                portID: sourceOp.outputPorts[0]?.portID || "output-0",
-              },
-              target: {
-                operatorID: operatorId,
-                portID: `input-${i}`,
-              },
-            };
-
-            workflowState.addLink(link);
-            createdLinkIds.push(linkId);
-          }
-        }
-
-        const afterContent = workflowState.getWorkflowContent();
-
-        // Create agent action for tracking
-        if (context?.agentActionManager && context.agentId) {
-          context.agentActionManager.createAgentAction(
-            context.agentId,
-            context.agentName || `Agent-${context.agentId}`,
-            summary || `Modified code operator: ${operatorId}`,
-            {
-              modify: { operatorIds: [operatorId] },
-              add: { operatorIds: [], linkIds: createdLinkIds },
-              delete: { operatorIds: [], linkIds: deletedLinkIds },
-            },
-            context.workflowMetadata || {},
-            beforeContent,
-            afterContent
-          );
-        }
-
-        // Build result message
-        let resultMsg = formatModifyOperatorResult(operatorId);
+        // Append link info to result
         if (deletedLinkIds.length > 0) {
           resultMsg += `\nDeleted links: [${deletedLinkIds.join(", ")}]`;
         }
         if (createdLinkIds.length > 0) {
-          resultMsg += `\nCreated links: [${createdLinkIds.join(", ")}]`;
+          resultMsg += `\nAuto-created links: [${createdLinkIds.join(", ")}]`;
         }
 
         // Auto-execute if configured

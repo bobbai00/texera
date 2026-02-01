@@ -62,10 +62,8 @@ import {
   TOOL_NAME_MODIFY_OPERATOR,
 } from "../tools/general-op-tools";
 import {
-  createAddCodeOperatorTool,
-  createModifyCodeOperatorTool,
-  TOOL_NAME_ADD_CODE_OPERATOR,
-  TOOL_NAME_MODIFY_CODE_OPERATOR,
+  createCodingTool,
+  TOOL_NAME_CODING,
 } from "../tools/code-op-tools";
 import {
   createListAllAvailableOperatorTypesTool,
@@ -314,9 +312,8 @@ export class TexeraAgent {
 
     // Mode-specific tools
     if (this.settings.agentMode === AgentMode.CODE) {
-      // CODE mode: Use code operator tools (addCodeOperator, modifyCodeOperator)
-      tools[TOOL_NAME_ADD_CODE_OPERATOR] = createAddCodeOperatorTool(this.workflowState, operatorSchemas, context);
-      tools[TOOL_NAME_MODIFY_CODE_OPERATOR] = createModifyCodeOperatorTool(this.workflowState, context);
+      // CODE mode: Use unified coding tool (creates or modifies operators)
+      tools[TOOL_NAME_CODING] = createCodingTool(this.workflowState, operatorSchemas, context);
     } else {
       // GENERAL mode: Use workflow tools (addOperator, modifyOperator) + metadata tools
       tools[TOOL_NAME_ADD_OPERATOR] = createAddOperatorTool(this.workflowState, operatorSchemas, context);
