@@ -62,8 +62,8 @@ import {
   TOOL_NAME_MODIFY_OPERATOR,
 } from "../tools/general-op-tools";
 import {
-  createCodingTool,
-  TOOL_NAME_CODING,
+  createCreateOrModifyOperatorTool,
+  TOOL_NAME_CREATE_OR_MODIFY_OPERATOR,
 } from "../tools/code-op-tools";
 import {
   createListAllAvailableOperatorTypesTool,
@@ -72,9 +72,9 @@ import {
   TOOL_NAME_GET_OPERATOR_SCHEMA,
 } from "../tools/metadata-tools";
 import {
-  createExecuteWorkflowTool,
+  createExecuteOperatorTool,
   executeOperatorAndFormat,
-  TOOL_NAME_EXECUTE_WORKFLOW,
+  TOOL_NAME_EXECUTE_OPERATOR,
   type ExecutionConfig,
 } from "../tools/execution-tools";
 
@@ -296,7 +296,6 @@ export class TexeraAgent {
         maxOperatorResultCharLimit: this.settings.maxOperatorResultCharLimit,
         toolTimeoutMs: this.settings.toolTimeoutMs,
         executionTimeoutMs: this.settings.executionTimeoutMs,
-        autoExecuteOnChange: this.settings.autoExecuteOnChange,
       },
       // Provide execution helper when execution is configured
       executeOperator: getExecutionConfig
@@ -313,7 +312,7 @@ export class TexeraAgent {
     // Mode-specific tools
     if (this.settings.agentMode === AgentMode.CODE) {
       // CODE mode: Use unified coding tool (creates or modifies operators)
-      tools[TOOL_NAME_CODING] = createCodingTool(this.workflowState, operatorSchemas, context);
+      tools[TOOL_NAME_CREATE_OR_MODIFY_OPERATOR] = createCreateOrModifyOperatorTool(this.workflowState, operatorSchemas, context);
     } else {
       // GENERAL mode: Use workflow tools (addOperator, modifyOperator) + metadata tools
       tools[TOOL_NAME_ADD_OPERATOR] = createAddOperatorTool(this.workflowState, operatorSchemas, context);
@@ -326,7 +325,7 @@ export class TexeraAgent {
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
     if (getExecutionConfig) {
-      tools[TOOL_NAME_EXECUTE_WORKFLOW] = createExecuteWorkflowTool(this.workflowState, getExecutionConfig);
+      tools[TOOL_NAME_EXECUTE_OPERATOR] = createExecuteOperatorTool(this.workflowState, getExecutionConfig);
     }
 
     return tools;
@@ -479,7 +478,6 @@ export class TexeraAgent {
     disabledTools?: Set<string>;
     maxSteps?: number;
     agentMode?: AgentMode;
-    autoExecuteOnChange?: boolean;
   }): void {
     let modeChanged = false;
 
@@ -507,9 +505,6 @@ export class TexeraAgent {
     if (updates.agentMode !== undefined && updates.agentMode !== this.settings.agentMode) {
       this.settings.agentMode = updates.agentMode;
       modeChanged = true;
-    }
-    if (updates.autoExecuteOnChange !== undefined) {
-      this.settings.autoExecuteOnChange = updates.autoExecuteOnChange;
     }
 
     // If mode changed, rebuild system prompt
@@ -707,6 +702,13 @@ export class TexeraAgent {
         tools: this.tools,
         stopWhen: stepCountIs(this.settings.maxSteps),
         abortSignal: this.abortController?.signal,
+        // Disable parallel tool calls to ensure sequential execution
+        // This prevents errors when creating dependent operators (e.g., operator B depends on operator A)
+        providerOptions: {
+          openai: { parallelToolCalls: false },
+          anthropic: { disableParallelToolUse: true },
+          mistral: { parallelToolCalls: false },
+        },
         onStepFinish: async ({ text, toolCalls, toolResults, usage }) => {
           stepIndex++; // Increment first since user message is step 0
 
@@ -1124,7 +1126,7 @@ export class TexeraAgent {
    *   - stepId resets for each user message
    *
    * Phase 2: Execute tool calls to build workflow
-   *   - Skip execution tools (executeWorkflow, getOperatorResult, etc.)
+   *   - Skip execution tools (executeOperator, getOperatorResult, etc.)
    *   - Abort on any error (no rollback needed)
    *
    * @param trace - The trace content containing messages

@@ -41,7 +41,7 @@ import type { ToolContext } from "./workflow-tools";
 // Tool Name Constants
 // ============================================================================
 
-export const TOOL_NAME_CODING = "coding";
+export const TOOL_NAME_CREATE_OR_MODIFY_OPERATOR = "createOrModifyOperator";
 
 // ============================================================================
 // Operator Types for Code Blocks
@@ -300,7 +300,7 @@ function createInputLinks(
   return createdLinkIds;
 }
 
-export function createCodingTool(
+export function createCreateOrModifyOperatorTool(
   workflowState: WorkflowState,
   operatorSchemas: Map<string, any>,
   context?: ToolContext
@@ -308,9 +308,10 @@ export function createCodingTool(
   const workflowUtil = context?.metadataStore ? new WorkflowUtilService(context.metadataStore, workflowState) : null;
 
   return tool({
-    description: `Add or modify a Python function as an operator in the dataflow.
+    description: `Add or modify a Python function as an operator in the dataflow, then automatically execute it and return results.
 - If operatorId does NOT exist: creates a new operator
 - If operatorId exists: modifies the existing operator (must keep same type)
+- After creation/modification, the operator is automatically executed and results are returned
 
 RULES:
 1. operatorId must be a valid Python variable name
@@ -497,8 +498,8 @@ Example: operatorId="filtered" (requires "customers" to exist)
           resultMsg += `\nAuto-created links: [${createdLinkIds.join(", ")}]`;
         }
 
-        // Auto-execute if configured
-        if (context?.settings?.autoExecuteOnChange && context?.executeOperator) {
+        // Always auto-execute and return results
+        if (context?.executeOperator) {
           const executionResult = await context.executeOperator(operatorId);
           resultMsg += `\n\n--- Execution Result ---\n${executionResult}`;
         }

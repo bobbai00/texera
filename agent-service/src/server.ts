@@ -161,7 +161,6 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     disabledTools: Array.from(agentSettings.disabledTools),
     maxSteps: agentSettings.maxSteps,
     agentMode: agentSettings.agentMode,
-    autoExecuteOnChange: agentSettings.autoExecuteOnChange,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -440,7 +439,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       disabledTools: Array.from(agentSettings.disabledTools),
       maxSteps: agentSettings.maxSteps,
       agentMode: agentSettings.agentMode,
-      autoExecuteOnChange: agentSettings.autoExecuteOnChange,
     };
   })
 
@@ -469,7 +467,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
         maxSteps: settings.maxSteps,
         agentMode: settings.agentMode ? (settings.agentMode as AgentMode) : undefined,
-        autoExecuteOnChange: settings.autoExecuteOnChange,
       });
 
       // Return updated settings
@@ -483,7 +480,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         disabledTools: Array.from(agentSettings.disabledTools),
         maxSteps: agentSettings.maxSteps,
         agentMode: agentSettings.agentMode,
-        autoExecuteOnChange: agentSettings.autoExecuteOnChange,
       };
     },
     {
@@ -498,7 +494,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         maxSteps: t.Optional(t.Number()),
         disabledTools: t.Optional(t.Array(t.String())),
         agentMode: t.Optional(t.Union([t.Literal("code"), t.Literal("general")])),
-        autoExecuteOnChange: t.Optional(t.Boolean()),
       }),
     }
   );

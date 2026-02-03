@@ -37,7 +37,7 @@ import { OperatorResultSerializationMode, DEFAULT_AGENT_SETTINGS } from "../type
 // Tool Name Constants
 // ============================================================================
 
-export const TOOL_NAME_EXECUTE_WORKFLOW = "executeWorkflow";
+export const TOOL_NAME_EXECUTE_OPERATOR = "executeOperator";
 
 // ============================================================================
 // Execution Configuration
@@ -603,13 +603,13 @@ export async function executeOperatorAndFormat(
 // ============================================================================
 
 /**
- * Create the executeWorkflow tool.
+ * Create the executeOperator tool.
  * @param workflowState - The workflow state
  * @param getConfig - Function that returns the current execution config (called at execution time)
  */
-export function createExecuteWorkflowTool(workflowState: WorkflowState, getConfig: () => ExecutionConfig) {
+export function createExecuteOperatorTool(workflowState: WorkflowState, getConfig: () => ExecutionConfig) {
   return tool({
-    description: "Execute the current workflow and get the specified operator's result.",
+    description: "Execute the workflow and get the specified operator's result.",
     inputSchema: z.object({
       operatorId: z.string().describe("The operator ID to view result for."),
     }),
