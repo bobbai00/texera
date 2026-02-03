@@ -161,6 +161,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     disabledTools: Array.from(agentSettings.disabledTools),
     maxSteps: agentSettings.maxSteps,
     agentMode: agentSettings.agentMode,
+    fineGrainedPrompt: agentSettings.fineGrainedPrompt,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -251,6 +252,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
           maxSteps: settings.maxSteps,
           agentMode: settings.agentMode ? (settings.agentMode as AgentMode) : undefined,
+          fineGrainedPrompt: settings.fineGrainedPrompt,
         });
       }
 
@@ -275,6 +277,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             disabledTools: t.Optional(t.Array(t.String())),
             maxSteps: t.Optional(t.Number()),
             agentMode: t.Optional(t.Union([t.Literal("code"), t.Literal("general")])),
+            fineGrainedPrompt: t.Optional(t.Boolean()),
           })
         ),
       }),
@@ -439,6 +442,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       disabledTools: Array.from(agentSettings.disabledTools),
       maxSteps: agentSettings.maxSteps,
       agentMode: agentSettings.agentMode,
+      fineGrainedPrompt: agentSettings.fineGrainedPrompt,
     };
   })
 
@@ -467,6 +471,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         disabledTools: settings.disabledTools ? new Set(settings.disabledTools) : undefined,
         maxSteps: settings.maxSteps,
         agentMode: settings.agentMode ? (settings.agentMode as AgentMode) : undefined,
+        fineGrainedPrompt: settings.fineGrainedPrompt,
       });
 
       // Return updated settings
@@ -480,6 +485,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         disabledTools: Array.from(agentSettings.disabledTools),
         maxSteps: agentSettings.maxSteps,
         agentMode: agentSettings.agentMode,
+        fineGrainedPrompt: agentSettings.fineGrainedPrompt,
       };
     },
     {
@@ -494,6 +500,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         maxSteps: t.Optional(t.Number()),
         disabledTools: t.Optional(t.Array(t.String())),
         agentMode: t.Optional(t.Union([t.Literal("code"), t.Literal("general")])),
+        fineGrainedPrompt: t.Optional(t.Boolean()),
       }),
     }
   );

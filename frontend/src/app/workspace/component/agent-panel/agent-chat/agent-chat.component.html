@@ -766,21 +766,21 @@
           </div>
 
           <div class="settings-param-item">
-            <label class="settings-param-label">Auto-Execute on Change</label>
+            <label class="settings-param-label">Fine-Grained Prompts</label>
             <div class="settings-param-input">
               <nz-switch
-                [(ngModel)]="settingsAutoExecuteOnChange"
+                [(ngModel)]="settingsFineGrainedPrompt"
                 nzSize="small"
                 style="margin-right: 12px"></nz-switch>
               <button
                 nz-button
                 nzType="primary"
                 nzSize="small"
-                (click)="saveAutoExecuteOnChange()">
+                (click)="saveFineGrainedPrompt()">
                 Save
               </button>
               <span class="settings-param-hint"
-                >When enabled, automatically executes the operator after adding or modifying code (CODE mode only).</span
+                >When enabled, uses stricter "one line = one operation" constraints for more atomic, debuggable operators.</span
               >
             </div>
           </div>

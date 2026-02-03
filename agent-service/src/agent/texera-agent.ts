@@ -239,17 +239,19 @@ export class TexeraAgent {
   }
 
   /**
-   * Rebuild system prompt based on current agent mode.
+   * Rebuild system prompt based on current agent mode and settings.
    * GENERAL mode: includes operator schemas in the prompt
    * CODE mode: uses structured prompt with examples
+   * fineGrainedPrompt: uses stricter atomic operation constraints
    */
   private rebuildSystemPrompt(): void {
+    const fineGrained = this.settings.fineGrainedPrompt;
     if (this.settings.agentMode === AgentMode.GENERAL) {
       // GENERAL mode: include operator schemas in prompt
-      this.systemPrompt = buildGeneralModeSystemPrompt(this.metadataStore);
+      this.systemPrompt = buildGeneralModeSystemPrompt(this.metadataStore, fineGrained);
     } else {
       // CODE mode: use structured prompt with examples
-      this.systemPrompt = buildCodeModeSystemPrompt();
+      this.systemPrompt = buildCodeModeSystemPrompt(fineGrained);
     }
     this.settings.systemPrompt = this.systemPrompt;
   }
@@ -478,8 +480,9 @@ export class TexeraAgent {
     disabledTools?: Set<string>;
     maxSteps?: number;
     agentMode?: AgentMode;
+    fineGrainedPrompt?: boolean;
   }): void {
-    let modeChanged = false;
+    let promptNeedsRebuild = false;
 
     if (updates.maxOperatorResultCharLimit !== undefined) {
       this.settings.maxOperatorResultCharLimit = updates.maxOperatorResultCharLimit;
@@ -504,11 +507,15 @@ export class TexeraAgent {
     }
     if (updates.agentMode !== undefined && updates.agentMode !== this.settings.agentMode) {
       this.settings.agentMode = updates.agentMode;
-      modeChanged = true;
+      promptNeedsRebuild = true;
+    }
+    if (updates.fineGrainedPrompt !== undefined && updates.fineGrainedPrompt !== this.settings.fineGrainedPrompt) {
+      this.settings.fineGrainedPrompt = updates.fineGrainedPrompt;
+      promptNeedsRebuild = true;
     }
 
-    // If mode changed, rebuild system prompt
-    if (modeChanged) {
+    // If mode or fineGrainedPrompt changed, rebuild system prompt
+    if (promptNeedsRebuild) {
       this.rebuildSystemPrompt();
     }
 
@@ -517,6 +524,7 @@ export class TexeraAgent {
     console.log(
       `[TexeraAgent ${this.agentId}] Settings updated: ` +
         `mode=${this.settings.agentMode}, ` +
+        `fineGrainedPrompt=${this.settings.fineGrainedPrompt}, ` +
         `maxOperatorResultCharLimit=${this.settings.maxOperatorResultCharLimit}, ` +
         `maxOperatorResultCellCharLimit=${this.settings.maxOperatorResultCellCharLimit}`
     );

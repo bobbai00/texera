@@ -113,7 +113,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsExecutionTimeoutMinutes = 10; // 10 minutes default
   public settingsMaxSteps = 10; // Default max steps per message
   public settingsAgentMode: "code" | "general" = "code"; // Agent operating mode
-  public settingsAutoExecuteOnChange = true; // Auto-execute after add/modify in code mode
+  public settingsFineGrainedPrompt = false; // Use fine-grained prompts with atomic operation constraints
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -421,7 +421,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsExecutionTimeoutMinutes = settings.executionTimeoutMinutes ?? 10;
         this.settingsMaxSteps = settings.maxSteps ?? 10;
         this.settingsAgentMode = settings.agentMode ?? "code";
-        this.settingsAutoExecuteOnChange = settings.autoExecuteOnChange ?? true;
+        this.settingsFineGrainedPrompt = settings.fineGrainedPrompt ?? false;
       });
 
     // Also load agent internal state
@@ -1200,18 +1200,18 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   }
 
   /**
-   * Save the auto-execute on change setting.
+   * Save the fine-grained prompt setting.
    */
-  public saveAutoExecuteOnChange(): void {
+  public saveFineGrainedPrompt(): void {
     this.copilotManagerService
       .updateAgentSettings(this.agentInfo.id, {
-        autoExecuteOnChange: this.settingsAutoExecuteOnChange,
+        fineGrainedPrompt: this.settingsFineGrainedPrompt,
       })
       .pipe(untilDestroyed(this))
       .subscribe({
         next: () =>
           this.notificationService.success(
-            this.settingsAutoExecuteOnChange ? "Auto-execute enabled" : "Auto-execute disabled"
+            this.settingsFineGrainedPrompt ? "Fine-grained prompts enabled" : "Standard prompts enabled"
           ),
         error: () => {}, // Error already handled by service
       });

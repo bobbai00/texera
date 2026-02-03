@@ -192,6 +192,8 @@ export interface AgentSettings {
   maxSteps: number;
   /** Agent operating mode (code or general) */
   agentMode: AgentMode;
+  /** Use fine-grained prompts with atomic operation constraints (one line = one operation) */
+  fineGrainedPrompt: boolean;
 }
 
 /**
@@ -206,6 +208,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   executionTimeoutMs: 240000, // 4 minutes
   maxSteps: 100,
   agentMode: AgentMode.CODE, // Default to CODE mode
+  fineGrainedPrompt: false, // Default to standard prompts
 };
 
 // ============================================================================
@@ -258,6 +261,8 @@ export interface AgentSettingsApi {
   maxSteps?: number;
   /** Agent operating mode: "code" or "general" */
   agentMode?: "code" | "general";
+  /** Use fine-grained prompts with atomic operation constraints */
+  fineGrainedPrompt?: boolean;
 }
 
 /**
@@ -311,6 +316,8 @@ export interface UpdateAgentSettingsRequest {
   maxSteps?: number;
   /** Agent operating mode: "code" or "general" */
   agentMode?: "code" | "general";
+  /** Use fine-grained prompts with atomic operation constraints */
+  fineGrainedPrompt?: boolean;
 }
 
 // ============================================================================

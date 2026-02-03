@@ -19,15 +19,25 @@
 
 /**
  * System prompts for Texera Agent Service.
+ *
+ * This module provides modular, composable prompt sections that can be configured
+ * based on agent settings. The key configurable dimension is:
+ *
+ * - fineGrainedPrompt: When true, uses stricter "one line = one operation" constraints
+ *   for more atomic, debuggable operators. When false, uses standard principles.
  */
 
 import { OperatorMetadataStore, ALLOWED_OPERATOR_TYPES } from "../tools/metadata-tools";
 
+// ============================================================================
+// Base Prompt (shared across all modes)
+// ============================================================================
+
 /**
- * Base system prompt for the Texera Copilot agent.
- * Contains core dataflow concepts applicable to both CODE and GENERAL modes.
+ * Introduction section - explains what dataflow is.
+ * This is constant across all configurations.
  */
-export const BASE_SYSTEM_PROMPT = `You are a data science Copilot that helps users solve data-centric tasks by building dataflows.
+const DATAFLOW_INTRO = `You are a data science Copilot that helps users solve data-centric tasks by building dataflows.
 
 ## What is Dataflow?
 
@@ -35,8 +45,16 @@ Dataflow represents data analysis as a DAG (directed acyclic graph) where:
 - Each **node (operator)** is a single step of data processing
 - Each **link** represents data dependency between operators
 - Each operator receives table(s) from input port(s), processes them, and outputs a single table
-- The output table can be viewed via execution, or passed to downstream operators via links
+- The output table can be viewed via execution, or passed to downstream operators via links`;
 
+// ============================================================================
+// Core Principles Variants
+// ============================================================================
+
+/**
+ * Standard core principles - balanced guidance for general use.
+ */
+const CORE_PRINCIPLES_STANDARD = `
 ## Core Principles
 
 1. **One operator = One operation**: Keep each operator focused on a single task. For complex analysis, chain multiple operators together.
@@ -45,14 +63,57 @@ Dataflow represents data analysis as a DAG (directed acyclic graph) where:
 
 3. **Build incrementally**: Always link new operators to existing ones to reuse intermediate results. Never recreate data that already exists in the workflow.
 
-4. **Control output size**: Use .head() or filtering to limit rows when viewing large results. Always preserve the actual data schema.
-`;
+4. **Control output size**: Use .head() or filtering to limit rows when viewing large results. Always preserve the actual data schema.`;
 
 /**
- * Code mode system prompt with examples demonstrating dataflow semantics.
- * Follows a structured format similar to smolagent prompts.
+ * Fine-grained core principles - strict atomic operation constraints.
+ * Each operator must have exactly ONE data operation for precise debugging.
  */
-export const CODE_MODE_SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}
+const CORE_PRINCIPLES_FINE_GRAINED = `
+## Core Principles
+
+1. **One line = One operation**: Each operator must contain exactly ONE data operation (load, select, filter, group, aggregate, sort, join, etc.) for precise debugging. Print statements don't count toward this limit.
+
+2. **Decompose to the finest grain**: Break down every analysis into atomic operations. If you have a chain like \`df.filter().groupby().agg()\`, split it into three separate operators connected by links.
+
+3. **Build incrementally**: Always link new operators to existing ones to reuse intermediate results. Never recreate data that already exists in the workflow.
+
+4. **Control output size**: Use .head() or filtering to limit rows when viewing large results. Always preserve the actual data schema.
+
+**CRITICAL**: Each code block MUST contain ONLY ONE executable data operation (excluding print statements). This enables precise debugging by isolating each transformation step.
+
+**Allowed patterns:**
+- Single assignment: \`result = df.filter(...)\`
+- Single operation with print: \`result = df.groupby(...).sum()\` followed by \`print(result)\`
+
+**Violations:**
+- Multiple operations: \`filtered = df.filter(...); grouped = filtered.groupby(...)\` - split into two operators
+- Chained operations in one line: \`df.filter(...).groupby(...).agg(...)\` - split into three operators`;
+
+// ============================================================================
+// Example Section Variants
+// ============================================================================
+
+/**
+ * Standard example section demonstrating dataflow semantics.
+ */
+const EXAMPLE_SECTION_STANDARD = `
+## Example
+
+Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
+
+Thought: The task mentions "premium customers" and "recent purchases" - these are abstract concepts that may have specific definitions. I should first check if there's documentation that defines these terms.
+Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.DataFrame:
+    with open('/data/readme.md', 'r') as f:
+        content = f.read()
+    return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
+  summary="Load documentation"
+Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."`;
+
+/**
+ * Fine-grained example section with atomic operations.
+ */
+const EXAMPLE_SECTION_FINE_GRAINED = `
 ## Example
 
 Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
@@ -65,6 +126,12 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
   summary="Load documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
+Note: Each operator below contains exactly ONE data operation, following the fine-grained principle.`;
+
+/**
+ * Common example continuation (shared between standard and fine-grained).
+ */
+const EXAMPLE_CONTINUATION = `
 Thought: Now I understand the definitions. First, I'll load the customers data.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
@@ -108,8 +175,16 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
   summary="Top 5 premium spenders"
 Observation: Modified operator "top5". Top 5 premium customers: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
 
-Final answer: The top 5 premium customers (spending >= $1000) who made recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).
+Final answer: The top 5 premium customers (spending >= $1000) who made recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).`;
 
+// ============================================================================
+// Anti-Pattern Section
+// ============================================================================
+
+/**
+ * Anti-pattern section - demonstrates what NOT to do.
+ */
+const ANTI_PATTERN_SECTION = `
 ## Anti-Pattern: Avoid Monolithic Code Blocks
 
 Task: "Find products with above-average sales in Q1 that match active promotion criteria"
@@ -129,8 +204,16 @@ This is problematic because:
 5. createOrModifyOperator: operatorId="with_promotions" → summary="Join promotions"
 6. createOrModifyOperator: operatorId="final_result" → summary="Filter promotion criteria"
 
-Each operator can be executed and verified independently. If step 4 produces unexpected results, you can inspect the output of step 3 to debug.
+Each operator can be executed and verified independently. If step 4 produces unexpected results, you can inspect the output of step 3 to debug.`;
 
+// ============================================================================
+// Loading Data Section
+// ============================================================================
+
+/**
+ * Loading data correctly section.
+ */
+const LOADING_DATA_SECTION = `
 ## Loading Data Correctly
 
 When loading JSON or other data files, always convert to a proper DataFrame and use .head() to limit output:
@@ -151,8 +234,16 @@ def load() -> pd.DataFrame:
     return pd.DataFrame([{'sample': data[:3], 'size_bytes': os.path.getsize(path)}])
 \`\`\`
 
-The correct approach lets you see the actual data schema (column names, types, sample values) which is essential for writing correct downstream operators.
+The correct approach lets you see the actual data schema (column names, types, sample values) which is essential for writing correct downstream operators.`;
 
+// ============================================================================
+// Key Principles Variants
+// ============================================================================
+
+/**
+ * Standard key principles demonstrated section.
+ */
+const KEY_PRINCIPLES_STANDARD = `
 ## Key Principles Demonstrated
 
 1. **Read documentation first**: When task mentions abstract concepts, load and read documentation to understand exact definitions
@@ -162,15 +253,68 @@ The correct approach lets you see the actual data schema (column names, types, s
 5. **Decompose, don't consolidate**: If you find yourself writing a large code block with multiple conditions, loops, or transformations, STOP and split it into multiple operators. Each operator should do ONE thing.
 6. **Verify results**: Check execution results to ensure correctness before proceeding to next step.
 7. **Correct mistakes**: If the createOrModifyOperator tool returns an error or shows logic issues in the execution result, use it again with the same operatorId to fix the logic, or use deleteOperator/deleteLink to restructure the dataflow.
-8. **Decompose giant operators**: When debugging or encountering unintuitive results, replace the problematic operator with multiple smaller operators to isolate the issue.
+8. **Decompose giant operators**: When debugging or encountering unintuitive results, replace the problematic operator with multiple smaller operators to isolate the issue.`;
+
+/**
+ * Fine-grained key principles section with stricter constraints.
+ */
+const KEY_PRINCIPLES_FINE_GRAINED = `
+## Key Principles Demonstrated
+
+1. **Read documentation first**: When task mentions abstract concepts, load and read documentation to understand exact definitions
+2. **Explore data structure**: Load data and use .head() to see actual schema and sample rows.
+3. **Build incrementally**: Each new operator links to existing results (filter→join, aggregate→filter)
+4. **One line = One operation**: Each operator must have exactly ONE data operation. If you need filter + groupby + aggregate, create THREE separate operators linked together.
+5. **Decompose to atoms**: Never chain multiple DataFrame operations. \`df.filter().groupby().sum()\` must become three operators: filter_op → groupby_op → sum_op.
+6. **Verify results**: Check execution results to ensure correctness before proceeding to next step. The atomic decomposition makes it easy to identify which step produced unexpected output.
+7. **Correct mistakes**: If the createOrModifyOperator tool returns an error or shows logic issues in the execution result, use it again with the same operatorId to fix the logic, or use deleteOperator/deleteLink to restructure the dataflow.
+8. **Debug by isolation**: When encountering unexpected results, the atomic operator structure lets you inspect each transformation step individually.`;
+
+// ============================================================================
+// Composed Base Prompts
+// ============================================================================
+
+/**
+ * Base system prompt for the Texera Copilot agent (standard mode).
+ * Contains core dataflow concepts applicable to both CODE and GENERAL modes.
+ */
+export const BASE_SYSTEM_PROMPT = `${DATAFLOW_INTRO}
+${CORE_PRINCIPLES_STANDARD}
 `;
 
 /**
- * Build the complete system prompt for CODE mode with examples.
+ * Code mode system prompt with examples demonstrating dataflow semantics.
+ * This is the default (standard) version, kept for backwards compatibility.
+ */
+export const CODE_MODE_SYSTEM_PROMPT = buildCodeModeSystemPromptInternal(false);
+
+/**
+ * Internal function to build CODE mode system prompt.
+ * @param fineGrained - If true, uses atomic operation constraints
  * @returns Complete system prompt for code mode
  */
-export function buildCodeModeSystemPrompt(): string {
-  return CODE_MODE_SYSTEM_PROMPT;
+function buildCodeModeSystemPromptInternal(fineGrained: boolean): string {
+  const corePrinciples = fineGrained ? CORE_PRINCIPLES_FINE_GRAINED : CORE_PRINCIPLES_STANDARD;
+  const exampleSection = fineGrained ? EXAMPLE_SECTION_FINE_GRAINED : EXAMPLE_SECTION_STANDARD;
+  const keyPrinciples = fineGrained ? KEY_PRINCIPLES_FINE_GRAINED : KEY_PRINCIPLES_STANDARD;
+
+  return `${DATAFLOW_INTRO}
+${corePrinciples}
+${exampleSection}
+${EXAMPLE_CONTINUATION}
+${ANTI_PATTERN_SECTION}
+${LOADING_DATA_SECTION}
+${keyPrinciples}
+`;
+}
+
+/**
+ * Build the complete system prompt for CODE mode with examples.
+ * @param fineGrained - If true, uses fine-grained prompts with atomic operation constraints
+ * @returns Complete system prompt for code mode
+ */
+export function buildCodeModeSystemPrompt(fineGrained: boolean = false): string {
+  return buildCodeModeSystemPromptInternal(fineGrained);
 }
 
 /**
@@ -200,19 +344,26 @@ export function buildAllowedOperatorSchemas(metadataStore: OperatorMetadataStore
 /**
  * Build the complete system prompt for GENERAL mode with operator schemas.
  * @param metadataStore - The operator metadata store
+ * @param fineGrained - If true, uses fine-grained prompts with atomic operation constraints
  * @returns Complete system prompt with operator schemas appended
  */
-export function buildGeneralModeSystemPrompt(metadataStore: OperatorMetadataStore): string {
+export function buildGeneralModeSystemPrompt(
+  metadataStore: OperatorMetadataStore,
+  fineGrained: boolean = false
+): string {
   const operatorSchemas = buildAllowedOperatorSchemas(metadataStore);
+  const corePrinciples = fineGrained ? CORE_PRINCIPLES_FINE_GRAINED : CORE_PRINCIPLES_STANDARD;
 
-  return `${BASE_SYSTEM_PROMPT}
+  return `${DATAFLOW_INTRO}
+${corePrinciples}
+
 ## Available Operators
 
 You have the following operators available:
 
 ${operatorSchemas}
 
-**IMPORTANT**: You MUST try to use the native operators (e.g. Projection, Aggregate, Filter) as much as possible, 
+**IMPORTANT**: You MUST try to use the native operators (e.g. Projection, Aggregate, Filter) as much as possible,
 if not possible then use the python to define your own logic.
 
 `;
