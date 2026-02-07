@@ -79,12 +79,22 @@ case class ConsoleMessageInfo(
 )
 
 /**
+  * Per-input-port shape info - reports rows and columns for each input port.
+  */
+case class PortShape(
+    portIndex: Int,
+    rows: Long,
+    columns: Int
+)
+
+/**
   * Per-operator result info - contains everything about one operator.
   */
 case class OperatorInfo(
     state: String,
     inputTuples: Long,
     outputTuples: Long,
+    inputPortShapes: Option[List[PortShape]], // per-input-port (rows, columns)
     resultMode: String, // "table" or "visualization"
     result: Option[Any], // JSON array (List[ObjectNode])
     totalRowCount: Option[Int],
@@ -452,6 +462,15 @@ class SyncExecutionResource extends LazyLogging {
         case None => ("Unknown", 0L, 0L)
       }
 
+      // Extract per-input-port shapes from stats
+      val inputPortShapes: Option[List[PortShape]] = stats
+        .map { s =>
+          s.operatorStatistics.inputMetrics.map { pm =>
+            PortShape(pm.portId.id, pm.tupleMetrics.count, pm.tupleMetrics.columnCount)
+          }.toList
+        }
+        .filter(_.nonEmpty)
+
       // Get result
       val (resultMode, result, totalRowCount, displayedRows, truncated) =
         collectOperatorResult(
@@ -492,6 +511,7 @@ class SyncExecutionResource extends LazyLogging {
         state = state,
         inputTuples = inputTuples,
         outputTuples = outputTuples,
+        inputPortShapes = inputPortShapes,
         resultMode = resultMode,
         result = result,
         totalRowCount = totalRowCount,

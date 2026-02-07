@@ -53,6 +53,7 @@ dependencies = [
     # === Serialization / Protocol ===
     "protobuf==3.20.3",
     "betterproto==2.0.0b7",
+    "black==24.3.0",
 
     # === External APIs ===
     "praw==7.6.1",
@@ -82,6 +83,7 @@ kramabench = [
     "edgartools==3.14.6",
     "PyMuPDF==1.25.5",
     "PyPDF2==3.0.1",
+    "skyfield==1.54",
 
     # NLP / Text Processing
     "nltk==3.9.1",

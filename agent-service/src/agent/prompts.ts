@@ -237,6 +237,21 @@ def load() -> pd.DataFrame:
 The correct approach lets you see the actual data schema (column names, types, sample values) which is essential for writing correct downstream operators.`;
 
 // ============================================================================
+// Common Pitfalls Section
+// ============================================================================
+
+/**
+ * Concise, general-purpose warnings about common multi-step analysis errors.
+ * Kept brief and principle-based rather than case-specific.
+ */
+const COMMON_PITFALLS_SECTION = `
+## Common Pitfalls in Multi-Step Dataflows
+
+- **Row Granularity shifts**: When an intermediate operator aggregates data (groupby, pivot, etc.), downstream operators receive fewer, summarized rows, and this will change row granularity. You MUST be aware of this and make sure to handle it properly aligning with the task. 
+- **Unit and format consistency**: Ensure the final result matches the expected units and format (e.g., percentage vs proportion, dollars vs cents). Convert explicitly in a dedicated operator rather than assuming.
+- **Late rounding**: Apply rounding only in the final operator. Rounding intermediate results compounds errors across the pipeline.`;
+
+// ============================================================================
 // Key Principles Variants
 // ============================================================================
 
@@ -304,6 +319,7 @@ ${exampleSection}
 ${EXAMPLE_CONTINUATION}
 ${ANTI_PATTERN_SECTION}
 ${LOADING_DATA_SECTION}
+${COMMON_PITFALLS_SECTION}
 ${keyPrinciples}
 `;
 }
@@ -356,6 +372,7 @@ export function buildGeneralModeSystemPrompt(
 
   return `${DATAFLOW_INTRO}
 ${corePrinciples}
+${COMMON_PITFALLS_SECTION}
 
 ## Available Operators
 

@@ -200,7 +200,9 @@ class DataProcessor(Runnable, Stoppable):
                         if not self._schema_inferred:
                             schema = self._check_and_update_schema(output_tuple)
                         else:
-                            schema = self._context.output_manager.get_port().get_schema()
+                            schema = (
+                                self._context.output_manager.get_port().get_schema()
+                            )
                     output_tuple.finalize(schema)
                 output_batch.append(output_tuple)
 
@@ -241,9 +243,7 @@ class DataProcessor(Runnable, Stoppable):
                     port_id, inferred_schema
                 )
 
-            logger.info(
-                f"Schema inferred from DataFrame dtypes: {inferred_schema}"
-            )
+            logger.info(f"Schema inferred from DataFrame dtypes: {inferred_schema}")
 
         return inferred_schema
 
@@ -369,19 +369,19 @@ class DataProcessor(Runnable, Stoppable):
         inferred = pandas.api.types.infer_dtype(column, skipna=True)
 
         # Basic types - pandas can reliably detect these even with nulls
-        if inferred == 'integer':
+        if inferred == "integer":
             return AttributeType.LONG
-        elif inferred == 'floating':
+        elif inferred == "floating":
             return AttributeType.DOUBLE
-        elif inferred == 'boolean':
+        elif inferred == "boolean":
             return AttributeType.BOOL
-        elif inferred == 'string':
+        elif inferred == "string":
             return AttributeType.STRING
-        elif inferred == 'bytes':
+        elif inferred == "bytes":
             return AttributeType.BINARY
-        elif inferred in ('datetime', 'datetime64'):
+        elif inferred in ("datetime", "datetime64"):
             return AttributeType.TIMESTAMP
-        elif inferred == 'mixed-integer-float':
+        elif inferred == "mixed-integer-float":
             # Floats can represent ints, so use DOUBLE
             return AttributeType.DOUBLE
 

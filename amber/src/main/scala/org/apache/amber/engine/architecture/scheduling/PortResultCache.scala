@@ -37,7 +37,7 @@ import scala.jdk.CollectionConverters._
   *
   * @param tupleCount Number of tuples that flowed through this port
   */
-case class CachedPortMetrics(tupleCount: Long)
+case class CachedPortMetrics(tupleCount: Long, columnCount: Int = 0)
 
 /**
   * Cached data for an operator including metrics and console messages.

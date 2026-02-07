@@ -311,7 +311,8 @@ export function createCreateOrModifyOperatorTool(
     description: `Add or modify a Python function as an operator in the dataflow, then automatically execute it and return results.
 - If operatorId does NOT exist: creates a new operator
 - If operatorId exists: modifies the existing operator (must keep same type)
-- After creation/modification, the operator is automatically executed and results are returned
+- After creation/modification, the operator is automatically executed and results are returned. 
+The execution result(if succeeded) includes the shape of the input tables(if any) and output table, and the record in the output table
 
 RULES:
 1. operatorId must be a valid Python variable name

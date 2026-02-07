@@ -24,6 +24,9 @@
 # 3. Start litellm by:
 #    litellm --config bin/litellm-config.yaml
 # By default, litellm is running on http://0.0.0.0:4000
+litellm_settings:
+  drop_params: true
+
 model_list:
   - model_name: claude-haiku-4.5
     litellm_params:

@@ -28,12 +28,12 @@ from proto.org.apache.amber.engine.architecture.worker import (
 
 class StatisticsManager:
     def __init__(self) -> None:
-        # Initialize metrics with default values
+        # Initialize metrics with default values: (count, size, column_count)
         self._input_tuple_metrics: DefaultDict[PortIdentity, TupleMetrics] = (
-            defaultdict(lambda: (0, 0))
+            defaultdict(lambda: (0, 0, 0))
         )
         self._output_tuple_metrics: DefaultDict[PortIdentity, TupleMetrics] = (
-            defaultdict(lambda: (0, 0))
+            defaultdict(lambda: (0, 0, 0))
         )
         self._data_processing_time: int = 0
         self._control_processing_time: int = 0
@@ -58,17 +58,29 @@ class StatisticsManager:
             - self._control_processing_time,
         )
 
-    def increase_input_statistics(self, port_id: PortIdentity, size: int) -> None:
+    def increase_input_statistics(
+        self, port_id: PortIdentity, size: int, column_count: int = 0
+    ) -> None:
         if size < 0:
             raise ValueError("Tuple size must be non-negative")
-        count, total_size = self._input_tuple_metrics[port_id]
-        self._input_tuple_metrics[port_id] = (count + 1, total_size + size)
+        count, total_size, _ = self._input_tuple_metrics[port_id]
+        self._input_tuple_metrics[port_id] = (
+            count + 1,
+            total_size + size,
+            column_count,
+        )
 
-    def increase_output_statistics(self, port_id: PortIdentity, size: int) -> None:
+    def increase_output_statistics(
+        self, port_id: PortIdentity, size: int, column_count: int = 0
+    ) -> None:
         if size < 0:
             raise ValueError("Tuple size must be non-negative")
-        count, total_size = self._output_tuple_metrics[port_id]
-        self._output_tuple_metrics[port_id] = (count + 1, total_size + size)
+        count, total_size, _ = self._output_tuple_metrics[port_id]
+        self._output_tuple_metrics[port_id] = (
+            count + 1,
+            total_size + size,
+            column_count,
+        )
 
     def increase_data_processing_time(self, time: int) -> None:
         if time < 0:

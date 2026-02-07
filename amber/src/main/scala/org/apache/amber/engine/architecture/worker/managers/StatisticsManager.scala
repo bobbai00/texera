@@ -35,6 +35,10 @@ class StatisticsManager {
     mutable.Map.empty.withDefaultValue((0L, 0L))
   private val outputStatistics: mutable.Map[PortIdentity, (Long, Long)] =
     mutable.Map.empty.withDefaultValue((0L, 0L))
+  private val inputColumnCount: mutable.Map[PortIdentity, Int] =
+    mutable.Map.empty.withDefaultValue(0)
+  private val outputColumnCount: mutable.Map[PortIdentity, Int] =
+    mutable.Map.empty.withDefaultValue(0)
   private var dataProcessingTime: Long = 0L
   private var totalExecutionTime: Long = 0L
   private var workerStartTime: Long = 0L
@@ -51,11 +55,17 @@ class StatisticsManager {
     WorkerStatistics(
       inputStatistics.map {
         case (portId, (tupleCount, tupleSize)) =>
-          PortTupleMetricsMapping(portId, TupleMetrics(tupleCount, tupleSize))
+          PortTupleMetricsMapping(
+            portId,
+            TupleMetrics(tupleCount, tupleSize, inputColumnCount(portId))
+          )
       }.toSeq,
       outputStatistics.map {
         case (portId, (tupleCount, tupleSize)) =>
-          PortTupleMetricsMapping(portId, TupleMetrics(tupleCount, tupleSize))
+          PortTupleMetricsMapping(
+            portId,
+            TupleMetrics(tupleCount, tupleSize, outputColumnCount(portId))
+          )
       }.toSeq,
       dataProcessingTime,
       controlProcessingTime,
@@ -79,22 +89,26 @@ class StatisticsManager {
     * Increases the input statistics for a given port.
     * @param portId the port identity
     * @param size the size of the tuple
+    * @param columnCount the number of columns in the tuple schema
     */
-  def increaseInputStatistics(portId: PortIdentity, size: Long): Unit = {
+  def increaseInputStatistics(portId: PortIdentity, size: Long, columnCount: Int): Unit = {
     require(size >= 0, "Tuple size must be non-negative")
     val (count, totalSize) = inputStatistics(portId)
     inputStatistics.update(portId, (count + 1, totalSize + size))
+    inputColumnCount.update(portId, columnCount)
   }
 
   /**
     * Increases the output statistics for a given port.
     * @param portId the port identity
     * @param size the size of the tuple
+    * @param columnCount the number of columns in the tuple schema
     */
-  def increaseOutputStatistics(portId: PortIdentity, size: Long): Unit = {
+  def increaseOutputStatistics(portId: PortIdentity, size: Long, columnCount: Int): Unit = {
     require(size >= 0, "Tuple size must be non-negative")
     val (count, totalSize) = outputStatistics(portId)
     outputStatistics.update(portId, (count + 1, totalSize + size))
+    outputColumnCount.update(portId, columnCount)
   }
 
   /**

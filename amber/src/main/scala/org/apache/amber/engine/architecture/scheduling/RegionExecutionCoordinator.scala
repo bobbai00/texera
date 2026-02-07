@@ -203,7 +203,8 @@ class RegionExecutionCoordinator(
             resourceConfig.portConfigs.get(globalPortId) match {
               case Some(outputConfig: OutputPortConfig) =>
                 val tupleCount = getTupleCountFromStorage(outputConfig.storageURI)
-                Some(portId -> CachedPortMetrics(tupleCount))
+                val columnCount = getColumnCountFromStorage(outputConfig.storageURI)
+                Some(portId -> CachedPortMetrics(tupleCount, columnCount))
               case _ => None
             }
           }.toMap
@@ -218,7 +219,23 @@ class RegionExecutionCoordinator(
                 .map(_.tupleMetrics.count)
                 .getOrElse(0L)
             }.sum
-            portId -> CachedPortMetrics(totalCount)
+            // Read column count from the input port's storage URI (upstream output data)
+            val globalInputPortId = GlobalPortIdentity(opId, portId, input = true)
+            val columnCount = resourceConfig.portConfigs.get(globalInputPortId) match {
+              case Some(cfg: InputPortConfig) =>
+                cfg.storagePairs.headOption
+                  .map(pair => getColumnCountFromStorage(pair._1))
+                  .getOrElse(0)
+              case _ =>
+                // Fallback to worker stats
+                operatorExecution.getWorkerIds.flatMap { workerId =>
+                  val workerExec = operatorExecution.getWorkerExecution(workerId)
+                  workerExec.getStats.inputTupleMetrics
+                    .find(_.portId == portId)
+                    .map(_.tupleMetrics.columnCount)
+                }.maxOption.getOrElse(0)
+            }
+            portId -> CachedPortMetrics(totalCount, columnCount)
           }.toMap
 
         // Get console messages URI for this operator
@@ -252,6 +269,20 @@ class RegionExecutionCoordinator(
       case e: Exception =>
         logger.warn(s"Failed to get tuple count from $uri: ${e.getMessage}")
         0L
+    }
+  }
+
+  /**
+    * Get the column count from a storage URI by opening the document and reading its schema.
+    */
+  private def getColumnCountFromStorage(uri: java.net.URI): Int = {
+    try {
+      val (_, schemaOpt) = DocumentFactory.openDocument(uri)
+      schemaOpt.map(_.getAttributes.size).getOrElse(0)
+    } catch {
+      case e: Exception =>
+        logger.warn(s"Failed to get column count from $uri: ${e.getMessage}")
+        0
     }
   }
 

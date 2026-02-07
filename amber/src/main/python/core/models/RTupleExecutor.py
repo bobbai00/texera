@@ -39,14 +39,12 @@ class RTupleExecutor(TupleOperatorV2):
 
     is_source = False
 
-    _combine_binary_and_non_binary_lists = robjects.r(
-        """
+    _combine_binary_and_non_binary_lists = robjects.r("""
         function(non_binary_list, binary_list) {
             non_binary_list <- as.list(non_binary_list$as_vector())
             return (c(non_binary_list, binary_list))
         }
-        """
-    )
+        """)
 
     def __init__(self, r_code: str):
         """

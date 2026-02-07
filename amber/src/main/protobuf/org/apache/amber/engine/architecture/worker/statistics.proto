@@ -47,6 +47,7 @@ message PortTupleMetricsMapping {
 message TupleMetrics {
   int64 count = 1;
   int64 size = 2;
+  int32 column_count = 3;
 }
 
 message WorkerStatistics {

@@ -167,16 +167,20 @@ class MainLoop(StoppableQueueBlockingRunnable):
         This is being invoked for each Tuple that are unpacked from the DataElement.
         """
         if isinstance(self.context.tuple_processing_manager.current_input_tuple, Tuple):
+            input_tuple = self.context.tuple_processing_manager.current_input_tuple
             self.context.statistics_manager.increase_input_statistics(
                 self.context.tuple_processing_manager.current_input_port_id,
-                self.context.tuple_processing_manager.current_input_tuple.in_mem_size(),
+                input_tuple.in_mem_size(),
+                len(input_tuple),
             )
 
         for output_tuple in self.process_tuple_with_udf():
             self._check_and_process_control()
             if output_tuple is not None:
                 self.context.statistics_manager.increase_output_statistics(
-                    PortIdentity(0), output_tuple.in_mem_size()
+                    PortIdentity(0),
+                    output_tuple.in_mem_size(),
+                    len(output_tuple),
                 )
                 for to, batch in self.context.output_manager.tuple_to_batch(
                     output_tuple
@@ -268,9 +272,7 @@ class MainLoop(StoppableQueueBlockingRunnable):
         # from the last data frame, causing on_finish() to be called with the wrong port.
         channel_id = self.context.current_input_channel_id
         port_id = self.context.input_manager.get_port_id(channel_id)
-        logger.info(
-            f"_process_end_channel: channel_id={channel_id}, port_id={port_id}"
-        )
+        logger.info(f"_process_end_channel: channel_id={channel_id}, port_id={port_id}")
         self.context.tuple_processing_manager.current_input_port_id = port_id
 
         self.process_input_state()

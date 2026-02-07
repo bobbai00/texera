@@ -35,6 +35,19 @@ export interface ConsoleMessage {
 }
 
 // ============================================================================
+// Port Shape
+// ============================================================================
+
+/**
+ * Per-input-port shape info: rows and columns flowing through a port.
+ */
+export interface PortShape {
+  portIndex: number;
+  rows: number;
+  columns: number;
+}
+
+// ============================================================================
 // Operator Info
 // ============================================================================
 
@@ -46,6 +59,7 @@ export interface OperatorInfo {
   state: string;
   inputTuples: number;
   outputTuples: number;
+  inputPortShapes?: PortShape[]; // per-input-port (rows, columns)
   resultMode: string; // "table" or "visualization"
   result?: Record<string, any>[]; // JSON array of tuples
   totalRowCount?: number;

@@ -29,7 +29,7 @@ import { createErrorResult } from "./tools-utility";
 import type { WorkflowState } from "../workflow/workflow-state";
 import { getBackendConfig } from "../api/backend-api";
 import type { LogicalPlan, LogicalLink } from "../api/execution-api";
-import type { SyncExecutionResult } from "../types/execution";
+import type { OperatorInfo, SyncExecutionResult } from "../types/execution";
 import { OperatorMetadataStore } from "./metadata-tools";
 import { OperatorResultSerializationMode, DEFAULT_AGENT_SETTINGS } from "../types/agent";
 
@@ -369,21 +369,70 @@ interface ResultMeta {
 
 /**
  * Formats the meta info line for execution results.
- * For table/toon: "table (rows: 10/100 truncated due to character limit, columns: 5)"
- * For json: "json (items: 10/100 truncated due to character limit)"
+ * For table/toon: only shows truncation notice if truncated, empty otherwise
+ * (shape arrow already conveys row/column counts).
+ * For json: "json (items: 10/100 truncated due to token limit)"
  */
 function formatResultMeta(meta: ResultMeta): string {
   if (meta.mode === "json") {
     const itemInfo = meta.truncated
-      ? `${meta.displayedRows}/${meta.totalRows} truncated due to character limit`
+      ? `${meta.displayedRows}/${meta.totalRows} truncated due to token limit`
       : `${meta.displayedRows}`;
     return `${meta.mode} (items: ${itemInfo})`;
   }
 
-  const rowInfo = meta.truncated
-    ? `${meta.displayedRows}/${meta.totalRows} truncated due to character limit`
-    : `${meta.displayedRows}`;
-  return `${meta.mode} (rows: ${rowInfo}, columns: ${meta.columns})`;
+  // For table/toon: only show truncation notice
+  if (meta.truncated) {
+    return `${meta.displayedRows}/${meta.totalRows} rows are displayed due to the token limit`;
+  }
+  return "";
+}
+
+/**
+ * Extract input parameter names from a Python UDF operator's code.
+ * Matches `def process(param1, param2)` or `def load()` signatures.
+ * Port index 0 corresponds to the first parameter, index 1 to the second, etc.
+ */
+function getInputParamNames(workflowState: WorkflowState, operatorId: string): string[] {
+  const op = workflowState.getOperator(operatorId);
+  if (!op) return [];
+  const code: string = op.operatorProperties?.code ?? "";
+  const match = code.match(/def\s+(?:process|load)\s*\(([^)]*)\)/);
+  if (!match || !match[1].trim()) return [];
+  // Extract just the parameter name (before any type annotation or default value)
+  return match[1]
+    .split(",")
+    .map(p => p.trim().split(/[:\s=]/)[0])
+    .filter(Boolean);
+}
+
+/**
+ * Format the input/output shape arrow notation for an operator.
+ * Example: "Shape: customers(100, 3), orders(200, 5) -> (150, 6)"
+ */
+function formatShapeArrow(
+  opInfo: OperatorInfo,
+  outputColumns: number,
+  paramNames: string[],
+  operatorId: string
+): string {
+  const outputRows = opInfo.totalRowCount ?? opInfo.outputTuples;
+  const outputPart = `${operatorId}(${outputRows}, ${outputColumns})`;
+
+  const inputShapes = opInfo.inputPortShapes;
+  if (!inputShapes || inputShapes.length === 0) {
+    return `Shape: ${outputPart}`;
+  }
+
+  const inputPart = inputShapes
+    .sort((a, b) => a.portIndex - b.portIndex)
+    .map(p => {
+      const name = paramNames[p.portIndex] ?? `input${p.portIndex}`;
+      return `${name}(${p.rows}, ${p.columns})`;
+    })
+    .join(", ");
+
+  return `Shape: ${inputPart} -> ${outputPart}`;
 }
 
 /**
@@ -421,36 +470,29 @@ function formatExecutionError(
 }
 
 /**
- * Convert JSON result to table format (pandas DataFrame-like, tab-separated).
- * Respects original types: numbers/booleans are not quoted, only complex types use JSON.
+ * Convert JSON result to pandas DataFrame-style table format (tab-separated).
+ * Includes row indices (0, 1, 2, ...) and a leading tab on the header row
+ * to align with the index column, matching pandas `__repr__` output.
  * Uses tab (\t) as column separator for readability.
  */
 function jsonToTableFormat(jsonResult: Record<string, any>[]): string {
   if (!jsonResult || jsonResult.length === 0) return "";
 
   const headers = Object.keys(jsonResult[0]);
-  const headerLine = headers.join("\t");
+  // Leading tab aligns headers with the index column (pandas style)
+  const headerLine = "\t" + headers.join("\t");
 
-  const rows = jsonResult.map(row =>
-    headers
-      .map(h => {
-        const val = row[h];
-        // Handle null/undefined
-        if (val === null) return "null";
-        if (val === undefined) return "";
-        // Preserve primitive types without quotes
-        if (typeof val === "number" || typeof val === "boolean") {
-          return String(val);
-        }
-        // Strings: escape tabs and newlines for table format
-        if (typeof val === "string") {
-          return val.replace(/\t/g, "\\t").replace(/\n/g, "\\n");
-        }
-        // Complex types (arrays, objects): use JSON representation
-        return JSON.stringify(val);
-      })
-      .join("\t")
-  );
+  const rows = jsonResult.map((row, idx) => {
+    const cells = headers.map(h => {
+      const val = row[h];
+      if (val === null) return "null";
+      if (val === undefined) return "";
+      if (typeof val === "number" || typeof val === "boolean") return String(val);
+      if (typeof val === "string") return val.replace(/\t/g, "\\t").replace(/\n/g, "\\n");
+      return JSON.stringify(val);
+    });
+    return `${idx}\t${cells.join("\t")}`;
+  });
 
   return [headerLine, ...rows].join("\n");
 }
@@ -577,17 +619,17 @@ export async function executeOperatorAndFormat(
         break;
     }
 
-    // Backend returns data row counts. For tabular formats (table/toon),
-    // add 1 for the header row since the displayed output includes it.
-    const headerOffset = (modeLabel === "table" || modeLabel === "toon") ? 1 : 0;
-    const rawDisplayedRows = opInfo.displayedRows ?? 0;
-    const rawTotalRows = opInfo.totalRowCount ?? rawDisplayedRows;
-    const displayedRows = rawDisplayedRows + headerOffset;
-    const totalRows = rawTotalRows + headerOffset;
-    const truncated = opInfo.truncated ?? rawDisplayedRows < rawTotalRows;
+    const displayedRows = opInfo.displayedRows ?? 0;
+    const totalRows = opInfo.totalRowCount ?? displayedRows;
+    const truncated = opInfo.truncated ?? displayedRows < totalRows;
+
+    // Build shape arrow notation: e.g. "Shape: input0(100, 3) -> opId(150, 6)"
+    const paramNames = getInputParamNames(workflowState, operatorId);
+    const shapeLine = formatShapeArrow(opInfo, columns, paramNames, operatorId);
 
     const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
-    return `${meta}\n${dataString}`;
+    const header = [shapeLine, meta].filter(Boolean).join("\n");
+    return header ? `${header}\n${dataString}` : dataString;
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw error;
@@ -609,7 +651,7 @@ export async function executeOperatorAndFormat(
  */
 export function createExecuteOperatorTool(workflowState: WorkflowState, getConfig: () => ExecutionConfig) {
   return tool({
-    description: "Execute the workflow and get the specified operator's result.",
+    description: "Execute the workflow and get the specified operator's result. The execution result(if succeeded) includes the shape of the input tables(if any) and output table, and the record in the output table",
     inputSchema: z.object({
       operatorId: z.string().describe("The operator ID to view result for."),
     }),

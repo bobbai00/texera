@@ -30,7 +30,11 @@ from pympler import asizeof
 from typing import Any, List, Iterator, Callable
 from typing_extensions import Protocol, runtime_checkable
 
-from .schema.attribute_type import TO_PYOBJECT_MAPPING, AttributeType, coerce_value_to_type
+from .schema.attribute_type import (
+    TO_PYOBJECT_MAPPING,
+    AttributeType,
+    coerce_value_to_type,
+)
 from .schema.field import Field
 from .schema.schema import Schema
 
@@ -89,19 +93,26 @@ class ArrowTableTupleProvider:
             field_type = self._table.schema.field(field_name).type
 
             # Handle native Arrow nested types
-            if pyarrow.types.is_list(field_type) or pyarrow.types.is_large_list(field_type):
+            if pyarrow.types.is_list(field_type) or pyarrow.types.is_large_list(
+                field_type
+            ):
                 # Native Arrow list - value is already a Python list
                 return value
-            elif pyarrow.types.is_struct(field_type) or pyarrow.types.is_map(field_type):
+            elif pyarrow.types.is_struct(field_type) or pyarrow.types.is_map(
+                field_type
+            ):
                 # Native Arrow struct/map - value is already a Python dict
                 return value
             # Handle JSON-serialized LIST/STRUCT (stored as strings for Arrow compatibility)
             elif (
-                (pyarrow.types.is_string(field_type) or pyarrow.types.is_large_string(field_type))
+                (
+                    pyarrow.types.is_string(field_type)
+                    or pyarrow.types.is_large_string(field_type)
+                )
                 and value is not None
                 and isinstance(value, str)
                 and len(value) > 0
-                and value[0] in ('[', '{')
+                and value[0] in ("[", "{")
             ):
                 try:
                     value = json.loads(value)
@@ -321,7 +332,9 @@ class Tuple:
                     if field_type == AttributeType.LIST:
                         if not isinstance(field_value, list):
                             # Try to convert to list if possible
-                            if hasattr(field_value, '__iter__') and not isinstance(field_value, (str, bytes, dict)):
+                            if hasattr(field_value, "__iter__") and not isinstance(
+                                field_value, (str, bytes, dict)
+                            ):
                                 self[field_name] = list(field_value)
                             else:
                                 self[field_name] = [field_value]
@@ -330,9 +343,9 @@ class Tuple:
                     elif field_type == AttributeType.STRUCT:
                         if not isinstance(field_value, dict):
                             # Try to convert to dict if possible
-                            if hasattr(field_value, '__dict__'):
+                            if hasattr(field_value, "__dict__"):
                                 self[field_name] = dict(field_value.__dict__)
-                            elif hasattr(field_value, 'items'):
+                            elif hasattr(field_value, "items"):
                                 self[field_name] = dict(field_value.items())
 
                     # Legacy: for BINARY type with non-bytes value, use pickle
@@ -435,6 +448,7 @@ class Tuple:
             if isinstance(a, float) and isinstance(b, float):
                 # Handle NaN: NaN == NaN should be True for tuple equality
                 import math
+
                 if math.isnan(a) and math.isnan(b):
                     return True
                 return a == b
@@ -470,6 +484,7 @@ class Tuple:
         def hash_nested(value) -> int:
             """Hash nested structures (list/dict) by converting to string and hashing."""
             import json
+
             try:
                 json_str = json.dumps(value, sort_keys=True, default=str)
                 return java_hash_bytes(map(ord, json_str), 0, salt)

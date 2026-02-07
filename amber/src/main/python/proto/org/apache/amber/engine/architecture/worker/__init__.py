@@ -47,6 +47,7 @@ class PortTupleMetricsMapping(betterproto.Message):
 class TupleMetrics(betterproto.Message):
     count: int = betterproto.int64_field(1)
     size: int = betterproto.int64_field(2)
+    column_count: int = betterproto.int32_field(3)
 
 
 @dataclass(eq=False, repr=False)

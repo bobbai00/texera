@@ -118,13 +118,13 @@ case class WorkflowExecution(executionId: Option[ExecutionIdentity] = None) {
             // Create input metrics from cached data
             val inputMetrics: Seq[PortTupleMetricsMapping] = cachedData.inputPortMetrics.map {
               case (portId, metrics) =>
-                PortTupleMetricsMapping(portId, TupleMetrics(metrics.tupleCount, 0L))
+                PortTupleMetricsMapping(portId, TupleMetrics(metrics.tupleCount, 0L, metrics.columnCount))
             }.toSeq
 
             // Create output metrics from cached data
             val outputMetrics: Seq[PortTupleMetricsMapping] = cachedData.outputPortMetrics.map {
               case (portId, metrics) =>
-                PortTupleMetricsMapping(portId, TupleMetrics(metrics.tupleCount, 0L))
+                PortTupleMetricsMapping(portId, TupleMetrics(metrics.tupleCount, 0L, metrics.columnCount))
             }.toSeq
 
             // Create OperatorMetrics for the cached operator

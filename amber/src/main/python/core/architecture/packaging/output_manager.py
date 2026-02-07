@@ -333,20 +333,22 @@ class OutputManager:
                 elif isinstance(v, (list, dict)):
                     # Serialize list/dict to JSON string
                     coerced_values.append(json.dumps(v))
-                elif pa.types.is_string(arrow_type) or pa.types.is_large_string(arrow_type):
+                elif pa.types.is_string(arrow_type) or pa.types.is_large_string(
+                    arrow_type
+                ):
                     # Convert to string if Arrow expects string
                     coerced_values.append(str(v) if not isinstance(v, str) else v)
-                elif pa.types.is_binary(arrow_type) or pa.types.is_large_binary(arrow_type):
+                elif pa.types.is_binary(arrow_type) or pa.types.is_large_binary(
+                    arrow_type
+                ):
                     # Convert to bytes if Arrow expects binary
                     if isinstance(v, bytes):
                         coerced_values.append(v)
                     elif isinstance(v, str):
-                        coerced_values.append(v.encode('utf-8'))
+                        coerced_values.append(v.encode("utf-8"))
                     else:
-                        coerced_values.append(str(v).encode('utf-8'))
+                        coerced_values.append(str(v).encode("utf-8"))
                 else:
                     coerced_values.append(v)
             data_dict[name] = coerced_values
-        return DataFrame(
-            frame=Table.from_pydict(data_dict, schema=arrow_schema)
-        )
+        return DataFrame(frame=Table.from_pydict(data_dict, schema=arrow_schema))

@@ -116,7 +116,9 @@ object ExecutionUtils {
         case (portId, mappings) =>
           val totalCount = mappings.map(_.tupleMetrics.count).sum
           val totalSize = mappings.map(_.tupleMetrics.size).sum
-          PortTupleMetricsMapping(portId, TupleMetrics(totalCount, totalSize))
+          // All workers on the same port process the same schema, so take max
+          val maxColumnCount = mappings.map(_.tupleMetrics.columnCount).max
+          PortTupleMetricsMapping(portId, TupleMetrics(totalCount, totalSize, maxColumnCount))
       }
       .toSeq
   }
