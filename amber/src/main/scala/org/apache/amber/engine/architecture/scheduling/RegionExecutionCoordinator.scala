@@ -228,12 +228,15 @@ class RegionExecutionCoordinator(
                   .getOrElse(0)
               case _ =>
                 // Fallback to worker stats
-                operatorExecution.getWorkerIds.flatMap { workerId =>
-                  val workerExec = operatorExecution.getWorkerExecution(workerId)
-                  workerExec.getStats.inputTupleMetrics
-                    .find(_.portId == portId)
-                    .map(_.tupleMetrics.columnCount)
-                }.maxOption.getOrElse(0)
+                operatorExecution.getWorkerIds
+                  .flatMap { workerId =>
+                    val workerExec = operatorExecution.getWorkerExecution(workerId)
+                    workerExec.getStats.inputTupleMetrics
+                      .find(_.portId == portId)
+                      .map(_.tupleMetrics.columnCount)
+                  }
+                  .maxOption
+                  .getOrElse(0)
             }
             portId -> CachedPortMetrics(totalCount, columnCount)
           }.toMap

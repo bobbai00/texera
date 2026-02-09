@@ -22,6 +22,7 @@ import pytest
 from pandas import RangeIndex
 
 from core.models import Table, Tuple
+from core.models.table import deduplicate_columns
 
 
 class TestTable:
@@ -142,3 +143,70 @@ class TestTable:
     def test_validation_of_schema(self):
         with pytest.raises(AssertionError):
             Table([{"text": "hello"}, {"book": "harry"}])
+
+
+class TestDeduplicateColumns:
+    def test_no_duplicates(self):
+        cols = ["a", "b", "c"]
+        new_cols, rename_map = deduplicate_columns(cols)
+        assert new_cols == ["a", "b", "c"]
+        assert rename_map is None
+
+    def test_simple_duplicate(self):
+        cols = ["a", "b", "a"]
+        new_cols, rename_map = deduplicate_columns(cols)
+        assert new_cols == ["a", "b", "a.1"]
+        assert rename_map is not None
+
+    def test_multiple_same_name(self):
+        cols = ["x", "x", "x", "x"]
+        new_cols, rename_map = deduplicate_columns(cols)
+        assert new_cols == ["x", "x.1", "x.2", "x.3"]
+
+    def test_multiple_different_duplicates(self):
+        cols = ["a", "b", "a", "b", "c"]
+        new_cols, rename_map = deduplicate_columns(cols)
+        assert new_cols == ["a", "b", "a.1", "b.1", "c"]
+
+    def test_suffix_collision(self):
+        # "a.1" already exists as an original column name, so the first
+        # duplicate of "a" must skip ".1" and use ".2"
+        cols = ["a", "a.1", "a"]
+        new_cols, rename_map = deduplicate_columns(cols)
+        assert new_cols[0] == "a"
+        assert new_cols[1] == "a.1"
+        assert new_cols[2] == "a.2"
+
+
+class TestTableDuplicateColumns:
+    def test_as_tuples_with_duplicate_columns(self):
+        """DataFrame with duplicate columns should preserve all values."""
+        df = pandas.DataFrame([[1, 2, 3]], columns=["a", "b", "a"])
+        table = Table(df)
+        tuples = list(table.as_tuples())
+        assert len(tuples) == 1
+        fields = tuples[0].as_dict()
+        assert len(fields) == 3
+        assert fields["a"] == 1
+        assert fields["b"] == 2
+        assert fields["a.1"] == 3
+
+    def test_as_tuples_multiple_rows_with_duplicates(self):
+        """Multiple rows with triple duplicate columns."""
+        df = pandas.DataFrame(
+            [[1, 2, 3], [4, 5, 6]],
+            columns=["col", "col", "col"],
+        )
+        table = Table(df)
+        tuples = list(table.as_tuples())
+        assert len(tuples) == 2
+
+        row0 = tuples[0].as_dict()
+        assert row0["col"] == 1
+        assert row0["col.1"] == 2
+        assert row0["col.2"] == 3
+
+        row1 = tuples[1].as_dict()
+        assert row1["col"] == 4
+        assert row1["col.1"] == 5
+        assert row1["col.2"] == 6

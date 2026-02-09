@@ -17,11 +17,47 @@
 
 import pandas
 from pampy import match
-from typing import Iterator, TypeVar, List
+from typing import Dict, Iterator, List, Optional, TypeVar
 
 from core.models import Tuple, TupleLike
 
 TableLike = TypeVar("TableLike", pandas.DataFrame, List[TupleLike])
+
+
+def deduplicate_columns(
+    columns: List[str],
+) -> tuple[List[str], Optional[Dict[str, str]]]:
+    """
+    Rename duplicate column names using pandas convention: col, col.1, col.2, ...
+
+    :param columns: list of column name strings
+    :return: (new_columns, rename_map) where rename_map is None if no duplicates,
+             otherwise a dict mapping old_index_name -> new_name for renamed columns
+    """
+    seen_counts: Dict[str, int] = {}
+    all_names = set(columns)
+    new_columns: List[str] = []
+    rename_map: Dict[str, str] = {}
+
+    for col in columns:
+        if col not in seen_counts:
+            seen_counts[col] = 0
+            new_columns.append(col)
+        else:
+            seen_counts[col] += 1
+            suffix = seen_counts[col]
+            new_name = f"{col}.{suffix}"
+            # Handle edge case where col.N already exists as an original name
+            while new_name in all_names or new_name in rename_map.values():
+                suffix += 1
+                new_name = f"{col}.{suffix}"
+            seen_counts[col] = suffix
+            rename_map[f"{col}@{suffix}"] = new_name
+            new_columns.append(new_name)
+
+    if not rename_map:
+        return columns, None
+    return new_columns, rename_map
 
 
 class Table(pandas.DataFrame):
@@ -75,8 +111,11 @@ class Table(pandas.DataFrame):
         # Convert column names to strings to handle RangeIndex (from header=None)
         # This ensures consistency with schema inference which uses str(column_name)
         str_columns = [str(col) for col in self.columns]
+        # Deduplicate column names to prevent dict(zip()) from silently
+        # dropping values when columns share the same name
+        deduped_columns, _ = deduplicate_columns(str_columns)
         for raw_tuple in self.itertuples(index=False, name=None):
-            yield Tuple(dict(zip(str_columns, raw_tuple)))
+            yield Tuple(dict(zip(deduped_columns, raw_tuple)))
 
     def __eq__(self, other: "Table") -> bool:
         if isinstance(other, Table):

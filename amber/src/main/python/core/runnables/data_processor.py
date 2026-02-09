@@ -17,6 +17,7 @@
 
 import datetime
 import os
+import re
 import sys
 import traceback
 import pandas
@@ -30,7 +31,7 @@ from core.data_processing_config import DataProcessingConfig
 from core.models import ExceptionInfo, State, TupleLike, InternalMarker, Tuple, Schema
 from core.models.internal_marker import StartChannel, EndChannel
 from core.models.schema.attribute_type import AttributeType, FROM_PYOBJECT_MAPPING
-from core.models.table import all_output_to_tuple
+from core.models.table import all_output_to_tuple, deduplicate_columns
 
 # Mapping from pandas/numpy dtypes to AttributeType
 # This provides more accurate schema inference from DataFrames
@@ -57,6 +58,9 @@ PANDAS_DTYPE_TO_ATTRIBUTE_TYPE = {
     # Bytes
     np.dtype("bytes"): AttributeType.BINARY,
 }
+
+_UDF_FILENAME_PATTERN = re.compile(r"^udf-v\d+\.py$")
+
 from core.util import Stoppable
 from core.util.console_message.replace_print import replace_print
 from core.util.console_message.timestamp import current_time_in_local_timezone
@@ -186,6 +190,10 @@ class DataProcessor(Runnable, Stoppable):
         for output in output_iterator:
             # output could be a None, a TupleLike, or a TableLike (DataFrame).
 
+            # Deduplicate DataFrame column names before schema inference
+            if isinstance(output, pandas.DataFrame):
+                output = self._deduplicate_dataframe_columns(output)
+
             # For DataFrame outputs, infer schema from dtypes BEFORE converting to tuples
             # This is more reliable because DataFrame dtypes are consistent across all rows
             if not self._schema_inferred and isinstance(output, pandas.DataFrame):
@@ -263,6 +271,39 @@ class DataProcessor(Runnable, Stoppable):
         Set the output state after processing by the executor.
         """
         self._context.state_processing_manager.current_output_state = output_state
+
+    def _deduplicate_dataframe_columns(
+        self, df: pandas.DataFrame
+    ) -> pandas.DataFrame:
+        """
+        If the DataFrame has duplicate column names, rename them using pandas
+        convention (col, col.1, col.2, ...) and emit a warning console message.
+        Returns the original DataFrame unchanged if there are no duplicates.
+        """
+        str_columns = [str(col) for col in df.columns]
+        new_columns, rename_map = deduplicate_columns(str_columns)
+        if rename_map is None:
+            return df
+
+        renamed_df = df.copy()
+        renamed_df.columns = new_columns
+
+        # Build a human-readable summary of renames
+        renames_desc = ", ".join(
+            f"'{old.split('@')[0]}' -> '{new}'"
+            for old, new in rename_map.items()
+        )
+        self._context.console_message_manager.put_message(
+            ConsoleMessage(
+                worker_id=self._context.worker_id,
+                timestamp=current_time_in_local_timezone(),
+                msg_type=ConsoleMessageType.PRINT,
+                source="DuplicateColumns",
+                title=f"Duplicate column names auto-renamed: {renames_desc}",
+                message="",
+            )
+        )
+        return renamed_df
 
     def _switch_context(self) -> None:
         """
@@ -550,23 +591,67 @@ class DataProcessor(Runnable, Stoppable):
 
         return declared_schema
 
+    @staticmethod
+    def _find_user_code_frame(tb):
+        """
+        Walk the traceback (deepest first) to find the last frame that belongs
+        to a user UDF file (udf-v*.py). Returns (frame, user_line_number) where
+        user_line_number is adjusted so that the first line of the user's
+        function body is line 1. Returns (None, None) if no UDF frame is found.
+        """
+        for frame in reversed(tb):
+            base_name = os.path.basename(frame.filename)
+            if _UDF_FILENAME_PATTERN.match(base_name):
+                # Try to compute user-relative line number by finding the
+                # function definition line in the UDF file
+                user_line = frame.lineno
+                try:
+                    with open(frame.filename, "r") as f:
+                        for i, line in enumerate(f, start=1):
+                            stripped = line.strip()
+                            if stripped.startswith(
+                                f"def {frame.name}("
+                            ) or stripped.startswith(f"def {frame.name} ("):
+                                # user_line is relative: def line = line 1
+                                user_line = frame.lineno - i + 1
+                                break
+                except OSError:
+                    pass
+                return frame, user_line
+        return None, None
+
     def _report_exception(self, exc_info: ExceptionInfo):
         tb = traceback.extract_tb(exc_info[2])
-        filename, line_number, func_name, code_line = tb[-1]
-        base_name = os.path.basename(filename)
-        module_name, _ = os.path.splitext(base_name)
 
         # Extract exception type and message
         exception_type = type(exc_info[1]).__name__
         exception_msg = str(exc_info[1])
 
-        source = f"{module_name}:{func_name}:{line_number}"
-        # Title shows the exact code line that caused the error
-        title: str = (
-            f"`{code_line.strip()}` - {exception_type}: {exception_msg}"
-            if code_line
-            else f"{exception_type}: {exception_msg}"
-        )[:300]
+        # Try to find the user's code frame for better error reporting
+        udf_frame, user_line = self._find_user_code_frame(tb)
+
+        if udf_frame is not None:
+            code_line = udf_frame.line
+            base_name = os.path.basename(udf_frame.filename)
+            module_name, _ = os.path.splitext(base_name)
+            source = f"{module_name}:{udf_frame.name}:{udf_frame.lineno}"
+            title: str = (
+                f"(line {user_line}) `{code_line.strip()}` "
+                f"- {exception_type}: {exception_msg}"
+                if code_line
+                else f"(line {user_line}) {exception_type}: {exception_msg}"
+            )[:300]
+        else:
+            # Fallback: use the deepest frame (original behavior)
+            filename, line_number, func_name, code_line = tb[-1]
+            base_name = os.path.basename(filename)
+            module_name, _ = os.path.splitext(base_name)
+            source = f"{module_name}:{func_name}:{line_number}"
+            title = (
+                f"`{code_line.strip()}` - {exception_type}: {exception_msg}"
+                if code_line
+                else f"{exception_type}: {exception_msg}"
+            )[:300]
 
         self._context.console_message_manager.put_message(
             ConsoleMessage(
