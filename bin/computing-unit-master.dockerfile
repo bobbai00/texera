@@ -49,19 +49,17 @@ ARG WITH_R_SUPPORT=false
 WORKDIR /texera/amber
 
 COPY --from=build /texera/amber/r-requirements.txt /tmp/r-requirements.txt
-COPY --from=build /texera/amber/requirements.txt /tmp/requirements.txt
-COPY --from=build /texera/amber/operator-requirements.txt /tmp/operator-requirements.txt
+# Use pyproject.toml as the single source of truth for Python dependencies
+COPY pyproject.toml /tmp/texera-deps/pyproject.toml
 
-# Install Python runtime dependencies (always) and R runtime dependencies (conditional)
+# Install system dependencies (Python 3.12 will be managed by uv)
 RUN apt-get update && apt-get install -y \
-    python3-pip \
-    python3-dev \
+    build-essential \
     libpq-dev \
     curl \
     unzip \
     $(if [ "$WITH_R_SUPPORT" = "true" ]; then echo "\
     gfortran \
-    build-essential \
     libreadline-dev \
     libncurses-dev \
     libssl-dev \
@@ -73,6 +71,25 @@ RUN apt-get update && apt-get install -y \
     libpango1.0-dev \
     libcurl4-openssl-dev"; fi) \
     && apt-get clean
+
+# Install uv - fast Python package manager
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Install Python dependencies from pyproject.toml using uv sync.
+# uv sync reads pyproject.toml, resolves deps, downloads Python 3.12,
+# and creates .venv/ in the current directory — all in one command.
+RUN cd /tmp/texera-deps && \
+    uv sync --python 3.12 --extra dev --extra kramabench --no-install-project && \
+    .venv/bin/python3 -c "import pkg_resources; print('pkg_resources OK')"
+
+# Make the venv's python3 available to the JVM (which calls "python3" to launch workers)
+ENV PATH="/tmp/texera-deps/.venv/bin:$PATH"
+
+# R Python requirements (not in pyproject.toml, needs separate install)
+RUN if [ "$WITH_R_SUPPORT" = "true" ]; then \
+        cd /tmp/texera-deps && uv pip install -r /tmp/r-requirements.txt; \
+    fi
 
 # Install R and needed libraries (conditional)
 ENV R_VERSION=4.3.3
@@ -87,14 +104,7 @@ RUN if [ "$WITH_R_SUPPORT" = "true" ]; then \
         make -j 4 && \
         make install && \
         cd .. && \
-        rm -rf R-${R_VERSION}* && R --version && pip3 install --upgrade pip setuptools wheel && \
-        pip3 install -r /tmp/requirements.txt && \
-        pip3 install -r /tmp/operator-requirements.txt && \
-        pip3 install -r /tmp/r-requirements.txt; \
-    else \
-        pip3 install --upgrade pip setuptools wheel && \
-        pip3 install -r /tmp/requirements.txt && \
-        pip3 install -r /tmp/operator-requirements.txt; \
+        rm -rf R-${R_VERSION}*; \
     fi
 # Install R packages, pinning arrow to 14.0.2.1 explicitly (conditional)
 RUN if [ "$WITH_R_SUPPORT" = "true" ]; then \
