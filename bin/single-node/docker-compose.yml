@@ -78,7 +78,7 @@ services:
   # Part2: Specification of Texera's micro-services
   # FileService provides endpoints for Texera's dataset management
   file-service:
-    image: bobbai/texera-file-service:agent-service
+    image: bobbai2000/texera-file-service:agent-service
     container_name: texera-file-service
     restart: always
     depends_on:
@@ -96,7 +96,7 @@ services:
 
   # WorkflowCompilingService provides endpoints for sanity check and schema propagation while workflows are being edited
   workflow-compiling-service:
-    image: bobbai/texera-workflow-compiling-service:agent-service
+    image: bobbai2000/texera-workflow-compiling-service:agent-service
     container_name: texera-workflow-compiling-service
     restart: always
     depends_on:
@@ -113,7 +113,7 @@ services:
   # ComputingUnitMaster provides endpoints for executing workflows and interactions during executions.
   computing-unit-master:
     # to enable R operators, change the image tag to single-node-release-1-0-0-R
-    image: bobbai/texera-workflow-execution-coordinator:agent-service
+    image: bobbai2000/texera-workflow-execution-coordinator:agent-service
     container_name: texera-computing-unit-master
     restart: always
     depends_on:
@@ -123,12 +123,12 @@ services:
       - .env
     volumes:
       - workflow_result_data:/amber/user-resources
-      - ./shared-data:/amber/user-resources/shared
+      - ./shared-data:/data
       - ./application.ini:/texera/amber/conf/application.ini:ro
 
   # TexeraWebApplication provides endpoints for hub resource management.
   texera-web-application:
-    image: bobbai/texera-dashboard-service:agent-service
+    image: bobbai2000/texera-dashboard-service:agent-service
     container_name: texera-web-application
     restart: always
     depends_on:
@@ -150,7 +150,7 @@ services:
 
   # ComputingUnitManagingService provides endpoints for managing computing units.
   computing-unit-managing-service:
-    image: bobbai/texera-workflow-computing-unit-managing-service:agent-service
+    image: bobbai2000/texera-workflow-computing-unit-managing-service:agent-service
     container_name: texera-computing-unit-managing-service
     restart: always
     env_file:
@@ -163,7 +163,7 @@ services:
 
   # ConfigService provides GUI configuration and feature flags to the frontend.
   config-service:
-    image: bobbai/texera-config-service:agent-service
+    image: bobbai2000/texera-config-service:agent-service
     container_name: texera-config-service
     restart: always
     env_file:
@@ -176,13 +176,17 @@ services:
 
   # Part 2.5: AI Copilot / Agent services
   # LiteLLM provides a unified LLM gateway that proxies requests to various LLM providers.
-  # Models are configured in litellm-config.yaml; API keys come from .env.
+  # Models are configured in litellm-config.yaml; API keys come from host environment.
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     container_name: texera-litellm
     restart: always
     env_file:
       - .env
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     volumes:
       - ./litellm-config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
@@ -194,7 +198,7 @@ services:
 
   # AgentService provides AI-powered workflow manipulation via LLM agents.
   agent-service:
-    image: bobbai/texera-agent-service:agent-service
+    image: bobbai2000/texera-agent-service:agent-service
     container_name: texera-agent-service
     restart: always
     depends_on:
