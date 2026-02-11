@@ -67,6 +67,7 @@ export interface OperatorInfo {
   truncated?: boolean;
   consoleLogs?: ConsoleMessage[];
   error?: string;
+  warnings?: string[];
 }
 
 // ============================================================================

@@ -101,7 +101,8 @@ case class OperatorInfo(
     displayedRows: Option[Int],
     truncated: Option[Boolean],
     consoleLogs: Option[List[ConsoleMessageInfo]],
-    error: Option[String]
+    error: Option[String],
+    warnings: Option[List[String]]
 )
 
 /**
@@ -507,6 +508,11 @@ class SyncExecutionResource extends LazyLogging {
         )
       )
 
+      // Extract warnings (PRINT messages with "WARNING: " prefix)
+      val warningMsgs = consoleLogs
+        .map(_.filter(_.title.startsWith("WARNING: ")).map(_.title))
+        .filter(_.nonEmpty)
+
       operatorInfos(opId) = OperatorInfo(
         state = state,
         inputTuples = inputTuples,
@@ -518,7 +524,8 @@ class SyncExecutionResource extends LazyLogging {
         displayedRows = displayedRows,
         truncated = truncated,
         consoleLogs = consoleLogs,
-        error = errorMsg
+        error = errorMsg,
+        warnings = warningMsgs
       )
     }
 

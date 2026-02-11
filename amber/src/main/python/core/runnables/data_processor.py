@@ -299,7 +299,7 @@ class DataProcessor(Runnable, Stoppable):
                 timestamp=current_time_in_local_timezone(),
                 msg_type=ConsoleMessageType.PRINT,
                 source="DuplicateColumns",
-                title=f"Duplicate column names auto-renamed: {renames_desc}",
+                title=f"WARNING: Duplicate column names auto-renamed: {renames_desc}",
                 message="",
             )
         )

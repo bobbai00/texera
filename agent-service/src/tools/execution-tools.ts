@@ -628,7 +628,11 @@ export async function executeOperatorAndFormat(
     const shapeLine = formatShapeArrow(opInfo, columns, paramNames, operatorId);
 
     const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
-    const header = [shapeLine, meta].filter(Boolean).join("\n");
+
+    // Surface warnings (e.g., duplicate column renames) so the agent can adjust its code
+    const warningLines = opInfo.warnings?.map(w => w) ?? [];
+
+    const header = [shapeLine, meta, ...warningLines].filter(Boolean).join("\n");
     return header ? `${header}\n${dataString}` : dataString;
   } catch (error: any) {
     if (error.name === "AbortError") {
