@@ -247,11 +247,11 @@ The correct approach lets you see the actual data schema (column names, types, s
 const COMMON_PITFALLS_SECTION = `
 ## Common Pitfalls in Multi-Step Dataflows
 
-- **Row Granularity shifts**: When an intermediate operator aggregates data (groupby, pivot, etc.), downstream operators receive fewer, summarized rows, and this will change row granularity. You MUST be aware of this and make sure to handle it properly aligning with the task. 
 - **Unit and format consistency**: Ensure the final result matches the expected units and format (e.g., percentage vs proportion, dollars vs cents). Convert explicitly in a dedicated operator rather than assuming.
 - **Late rounding**: Apply rounding only in the final operator. Rounding intermediate results compounds errors across the pipeline.
 - **Misidentified columns from messy files**: When column names are generic (\`Unnamed: 0\`, \`0\`, \`1\`, ...) or a data value appears as a column name, the file was not loaded correctly. Do NOT guess column meanings from values alone. Inspect the raw file content, find the actual structure (delimiter, header row, skip rows), and re-load by modifying the source operator.
-- **Plausibility checks on intermediate results**: After selecting a column or computing a value, verify the magnitude makes sense for what it represents. If values seem implausible (e.g., orders of magnitude off from what the question implies), re-examine your column selection and data loading before proceeding.`;
+- **Plausibility checks on intermediate results**: After selecting a column or computing a value, verify the magnitude makes sense for what it represents. If values seem implausible (e.g., orders of magnitude off from what the question implies), re-examine your column selection and data loading before proceeding.
+- **Numerical, range edge cases**: Watch for: inclusive vs exclusive boundaries in filters (\`>=\` vs \`>\`), null/NaN rows silently dropped by aggregations, duplicate rows inflating counts or sums, and premature aggregation that loses row-level detail needed later. When a result is close but not exact, trace back through each operator to find which step introduced the discrepancy.`;
 
 // ============================================================================
 // Key Principles Variants
@@ -268,10 +268,10 @@ const KEY_PRINCIPLES_STANDARD = `
 3. **Build incrementally**: Always link new operators to existing ones to reuse intermediate results. Never recreate data that already exists in the workflow.
 4. **Examine data before processing**: Do NOT assume files are clean or well-formatted. Before processing, inspect the raw file to check for: correct delimiters, presence of a header row, metadata/comment rows above the data, or multiple sub-tables. If column names appear generic or auto-generated (e.g., Unnamed:, 0, 1, 2), the header was not correctly identified — find the real header and re-load by modifying the source operator.
 5. **Read documentation first**: When task mentions abstract concepts, load and read documentation to understand exact definitions.
-6. **Control output size**: Use \`pd.concat([df.head(3), df.tail(3)])\` to sample both the beginning and end of data, revealing the full range of values. Avoid using \`.head()\` alone, as it only shows the first few rows and may miss important patterns at the end of the file.
-7. **Verify results**: Check execution results to ensure correctness before proceeding to next step.
-8. **Correct mistakes**: If the createOrModifyOperator tool returns an error or shows logic issues in the execution result, use it again with the same operatorId to fix the logic, or use deleteOperator/deleteLink to restructure the dataflow.
-9. **Decompose giant operators**: When debugging or encountering unintuitive results, replace the problematic operator with multiple smaller operators to isolate the issue.
+6. **Control output size**: Use operations like  \`pd.concat([df.head(3), df.tail(3)])\` to sample both the beginning and end of data, revealing the full range of values. Avoid using \`.head()\` alone, as it only shows the first few rows and may miss important patterns at the end of the file.
+7. **Cross-validate results**: After obtaining a result, critically question it. If the result looks plausible but you are not confident, create a separate validation operator to verify
+8. **Refining the dataflow by modifying related operators**: When you spot an issue in the result, go back and modify the operators that caused it or you think is related to it; you can always change the earlier-added operators if you think something is wrong.
+9. **Debug by isolating the problematic logic**: When encountering unexpected results, make the operator contain ONLY the problematic logic to better debug the problem.
 10. **Explore beyond truncated output**: Due to token limits, the tail of execution results may be truncated. Do not assume you have seen all the data. Create additional operators to explore the middle or tail of a table. Useful pandas patterns for exploration:
     - \`df.iloc[::K]\` — sample every K-th row (e.g., \`df.iloc[::100]\` for a 10k-row table)
     - \`df.sample(n=10, random_state=42)\` — random sample of rows
@@ -291,9 +291,9 @@ const KEY_PRINCIPLES_FINE_GRAINED = `
 4. **Examine data before processing**: Do NOT assume files are clean or well-formatted. Before processing, inspect the raw file to check for: correct delimiters, presence of a header row, metadata/comment rows above the data, or multiple sub-tables. If column names appear generic or auto-generated (e.g., Unnamed:, 0, 1, 2), the header was not correctly identified — find the real header and re-load by modifying the source operator.
 5. **Read documentation first**: When task mentions abstract concepts, load and read documentation to understand exact definitions.
 6. **Control output size**: Use \`pd.concat([df.head(3), df.tail(3)])\` to sample both the beginning and end of data, revealing the full range of values. Avoid using \`.head()\` alone. Always preserve the actual data schema.
-7. **Verify results**: Check execution results to ensure correctness before proceeding to next step. The atomic decomposition makes it easy to identify which step produced unexpected output.
-8. **Correct mistakes**: If the createOrModifyOperator tool returns an error or shows logic issues in the execution result, use it again with the same operatorId to fix the logic, or use deleteOperator/deleteLink to restructure the dataflow.
-9. **Debug by isolation**: When encountering unexpected results, the atomic operator structure lets you inspect each transformation step individually.
+7. **Cross-validate results**: After obtaining a result, critically question it. If the result looks plausible but you are not confident, create a separate validation operator to verify
+8. **Refining the dataflow by modifying related operators**: When you spot an issue in the result, go back and modify the operators that caused it or you think is related to it; you can always change the earlier-added operators if you think something is wrong.
+9. **Debug by isolating the problematic logic**: When encountering unexpected results, make the operator contain ONLY the problematic logic to better debug the problem.
 10. **Explore beyond truncated output**: Due to token limits, the tail of execution results may be truncated. Do not assume you have seen all the data. Create additional operators to explore the middle or tail of a table. Useful pandas patterns for exploration:
     - \`df.iloc[::K]\` — sample every K-th row (e.g., \`df.iloc[::100]\` for a 10k-row table)
     - \`df.sample(n=10, random_state=42)\` — random sample of rows
@@ -301,15 +301,7 @@ const KEY_PRINCIPLES_FINE_GRAINED = `
     - \`df.describe()\` — range, mean, std, min/max for all numeric columns
     - \`df.dtypes\` — check column types to catch mis-parsed numeric or date columns
 
-**CRITICAL**: Each code block MUST contain ONLY ONE executable data operation (excluding print statements). This enables precise debugging by isolating each transformation step.
-
-**Allowed patterns:**
-- Single assignment: \`result = df.filter(...)\`
-- Single operation with print: \`result = df.groupby(...).sum()\` followed by \`print(result)\`
-
-**Violations:**
-- Multiple operations: \`filtered = df.filter(...); grouped = filtered.groupby(...)\` - split into two operators
-- Chained operations in one line: \`df.filter(...).groupby(...).agg(...)\` - split into three operators`;
+**CRITICAL**: Each code block MUST contain ONLY ONE executable data operation (excluding print statements). This enables precise debugging by isolating each transformation step.`;
 
 // ============================================================================
 // Composed Base Prompts

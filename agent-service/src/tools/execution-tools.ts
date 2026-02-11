@@ -436,6 +436,65 @@ function formatShapeArrow(
 }
 
 /**
+ * Format the upstream sub-DAG from source operators to the target operator.
+ * Shows all source-to-target paths so the agent understands the data lineage.
+ * Node format: "operatorID: displayName" (or just "operatorID" if no custom name).
+ * Example: "Dataflow: CSVFileScan-operator-1: load_csv -> PythonUDFV2-operator-2: wollaston_tidy"
+ */
+function formatDataflow(workflowState: WorkflowState, targetOperatorId: string): string {
+  const subDAG = workflowState.getSubDAG(targetOperatorId);
+  if (subDAG.operators.length <= 1) return "";
+
+  // Build label map: operatorId -> "operatorID: displayName" or just "operatorID"
+  const labelMap = new Map(
+    subDAG.operators.map(op => [
+      op.operatorID,
+      op.customDisplayName ? `${op.operatorID}: ${op.customDisplayName}` : op.operatorID,
+    ])
+  );
+
+  // Build adjacency lists within the sub-DAG
+  const children = new Map<string, string[]>();
+  const parentCount = new Map<string, number>();
+  for (const op of subDAG.operators) {
+    children.set(op.operatorID, []);
+    parentCount.set(op.operatorID, 0);
+  }
+  for (const link of subDAG.links) {
+    children.get(link.source.operatorID)?.push(link.target.operatorID);
+    parentCount.set(link.target.operatorID, (parentCount.get(link.target.operatorID) ?? 0) + 1);
+  }
+
+  // Find source nodes (no incoming edges in sub-DAG)
+  const sources = subDAG.operators
+    .filter(op => (parentCount.get(op.operatorID) ?? 0) === 0)
+    .map(op => op.operatorID);
+
+  // Enumerate all source-to-target paths via DFS (capped for safety)
+  const MAX_PATHS = 20;
+  const paths: string[][] = [];
+  const dfs = (nodeId: string, path: string[]) => {
+    if (paths.length >= MAX_PATHS) return;
+    path.push(labelMap.get(nodeId) ?? nodeId);
+    if (nodeId === targetOperatorId) {
+      paths.push([...path]);
+    } else {
+      for (const child of children.get(nodeId) ?? []) {
+        dfs(child, path);
+      }
+    }
+    path.pop();
+  };
+  for (const source of sources) {
+    dfs(source, []);
+  }
+
+  if (paths.length === 0) return "";
+  const padding = "          "; // align with "Dataflow: "
+  return "Dataflow: " + paths.map(p => p.join(" -> ")).join("\n" + padding);
+}
+
+/**
  * Formats execution error with structured sections.
  */
 function formatExecutionError(
@@ -623,6 +682,9 @@ export async function executeOperatorAndFormat(
     const totalRows = opInfo.totalRowCount ?? displayedRows;
     const truncated = opInfo.truncated ?? displayedRows < totalRows;
 
+    // Build dataflow: show upstream sub-DAG so the agent understands data lineage
+    const dataflowLine = formatDataflow(workflowState, operatorId);
+
     // Build shape arrow notation: e.g. "Shape: input0(100, 3) -> opId(150, 6)"
     const paramNames = getInputParamNames(workflowState, operatorId);
     const shapeLine = formatShapeArrow(opInfo, columns, paramNames, operatorId);
@@ -632,7 +694,7 @@ export async function executeOperatorAndFormat(
     // Surface warnings (e.g., duplicate column renames) so the agent can adjust its code
     const warningLines = opInfo.warnings?.map(w => w) ?? [];
 
-    const header = [shapeLine, meta, ...warningLines].filter(Boolean).join("\n");
+    const header = [dataflowLine, shapeLine, meta, ...warningLines].filter(Boolean).join("\n");
     return header ? `${header}\n${dataString}` : dataString;
   } catch (error: any) {
     if (error.name === "AbortError") {
@@ -655,7 +717,7 @@ export async function executeOperatorAndFormat(
  */
 export function createExecuteOperatorTool(workflowState: WorkflowState, getConfig: () => ExecutionConfig) {
   return tool({
-    description: "Execute the workflow and get the specified operator's result. The execution result(if succeeded) includes the shape of the input tables(if any) and output table, and the record in the output table",
+    description: "Execute the workflow and get the specified operator's result. The execution result(if succeeded) includes the data flow of the execution path, the shape of the input tables(if any) and output table, and the records in the output table",
     inputSchema: z.object({
       operatorId: z.string().describe("The operator ID to view result for."),
     }),
