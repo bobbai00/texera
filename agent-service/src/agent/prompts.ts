@@ -48,49 +48,6 @@ Dataflow represents data analysis as a DAG (directed acyclic graph) where:
 - The output table can be viewed via execution, or passed to downstream operators via links`;
 
 // ============================================================================
-// Core Principles Variants
-// ============================================================================
-
-/**
- * Standard core principles - balanced guidance for general use.
- */
-const CORE_PRINCIPLES_STANDARD = `
-## Core Principles
-
-1. **One operator = One operation**: Keep each operator focused on a single task. For complex analysis, chain multiple operators together.
-
-2. **Decompose complex logic**: Never write large code blocks with multiple conditions or transformations. Split them into separate operators connected by links. This makes each step verifiable, debuggable, and reusable.
-
-3. **Build incrementally**: Always link new operators to existing ones to reuse intermediate results. Never recreate data that already exists in the workflow.
-
-4. **Control output size**: Use .head() or filtering to limit rows when viewing large results. Always preserve the actual data schema.`;
-
-/**
- * Fine-grained core principles - strict atomic operation constraints.
- * Each operator must have exactly ONE data operation for precise debugging.
- */
-const CORE_PRINCIPLES_FINE_GRAINED = `
-## Core Principles
-
-1. **One line = One operation**: Each operator must contain exactly ONE data operation (load, select, filter, group, aggregate, sort, join, etc.) for precise debugging. Print statements don't count toward this limit.
-
-2. **Decompose to the finest grain**: Break down every analysis into atomic operations. If you have a chain like \`df.filter().groupby().agg()\`, split it into three separate operators connected by links.
-
-3. **Build incrementally**: Always link new operators to existing ones to reuse intermediate results. Never recreate data that already exists in the workflow.
-
-4. **Control output size**: Use .head() or filtering to limit rows when viewing large results. Always preserve the actual data schema.
-
-**CRITICAL**: Each code block MUST contain ONLY ONE executable data operation (excluding print statements). This enables precise debugging by isolating each transformation step.
-
-**Allowed patterns:**
-- Single assignment: \`result = df.filter(...)\`
-- Single operation with print: \`result = df.groupby(...).sum()\` followed by \`print(result)\`
-
-**Violations:**
-- Multiple operations: \`filtered = df.filter(...); grouped = filtered.groupby(...)\` - split into two operators
-- Chained operations in one line: \`df.filter(...).groupby(...).agg(...)\` - split into three operators`;
-
-// ============================================================================
 // Example Section Variants
 // ============================================================================
 
@@ -132,33 +89,28 @@ Note: Each operator below contains exactly ONE data operation, following the fin
  * Common example continuation (shared between standard and fine-grained).
  */
 const EXAMPLE_CONTINUATION = `
-Thought: Now I understand the definitions. First, I'll load the customers data.
+Thought: Now I understand the definitions. Let me load both data files.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
-    return pd.read_csv('/data/customers.csv')\`
+    df = pd.read_csv('/data/customers.csv')
+    return pd.concat([df.head(3), df.tail(3)])\`
   summary="Load customers"
-Observation: Added operator "customers" with 5 columns: customer_id, name, email, signup_date, tier
+Observation: Added operator "customers" with 5 columns: customer_id, name, email, signup_date, tier (6 sample rows showing first and last entries)
 
-Thought: Now I'll load the orders data.
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
-    return pd.read_csv('/data/orders.csv')\`
+    df = pd.read_csv('/data/orders.csv')
+    return pd.concat([df.head(3), df.tail(3)])\`
   summary="Load orders"
-Observation: Added operator "orders" with 4 columns: order_id, customer_id, amount, order_date
+Observation: Added operator "orders" with 4 columns: order_id, customer_id, amount, order_date (6 sample rows showing first and last entries)
 
-Thought: Now I'll join customers with orders.
-Tool call: createOrModifyOperator: operatorId="customer_orders", code=\`def process(customers, orders) -> pd.DataFrame:
-    return customers.merge(orders, on='customer_id', how='inner')\`
-  summary="Join customers orders"
-Observation: Added operator "customer_orders". Auto-created links: [customers-->customer_orders, orders-->customer_orders]. Result: 15,000 rows.
-
-Thought: Good, the join worked. Now I'll filter for orders in the last 30 days.
-Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customer_orders) -> pd.DataFrame:
+Thought: I'll join and filter for recent orders, then aggregate.
+Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
+    merged = customers.merge(orders, on='customer_id', how='inner')
     from datetime import datetime, timedelta
     cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-    return customer_orders[customer_orders['order_date'] >= cutoff]\`
-  summary="Filter last 30 days"
-Observation: Added operator "recent_orders". Auto-created links: [customer_orders-->recent_orders]. Filtered to 1,247 orders.
+    return merged[merged['order_date'] >= cutoff]\`
+  summary="Join and filter recent orders"
+Observation: Added operator "recent_orders". Auto-created links: [customers-->recent_orders, orders-->recent_orders]. Filtered to 1,247 rows.
 
-Thought: Now I'll aggregate by customer and get top 5.
 Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
     spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
     spending.columns = ['customer_id', 'name', 'total_spending']
@@ -166,16 +118,59 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
   summary="Top 5 spenders"
 Observation: Added operator "top5". Auto-created links: [recent_orders-->top5]. Top 5: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
 
-Thought: Wait, I need to verify these are all "premium customers" (total spending >= $1000). My current logic doesn't explicitly enforce the premium threshold. I should modify the operator to add the premium filter.
+Thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
 Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
     spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
     spending.columns = ['customer_id', 'name', 'total_spending']
-    premium = spending[spending['total_spending'] >= 1000]  # Filter premium customers
+    premium = spending[spending['total_spending'] >= 1000]
     return premium.nlargest(5, 'total_spending')\`
   summary="Top 5 premium spenders"
-Observation: Modified operator "top5". Top 5 premium customers: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
+Observation: Modified operator "top5". Top 5 premium: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
 
-Final answer: The top 5 premium customers (spending >= $1000) who made recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).`;
+Final answer: The top 5 premium customers (spending >= $1000) with recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).`;
+
+// ============================================================================
+// Messy Data Example Section
+// ============================================================================
+
+/**
+ * Example demonstrating how to handle messy/malformed data files.
+ * Teaches the agent to inspect raw files before loading and fix parsing issues.
+ */
+const MESSY_DATA_EXAMPLE = `
+## Example: Handling Messy Data Files
+
+Task: "Load measurements.csv and compute the average temperature."
+
+Thought: Before loading, I should inspect the raw file to understand its structure — it may not be a clean CSV.
+Tool call: createOrModifyOperator: operatorId="inspect_raw", code=\`def load() -> pd.DataFrame:
+    with open('/data/measurements.csv', 'r') as f:
+        lines = [f.readline() for _ in range(5)]
+    return pd.DataFrame([{'line_num': i+1, 'content': line.strip()} for i, line in enumerate(lines)])\`
+  summary="Inspect raw file structure"
+Observation: Added operator "inspect_raw".
+  line_num | content
+  1        | # Sensor log exported 2024-01-15
+  2        | station;date;temperature;humidity
+  3        | A1;2024-01-01;22.5;45
+  4        | A1;2024-01-02;23.1;42
+  5        | A2;2024-01-01;19.8;51
+
+Thought: The file has a comment/metadata line at row 1, uses semicolons as delimiters, and the actual header is on row 2. I need to skip the first row and use sep=';'.
+Tool call: createOrModifyOperator: operatorId="measurements", code=\`def load() -> pd.DataFrame:
+    df = pd.read_csv('/data/measurements.csv', sep=';', skiprows=1)
+    return pd.concat([df.head(3), df.tail(3)])\`
+  summary="Load measurements with correct parsing"
+Observation: Added operator "measurements". 4 columns: station, date, temperature, humidity. First and last rows show plausible values — temperature around 19-23, humidity around 42-51.
+
+Thought: The data loaded correctly with proper column names and plausible values. Now I can compute the average temperature.
+Tool call: createOrModifyOperator: operatorId="avg_temp", code=\`def process(measurements) -> pd.DataFrame:
+    avg = measurements['temperature'].mean()
+    return pd.DataFrame([{'average_temperature': round(avg, 2)}])\`
+  summary="Calculate average temperature"
+Observation: Added operator "avg_temp". Auto-created links: [measurements-->avg_temp]. average_temperature = 21.80
+
+Final answer: The average temperature is 21.80.`;
 
 // ============================================================================
 // Anti-Pattern Section
@@ -216,15 +211,16 @@ Each operator can be executed and verified independently. If step 4 produces une
 const LOADING_DATA_SECTION = `
 ## Loading Data Correctly
 
-When loading JSON or other data files, always convert to a proper DataFrame and use .head() to limit output:
+When loading JSON or other data files, always convert to a proper DataFrame and sample both the beginning and end to understand the full data range:
 
-**Correct** - Load JSON as DataFrame with actual schema:
+**Correct** - Load JSON as DataFrame and sample head + tail:
 \`\`\`python
 def load() -> pd.DataFrame:
     import json
     with open('/data/rules.json', 'r') as f:
         data = json.load(f)
-    return pd.DataFrame(data).head(5)  # Returns actual columns like id, name, value, etc.
+    df = pd.DataFrame(data)
+    return pd.concat([df.head(3), df.tail(3)])  # See first and last rows to understand data range
 \`\`\`
 
 **Wrong** - Creating artificial metadata columns:
@@ -234,7 +230,11 @@ def load() -> pd.DataFrame:
     return pd.DataFrame([{'sample': data[:3], 'size_bytes': os.path.getsize(path)}])
 \`\`\`
 
-The correct approach lets you see the actual data schema (column names, types, sample values) which is essential for writing correct downstream operators.`;
+The correct approach lets you see the actual data schema (column names, types, sample values) which is essential for writing correct downstream operators.
+
+**Sampling for deeper insight**: Always sample both head and tail (\`pd.concat([df.head(3), df.tail(3)])\`) rather than just \`.head()\` — this reveals whether values change across the file (e.g., date ranges, ID patterns, shifting formats). Additionally, use \`.columns.tolist()\` to list all column names, and \`.describe()\` or \`.nunique()\` on specific columns to understand value ranges and distributions. For wide files (>10 columns), select a subset of potentially relevant columns early and print their sample values to confirm they contain what you expect before building downstream operators.
+
+**Note:** Real-world data files are often malformed — they may have wrong delimiters, missing or misplaced headers, metadata/comment rows above the data, or multiple tables in one file. After loading, always examine the result. If column names look auto-generated (e.g., \`Unnamed: 0\`) or a data value appears as a header, adjust the loading parameters (e.g., \`header=\`, \`skiprows=\`, \`sep=\`) and re-load by modifying the source operator.`;
 
 // ============================================================================
 // Common Pitfalls Section
@@ -249,41 +249,67 @@ const COMMON_PITFALLS_SECTION = `
 
 - **Row Granularity shifts**: When an intermediate operator aggregates data (groupby, pivot, etc.), downstream operators receive fewer, summarized rows, and this will change row granularity. You MUST be aware of this and make sure to handle it properly aligning with the task. 
 - **Unit and format consistency**: Ensure the final result matches the expected units and format (e.g., percentage vs proportion, dollars vs cents). Convert explicitly in a dedicated operator rather than assuming.
-- **Late rounding**: Apply rounding only in the final operator. Rounding intermediate results compounds errors across the pipeline.`;
+- **Late rounding**: Apply rounding only in the final operator. Rounding intermediate results compounds errors across the pipeline.
+- **Misidentified columns from messy files**: When column names are generic (\`Unnamed: 0\`, \`0\`, \`1\`, ...) or a data value appears as a column name, the file was not loaded correctly. Do NOT guess column meanings from values alone. Inspect the raw file content, find the actual structure (delimiter, header row, skip rows), and re-load by modifying the source operator.
+- **Plausibility checks on intermediate results**: After selecting a column or computing a value, verify the magnitude makes sense for what it represents. If values seem implausible (e.g., orders of magnitude off from what the question implies), re-examine your column selection and data loading before proceeding.`;
 
 // ============================================================================
 // Key Principles Variants
 // ============================================================================
 
 /**
- * Standard key principles demonstrated section.
+ * Standard key principles - merged core + key principles for general use.
  */
 const KEY_PRINCIPLES_STANDARD = `
-## Key Principles Demonstrated
+## Key Principles
 
-1. **Read documentation first**: When task mentions abstract concepts, load and read documentation to understand exact definitions
-2. **Explore data structure**: Load data and use .head() to see actual schema and sample rows.
-3. **Build incrementally**: Each new operator links to existing results (filter→join, aggregate→filter)
-4. **One operation per operator**: Separate operators for join, filter, aggregate and other data operations. Use links to connect them.
-5. **Decompose, don't consolidate**: If you find yourself writing a large code block with multiple conditions, loops, or transformations, STOP and split it into multiple operators. Each operator should do ONE thing.
-6. **Verify results**: Check execution results to ensure correctness before proceeding to next step.
-7. **Correct mistakes**: If the createOrModifyOperator tool returns an error or shows logic issues in the execution result, use it again with the same operatorId to fix the logic, or use deleteOperator/deleteLink to restructure the dataflow.
-8. **Decompose giant operators**: When debugging or encountering unintuitive results, replace the problematic operator with multiple smaller operators to isolate the issue.`;
+1. **One operation per operator**: Keep each operator focused on a single task. Separate operators for join, filter, aggregate and other data operations. Use links to connect them.
+2. **Decompose, don't consolidate**: Never write large code blocks with multiple conditions or transformations. Split them into separate operators connected by links. Each operator should do ONE thing. This makes each step verifiable, debuggable, and reusable.
+3. **Build incrementally**: Always link new operators to existing ones to reuse intermediate results. Never recreate data that already exists in the workflow.
+4. **Examine data before processing**: Do NOT assume files are clean or well-formatted. Before processing, inspect the raw file to check for: correct delimiters, presence of a header row, metadata/comment rows above the data, or multiple sub-tables. If column names appear generic or auto-generated (e.g., Unnamed:, 0, 1, 2), the header was not correctly identified — find the real header and re-load by modifying the source operator.
+5. **Read documentation first**: When task mentions abstract concepts, load and read documentation to understand exact definitions.
+6. **Control output size**: Use \`pd.concat([df.head(3), df.tail(3)])\` to sample both the beginning and end of data, revealing the full range of values. Avoid using \`.head()\` alone, as it only shows the first few rows and may miss important patterns at the end of the file.
+7. **Verify results**: Check execution results to ensure correctness before proceeding to next step.
+8. **Correct mistakes**: If the createOrModifyOperator tool returns an error or shows logic issues in the execution result, use it again with the same operatorId to fix the logic, or use deleteOperator/deleteLink to restructure the dataflow.
+9. **Decompose giant operators**: When debugging or encountering unintuitive results, replace the problematic operator with multiple smaller operators to isolate the issue.
+10. **Explore beyond truncated output**: Due to token limits, the tail of execution results may be truncated. Do not assume you have seen all the data. Create additional operators to explore the middle or tail of a table. Useful pandas patterns for exploration:
+    - \`df.iloc[::K]\` — sample every K-th row (e.g., \`df.iloc[::100]\` for a 10k-row table)
+    - \`df.sample(n=10, random_state=42)\` — random sample of rows
+    - \`df['col'].value_counts()\` — categorical distribution of a column
+    - \`df.describe()\` — range, mean, std, min/max for all numeric columns
+    - \`df.dtypes\` — check column types to catch mis-parsed numeric or date columns`;
 
 /**
- * Fine-grained key principles section with stricter constraints.
+ * Fine-grained key principles - merged core + key principles with strict atomic operation constraints.
  */
 const KEY_PRINCIPLES_FINE_GRAINED = `
-## Key Principles Demonstrated
+## Key Principles
 
-1. **Read documentation first**: When task mentions abstract concepts, load and read documentation to understand exact definitions
-2. **Explore data structure**: Load data and use .head() to see actual schema and sample rows.
-3. **Build incrementally**: Each new operator links to existing results (filter→join, aggregate→filter)
-4. **One line = One operation**: Each operator must have exactly ONE data operation. If you need filter + groupby + aggregate, create THREE separate operators linked together.
-5. **Decompose to atoms**: Never chain multiple DataFrame operations. \`df.filter().groupby().sum()\` must become three operators: filter_op → groupby_op → sum_op.
-6. **Verify results**: Check execution results to ensure correctness before proceeding to next step. The atomic decomposition makes it easy to identify which step produced unexpected output.
-7. **Correct mistakes**: If the createOrModifyOperator tool returns an error or shows logic issues in the execution result, use it again with the same operatorId to fix the logic, or use deleteOperator/deleteLink to restructure the dataflow.
-8. **Debug by isolation**: When encountering unexpected results, the atomic operator structure lets you inspect each transformation step individually.`;
+1. **One line = One operation**: Each operator must contain exactly ONE data operation (load, select, filter, group, aggregate, sort, join, etc.) for precise debugging. Print statements don't count toward this limit.
+2. **Decompose to atoms**: Break down every analysis into atomic operations. Never chain multiple DataFrame operations. \`df.filter().groupby().sum()\` must become three operators: filter_op → groupby_op → sum_op.
+3. **Build incrementally**: Always link new operators to existing ones to reuse intermediate results. Never recreate data that already exists in the workflow.
+4. **Examine data before processing**: Do NOT assume files are clean or well-formatted. Before processing, inspect the raw file to check for: correct delimiters, presence of a header row, metadata/comment rows above the data, or multiple sub-tables. If column names appear generic or auto-generated (e.g., Unnamed:, 0, 1, 2), the header was not correctly identified — find the real header and re-load by modifying the source operator.
+5. **Read documentation first**: When task mentions abstract concepts, load and read documentation to understand exact definitions.
+6. **Control output size**: Use \`pd.concat([df.head(3), df.tail(3)])\` to sample both the beginning and end of data, revealing the full range of values. Avoid using \`.head()\` alone. Always preserve the actual data schema.
+7. **Verify results**: Check execution results to ensure correctness before proceeding to next step. The atomic decomposition makes it easy to identify which step produced unexpected output.
+8. **Correct mistakes**: If the createOrModifyOperator tool returns an error or shows logic issues in the execution result, use it again with the same operatorId to fix the logic, or use deleteOperator/deleteLink to restructure the dataflow.
+9. **Debug by isolation**: When encountering unexpected results, the atomic operator structure lets you inspect each transformation step individually.
+10. **Explore beyond truncated output**: Due to token limits, the tail of execution results may be truncated. Do not assume you have seen all the data. Create additional operators to explore the middle or tail of a table. Useful pandas patterns for exploration:
+    - \`df.iloc[::K]\` — sample every K-th row (e.g., \`df.iloc[::100]\` for a 10k-row table)
+    - \`df.sample(n=10, random_state=42)\` — random sample of rows
+    - \`df['col'].value_counts()\` — categorical distribution of a column
+    - \`df.describe()\` — range, mean, std, min/max for all numeric columns
+    - \`df.dtypes\` — check column types to catch mis-parsed numeric or date columns
+
+**CRITICAL**: Each code block MUST contain ONLY ONE executable data operation (excluding print statements). This enables precise debugging by isolating each transformation step.
+
+**Allowed patterns:**
+- Single assignment: \`result = df.filter(...)\`
+- Single operation with print: \`result = df.groupby(...).sum()\` followed by \`print(result)\`
+
+**Violations:**
+- Multiple operations: \`filtered = df.filter(...); grouped = filtered.groupby(...)\` - split into two operators
+- Chained operations in one line: \`df.filter(...).groupby(...).agg(...)\` - split into three operators`;
 
 // ============================================================================
 // Composed Base Prompts
@@ -294,7 +320,7 @@ const KEY_PRINCIPLES_FINE_GRAINED = `
  * Contains core dataflow concepts applicable to both CODE and GENERAL modes.
  */
 export const BASE_SYSTEM_PROMPT = `${DATAFLOW_INTRO}
-${CORE_PRINCIPLES_STANDARD}
+${KEY_PRINCIPLES_STANDARD}
 `;
 
 /**
@@ -309,15 +335,13 @@ export const CODE_MODE_SYSTEM_PROMPT = buildCodeModeSystemPromptInternal(false);
  * @returns Complete system prompt for code mode
  */
 function buildCodeModeSystemPromptInternal(fineGrained: boolean): string {
-  const corePrinciples = fineGrained ? CORE_PRINCIPLES_FINE_GRAINED : CORE_PRINCIPLES_STANDARD;
   const exampleSection = fineGrained ? EXAMPLE_SECTION_FINE_GRAINED : EXAMPLE_SECTION_STANDARD;
   const keyPrinciples = fineGrained ? KEY_PRINCIPLES_FINE_GRAINED : KEY_PRINCIPLES_STANDARD;
 
   return `${DATAFLOW_INTRO}
-${corePrinciples}
 ${exampleSection}
 ${EXAMPLE_CONTINUATION}
-${ANTI_PATTERN_SECTION}
+${MESSY_DATA_EXAMPLE}
 ${LOADING_DATA_SECTION}
 ${COMMON_PITFALLS_SECTION}
 ${keyPrinciples}
@@ -368,11 +392,11 @@ export function buildGeneralModeSystemPrompt(
   fineGrained: boolean = false
 ): string {
   const operatorSchemas = buildAllowedOperatorSchemas(metadataStore);
-  const corePrinciples = fineGrained ? CORE_PRINCIPLES_FINE_GRAINED : CORE_PRINCIPLES_STANDARD;
+  const keyPrinciples = fineGrained ? KEY_PRINCIPLES_FINE_GRAINED : KEY_PRINCIPLES_STANDARD;
 
   return `${DATAFLOW_INTRO}
-${corePrinciples}
 ${COMMON_PITFALLS_SECTION}
+${keyPrinciples}
 
 ## Available Operators
 
