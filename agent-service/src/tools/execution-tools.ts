@@ -689,12 +689,18 @@ export async function executeOperatorAndFormat(
     const paramNames = getInputParamNames(workflowState, operatorId);
     const shapeLine = formatShapeArrow(opInfo, columns, paramNames, operatorId);
 
+    // Build columns line: e.g. "Columns: ['a', 'b', 'c']"
+    const columnNames = jsonArray.length > 0 ? Object.keys(jsonArray[0]) : [];
+    const columnsLine = columnNames.length > 0
+      ? `Columns: [${columnNames.map(c => `'${c}'`).join(", ")}]`
+      : "";
+
     const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
 
     // Surface warnings (e.g., duplicate column renames) so the agent can adjust its code
     const warningLines = opInfo.warnings?.map(w => w) ?? [];
 
-    const header = [dataflowLine, shapeLine, meta, ...warningLines].filter(Boolean).join("\n");
+    const header = [dataflowLine, shapeLine, columnsLine, meta, ...warningLines].filter(Boolean).join("\n");
     return header ? `${header}\n${dataString}` : dataString;
   } catch (error: any) {
     if (error.name === "AbortError") {
