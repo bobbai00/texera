@@ -24,8 +24,8 @@
 # 3. Start litellm by:
 #    litellm --config bin/litellm-config.yaml
 # By default, litellm is running on http://0.0.0.0:4000
-litellm_settings:
-  drop_params: true
+#litellm_settings:
+#  drop_params: true
 
 model_list:
   - model_name: qwen3-coder
@@ -53,6 +53,18 @@ model_list:
       model: claude-sonnet-4-5-20250929
       api_key: "os.environ/ANTHROPIC_API_KEY"
   - model_name: gpt-5-mini
+    litellm_params:
+      model: gpt-5-mini-2025-08-07
+      api_key: "os.environ/OPENAI_API_KEY"
+  - model_name: gpt-5-mini-high
+    litellm_params:
+      model: gpt-5-mini-2025-08-07
+      api_key: "os.environ/OPENAI_API_KEY"
+  - model_name: gpt-5-mini-medium
+    litellm_params:
+      model: gpt-5-mini-2025-08-07
+      api_key: "os.environ/OPENAI_API_KEY"
+  - model_name: gpt-5-mini-low
     litellm_params:
       model: gpt-5-mini-2025-08-07
       api_key: "os.environ/OPENAI_API_KEY"

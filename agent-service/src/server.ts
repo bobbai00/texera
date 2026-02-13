@@ -61,6 +61,29 @@ const API_PREFIX = process.env.API_PREFIX || "/api";
 const LLM_API_KEY = process.env.LLM_API_KEY || "dummy";
 const MODEL = process.env.MODEL || "gpt-4-turbo";
 
+const REASONING_EFFORT_SUFFIXES = ["low", "medium", "high"] as const;
+type ReasoningEffort = (typeof REASONING_EFFORT_SUFFIXES)[number];
+
+/**
+ * Parse reasoning effort suffix from model name.
+ * e.g., "gpt-5-mini-high" -> { modelName: "gpt-5-mini", reasoningEffort: "high" }
+ * e.g., "claude-sonnet-4" -> { modelName: "claude-sonnet-4" }
+ */
+function parseReasoningEffort(modelType: string): {
+  modelName: string;
+  reasoningEffort?: ReasoningEffort;
+} {
+  for (const effort of REASONING_EFFORT_SUFFIXES) {
+    if (modelType.endsWith(`-${effort}`)) {
+      return {
+        modelName: modelType.slice(0, -(effort.length + 1)),
+        reasoningEffort: effort,
+      };
+    }
+  }
+  return { modelName: modelType };
+}
+
 // ============================================================================
 // Agent Management
 // ============================================================================
@@ -88,11 +111,16 @@ async function createAgentInstance(
     apiKey: LLM_API_KEY,
   });
 
+  // Parse reasoning effort suffix from model name (e.g., "gpt-5-mini-high" -> model "gpt-5-mini", reasoningEffort "high")
+  const effectiveModelType = modelType || MODEL;
+  const { modelName, reasoningEffort } = parseReasoningEffort(effectiveModelType);
+
   const agent = new TexeraAgent({
-    model: openai.chat(modelType || MODEL),
-    modelType: modelType || MODEL,
+    model: openai.chat(modelName),
+    modelType: effectiveModelType,
     agentId,
     agentName: customName || `Agent-${agentId}`,
+    reasoningEffort,
   });
 
   // Initialize agent (loads operator metadata from backend and rebuilds tools)

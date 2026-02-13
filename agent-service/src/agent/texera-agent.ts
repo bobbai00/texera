@@ -100,6 +100,8 @@ export interface TexeraAgentConfig {
   agentName?: string;
   /** Custom system prompt (optional, defaults to BASE_SYSTEM_PROMPT) */
   systemPrompt?: string;
+  /** Reasoning effort level for reasoning models (e.g., "low", "medium", "high") */
+  reasoningEffort?: "low" | "medium" | "high";
 }
 
 // ============================================================================
@@ -156,6 +158,7 @@ export class TexeraAgent {
   private model: LanguageModel;
   private systemPrompt: string;
   private settings: AgentSettings;
+  private reasoningEffort?: "low" | "medium" | "high";
 
   // Conversation history
   private messages: ModelMessage[] = [];
@@ -194,6 +197,7 @@ export class TexeraAgent {
     this.createdAt = new Date();
     this.model = config.model;
     this.systemPrompt = config.systemPrompt || BASE_SYSTEM_PROMPT;
+    this.reasoningEffort = config.reasoningEffort;
 
     // Initialize state
     this.workflowState = new WorkflowState();
@@ -319,7 +323,7 @@ export class TexeraAgent {
       // GENERAL mode: Use workflow tools (addOperator, modifyOperator) + metadata tools
       tools[TOOL_NAME_ADD_OPERATOR] = createAddOperatorTool(this.workflowState, operatorSchemas, context);
       tools[TOOL_NAME_MODIFY_OPERATOR] = createModifyOperatorTool(this.workflowState, context);
-      tools[TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES] = createListAllAvailableOperatorTypesTool(this.metadataStore);
+      tools[TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES] = createListAllAvailableOperatorTypesTool(this.metadataStore, true);
       tools[TOOL_NAME_GET_OPERATOR_SCHEMA] = createGetOperatorSchemaTool(this.metadataStore);
       tools[TOOL_NAME_ADD_LINK] = createAddLinkTool(this.workflowState, context);
       tools[TOOL_NAME_DELETE_LINK] = createDeleteLinkTool(this.workflowState, context);
@@ -713,7 +717,10 @@ export class TexeraAgent {
         // Disable parallel tool calls to ensure sequential execution
         // This prevents errors when creating dependent operators (e.g., operator B depends on operator A)
         providerOptions: {
-          openai: { parallelToolCalls: false },
+          openai: {
+            parallelToolCalls: false,
+            ...(this.reasoningEffort && { reasoningEffort: this.reasoningEffort }),
+          },
           anthropic: { disableParallelToolUse: true },
           mistral: { parallelToolCalls: false },
         },
