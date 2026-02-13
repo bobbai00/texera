@@ -44,19 +44,6 @@ import type { ToolContext } from "./workflow-tools";
 export const TOOL_NAME_ADD_OPERATOR = "addOperator";
 export const TOOL_NAME_MODIFY_OPERATOR = "modifyOperator";
 
-// Operator type that supports dynamic input ports
-const MULTI_INPUT_OPERATOR_TYPE = "DataProcessing";
-
-// ============================================================================
-// Port Validation
-// ============================================================================
-
-function validateNumInputPorts(numPorts: number): string | null {
-  if (numPorts < 1) return "At least 1 input port is required";
-  if (numPorts > 10) return "Maximum 10 input ports allowed";
-  return null;
-}
-
 // ============================================================================
 // Add Operator Tool
 // ============================================================================
@@ -70,22 +57,18 @@ export function createAddOperatorTool(
 
   return tool({
     description:
-      "Add a new operator to the workflow. Use getOperatorSchema first to understand required properties. " +
-      `For ${MULTI_INPUT_OPERATOR_TYPE}, specify numInputPorts to create multiple input ports.`,
+      "Add a new operator to the workflow. Use getOperatorSchema first to understand required properties.",
     inputSchema: z.object({
-      operatorType: z.string().describe(`The operator type (e.g., '${MULTI_INPUT_OPERATOR_TYPE}', 'Aggregate')`),
+      operatorId: z.string().describe("Unique operator ID"),
+      operatorType: z.string().describe("The operator type (e.g., 'DataProcessing', 'Aggregate')"),
       properties: z.record(z.any()).describe("Properties to set on the operator"),
-      customDisplayName: z.string().describe("Optional display name for the operator"),
-      numInputPorts: z
-        .number()
-        .optional()
-        .describe(`Number of input ports for ${MULTI_INPUT_OPERATOR_TYPE} (default: 1).`),
+      summary: z.string().optional().describe("Brief summary of operator behavior"),
     }),
     execute: async (args: {
+      operatorId: string;
       operatorType: string;
       properties?: Record<string, any>;
-      customDisplayName?: string;
-      numInputPorts?: number;
+      summary?: string;
     }) => {
       try {
         const schemaEntry = operatorSchemas.get(args.operatorType);
@@ -93,18 +76,6 @@ export function createAddOperatorTool(
           return createErrorResult(
             `Unknown operator type: ${args.operatorType}. Use listAllAvailableOperatorTypes to see available operators.`
           );
-        }
-
-        // Validate numInputPorts if provided
-        if (args.numInputPorts !== undefined) {
-          if (args.operatorType !== MULTI_INPUT_OPERATOR_TYPE) {
-            return createErrorResult(
-              `numInputPorts is only supported for ${MULTI_INPUT_OPERATOR_TYPE}. ` +
-                `Operator type "${args.operatorType}" does not support dynamic input ports.`
-            );
-          }
-          const portError = validateNumInputPorts(args.numInputPorts);
-          if (portError) return createErrorResult(portError);
         }
 
         // Validate properties
@@ -122,22 +93,24 @@ export function createAddOperatorTool(
           return createErrorResult("Metadata store not available for operator creation");
         }
 
+        // Check for duplicate operatorId
+        const existing = workflowState.getOperator(args.operatorId);
+        if (existing) {
+          return createErrorResult(
+            `Operator with ID "${args.operatorId}" already exists. Use modifyOperator to update it, or choose a different ID.`
+          );
+        }
+
         const beforeContent = workflowState.getWorkflowContent();
 
-        let operator = workflowUtil.getNewOperatorPredicate(args.operatorType, args.customDisplayName);
-        if (args.properties) {
-          operator = {
-            ...operator,
-            operatorProperties: { ...operator.operatorProperties, ...args.properties },
-          };
-        }
+        let operator = workflowUtil.getNewOperatorPredicate(args.operatorType, args.summary);
+        operator = {
+          ...operator,
+          operatorID: args.operatorId,
+          operatorProperties: { ...operator.operatorProperties, ...args.properties },
+        };
 
         workflowState.addOperator(operator);
-
-        // Set up input ports for PythonTableUDF
-        if (args.numInputPorts !== undefined && args.numInputPorts > 1) {
-          workflowState.updateOperatorInputPorts(operator.operatorID, args.numInputPorts);
-        }
 
         // Auto-layout the workflow after adding the operator
         autoLayoutWorkflow(workflowState);
@@ -150,7 +123,7 @@ export function createAddOperatorTool(
           context.agentActionManager.createAgentAction(
             context.agentId,
             context.agentName || `Agent-${context.agentId}`,
-            args.customDisplayName || `Added ${args.operatorType}`,
+            args.summary || `Added ${args.operatorType}`,
             { add: { operatorIds: [operator.operatorID], linkIds: [] } },
             context.workflowMetadata || {},
             beforeContent,
@@ -177,19 +150,16 @@ export function createAddOperatorTool(
 export function createModifyOperatorTool(workflowState: WorkflowState, context?: ToolContext) {
   return tool({
     description:
-      "Modify properties of an existing operator. Use this to fix errors or change operator logic. " +
-      `For ${MULTI_INPUT_OPERATOR_TYPE}, you can also update the number of input ports.`,
+      "Modify properties of an existing operator. Use this to fix errors or change operator logic.",
     inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to modify"),
       properties: z.record(z.any()).describe("Properties to update (merged with existing)"),
-      summary: z.string().optional().describe("Brief summary of what this modification accomplishes"),
-      numInputPorts: z.number().optional().describe(`New number of input ports for ${MULTI_INPUT_OPERATOR_TYPE}.`),
+      summary: z.string().optional().describe("Brief summary of operator behavior"),
     }),
     execute: async (args: {
       operatorId: string;
       properties: Record<string, any>;
       summary?: string;
-      numInputPorts?: number;
     }) => {
       try {
         const operator = workflowState.getOperator(args.operatorId);
@@ -208,25 +178,9 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
           }
         }
 
-        // Validate numInputPorts if provided
-        if (args.numInputPorts !== undefined) {
-          if (operator.operatorType !== MULTI_INPUT_OPERATOR_TYPE) {
-            return createErrorResult(
-              `numInputPorts is only supported for ${MULTI_INPUT_OPERATOR_TYPE}. ` +
-                `Operator "${args.operatorId}" is of type "${operator.operatorType}".`
-            );
-          }
-          const portError = validateNumInputPorts(args.numInputPorts);
-          if (portError) return createErrorResult(portError);
-        }
-
         const beforeContent = workflowState.getWorkflowContent();
 
         workflowState.updateOperatorProperties(args.operatorId, args.properties);
-
-        if (args.numInputPorts !== undefined && args.numInputPorts > 0) {
-          workflowState.updateOperatorInputPorts(args.operatorId, args.numInputPorts);
-        }
 
         const afterContent = workflowState.getWorkflowContent();
 

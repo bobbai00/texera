@@ -228,7 +228,7 @@ export function formatOperator(op: OperatorPredicate): string {
  * Formats a single link for display in workflow results.
  */
 export function formatLink(link: OperatorLink): string {
-  return `From ${link.source.operatorID}, port ${link.source.portID} To ${link.target.operatorID}, port ${link.target.portID}`;
+  return `${link.source.operatorID} -> ${link.target.operatorID}`;
 }
 
 /**
