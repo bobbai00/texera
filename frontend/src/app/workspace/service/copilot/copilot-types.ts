@@ -64,6 +64,8 @@ export interface ReActStep {
     totalTokens?: number;
     cachedInputTokens?: number;
   };
+  /** Messages array sent to the LLM for this step (only when context optimization is active) */
+  inputMessages?: any[];
   // Map from tool call index to operator access information
   operatorAccess?: Map<number, ToolOperatorAccess>;
 }

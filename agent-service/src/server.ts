@@ -61,29 +61,6 @@ const API_PREFIX = process.env.API_PREFIX || "/api";
 const LLM_API_KEY = process.env.LLM_API_KEY || "dummy";
 const MODEL = process.env.MODEL || "gpt-4-turbo";
 
-const REASONING_EFFORT_SUFFIXES = ["low", "medium", "high"] as const;
-type ReasoningEffort = (typeof REASONING_EFFORT_SUFFIXES)[number];
-
-/**
- * Parse reasoning effort suffix from model name.
- * e.g., "gpt-5-mini-high" -> { modelName: "gpt-5-mini", reasoningEffort: "high" }
- * e.g., "claude-sonnet-4" -> { modelName: "claude-sonnet-4" }
- */
-function parseReasoningEffort(modelType: string): {
-  modelName: string;
-  reasoningEffort?: ReasoningEffort;
-} {
-  for (const effort of REASONING_EFFORT_SUFFIXES) {
-    if (modelType.endsWith(`-${effort}`)) {
-      return {
-        modelName: modelType.slice(0, -(effort.length + 1)),
-        reasoningEffort: effort,
-      };
-    }
-  }
-  return { modelName: modelType };
-}
-
 // ============================================================================
 // Agent Management
 // ============================================================================
@@ -111,16 +88,16 @@ async function createAgentInstance(
     apiKey: LLM_API_KEY,
   });
 
-  // Parse reasoning effort suffix from model name (e.g., "gpt-5-mini-high" -> model "gpt-5-mini", reasoningEffort "high")
+  // Send the full model name to LiteLLM (e.g., "gpt-5-mini-medium").
+  // Reasoning effort variants are configured as separate model entries in litellm-config.yaml
+  // with extra_body to inject reasoning_effort, bypassing LiteLLM's param validation.
   const effectiveModelType = modelType || MODEL;
-  const { modelName, reasoningEffort } = parseReasoningEffort(effectiveModelType);
 
   const agent = new TexeraAgent({
-    model: openai.chat(modelName),
+    model: openai.chat(effectiveModelType),
     modelType: effectiveModelType,
     agentId,
     agentName: customName || `Agent-${agentId}`,
-    reasoningEffort,
   });
 
   // Initialize agent (loads operator metadata from backend and rebuilds tools)
@@ -190,6 +167,8 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     maxSteps: agentSettings.maxSteps,
     agentMode: agentSettings.agentMode,
     fineGrainedPrompt: agentSettings.fineGrainedPrompt,
+    enableContextOptimization: agentSettings.enableContextOptimization,
+    frontierDepth: agentSettings.frontierDepth,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -281,6 +260,8 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           maxSteps: settings.maxSteps,
           agentMode: settings.agentMode ? (settings.agentMode as AgentMode) : undefined,
           fineGrainedPrompt: settings.fineGrainedPrompt,
+          enableContextOptimization: settings.enableContextOptimization,
+          frontierDepth: settings.frontierDepth,
         });
       }
 
@@ -306,6 +287,8 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             maxSteps: t.Optional(t.Number()),
             agentMode: t.Optional(t.Union([t.Literal("code"), t.Literal("general")])),
             fineGrainedPrompt: t.Optional(t.Boolean()),
+            enableContextOptimization: t.Optional(t.Boolean()),
+            frontierDepth: t.Optional(t.Number()),
           })
         ),
       }),
@@ -471,6 +454,8 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       maxSteps: agentSettings.maxSteps,
       agentMode: agentSettings.agentMode,
       fineGrainedPrompt: agentSettings.fineGrainedPrompt,
+      enableContextOptimization: agentSettings.enableContextOptimization,
+      frontierDepth: agentSettings.frontierDepth,
     };
   })
 
@@ -500,6 +485,8 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         maxSteps: settings.maxSteps,
         agentMode: settings.agentMode ? (settings.agentMode as AgentMode) : undefined,
         fineGrainedPrompt: settings.fineGrainedPrompt,
+        enableContextOptimization: settings.enableContextOptimization,
+        frontierDepth: settings.frontierDepth,
       });
 
       // Return updated settings
@@ -514,6 +501,8 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         maxSteps: agentSettings.maxSteps,
         agentMode: agentSettings.agentMode,
         fineGrainedPrompt: agentSettings.fineGrainedPrompt,
+        enableContextOptimization: agentSettings.enableContextOptimization,
+        frontierDepth: agentSettings.frontierDepth,
       };
     },
     {
@@ -529,6 +518,8 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         disabledTools: t.Optional(t.Array(t.String())),
         agentMode: t.Optional(t.Union([t.Literal("code"), t.Literal("general")])),
         fineGrainedPrompt: t.Optional(t.Boolean()),
+        enableContextOptimization: t.Optional(t.Boolean()),
+        frontierDepth: t.Optional(t.Number()),
       }),
     }
   );

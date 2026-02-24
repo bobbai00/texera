@@ -125,6 +125,8 @@ export interface ReActStep {
     isError?: boolean;
   }>;
   usage?: TokenUsage;
+  /** Messages array sent to the LLM for this step (only when context optimization is active) */
+  inputMessages?: any[];
 }
 
 /**
@@ -194,6 +196,10 @@ export interface AgentSettings {
   agentMode: AgentMode;
   /** Use fine-grained prompts with atomic operation constraints (one line = one operation) */
   fineGrainedPrompt: boolean;
+  /** Enable context optimization to condense message history between steps */
+  enableContextOptimization: boolean;
+  /** Number of BFS levels backward from leaf operators for frontier computation */
+  frontierDepth: number;
 }
 
 /**
@@ -209,6 +215,8 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   maxSteps: 100,
   agentMode: AgentMode.CODE, // Default to CODE mode
   fineGrainedPrompt: false, // Default to standard prompts
+  enableContextOptimization: false,
+  frontierDepth: 1,
 };
 
 // ============================================================================
@@ -263,6 +271,10 @@ export interface AgentSettingsApi {
   agentMode?: "code" | "general";
   /** Use fine-grained prompts with atomic operation constraints */
   fineGrainedPrompt?: boolean;
+  /** Enable context optimization to condense message history between steps */
+  enableContextOptimization?: boolean;
+  /** Number of BFS levels backward from leaf operators for frontier computation */
+  frontierDepth?: number;
 }
 
 /**
@@ -318,6 +330,10 @@ export interface UpdateAgentSettingsRequest {
   agentMode?: "code" | "general";
   /** Use fine-grained prompts with atomic operation constraints */
   fineGrainedPrompt?: boolean;
+  /** Enable context optimization to condense message history between steps */
+  enableContextOptimization?: boolean;
+  /** Number of BFS levels backward from leaf operators for frontier computation */
+  frontierDepth?: number;
 }
 
 // ============================================================================

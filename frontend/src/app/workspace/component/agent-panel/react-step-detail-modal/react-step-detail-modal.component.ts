@@ -77,4 +77,43 @@ export class ReActStepDetailModalComponent {
   public hasOperatorAccess(step: ReActStep): boolean {
     return !!step.operatorAccess && step.operatorAccess.size > 0;
   }
+
+  /**
+   * Extract displayable text from a message object.
+   * Handles string content, array content (text parts, tool-call summaries).
+   */
+  public formatMessageContent(msg: any): string {
+    if (!msg) return "";
+    const content = msg.content;
+    if (typeof content === "string") {
+      return content;
+    }
+    if (Array.isArray(content)) {
+      return content
+        .map((part: any) => {
+          if (part.type === "text") return part.text || "";
+          if (part.type === "tool-call") return `[Tool Call: ${part.toolName}]`;
+          if (part.type === "tool-result") return `[Tool Result: ${part.toolCallId}]`;
+          return JSON.stringify(part);
+        })
+        .join("\n");
+    }
+    return JSON.stringify(content, null, 2);
+  }
+
+  /**
+   * Get tag color for a message role.
+   */
+  public getMessageRoleColor(role: string): string {
+    switch (role) {
+      case "user":
+        return "blue";
+      case "assistant":
+        return "orange";
+      case "tool":
+        return "green";
+      default:
+        return "default";
+    }
+  }
 }

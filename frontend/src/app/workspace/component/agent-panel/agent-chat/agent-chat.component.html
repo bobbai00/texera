@@ -784,6 +784,51 @@
               >
             </div>
           </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">Context Optimization</label>
+            <div class="settings-param-input">
+              <nz-switch
+                [(ngModel)]="settingsEnableContextOptimization"
+                nzSize="small"
+                style="margin-right: 12px"></nz-switch>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveContextOptimization()">
+                Save
+              </button>
+              <span class="settings-param-hint"
+                >Condenses message history between steps to reduce token usage. Keeps workflow topology, frontier operator details, and the last tool exchange.</span
+              >
+            </div>
+          </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">Frontier Depth</label>
+            <div class="settings-param-input">
+              <nz-input-number
+                [(ngModel)]="settingsFrontierDepth"
+                [nzMin]="1"
+                [nzMax]="10"
+                [nzStep]="1"
+                nzSize="small"
+                [nzDisabled]="!settingsEnableContextOptimization"
+                style="width: 120px"></nz-input-number>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                [disabled]="!settingsEnableContextOptimization"
+                (click)="saveFrontierDepth()">
+                Save
+              </button>
+              <span class="settings-param-hint"
+                >Number of BFS levels backward from leaf operators for frontier computation (1 = leaves only, higher = more context).</span
+              >
+            </div>
+          </div>
         </div>
       </nz-tab>
 

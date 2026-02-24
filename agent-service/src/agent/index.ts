@@ -19,3 +19,4 @@
 
 export * from "./texera-agent";
 export * from "./prompts";
+export * from "./context-optimization";

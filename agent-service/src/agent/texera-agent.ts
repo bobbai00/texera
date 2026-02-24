@@ -77,6 +77,7 @@ import {
   TOOL_NAME_EXECUTE_OPERATOR,
   type ExecutionConfig,
 } from "../tools/execution-tools";
+import { trimNonFrontierResults } from "./context-optimization";
 
 // ============================================================================
 // Constants
@@ -100,8 +101,6 @@ export interface TexeraAgentConfig {
   agentName?: string;
   /** Custom system prompt (optional, defaults to BASE_SYSTEM_PROMPT) */
   systemPrompt?: string;
-  /** Reasoning effort level for reasoning models (e.g., "low", "medium", "high") */
-  reasoningEffort?: "low" | "medium" | "high";
 }
 
 // ============================================================================
@@ -158,7 +157,6 @@ export class TexeraAgent {
   private model: LanguageModel;
   private systemPrompt: string;
   private settings: AgentSettings;
-  private reasoningEffort?: "low" | "medium" | "high";
 
   // Conversation history
   private messages: ModelMessage[] = [];
@@ -197,7 +195,6 @@ export class TexeraAgent {
     this.createdAt = new Date();
     this.model = config.model;
     this.systemPrompt = config.systemPrompt || BASE_SYSTEM_PROMPT;
-    this.reasoningEffort = config.reasoningEffort;
 
     // Initialize state
     this.workflowState = new WorkflowState();
@@ -485,6 +482,8 @@ export class TexeraAgent {
     maxSteps?: number;
     agentMode?: AgentMode;
     fineGrainedPrompt?: boolean;
+    enableContextOptimization?: boolean;
+    frontierDepth?: number;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -516,6 +515,12 @@ export class TexeraAgent {
     if (updates.fineGrainedPrompt !== undefined && updates.fineGrainedPrompt !== this.settings.fineGrainedPrompt) {
       this.settings.fineGrainedPrompt = updates.fineGrainedPrompt;
       promptNeedsRebuild = true;
+    }
+    if (updates.enableContextOptimization !== undefined) {
+      this.settings.enableContextOptimization = updates.enableContextOptimization;
+    }
+    if (updates.frontierDepth !== undefined) {
+      this.settings.frontierDepth = Math.max(1, updates.frontierDepth);
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt
@@ -705,6 +710,7 @@ export class TexeraAgent {
       this.addStep(userStep);
 
       let isFirstStep = true;
+      let lastPreparedMessages: ModelMessage[] | undefined;
 
       // Call the model with tools - uses full message history
       const result = await generateText({
@@ -713,14 +719,25 @@ export class TexeraAgent {
         messages: this.messages,
         tools: this.tools,
         stopWhen: stepCountIs(this.settings.maxSteps),
+        prepareStep: this.settings.enableContextOptimization
+          ? ({ stepNumber, messages: currentMessages }) => {
+              if (stepNumber === 0) return undefined;
+              const trimmed = trimNonFrontierResults(
+                currentMessages,
+                this.workflowState,
+                this.settings.frontierDepth,
+                this.settings.agentMode
+              );
+              lastPreparedMessages = trimmed;
+              return { messages: trimmed };
+            }
+          : undefined,
         abortSignal: this.abortController?.signal,
-        // Disable parallel tool calls to ensure sequential execution
-        // This prevents errors when creating dependent operators (e.g., operator B depends on operator A)
+        // Disable parallel tool calls to ensure sequential execution.
+        // Note: reasoning_effort is NOT passed here — it's configured per-model in
+        // litellm-config.yaml via extra_body to bypass LiteLLM's param validation.
         providerOptions: {
-          openai: {
-            parallelToolCalls: false,
-            ...(this.reasoningEffort && { reasoningEffort: this.reasoningEffort }),
-          },
+          openai: { parallelToolCalls: false },
           anthropic: { disableParallelToolUse: true },
           mistral: { parallelToolCalls: false },
         },
@@ -759,7 +776,9 @@ export class TexeraAgent {
                   totalTokens: usage.totalTokens,
                 }
               : undefined,
+            inputMessages: lastPreparedMessages,
           };
+          lastPreparedMessages = undefined;
           this.addStep(agentStep);
 
           isFirstStep = false;

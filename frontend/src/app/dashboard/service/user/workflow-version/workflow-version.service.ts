@@ -127,7 +127,7 @@ export class WorkflowVersionService {
     differentOpIDsList.added.map(id => this.highlightOpBoundary(id, "0,255,0,0.5"));
 
     if (differentOpIDsList.deleted.length > 0) {
-      const tempWorkflow = this.workflowActionService.getTempWorkflow();
+      const tempWorkflow   = this.workflowActionService.getTempWorkflow();
       if (tempWorkflow != undefined) {
         for (const link of tempWorkflow.content.links) {
           if (differentOpIDsList.deleted.includes(link.source.operatorID) && link.target.operatorID != undefined) {

@@ -64,6 +64,10 @@ export interface AgentSettingsApi {
   agentMode?: "code" | "general";
   /** Use fine-grained prompts with atomic operation constraints (one line = one operation) */
   fineGrainedPrompt?: boolean;
+  /** Enable context optimization to condense message history between steps */
+  enableContextOptimization?: boolean;
+  /** Number of BFS levels backward from leaf operators for frontier computation */
+  frontierDepth?: number;
 }
 
 /**
@@ -313,6 +317,7 @@ export class TexeraCopilotManagerService {
         output: tr.output || tr.result,
       })),
       usage: apiStep.usage,
+      inputMessages: apiStep.inputMessages,
       operatorAccess,
     };
   }
@@ -1248,6 +1253,8 @@ export class TexeraCopilotManagerService {
           maxSteps: 10,
           agentMode: "code" as const,
           fineGrainedPrompt: false,
+          enableContextOptimization: false,
+          frontierDepth: 1,
         })
       )
     );

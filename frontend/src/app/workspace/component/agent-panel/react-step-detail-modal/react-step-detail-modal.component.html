@@ -142,6 +142,43 @@
         </nz-descriptions>
       </div>
 
+      <!-- Input Messages Section (only when context optimization produced trimmed messages) -->
+      <div
+        *ngIf="step.inputMessages && step.inputMessages.length > 0"
+        style="margin-bottom: 24px">
+        <h4 style="margin-bottom: 12px; color: #595959">
+          <i
+            nz-icon
+            nzType="mail"
+            nzTheme="outline"
+            style="margin-right: 8px"></i>
+          Input Messages ({{ step.inputMessages.length }})
+        </h4>
+        <nz-collapse>
+          <nz-collapse-panel
+            *ngFor="let msg of step.inputMessages; let idx = index"
+            [nzHeader]="'[' + (idx + 1) + '] ' + (msg.role || 'unknown')"
+            [nzActive]="false">
+            <div style="margin-bottom: 8px">
+              <nz-tag [nzColor]="getMessageRoleColor(msg.role)">{{ msg.role }}</nz-tag>
+            </div>
+            <pre
+              style="
+                background: #fff;
+                padding: 12px;
+                border: 1px solid #d9d9d9;
+                border-radius: 4px;
+                overflow-x: auto;
+                margin: 0;
+                white-space: pre-wrap;
+                word-break: break-word;
+                max-height: 300px;
+                overflow-y: auto;
+              ">{{ formatMessageContent(msg) }}</pre>
+          </nz-collapse-panel>
+        </nz-collapse>
+      </div>
+
       <!-- Tool Calls Section -->
       <div *ngIf="step.toolCalls && step.toolCalls.length > 0">
         <h4 style="margin-bottom: 12px; color: #595959">
@@ -260,6 +297,7 @@
           (!step.content || step.content.trim().length === 0) &&
           !step.actualContent &&
           !step.usage &&
+          (!step.inputMessages || step.inputMessages.length === 0) &&
           (!step.toolCalls || step.toolCalls.length === 0) &&
           !hasOperatorAccess(step)
         "

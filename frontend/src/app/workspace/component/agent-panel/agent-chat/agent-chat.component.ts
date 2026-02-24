@@ -114,6 +114,8 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsMaxSteps = 10; // Default max steps per message
   public settingsAgentMode: "code" | "general" = "code"; // Agent operating mode
   public settingsFineGrainedPrompt = false; // Use fine-grained prompts with atomic operation constraints
+  public settingsEnableContextOptimization = false; // Enable context optimization
+  public settingsFrontierDepth = 1; // Frontier depth for context optimization
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -422,6 +424,8 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsMaxSteps = settings.maxSteps ?? 10;
         this.settingsAgentMode = settings.agentMode ?? "code";
         this.settingsFineGrainedPrompt = settings.fineGrainedPrompt ?? false;
+        this.settingsEnableContextOptimization = settings.enableContextOptimization ?? false;
+        this.settingsFrontierDepth = settings.frontierDepth ?? 1;
       });
 
     // Also load agent internal state
@@ -1214,6 +1218,39 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
             this.settingsFineGrainedPrompt ? "Fine-grained prompts enabled" : "Standard prompts enabled"
           ),
         error: () => {}, // Error already handled by service
+      });
+  }
+
+  /**
+   * Save the context optimization setting.
+   */
+  public saveContextOptimization(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        enableContextOptimization: this.settingsEnableContextOptimization,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsEnableContextOptimization ? "Context optimization enabled" : "Context optimization disabled"
+          ),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the frontier depth setting.
+   */
+  public saveFrontierDepth(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        frontierDepth: this.settingsFrontierDepth,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () => this.notificationService.success("Frontier depth saved"),
+        error: () => {},
       });
   }
 

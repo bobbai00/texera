@@ -369,6 +369,92 @@ export class WorkflowState {
     return { operators: subDagOperators, links: subDagLinks };
   }
 
+  /**
+   * Get frontier operators by BFS backward from leaf/sink operators.
+   * Leaf operators are those with no outgoing links.
+   * Returns operator IDs sorted topologically (predecessors first, leaves last).
+   *
+   * @param depth - Number of BFS levels backward from leaves (1 = leaves only)
+   * @returns Array of operator IDs in topological order
+   */
+  getFrontierOperators(depth: number): string[] {
+    const allOperators = this.getAllOperators();
+    if (allOperators.length === 0) return [];
+
+    // Build set of operators that are sources of links (have outgoing edges)
+    const sourceOperatorIds = new Set<string>();
+    for (const link of this.getAllLinks()) {
+      sourceOperatorIds.add(link.source.operatorID);
+    }
+
+    // Find leaf operators (no outgoing links)
+    const leaves = allOperators
+      .filter(op => !sourceOperatorIds.has(op.operatorID))
+      .map(op => op.operatorID);
+
+    if (leaves.length === 0) {
+      // All operators have outgoing links (cycle or all connected) - use all as leaves
+      return allOperators.map(op => op.operatorID);
+    }
+
+    // BFS backward through incoming links for `depth` levels
+    const frontier = new Set<string>(leaves);
+    let currentLevel = new Set<string>(leaves);
+
+    for (let d = 1; d < depth; d++) {
+      const nextLevel = new Set<string>();
+      for (const opId of currentLevel) {
+        // Find incoming links to this operator
+        for (const link of this.getAllLinks()) {
+          if (link.target.operatorID === opId && !frontier.has(link.source.operatorID)) {
+            nextLevel.add(link.source.operatorID);
+            frontier.add(link.source.operatorID);
+          }
+        }
+      }
+      if (nextLevel.size === 0) break;
+      currentLevel = nextLevel;
+    }
+
+    // Topological sort: predecessors first, leaves last
+    // Build adjacency for frontier-only subgraph
+    const frontierArray = Array.from(frontier);
+    const inDegree = new Map<string, number>();
+    const children = new Map<string, string[]>();
+    for (const opId of frontierArray) {
+      inDegree.set(opId, 0);
+      children.set(opId, []);
+    }
+    for (const link of this.getAllLinks()) {
+      if (frontier.has(link.source.operatorID) && frontier.has(link.target.operatorID)) {
+        children.get(link.source.operatorID)!.push(link.target.operatorID);
+        inDegree.set(link.target.operatorID, (inDegree.get(link.target.operatorID) ?? 0) + 1);
+      }
+    }
+
+    // Kahn's algorithm
+    const queue: string[] = frontierArray.filter(opId => (inDegree.get(opId) ?? 0) === 0);
+    const sorted: string[] = [];
+    while (queue.length > 0) {
+      const node = queue.shift()!;
+      sorted.push(node);
+      for (const child of children.get(node) ?? []) {
+        const newDeg = (inDegree.get(child) ?? 1) - 1;
+        inDegree.set(child, newDeg);
+        if (newDeg === 0) queue.push(child);
+      }
+    }
+
+    // If there are nodes not in sorted (cycle), append them
+    if (sorted.length < frontierArray.length) {
+      for (const opId of frontierArray) {
+        if (!sorted.includes(opId)) sorted.push(opId);
+      }
+    }
+
+    return sorted;
+  }
+
   // ============================================================================
   // Validation State
   // ============================================================================
