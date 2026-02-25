@@ -689,6 +689,65 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       });
   }
 
+  /**
+   * Export the ReAct steps as a JSON file.
+   * Fetches steps from the backend to get clean JSON (without Map objects).
+   */
+  public exportReActSteps(): void {
+    if (this.agentResponses.length === 0) {
+      this.notificationService.warning("No ReAct steps to export");
+      return;
+    }
+
+    this.copilotManagerService
+      .getReActSteps(this.agentInfo.id)
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: (steps: ReActStep[]) => {
+          // Convert steps to plain objects (handle Map -> object for operatorAccess)
+          const exportSteps = steps.map(step => {
+            const plain: any = { ...step };
+            if (step.operatorAccess) {
+              const accessObj: Record<string, any> = {};
+              step.operatorAccess.forEach((value, key) => {
+                accessObj[key] = value;
+              });
+              plain.operatorAccess = accessObj;
+            }
+            return plain;
+          });
+
+          const exportData = {
+            agentId: this.agentInfo.id,
+            agentName: this.agentInfo.name,
+            modelType: this.agentInfo.modelType,
+            exportedAt: new Date().toISOString(),
+            stepCount: exportSteps.length,
+            steps: exportSteps,
+          };
+
+          const jsonString = JSON.stringify(exportData, null, 2);
+          const blob = new Blob([jsonString], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `${this.agentInfo.name}-react-steps-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+
+          URL.revokeObjectURL(url);
+
+          this.notificationService.success(`Exported ${exportSteps.length} ReAct steps`);
+        },
+        error: (err: unknown) => {
+          console.error("Failed to export ReAct steps:", err);
+          this.notificationService.error("Failed to export ReAct steps");
+        },
+      });
+  }
+
   public isGenerating(): boolean {
     return this.agentState === CopilotState.GENERATING;
   }

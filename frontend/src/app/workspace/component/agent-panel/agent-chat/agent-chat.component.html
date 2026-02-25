@@ -87,6 +87,22 @@
         </button>
       </div>
 
+      <!-- Export ReAct steps button -->
+      <div class="toolbar-item">
+        <button
+          nz-button
+          nzType="text"
+          nzSize="small"
+          (click)="exportReActSteps()"
+          nz-tooltip
+          nzTooltipTitle="Export ReAct steps as JSON">
+          <i
+            nz-icon
+            nzType="file-done"
+            nzTheme="outline"></i>
+        </button>
+      </div>
+
       <!-- Clear button (when available) -->
       <div class="toolbar-item">
         <button

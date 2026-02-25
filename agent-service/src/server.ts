@@ -48,6 +48,7 @@ import type {
   AgentSettingsApi,
   ReActStep,
   AgentAction,
+  AgentMessageStats,
   TraceContent,
 } from "./types/agent";
 import { OperatorResultSerializationMode, AgentMode } from "./types/agent";
@@ -544,6 +545,7 @@ interface WsOutgoingMessage {
   steps?: ReActStep[];
   agentAction?: AgentAction;
   agentActions?: AgentAction[];
+  stats?: AgentMessageStats;
 }
 
 /**
@@ -661,10 +663,11 @@ const app = new Elysia()
             broadcastToAgent(agentId, { type: "step", step: lastStep });
           }
 
-          // Broadcast completion
+          // Broadcast completion with stats
           broadcastToAgent(agentId, {
             type: "complete",
             state: agent.getState(),
+            stats: result.stats,
           });
 
           console.log(`[WS] Agent ${agentId} completed with ${result.messages.length} steps`);

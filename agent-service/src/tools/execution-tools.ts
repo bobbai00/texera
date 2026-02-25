@@ -39,6 +39,11 @@ import { OperatorResultSerializationMode, DEFAULT_AGENT_SETTINGS } from "../type
 
 export const TOOL_NAME_EXECUTE_OPERATOR = "executeOperator";
 
+// Section separators used in execution results.
+// These are also used by context-optimization.ts to selectively trim sections.
+export const SECTION_EXECUTION_METADATA = "[Execution Metadata]";
+export const SECTION_EXECUTION_DATA = "[Execution Data]";
+
 // ============================================================================
 // Execution Configuration
 // ============================================================================
@@ -700,8 +705,15 @@ export async function executeOperatorAndFormat(
     // Surface warnings (e.g., duplicate column renames) so the agent can adjust its code
     const warningLines = opInfo.warnings?.map(w => w) ?? [];
 
-    const header = [dataflowLine, shapeLine, columnsLine, meta, ...warningLines].filter(Boolean).join("\n");
-    return header ? `${header}\n${dataString}` : dataString;
+    // Build structured result with separate metadata and data sections.
+    // Context optimization can trim the data section while preserving metadata.
+    const metadataLines = [dataflowLine, shapeLine, columnsLine, meta, ...warningLines].filter(Boolean);
+    const metadataSection = metadataLines.length > 0
+      ? `${SECTION_EXECUTION_METADATA}\n${metadataLines.join("\n")}`
+      : "";
+    const dataSection = `${SECTION_EXECUTION_DATA}\n${dataString}`;
+
+    return [metadataSection, dataSection].filter(Boolean).join("\n");
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw error;

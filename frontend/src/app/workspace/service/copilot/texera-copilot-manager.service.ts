@@ -546,6 +546,27 @@ export class TexeraCopilotManagerService {
         if (message.state) {
           tracking.stateSubject.next(this.mapStateToCopilotState(message.state));
         }
+        // Update message stats if stats are included
+        if (message.stats) {
+          const s = message.stats;
+          const stat: CopilotMessageStats = {
+            messageId: s.messageId,
+            userMessage: s.userMessage || "",
+            startTime: new Date(s.startTime),
+            endTime: s.endTime ? new Date(s.endTime) : undefined,
+            totalInputTokens: s.totalInputTokens || 0,
+            totalOutputTokens: s.totalOutputTokens || 0,
+            totalTokens: s.totalTokens || 0,
+            cachedInputTokens: s.cachedInputTokens || 0,
+            stepCount: s.stepCount || 0,
+            status: s.status || "completed",
+            errorMessage: s.errorMessage,
+          };
+          const currentStats = tracking.messageStatsSubject.getValue();
+          const updatedStats = new Map(currentStats);
+          updatedStats.set(stat.messageId, stat);
+          tracking.messageStatsSubject.next(updatedStats);
+        }
         break;
 
       case "agentAction":

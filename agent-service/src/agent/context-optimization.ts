@@ -33,7 +33,7 @@ import type { ModelMessage } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
 import { AgentMode } from "../types/agent";
 import { TOOL_NAME_CREATE_OR_MODIFY_OPERATOR } from "../tools/code-op-tools";
-import { TOOL_NAME_EXECUTE_OPERATOR } from "../tools/execution-tools";
+import { TOOL_NAME_EXECUTE_OPERATOR, SECTION_EXECUTION_DATA } from "../tools/execution-tools";
 
 // ============================================================================
 // Frontier Computation
@@ -51,15 +51,31 @@ export function computeFrontier(workflowState: WorkflowState, depth: number): st
 // Selective Execution Result Trimming
 // ============================================================================
 
+const TRIMMED_NOTICE = "(execution result skipped due to the context compaction)";
+
+/**
+ * Remove the "[Execution Data]" section from a result string while preserving
+ * everything before it (operator action description, "[Execution Metadata]", etc.).
+ * Returns the original string unchanged if no data section is found.
+ */
+function trimExecutionDataSection(resultStr: string): string {
+  const dataIdx = resultStr.indexOf(SECTION_EXECUTION_DATA);
+  if (dataIdx < 0) return resultStr;
+
+  // Keep everything before the data section marker, plus a trimmed notice
+  const before = resultStr.substring(0, dataIdx).trimEnd();
+  return before + "\n" + SECTION_EXECUTION_DATA + "\n" + TRIMMED_NOTICE;
+}
+
 /**
  * Trim execution results from non-frontier operators while keeping the full
  * message history intact.
  *
  * For each tool-result in the message history:
  * - Errors (results starting with "[ERROR]") are always preserved.
- * - Code mode (`createOrModifyOperator`): strips everything after the
- *   "--- Execution Result ---" marker, keeping the action description.
- * - General mode (`executeOperator`): replaces the entire result.
+ * - For execution-related tools (`createOrModifyOperator`, `executeOperator`):
+ *   Removes the "[Execution Data]" section (the raw table/JSON) while
+ *   preserving the "[Execution Metadata]" section (shape, dataflow, columns).
  * - All other tool results are kept as-is regardless of frontier status.
  *
  * @param messages - The full message history
@@ -78,14 +94,16 @@ export function trimNonFrontierResults(
   const frontierSet = new Set(frontierOpIds);
 
   // First pass: scan assistant messages to build toolCallId -> { toolName, operatorId } map
+  // Note: Vercel AI SDK uses `input` (not `args`) for tool-call parameters
   const toolCallMap = new Map<string, { toolName: string; operatorId?: string }>();
   for (const msg of messages) {
     if (msg.role === "assistant" && Array.isArray(msg.content)) {
       for (const part of msg.content as any[]) {
         if (part.type === "tool-call") {
+          const params = part.args || part.input || {};
           toolCallMap.set(part.toolCallId, {
             toolName: part.toolName,
-            operatorId: part.args?.operatorId,
+            operatorId: params.operatorId,
           });
         }
       }
@@ -93,6 +111,8 @@ export function trimNonFrontierResults(
   }
 
   // Second pass: clone and trim tool-result messages for non-frontier operators
+  // Note: Vercel AI SDK tool-result uses `output` (not `result`), and the output
+  // can be a structured object like { type: "text", value: "..." } or a plain string.
   let trimCount = 0;
   const trimmedMessages: ModelMessage[] = messages.map(msg => {
     if (msg.role !== "tool" || !Array.isArray(msg.content)) {
@@ -111,33 +131,43 @@ export function trimNonFrontierResults(
       // Only trim execution-related tools for non-frontier operators
       if (!operatorId || frontierSet.has(operatorId)) return part;
 
-      const resultStr = typeof part.result === "string" ? part.result : JSON.stringify(part.result);
+      // Extract the result string from whichever field/format the AI SDK uses
+      const rawResult = part.result ?? part.output;
+      let resultStr: string;
+      if (typeof rawResult === "string") {
+        resultStr = rawResult;
+      } else if (rawResult && typeof rawResult === "object" && rawResult.value !== undefined) {
+        // Structured format: { type: "text", value: "..." }
+        resultStr = String(rawResult.value);
+      } else {
+        resultStr = JSON.stringify(rawResult);
+      }
 
       // Always preserve errors — the agent needs to learn from failures
       if (resultStr.startsWith("[ERROR]")) return part;
 
-      if (toolName === TOOL_NAME_CREATE_OR_MODIFY_OPERATOR) {
-        const marker = "--- Execution Result ---";
-        const markerIdx = resultStr.indexOf(marker);
-        if (markerIdx >= 0) {
+      // Helper to build the replacement result in the same format as the original
+      const buildReplacement = (newText: string): any => {
+        if (part.result !== undefined) {
+          // Original uses `result` field
+          return { ...part, result: newText };
+        }
+        // Original uses `output` field
+        if (typeof rawResult === "object" && rawResult.value !== undefined) {
+          // Structured format: preserve the wrapper
+          return { ...part, output: { ...rawResult, value: newText } };
+        }
+        return { ...part, output: newText };
+      };
+
+      if (toolName === TOOL_NAME_CREATE_OR_MODIFY_OPERATOR || toolName === TOOL_NAME_EXECUTE_OPERATOR) {
+        const trimmedText = trimExecutionDataSection(resultStr);
+        if (trimmedText !== resultStr) {
           modified = true;
           trimCount++;
-          return {
-            ...part,
-            result: resultStr.substring(0, markerIdx + marker.length) +
-              "\n(Execution result omitted due to context optimization)",
-          };
+          return buildReplacement(trimmedText);
         }
         return part;
-      }
-
-      if (toolName === TOOL_NAME_EXECUTE_OPERATOR) {
-        modified = true;
-        trimCount++;
-        return {
-          ...part,
-          result: "(Execution result omitted due to context optimization)",
-        };
       }
 
       return part;

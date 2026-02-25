@@ -79,29 +79,6 @@ export class ReActStepDetailModalComponent {
   }
 
   /**
-   * Extract displayable text from a message object.
-   * Handles string content, array content (text parts, tool-call summaries).
-   */
-  public formatMessageContent(msg: any): string {
-    if (!msg) return "";
-    const content = msg.content;
-    if (typeof content === "string") {
-      return content;
-    }
-    if (Array.isArray(content)) {
-      return content
-        .map((part: any) => {
-          if (part.type === "text") return part.text || "";
-          if (part.type === "tool-call") return `[Tool Call: ${part.toolName}]`;
-          if (part.type === "tool-result") return `[Tool Result: ${part.toolCallId}]`;
-          return JSON.stringify(part);
-        })
-        .join("\n");
-    }
-    return JSON.stringify(content, null, 2);
-  }
-
-  /**
    * Get tag color for a message role.
    */
   public getMessageRoleColor(role: string): string {
@@ -115,5 +92,132 @@ export class ReActStepDetailModalComponent {
       default:
         return "default";
     }
+  }
+
+  // ============================================================================
+  // Input Messages helpers
+  // ============================================================================
+
+  /**
+   * Get text content from a message (user or assistant text parts).
+   */
+  public getTextFromMessage(msg: any): string {
+    if (!msg?.content) return "";
+    if (typeof msg.content === "string") return msg.content;
+    if (Array.isArray(msg.content)) {
+      return msg.content
+        .filter((p: any) => p.type === "text")
+        .map((p: any) => p.text || "")
+        .join("\n");
+    }
+    return "";
+  }
+
+  /**
+   * Get tool call summaries from an assistant message.
+   * Returns array of { toolName, operatorId, fullArgs } for display.
+   */
+  public getToolCallSummaries(msg: any): { toolName: string; operatorId: string; fullArgs: any }[] {
+    if (!msg?.content || !Array.isArray(msg.content)) return [];
+    return msg.content
+      .filter((p: any) => p.type === "tool-call")
+      .map((p: any) => {
+        const args = p.args || p.input || {};
+        return {
+          toolName: p.toolName,
+          operatorId: args.operatorId || "",
+          fullArgs: args,
+        };
+      });
+  }
+
+  /**
+   * Get tool calls from an assistant message, formatted as function-call strings.
+   */
+  public getToolCallStrings(msg: any): string[] {
+    if (!msg?.content || !Array.isArray(msg.content)) return [];
+    return msg.content
+      .filter((p: any) => p.type === "tool-call")
+      .map((p: any) => this.formatAsFunction(p));
+  }
+
+  /**
+   * Format a tool-call part as function-call notation: toolName(key=val, key=val)
+   */
+  private formatAsFunction(part: any): string {
+    const args = part.args || part.input || {};
+    const params = Object.entries(args)
+      .map(([k, v]) => {
+        let val: string;
+        if (typeof v === "string") {
+          val = v.length > 60 ? `"${v.substring(0, 60)}..."` : `"${v}"`;
+        } else {
+          const s = JSON.stringify(v);
+          val = s.length > 60 ? s.substring(0, 60) + "..." : s;
+        }
+        return `${k}=${val}`;
+      })
+      .join(", ");
+    return `${part.toolName}(${params})`;
+  }
+
+  /**
+   * Build a toolCallId → toolName map from all input messages.
+   */
+  private buildToolCallNameMap(messages: any[]): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const msg of messages) {
+      if (msg.role === "assistant" && Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if (part.type === "tool-call") {
+            map.set(part.toolCallId, part.toolName);
+          }
+        }
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Get full tool result content items for expanded view.
+   * Each item includes: toolName, resultContent string, approximate token count, and whether it was trimmed.
+   */
+  public getToolResultFullItems(
+    msg: any
+  ): { toolName: string; resultContent: string; tokenCount: number; isTrimmed: boolean }[] {
+    if (!msg?.content || !Array.isArray(msg.content)) return [];
+    const nameMap = this.step?.inputMessages ? this.buildToolCallNameMap(this.step.inputMessages) : new Map();
+    return msg.content
+      .filter((p: any) => p.type === "tool-result")
+      .map((p: any) => {
+        const raw = p.result ?? p.output ?? p.content ?? "";
+        const resultStr = typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
+        return {
+          toolName: nameMap.get(p.toolCallId) || p.toolCallId,
+          resultContent: resultStr,
+          tokenCount: Math.ceil(resultStr.length / 4),
+          isTrimmed: resultStr.includes("context compaction"),
+        };
+      });
+  }
+
+  /**
+   * Get structured tool results from a tool message.
+   * Each result includes: toolName, approximate token count, and whether it was trimmed.
+   */
+  public getToolResultItems(msg: any): { toolName: string; tokenCount: number; isTrimmed: boolean }[] {
+    if (!msg?.content || !Array.isArray(msg.content)) return [];
+    const nameMap = this.step?.inputMessages ? this.buildToolCallNameMap(this.step.inputMessages) : new Map();
+    return msg.content
+      .filter((p: any) => p.type === "tool-result")
+      .map((p: any) => {
+        const raw = p.result ?? p.output ?? p.content ?? "";
+        const resultStr = typeof raw === "string" ? raw : JSON.stringify(raw);
+        return {
+          toolName: nameMap.get(p.toolCallId) || p.toolCallId,
+          tokenCount: Math.ceil(resultStr.length / 4),
+          isTrimmed: resultStr.includes("context compaction"),
+        };
+      });
   }
 }
