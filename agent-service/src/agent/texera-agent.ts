@@ -484,6 +484,7 @@ export class TexeraAgent {
     fineGrainedPrompt?: boolean;
     enableContextOptimization?: boolean;
     frontierDepth?: number;
+    trimmedResultCharLimit?: number;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -521,6 +522,9 @@ export class TexeraAgent {
     }
     if (updates.frontierDepth !== undefined) {
       this.settings.frontierDepth = Math.max(1, updates.frontierDepth);
+    }
+    if (updates.trimmedResultCharLimit !== undefined) {
+      this.settings.trimmedResultCharLimit = Math.max(0, updates.trimmedResultCharLimit);
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt
@@ -726,7 +730,8 @@ export class TexeraAgent {
                 currentMessages,
                 this.workflowState,
                 this.settings.frontierDepth,
-                this.settings.agentMode
+                this.settings.agentMode,
+                this.settings.trimmedResultCharLimit
               );
               lastPreparedMessages = trimmed;
               return { messages: trimmed };

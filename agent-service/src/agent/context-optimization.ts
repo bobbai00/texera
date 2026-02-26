@@ -33,7 +33,7 @@ import type { ModelMessage } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
 import { AgentMode } from "../types/agent";
 import { TOOL_NAME_CREATE_OR_MODIFY_OPERATOR } from "../tools/code-op-tools";
-import { TOOL_NAME_EXECUTE_OPERATOR, SECTION_EXECUTION_DATA } from "../tools/execution-tools";
+import { TOOL_NAME_EXECUTE_OPERATOR, SECTION_EXECUTION_RESULT } from "../tools/execution-tools";
 
 // ============================================================================
 // Frontier Computation
@@ -54,17 +54,61 @@ export function computeFrontier(workflowState: WorkflowState, depth: number): st
 const TRIMMED_NOTICE = "(execution result skipped due to the context compaction)";
 
 /**
- * Remove the "[Execution Data]" section from a result string while preserving
- * everything before it (operator action description, "[Execution Metadata]", etc.).
- * Returns the original string unchanged if no data section is found.
+ * Remove or partially keep the "--- Execution Result ---" section from a result string
+ * while preserving everything before it (operator action description,
+ * "--- Execution Metadata ---", etc.).
+ *
+ * @param resultStr - The full result string
+ * @param charLimit - Max chars to keep from result rows (0 = fully trim)
+ * @returns The original string unchanged if no result section is found.
  */
-function trimExecutionDataSection(resultStr: string): string {
-  const dataIdx = resultStr.indexOf(SECTION_EXECUTION_DATA);
-  if (dataIdx < 0) return resultStr;
+function trimExecutionResultSection(resultStr: string, charLimit: number): string {
+  const resultIdx = resultStr.indexOf(SECTION_EXECUTION_RESULT);
+  if (resultIdx < 0) return resultStr;
 
-  // Keep everything before the data section marker, plus a trimmed notice
-  const before = resultStr.substring(0, dataIdx).trimEnd();
-  return before + "\n" + SECTION_EXECUTION_DATA + "\n" + TRIMMED_NOTICE;
+  const before = resultStr.substring(0, resultIdx).trimEnd();
+
+  if (charLimit <= 0) {
+    // Fully trim: replace data with notice
+    return before + "\n\n" + SECTION_EXECUTION_RESULT + "\n" + TRIMMED_NOTICE;
+  }
+
+  // Partial trim: always keep header, then keep data rows up to charLimit
+  const afterMarker = resultStr.substring(resultIdx + SECTION_EXECUTION_RESULT.length);
+  const allLines = afterMarker.split("\n");
+
+  // Separate into non-empty lines: first is header, rest are data rows
+  const nonEmptyLines = allLines.filter(l => l.trim() !== "");
+  if (nonEmptyLines.length === 0) {
+    return before + "\n\n" + SECTION_EXECUTION_RESULT + "\n" + TRIMMED_NOTICE;
+  }
+
+  const headerLine = nonEmptyLines[0];
+  const dataRows = nonEmptyLines.slice(1);
+  const totalDataRows = dataRows.length;
+
+  // Keep data rows up to charLimit (header doesn't count toward limit)
+  let accumulated = 0;
+  const keptDataRows: string[] = [];
+  for (const row of dataRows) {
+    const rowLen = row.length + 1; // +1 for newline
+    if (accumulated + rowLen > charLimit && keptDataRows.length > 0) {
+      break;
+    }
+    keptDataRows.push(row);
+    accumulated += rowLen;
+  }
+
+  const keptCount = keptDataRows.length;
+  const keptResult = [headerLine, ...keptDataRows].join("\n");
+
+  // Use same "X/Y rows" format as the existing token-limit truncation notice
+  const notice =
+    keptCount < totalDataRows
+      ? `\n${keptCount}/${totalDataRows} rows are displayed due to the context compaction`
+      : "";
+
+  return before + "\n\n" + SECTION_EXECUTION_RESULT + "\n" + keptResult + notice;
 }
 
 /**
@@ -74,8 +118,8 @@ function trimExecutionDataSection(resultStr: string): string {
  * For each tool-result in the message history:
  * - Errors (results starting with "[ERROR]") are always preserved.
  * - For execution-related tools (`createOrModifyOperator`, `executeOperator`):
- *   Removes the "[Execution Data]" section (the raw table/JSON) while
- *   preserving the "[Execution Metadata]" section (shape, dataflow, columns).
+ *   Removes the "--- Execution Result ---" section (the raw table/JSON) while
+ *   preserving the "--- Execution Metadata ---" section (shape, dataflow, columns).
  * - All other tool results are kept as-is regardless of frontier status.
  *
  * @param messages - The full message history
@@ -88,7 +132,8 @@ export function trimNonFrontierResults(
   messages: ModelMessage[],
   workflowState: WorkflowState,
   frontierDepth: number,
-  agentMode: AgentMode
+  agentMode: AgentMode,
+  trimmedResultCharLimit: number = 0
 ): ModelMessage[] {
   const frontierOpIds = computeFrontier(workflowState, frontierDepth);
   const frontierSet = new Set(frontierOpIds);
@@ -161,7 +206,7 @@ export function trimNonFrontierResults(
       };
 
       if (toolName === TOOL_NAME_CREATE_OR_MODIFY_OPERATOR || toolName === TOOL_NAME_EXECUTE_OPERATOR) {
-        const trimmedText = trimExecutionDataSection(resultStr);
+        const trimmedText = trimExecutionResultSection(resultStr, trimmedResultCharLimit);
         if (trimmedText !== resultStr) {
           modified = true;
           trimCount++;

@@ -200,6 +200,8 @@ export interface AgentSettings {
   enableContextOptimization: boolean;
   /** Number of BFS levels backward from leaf operators for frontier computation */
   frontierDepth: number;
+  /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
+  trimmedResultCharLimit: number;
 }
 
 /**
@@ -217,6 +219,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   fineGrainedPrompt: false, // Default to standard prompts
   enableContextOptimization: false,
   frontierDepth: 1,
+  trimmedResultCharLimit: 0,
 };
 
 // ============================================================================
@@ -275,6 +278,8 @@ export interface AgentSettingsApi {
   enableContextOptimization?: boolean;
   /** Number of BFS levels backward from leaf operators for frontier computation */
   frontierDepth?: number;
+  /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
+  trimmedResultCharLimit?: number;
 }
 
 /**
@@ -334,6 +339,8 @@ export interface UpdateAgentSettingsRequest {
   enableContextOptimization?: boolean;
   /** Number of BFS levels backward from leaf operators for frontier computation */
   frontierDepth?: number;
+  /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
+  trimmedResultCharLimit?: number;
 }
 
 // ============================================================================

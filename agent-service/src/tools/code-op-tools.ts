@@ -502,7 +502,7 @@ Example: operatorId="filtered" (requires "customers" to exist)
         // Always auto-execute and return results
         if (context?.executeOperator) {
           const executionResult = await context.executeOperator(operatorId);
-          resultMsg += `\n\n--- Execution Result ---\n${executionResult}`;
+          resultMsg += `\n\n${executionResult}`;
         }
 
         return createToolResult(resultMsg);

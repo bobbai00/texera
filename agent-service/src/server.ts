@@ -170,6 +170,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     fineGrainedPrompt: agentSettings.fineGrainedPrompt,
     enableContextOptimization: agentSettings.enableContextOptimization,
     frontierDepth: agentSettings.frontierDepth,
+    trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -263,6 +264,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           fineGrainedPrompt: settings.fineGrainedPrompt,
           enableContextOptimization: settings.enableContextOptimization,
           frontierDepth: settings.frontierDepth,
+          trimmedResultCharLimit: settings.trimmedResultCharLimit,
         });
       }
 
@@ -290,6 +292,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             fineGrainedPrompt: t.Optional(t.Boolean()),
             enableContextOptimization: t.Optional(t.Boolean()),
             frontierDepth: t.Optional(t.Number()),
+            trimmedResultCharLimit: t.Optional(t.Number()),
           })
         ),
       }),
@@ -457,6 +460,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       fineGrainedPrompt: agentSettings.fineGrainedPrompt,
       enableContextOptimization: agentSettings.enableContextOptimization,
       frontierDepth: agentSettings.frontierDepth,
+      trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
     };
   })
 
@@ -488,6 +492,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         fineGrainedPrompt: settings.fineGrainedPrompt,
         enableContextOptimization: settings.enableContextOptimization,
         frontierDepth: settings.frontierDepth,
+        trimmedResultCharLimit: settings.trimmedResultCharLimit,
       });
 
       // Return updated settings
@@ -504,6 +509,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         fineGrainedPrompt: agentSettings.fineGrainedPrompt,
         enableContextOptimization: agentSettings.enableContextOptimization,
         frontierDepth: agentSettings.frontierDepth,
+        trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
       };
     },
     {
@@ -521,6 +527,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         fineGrainedPrompt: t.Optional(t.Boolean()),
         enableContextOptimization: t.Optional(t.Boolean()),
         frontierDepth: t.Optional(t.Number()),
+        trimmedResultCharLimit: t.Optional(t.Number()),
       }),
     }
   );

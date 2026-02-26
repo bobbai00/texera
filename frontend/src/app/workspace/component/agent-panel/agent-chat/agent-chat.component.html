@@ -845,6 +845,31 @@
               >
             </div>
           </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">Trimmed Result Char Limit</label>
+            <div class="settings-param-input">
+              <nz-input-number
+                [(ngModel)]="settingsTrimmedResultCharLimit"
+                [nzMin]="0"
+                [nzMax]="100000"
+                [nzStep]="500"
+                nzSize="small"
+                [nzDisabled]="!settingsEnableContextOptimization"
+                style="width: 120px"></nz-input-number>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                [disabled]="!settingsEnableContextOptimization"
+                (click)="saveTrimmedResultCharLimit()">
+                Save
+              </button>
+              <span class="settings-param-hint"
+                >Max characters to keep from trimmed (non-frontier) results (0 = fully skip). Cuts at row boundaries. Must not exceed max operator result limit.</span
+              >
+            </div>
+          </div>
         </div>
       </nz-tab>
 

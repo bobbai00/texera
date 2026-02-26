@@ -68,6 +68,8 @@ export interface AgentSettingsApi {
   enableContextOptimization?: boolean;
   /** Number of BFS levels backward from leaf operators for frontier computation */
   frontierDepth?: number;
+  /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
+  trimmedResultCharLimit?: number;
 }
 
 /**
@@ -1276,6 +1278,7 @@ export class TexeraCopilotManagerService {
           fineGrainedPrompt: false,
           enableContextOptimization: false,
           frontierDepth: 1,
+          trimmedResultCharLimit: 0,
         })
       )
     );

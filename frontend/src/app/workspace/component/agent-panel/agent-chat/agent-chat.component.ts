@@ -116,6 +116,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsFineGrainedPrompt = false; // Use fine-grained prompts with atomic operation constraints
   public settingsEnableContextOptimization = false; // Enable context optimization
   public settingsFrontierDepth = 1; // Frontier depth for context optimization
+  public settingsTrimmedResultCharLimit = 0; // Max chars to keep from trimmed results (0 = fully skip)
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -426,6 +427,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsFineGrainedPrompt = settings.fineGrainedPrompt ?? false;
         this.settingsEnableContextOptimization = settings.enableContextOptimization ?? false;
         this.settingsFrontierDepth = settings.frontierDepth ?? 1;
+        this.settingsTrimmedResultCharLimit = settings.trimmedResultCharLimit ?? 0;
       });
 
     // Also load agent internal state
@@ -1309,6 +1311,27 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       .pipe(untilDestroyed(this))
       .subscribe({
         next: () => this.notificationService.success("Frontier depth saved"),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the trimmed result character limit setting.
+   */
+  public saveTrimmedResultCharLimit(): void {
+    if (this.settingsTrimmedResultCharLimit > this.settingsMaxCharLimit) {
+      this.notificationService.error(
+        `Trimmed result limit (${this.settingsTrimmedResultCharLimit}) cannot exceed max operator result limit (${this.settingsMaxCharLimit})`
+      );
+      return;
+    }
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        trimmedResultCharLimit: this.settingsTrimmedResultCharLimit,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () => this.notificationService.success("Trimmed result character limit saved"),
         error: () => {},
       });
   }
