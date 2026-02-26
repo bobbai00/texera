@@ -70,6 +70,8 @@ export interface AgentSettingsApi {
   frontierDepth?: number;
   /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
   trimmedResultCharLimit?: number;
+  /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
+  cacheEnabled?: boolean;
 }
 
 /**
@@ -1279,6 +1281,7 @@ export class TexeraCopilotManagerService {
           enableContextOptimization: false,
           frontierDepth: 1,
           trimmedResultCharLimit: 0,
+          cacheEnabled: true,
         })
       )
     );

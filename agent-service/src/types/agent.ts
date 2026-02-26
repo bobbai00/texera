@@ -202,6 +202,8 @@ export interface AgentSettings {
   frontierDepth: number;
   /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
   trimmedResultCharLimit: number;
+  /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
+  cacheEnabled: boolean;
 }
 
 /**
@@ -220,6 +222,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   enableContextOptimization: false,
   frontierDepth: 1,
   trimmedResultCharLimit: 0,
+  cacheEnabled: true,
 };
 
 // ============================================================================
@@ -280,6 +283,8 @@ export interface AgentSettingsApi {
   frontierDepth?: number;
   /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
   trimmedResultCharLimit?: number;
+  /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
+  cacheEnabled?: boolean;
 }
 
 /**
@@ -341,6 +346,8 @@ export interface UpdateAgentSettingsRequest {
   frontierDepth?: number;
   /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
   trimmedResultCharLimit?: number;
+  /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
+  cacheEnabled?: boolean;
 }
 
 // ============================================================================

@@ -66,7 +66,8 @@ case class SyncExecutionRequest(
     targetOperatorIds: List[String],
     timeoutSeconds: Int, // Execution timeout in seconds
     maxOperatorResultCharLimit: Int, // Max characters for operator results (uses symmetric truncation)
-    maxOperatorResultCellCharLimit: Int // Max characters per cell
+    maxOperatorResultCellCharLimit: Int, // Max characters per cell
+    cacheEnabled: Boolean = true // Whether to enable operator result caching
 )
 
 /**
@@ -202,9 +203,11 @@ class SyncExecutionResource extends LazyLogging {
         engineVersion = "1.0",
         logicalPlan = effectiveLogicalPlan,
         replayFromExecution = None,
-        workflowSettings = request.workflowSettings.getOrElse(
-          WorkflowSettings(dataTransferBatchSize = ApplicationConfig.defaultDataTransferBatchSize)
-        ),
+        workflowSettings = request.workflowSettings
+          .getOrElse(
+            WorkflowSettings(dataTransferBatchSize = ApplicationConfig.defaultDataTransferBatchSize)
+          )
+          .copy(cacheEnabled = request.cacheEnabled),
         emailNotificationEnabled = false,
         computingUnitId = computingUnitId
       )

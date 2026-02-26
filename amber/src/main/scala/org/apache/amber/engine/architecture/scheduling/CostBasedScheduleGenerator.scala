@@ -210,15 +210,17 @@ class CostBasedScheduleGenerator(
   }
 
   def generate(): (Schedule, PhysicalPlan) = {
-    // Analyze cache hits before schedule generation
-    val analysisResult = analyzeCacheHits()
-    cacheAnalysisResult = Some(analysisResult)
+    // Analyze cache hits before schedule generation (skip if caching is disabled)
+    if (workflowContext.workflowSettings.cacheEnabled) {
+      val analysisResult = analyzeCacheHits()
+      cacheAnalysisResult = Some(analysisResult)
 
-    // Store cache keys for this execution so RegionExecutionCoordinator can access them
-    PortResultCache.storeCacheKeysForExecution(
-      workflowContext.executionId,
-      analysisResult.cacheKeys
-    )
+      // Store cache keys for this execution so RegionExecutionCoordinator can access them
+      PortResultCache.storeCacheKeysForExecution(
+        workflowContext.executionId,
+        analysisResult.cacheKeys
+      )
+    }
 
     val startTime = System.nanoTime()
     val regionDAG = createRegionDAG()

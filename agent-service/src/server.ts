@@ -171,6 +171,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     enableContextOptimization: agentSettings.enableContextOptimization,
     frontierDepth: agentSettings.frontierDepth,
     trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
+    cacheEnabled: agentSettings.cacheEnabled,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -265,6 +266,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           enableContextOptimization: settings.enableContextOptimization,
           frontierDepth: settings.frontierDepth,
           trimmedResultCharLimit: settings.trimmedResultCharLimit,
+          cacheEnabled: settings.cacheEnabled,
         });
       }
 
@@ -293,6 +295,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             enableContextOptimization: t.Optional(t.Boolean()),
             frontierDepth: t.Optional(t.Number()),
             trimmedResultCharLimit: t.Optional(t.Number()),
+            cacheEnabled: t.Optional(t.Boolean()),
           })
         ),
       }),
@@ -461,6 +464,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       enableContextOptimization: agentSettings.enableContextOptimization,
       frontierDepth: agentSettings.frontierDepth,
       trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
+      cacheEnabled: agentSettings.cacheEnabled,
     };
   })
 
@@ -493,6 +497,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         enableContextOptimization: settings.enableContextOptimization,
         frontierDepth: settings.frontierDepth,
         trimmedResultCharLimit: settings.trimmedResultCharLimit,
+        cacheEnabled: settings.cacheEnabled,
       });
 
       // Return updated settings
@@ -510,6 +515,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         enableContextOptimization: agentSettings.enableContextOptimization,
         frontierDepth: agentSettings.frontierDepth,
         trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
+        cacheEnabled: agentSettings.cacheEnabled,
       };
     },
     {
@@ -528,6 +534,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         enableContextOptimization: t.Optional(t.Boolean()),
         frontierDepth: t.Optional(t.Number()),
         trimmedResultCharLimit: t.Optional(t.Number()),
+        cacheEnabled: t.Optional(t.Boolean()),
       }),
     }
   );

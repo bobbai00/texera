@@ -60,6 +60,8 @@ export interface ExecutionConfig {
   maxOperatorResultCellCharLimit?: number;
   /** Execution timeout in milliseconds */
   executionTimeoutMs?: number;
+  /** Whether to enable operator result caching */
+  cacheEnabled?: boolean;
 }
 
 // ============================================================================
@@ -318,6 +320,7 @@ async function executeWorkflowHttp(
     maxOperatorResultCharLimit: config.maxOperatorResultCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit,
     maxOperatorResultCellCharLimit:
       config.maxOperatorResultCellCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCellCharLimit,
+    cacheEnabled: config.cacheEnabled ?? DEFAULT_AGENT_SETTINGS.cacheEnabled,
   };
 
   console.log(

@@ -117,6 +117,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsEnableContextOptimization = false; // Enable context optimization
   public settingsFrontierDepth = 1; // Frontier depth for context optimization
   public settingsTrimmedResultCharLimit = 0; // Max chars to keep from trimmed results (0 = fully skip)
+  public settingsCacheEnabled = true; // Whether to enable operator result caching
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -428,6 +429,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsEnableContextOptimization = settings.enableContextOptimization ?? false;
         this.settingsFrontierDepth = settings.frontierDepth ?? 1;
         this.settingsTrimmedResultCharLimit = settings.trimmedResultCharLimit ?? 0;
+        this.settingsCacheEnabled = settings.cacheEnabled ?? true;
       });
 
     // Also load agent internal state
@@ -1332,6 +1334,24 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       .pipe(untilDestroyed(this))
       .subscribe({
         next: () => this.notificationService.success("Trimmed result character limit saved"),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the cache enabled setting.
+   */
+  public saveCacheEnabled(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        cacheEnabled: this.settingsCacheEnabled,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsCacheEnabled ? "Operator result caching enabled" : "Operator result caching disabled"
+          ),
         error: () => {},
       });
   }

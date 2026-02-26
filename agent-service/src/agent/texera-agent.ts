@@ -283,6 +283,7 @@ export class TexeraAgent {
           maxOperatorResultCellCharLimit: this.settings.maxOperatorResultCellCharLimit,
           serializationMode: this.settings.operatorResultSerializationMode,
           executionTimeoutMs: this.settings.executionTimeoutMs,
+          cacheEnabled: this.settings.cacheEnabled,
         })
       : undefined;
 
@@ -485,6 +486,7 @@ export class TexeraAgent {
     enableContextOptimization?: boolean;
     frontierDepth?: number;
     trimmedResultCharLimit?: number;
+    cacheEnabled?: boolean;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -525,6 +527,9 @@ export class TexeraAgent {
     }
     if (updates.trimmedResultCharLimit !== undefined) {
       this.settings.trimmedResultCharLimit = Math.max(0, updates.trimmedResultCharLimit);
+    }
+    if (updates.cacheEnabled !== undefined) {
+      this.settings.cacheEnabled = updates.cacheEnabled;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt

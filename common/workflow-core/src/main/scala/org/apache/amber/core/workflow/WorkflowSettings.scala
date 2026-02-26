@@ -21,5 +21,6 @@ package org.apache.amber.core.workflow
 
 case class WorkflowSettings(
     dataTransferBatchSize: Int,
-    outputPortsNeedingStorage: Set[GlobalPortIdentity] = Set.empty
+    outputPortsNeedingStorage: Set[GlobalPortIdentity] = Set.empty,
+    cacheEnabled: Boolean = true
 )
