@@ -73,7 +73,8 @@ function trimExecutionResultSection(resultStr: string, charLimit: number): strin
     return before + "\n\n" + SECTION_EXECUTION_RESULT + "\n" + TRIMMED_NOTICE;
   }
 
-  // Partial trim: always keep header, then keep data rows up to charLimit
+  // Partial trim with symmetric truncation: keep first X rows + last Y rows
+  // matching the backend's approach in SyncExecutionResource.scala
   const afterMarker = resultStr.substring(resultIdx + SECTION_EXECUTION_RESULT.length);
   const allLines = afterMarker.split("\n");
 
@@ -87,22 +88,33 @@ function trimExecutionResultSection(resultStr: string, charLimit: number): strin
   const dataRows = nonEmptyLines.slice(1);
   const totalDataRows = dataRows.length;
 
-  // Keep data rows up to charLimit (header doesn't count toward limit)
-  let accumulated = 0;
-  const keptDataRows: string[] = [];
+  // Allocate half the budget for front rows, half for back rows
+  const halfLimit = Math.floor(charLimit / 2);
+
+  // Collect front rows
+  let frontSize = 0;
+  const frontRows: string[] = [];
   for (const row of dataRows) {
     const rowLen = row.length + 1; // +1 for newline
-    if (accumulated + rowLen > charLimit && keptDataRows.length > 0) {
-      break;
-    }
-    keptDataRows.push(row);
-    accumulated += rowLen;
+    if (frontSize + rowLen > halfLimit && frontRows.length > 0) break;
+    frontRows.push(row);
+    frontSize += rowLen;
   }
 
-  const keptCount = keptDataRows.length;
-  const keptResult = [headerLine, ...keptDataRows].join("\n");
+  // Collect back rows (scan from end, keep within half budget)
+  let backSize = 0;
+  const backRows: string[] = [];
+  for (let i = dataRows.length - 1; i >= frontRows.length; i--) {
+    const rowLen = dataRows[i].length + 1;
+    if (backSize + rowLen > halfLimit && backRows.length > 0) break;
+    backRows.unshift(dataRows[i]);
+    backSize += rowLen;
+  }
 
-  // Use same "X/Y rows" format as the existing token-limit truncation notice
+  const keptCount = frontRows.length + backRows.length;
+  const keptRows = [...frontRows, ...backRows];
+  const keptResult = [headerLine, ...keptRows].join("\n");
+
   const notice =
     keptCount < totalDataRows
       ? `\n${keptCount}/${totalDataRows} rows are displayed due to the context compaction`
