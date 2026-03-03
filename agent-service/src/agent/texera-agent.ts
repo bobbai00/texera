@@ -492,6 +492,7 @@ export class TexeraAgent {
     cacheEnabled?: boolean;
     executionBackend?: ExecutionBackend;
     latestOnly?: boolean;
+    dynamicDepthEnabled?: boolean;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -541,6 +542,9 @@ export class TexeraAgent {
     }
     if (updates.latestOnly !== undefined) {
       this.settings.latestOnly = updates.latestOnly;
+    }
+    if (updates.dynamicDepthEnabled !== undefined) {
+      this.settings.dynamicDepthEnabled = updates.dynamicDepthEnabled;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt
@@ -749,10 +753,13 @@ export class TexeraAgent {
               }
               // context optimization second: trims execution result sections
               if (this.settings.enableContextOptimization) {
+                const effectiveDepth = this.settings.dynamicDepthEnabled
+                  ? this.workflowState.computeAveragePathLength()
+                  : this.settings.frontierDepth;
                 processed = trimNonFrontierResults(
                   processed,
                   this.workflowState,
-                  this.settings.frontierDepth,
+                  effectiveDepth,
                   this.settings.agentMode,
                   this.settings.trimmedResultCharLimit
                 );

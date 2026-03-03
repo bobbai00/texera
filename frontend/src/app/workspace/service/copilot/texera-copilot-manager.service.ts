@@ -76,6 +76,8 @@ export interface AgentSettingsApi {
   executionBackend?: "texera" | "hamilton";
   /** Keep only the latest tool call/result for each operator still in the workflow */
   latestOnly?: boolean;
+  /** Automatically compute frontier depth as ceil(average source-to-sink path length) */
+  dynamicDepthEnabled?: boolean;
 }
 
 /**
@@ -1288,6 +1290,7 @@ export class TexeraCopilotManagerService {
           cacheEnabled: true,
           executionBackend: "texera" as const,
           latestOnly: false,
+          dynamicDepthEnabled: false,
         })
       )
     );

@@ -120,6 +120,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsCacheEnabled = true; // Whether to enable operator result caching
   public settingsExecutionBackend: "texera" | "hamilton" = "texera"; // Execution backend
   public settingsLatestOnly = false; // Keep only latest tool call/result per operator
+  public settingsDynamicDepthEnabled = false; // Automatically compute frontier depth
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -434,6 +435,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsCacheEnabled = settings.cacheEnabled ?? true;
         this.settingsExecutionBackend = settings.executionBackend ?? "texera";
         this.settingsLatestOnly = settings.latestOnly ?? false;
+        this.settingsDynamicDepthEnabled = settings.dynamicDepthEnabled ?? false;
       });
 
     // Also load agent internal state
@@ -1393,6 +1395,24 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         next: () =>
           this.notificationService.success(
             this.settingsLatestOnly ? "Latest-only filter enabled" : "Latest-only filter disabled"
+          ),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the dynamic depth enabled setting.
+   */
+  public saveDynamicDepthEnabled(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        dynamicDepthEnabled: this.settingsDynamicDepthEnabled,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsDynamicDepthEnabled ? "Dynamic depth enabled" : "Dynamic depth disabled"
           ),
         error: () => {},
       });

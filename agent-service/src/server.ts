@@ -174,6 +174,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     cacheEnabled: agentSettings.cacheEnabled,
     executionBackend: agentSettings.executionBackend,
     latestOnly: agentSettings.latestOnly,
+    dynamicDepthEnabled: agentSettings.dynamicDepthEnabled,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -273,6 +274,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             ? (settings.executionBackend as ExecutionBackend)
             : undefined,
           latestOnly: settings.latestOnly,
+          dynamicDepthEnabled: settings.dynamicDepthEnabled,
         });
       }
 
@@ -304,6 +306,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             cacheEnabled: t.Optional(t.Boolean()),
             executionBackend: t.Optional(t.Union([t.Literal("texera"), t.Literal("hamilton")])),
             latestOnly: t.Optional(t.Boolean()),
+            dynamicDepthEnabled: t.Optional(t.Boolean()),
           })
         ),
       }),
@@ -475,6 +478,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       cacheEnabled: agentSettings.cacheEnabled,
       executionBackend: agentSettings.executionBackend,
       latestOnly: agentSettings.latestOnly,
+      dynamicDepthEnabled: agentSettings.dynamicDepthEnabled,
     };
   })
 
@@ -512,6 +516,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           ? (settings.executionBackend as ExecutionBackend)
           : undefined,
         latestOnly: settings.latestOnly,
+        dynamicDepthEnabled: settings.dynamicDepthEnabled,
       });
 
       // Return updated settings
@@ -532,6 +537,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         cacheEnabled: agentSettings.cacheEnabled,
         executionBackend: agentSettings.executionBackend,
         latestOnly: agentSettings.latestOnly,
+        dynamicDepthEnabled: agentSettings.dynamicDepthEnabled,
       };
     },
     {
@@ -553,6 +559,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         cacheEnabled: t.Optional(t.Boolean()),
         executionBackend: t.Optional(t.Union([t.Literal("texera"), t.Literal("hamilton")])),
         latestOnly: t.Optional(t.Boolean()),
+        dynamicDepthEnabled: t.Optional(t.Boolean()),
       }),
     }
   );

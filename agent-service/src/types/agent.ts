@@ -218,6 +218,8 @@ export interface AgentSettings {
   executionBackend: ExecutionBackend;
   /** Keep only the latest tool call/result for each operator still in the workflow */
   latestOnly: boolean;
+  /** Automatically compute frontier depth as ceil(average source-to-sink path length) */
+  dynamicDepthEnabled: boolean;
 }
 
 /**
@@ -239,6 +241,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   cacheEnabled: true,
   executionBackend: ExecutionBackend.TEXERA,
   latestOnly: false,
+  dynamicDepthEnabled: false,
 };
 
 // ============================================================================
@@ -305,6 +308,8 @@ export interface AgentSettingsApi {
   executionBackend?: "texera" | "hamilton";
   /** Keep only the latest tool call/result for each operator still in the workflow */
   latestOnly?: boolean;
+  /** Automatically compute frontier depth as ceil(average source-to-sink path length) */
+  dynamicDepthEnabled?: boolean;
 }
 
 /**
@@ -372,6 +377,8 @@ export interface UpdateAgentSettingsRequest {
   executionBackend?: "texera" | "hamilton";
   /** Keep only the latest tool call/result for each operator still in the workflow */
   latestOnly?: boolean;
+  /** Automatically compute frontier depth as ceil(average source-to-sink path length) */
+  dynamicDepthEnabled?: boolean;
 }
 
 // ============================================================================
