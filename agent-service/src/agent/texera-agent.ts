@@ -769,14 +769,9 @@ export class TexeraAgent {
             }
           : undefined,
         abortSignal: this.abortController?.signal,
-        // Disable parallel tool calls to ensure sequential execution.
         // Note: reasoning_effort is NOT passed here — it's configured per-model in
         // litellm-config.yaml via extra_body to bypass LiteLLM's param validation.
-        providerOptions: {
-          openai: { parallelToolCalls: false },
-          anthropic: { disableParallelToolUse: true },
-          mistral: { parallelToolCalls: false },
-        },
+        providerOptions: {},
         onStepFinish: async ({ text, toolCalls, toolResults, usage }) => {
           stepIndex++; // Increment first since user message is step 0
 

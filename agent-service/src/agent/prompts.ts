@@ -89,20 +89,19 @@ Note: Each operator below contains exactly ONE data operation, following the fin
  * Common example continuation (shared between standard and fine-grained).
  */
 const EXAMPLE_CONTINUATION = `
-Thought: Now I understand the definitions. Let me sample both data files to understand their schema.
+Thought: Now I understand the definitions. Let me sample both data files to understand their schema. These two operators are independent, so I'll create them in parallel.
 Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/customers.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
   retrieveResult=true, summary="Sample customers schema"
-Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
-
 Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/orders.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
   retrieveResult=true, summary="Sample orders schema"
+Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
 Observation: Added operator "sample_orders". 4 columns: order_id, customer_id, amount, order_date (6 sample rows)
 
-Thought: Now that I have loaded the samples, I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data. I'll set retrieveResult=false since full datasets are too large to inspect.
+Thought: Now that I have loaded the samples, I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data. These loads are independent, so I'll batch them in parallel with retrieveResult=false.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
   retrieveResult=false, summary="Load complete customers"
@@ -294,7 +293,7 @@ const KEY_PRINCIPLES_PREAMBLE_FINE_GRAINED = `
 2. **Decompose to atoms**: Break down every analysis into atomic operations. Never chain multiple DataFrame operations. \`df.filter().groupby().sum()\` must become three operators: filter_op → groupby_op → sum_op.`;
 
 /**
- * Shared principles 3-10 — identical across standard and fine-grained modes.
+ * Shared principles 3-11 — identical across standard and fine-grained modes.
  */
 const KEY_PRINCIPLES_SHARED = `3. **Build incrementally**: Always link new operators to existing ones to reuse intermediate results. Never recreate data that already exists in the workflow.
 4. **Examine data before processing**: Do NOT assume files are clean or well-formatted. Before processing, inspect the raw file to check for: correct delimiters, presence of a header row, metadata/comment rows above the data, or multiple sub-tables. If column names appear generic or auto-generated (e.g., Unnamed:, 0, 1, 2), the header was not correctly identified — find the real header and re-load by modifying the source operator.
@@ -303,7 +302,8 @@ const KEY_PRINCIPLES_SHARED = `3. **Build incrementally**: Always link new opera
 7. **Load the complete data for data analysis**: After sampling and inspecting the data to understand its schema and value ranges, create a **separate** operator that loads the complete data for the actual pipeline. Never connect downstream processing operators to the sampling operator — it only contains a few rows. The full-data operator is what the rest of the pipeline must link to.
 8. **Cross-validate results**: After obtaining a result, critically question it. If the result looks plausible but you are not confident, create a separate validation operator to verify
 9. **Refining the dataflow by modifying related operators**: When you spot an issue in the result, go back and modify the operators that caused it or you think is related to it; you can always change the earlier-added operators if you think something is wrong.
-10. **Debug by isolating the problematic logic**: When encountering unexpected results, make the operator contain ONLY the problematic logic to better debug the problem.`;
+10. **Debug by isolating the problematic logic**: When encountering unexpected results, make the operator contain ONLY the problematic logic to better debug the problem.
+11. **Batch independent operations**: When multiple operators have no dependency on each other (e.g., loading several data files, or creating sampling operators), create them all in a single step using parallel tool calls. This reduces round-trips and saves tokens.`;
 
 /**
  * Fine-grained suffix — critical constraint appended only in fine-grained mode.
