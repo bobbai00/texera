@@ -173,6 +173,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
     cacheEnabled: agentSettings.cacheEnabled,
     executionBackend: agentSettings.executionBackend,
+    latestOnly: agentSettings.latestOnly,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -271,6 +272,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           executionBackend: settings.executionBackend
             ? (settings.executionBackend as ExecutionBackend)
             : undefined,
+          latestOnly: settings.latestOnly,
         });
       }
 
@@ -301,6 +303,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             trimmedResultCharLimit: t.Optional(t.Number()),
             cacheEnabled: t.Optional(t.Boolean()),
             executionBackend: t.Optional(t.Union([t.Literal("texera"), t.Literal("hamilton")])),
+            latestOnly: t.Optional(t.Boolean()),
           })
         ),
       }),
@@ -471,6 +474,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
       cacheEnabled: agentSettings.cacheEnabled,
       executionBackend: agentSettings.executionBackend,
+      latestOnly: agentSettings.latestOnly,
     };
   })
 
@@ -507,6 +511,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         executionBackend: settings.executionBackend
           ? (settings.executionBackend as ExecutionBackend)
           : undefined,
+        latestOnly: settings.latestOnly,
       });
 
       // Return updated settings
@@ -526,6 +531,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
         cacheEnabled: agentSettings.cacheEnabled,
         executionBackend: agentSettings.executionBackend,
+        latestOnly: agentSettings.latestOnly,
       };
     },
     {
@@ -546,6 +552,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         trimmedResultCharLimit: t.Optional(t.Number()),
         cacheEnabled: t.Optional(t.Boolean()),
         executionBackend: t.Optional(t.Union([t.Literal("texera"), t.Literal("hamilton")])),
+        latestOnly: t.Optional(t.Boolean()),
       }),
     }
   );

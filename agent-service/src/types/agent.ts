@@ -216,6 +216,8 @@ export interface AgentSettings {
   cacheEnabled: boolean;
   /** Execution backend: "texera" (default) or "hamilton" */
   executionBackend: ExecutionBackend;
+  /** Keep only the latest tool call/result for each operator still in the workflow */
+  latestOnly: boolean;
 }
 
 /**
@@ -236,6 +238,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   trimmedResultCharLimit: 0,
   cacheEnabled: true,
   executionBackend: ExecutionBackend.TEXERA,
+  latestOnly: false,
 };
 
 // ============================================================================
@@ -300,6 +303,8 @@ export interface AgentSettingsApi {
   cacheEnabled?: boolean;
   /** Execution backend: "texera" or "hamilton" */
   executionBackend?: "texera" | "hamilton";
+  /** Keep only the latest tool call/result for each operator still in the workflow */
+  latestOnly?: boolean;
 }
 
 /**
@@ -365,6 +370,8 @@ export interface UpdateAgentSettingsRequest {
   cacheEnabled?: boolean;
   /** Execution backend: "texera" or "hamilton" */
   executionBackend?: "texera" | "hamilton";
+  /** Keep only the latest tool call/result for each operator still in the workflow */
+  latestOnly?: boolean;
 }
 
 // ============================================================================

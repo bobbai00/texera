@@ -822,6 +822,26 @@
           </div>
 
           <div class="settings-param-item">
+            <label class="settings-param-label">Latest Only</label>
+            <div class="settings-param-input">
+              <nz-switch
+                [(ngModel)]="settingsLatestOnly"
+                nzSize="small"
+                style="margin-right: 12px"></nz-switch>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveLatestOnly()">
+                Save
+              </button>
+              <span class="settings-param-hint"
+                >Keep only the latest tool results for each operator still in the workflow.</span
+              >
+            </div>
+          </div>
+
+          <div class="settings-param-item">
             <label class="settings-param-label">Frontier Depth</label>
             <div class="settings-param-input">
               <nz-input-number

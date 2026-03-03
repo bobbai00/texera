@@ -79,6 +79,7 @@ import {
   type ExecutionConfig,
 } from "../tools/execution-tools";
 import { trimNonFrontierResults } from "./context-optimization";
+import { filterLatestOnlyMessages } from "./latest-only-filter";
 
 // ============================================================================
 // Constants
@@ -490,6 +491,7 @@ export class TexeraAgent {
     trimmedResultCharLimit?: number;
     cacheEnabled?: boolean;
     executionBackend?: ExecutionBackend;
+    latestOnly?: boolean;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -536,6 +538,9 @@ export class TexeraAgent {
     }
     if (updates.executionBackend !== undefined) {
       this.settings.executionBackend = updates.executionBackend;
+    }
+    if (updates.latestOnly !== undefined) {
+      this.settings.latestOnly = updates.latestOnly;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt
@@ -734,18 +739,26 @@ export class TexeraAgent {
         messages: this.messages,
         tools: this.tools,
         stopWhen: stepCountIs(this.settings.maxSteps),
-        prepareStep: this.settings.enableContextOptimization
+        prepareStep: (this.settings.enableContextOptimization || this.settings.latestOnly)
           ? ({ stepNumber, messages: currentMessages }) => {
               if (stepNumber === 0) return undefined;
-              const trimmed = trimNonFrontierResults(
-                currentMessages,
-                this.workflowState,
-                this.settings.frontierDepth,
-                this.settings.agentMode,
-                this.settings.trimmedResultCharLimit
-              );
-              lastPreparedMessages = trimmed;
-              return { messages: trimmed };
+              let processed = currentMessages;
+              // latestOnly first: removes whole tool-call/result pairs for stale operators
+              if (this.settings.latestOnly) {
+                processed = filterLatestOnlyMessages(processed, this.workflowState);
+              }
+              // context optimization second: trims execution result sections
+              if (this.settings.enableContextOptimization) {
+                processed = trimNonFrontierResults(
+                  processed,
+                  this.workflowState,
+                  this.settings.frontierDepth,
+                  this.settings.agentMode,
+                  this.settings.trimmedResultCharLimit
+                );
+              }
+              lastPreparedMessages = processed;
+              return { messages: processed };
             }
           : undefined,
         abortSignal: this.abortController?.signal,

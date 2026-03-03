@@ -119,6 +119,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsTrimmedResultCharLimit = 0; // Max chars to keep from trimmed results (0 = fully skip)
   public settingsCacheEnabled = true; // Whether to enable operator result caching
   public settingsExecutionBackend: "texera" | "hamilton" = "texera"; // Execution backend
+  public settingsLatestOnly = false; // Keep only latest tool call/result per operator
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -432,6 +433,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsTrimmedResultCharLimit = settings.trimmedResultCharLimit ?? 0;
         this.settingsCacheEnabled = settings.cacheEnabled ?? true;
         this.settingsExecutionBackend = settings.executionBackend ?? "texera";
+        this.settingsLatestOnly = settings.latestOnly ?? false;
       });
 
     // Also load agent internal state
@@ -1373,6 +1375,24 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
             this.settingsExecutionBackend === "hamilton"
               ? "Execution backend set to Hamilton"
               : "Execution backend set to Texera"
+          ),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the latest-only filter setting.
+   */
+  public saveLatestOnly(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        latestOnly: this.settingsLatestOnly,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsLatestOnly ? "Latest-only filter enabled" : "Latest-only filter disabled"
           ),
         error: () => {},
       });

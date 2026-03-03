@@ -74,6 +74,8 @@ export interface AgentSettingsApi {
   cacheEnabled?: boolean;
   /** Execution backend: "texera" (default) or "hamilton" */
   executionBackend?: "texera" | "hamilton";
+  /** Keep only the latest tool call/result for each operator still in the workflow */
+  latestOnly?: boolean;
 }
 
 /**
@@ -1285,6 +1287,7 @@ export class TexeraCopilotManagerService {
           trimmedResultCharLimit: 0,
           cacheEnabled: true,
           executionBackend: "texera" as const,
+          latestOnly: false,
         })
       )
     );
