@@ -64,7 +64,7 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
     with open('/data/readme.md', 'r') as f:
         content = f.read()
     return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
-  summary="Load documentation"
+  retrieveResult=true, summary="Load documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."`;
 
 /**
@@ -80,7 +80,7 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
     with open('/data/readme.md', 'r') as f:
         content = f.read()
     return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
-  summary="Load documentation"
+  retrieveResult=true, summary="Load documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
 Note: Each operator below contains exactly ONE data operation, following the fine-grained principle.`;
@@ -93,22 +93,22 @@ Thought: Now I understand the definitions. Let me sample both data files to unde
 Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/customers.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample customers schema"
+  retrieveResult=true, summary="Sample customers schema"
 Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
 
 Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/orders.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample orders schema"
+  retrieveResult=true, summary="Sample orders schema"
 Observation: Added operator "sample_orders". 4 columns: order_id, customer_id, amount, order_date (6 sample rows)
 
-Thought: Now that I have loaded the samples, I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data.
+Thought: Now that I have loaded the samples, I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data. I'll set retrieveResult=false since full datasets are too large to inspect.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
-  summary="Load complete customers"
+  retrieveResult=false, summary="Load complete customers"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
-  summary="Load complete orders"
+  retrieveResult=false, summary="Load complete orders"
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -116,14 +116,14 @@ Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def proces
     from datetime import datetime, timedelta
     cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
     return merged[merged['order_date'] >= cutoff]\`
-  summary="Join and filter recent orders"
+  retrieveResult=true, summary="Join and filter recent orders"
 Observation: Added operator "recent_orders". Auto-created links: [customers-->recent_orders, orders-->recent_orders]. Filtered to 1,247 rows.
 
 Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
     spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
     spending.columns = ['customer_id', 'name', 'total_spending']
     return spending.nlargest(5, 'total_spending')\`
-  summary="Top 5 spenders"
+  retrieveResult=true, summary="Top 5 spenders"
 Observation: Added operator "top5". Auto-created links: [recent_orders-->top5]. Top 5: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
 
 Thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
@@ -132,7 +132,7 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
     spending.columns = ['customer_id', 'name', 'total_spending']
     premium = spending[spending['total_spending'] >= 1000]
     return premium.nlargest(5, 'total_spending')\`
-  summary="Top 5 premium spenders"
+  retrieveResult=true, summary="Top 5 premium spenders"
 Observation: Modified operator "top5". Top 5 premium: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
 
 Final answer: The top 5 premium customers (spending >= $1000) with recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).`;
@@ -155,7 +155,7 @@ Tool call: createOrModifyOperator: operatorId="sample_raw", code=\`def load() ->
     with open('/data/measurements.csv', 'r') as f:
         lines = [f.readline() for _ in range(5)]
     return pd.DataFrame([{'line_num': i+1, 'content': line.strip()} for i, line in enumerate(lines)])\`
-  summary="Inspect raw file structure"
+  retrieveResult=true, summary="Inspect raw file structure"
 Observation: Added operator "sample_raw".
   line_num | content
   1        | # Sensor log exported 2024-01-15
@@ -168,19 +168,19 @@ Thought: The file has a comment/metadata line at row 1, uses semicolons as delim
 Tool call: createOrModifyOperator: operatorId="sample_measurements", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/measurements.csv', sep=';', skiprows=1)
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample measurements parsing"
+  retrieveResult=true, summary="Sample measurements parsing"
 Observation: Added operator "sample_measurements". 4 columns: station, date, temperature, humidity. First and last rows show plausible values — temperature around 19-23, humidity around 42-51.
 
 Thought: Now that I have loaded the samples, I **MUST** load the full data to proceed. The sample operator was only for viewing.
 Tool call: createOrModifyOperator: operatorId="measurements", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/measurements.csv', sep=';', skiprows=1)\`
-  summary="Load complete measurements"
+  retrieveResult=false, summary="Load complete measurements"
 
 Thought: Now I can compute the average temperature on the full dataset.
 Tool call: createOrModifyOperator: operatorId="avg_temp", code=\`def process(measurements) -> pd.DataFrame:
     avg = measurements['temperature'].mean()
     return pd.DataFrame([{'average_temperature': round(avg, 2)}])\`
-  summary="Calculate average temperature"
+  retrieveResult=true, summary="Calculate average temperature"
 Observation: Added operator "avg_temp". Auto-created links: [measurements-->avg_temp]. average_temperature = 21.80
 
 Final answer: The average temperature is 21.80.`;
@@ -224,11 +224,11 @@ Each operator can be executed and verified independently. If step 4 produces une
 const LOADING_DATA_SECTION = `
 ## Loading Data Correctly
 
-When loading data files, use a two-step pattern: **(1) sample** with a sampling operator, then **(2) load complete data** in a separate operator for the actual pipeline.
+When loading data files, use a two-step pattern: **(1) sample** with a sampling operator (\`retrieveResult: true\`), then **(2) load complete data** in a separate operator for the actual pipeline (\`retrieveResult: false\`).
 
 **Step 1** - Create a sampling operator to understand the schema (sampling only, NOT used by downstream):
 \`\`\`python
-# operatorId="sample_rules"
+# operatorId="sample_rules", retrieveResult=true
 def load() -> pd.DataFrame:
     import json
     with open('/data/rules.json', 'r') as f:
@@ -239,7 +239,7 @@ def load() -> pd.DataFrame:
 
 **Step 2** - Create a separate operator that loads the complete data (this is what downstream operators connect to):
 \`\`\`python
-# operatorId="rules"
+# operatorId="rules", retrieveResult=false
 def load() -> pd.DataFrame:
     import json
     with open('/data/rules.json', 'r') as f:
@@ -247,19 +247,14 @@ def load() -> pd.DataFrame:
     return pd.DataFrame(data)  # Full data for the pipeline
 \`\`\`
 
-**Sampling techniques for comprehensive understanding**: Different sampling techniques can be used to gain a comprehensive understanding of the data:
-- \`pd.concat([df.head(3), df.tail(3)])\` — sample both the beginning and end, revealing the full range of values (e.g., date ranges, ID patterns, shifting formats)
-- \`df.iloc[::K]\` — sample every K-th row (e.g., \`df.iloc[::100]\` for a 10k-row table) to see evenly spaced slices
-- \`df.sample(n=10, random_state=42)\` — random sample of rows for a representative view
-- \`df['col'].value_counts()\` — categorical distribution of a column
-- \`df.describe()\` — range, mean, std, min/max for all numeric columns
-- \`df.dtypes\` — check column types to catch mis-parsed numeric or date columns
-- \`df.columns.tolist()\` — list all column names, especially useful for wide files (>10 columns)
+**Sampling techniques**: Use techniques like \`pd.concat([df.head(3), df.tail(3)])\`, \`df.sample(n=10)\`, \`df.describe()\`, \`df.dtypes\`, or \`df['col'].value_counts()\` to understand the data before building the pipeline.
 
 **Note:** Real-world data files are often malformed — they may have wrong delimiters, missing or misplaced headers, metadata/comment rows above the data, or multiple tables in one file. After loading, always examine the result. 
 If column names look auto-generated (e.g., \`Unnamed: 0\`) or a data value appears as a header, adjust the loading parameters (e.g., \`header=\`, \`skiprows=\`, \`sep=\`) and re-load by modifying the source operator.
 
 **CRITICAL**: Never build downstream operators on top of a sampling operator. The sampling operator returns only a few rows — any downstream processing on it will produce wrong results. Always create a new full-data operator and connect your pipeline to that.
+
+**Result retrieval**: Use \`retrieveResult: false\` for full data loads and intermediate operators you don't need to inspect. Use \`retrieveResult: true\` for samples, final results, and outputs you need to verify.
 `;
 
 // ============================================================================

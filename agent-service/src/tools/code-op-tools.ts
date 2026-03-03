@@ -308,11 +308,11 @@ export function createCreateOrModifyOperatorTool(
   const workflowUtil = context?.metadataStore ? new WorkflowUtilService(context.metadataStore, workflowState) : null;
 
   return tool({
-    description: `Add or modify a Python function as an operator in the dataflow, then automatically execute it and return results.
+    description: `Add or modify a Python function as an operator in the dataflow, then automatically execute it.
 - If operatorId does NOT exist: creates a new operator
 - If operatorId exists: modifies the existing operator (must keep same type)
-- After creation/modification, the operator is automatically executed and results are returned.
-The execution result(if succeeded) includes the complete data flow leading up to and including this operator, the shape of the input tables(if any) and output table, and the records in the output table
+- After creation/modification, the operator is automatically executed.
+- retrieveResult: if true, execution result and metadata are included; if false, only success/failure is reported (saves tokens). Errors are always reported.
 
 RULES:
 1. operatorId must be a valid Python variable name
@@ -338,9 +338,12 @@ Example: operatorId="filtered" (requires "customers" to exist)
         "Unique operator name (valid Python variable). Other operators reference this as input parameter."
       ),
       code: z.string().describe("Python function: def load() or def process(...)"),
+      retrieveResult: z.boolean().describe(
+        "If true, include execution result and metadata. Set false for full data loads or intermediate operators to save tokens."
+      ),
       summary: z.string().optional().describe("Brief summary of operator behavior"),
     }),
-    execute: async (args: { operatorId: string; code: string; summary?: string }) => {
+    execute: async (args: { operatorId: string; code: string; retrieveResult: boolean; summary?: string }) => {
       try {
         const { operatorId, code, summary } = args;
 
@@ -499,10 +502,14 @@ Example: operatorId="filtered" (requires "customers" to exist)
           resultMsg += `\nAuto-created links: [${createdLinkIds.join(", ")}]`;
         }
 
-        // Always auto-execute and return results
+        // Always auto-execute
         if (context?.executeOperator) {
           const executionResult = await context.executeOperator(operatorId);
-          resultMsg += `\n\n${executionResult}`;
+          if (!args.retrieveResult && !executionResult.startsWith("[ERROR]")) {
+            resultMsg += "\nExecuted successfully.";
+          } else {
+            resultMsg += `\n\n${executionResult}`;
+          }
         }
 
         return createToolResult(resultMsg);
