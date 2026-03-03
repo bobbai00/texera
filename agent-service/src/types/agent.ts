@@ -173,6 +173,16 @@ export enum AgentMode {
 }
 
 /**
+ * Execution backend - determines where workflows are executed
+ */
+export enum ExecutionBackend {
+  /** Texera backend (Scala service, default) */
+  TEXERA = "texera",
+  /** Hamilton sidecar (Python FastAPI service) */
+  HAMILTON = "hamilton",
+}
+
+/**
  * Configurable settings for an agent instance
  */
 export interface AgentSettings {
@@ -204,6 +214,8 @@ export interface AgentSettings {
   trimmedResultCharLimit: number;
   /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
   cacheEnabled: boolean;
+  /** Execution backend: "texera" (default) or "hamilton" */
+  executionBackend: ExecutionBackend;
 }
 
 /**
@@ -223,6 +235,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   frontierDepth: 1,
   trimmedResultCharLimit: 0,
   cacheEnabled: true,
+  executionBackend: ExecutionBackend.TEXERA,
 };
 
 // ============================================================================
@@ -285,6 +298,8 @@ export interface AgentSettingsApi {
   trimmedResultCharLimit?: number;
   /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
   cacheEnabled?: boolean;
+  /** Execution backend: "texera" or "hamilton" */
+  executionBackend?: "texera" | "hamilton";
 }
 
 /**
@@ -348,6 +363,8 @@ export interface UpdateAgentSettingsRequest {
   trimmedResultCharLimit?: number;
   /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
   cacheEnabled?: boolean;
+  /** Execution backend: "texera" or "hamilton" */
+  executionBackend?: "texera" | "hamilton";
 }
 
 // ============================================================================

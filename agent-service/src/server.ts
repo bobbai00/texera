@@ -51,7 +51,7 @@ import type {
   AgentMessageStats,
   TraceContent,
 } from "./types/agent";
-import { OperatorResultSerializationMode, AgentMode } from "./types/agent";
+import { OperatorResultSerializationMode, AgentMode, ExecutionBackend } from "./types/agent";
 
 // ============================================================================
 // Configuration
@@ -172,6 +172,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     frontierDepth: agentSettings.frontierDepth,
     trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
     cacheEnabled: agentSettings.cacheEnabled,
+    executionBackend: agentSettings.executionBackend,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -267,6 +268,9 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           frontierDepth: settings.frontierDepth,
           trimmedResultCharLimit: settings.trimmedResultCharLimit,
           cacheEnabled: settings.cacheEnabled,
+          executionBackend: settings.executionBackend
+            ? (settings.executionBackend as ExecutionBackend)
+            : undefined,
         });
       }
 
@@ -296,6 +300,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             frontierDepth: t.Optional(t.Number()),
             trimmedResultCharLimit: t.Optional(t.Number()),
             cacheEnabled: t.Optional(t.Boolean()),
+            executionBackend: t.Optional(t.Union([t.Literal("texera"), t.Literal("hamilton")])),
           })
         ),
       }),
@@ -465,6 +470,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       frontierDepth: agentSettings.frontierDepth,
       trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
       cacheEnabled: agentSettings.cacheEnabled,
+      executionBackend: agentSettings.executionBackend,
     };
   })
 
@@ -498,6 +504,9 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         frontierDepth: settings.frontierDepth,
         trimmedResultCharLimit: settings.trimmedResultCharLimit,
         cacheEnabled: settings.cacheEnabled,
+        executionBackend: settings.executionBackend
+          ? (settings.executionBackend as ExecutionBackend)
+          : undefined,
       });
 
       // Return updated settings
@@ -516,6 +525,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         frontierDepth: agentSettings.frontierDepth,
         trimmedResultCharLimit: agentSettings.trimmedResultCharLimit,
         cacheEnabled: agentSettings.cacheEnabled,
+        executionBackend: agentSettings.executionBackend,
       };
     },
     {
@@ -535,6 +545,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         frontierDepth: t.Optional(t.Number()),
         trimmedResultCharLimit: t.Optional(t.Number()),
         cacheEnabled: t.Optional(t.Boolean()),
+        executionBackend: t.Optional(t.Union([t.Literal("texera"), t.Literal("hamilton")])),
       }),
     }
   );

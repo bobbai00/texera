@@ -890,6 +890,37 @@
               >
             </div>
           </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">Execution Backend</label>
+            <div class="settings-param-input">
+              <nz-radio-group
+                [(ngModel)]="settingsExecutionBackend"
+                nzSize="small"
+                style="display: inline-flex; gap: 16px; margin-right: 12px">
+                <label
+                  nz-radio
+                  nzValue="texera"
+                  >TEXERA</label
+                >
+                <label
+                  nz-radio
+                  nzValue="hamilton"
+                  >HAMILTON</label
+                >
+              </nz-radio-group>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveExecutionBackend()">
+                Save
+              </button>
+              <span class="settings-param-hint"
+                >TEXERA: Execute via Texera backend (Scala). HAMILTON: Execute via Hamilton sidecar (Python, CODE mode only).</span
+              >
+            </div>
+          </div>
         </div>
       </nz-tab>
 

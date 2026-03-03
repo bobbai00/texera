@@ -41,6 +41,7 @@ import {
   DEFAULT_AGENT_SETTINGS,
   OperatorResultSerializationMode,
   AgentMode,
+  ExecutionBackend,
   REPLAY_SKIP_TOOLS,
 } from "../types/agent";
 import { BASE_SYSTEM_PROMPT, buildGeneralModeSystemPrompt, buildCodeModeSystemPrompt } from "./prompts";
@@ -284,6 +285,7 @@ export class TexeraAgent {
           serializationMode: this.settings.operatorResultSerializationMode,
           executionTimeoutMs: this.settings.executionTimeoutMs,
           cacheEnabled: this.settings.cacheEnabled,
+          executionBackend: this.settings.executionBackend,
         })
       : undefined;
 
@@ -487,6 +489,7 @@ export class TexeraAgent {
     frontierDepth?: number;
     trimmedResultCharLimit?: number;
     cacheEnabled?: boolean;
+    executionBackend?: ExecutionBackend;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -530,6 +533,9 @@ export class TexeraAgent {
     }
     if (updates.cacheEnabled !== undefined) {
       this.settings.cacheEnabled = updates.cacheEnabled;
+    }
+    if (updates.executionBackend !== undefined) {
+      this.settings.executionBackend = updates.executionBackend;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt

@@ -72,6 +72,8 @@ export interface AgentSettingsApi {
   trimmedResultCharLimit?: number;
   /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
   cacheEnabled?: boolean;
+  /** Execution backend: "texera" (default) or "hamilton" */
+  executionBackend?: "texera" | "hamilton";
 }
 
 /**
@@ -1282,6 +1284,7 @@ export class TexeraCopilotManagerService {
           frontierDepth: 1,
           trimmedResultCharLimit: 0,
           cacheEnabled: true,
+          executionBackend: "texera" as const,
         })
       )
     );

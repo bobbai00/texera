@@ -31,7 +31,7 @@ import { getBackendConfig } from "../api/backend-api";
 import type { LogicalPlan, LogicalLink } from "../api/execution-api";
 import type { OperatorInfo, SyncExecutionResult } from "../types/execution";
 import { OperatorMetadataStore } from "./metadata-tools";
-import { OperatorResultSerializationMode, DEFAULT_AGENT_SETTINGS } from "../types/agent";
+import { OperatorResultSerializationMode, ExecutionBackend, DEFAULT_AGENT_SETTINGS } from "../types/agent";
 
 // ============================================================================
 // Tool Name Constants
@@ -62,6 +62,8 @@ export interface ExecutionConfig {
   executionTimeoutMs?: number;
   /** Whether to enable operator result caching */
   cacheEnabled?: boolean;
+  /** Execution backend: texera (default) or hamilton */
+  executionBackend?: ExecutionBackend;
 }
 
 // ============================================================================
@@ -361,6 +363,77 @@ async function executeWorkflowHttp(
 }
 
 // ============================================================================
+// Hamilton Execution Function
+// ============================================================================
+
+/**
+ * Execute a workflow via the Hamilton sidecar.
+ * Sends WorkflowContent format (operators with operatorProperties.code,
+ * links with source/target) rather than the Texera LogicalPlan format.
+ * The sidecar is stateless — it translates to Hamilton and executes.
+ */
+async function executeWorkflowHamilton(
+  config: ExecutionConfig,
+  workflowState: WorkflowState,
+  operatorId: string,
+  options: { abortSignal?: AbortSignal } = {}
+): Promise<SyncExecutionResult> {
+  const backendConfig = getBackendConfig();
+  const hamiltonEndpoint = backendConfig.hamiltonEndpoint || "http://localhost:8111";
+
+  const url = `${hamiltonEndpoint}/execute`;
+
+  const timeoutSeconds = config.executionTimeoutMs
+    ? Math.ceil(config.executionTimeoutMs / 1000)
+    : Math.ceil(DEFAULT_AGENT_SETTINGS.executionTimeoutMs / 1000);
+
+  // Get the sub-DAG up to the target operator, in WorkflowContent format
+  const subDAG = workflowState.getSubDAG(operatorId);
+
+  const request = {
+    operators: subDAG.operators,
+    links: subDAG.links,
+    targetOperatorIds: [operatorId],
+    timeoutSeconds,
+    maxResultRows: config.maxOperatorResultCharLimit
+      ? Math.floor(config.maxOperatorResultCharLimit / 200)
+      : 200,
+  };
+
+  console.log(
+    `[ExecutionTools] Executing workflow via Hamilton: ${url} ` +
+      `(operators: ${subDAG.operators.length}, links: ${subDAG.links.length}, target: ${operatorId})`
+  );
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal: options.abortSignal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Hamilton execution failed: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
+    console.error("[ExecutionTools] Hamilton execution failed:", error);
+    return {
+      success: false,
+      state: "Error",
+      operators: {},
+      errors: [error instanceof Error ? error.message : "Unknown error"],
+    };
+  }
+}
+
+// ============================================================================
 // Result Formatting (agent-service side)
 // ============================================================================
 
@@ -620,9 +693,14 @@ export async function executeOperatorAndFormat(
       return createErrorResult(formatWorkflowValidationErrors(validationResult));
     }
 
-    const result = await executeWorkflowHttp(config, logicalPlan, {
-      abortSignal: options.abortSignal,
-    });
+    const result =
+      config.executionBackend === ExecutionBackend.HAMILTON
+        ? await executeWorkflowHamilton(config, workflowState, operatorId, {
+            abortSignal: options.abortSignal,
+          })
+        : await executeWorkflowHttp(config, logicalPlan, {
+            abortSignal: options.abortSignal,
+          });
 
     // Handle execution failure
     if (!result.success) {
