@@ -24,6 +24,11 @@
  * accumulates tool calls for operators that were later modified or deleted.
  * This filter keeps only the **latest** tool call/result for each operator
  * that **still exists** in the current workflow, removing stale context.
+ *
+ * Definition tools (createOrModify, addOperator, modifyOperator) and execution
+ * tools (executeOperator) are tracked independently. This ensures that when
+ * executeOperator is the latest call, the most recent definition is also kept,
+ * preserving the operator's code/configuration in context.
  */
 
 import type { ModelMessage } from "ai";
@@ -134,7 +139,19 @@ export function filterLatestOnlyMessages(messages: ModelMessage[], workflowState
   }
 
   // --- Step 2: Reverse traverse to decide which tool calls to remove ---
-  const seenOperatorIds = new Set<string>();
+  //
+  // Definition and execution tools are tracked independently so that
+  // executeOperator(a) does not suppress the latest createOrModifyOperator(a).
+  // This keeps the operator's code/configuration in context alongside its
+  // execution results.
+  const DEFINITION_TOOLS = new Set([
+    TOOL_NAME_CREATE_OR_MODIFY_OPERATOR,
+    TOOL_NAME_ADD_OPERATOR,
+    TOOL_NAME_MODIFY_OPERATOR,
+  ]);
+
+  const seenDefinition = new Set<string>();  // latest definition per operator
+  const seenExecution = new Set<string>();   // latest execution per operator
   const toolCallIdsToRemove = new Set<string>();
 
   for (let i = entries.length - 1; i >= 0; i--) {
@@ -159,14 +176,31 @@ export function filterLatestOnlyMessages(messages: ModelMessage[], workflowState
       continue;
     }
 
-    // Check if this is a superseded (not-latest) call for any referenced operator
-    const anyAlreadySeen = operatorIds.some(id => seenOperatorIds.has(id));
-    if (anyAlreadySeen) {
-      toolCallIdsToRemove.add(entry.toolCallId);
+    if (DEFINITION_TOOLS.has(toolName)) {
+      // Definition tool: check against definition-seen set only
+      const anyAlreadySeen = operatorIds.some(id => seenDefinition.has(id));
+      if (anyAlreadySeen) {
+        toolCallIdsToRemove.add(entry.toolCallId);
+      } else {
+        for (const id of operatorIds) seenDefinition.add(id);
+      }
+    } else if (toolName === TOOL_NAME_EXECUTE_OPERATOR) {
+      // Execution tool: check against execution-seen set only
+      const anyAlreadySeen = operatorIds.some(id => seenExecution.has(id));
+      if (anyAlreadySeen) {
+        toolCallIdsToRemove.add(entry.toolCallId);
+      } else {
+        for (const id of operatorIds) seenExecution.add(id);
+      }
     } else {
-      // First (latest) encounter — mark all referenced operators as seen
-      for (const id of operatorIds) {
-        seenOperatorIds.add(id);
+      // Other tools (addLink, deleteLink, etc.): check against both sets
+      const anyAlreadySeen = operatorIds.some(
+        id => seenDefinition.has(id) || seenExecution.has(id)
+      );
+      if (anyAlreadySeen) {
+        toolCallIdsToRemove.add(entry.toolCallId);
+      } else {
+        for (const id of operatorIds) seenDefinition.add(id);
       }
     }
   }
