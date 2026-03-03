@@ -470,109 +470,46 @@ function formatResultMeta(meta: ResultMeta): string {
 }
 
 /**
- * Extract input parameter names from a Python UDF operator's code.
- * Matches `def process(param1, param2)` or `def load()` signatures.
- * Port index 0 corresponds to the first parameter, index 1 to the second, etc.
+ * Format compact Input/Output metadata lines for an operator.
+ * Uses upstream operator IDs from workflow links to label each input port.
+ * - Source operator (no inputs): "Output: opId(rows, cols)"
+ * - Single input: "Input: upstream(rows, cols)\nOutput: opId(rows, cols)"
+ * - Multi input: "Input: up1(rows, cols), up2(rows, cols)\nOutput: opId(rows, cols)"
  */
-function getInputParamNames(workflowState: WorkflowState, operatorId: string): string[] {
-  const op = workflowState.getOperator(operatorId);
-  if (!op) return [];
-  const code: string = op.operatorProperties?.code ?? "";
-  const match = code.match(/def\s+(?:process|load)\s*\(([^)]*)\)/);
-  if (!match || !match[1].trim()) return [];
-  // Extract just the parameter name (before any type annotation or default value)
-  return match[1]
-    .split(",")
-    .map(p => p.trim().split(/[:\s=]/)[0])
-    .filter(Boolean);
-}
-
-/**
- * Format the input/output shape arrow notation for an operator.
- * Example: "Shape: customers(100, 3), orders(200, 5) -> (150, 6)"
- */
-function formatShapeArrow(
+function formatInputOutput(
+  workflowState: WorkflowState,
+  operatorId: string,
   opInfo: OperatorInfo,
-  outputColumns: number,
-  paramNames: string[],
-  operatorId: string
+  outputColumns: number
 ): string {
   const outputRows = opInfo.totalRowCount ?? opInfo.outputTuples;
-  const outputPart = `${operatorId}(${outputRows}, ${outputColumns})`;
+  const outputLine = `Output shape: ${operatorId}(${outputRows}, ${outputColumns})`;
 
   const inputShapes = opInfo.inputPortShapes;
   if (!inputShapes || inputShapes.length === 0) {
-    return `Shape: ${outputPart}`;
+    return outputLine;
+  }
+
+  // Build a map from portIndex to upstream operator ID using workflow links
+  const inputLinks = workflowState.getAllLinks().filter(l => l.target.operatorID === operatorId);
+  const portIndexToUpstream = new Map<number, string>();
+  const op = workflowState.getOperator(operatorId);
+  for (const link of inputLinks) {
+    const portIdx = op?.inputPorts.findIndex(p => p.portID === link.target.portID) ?? -1;
+    if (portIdx >= 0) {
+      portIndexToUpstream.set(portIdx, link.source.operatorID);
+    }
   }
 
   const inputPart = inputShapes
     .sort((a, b) => a.portIndex - b.portIndex)
     .map(p => {
-      const name = paramNames[p.portIndex] ?? `input${p.portIndex}`;
+      const name = portIndexToUpstream.get(p.portIndex) ?? `input${p.portIndex}`;
       return `${name}(${p.rows}, ${p.columns})`;
     })
     .join(", ");
 
-  return `Shape: ${inputPart} -> ${outputPart}`;
-}
-
-/**
- * Format the upstream sub-DAG from source operators to the target operator.
- * Shows all source-to-target paths so the agent understands the data lineage.
- * Node format: "operatorID: displayName" (or just "operatorID" if no custom name).
- * Example: "Dataflow: CSVFileScan-operator-1: load_csv -> PythonUDFV2-operator-2: wollaston_tidy"
- */
-function formatDataflow(workflowState: WorkflowState, targetOperatorId: string): string {
-  const subDAG = workflowState.getSubDAG(targetOperatorId);
-  if (subDAG.operators.length <= 1) return "";
-
-  // Build label map: operatorId -> "operatorID: displayName" or just "operatorID"
-  const labelMap = new Map(
-    subDAG.operators.map(op => [
-      op.operatorID,
-      op.customDisplayName ? `${op.operatorID}: ${op.customDisplayName}` : op.operatorID,
-    ])
-  );
-
-  // Build adjacency lists within the sub-DAG
-  const children = new Map<string, string[]>();
-  const parentCount = new Map<string, number>();
-  for (const op of subDAG.operators) {
-    children.set(op.operatorID, []);
-    parentCount.set(op.operatorID, 0);
-  }
-  for (const link of subDAG.links) {
-    children.get(link.source.operatorID)?.push(link.target.operatorID);
-    parentCount.set(link.target.operatorID, (parentCount.get(link.target.operatorID) ?? 0) + 1);
-  }
-
-  // Find source nodes (no incoming edges in sub-DAG)
-  const sources = subDAG.operators
-    .filter(op => (parentCount.get(op.operatorID) ?? 0) === 0)
-    .map(op => op.operatorID);
-
-  // Enumerate all source-to-target paths via DFS (capped for safety)
-  const MAX_PATHS = 20;
-  const paths: string[][] = [];
-  const dfs = (nodeId: string, path: string[]) => {
-    if (paths.length >= MAX_PATHS) return;
-    path.push(labelMap.get(nodeId) ?? nodeId);
-    if (nodeId === targetOperatorId) {
-      paths.push([...path]);
-    } else {
-      for (const child of children.get(nodeId) ?? []) {
-        dfs(child, path);
-      }
-    }
-    path.pop();
-  };
-  for (const source of sources) {
-    dfs(source, []);
-  }
-
-  if (paths.length === 0) return "";
-  const padding = "          "; // align with "Dataflow: "
-  return "Dataflow: " + paths.map(p => p.join(" -> ")).join("\n" + padding);
+  return `Input shape: ${inputPart}\n${outputLine}`;
 }
 
 /**
@@ -768,18 +705,8 @@ export async function executeOperatorAndFormat(
     const totalRows = opInfo.totalRowCount ?? displayedRows;
     const truncated = opInfo.truncated ?? displayedRows < totalRows;
 
-    // Build dataflow: show upstream sub-DAG so the agent understands data lineage
-    const dataflowLine = formatDataflow(workflowState, operatorId);
-
-    // Build shape arrow notation: e.g. "Shape: input0(100, 3) -> opId(150, 6)"
-    const paramNames = getInputParamNames(workflowState, operatorId);
-    const shapeLine = formatShapeArrow(opInfo, columns, paramNames, operatorId);
-
-    // Build columns line: e.g. "Columns: ['a', 'b', 'c']"
-    const columnNames = jsonArray.length > 0 ? Object.keys(jsonArray[0]) : [];
-    const columnsLine = columnNames.length > 0
-      ? `Columns: [${columnNames.map(c => `'${c}'`).join(", ")}]`
-      : "";
+    // Build compact Input/Output lines using upstream operator IDs from links
+    const shapeLine = formatInputOutput(workflowState, operatorId, opInfo, columns);
 
     const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
 
@@ -788,7 +715,7 @@ export async function executeOperatorAndFormat(
 
     // Build structured result with separate metadata and result sections.
     // Context optimization can trim the result section while preserving metadata.
-    const metadataLines = [dataflowLine, shapeLine, columnsLine, meta, ...warningLines].filter(Boolean);
+    const metadataLines = [shapeLine, meta, ...warningLines].filter(Boolean);
     const metadataSection = metadataLines.length > 0
       ? `${SECTION_EXECUTION_METADATA}\n${metadataLines.join("\n")}`
       : "";
@@ -816,7 +743,7 @@ export async function executeOperatorAndFormat(
  */
 export function createExecuteOperatorTool(workflowState: WorkflowState, getConfig: () => ExecutionConfig) {
   return tool({
-    description: "Execute the workflow and get the specified operator's result. The execution result(if succeeded) includes the data flow of the execution path, the shape of the input tables(if any) and output table, and the records in the output table",
+    description: "Execute the workflow and get the specified operator's result. The execution result(if succeeded) includes the shape of the input tables(if any) and output table, and the records in the output table",
     inputSchema: z.object({
       operatorId: z.string().describe("The operator ID to view result for."),
     }),
