@@ -513,6 +513,75 @@ function formatInputOutput(
 }
 
 /**
+ * Compute all upstream operator IDs for a given operator via reverse traversal,
+ * then return them in topological order (sources first).
+ * The target operator itself is excluded.
+ */
+function getUpstreamOperatorIds(workflowState: WorkflowState, operatorId: string): string[] {
+  const links = workflowState.getAllLinks();
+
+  // Build adjacency: target -> sources
+  const reverseAdj = new Map<string, string[]>();
+  // Build adjacency: source -> targets (for topological sort)
+  const forwardAdj = new Map<string, string[]>();
+  for (const link of links) {
+    const src = link.source.operatorID;
+    const tgt = link.target.operatorID;
+    if (!reverseAdj.has(tgt)) reverseAdj.set(tgt, []);
+    reverseAdj.get(tgt)!.push(src);
+    if (!forwardAdj.has(src)) forwardAdj.set(src, []);
+    forwardAdj.get(src)!.push(tgt);
+  }
+
+  // BFS backward from operatorId to collect all upstream nodes
+  const upstream = new Set<string>();
+  const queue = reverseAdj.get(operatorId) ?? [];
+  for (const id of queue) upstream.add(id);
+  let i = 0;
+  while (i < queue.length) {
+    const current = queue[i++];
+    for (const parent of reverseAdj.get(current) ?? []) {
+      if (!upstream.has(parent)) {
+        upstream.add(parent);
+        queue.push(parent);
+      }
+    }
+  }
+
+  if (upstream.size === 0) return [];
+
+  // Kahn's algorithm on the upstream sub-DAG
+  const inDegree = new Map<string, number>();
+  for (const id of upstream) inDegree.set(id, 0);
+  for (const id of upstream) {
+    for (const next of forwardAdj.get(id) ?? []) {
+      if (upstream.has(next)) {
+        inDegree.set(next, (inDegree.get(next) ?? 0) + 1);
+      }
+    }
+  }
+
+  const sorted: string[] = [];
+  const topoQueue: string[] = [];
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) topoQueue.push(id);
+  }
+  while (topoQueue.length > 0) {
+    const node = topoQueue.shift()!;
+    sorted.push(node);
+    for (const next of forwardAdj.get(node) ?? []) {
+      if (upstream.has(next)) {
+        const newDeg = (inDegree.get(next) ?? 1) - 1;
+        inDegree.set(next, newDeg);
+        if (newDeg === 0) topoQueue.push(next);
+      }
+    }
+  }
+
+  return sorted;
+}
+
+/**
  * Formats execution error with structured sections.
  */
 function formatExecutionError(
@@ -710,12 +779,18 @@ export async function executeOperatorAndFormat(
 
     const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
 
+    // Build upstream operator IDs line (topological order, sources first)
+    const upstreamIds = getUpstreamOperatorIds(workflowState, operatorId);
+    const upstreamLine = upstreamIds.length > 0
+      ? `Upstream operator IDs: ${upstreamIds.join(", ")}`
+      : "";
+
     // Surface warnings (e.g., duplicate column renames) so the agent can adjust its code
     const warningLines = opInfo.warnings?.map(w => w) ?? [];
 
     // Build structured result with separate metadata and result sections.
     // Context optimization can trim the result section while preserving metadata.
-    const metadataLines = [shapeLine, meta, ...warningLines].filter(Boolean);
+    const metadataLines = [shapeLine, upstreamLine, meta, ...warningLines].filter(Boolean);
     const metadataSection = metadataLines.length > 0
       ? `${SECTION_EXECUTION_METADATA}\n${metadataLines.join("\n")}`
       : "";
