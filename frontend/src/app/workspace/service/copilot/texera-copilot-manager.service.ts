@@ -80,6 +80,8 @@ export interface AgentSettingsApi {
   dynamicDepthEnabled?: boolean;
   /** Allow the model to issue multiple tool calls in a single response */
   parallelToolCalls?: boolean;
+  /** When true, retrieveResult becomes an optional parameter the LLM can set per call */
+  optionalResultRetrieval?: boolean;
 }
 
 /**
@@ -1294,6 +1296,7 @@ export class TexeraCopilotManagerService {
           latestOnly: false,
           dynamicDepthEnabled: false,
           parallelToolCalls: false,
+          optionalResultRetrieval: false,
         })
       )
     );

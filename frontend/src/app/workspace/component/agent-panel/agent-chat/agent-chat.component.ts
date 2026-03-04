@@ -122,6 +122,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsLatestOnly = false; // Keep only latest tool call/result per operator
   public settingsDynamicDepthEnabled = false; // Automatically compute frontier depth
   public settingsParallelToolCalls = false; // Allow multiple tool calls per response
+  public settingsOptionalResultRetrieval = false; // Make retrieveResult optional per call
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -438,6 +439,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsLatestOnly = settings.latestOnly ?? false;
         this.settingsDynamicDepthEnabled = settings.dynamicDepthEnabled ?? false;
         this.settingsParallelToolCalls = settings.parallelToolCalls ?? false;
+        this.settingsOptionalResultRetrieval = settings.optionalResultRetrieval ?? false;
       });
 
     // Also load agent internal state
@@ -1433,6 +1435,26 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         next: () =>
           this.notificationService.success(
             this.settingsParallelToolCalls ? "Parallel tool calls enabled" : "Parallel tool calls disabled"
+          ),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the optional result retrieval setting.
+   */
+  public saveOptionalResultRetrieval(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        optionalResultRetrieval: this.settingsOptionalResultRetrieval,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsOptionalResultRetrieval
+              ? "Optional result retrieval enabled"
+              : "Optional result retrieval disabled"
           ),
         error: () => {},
       });

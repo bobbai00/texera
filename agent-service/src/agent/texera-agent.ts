@@ -51,6 +51,8 @@ import {
   EXAMPLES_STANDARD,
   EXAMPLES_FINE_GRAINED,
   EXAMPLES_PARALLEL,
+  EXAMPLES_RESULT_PARAM,
+  EXAMPLES_PARALLEL_RESULT_PARAM,
 } from "./prompts";
 import {
   createGetCurrentWorkflowTool,
@@ -262,8 +264,12 @@ export class TexeraAgent {
       let examples: string;
       if (this.settings.fineGrainedPrompt) {
         examples = EXAMPLES_FINE_GRAINED;
+      } else if (this.settings.parallelToolCalls && this.settings.optionalResultRetrieval) {
+        examples = EXAMPLES_PARALLEL_RESULT_PARAM;
       } else if (this.settings.parallelToolCalls) {
         examples = EXAMPLES_PARALLEL;
+      } else if (this.settings.optionalResultRetrieval) {
+        examples = EXAMPLES_RESULT_PARAM;
       } else {
         examples = EXAMPLES_STANDARD;
       }
@@ -316,6 +322,7 @@ export class TexeraAgent {
         maxOperatorResultCharLimit: this.settings.maxOperatorResultCharLimit,
         toolTimeoutMs: this.settings.toolTimeoutMs,
         executionTimeoutMs: this.settings.executionTimeoutMs,
+        optionalResultRetrieval: this.settings.optionalResultRetrieval,
       },
       // Provide execution helper when execution is configured
       executeOperator: getExecutionConfig
@@ -511,6 +518,7 @@ export class TexeraAgent {
     latestOnly?: boolean;
     dynamicDepthEnabled?: boolean;
     parallelToolCalls?: boolean;
+    optionalResultRetrieval?: boolean;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -566,6 +574,10 @@ export class TexeraAgent {
     }
     if (updates.parallelToolCalls !== undefined && updates.parallelToolCalls !== this.settings.parallelToolCalls) {
       this.settings.parallelToolCalls = updates.parallelToolCalls;
+      promptNeedsRebuild = true;
+    }
+    if (updates.optionalResultRetrieval !== undefined && updates.optionalResultRetrieval !== this.settings.optionalResultRetrieval) {
+      this.settings.optionalResultRetrieval = updates.optionalResultRetrieval;
       promptNeedsRebuild = true;
     }
 

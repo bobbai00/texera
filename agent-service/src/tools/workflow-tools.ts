@@ -52,6 +52,7 @@ export interface ToolContext {
     maxOperatorResultCharLimit?: number;
     toolTimeoutMs?: number;
     executionTimeoutMs?: number;
+    optionalResultRetrieval?: boolean;
   };
   /**
    * Execute a specific operator and return formatted result.

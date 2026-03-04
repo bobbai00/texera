@@ -222,6 +222,8 @@ export interface AgentSettings {
   dynamicDepthEnabled: boolean;
   /** Allow the model to issue multiple tool calls in a single response */
   parallelToolCalls: boolean;
+  /** When true, retrieveResult becomes an optional parameter the LLM can set per call; when false, results are always retrieved */
+  optionalResultRetrieval: boolean;
 }
 
 /**
@@ -245,6 +247,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   latestOnly: false,
   dynamicDepthEnabled: false,
   parallelToolCalls: false,
+  optionalResultRetrieval: false,
 };
 
 // ============================================================================
@@ -315,6 +318,8 @@ export interface AgentSettingsApi {
   dynamicDepthEnabled?: boolean;
   /** Allow the model to issue multiple tool calls in a single response */
   parallelToolCalls?: boolean;
+  /** When true, retrieveResult becomes an optional parameter the LLM can set per call */
+  optionalResultRetrieval?: boolean;
 }
 
 /**
@@ -386,6 +391,8 @@ export interface UpdateAgentSettingsRequest {
   dynamicDepthEnabled?: boolean;
   /** Allow the model to issue multiple tool calls in a single response */
   parallelToolCalls?: boolean;
+  /** When true, retrieveResult becomes an optional parameter the LLM can set per call */
+  optionalResultRetrieval?: boolean;
 }
 
 // ============================================================================

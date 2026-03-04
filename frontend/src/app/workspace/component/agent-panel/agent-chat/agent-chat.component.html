@@ -983,6 +983,27 @@
               >
             </div>
           </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">Optional Result Retrieval</label>
+            <div class="settings-param-input">
+              <nz-switch
+                [(ngModel)]="settingsOptionalResultRetrieval"
+                nzSize="small"
+                style="margin-right: 12px"></nz-switch>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveOptionalResultRetrieval()">
+                Save
+              </button>
+              <span class="settings-param-hint"
+                >When enabled, the LLM can choose per-call whether to retrieve execution results. When disabled, results
+                are always retrieved.</span
+              >
+            </div>
+          </div>
         </div>
       </nz-tab>
 

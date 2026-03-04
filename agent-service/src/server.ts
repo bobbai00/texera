@@ -176,6 +176,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     latestOnly: agentSettings.latestOnly,
     dynamicDepthEnabled: agentSettings.dynamicDepthEnabled,
     parallelToolCalls: agentSettings.parallelToolCalls,
+    optionalResultRetrieval: agentSettings.optionalResultRetrieval,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -277,6 +278,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           latestOnly: settings.latestOnly,
           dynamicDepthEnabled: settings.dynamicDepthEnabled,
           parallelToolCalls: settings.parallelToolCalls,
+          optionalResultRetrieval: settings.optionalResultRetrieval,
         });
       }
 
@@ -310,6 +312,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             latestOnly: t.Optional(t.Boolean()),
             dynamicDepthEnabled: t.Optional(t.Boolean()),
             parallelToolCalls: t.Optional(t.Boolean()),
+            optionalResultRetrieval: t.Optional(t.Boolean()),
           })
         ),
       }),
@@ -483,6 +486,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       latestOnly: agentSettings.latestOnly,
       dynamicDepthEnabled: agentSettings.dynamicDepthEnabled,
       parallelToolCalls: agentSettings.parallelToolCalls,
+      optionalResultRetrieval: agentSettings.optionalResultRetrieval,
     };
   })
 
@@ -522,6 +526,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         latestOnly: settings.latestOnly,
         dynamicDepthEnabled: settings.dynamicDepthEnabled,
         parallelToolCalls: settings.parallelToolCalls,
+        optionalResultRetrieval: settings.optionalResultRetrieval,
       });
 
       // Return updated settings
@@ -544,6 +549,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         latestOnly: agentSettings.latestOnly,
         dynamicDepthEnabled: agentSettings.dynamicDepthEnabled,
         parallelToolCalls: agentSettings.parallelToolCalls,
+        optionalResultRetrieval: agentSettings.optionalResultRetrieval,
       };
     },
     {
@@ -567,6 +573,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         latestOnly: t.Optional(t.Boolean()),
         dynamicDepthEnabled: t.Optional(t.Boolean()),
         parallelToolCalls: t.Optional(t.Boolean()),
+        optionalResultRetrieval: t.Optional(t.Boolean()),
       }),
     }
   );

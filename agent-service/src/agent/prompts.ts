@@ -470,6 +470,77 @@ Final answer: The top 5 premium customers (spending >= $1000) with recent purcha
 
 **[IMPORTANT] optional result retrieval**: Use \`retrieveResult: false\` for full data loads and intermediate operators you don't need to inspect. Use \`retrieveResult: true\` for samples, final results, and outputs you need to verify. Errors are always reported regardless.`;
 
+// --------------- Example variant: Parallel + Result parameter ---------------
+
+/**
+ * Combined parallel + result-parameter examples — demonstrates both batching
+ * independent operations and using retrieveResult=true/false.
+ */
+export const EXAMPLES_PARALLEL_RESULT_PARAM = `
+## Example
+
+Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
+
+Thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
+Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.DataFrame:
+    with open('/data/readme.md', 'r') as f:
+        content = f.read()
+    return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
+  retrieveResult=true, summary="Load documentation"
+Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
+
+Thought: Let me sample both data files to understand their schema. These two operators are independent, so I'll create them in parallel with retrieveResult=true to inspect schemas.
+Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
+    df = pd.read_csv('/data/customers.csv')
+    return pd.concat([df.head(3), df.tail(3)])\`
+  retrieveResult=true, summary="Sample customers schema"
+Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
+    df = pd.read_csv('/data/orders.csv')
+    return pd.concat([df.head(3), df.tail(3)])\`
+  retrieveResult=true, summary="Sample orders schema"
+Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
+Observation: Added operator "sample_orders". 4 columns: order_id, customer_id, amount, order_date (6 sample rows)
+
+Thought: Now I **MUST** load the full data to proceed. These loads are independent, so I'll batch them in parallel with retrieveResult=false since I don't need to see the full data.
+Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/customers.csv')\`
+  retrieveResult=false, summary="Load complete customers"
+Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/orders.csv')\`
+  retrieveResult=false, summary="Load complete orders"
+
+Thought: Now I'll join, filter for recent orders, and aggregate on the complete data. I need to see the result to verify correctness.
+Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
+    merged = customers.merge(orders, on='customer_id', how='inner')
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+    return merged[merged['order_date'] >= cutoff]\`
+  retrieveResult=true, summary="Join and filter recent orders"
+Observation: Added operator "recent_orders". Auto-created links: [customers-->recent_orders, orders-->recent_orders]. Filtered to 1,247 rows.
+
+Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
+    spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+    spending.columns = ['customer_id', 'name', 'total_spending']
+    return spending.nlargest(5, 'total_spending')\`
+  retrieveResult=true, summary="Top 5 spenders"
+Observation: Added operator "top5". Auto-created links: [recent_orders-->top5]. Top 5: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
+
+Thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
+Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
+    spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+    spending.columns = ['customer_id', 'name', 'total_spending']
+    premium = spending[spending['total_spending'] >= 1000]
+    return premium.nlargest(5, 'total_spending')\`
+  retrieveResult=true, summary="Top 5 premium spenders"
+Observation: Modified operator "top5". Top 5 premium: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
+
+Final answer: The top 5 premium customers (spending >= $1000) with recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).
+
+
+**[IMPORTANT]: Parallel tool calls**: When multiple data operations can be added together, (e.g., loading different data files, having a multi-operator data manipulation), create them all in a single step using parallel tool calls. This reduces round-trips and saves tokens.
+
+**[IMPORTANT] optional result retrieval**: Use \`retrieveResult: false\` for full data loads and intermediate operators you don't need to inspect. Use \`retrieveResult: true\` for samples, final results, and outputs you need to verify. Errors are always reported regardless.`;
+
 // ============================================================================
 // General Mode Template
 // ============================================================================
@@ -494,7 +565,7 @@ if not possible then use the python to define your own logic.
 
 /**
  * Build code mode system prompt by plugging in an example set.
- * @param examples - One of EXAMPLES_STANDARD, EXAMPLES_PARALLEL, EXAMPLES_FINE_GRAINED, EXAMPLES_RESULT_PARAM
+ * @param examples - One of EXAMPLES_STANDARD, EXAMPLES_PARALLEL, EXAMPLES_FINE_GRAINED, EXAMPLES_RESULT_PARAM, EXAMPLES_PARALLEL_RESULT_PARAM
  */
 export function buildCodeModeSystemPrompt(examples: string = EXAMPLES_STANDARD): string {
   return CODE_MODE_TEMPLATE.replace("{{EXAMPLES}}", examples);
