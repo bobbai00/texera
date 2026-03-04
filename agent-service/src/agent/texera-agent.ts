@@ -44,7 +44,14 @@ import {
   ExecutionBackend,
   REPLAY_SKIP_TOOLS,
 } from "../types/agent";
-import { BASE_SYSTEM_PROMPT, buildGeneralModeSystemPrompt, buildCodeModeSystemPrompt } from "./prompts";
+import {
+  BASE_SYSTEM_PROMPT,
+  buildGeneralModeSystemPrompt,
+  buildCodeModeSystemPrompt,
+  EXAMPLES_STANDARD,
+  EXAMPLES_FINE_GRAINED,
+  EXAMPLES_PARALLEL,
+} from "./prompts";
 import {
   createGetCurrentWorkflowTool,
   createAddLinkTool,
@@ -249,13 +256,18 @@ export class TexeraAgent {
    * fineGrainedPrompt: uses stricter atomic operation constraints
    */
   private rebuildSystemPrompt(): void {
-    const fineGrained = this.settings.fineGrainedPrompt;
     if (this.settings.agentMode === AgentMode.GENERAL) {
-      // GENERAL mode: include operator schemas in prompt
-      this.systemPrompt = buildGeneralModeSystemPrompt(this.metadataStore, fineGrained);
+      this.systemPrompt = buildGeneralModeSystemPrompt(this.metadataStore);
     } else {
-      // CODE mode: use structured prompt with examples
-      this.systemPrompt = buildCodeModeSystemPrompt(fineGrained);
+      let examples: string;
+      if (this.settings.fineGrainedPrompt) {
+        examples = EXAMPLES_FINE_GRAINED;
+      } else if (this.settings.parallelToolCalls) {
+        examples = EXAMPLES_PARALLEL;
+      } else {
+        examples = EXAMPLES_STANDARD;
+      }
+      this.systemPrompt = buildCodeModeSystemPrompt(examples);
     }
     this.settings.systemPrompt = this.systemPrompt;
   }
@@ -552,8 +564,9 @@ export class TexeraAgent {
     if (updates.dynamicDepthEnabled !== undefined) {
       this.settings.dynamicDepthEnabled = updates.dynamicDepthEnabled;
     }
-    if (updates.parallelToolCalls !== undefined) {
+    if (updates.parallelToolCalls !== undefined && updates.parallelToolCalls !== this.settings.parallelToolCalls) {
       this.settings.parallelToolCalls = updates.parallelToolCalls;
+      promptNeedsRebuild = true;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt
