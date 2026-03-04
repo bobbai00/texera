@@ -344,6 +344,7 @@ Example: operatorId="filtered" (requires "customers" to exist)
       summary: z.string().optional().describe("Brief summary of operator behavior"),
     }),
     execute: async (args: { operatorId: string; code: string; retrieveResult: boolean; summary?: string }) => {
+      const coordinator = context?.parallelCoordinator;
       try {
         const { operatorId, code, summary } = args;
 
@@ -362,6 +363,10 @@ Example: operatorId="filtered" (requires "customers" to exist)
         const { type, numInputPorts, parameters } = parseResult;
         const isDataProcessing = type === "DataProcessing";
 
+        // Register with parallel coordinator (sync, before first await).
+        // This ensures all sibling parallel calls register before any of them wait.
+        coordinator?.register(operatorId);
+
         // Validate Python syntax
         const syntaxError = await validatePythonSyntax(code);
         if (syntaxError) {
@@ -371,6 +376,9 @@ Example: operatorId="filtered" (requires "customers" to exist)
         // Validate input parameters for process() functions
         let inputOperators: OperatorPredicate[] = [];
         if (isDataProcessing && parameters.length > 0) {
+          // Wait for dependencies being created by sibling parallel calls
+          await coordinator?.waitForDependencies(parameters, id => !!workflowState.getOperator(id));
+
           const validation = validateInputParameters(workflowState, parameters);
           if ("error" in validation) {
             return createErrorResult(validation.error);
@@ -515,6 +523,8 @@ Example: operatorId="filtered" (requires "customers" to exist)
         return createToolResult(resultMsg);
       } catch (error: any) {
         return createErrorResult(formatOperatorError(args.operatorId, error.message || String(error)));
+      } finally {
+        coordinator?.markDone(args.operatorId);
       }
     },
   });

@@ -56,6 +56,7 @@ import {
   TOOL_NAME_DELETE_OPERATOR,
   type ToolContext,
 } from "../tools/workflow-tools";
+import { ParallelCallCoordinator } from "../tools/parallel-call-coordinator";
 import {
   createAddOperatorTool,
   createModifyOperatorTool,
@@ -307,6 +308,10 @@ export class TexeraAgent {
       // Provide execution helper when execution is configured
       executeOperator: getExecutionConfig
         ? (operatorId: string) => executeOperatorAndFormat(this.workflowState, getExecutionConfig(), operatorId)
+        : undefined,
+      // Coordinate parallel tool calls with inter-operator dependencies
+      parallelCoordinator: this.settings.parallelToolCalls
+        ? new ParallelCallCoordinator(this.settings.toolTimeoutMs)
         : undefined,
     };
 

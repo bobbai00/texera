@@ -36,6 +36,7 @@ import {
 } from "./tools-utility";
 import type { OperatorMetadataStore } from "./metadata-tools";
 import type { AgentActionManager } from "../agent/agent-action-manager";
+import type { ParallelCallCoordinator } from "./parallel-call-coordinator";
 
 // ============================================================================
 // Types for tool context
@@ -59,6 +60,8 @@ export interface ToolContext {
    * @returns Formatted result string or null if execution is not available
    */
   executeOperator?: (operatorId: string) => Promise<string>;
+  /** Coordinates parallel tool calls with inter-operator dependencies */
+  parallelCoordinator?: ParallelCallCoordinator;
 }
 
 // ============================================================================
