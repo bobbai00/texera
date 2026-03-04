@@ -121,6 +121,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsExecutionBackend: "texera" | "hamilton" = "texera"; // Execution backend
   public settingsLatestOnly = false; // Keep only latest tool call/result per operator
   public settingsDynamicDepthEnabled = false; // Automatically compute frontier depth
+  public settingsParallelToolCalls = false; // Allow multiple tool calls per response
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -436,6 +437,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsExecutionBackend = settings.executionBackend ?? "texera";
         this.settingsLatestOnly = settings.latestOnly ?? false;
         this.settingsDynamicDepthEnabled = settings.dynamicDepthEnabled ?? false;
+        this.settingsParallelToolCalls = settings.parallelToolCalls ?? false;
       });
 
     // Also load agent internal state
@@ -1413,6 +1415,24 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         next: () =>
           this.notificationService.success(
             this.settingsDynamicDepthEnabled ? "Dynamic depth enabled" : "Dynamic depth disabled"
+          ),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the parallel tool calls setting.
+   */
+  public saveParallelToolCalls(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        parallelToolCalls: this.settingsParallelToolCalls,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsParallelToolCalls ? "Parallel tool calls enabled" : "Parallel tool calls disabled"
           ),
         error: () => {},
       });

@@ -78,6 +78,8 @@ export interface AgentSettingsApi {
   latestOnly?: boolean;
   /** Automatically compute frontier depth as ceil(average source-to-sink path length) */
   dynamicDepthEnabled?: boolean;
+  /** Allow the model to issue multiple tool calls in a single response */
+  parallelToolCalls?: boolean;
 }
 
 /**
@@ -1291,6 +1293,7 @@ export class TexeraCopilotManagerService {
           executionBackend: "texera" as const,
           latestOnly: false,
           dynamicDepthEnabled: false,
+          parallelToolCalls: false,
         })
       )
     );

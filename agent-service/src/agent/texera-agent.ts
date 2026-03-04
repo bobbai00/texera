@@ -493,6 +493,7 @@ export class TexeraAgent {
     executionBackend?: ExecutionBackend;
     latestOnly?: boolean;
     dynamicDepthEnabled?: boolean;
+    parallelToolCalls?: boolean;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -545,6 +546,9 @@ export class TexeraAgent {
     }
     if (updates.dynamicDepthEnabled !== undefined) {
       this.settings.dynamicDepthEnabled = updates.dynamicDepthEnabled;
+    }
+    if (updates.parallelToolCalls !== undefined) {
+      this.settings.parallelToolCalls = updates.parallelToolCalls;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt
@@ -771,7 +775,13 @@ export class TexeraAgent {
         abortSignal: this.abortController?.signal,
         // Note: reasoning_effort is NOT passed here — it's configured per-model in
         // litellm-config.yaml via extra_body to bypass LiteLLM's param validation.
-        providerOptions: {},
+        providerOptions: this.settings.parallelToolCalls
+          ? {}
+          : {
+              openai: { parallelToolCalls: false },
+              anthropic: { disableParallelToolUse: true },
+              mistral: { parallelToolCalls: false },
+            },
         onStepFinish: async ({ text, toolCalls, toolResults, usage }) => {
           stepIndex++; // Increment first since user message is step 0
 

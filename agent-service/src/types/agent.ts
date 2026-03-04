@@ -220,6 +220,8 @@ export interface AgentSettings {
   latestOnly: boolean;
   /** Automatically compute frontier depth as ceil(average source-to-sink path length) */
   dynamicDepthEnabled: boolean;
+  /** Allow the model to issue multiple tool calls in a single response */
+  parallelToolCalls: boolean;
 }
 
 /**
@@ -242,6 +244,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   executionBackend: ExecutionBackend.TEXERA,
   latestOnly: false,
   dynamicDepthEnabled: false,
+  parallelToolCalls: false,
 };
 
 // ============================================================================
@@ -310,6 +313,8 @@ export interface AgentSettingsApi {
   latestOnly?: boolean;
   /** Automatically compute frontier depth as ceil(average source-to-sink path length) */
   dynamicDepthEnabled?: boolean;
+  /** Allow the model to issue multiple tool calls in a single response */
+  parallelToolCalls?: boolean;
 }
 
 /**
@@ -379,6 +384,8 @@ export interface UpdateAgentSettingsRequest {
   latestOnly?: boolean;
   /** Automatically compute frontier depth as ceil(average source-to-sink path length) */
   dynamicDepthEnabled?: boolean;
+  /** Allow the model to issue multiple tool calls in a single response */
+  parallelToolCalls?: boolean;
 }
 
 // ============================================================================
