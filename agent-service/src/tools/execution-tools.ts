@@ -395,9 +395,8 @@ async function executeWorkflowHamilton(
     links: subDAG.links,
     targetOperatorIds: [operatorId],
     timeoutSeconds,
-    maxResultRows: config.maxOperatorResultCharLimit
-      ? Math.floor(config.maxOperatorResultCharLimit / 200)
-      : 200,
+    maxResultChars: config.maxOperatorResultCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit,
+    maxCellChars: config.maxOperatorResultCellCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCellCharLimit,
   };
 
   console.log(
@@ -747,7 +746,7 @@ export async function executeOperatorAndFormat(
       return "(no result data)";
     }
 
-    // Backend returns JSON array - serialize based on configured mode
+    // Both Texera and Hamilton enforce per-cell truncation server-side.
     const jsonArray = opInfo.result as Record<string, any>[];
     const columns = jsonArray.length > 0 ? Object.keys(jsonArray[0]).length : 0;
 
@@ -770,9 +769,46 @@ export async function executeOperatorAndFormat(
         break;
     }
 
-    const displayedRows = opInfo.displayedRows ?? 0;
-    const totalRows = opInfo.totalRowCount ?? displayedRows;
-    const truncated = opInfo.truncated ?? displayedRows < totalRows;
+    // Safety-net: both backends truncate server-side, but serialization to
+    // table/toon format may add padding beyond the raw record size estimate.
+    // This ensures the final serialized string respects the character limit.
+    const charLimit = config.maxOperatorResultCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit;
+    let displayedRows = opInfo.displayedRows ?? 0;
+    let totalRows = opInfo.totalRowCount ?? displayedRows;
+    let truncated = opInfo.truncated ?? displayedRows < totalRows;
+
+    if (dataString.length > charLimit) {
+      const allLines = dataString.split("\n");
+      // First line is the header (for table/toon) or opening bracket (for json)
+      const headerLine = allLines[0];
+      const dataRows = allLines.slice(1);
+
+      // Symmetric truncation: keep first half + last half of rows within budget
+      const halfLimit = Math.floor(charLimit / 2);
+
+      let frontSize = headerLine.length + 1;
+      const frontRows: string[] = [];
+      for (const row of dataRows) {
+        const rowLen = row.length + 1;
+        if (frontSize + rowLen > halfLimit && frontRows.length > 0) break;
+        frontRows.push(row);
+        frontSize += rowLen;
+      }
+
+      let backSize = 0;
+      const backRows: string[] = [];
+      for (let i = dataRows.length - 1; i >= frontRows.length; i--) {
+        const rowLen = dataRows[i].length + 1;
+        if (backSize + rowLen > halfLimit && backRows.length > 0) break;
+        backRows.unshift(dataRows[i]);
+        backSize += rowLen;
+      }
+
+      const keptRows = [...frontRows, ...backRows];
+      dataString = [headerLine, ...keptRows].join("\n");
+      displayedRows = keptRows.length;
+      truncated = true;
+    }
 
     // Build compact Input/Output lines using upstream operator IDs from links
     const shapeLine = formatInputOutput(workflowState, operatorId, opInfo, columns);

@@ -101,7 +101,8 @@ class ExecuteRequest(BaseModel):
     # Execution parameters (not part of WorkflowContent but added by the caller)
     targetOperatorIds: list[str] = []
     timeoutSeconds: int = 240
-    maxResultRows: int = 200
+    maxResultChars: int = 20000
+    maxCellChars: int = 4000
 
 
 # ---------------------------------------------------------------------------
@@ -269,10 +270,8 @@ def _build_hamilton_module(
     return module
 
 
-def _to_result(
-    value: Any, max_rows: int
-) -> tuple[list[dict[str, Any]], int, int, bool]:
-    """Convert any Hamilton node output to ``(records, total, displayed, truncated)``."""
+def _to_dataframe(value: Any) -> pd.DataFrame:
+    """Convert any Hamilton node output to a DataFrame."""
     if isinstance(value, pd.DataFrame):
         df = value
     elif isinstance(value, pd.Series):
@@ -286,12 +285,97 @@ def _to_result(
 
     # Ensure column names are strings to satisfy Pydantic validation
     df.columns = df.columns.astype(str)
+    return df
 
+
+def _truncate_cell(value: Any, max_chars: int) -> Any:
+    """Truncate a single cell value if it's a string exceeding the limit."""
+    if isinstance(value, str) and len(value) > max_chars:
+        half = (max_chars - len("...[truncated]...")) // 2
+        if half > 0:
+            return value[:half] + "...[truncated]..." + value[-half:]
+        return value[:max_chars]
+    return value
+
+
+def _estimate_record_size(record: dict[str, Any]) -> int:
+    """Estimate the JSON-serialized size of a single record."""
+    # Fast approximation: sum of key and value string lengths + overhead
+    size = 2  # braces
+    for k, v in record.items():
+        size += len(k) + 4  # key + quotes + colon + comma
+        if v is None:
+            size += 4
+        elif isinstance(v, str):
+            size += len(v) + 2
+        elif isinstance(v, bool):
+            size += 5
+        elif isinstance(v, (int, float)):
+            size += len(str(v))
+        else:
+            size += len(str(v))
+    return size
+
+
+def _to_result(
+    value: Any, max_result_chars: int, max_cell_chars: int
+) -> tuple[list[dict[str, Any]], int, int, bool]:
+    """
+    Convert any Hamilton node output to ``(records, total, displayed, truncated)``.
+
+    Uses character-aware symmetric truncation (front half + back half) matching
+    the Texera Scala backend's ``collectOperatorResult`` strategy.
+    """
+    df = _to_dataframe(value)
     total = len(df)
-    truncated = total > max_rows
-    display_df = df.head(max_rows) if truncated else df
-    records = display_df.to_dict(orient="records")
-    return records, total, len(records), truncated
+
+    if total == 0:
+        return [], 0, 0, False
+
+    records = df.to_dict(orient="records")
+
+    # Apply per-cell truncation
+    records = [
+        {k: _truncate_cell(v, max_cell_chars) for k, v in rec.items()}
+        for rec in records
+    ]
+
+    # Check if first record alone exceeds the budget
+    first_size = _estimate_record_size(records[0])
+    if first_size >= max_result_chars:
+        return [records[0]], total, 1, True
+
+    # Symmetric truncation: front half budget + back half budget
+    half_limit = max_result_chars // 2
+
+    # Collect front records
+    front: list[dict[str, Any]] = []
+    front_size = 0
+    for rec in records:
+        rec_size = _estimate_record_size(rec)
+        if front_size + rec_size > half_limit and front:
+            break
+        front.append(rec)
+        front_size += rec_size
+
+    # If all records fit in front half, no need for back
+    if len(front) >= total:
+        return front, total, len(front), False
+
+    # Collect back records (sliding window from remaining)
+    back: list[tuple[dict[str, Any], int]] = []
+    back_size = 0
+    for rec in records[len(front):]:
+        rec_size = _estimate_record_size(rec)
+        back.append((rec, rec_size))
+        back_size += rec_size
+        # Evict from front of back buffer if over budget
+        while back_size > half_limit and len(back) > 1:
+            _, removed_size = back.pop(0)
+            back_size -= removed_size
+
+    result = front + [r for r, _ in back]
+    return result, total, len(result), len(result) < total
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +552,9 @@ def execute(req: ExecuteRequest):
                 )
                 continue
 
-            records, total, displayed, truncated = _to_result(value, req.maxResultRows)
+            records, total, displayed, truncated = _to_result(
+                value, req.maxResultChars, req.maxCellChars
+            )
             columns = len(records[0]) if records else 0
 
             # Input port shapes from upstream results
@@ -477,8 +563,10 @@ def execute(req: ExecuteRequest):
                 for port_idx, from_op in sorted(input_map[op_id].items()):
                     upstream_val = results.get(from_op)
                     if upstream_val is not None:
-                        up_records, up_total, _, _ = _to_result(upstream_val, total)
-                        up_cols = len(up_records[0]) if up_records else 0
+                        # For upstream shapes we only need row/col counts, not truncated data
+                        up_df = _to_dataframe(upstream_val)
+                        up_total = len(up_df)
+                        up_cols = len(up_df.columns)
                         input_shapes.append(
                             PortShape(portIndex=port_idx, rows=up_total, columns=up_cols)
                         )
