@@ -34,7 +34,7 @@
 import type { ModelMessage } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
 import { TOOL_NAME_CREATE_OR_MODIFY_OPERATOR } from "../tools/code-op-tools";
-import { TOOL_NAME_EXECUTE_OPERATOR } from "../tools/execution-tools";
+import { TOOL_NAME_EXECUTE_OPERATOR, SECTION_EXECUTION_RESULT } from "../tools/execution-tools";
 import {
   TOOL_NAME_GET_CURRENT_WORKFLOW,
   TOOL_NAME_ADD_LINK,
@@ -104,9 +104,13 @@ interface ToolCallEntry {
  *
  * Algorithm:
  * 1. Scan assistant messages to build a chronological list of tool-call entries.
- * 2. Reverse-traverse to find the latest call per operator, marking stale ones.
- * 3. Remove marked tool-call parts from assistant messages and corresponding
- *    tool-result parts from tool messages.
+ * 2. Reverse-traverse to find the latest call per operator, marking stale ones:
+ *    - Deleted operators / stale deletes / stale non-definition calls → full removal.
+ *    - Stale definition calls (createOrModify, addOperator, modifyOperator) → trim
+ *      only the execution result data, keeping the tool-call (code/args) and
+ *      metadata/errors so the agent retains memory of prior attempts.
+ * 3. Filter messages: remove fully-stale parts, trim result sections for stale
+ *    definitions.
  * 4. Drop empty messages.
  */
 export function filterLatestOnlyMessages(messages: ModelMessage[], workflowState: WorkflowState): ModelMessage[] {
@@ -153,6 +157,10 @@ export function filterLatestOnlyMessages(messages: ModelMessage[], workflowState
   const seenDefinition = new Set<string>();  // latest definition per operator
   const seenExecution = new Set<string>();   // latest execution per operator
   const toolCallIdsToRemove = new Set<string>();
+  // Stale definition calls: keep the tool-call (code/args) but trim execution
+  // result data from the tool-result, preserving metadata and errors so the
+  // agent can see what it previously tried and why it failed.
+  const toolCallIdsToTrimResult = new Set<string>();
 
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
@@ -180,7 +188,8 @@ export function filterLatestOnlyMessages(messages: ModelMessage[], workflowState
       // Definition tool: check against definition-seen set only
       const anyAlreadySeen = operatorIds.some(id => seenDefinition.has(id));
       if (anyAlreadySeen) {
-        toolCallIdsToRemove.add(entry.toolCallId);
+        // Stale definition: trim result data but keep call + metadata/errors
+        toolCallIdsToTrimResult.add(entry.toolCallId);
       } else {
         for (const id of operatorIds) seenDefinition.add(id);
       }
@@ -205,18 +214,24 @@ export function filterLatestOnlyMessages(messages: ModelMessage[], workflowState
     }
   }
 
-  if (toolCallIdsToRemove.size === 0) {
-    console.log(`[LatestOnlyFilter] No tool calls removed (${entries.length} total)`);
+  if (toolCallIdsToRemove.size === 0 && toolCallIdsToTrimResult.size === 0) {
+    console.log(`[LatestOnlyFilter] No tool calls removed or trimmed (${entries.length} total)`);
     return messages;
   }
 
   // --- Step 3: Filter messages ---
+  //
+  // - toolCallIdsToRemove: fully remove both tool-call and tool-result parts
+  // - toolCallIdsToTrimResult: keep tool-call unchanged, but strip the
+  //   "--- Execution Result ---" section from the tool-result while preserving
+  //   metadata and error messages (same approach as context-optimization.ts)
   const filtered: ModelMessage[] = [];
 
   for (const msg of messages) {
     if (msg.role === "assistant" && Array.isArray(msg.content)) {
       const newContent = (msg.content as any[]).filter(part => {
         if (part.type === "tool-call") {
+          // Remove fully deleted calls; keep trimmed calls unchanged
           return !toolCallIdsToRemove.has(part.toolCallId);
         }
         return true; // keep text parts
@@ -227,15 +242,56 @@ export function filterLatestOnlyMessages(messages: ModelMessage[], workflowState
         filtered.push({ ...msg, content: newContent });
       }
     } else if (msg.role === "tool" && Array.isArray(msg.content)) {
-      const newContent = (msg.content as any[]).filter(part => {
-        if (part.type === "tool-result") {
-          return !toolCallIdsToRemove.has(part.toolCallId);
-        }
-        return true;
-      });
+      let modified = false;
+      const newContent = (msg.content as any[])
+        .filter(part => {
+          if (part.type === "tool-result") {
+            return !toolCallIdsToRemove.has(part.toolCallId);
+          }
+          return true;
+        })
+        .map(part => {
+          if (part.type !== "tool-result" || !toolCallIdsToTrimResult.has(part.toolCallId)) {
+            return part;
+          }
+
+          // Trim execution result section, keep metadata and errors
+          const rawResult = part.result ?? part.output;
+          let resultStr: string;
+          if (typeof rawResult === "string") {
+            resultStr = rawResult;
+          } else if (rawResult && typeof rawResult === "object" && rawResult.value !== undefined) {
+            resultStr = String(rawResult.value);
+          } else {
+            resultStr = JSON.stringify(rawResult);
+          }
+
+          // Always preserve errors — the agent needs to learn from failures
+          if (resultStr.startsWith("[ERROR]")) return part;
+
+          const resultIdx = resultStr.indexOf(SECTION_EXECUTION_RESULT);
+          if (resultIdx < 0) return part; // no result section to trim
+
+          const trimmedText =
+            resultStr.substring(0, resultIdx).trimEnd() +
+            "\n\n" +
+            SECTION_EXECUTION_RESULT +
+            "\n(execution result trimmed — superseded by a later version of this operator)";
+
+          modified = true;
+
+          // Build replacement preserving the original field format
+          if (part.result !== undefined) {
+            return { ...part, result: trimmedText };
+          }
+          if (typeof rawResult === "object" && rawResult.value !== undefined) {
+            return { ...part, output: { ...rawResult, value: trimmedText } };
+          }
+          return { ...part, output: trimmedText };
+        });
 
       if (newContent.length > 0) {
-        filtered.push({ ...msg, content: newContent });
+        filtered.push(modified ? { ...msg, content: newContent } : msg);
       }
     } else {
       // user messages and other message types — keep as-is
@@ -244,8 +300,8 @@ export function filterLatestOnlyMessages(messages: ModelMessage[], workflowState
   }
 
   console.log(
-    `[LatestOnlyFilter] Removed ${toolCallIdsToRemove.size}/${entries.length} tool call pairs ` +
-      `(${currentOperatorIds.size} operators in workflow)`
+    `[LatestOnlyFilter] Removed ${toolCallIdsToRemove.size}, trimmed ${toolCallIdsToTrimResult.size} ` +
+      `of ${entries.length} tool calls (${currentOperatorIds.size} operators in workflow)`
   );
 
   return filtered;
