@@ -64,6 +64,8 @@ export interface ExecutionConfig {
   cacheEnabled?: boolean;
   /** Execution backend: texera (default) or hamilton */
   executionBackend?: ExecutionBackend;
+  /** When true, omit the execution metadata section from results */
+  noExecutionMetadata?: boolean;
 }
 
 // ============================================================================
@@ -826,7 +828,9 @@ export async function executeOperatorAndFormat(
 
     // Build structured result with separate metadata and result sections.
     // Context optimization can trim the result section while preserving metadata.
-    const metadataLines = [shapeLine, upstreamLine, meta, ...warningLines].filter(Boolean);
+    const metadataLines = config.noExecutionMetadata
+      ? []
+      : [shapeLine, upstreamLine, meta, ...warningLines].filter(Boolean);
     const metadataSection = metadataLines.length > 0
       ? `${SECTION_EXECUTION_METADATA}\n${metadataLines.join("\n")}`
       : "";

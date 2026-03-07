@@ -177,6 +177,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     dynamicDepthEnabled: agentSettings.dynamicDepthEnabled,
     parallelToolCalls: agentSettings.parallelToolCalls,
     optionalResultRetrieval: agentSettings.optionalResultRetrieval,
+    noExecutionMetadata: agentSettings.noExecutionMetadata,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -279,6 +280,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           dynamicDepthEnabled: settings.dynamicDepthEnabled,
           parallelToolCalls: settings.parallelToolCalls,
           optionalResultRetrieval: settings.optionalResultRetrieval,
+          noExecutionMetadata: settings.noExecutionMetadata,
         });
       }
 
@@ -313,6 +315,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             dynamicDepthEnabled: t.Optional(t.Boolean()),
             parallelToolCalls: t.Optional(t.Boolean()),
             optionalResultRetrieval: t.Optional(t.Boolean()),
+            noExecutionMetadata: t.Optional(t.Boolean()),
           })
         ),
       }),
@@ -487,6 +490,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       dynamicDepthEnabled: agentSettings.dynamicDepthEnabled,
       parallelToolCalls: agentSettings.parallelToolCalls,
       optionalResultRetrieval: agentSettings.optionalResultRetrieval,
+      noExecutionMetadata: agentSettings.noExecutionMetadata,
     };
   })
 
@@ -527,6 +531,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         dynamicDepthEnabled: settings.dynamicDepthEnabled,
         parallelToolCalls: settings.parallelToolCalls,
         optionalResultRetrieval: settings.optionalResultRetrieval,
+        noExecutionMetadata: settings.noExecutionMetadata,
       });
 
       // Return updated settings
@@ -550,6 +555,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         dynamicDepthEnabled: agentSettings.dynamicDepthEnabled,
         parallelToolCalls: agentSettings.parallelToolCalls,
         optionalResultRetrieval: agentSettings.optionalResultRetrieval,
+        noExecutionMetadata: agentSettings.noExecutionMetadata,
       };
     },
     {
@@ -574,6 +580,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         dynamicDepthEnabled: t.Optional(t.Boolean()),
         parallelToolCalls: t.Optional(t.Boolean()),
         optionalResultRetrieval: t.Optional(t.Boolean()),
+        noExecutionMetadata: t.Optional(t.Boolean()),
       }),
     }
   );

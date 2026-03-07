@@ -224,6 +224,8 @@ export interface AgentSettings {
   parallelToolCalls: boolean;
   /** When true, retrieveResult becomes an optional parameter the LLM can set per call; when false, results are always retrieved */
   optionalResultRetrieval: boolean;
+  /** When true, execution metadata (shape, upstream IDs, row counts) is omitted from tool results */
+  noExecutionMetadata: boolean;
 }
 
 /**
@@ -248,6 +250,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   dynamicDepthEnabled: false,
   parallelToolCalls: false,
   optionalResultRetrieval: false,
+  noExecutionMetadata: false,
 };
 
 // ============================================================================
@@ -320,6 +323,8 @@ export interface AgentSettingsApi {
   parallelToolCalls?: boolean;
   /** When true, retrieveResult becomes an optional parameter the LLM can set per call */
   optionalResultRetrieval?: boolean;
+  /** When true, execution metadata is omitted from tool results */
+  noExecutionMetadata?: boolean;
 }
 
 /**
@@ -393,6 +398,8 @@ export interface UpdateAgentSettingsRequest {
   parallelToolCalls?: boolean;
   /** When true, retrieveResult becomes an optional parameter the LLM can set per call */
   optionalResultRetrieval?: boolean;
+  /** When true, execution metadata is omitted from tool results */
+  noExecutionMetadata?: boolean;
 }
 
 // ============================================================================

@@ -306,6 +306,7 @@ export class TexeraAgent {
           executionTimeoutMs: this.settings.executionTimeoutMs,
           cacheEnabled: this.settings.cacheEnabled,
           executionBackend: this.settings.executionBackend,
+          noExecutionMetadata: this.settings.noExecutionMetadata,
         })
       : undefined;
 
@@ -519,6 +520,7 @@ export class TexeraAgent {
     dynamicDepthEnabled?: boolean;
     parallelToolCalls?: boolean;
     optionalResultRetrieval?: boolean;
+    noExecutionMetadata?: boolean;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -579,6 +581,9 @@ export class TexeraAgent {
     if (updates.optionalResultRetrieval !== undefined && updates.optionalResultRetrieval !== this.settings.optionalResultRetrieval) {
       this.settings.optionalResultRetrieval = updates.optionalResultRetrieval;
       promptNeedsRebuild = true;
+    }
+    if (updates.noExecutionMetadata !== undefined) {
+      this.settings.noExecutionMetadata = updates.noExecutionMetadata;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt

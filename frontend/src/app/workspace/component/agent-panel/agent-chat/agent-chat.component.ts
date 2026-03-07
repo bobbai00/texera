@@ -123,6 +123,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsDynamicDepthEnabled = false; // Automatically compute frontier depth
   public settingsParallelToolCalls = false; // Allow multiple tool calls per response
   public settingsOptionalResultRetrieval = false; // Make retrieveResult optional per call
+  public settingsNoExecutionMetadata = false; // Omit execution metadata from results
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -440,6 +441,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsDynamicDepthEnabled = settings.dynamicDepthEnabled ?? false;
         this.settingsParallelToolCalls = settings.parallelToolCalls ?? false;
         this.settingsOptionalResultRetrieval = settings.optionalResultRetrieval ?? false;
+        this.settingsNoExecutionMetadata = settings.noExecutionMetadata ?? false;
       });
 
     // Also load agent internal state
@@ -1455,6 +1457,24 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
             this.settingsOptionalResultRetrieval
               ? "Optional result retrieval enabled"
               : "Optional result retrieval disabled"
+          ),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the no execution metadata setting.
+   */
+  public saveNoExecutionMetadata(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        noExecutionMetadata: this.settingsNoExecutionMetadata,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsNoExecutionMetadata ? "Execution metadata hidden" : "Execution metadata shown"
           ),
         error: () => {},
       });

@@ -82,6 +82,8 @@ export interface AgentSettingsApi {
   parallelToolCalls?: boolean;
   /** When true, retrieveResult becomes an optional parameter the LLM can set per call */
   optionalResultRetrieval?: boolean;
+  /** When true, execution metadata is omitted from tool results */
+  noExecutionMetadata?: boolean;
 }
 
 /**
@@ -1297,6 +1299,7 @@ export class TexeraCopilotManagerService {
           dynamicDepthEnabled: false,
           parallelToolCalls: false,
           optionalResultRetrieval: false,
+          noExecutionMetadata: false,
         })
       )
     );

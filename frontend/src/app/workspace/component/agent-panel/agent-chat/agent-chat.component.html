@@ -1004,6 +1004,27 @@
               >
             </div>
           </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">No Execution Metadata</label>
+            <div class="settings-param-input">
+              <nz-switch
+                [(ngModel)]="settingsNoExecutionMetadata"
+                nzSize="small"
+                style="margin-right: 12px"></nz-switch>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveNoExecutionMetadata()">
+                Save
+              </button>
+              <span class="settings-param-hint"
+                >When enabled, execution metadata (input/output shapes, upstream IDs, row counts) is omitted from tool
+                results.</span
+              >
+            </div>
+          </div>
         </div>
       </nz-tab>
 
