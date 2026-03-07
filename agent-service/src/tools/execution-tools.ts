@@ -456,18 +456,10 @@ interface ResultMeta {
  * For json: "json (items: 10/100 truncated due to token limit)"
  */
 function formatResultMeta(meta: ResultMeta): string {
-  if (meta.mode === "json") {
-    const itemInfo = meta.truncated
-      ? `${meta.displayedRows}/${meta.totalRows} truncated due to token limit`
-      : `${meta.displayedRows}`;
-    return `${meta.mode} (items: ${itemInfo})`;
-  }
-
-  // For table/toon: only show truncation notice
-  if (meta.truncated) {
-    return `${meta.displayedRows}/${meta.totalRows} rows are displayed due to the token limit`;
-  }
-  return "";
+  const rowsPart = meta.truncated
+    ? `${meta.displayedRows}/${meta.totalRows} rows (truncated)`
+    : `${meta.totalRows} rows`;
+  return `[${meta.mode}] ${rowsPart}, ${meta.columns} columns`;
 }
 
 /**
@@ -830,11 +822,12 @@ export async function executeOperatorAndFormat(
     // Context optimization can trim the result section while preserving metadata.
     const metadataLines = config.noExecutionMetadata
       ? []
-      : [shapeLine, upstreamLine, meta, ...warningLines].filter(Boolean);
+      : [shapeLine, upstreamLine, ...warningLines].filter(Boolean);
     const metadataSection = metadataLines.length > 0
       ? `${SECTION_EXECUTION_METADATA}\n${metadataLines.join("\n")}`
       : "";
-    const resultSection = `${SECTION_EXECUTION_RESULT}\n${dataString}`;
+    const resultHeader = [meta, dataString].filter(Boolean).join("\n");
+    const resultSection = `${SECTION_EXECUTION_RESULT}\n${resultHeader}`;
 
     return [metadataSection, resultSection].filter(Boolean).join("\n\n");
   } catch (error: any) {
