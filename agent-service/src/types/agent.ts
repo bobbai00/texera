@@ -180,6 +180,8 @@ export enum ExecutionBackend {
   TEXERA = "texera",
   /** Hamilton sidecar (Python FastAPI service) */
   HAMILTON = "hamilton",
+  /** Dagster sidecar (Python FastAPI service) */
+  DAGSTER = "dagster",
 }
 
 /**
@@ -214,7 +216,7 @@ export interface AgentSettings {
   trimmedResultCharLimit: number;
   /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
   cacheEnabled: boolean;
-  /** Execution backend: "texera" (default) or "hamilton" */
+  /** Execution backend: "texera", "hamilton", or "dagster" */
   executionBackend: ExecutionBackend;
   /** Keep only the latest tool call/result for each operator still in the workflow */
   latestOnly: boolean;
@@ -313,8 +315,8 @@ export interface AgentSettingsApi {
   trimmedResultCharLimit?: number;
   /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
   cacheEnabled?: boolean;
-  /** Execution backend: "texera" or "hamilton" */
-  executionBackend?: "texera" | "hamilton";
+  /** Execution backend: "texera", "hamilton", or "dagster" */
+  executionBackend?: "texera" | "hamilton" | "dagster";
   /** Keep only the latest tool call/result for each operator still in the workflow */
   latestOnly?: boolean;
   /** Automatically compute frontier depth as ceil(average source-to-sink path length) */
@@ -388,8 +390,8 @@ export interface UpdateAgentSettingsRequest {
   trimmedResultCharLimit?: number;
   /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
   cacheEnabled?: boolean;
-  /** Execution backend: "texera" or "hamilton" */
-  executionBackend?: "texera" | "hamilton";
+  /** Execution backend: "texera", "hamilton", or "dagster" */
+  executionBackend?: "texera" | "hamilton" | "dagster";
   /** Keep only the latest tool call/result for each operator still in the workflow */
   latestOnly?: boolean;
   /** Automatically compute frontier depth as ceil(average source-to-sink path length) */

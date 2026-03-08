@@ -435,6 +435,76 @@ async function executeWorkflowHamilton(
 }
 
 // ============================================================================
+// Dagster Execution Function
+// ============================================================================
+
+/**
+ * Execute a workflow via the Dagster sidecar.
+ * Sends WorkflowContent format (operators with operatorProperties.code,
+ * links with source/target) rather than the Texera LogicalPlan format.
+ * The sidecar is stateless — it translates to Dagster assets and executes.
+ */
+async function executeWorkflowDagster(
+  config: ExecutionConfig,
+  workflowState: WorkflowState,
+  operatorId: string,
+  options: { abortSignal?: AbortSignal } = {}
+): Promise<SyncExecutionResult> {
+  const backendConfig = getBackendConfig();
+  const dagsterEndpoint = backendConfig.dagsterEndpoint || "http://localhost:8112";
+
+  const url = `${dagsterEndpoint}/execute`;
+
+  const timeoutSeconds = config.executionTimeoutMs
+    ? Math.ceil(config.executionTimeoutMs / 1000)
+    : Math.ceil(DEFAULT_AGENT_SETTINGS.executionTimeoutMs / 1000);
+
+  // Get the sub-DAG up to the target operator, in WorkflowContent format
+  const subDAG = workflowState.getSubDAG(operatorId);
+
+  const request = {
+    operators: subDAG.operators,
+    links: subDAG.links,
+    targetOperatorIds: [operatorId],
+    timeoutSeconds,
+    maxResultChars: config.maxOperatorResultCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit,
+    maxCellChars: config.maxOperatorResultCellCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCellCharLimit,
+  };
+
+  console.log(
+    `[ExecutionTools] Executing workflow via Dagster: ${url} ` +
+      `(operators: ${subDAG.operators.length}, links: ${subDAG.links.length}, target: ${operatorId})`
+  );
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal: options.abortSignal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Dagster execution failed: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
+    console.error("[ExecutionTools] Dagster execution failed:", error);
+    return {
+      success: false,
+      state: "Error",
+      operators: {},
+      errors: [error instanceof Error ? error.message : "Unknown error"],
+    };
+  }
+}
+
+// ============================================================================
 // Result Formatting (agent-service side)
 // ============================================================================
 
@@ -692,14 +762,20 @@ export async function executeOperatorAndFormat(
       return createErrorResult(formatWorkflowValidationErrors(validationResult));
     }
 
-    const result =
-      config.executionBackend === ExecutionBackend.HAMILTON
-        ? await executeWorkflowHamilton(config, workflowState, operatorId, {
-            abortSignal: options.abortSignal,
-          })
-        : await executeWorkflowHttp(config, logicalPlan, {
-            abortSignal: options.abortSignal,
-          });
+    let result: SyncExecutionResult;
+    if (config.executionBackend === ExecutionBackend.HAMILTON) {
+      result = await executeWorkflowHamilton(config, workflowState, operatorId, {
+        abortSignal: options.abortSignal,
+      });
+    } else if (config.executionBackend === ExecutionBackend.DAGSTER) {
+      result = await executeWorkflowDagster(config, workflowState, operatorId, {
+        abortSignal: options.abortSignal,
+      });
+    } else {
+      result = await executeWorkflowHttp(config, logicalPlan, {
+        abortSignal: options.abortSignal,
+      });
+    }
 
     // Handle execution failure
     if (!result.success) {

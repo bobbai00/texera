@@ -56,6 +56,8 @@ export interface BackendConfig {
   configEndpoint: string;
   /** Hamilton sidecar endpoint (default: http://localhost:8111) */
   hamiltonEndpoint: string;
+  /** Dagster sidecar endpoint (default: http://localhost:8112) */
+  dagsterEndpoint: string;
 }
 
 interface ConfigFileService {
@@ -101,6 +103,7 @@ function loadConfigFile(): Partial<BackendConfig> {
           computingEndpoint: config.services.computing?.target,
           configEndpoint: config.services.config?.target,
           hamiltonEndpoint: config.services.hamilton?.target,
+          dagsterEndpoint: config.services.dagster?.target,
         };
       }
     }
@@ -124,6 +127,7 @@ const DEFAULT_CONFIG: BackendConfig = {
   computingEndpoint: process.env.COMPUTING_ENDPOINT || fileConfig.computingEndpoint || "http://localhost:8888",
   configEndpoint: process.env.CONFIG_ENDPOINT || fileConfig.configEndpoint || "http://localhost:9094",
   hamiltonEndpoint: process.env.HAMILTON_ENDPOINT || fileConfig.hamiltonEndpoint || "http://localhost:8111",
+  dagsterEndpoint: process.env.DAGSTER_ENDPOINT || fileConfig.dagsterEndpoint || "http://localhost:8112",
 };
 
 let currentConfig = { ...DEFAULT_CONFIG };
