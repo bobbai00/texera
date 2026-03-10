@@ -360,7 +360,7 @@ export class TexeraAgent {
     }
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
-    if (getExecutionConfig) {
+    if (getExecutionConfig && !this.settings.simplifiedTools) {
       tools[TOOL_NAME_EXECUTE_OPERATOR] = createExecuteOperatorTool(this.workflowState, getExecutionConfig);
     }
 
