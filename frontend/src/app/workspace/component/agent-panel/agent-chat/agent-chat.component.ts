@@ -124,6 +124,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsParallelToolCalls = false; // Allow multiple tool calls per response
   public settingsOptionalResultRetrieval = false; // Make retrieveResult optional per call
   public settingsNoExecutionMetadata = false; // Omit execution metadata from results
+  public settingsSimplifiedTools = false; // Do not register getCurrentWorkflow tool
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -442,6 +443,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsParallelToolCalls = settings.parallelToolCalls ?? false;
         this.settingsOptionalResultRetrieval = settings.optionalResultRetrieval ?? false;
         this.settingsNoExecutionMetadata = settings.noExecutionMetadata ?? false;
+        this.settingsSimplifiedTools = settings.simplifiedTools ?? false;
       });
 
     // Also load agent internal state
@@ -1475,6 +1477,24 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         next: () =>
           this.notificationService.success(
             this.settingsNoExecutionMetadata ? "Execution metadata hidden" : "Execution metadata shown"
+          ),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the simplified tools setting.
+   */
+  public saveSimplifiedTools(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        simplifiedTools: this.settingsSimplifiedTools,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsSimplifiedTools ? "Simplified tools enabled" : "Simplified tools disabled"
           ),
         error: () => {},
       });

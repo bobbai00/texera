@@ -337,9 +337,13 @@ export class TexeraAgent {
 
     // Common tools for both modes
     const tools: Record<string, any> = {
-      [TOOL_NAME_GET_CURRENT_WORKFLOW]: createGetCurrentWorkflowTool(this.workflowState),
       [TOOL_NAME_DELETE_OPERATOR]: createDeleteOperatorTool(this.workflowState, context),
     };
+
+    // Register getCurrentWorkflow unless simplifiedTools is enabled
+    if (!this.settings.simplifiedTools) {
+      tools[TOOL_NAME_GET_CURRENT_WORKFLOW] = createGetCurrentWorkflowTool(this.workflowState);
+    }
 
     // Mode-specific tools
     if (this.settings.agentMode === AgentMode.CODE) {
@@ -521,6 +525,7 @@ export class TexeraAgent {
     parallelToolCalls?: boolean;
     optionalResultRetrieval?: boolean;
     noExecutionMetadata?: boolean;
+    simplifiedTools?: boolean;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -584,6 +589,9 @@ export class TexeraAgent {
     }
     if (updates.noExecutionMetadata !== undefined) {
       this.settings.noExecutionMetadata = updates.noExecutionMetadata;
+    }
+    if (updates.simplifiedTools !== undefined) {
+      this.settings.simplifiedTools = updates.simplifiedTools;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt

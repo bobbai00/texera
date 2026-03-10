@@ -228,6 +228,8 @@ export interface AgentSettings {
   optionalResultRetrieval: boolean;
   /** When true, execution metadata (shape, upstream IDs, row counts) is omitted from tool results */
   noExecutionMetadata: boolean;
+  /** When true, getCurrentWorkflow tool is not registered (simplified tool set) */
+  simplifiedTools: boolean;
 }
 
 /**
@@ -253,6 +255,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   parallelToolCalls: false,
   optionalResultRetrieval: false,
   noExecutionMetadata: false,
+  simplifiedTools: false,
 };
 
 // ============================================================================
@@ -327,6 +330,8 @@ export interface AgentSettingsApi {
   optionalResultRetrieval?: boolean;
   /** When true, execution metadata is omitted from tool results */
   noExecutionMetadata?: boolean;
+  /** When true, getCurrentWorkflow tool is not registered (simplified tool set) */
+  simplifiedTools?: boolean;
 }
 
 /**
@@ -402,6 +407,8 @@ export interface UpdateAgentSettingsRequest {
   optionalResultRetrieval?: boolean;
   /** When true, execution metadata is omitted from tool results */
   noExecutionMetadata?: boolean;
+  /** When true, getCurrentWorkflow tool is not registered (simplified tool set) */
+  simplifiedTools?: boolean;
 }
 
 // ============================================================================

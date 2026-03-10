@@ -178,6 +178,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     parallelToolCalls: agentSettings.parallelToolCalls,
     optionalResultRetrieval: agentSettings.optionalResultRetrieval,
     noExecutionMetadata: agentSettings.noExecutionMetadata,
+    simplifiedTools: agentSettings.simplifiedTools,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -281,6 +282,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           parallelToolCalls: settings.parallelToolCalls,
           optionalResultRetrieval: settings.optionalResultRetrieval,
           noExecutionMetadata: settings.noExecutionMetadata,
+          simplifiedTools: settings.simplifiedTools,
         });
       }
 
@@ -316,6 +318,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             parallelToolCalls: t.Optional(t.Boolean()),
             optionalResultRetrieval: t.Optional(t.Boolean()),
             noExecutionMetadata: t.Optional(t.Boolean()),
+            simplifiedTools: t.Optional(t.Boolean()),
           })
         ),
       }),
@@ -491,6 +494,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       parallelToolCalls: agentSettings.parallelToolCalls,
       optionalResultRetrieval: agentSettings.optionalResultRetrieval,
       noExecutionMetadata: agentSettings.noExecutionMetadata,
+      simplifiedTools: agentSettings.simplifiedTools,
     };
   })
 
@@ -532,6 +536,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         parallelToolCalls: settings.parallelToolCalls,
         optionalResultRetrieval: settings.optionalResultRetrieval,
         noExecutionMetadata: settings.noExecutionMetadata,
+        simplifiedTools: settings.simplifiedTools,
       });
 
       // Return updated settings
@@ -556,6 +561,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         parallelToolCalls: agentSettings.parallelToolCalls,
         optionalResultRetrieval: agentSettings.optionalResultRetrieval,
         noExecutionMetadata: agentSettings.noExecutionMetadata,
+        simplifiedTools: agentSettings.simplifiedTools,
       };
     },
     {
@@ -581,6 +587,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         parallelToolCalls: t.Optional(t.Boolean()),
         optionalResultRetrieval: t.Optional(t.Boolean()),
         noExecutionMetadata: t.Optional(t.Boolean()),
+        simplifiedTools: t.Optional(t.Boolean()),
       }),
     }
   );
