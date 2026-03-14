@@ -125,6 +125,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsOptionalResultRetrieval = false; // Make retrieveResult optional per call
   public settingsNoExecutionMetadata = false; // Omit execution metadata from results
   public settingsSimplifiedTools = false; // Do not register getCurrentWorkflow tool
+  public settingsNoActionDetail = false; // Replace code/properties with placeholder in message history
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -444,6 +445,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsOptionalResultRetrieval = settings.optionalResultRetrieval ?? false;
         this.settingsNoExecutionMetadata = settings.noExecutionMetadata ?? false;
         this.settingsSimplifiedTools = settings.simplifiedTools ?? false;
+        this.settingsNoActionDetail = settings.noActionDetail ?? false;
       });
 
     // Also load agent internal state
@@ -1477,6 +1479,24 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         next: () =>
           this.notificationService.success(
             this.settingsNoExecutionMetadata ? "Execution metadata hidden" : "Execution metadata shown"
+          ),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the no action detail setting.
+   */
+  public saveNoActionDetail(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        noActionDetail: this.settingsNoActionDetail,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsNoActionDetail ? "No action detail enabled" : "No action detail disabled"
           ),
         error: () => {},
       });

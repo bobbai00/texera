@@ -339,7 +339,7 @@ Example: operatorId="filtered" (requires "customers" to exist)
           "Unique operator name (valid Python variable). Other operators reference this as input parameter."
         ),
         code: z.string().describe("Python function: def load() or def process(...)"),
-        summary: z.string().optional().describe("Brief summary of operator behavior"),
+        summary: z.string().optional().describe("Detailed summary of the operator behavior. For load() operators, include the filename(s) being loaded."),
       };
       return context?.settings?.optionalResultRetrieval
         ? z.object({

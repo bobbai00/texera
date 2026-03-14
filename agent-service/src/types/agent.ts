@@ -230,6 +230,8 @@ export interface AgentSettings {
   noExecutionMetadata: boolean;
   /** When true, getCurrentWorkflow tool is not registered (simplified tool set) */
   simplifiedTools: boolean;
+  /** When true, code/properties details in definition tool calls are replaced with a placeholder in message history */
+  noActionDetail: boolean;
 }
 
 /**
@@ -256,6 +258,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   optionalResultRetrieval: false,
   noExecutionMetadata: false,
   simplifiedTools: false,
+  noActionDetail: false,
 };
 
 // ============================================================================
@@ -332,6 +335,8 @@ export interface AgentSettingsApi {
   noExecutionMetadata?: boolean;
   /** When true, getCurrentWorkflow tool is not registered (simplified tool set) */
   simplifiedTools?: boolean;
+  /** When true, code/properties details in definition tool calls are replaced with a placeholder in message history */
+  noActionDetail?: boolean;
 }
 
 /**
@@ -409,6 +414,8 @@ export interface UpdateAgentSettingsRequest {
   noExecutionMetadata?: boolean;
   /** When true, getCurrentWorkflow tool is not registered (simplified tool set) */
   simplifiedTools?: boolean;
+  /** When true, code/properties details in definition tool calls are replaced with a placeholder in message history */
+  noActionDetail?: boolean;
 }
 
 // ============================================================================

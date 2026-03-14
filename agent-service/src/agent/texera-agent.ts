@@ -90,6 +90,7 @@ import {
 } from "../tools/execution-tools";
 import { trimNonFrontierResults } from "./context-optimization";
 import { filterLatestOnlyMessages } from "./latest-only-filter";
+import { redactActionDetails } from "./no-action-detail-filter";
 
 // ============================================================================
 // Constants
@@ -526,6 +527,7 @@ export class TexeraAgent {
     optionalResultRetrieval?: boolean;
     noExecutionMetadata?: boolean;
     simplifiedTools?: boolean;
+    noActionDetail?: boolean;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -592,6 +594,9 @@ export class TexeraAgent {
     }
     if (updates.simplifiedTools !== undefined) {
       this.settings.simplifiedTools = updates.simplifiedTools;
+    }
+    if (updates.noActionDetail !== undefined) {
+      this.settings.noActionDetail = updates.noActionDetail;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt
@@ -790,7 +795,7 @@ export class TexeraAgent {
         messages: this.messages,
         tools: this.tools,
         stopWhen: stepCountIs(this.settings.maxSteps),
-        prepareStep: (this.settings.enableContextOptimization || this.settings.latestOnly)
+        prepareStep: (this.settings.enableContextOptimization || this.settings.latestOnly || this.settings.noActionDetail)
           ? ({ stepNumber, messages: currentMessages }) => {
               if (stepNumber === 0) return undefined;
               let processed = currentMessages;
@@ -798,7 +803,11 @@ export class TexeraAgent {
               if (this.settings.latestOnly) {
                 processed = filterLatestOnlyMessages(processed, this.workflowState);
               }
-              // context optimization second: trims execution result sections
+              // noActionDetail: replaces code/properties in definition tool calls with placeholder
+              if (this.settings.noActionDetail) {
+                processed = redactActionDetails(processed);
+              }
+              // context optimization last: trims execution result sections
               if (this.settings.enableContextOptimization) {
                 const effectiveDepth = this.settings.dynamicDepthEnabled
                   ? this.workflowState.computeAveragePathLength()

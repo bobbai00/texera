@@ -86,6 +86,8 @@ export interface AgentSettingsApi {
   noExecutionMetadata?: boolean;
   /** When true, getCurrentWorkflow tool is not registered (simplified tool set) */
   simplifiedTools?: boolean;
+  /** When true, code/properties details in definition tool calls are replaced with a placeholder */
+  noActionDetail?: boolean;
 }
 
 /**
@@ -1303,6 +1305,7 @@ export class TexeraCopilotManagerService {
           optionalResultRetrieval: false,
           noExecutionMetadata: false,
           simplifiedTools: false,
+          noActionDetail: false,
         })
       )
     );

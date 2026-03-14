@@ -1046,6 +1046,27 @@
               >
             </div>
           </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">No Action Detail</label>
+            <div class="settings-param-input">
+              <nz-switch
+                [(ngModel)]="settingsNoActionDetail"
+                nzSize="small"
+                style="margin-right: 12px"></nz-switch>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveNoActionDetail()">
+                Save
+              </button>
+              <span class="settings-param-hint"
+                >When enabled, code and properties in prior tool calls are replaced with a placeholder, forcing the agent
+                to focus on operator semantics and lineage rather than implementation details.</span
+              >
+            </div>
+          </div>
         </div>
       </nz-tab>
 

@@ -179,6 +179,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     optionalResultRetrieval: agentSettings.optionalResultRetrieval,
     noExecutionMetadata: agentSettings.noExecutionMetadata,
     simplifiedTools: agentSettings.simplifiedTools,
+    noActionDetail: agentSettings.noActionDetail,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -283,6 +284,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           optionalResultRetrieval: settings.optionalResultRetrieval,
           noExecutionMetadata: settings.noExecutionMetadata,
           simplifiedTools: settings.simplifiedTools,
+          noActionDetail: settings.noActionDetail,
         });
       }
 
@@ -319,6 +321,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             optionalResultRetrieval: t.Optional(t.Boolean()),
             noExecutionMetadata: t.Optional(t.Boolean()),
             simplifiedTools: t.Optional(t.Boolean()),
+            noActionDetail: t.Optional(t.Boolean()),
           })
         ),
       }),
@@ -495,6 +498,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       optionalResultRetrieval: agentSettings.optionalResultRetrieval,
       noExecutionMetadata: agentSettings.noExecutionMetadata,
       simplifiedTools: agentSettings.simplifiedTools,
+      noActionDetail: agentSettings.noActionDetail,
     };
   })
 
@@ -537,6 +541,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         optionalResultRetrieval: settings.optionalResultRetrieval,
         noExecutionMetadata: settings.noExecutionMetadata,
         simplifiedTools: settings.simplifiedTools,
+        noActionDetail: settings.noActionDetail,
       });
 
       // Return updated settings
@@ -562,6 +567,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         optionalResultRetrieval: agentSettings.optionalResultRetrieval,
         noExecutionMetadata: agentSettings.noExecutionMetadata,
         simplifiedTools: agentSettings.simplifiedTools,
+        noActionDetail: agentSettings.noActionDetail,
       };
     },
     {
@@ -588,6 +594,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         optionalResultRetrieval: t.Optional(t.Boolean()),
         noExecutionMetadata: t.Optional(t.Boolean()),
         simplifiedTools: t.Optional(t.Boolean()),
+        noActionDetail: t.Optional(t.Boolean()),
       }),
     }
   );

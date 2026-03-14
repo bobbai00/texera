@@ -53,7 +53,7 @@ Tool call: createOrModifyOperator: operatorId="sample_raw", code=\`def load() ->
     with open('/data/measurements.csv', 'r') as f:
         lines = [f.readline() for _ in range(5)]
     return pd.DataFrame([{'line_num': i+1, 'content': line.strip()} for i, line in enumerate(lines)])\`
-  summary="Inspect raw file structure"
+  summary="Inspect raw file structure of measurements.csv"
 Observation: Added operator "sample_raw".
   line_num | content
   1        | # Sensor log exported 2024-01-15
@@ -66,13 +66,13 @@ Thought: The file has a comment line at row 1, uses semicolons, and the header i
 Tool call: createOrModifyOperator: operatorId="sample_measurements", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/measurements.csv', sep=';', skiprows=1)
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample measurements parsing"
+  summary="Sample measurements.csv parsing"
 Observation: Added operator "sample_measurements". 4 columns: station, date, temperature, humidity.
 
 Thought: Now I **MUST** load the full data. The sample operator was only for viewing.
 Tool call: createOrModifyOperator: operatorId="measurements", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/measurements.csv', sep=';', skiprows=1)\`
-  summary="Load complete measurements"
+  summary="Load complete measurements.csv"
 
 Thought: Now I can compute the average temperature on the full dataset.
 Tool call: createOrModifyOperator: operatorId="avg_temp", code=\`def process(measurements) -> pd.DataFrame:
@@ -197,30 +197,30 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
     with open('/data/readme.md', 'r') as f:
         content = f.read()
     return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
-  summary="Load documentation"
+  summary="Load readme.md documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
 Thought: Let me sample the customers file to understand its schema.
 Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/customers.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample customers schema"
+  summary="Sample customers.csv schema"
 Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
 
 Thought: Now sample the orders file.
 Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/orders.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample orders schema"
+  summary="Sample orders.csv schema"
 Observation: Added operator "sample_orders". 4 columns: order_id, customer_id, amount, order_date (6 sample rows)
 
 Thought: Now I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
-  summary="Load complete customers"
+  summary="Load complete customers.csv"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
-  summary="Load complete orders"
+  summary="Load complete orders.csv"
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -264,28 +264,28 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
     with open('/data/readme.md', 'r') as f:
         content = f.read()
     return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
-  summary="Load documentation"
+  summary="Load readme.md documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
 Thought: Let me sample both data files to understand their schema. These two operators are independent, so I'll create them in parallel.
 Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/customers.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample customers schema"
+  summary="Sample customers.csv schema"
 Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/orders.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample orders schema"
+  summary="Sample orders.csv schema"
 Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
 Observation: Added operator "sample_orders". 4 columns: order_id, customer_id, amount, order_date (6 sample rows)
 
 Thought: Now I **MUST** load the full data to proceed. These loads are independent, so I'll batch them in parallel.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
-  summary="Load complete customers"
+  summary="Load complete customers.csv"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
-  summary="Load complete orders"
+  summary="Load complete orders.csv"
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -338,30 +338,30 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
     with open('/data/readme.md', 'r') as f:
         content = f.read()
     return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
-  summary="Load documentation"
+  summary="Load readme.md documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
 Thought: Let me sample the customers file to understand its schema.
 Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/customers.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample customers schema"
+  summary="Sample customers.csv schema"
 Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
 
 Thought: Now sample the orders file.
 Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/orders.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample orders schema"
+  summary="Sample orders.csv schema"
 Observation: Added operator "sample_orders". 4 columns: order_id, customer_id, amount, order_date (6 sample rows)
 
 Thought: Now I **MUST** load the full data. Each operator below contains exactly ONE data operation.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
-  summary="Load complete customers"
+  summary="Load complete customers.csv"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
-  summary="Load complete orders"
+  summary="Load complete orders.csv"
 
 Thought: Join customers and orders — ONE operation: merge.
 Tool call: createOrModifyOperator: operatorId="merged", code=\`def process(customers, orders) -> pd.DataFrame:
