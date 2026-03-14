@@ -116,7 +116,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsFineGrainedPrompt = false; // Use fine-grained prompts with atomic operation constraints
   public settingsEnableContextOptimization = false; // Enable context optimization
   public settingsFrontierDepth = 1; // Frontier depth for context optimization
-  public settingsTrimmedResultCharLimit = 0; // Max chars to keep from trimmed results (0 = fully skip)
+  public settingsMinimumResultCharLimit = 0; // Lower bound for log-decay trimming (0 = fully skip non-frontier)
   public settingsCacheEnabled = true; // Whether to enable operator result caching
   public settingsExecutionBackend: "texera" | "hamilton" = "texera"; // Execution backend
   public settingsLatestOnly = false; // Keep only latest tool call/result per operator
@@ -436,7 +436,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsFineGrainedPrompt = settings.fineGrainedPrompt ?? false;
         this.settingsEnableContextOptimization = settings.enableContextOptimization ?? false;
         this.settingsFrontierDepth = settings.frontierDepth ?? 1;
-        this.settingsTrimmedResultCharLimit = settings.trimmedResultCharLimit ?? 0;
+        this.settingsMinimumResultCharLimit = settings.minimumResultCharLimit ?? 0;
         this.settingsCacheEnabled = settings.cacheEnabled ?? true;
         this.settingsExecutionBackend = settings.executionBackend ?? "texera";
         this.settingsLatestOnly = settings.latestOnly ?? false;
@@ -1334,22 +1334,22 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   }
 
   /**
-   * Save the trimmed result character limit setting.
+   * Save the minimum result character limit setting (lower bound for log-decay).
    */
-  public saveTrimmedResultCharLimit(): void {
-    if (this.settingsTrimmedResultCharLimit > this.settingsMaxCharLimit) {
+  public saveMinimumResultCharLimit(): void {
+    if (this.settingsMinimumResultCharLimit > this.settingsMaxCharLimit) {
       this.notificationService.error(
-        `Trimmed result limit (${this.settingsTrimmedResultCharLimit}) cannot exceed max operator result limit (${this.settingsMaxCharLimit})`
+        `Minimum result limit (${this.settingsMinimumResultCharLimit}) cannot exceed max operator result limit (${this.settingsMaxCharLimit})`
       );
       return;
     }
     this.copilotManagerService
       .updateAgentSettings(this.agentInfo.id, {
-        trimmedResultCharLimit: this.settingsTrimmedResultCharLimit,
+        minimumResultCharLimit: this.settingsMinimumResultCharLimit,
       })
       .pipe(untilDestroyed(this))
       .subscribe({
-        next: () => this.notificationService.success("Trimmed result character limit saved"),
+        next: () => this.notificationService.success("Minimum result character limit saved"),
         error: () => {},
       });
   }

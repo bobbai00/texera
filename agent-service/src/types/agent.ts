@@ -212,8 +212,8 @@ export interface AgentSettings {
   enableContextOptimization: boolean;
   /** Number of BFS levels backward from leaf operators for frontier computation */
   frontierDepth: number;
-  /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
-  trimmedResultCharLimit: number;
+  /** Minimum characters to keep from execution results after log-fallback decay (frontier uses maxOperatorResultCharLimit, each deeper depth halves) */
+  minimumResultCharLimit: number;
   /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
   cacheEnabled: boolean;
   /** Execution backend: "texera", "hamilton", or "dagster" */
@@ -249,7 +249,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   fineGrainedPrompt: false, // Default to standard prompts
   enableContextOptimization: false,
   frontierDepth: 1,
-  trimmedResultCharLimit: 0,
+  minimumResultCharLimit: 0,
   cacheEnabled: true,
   executionBackend: ExecutionBackend.TEXERA,
   latestOnly: false,
@@ -317,8 +317,8 @@ export interface AgentSettingsApi {
   enableContextOptimization?: boolean;
   /** Number of BFS levels backward from leaf operators for frontier computation */
   frontierDepth?: number;
-  /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
-  trimmedResultCharLimit?: number;
+  /** Minimum characters to keep from execution results after log-fallback decay */
+  minimumResultCharLimit?: number;
   /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
   cacheEnabled?: boolean;
   /** Execution backend: "texera", "hamilton", or "dagster" */
@@ -396,8 +396,8 @@ export interface UpdateAgentSettingsRequest {
   enableContextOptimization?: boolean;
   /** Number of BFS levels backward from leaf operators for frontier computation */
   frontierDepth?: number;
-  /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
-  trimmedResultCharLimit?: number;
+  /** Minimum characters to keep from execution results after log-fallback decay */
+  minimumResultCharLimit?: number;
   /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
   cacheEnabled?: boolean;
   /** Execution backend: "texera", "hamilton", or "dagster" */

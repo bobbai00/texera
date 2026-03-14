@@ -518,7 +518,7 @@ export class TexeraAgent {
     fineGrainedPrompt?: boolean;
     enableContextOptimization?: boolean;
     frontierDepth?: number;
-    trimmedResultCharLimit?: number;
+    minimumResultCharLimit?: number;
     cacheEnabled?: boolean;
     executionBackend?: ExecutionBackend;
     latestOnly?: boolean;
@@ -566,8 +566,8 @@ export class TexeraAgent {
     if (updates.frontierDepth !== undefined) {
       this.settings.frontierDepth = Math.max(1, updates.frontierDepth);
     }
-    if (updates.trimmedResultCharLimit !== undefined) {
-      this.settings.trimmedResultCharLimit = Math.max(0, updates.trimmedResultCharLimit);
+    if (updates.minimumResultCharLimit !== undefined) {
+      this.settings.minimumResultCharLimit = Math.max(0, updates.minimumResultCharLimit);
     }
     if (updates.cacheEnabled !== undefined) {
       this.settings.cacheEnabled = updates.cacheEnabled;
@@ -817,7 +817,8 @@ export class TexeraAgent {
                   this.workflowState,
                   effectiveDepth,
                   this.settings.agentMode,
-                  this.settings.trimmedResultCharLimit
+                  this.settings.minimumResultCharLimit,
+                  this.settings.maxOperatorResultCharLimit
                 );
               }
               lastPreparedMessages = processed;

@@ -889,10 +889,10 @@
           </div>
 
           <div class="settings-param-item">
-            <label class="settings-param-label">Trimmed Result Char Limit</label>
+            <label class="settings-param-label">Minimum Result Char Limit</label>
             <div class="settings-param-input">
               <nz-input-number
-                [(ngModel)]="settingsTrimmedResultCharLimit"
+                [(ngModel)]="settingsMinimumResultCharLimit"
                 [nzMin]="0"
                 [nzMax]="100000"
                 [nzStep]="500"
@@ -904,11 +904,11 @@
                 nzType="primary"
                 nzSize="small"
                 [disabled]="!settingsEnableContextOptimization"
-                (click)="saveTrimmedResultCharLimit()">
+                (click)="saveMinimumResultCharLimit()">
                 Save
               </button>
               <span class="settings-param-hint"
-                >Max characters to keep from trimmed (non-frontier) results (0 = fully skip). Cuts at row boundaries. Must not exceed max operator result limit.</span
+                >Lower bound for log-decay trimming. Frontier uses max operator result limit, each deeper depth halves. 0 = fully skip non-frontier.</span
               >
             </div>
           </div>

@@ -47,6 +47,57 @@ export function computeFrontier(workflowState: WorkflowState, depth: number): st
   return workflowState.getFrontierOperators(depth);
 }
 
+/**
+ * Compute the BFS depth of each operator from leaf nodes (reverse BFS).
+ * Leaves (no outgoing links) have depth 1, their predecessors depth 2, etc.
+ */
+export function computeOperatorDepths(workflowState: WorkflowState): Map<string, number> {
+  const depths = new Map<string, number>();
+  const operators = workflowState.getAllOperators();
+  const links = workflowState.getAllLinks();
+
+  // Build adjacency: for each operator, find its predecessors (incoming links)
+  const predecessors = new Map<string, string[]>();
+  for (const op of operators) {
+    predecessors.set(op.operatorID, []);
+  }
+  for (const link of links) {
+    const preds = predecessors.get(link.target.operatorID);
+    if (preds) {
+      preds.push(link.source.operatorID);
+    }
+  }
+
+  // Find leaves: operators with no outgoing links
+  const hasOutgoing = new Set<string>();
+  for (const link of links) {
+    hasOutgoing.add(link.source.operatorID);
+  }
+
+  const queue: string[] = [];
+  for (const op of operators) {
+    if (!hasOutgoing.has(op.operatorID)) {
+      depths.set(op.operatorID, 1);
+      queue.push(op.operatorID);
+    }
+  }
+
+  // BFS backward from leaves
+  let idx = 0;
+  while (idx < queue.length) {
+    const current = queue[idx++];
+    const currentDepth = depths.get(current)!;
+    for (const pred of predecessors.get(current) || []) {
+      if (!depths.has(pred)) {
+        depths.set(pred, currentDepth + 1);
+        queue.push(pred);
+      }
+    }
+  }
+
+  return depths;
+}
+
 // ============================================================================
 // Selective Execution Result Trimming
 // ============================================================================
@@ -145,8 +196,11 @@ export function trimNonFrontierResults(
   workflowState: WorkflowState,
   frontierDepth: number,
   agentMode: AgentMode,
-  trimmedResultCharLimit: number = 0
+  minimumResultCharLimit: number = 0,
+  maxResultCharLimit: number = 0
 ): ModelMessage[] {
+  const useLogFallback = maxResultCharLimit > 0 && minimumResultCharLimit >= 0;
+  const operatorDepths = useLogFallback ? computeOperatorDepths(workflowState) : undefined;
   const frontierOpIds = computeFrontier(workflowState, frontierDepth);
   const frontierSet = new Set(frontierOpIds);
 
@@ -185,8 +239,23 @@ export function trimNonFrontierResults(
 
       const { toolName, operatorId } = info;
 
-      // Only trim execution-related tools for non-frontier operators
-      if (!operatorId || frontierSet.has(operatorId)) return part;
+      if (!operatorId) return part;
+
+      // Determine the char limit for this operator
+      let opCharLimit: number;
+      if (useLogFallback) {
+        // Log-fallback mode: frontier (depth 1) = maxResultCharLimit,
+        // depth 2 = half, depth 3 = quarter, etc. Floor is minimumResultCharLimit.
+        const depth = operatorDepths!.get(operatorId) ?? 1;
+        opCharLimit = Math.max(
+          Math.floor(maxResultCharLimit / Math.pow(2, depth - 1)),
+          minimumResultCharLimit
+        );
+      } else {
+        // Binary mode: frontier = full (no trimming), non-frontier = minimumResultCharLimit
+        if (frontierSet.has(operatorId)) return part;
+        opCharLimit = minimumResultCharLimit;
+      }
 
       // Extract the result string from whichever field/format the AI SDK uses
       const rawResult = part.result ?? part.output;
@@ -218,7 +287,7 @@ export function trimNonFrontierResults(
       };
 
       if (toolName === TOOL_NAME_CREATE_OR_MODIFY_OPERATOR || toolName === TOOL_NAME_EXECUTE_OPERATOR) {
-        const trimmedText = trimExecutionResultSection(resultStr, trimmedResultCharLimit);
+        const trimmedText = trimExecutionResultSection(resultStr, opCharLimit);
         if (trimmedText !== resultStr) {
           modified = true;
           trimCount++;
@@ -235,7 +304,9 @@ export function trimNonFrontierResults(
 
   console.log(
     `[ContextOptimization] Trimmed ${trimCount} execution results ` +
-      `(frontier: ${frontierOpIds.length} operators, depth: ${frontierDepth})`
+      `(frontier: ${frontierOpIds.length} operators, depth: ${frontierDepth}` +
+      (useLogFallback ? `, logFallback: ${maxResultCharLimit}→${minimumResultCharLimit}` : "") +
+      `)`
   );
 
   return trimmedMessages;

@@ -68,8 +68,8 @@ export interface AgentSettingsApi {
   enableContextOptimization?: boolean;
   /** Number of BFS levels backward from leaf operators for frontier computation */
   frontierDepth?: number;
-  /** Max characters to keep from trimmed (non-frontier) execution results (0 = fully skip) */
-  trimmedResultCharLimit?: number;
+  /** Minimum characters to keep from execution results after log-fallback decay */
+  minimumResultCharLimit?: number;
   /** Whether to enable operator result caching (when disabled, every execution runs fresh) */
   cacheEnabled?: boolean;
   /** Execution backend: "texera" (default) or "hamilton" */
@@ -1296,7 +1296,7 @@ export class TexeraCopilotManagerService {
           fineGrainedPrompt: false,
           enableContextOptimization: false,
           frontierDepth: 1,
-          trimmedResultCharLimit: 0,
+          minimumResultCharLimit: 0,
           cacheEnabled: true,
           executionBackend: "texera" as const,
           latestOnly: false,
