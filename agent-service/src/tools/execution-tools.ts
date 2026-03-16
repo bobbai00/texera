@@ -694,10 +694,13 @@ function jsonToTableFormat(jsonResult: Record<string, any>[]): string {
   const rows = jsonResult.map((row, idx) => {
     const cells = headers.map(h => {
       const val = row[h];
-      if (val === null) return "null";
+      if (val === null) return "NaN";
       if (val === undefined) return "";
       if (typeof val === "number" || typeof val === "boolean") return String(val);
-      if (typeof val === "string") return val.replace(/\t/g, "\\t").replace(/\n/g, "\\n");
+      if (typeof val === "string") {
+        if (val === "NULL") return "NaN";
+        return val.replace(/\t/g, "\\t").replace(/\n/g, "\\n");
+      }
       return JSON.stringify(val);
     });
     return `${idx}\t${cells.join("\t")}`;
