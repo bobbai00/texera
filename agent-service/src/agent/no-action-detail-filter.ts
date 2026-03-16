@@ -31,8 +31,7 @@ import { TOOL_NAME_CREATE_OR_MODIFY_OPERATOR } from "../tools/code-op-tools";
 import { TOOL_NAME_ADD_OPERATOR, TOOL_NAME_MODIFY_OPERATOR } from "../tools/general-op-tools";
 import { TOOL_NAME_GET_CURRENT_WORKFLOW } from "../tools/workflow-tools";
 
-const ACTION_DETAIL_PLACEHOLDER =
-  "(Details skipped; please focus on the operator's summary to understand the semantics of the operator.)";
+const ACTION_DETAIL_PLACEHOLDER = "<original code omitted from context — refer to the summary for the semantics of this operator>";
 
 /** Tool names whose args contain implementation details we want to redact. */
 const DEFINITION_TOOLS = new Set([
@@ -48,11 +47,16 @@ const DEFINITION_TOOLS = new Set([
 const PROPERTIES_LINE_REGEX = /^\tProperties: .+$/gm;
 
 /**
- * Replace code/properties fields in **older** definition tool-call arguments
- * with a placeholder, and redact Properties lines from getCurrentWorkflow results.
+ * Replace code/properties fields in definition tool-call arguments with a
+ * placeholder, and redact Properties lines from getCurrentWorkflow results.
  *
- * The **latest** definition call for each operator is kept intact so the LLM
- * can see (and modify) the current code. Only superseded calls are redacted.
+ * For the **latest** assistant step's definition calls:
+ * - If the tool result has an execution **error**: keep intact so the LLM can
+ *   see and fix the code.
+ * - If the tool result was **successful**: redact (the code worked, no need to
+ *   keep it in context).
+ *
+ * All older definition calls are always redacted.
  *
  * This forces the agent to reason about operator semantics (via the summary
  * field) and lineage rather than low-level code details, saving tokens.
@@ -62,13 +66,31 @@ export function redactActionDetails(messages: ModelMessage[]): ModelMessage[] {
   let redactResultCount = 0;
 
   // --- Pre-scan: find definition toolCallIds in the LAST assistant message ---
-  // Only keep definitions from the most recent step intact. Everything older
-  // gets redacted. This ensures the LLM can see/modify code it just wrote,
-  // while all earlier definitions are replaced with placeholders.
+  // Only keep definitions whose tool result contains an error (so the LLM can
+  // see and fix the code). Successful definitions are redacted like older ones.
   const lastStepDefCallIds = new Set<string>();
 
   // Build toolCallId → { toolName, operatorId } map at the same time
   const toolCallMap = new Map<string, { toolName: string; operatorId?: string }>();
+
+  // Build toolCallId → hasError map from tool-result messages
+  const toolResultErrors = new Map<string, boolean>();
+  for (const msg of messages) {
+    if (msg.role !== "tool" || !Array.isArray(msg.content)) continue;
+    for (const part of msg.content as any[]) {
+      if (part.type !== "tool-result") continue;
+      // Check if the result indicates an error
+      const rawResult = part.result ?? part.output;
+      let resultStr: string | undefined;
+      if (typeof rawResult === "string") {
+        resultStr = rawResult;
+      } else if (rawResult && typeof rawResult === "object" && rawResult.value !== undefined) {
+        resultStr = String(rawResult.value);
+      }
+      const hasError = part.isError === true || (resultStr !== undefined && resultStr.includes("[ERROR]"));
+      toolResultErrors.set(part.toolCallId, hasError);
+    }
+  }
 
   // Find the last assistant message index
   let lastAssistantIdx = -1;
@@ -86,9 +108,11 @@ export function redactActionDetails(messages: ModelMessage[]): ModelMessage[] {
       if (part.type !== "tool-call") continue;
       const args = part.args || part.input || {};
       toolCallMap.set(part.toolCallId, { toolName: part.toolName, operatorId: args.operatorId });
-      // Keep definitions from the last assistant message intact
+      // Keep definitions from the last assistant message only if they had an error
       if (i === lastAssistantIdx && DEFINITION_TOOLS.has(part.toolName)) {
-        lastStepDefCallIds.add(part.toolCallId);
+        if (toolResultErrors.get(part.toolCallId)) {
+          lastStepDefCallIds.add(part.toolCallId);
+        }
       }
     }
   }
