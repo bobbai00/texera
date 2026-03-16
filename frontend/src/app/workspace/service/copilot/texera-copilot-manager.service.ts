@@ -88,6 +88,8 @@ export interface AgentSettingsApi {
   simplifiedTools?: boolean;
   /** When true, code/properties details in definition tool calls are replaced with a placeholder */
   noActionDetail?: boolean;
+  /** When true, non-frontier operators use minimumResultCharLimit directly instead of log-fallback decay */
+  noLogFallback?: boolean;
 }
 
 /**
@@ -1306,6 +1308,7 @@ export class TexeraCopilotManagerService {
           noExecutionMetadata: false,
           simplifiedTools: false,
           noActionDetail: false,
+          noLogFallback: false,
         })
       )
     );

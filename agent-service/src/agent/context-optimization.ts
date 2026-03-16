@@ -197,9 +197,10 @@ export function trimNonFrontierResults(
   frontierDepth: number,
   agentMode: AgentMode,
   minimumResultCharLimit: number = 0,
-  maxResultCharLimit: number = 0
+  maxResultCharLimit: number = 0,
+  noLogFallback: boolean = false
 ): ModelMessage[] {
-  const useLogFallback = maxResultCharLimit > 0 && minimumResultCharLimit >= 0;
+  const useLogFallback = !noLogFallback && maxResultCharLimit > 0 && minimumResultCharLimit >= 0;
   const operatorDepths = useLogFallback ? computeOperatorDepths(workflowState) : undefined;
   const frontierOpIds = computeFrontier(workflowState, frontierDepth);
   const frontierSet = new Set(frontierOpIds);

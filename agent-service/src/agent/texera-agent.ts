@@ -528,6 +528,7 @@ export class TexeraAgent {
     noExecutionMetadata?: boolean;
     simplifiedTools?: boolean;
     noActionDetail?: boolean;
+    noLogFallback?: boolean;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -597,6 +598,9 @@ export class TexeraAgent {
     }
     if (updates.noActionDetail !== undefined) {
       this.settings.noActionDetail = updates.noActionDetail;
+    }
+    if (updates.noLogFallback !== undefined) {
+      this.settings.noLogFallback = updates.noLogFallback;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt
@@ -818,7 +822,8 @@ export class TexeraAgent {
                   effectiveDepth,
                   this.settings.agentMode,
                   this.settings.minimumResultCharLimit,
-                  this.settings.maxOperatorResultCharLimit
+                  this.settings.maxOperatorResultCharLimit,
+                  this.settings.noLogFallback
                 );
               }
               lastPreparedMessages = processed;

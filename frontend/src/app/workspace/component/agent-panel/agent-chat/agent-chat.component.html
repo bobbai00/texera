@@ -1067,6 +1067,29 @@
               >
             </div>
           </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">No Log Fallback</label>
+            <div class="settings-param-input">
+              <nz-switch
+                [(ngModel)]="settingsNoLogFallback"
+                nzSize="small"
+                [nzDisabled]="!settingsEnableContextOptimization"
+                style="margin-right: 12px"></nz-switch>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                [disabled]="!settingsEnableContextOptimization"
+                (click)="saveNoLogFallback()">
+                Save
+              </button>
+              <span class="settings-param-hint"
+                >When enabled, non-frontier operators use the minimum result char limit directly instead of log-fallback
+                decay from the max limit.</span
+              >
+            </div>
+          </div>
         </div>
       </nz-tab>
 

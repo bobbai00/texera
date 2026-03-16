@@ -126,6 +126,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsNoExecutionMetadata = false; // Omit execution metadata from results
   public settingsSimplifiedTools = false; // Do not register getCurrentWorkflow tool
   public settingsNoActionDetail = false; // Replace code/properties with placeholder in message history
+  public settingsNoLogFallback = false; // Non-frontier operators use minimum limit directly
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -446,6 +447,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsNoExecutionMetadata = settings.noExecutionMetadata ?? false;
         this.settingsSimplifiedTools = settings.simplifiedTools ?? false;
         this.settingsNoActionDetail = settings.noActionDetail ?? false;
+        this.settingsNoLogFallback = settings.noLogFallback ?? false;
       });
 
     // Also load agent internal state
@@ -1497,6 +1499,24 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         next: () =>
           this.notificationService.success(
             this.settingsNoActionDetail ? "No action detail enabled" : "No action detail disabled"
+          ),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the no log fallback setting.
+   */
+  public saveNoLogFallback(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        noLogFallback: this.settingsNoLogFallback,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsNoLogFallback ? "No log fallback enabled" : "No log fallback disabled"
           ),
         error: () => {},
       });

@@ -180,6 +180,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     noExecutionMetadata: agentSettings.noExecutionMetadata,
     simplifiedTools: agentSettings.simplifiedTools,
     noActionDetail: agentSettings.noActionDetail,
+    noLogFallback: agentSettings.noLogFallback,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -285,6 +286,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           noExecutionMetadata: settings.noExecutionMetadata,
           simplifiedTools: settings.simplifiedTools,
           noActionDetail: settings.noActionDetail,
+          noLogFallback: settings.noLogFallback,
         });
       }
 
@@ -322,6 +324,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             noExecutionMetadata: t.Optional(t.Boolean()),
             simplifiedTools: t.Optional(t.Boolean()),
             noActionDetail: t.Optional(t.Boolean()),
+            noLogFallback: t.Optional(t.Boolean()),
           })
         ),
       }),
@@ -499,6 +502,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       noExecutionMetadata: agentSettings.noExecutionMetadata,
       simplifiedTools: agentSettings.simplifiedTools,
       noActionDetail: agentSettings.noActionDetail,
+      noLogFallback: agentSettings.noLogFallback,
     };
   })
 
@@ -542,6 +546,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         noExecutionMetadata: settings.noExecutionMetadata,
         simplifiedTools: settings.simplifiedTools,
         noActionDetail: settings.noActionDetail,
+        noLogFallback: settings.noLogFallback,
       });
 
       // Return updated settings
@@ -568,6 +573,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         noExecutionMetadata: agentSettings.noExecutionMetadata,
         simplifiedTools: agentSettings.simplifiedTools,
         noActionDetail: agentSettings.noActionDetail,
+        noLogFallback: agentSettings.noLogFallback,
       };
     },
     {
@@ -595,6 +601,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         noExecutionMetadata: t.Optional(t.Boolean()),
         simplifiedTools: t.Optional(t.Boolean()),
         noActionDetail: t.Optional(t.Boolean()),
+        noLogFallback: t.Optional(t.Boolean()),
       }),
     }
   );
