@@ -381,7 +381,8 @@ export class TexeraAgent {
     }
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
-    if (getExecutionConfig && !this.settings.simplifiedTools) {
+    // When noActionDetail is on, executeOperator is not needed — execution is handled inline by createOrModifyOperator
+    if (getExecutionConfig && !this.settings.simplifiedTools && !this.settings.noActionDetail) {
       tools[TOOL_NAME_EXECUTE_OPERATOR] = createExecuteOperatorTool(
         this.workflowState,
         getExecutionConfig,

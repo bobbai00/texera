@@ -136,7 +136,6 @@ const KEY_PRINCIPLES = `
 - **One operation per operator**: Each operator does one task (join, filter, aggregate, etc.). Use links to connect them.
 - **Build incrementally**: Link new operators to existing ones. Never recreate data already in the workflow.
 - **Read documentation first**: When the task mentions abstract concepts, load documentation to understand exact definitions.
-- **Cross-validate results**: Critically question results. If uncertain, create a validation operator to verify.
 - **Refine by modifying**: When results are wrong, go back and modify the operators that caused the issue.
 - **Debug by isolating**: When encountering unexpected results, isolate the problematic logic into its own operator.
 - **Context optimization**: Some tool-call parameters (e.g., \`code\`, \`properties\`) in conversation history may appear as "[REDACTED]" for compaction. Always provide the actual values for all required parameters — never pass "[REDACTED]" as a value.`;

@@ -133,7 +133,7 @@ function appendOperatorEntry(
   const hasError = execResult !== undefined && execResult.includes("[ERROR]");
 
   lines.push("");
-  lines.push(`[${index}] Operator: ${op.operatorID}`);
+  lines.push(`[${index}] Created Operator: ${op.operatorID}`);
   lines.push(`  Summary: ${summary}`);
 
   // For error operators, include the code so the LLM can see what went wrong
@@ -145,6 +145,7 @@ function appendOperatorEntry(
   }
 
   if (execResult) {
+    lines.push("  Result:");
     const indented = execResult
       .split("\n")
       .map(l => "  " + l)
