@@ -682,6 +682,42 @@ function formatColumnStatsMetadata(resultStatistics: Record<string, string>): st
 }
 
 /**
+ * Format per-column statistics as a single tab-separated footer row for TABLE format.
+ * Each cell: "dataType,key1=val1,key2=val2,..."
+ * Aligned with table headers so column names are not duplicated.
+ * Example: [stats]\tstr,count=50,null=0,uniq=48\tint,count=50,null=2,mean=35.2
+ */
+function formatColumnStatsRow(resultStatistics: Record<string, string>, headers: string[]): string | null {
+  const cells: string[] = [];
+  let hasAny = false;
+
+  for (const colName of headers) {
+    const statsJson = resultStatistics[colName];
+    if (!statsJson) {
+      cells.push("");
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(statsJson);
+      const dataType: string = parsed.data_type ?? "?";
+      const stats: Record<string, any> = parsed.statistics ?? {};
+
+      const kvPairs = Object.entries(stats)
+        .filter(([_, v]) => v !== null && v !== undefined && typeof v !== "object")
+        .map(([k, v]) => `${k}=${v}`)
+        .join(",");
+
+      cells.push(kvPairs ? `${dataType},${kvPairs}` : dataType);
+      hasAny = true;
+    } catch {
+      cells.push("");
+    }
+  }
+
+  return hasAny ? `[stats]\t${cells.join("\t")}` : null;
+}
+
+/**
  * Formats execution error with structured sections.
  */
 function formatExecutionError(
@@ -873,9 +909,10 @@ export async function executeOperatorAndFormat(
 
     // Both Texera and Hamilton enforce per-cell truncation server-side.
     const jsonArray = opInfo.result as Record<string, any>[];
-    const columns = jsonArray.length > 0
-      ? Object.keys(jsonArray[0]).filter(k => k !== "__row_index__").length
-      : 0;
+    const headers = jsonArray.length > 0
+      ? Object.keys(jsonArray[0]).filter(k => k !== "__row_index__")
+      : [];
+    const columns = headers.length;
 
     // Notify caller with backend stats (from ydata-profiling in Python worker)
     if (options.onResult) {
@@ -909,16 +946,25 @@ export async function executeOperatorAndFormat(
     let totalRows = opInfo.totalRowCount ?? displayedRows;
     let truncated = opInfo.truncated ?? displayedRows < totalRows;
 
+    // Build stats row for TABLE mode (inserted right after header, before data rows)
+    let statsRow: string | null = null;
+    if (config.carryMetadata && opInfo.resultStatistics && serializationMode === OperatorResultSerializationMode.TABLE) {
+      statsRow = formatColumnStatsRow(opInfo.resultStatistics, headers);
+    }
+
     if (dataString.length > charLimit) {
       const allLines = dataString.split("\n");
       // First line is the header (for table/toon) or opening bracket (for json)
       const headerLine = allLines[0];
       const dataRows = allLines.slice(1);
 
-      // Symmetric truncation: keep first half + last half of rows within budget
-      const halfLimit = Math.floor(charLimit / 2);
+      // Reserve space for header + stats row (if present)
+      const reservedSize = headerLine.length + 1 + (statsRow ? statsRow.length + 1 : 0);
 
-      let frontSize = headerLine.length + 1;
+      // Symmetric truncation: keep first half + last half of rows within budget
+      const halfLimit = Math.floor((charLimit - reservedSize) / 2);
+
+      let frontSize = 0;
       const frontRows: string[] = [];
       for (const row of dataRows) {
         const rowLen = row.length + 1;
@@ -937,9 +983,18 @@ export async function executeOperatorAndFormat(
       }
 
       const keptRows = [...frontRows, ...backRows];
-      dataString = [headerLine, ...keptRows].join("\n");
+      const parts = [headerLine];
+      if (statsRow) parts.push(statsRow);
+      parts.push(...keptRows);
+      dataString = parts.join("\n");
       displayedRows = keptRows.length;
       truncated = true;
+    } else if (statsRow) {
+      // No truncation needed — insert stats row right after header
+      const allLines = dataString.split("\n");
+      const headerLine = allLines[0];
+      const dataRows = allLines.slice(1);
+      dataString = [headerLine, statsRow, ...dataRows].join("\n");
     }
 
     // Build compact Input/Output lines using upstream operator IDs from links
@@ -956,8 +1011,9 @@ export async function executeOperatorAndFormat(
     // Surface warnings (e.g., duplicate column renames) so the agent can adjust its code
     const warningLines = opInfo.warnings?.map(w => w) ?? [];
 
-    // carryMetadata: include per-column statistics in the metadata section
-    const columnStatsLines = (config.carryMetadata && opInfo.resultStatistics)
+    // carryMetadata: include per-column statistics
+    // For TABLE mode, stats are in the footer row — skip from metadata to avoid duplication
+    const columnStatsLines = (config.carryMetadata && opInfo.resultStatistics && serializationMode !== OperatorResultSerializationMode.TABLE)
       ? formatColumnStatsMetadata(opInfo.resultStatistics)
       : [];
 
