@@ -548,7 +548,7 @@ function formatInputOutput(
   outputColumns: number
 ): string {
   const outputRows = opInfo.totalRowCount ?? opInfo.outputTuples;
-  const outputLine = `Output shape: ${operatorId}(${outputRows}, ${outputColumns})`;
+  const outputLine = `Output shape: (${outputRows}, ${outputColumns})`;
 
   const inputShapes = opInfo.inputPortShapes;
   if (!inputShapes || inputShapes.length === 0) {
