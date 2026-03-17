@@ -31,7 +31,6 @@ import { TOOL_NAME_CREATE_OR_MODIFY_OPERATOR } from "../tools/code-op-tools";
 import { TOOL_NAME_ADD_OPERATOR, TOOL_NAME_MODIFY_OPERATOR } from "../tools/general-op-tools";
 import { TOOL_NAME_GET_CURRENT_WORKFLOW } from "../tools/workflow-tools";
 
-const ACTION_DETAIL_PLACEHOLDER = "<original code omitted from context — refer to the summary for the semantics of this operator>";
 
 /** Tool names whose args contain implementation details we want to redact. */
 const DEFINITION_TOOLS = new Set([
@@ -41,10 +40,10 @@ const DEFINITION_TOOLS = new Set([
 ]);
 
 /**
- * Regex matching the `Properties: {...}` line in getCurrentWorkflow output.
- * Replaces the JSON value while keeping the field label.
+ * Regex matching detail lines in getCurrentWorkflow output (OperatorType, port counts, Properties).
+ * When noActionDetail is enabled, only OperatorId and Summary lines are kept.
  */
-const PROPERTIES_LINE_REGEX = /^\tProperties: .+$/gm;
+const WORKFLOW_DETAIL_LINE_REGEX = /\n\t(?:OperatorType|Number of input ports|Properties): .+/g;
 
 /**
  * Replace code/properties fields in definition tool-call arguments with a
@@ -65,10 +64,10 @@ export function redactActionDetails(messages: ModelMessage[]): ModelMessage[] {
   let redactCallCount = 0;
   let redactResultCount = 0;
 
-  // --- Pre-scan: find definition toolCallIds in the LAST assistant message ---
-  // Only keep definitions whose tool result contains an error (so the LLM can
-  // see and fix the code). Successful definitions are redacted like older ones.
-  const lastStepDefCallIds = new Set<string>();
+  // --- Pre-scan: find definition toolCallIds whose result had an error ---
+  // Any definition call that resulted in an error keeps its code/properties
+  // so the LLM can see what went wrong and fix it.
+  const errorDefCallIds = new Set<string>();
 
   // Build toolCallId → { toolName, operatorId } map at the same time
   const toolCallMap = new Map<string, { toolName: string; operatorId?: string }>();
@@ -79,7 +78,6 @@ export function redactActionDetails(messages: ModelMessage[]): ModelMessage[] {
     if (msg.role !== "tool" || !Array.isArray(msg.content)) continue;
     for (const part of msg.content as any[]) {
       if (part.type !== "tool-result") continue;
-      // Check if the result indicates an error
       const rawResult = part.result ?? part.output;
       let resultStr: string | undefined;
       if (typeof rawResult === "string") {
@@ -92,27 +90,15 @@ export function redactActionDetails(messages: ModelMessage[]): ModelMessage[] {
     }
   }
 
-  // Find the last assistant message index
-  let lastAssistantIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "assistant" && Array.isArray(messages[i].content)) {
-      lastAssistantIdx = i;
-      break;
-    }
-  }
-
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
+  for (const msg of messages) {
     if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
     for (const part of msg.content as any[]) {
       if (part.type !== "tool-call") continue;
       const args = part.args || part.input || {};
       toolCallMap.set(part.toolCallId, { toolName: part.toolName, operatorId: args.operatorId });
-      // Keep definitions from the last assistant message only if they had an error
-      if (i === lastAssistantIdx && DEFINITION_TOOLS.has(part.toolName)) {
-        if (toolResultErrors.get(part.toolCallId)) {
-          lastStepDefCallIds.add(part.toolCallId);
-        }
+      // Preserve definitions that had an error result
+      if (DEFINITION_TOOLS.has(part.toolName) && toolResultErrors.get(part.toolCallId)) {
+        errorDefCallIds.add(part.toolCallId);
       }
     }
   }
@@ -124,29 +110,29 @@ export function redactActionDetails(messages: ModelMessage[]): ModelMessage[] {
       let modified = false;
       const newContent = (msg.content as any[]).map(part => {
         if (part.type !== "tool-call" || !DEFINITION_TOOLS.has(part.toolName)) return part;
-        // Keep definitions from the last step intact
-        if (lastStepDefCallIds.has(part.toolCallId)) return part;
+        // Keep definitions whose execution had an error (so LLM can see and fix the code)
+        if (errorDefCallIds.has(part.toolCallId)) return part;
 
         const args = part.args || part.input || {};
 
-        // createOrModifyOperator: replace the `code` field
+        // createOrModifyOperator: remove the `code` field entirely
         if (part.toolName === TOOL_NAME_CREATE_OR_MODIFY_OPERATOR && args.code !== undefined) {
           modified = true;
           redactCallCount++;
-          const newArgs = { ...args, code: ACTION_DETAIL_PLACEHOLDER };
+          const { code: _, ...newArgs } = args;
           return part.args !== undefined
             ? { ...part, args: newArgs }
             : { ...part, input: newArgs };
         }
 
-        // addOperator / modifyOperator: replace the `properties` field
+        // addOperator / modifyOperator: remove the `properties` field entirely
         if (
           (part.toolName === TOOL_NAME_ADD_OPERATOR || part.toolName === TOOL_NAME_MODIFY_OPERATOR) &&
           args.properties !== undefined
         ) {
           modified = true;
           redactCallCount++;
-          const newArgs = { ...args, properties: ACTION_DETAIL_PLACEHOLDER };
+          const { properties: _, ...newArgs } = args;
           return part.args !== undefined
             ? { ...part, args: newArgs }
             : { ...part, input: newArgs };
@@ -178,11 +164,8 @@ export function redactActionDetails(messages: ModelMessage[]): ModelMessage[] {
           return part;
         }
 
-        // Replace Properties lines with placeholder
-        const redacted = resultStr.replace(
-          PROPERTIES_LINE_REGEX,
-          `\tProperties: ${ACTION_DETAIL_PLACEHOLDER}`
-        );
+        // Remove detail lines (OperatorType, ports, Properties), keeping only OperatorId and Summary
+        const redacted = resultStr.replace(WORKFLOW_DETAIL_LINE_REGEX, "");
         if (redacted === resultStr) return part;
 
         modified = true;
@@ -206,7 +189,7 @@ export function redactActionDetails(messages: ModelMessage[]): ModelMessage[] {
   if (redactCallCount > 0 || redactResultCount > 0) {
     console.log(
       `[NoActionDetailFilter] Redacted ${redactCallCount} tool-call args, ` +
-        `${redactResultCount} getCurrentWorkflow results (kept ${lastStepDefCallIds.size} last-step definitions)`
+        `${redactResultCount} getCurrentWorkflow results (kept ${errorDefCallIds.size} error definitions)`
     );
   }
 

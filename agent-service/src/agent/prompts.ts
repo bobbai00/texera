@@ -160,7 +160,8 @@ const KEY_PRINCIPLES = `
 7. **Load the complete data for data analysis**: After sampling and inspecting the data to understand its schema and value ranges, create a **separate** operator that loads the complete data for the actual pipeline. Never connect downstream processing operators to the sampling operator — it only contains a few rows. The full-data operator is what the rest of the pipeline must link to.
 8. **Cross-validate results**: After obtaining a result, critically question it. If the result looks plausible but you are not confident, create a separate validation operator to verify.
 9. **Refining the dataflow by modifying related operators**: When you spot an issue in the result, go back and modify the operators that caused it or you think is related to it; you can always change the earlier-added operators if you think something is wrong.
-10. **Debug by isolating the problematic logic**: When encountering unexpected results, make the operator contain ONLY the problematic logic to better debug the problem.`;
+10. **Debug by isolating the problematic logic**: When encountering unexpected results, make the operator contain ONLY the problematic logic to better debug the problem.
+11. **Context optimization**: In the conversation history, some tool-call parameters (e.g., code, properties) may have been replaced with placeholders or removed for context compaction. Always respect the tool definition and provide all required parameters when making tool calls — do not mimic the redacted form seen in prior steps.`;
 
 // ============================================================================
 // Code Mode Template

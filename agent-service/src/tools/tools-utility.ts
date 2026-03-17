@@ -215,8 +215,10 @@ import type { OperatorPredicate, OperatorLink } from "../types/workflow";
  * Formats a single operator for display in workflow results.
  */
 export function formatOperator(op: OperatorPredicate): string {
+  const summary = op.customDisplayName || op.operatorID;
   const lines = [
     `\tOperatorId: ${op.operatorID}`,
+    `\tSummary: ${summary}`,
     `\tOperatorType: ${op.operatorType}`,
     `\tNumber of input ports: ${op.inputPorts.length}, Number of output ports: ${op.outputPorts.length}`,
     `\tProperties: ${JSON.stringify(op.operatorProperties)}`,
