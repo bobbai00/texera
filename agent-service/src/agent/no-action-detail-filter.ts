@@ -18,21 +18,25 @@
  */
 
 /**
- * No-action-detail filter.
+ * No-action-detail filter — DAG serialization variant.
  *
- * When enabled, replaces the code/properties fields in definition tool-call
- * arguments with a short placeholder. This forces the agent to reason about
- * operator semantics (via the summary field) and lineage rather than
- * low-level code details, saving tokens in the process.
+ * Replaces ALL historical tool-call / tool-result messages with a single
+ * plain-text "Workflow State" summary.  The summary is built from the live
+ * WorkflowState (operators, links, display names) and a pre-populated
+ * execution-results map that records each operator's formatted result text
+ * as tools execute.
+ *
+ * This eliminates the tool-call message structures that GPT-5.2 tends to
+ * imitate (causing validation errors or "[REDACTED]"-echo loops).
  */
 
 import type { ModelMessage } from "ai";
 import { TOOL_NAME_CREATE_OR_MODIFY_OPERATOR } from "../tools/code-op-tools";
 import { TOOL_NAME_ADD_OPERATOR, TOOL_NAME_MODIFY_OPERATOR } from "../tools/general-op-tools";
-import { TOOL_NAME_GET_CURRENT_WORKFLOW } from "../tools/workflow-tools";
+import type { WorkflowState } from "../workflow/workflow-state";
+import type { OperatorPredicate } from "../types/workflow";
 
-
-/** Tool names whose args contain implementation details we want to redact. */
+/** Tool names that define / modify operators (used to extract creation order). */
 const DEFINITION_TOOLS = new Set([
   TOOL_NAME_CREATE_OR_MODIFY_OPERATOR,
   TOOL_NAME_ADD_OPERATOR,
@@ -40,158 +44,161 @@ const DEFINITION_TOOLS = new Set([
 ]);
 
 /**
- * Regex matching detail lines in getCurrentWorkflow output (OperatorType, port counts, Properties).
- * When noActionDetail is enabled, only OperatorId and Summary lines are kept.
+ * Replace all tool-call / tool-result messages with a compact DAG summary.
+ *
+ * @param messages        - Current conversation messages
+ * @param workflowState   - Live workflow state (operators + links)
+ * @param operatorExecutionResults - Map of operatorId → formatted result text
+ * @returns Filtered message array
  */
-const WORKFLOW_DETAIL_LINE_REGEX = /\n\t(?:OperatorType|Number of input ports|Properties): .+/g;
-
-/**
- * Replace code/properties fields in definition tool-call arguments with a
- * placeholder, and redact Properties lines from getCurrentWorkflow results.
- *
- * For the **latest** assistant step's definition calls:
- * - If the tool result has an execution **error**: keep intact so the LLM can
- *   see and fix the code.
- * - If the tool result was **successful**: redact (the code worked, no need to
- *   keep it in context).
- *
- * All older definition calls are always redacted.
- *
- * This forces the agent to reason about operator semantics (via the summary
- * field) and lineage rather than low-level code details, saving tokens.
- */
-export function redactActionDetails(messages: ModelMessage[]): ModelMessage[] {
-  let redactCallCount = 0;
-  let redactResultCount = 0;
-
-  // --- Pre-scan: find definition toolCallIds whose result had an error ---
-  // Any definition call that resulted in an error keeps its code/properties
-  // so the LLM can see what went wrong and fix it.
-  const errorDefCallIds = new Set<string>();
-
-  // Build toolCallId → { toolName, operatorId } map at the same time
-  const toolCallMap = new Map<string, { toolName: string; operatorId?: string }>();
-
-  // Build toolCallId → hasError map from tool-result messages
-  const toolResultErrors = new Map<string, boolean>();
-  for (const msg of messages) {
-    if (msg.role !== "tool" || !Array.isArray(msg.content)) continue;
-    for (const part of msg.content as any[]) {
-      if (part.type !== "tool-result") continue;
-      const rawResult = part.result ?? part.output;
-      let resultStr: string | undefined;
-      if (typeof rawResult === "string") {
-        resultStr = rawResult;
-      } else if (rawResult && typeof rawResult === "object" && rawResult.value !== undefined) {
-        resultStr = String(rawResult.value);
-      }
-      const hasError = part.isError === true || (resultStr !== undefined && resultStr.includes("[ERROR]"));
-      toolResultErrors.set(part.toolCallId, hasError);
-    }
-  }
+export function redactActionDetails(
+  messages: ModelMessage[],
+  workflowState: WorkflowState,
+  operatorExecutionResults: Map<string, string>
+): ModelMessage[] {
+  // --- Step 1: Extract operator creation order from tool calls ---
+  const creationOrder: string[] = [];
+  const seen = new Set<string>();
 
   for (const msg of messages) {
     if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
     for (const part of msg.content as any[]) {
-      if (part.type !== "tool-call") continue;
+      if (part.type !== "tool-call" || !DEFINITION_TOOLS.has(part.toolName)) continue;
       const args = part.args || part.input || {};
-      toolCallMap.set(part.toolCallId, { toolName: part.toolName, operatorId: args.operatorId });
-      // Preserve definitions that had an error result
-      if (DEFINITION_TOOLS.has(part.toolName) && toolResultErrors.get(part.toolCallId)) {
-        errorDefCallIds.add(part.toolCallId);
+      const opId = args.operatorId;
+      if (opId && !seen.has(opId)) {
+        seen.add(opId);
+        creationOrder.push(opId);
       }
     }
   }
 
-  // --- Main pass: redact older definition calls and getCurrentWorkflow results ---
-  const result: ModelMessage[] = messages.map(msg => {
-    // Redact tool-call args in assistant messages (skip last step's definitions)
+  // --- Step 2: Serialize DAG summary ---
+  const dagSummary = serializeDag(creationOrder, workflowState, operatorExecutionResults);
+
+  // --- Step 3: Reconstruct messages ---
+  const result: ModelMessage[] = [];
+
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      result.push(msg);
+      continue;
+    }
+
     if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      let modified = false;
-      const newContent = (msg.content as any[]).map(part => {
-        if (part.type !== "tool-call" || !DEFINITION_TOOLS.has(part.toolName)) return part;
-        // Keep definitions whose execution had an error (so LLM can see and fix the code)
-        if (errorDefCallIds.has(part.toolCallId)) return part;
-
-        const args = part.args || part.input || {};
-
-        // createOrModifyOperator: remove the `code` field entirely
-        if (part.toolName === TOOL_NAME_CREATE_OR_MODIFY_OPERATOR && args.code !== undefined) {
-          modified = true;
-          redactCallCount++;
-          const { code: _, ...newArgs } = args;
-          return part.args !== undefined
-            ? { ...part, args: newArgs }
-            : { ...part, input: newArgs };
-        }
-
-        // addOperator / modifyOperator: remove the `properties` field entirely
-        if (
-          (part.toolName === TOOL_NAME_ADD_OPERATOR || part.toolName === TOOL_NAME_MODIFY_OPERATOR) &&
-          args.properties !== undefined
-        ) {
-          modified = true;
-          redactCallCount++;
-          const { properties: _, ...newArgs } = args;
-          return part.args !== undefined
-            ? { ...part, args: newArgs }
-            : { ...part, input: newArgs };
-        }
-
-        return part;
-      });
-
-      return modified ? { ...msg, content: newContent } : msg;
+      // Keep only text parts; drop tool-call parts
+      const textParts = (msg.content as any[]).filter(p => p.type === "text" && p.text?.trim());
+      if (textParts.length > 0) {
+        result.push({ ...msg, content: textParts });
+      }
+      continue;
     }
 
-    // Redact Properties lines in getCurrentWorkflow tool results
-    if (msg.role === "tool" && Array.isArray(msg.content)) {
-      let modified = false;
-      const newContent = (msg.content as any[]).map(part => {
-        if (part.type !== "tool-result") return part;
-
-        const info = toolCallMap.get(part.toolCallId);
-        if (!info || info.toolName !== TOOL_NAME_GET_CURRENT_WORKFLOW) return part;
-
-        // Extract the result string
-        const rawResult = part.result ?? part.output;
-        let resultStr: string;
-        if (typeof rawResult === "string") {
-          resultStr = rawResult;
-        } else if (rawResult && typeof rawResult === "object" && rawResult.value !== undefined) {
-          resultStr = String(rawResult.value);
-        } else {
-          return part;
-        }
-
-        // Remove detail lines (OperatorType, ports, Properties), keeping only OperatorId and Summary
-        const redacted = resultStr.replace(WORKFLOW_DETAIL_LINE_REGEX, "");
-        if (redacted === resultStr) return part;
-
-        modified = true;
-        redactResultCount++;
-
-        if (part.result !== undefined) {
-          return { ...part, result: redacted };
-        }
-        if (typeof rawResult === "object" && rawResult.value !== undefined) {
-          return { ...part, output: { ...rawResult, value: redacted } };
-        }
-        return { ...part, output: redacted };
-      });
-
-      return modified ? { ...msg, content: newContent } : msg;
+    // Drop tool messages entirely
+    if (msg.role === "tool") {
+      continue;
     }
 
-    return msg;
-  });
+    // Keep anything else (system, etc.)
+    result.push(msg);
+  }
 
-  if (redactCallCount > 0 || redactResultCount > 0) {
+  // Append DAG summary as final user message if any operators exist
+  if (dagSummary) {
+    result.push({
+      role: "user",
+      content: dagSummary,
+    });
+
     console.log(
-      `[NoActionDetailFilter] Redacted ${redactCallCount} tool-call args, ` +
-        `${redactResultCount} getCurrentWorkflow results (kept ${errorDefCallIds.size} error definitions)`
+      `[NoActionDetailFilter] Replaced tool messages with DAG summary (${creationOrder.length} operators in creation order, ` +
+        `${operatorExecutionResults.size} with results)`
     );
   }
 
   return result;
+}
+
+/**
+ * Append a single operator entry to the DAG summary lines.
+ * For operators whose execution result contains an error, include the code.
+ */
+function appendOperatorEntry(
+  lines: string[],
+  index: number,
+  op: OperatorPredicate,
+  execResult: string | undefined
+): void {
+  const summary = op.customDisplayName || op.operatorID;
+  const hasError = execResult !== undefined && execResult.includes("[ERROR]");
+
+  lines.push("");
+  lines.push(`[${index}] Operator: ${op.operatorID}`);
+  lines.push(`  Summary: ${summary}`);
+
+  // For error operators, include the code so the LLM can see what went wrong
+  if (hasError) {
+    const code = op.operatorProperties?.code;
+    if (code) {
+      lines.push(`  Code: ${code}`);
+    }
+  }
+
+  if (execResult) {
+    const indented = execResult
+      .split("\n")
+      .map(l => "  " + l)
+      .join("\n");
+    lines.push(indented);
+  } else {
+    lines.push("  Not yet executed.");
+  }
+}
+
+/**
+ * Serialize the workflow into a compact text DAG summary.
+ */
+function serializeDag(
+  creationOrder: string[],
+  workflowState: WorkflowState,
+  operatorExecutionResults: Map<string, string>
+): string | null {
+  const allOperators = workflowState.getAllOperators();
+  if (allOperators.length === 0 && creationOrder.length === 0) return null;
+
+  const lines: string[] = ["=== Current Workflow ==="];
+
+  // Build a set of operator IDs currently in the workflow
+  const activeOpIds = new Set(allOperators.map(op => op.operatorID));
+
+  // Include operators in creation order first (skip deleted ones)
+  const included = new Set<string>();
+  let index = 1;
+
+  for (const opId of creationOrder) {
+    if (!activeOpIds.has(opId)) continue; // deleted operator
+    const op = workflowState.getOperator(opId);
+    if (!op) continue;
+
+    included.add(opId);
+    appendOperatorEntry(lines, index, op, operatorExecutionResults.get(opId));
+    index++;
+  }
+
+  // Include any operators that exist in workflow but weren't in creation order
+  for (const op of allOperators) {
+    if (included.has(op.operatorID)) continue;
+    appendOperatorEntry(lines, index, op, operatorExecutionResults.get(op.operatorID));
+    index++;
+  }
+
+  // Links
+  const allLinks = workflowState.getAllLinks();
+  if (allLinks.length > 0) {
+    const linkStrs = allLinks.map(l => `${l.source.operatorID}-->${l.target.operatorID}`);
+    lines.push("");
+    lines.push(`Links: ${linkStrs.join(", ")}`);
+  }
+
+  return lines.join("\n");
 }

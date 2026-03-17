@@ -53,6 +53,7 @@ import {
   EXAMPLES_PARALLEL,
   EXAMPLES_RESULT_PARAM,
   EXAMPLES_PARALLEL_RESULT_PARAM,
+  EXAMPLES_NO_ACTION_DETAIL,
 } from "./prompts";
 import {
   createGetCurrentWorkflowTool,
@@ -158,6 +159,8 @@ export class TexeraAgent {
   private workflowState: WorkflowState;
   /** Pre-computed execution result statistics per operator (for result summarization filter). */
   private resultStatistics: Map<string, ResultStatistics> = new Map();
+  /** Stores formatted execution result text per operator (for DAG serialization in noActionDetail). */
+  private operatorExecutionResults: Map<string, string> = new Map();
   // Uses global singleton - initialized once at server startup
   private metadataStore: OperatorMetadataStore;
   // Agent action manager for tracking workflow modifications
@@ -266,7 +269,9 @@ export class TexeraAgent {
       this.systemPrompt = buildGeneralModeSystemPrompt(this.metadataStore);
     } else {
       let examples: string;
-      if (this.settings.fineGrainedPrompt) {
+      if (this.settings.noActionDetail) {
+        examples = EXAMPLES_NO_ACTION_DETAIL;
+      } else if (this.settings.fineGrainedPrompt) {
         examples = EXAMPLES_FINE_GRAINED;
       } else if (this.settings.parallelToolCalls && this.settings.optionalResultRetrieval) {
         examples = EXAMPLES_PARALLEL_RESULT_PARAM;
@@ -277,7 +282,7 @@ export class TexeraAgent {
       } else {
         examples = EXAMPLES_STANDARD;
       }
-      this.systemPrompt = buildCodeModeSystemPrompt(examples);
+      this.systemPrompt = buildCodeModeSystemPrompt(examples, this.settings.noActionDetail);
     }
     this.settings.systemPrompt = this.systemPrompt;
   }
@@ -332,13 +337,17 @@ export class TexeraAgent {
       },
       // Provide execution helper when execution is configured
       executeOperator: getExecutionConfig
-        ? (operatorId: string) => executeOperatorAndFormat(this.workflowState, getExecutionConfig(), operatorId, {
-            onResult: (opId, backendStats) => {
-              if (backendStats && Object.keys(backendStats).length > 0) {
-                this.resultStatistics.set(opId, parseBackendStats(backendStats));
-              }
-            },
-          })
+        ? async (operatorId: string) => {
+            const result = await executeOperatorAndFormat(this.workflowState, getExecutionConfig(), operatorId, {
+              onResult: (opId, backendStats) => {
+                if (backendStats && Object.keys(backendStats).length > 0) {
+                  this.resultStatistics.set(opId, parseBackendStats(backendStats));
+                }
+              },
+            });
+            this.operatorExecutionResults.set(operatorId, typeof result === "string" ? result : String(result));
+            return result;
+          }
         : undefined,
       // Coordinate parallel tool calls with inter-operator dependencies
       parallelCoordinator: this.settings.parallelToolCalls
@@ -351,8 +360,9 @@ export class TexeraAgent {
       [TOOL_NAME_DELETE_OPERATOR]: createDeleteOperatorTool(this.workflowState, context),
     };
 
-    // Register getCurrentWorkflow unless simplifiedTools is enabled
-    if (!this.settings.simplifiedTools) {
+    // Register getCurrentWorkflow unless simplifiedTools or noActionDetail is enabled
+    // (noActionDetail already injects the DAG summary, making getCurrentWorkflow redundant)
+    if (!this.settings.simplifiedTools && !this.settings.noActionDetail) {
       tools[TOOL_NAME_GET_CURRENT_WORKFLOW] = createGetCurrentWorkflowTool(this.workflowState);
     }
 
@@ -379,6 +389,9 @@ export class TexeraAgent {
           if (backendStats && Object.keys(backendStats).length > 0) {
             this.resultStatistics.set(opId, parseBackendStats(backendStats));
           }
+        },
+        (opId, result) => {
+          this.operatorExecutionResults.set(opId, typeof result === "string" ? result : String(result));
         }
       );
     }
@@ -615,8 +628,9 @@ export class TexeraAgent {
     if (updates.simplifiedTools !== undefined) {
       this.settings.simplifiedTools = updates.simplifiedTools;
     }
-    if (updates.noActionDetail !== undefined) {
+    if (updates.noActionDetail !== undefined && updates.noActionDetail !== this.settings.noActionDetail) {
       this.settings.noActionDetail = updates.noActionDetail;
+      promptNeedsRebuild = true;
     }
     if (updates.noLogFallback !== undefined) {
       this.settings.noLogFallback = updates.noLogFallback;
@@ -826,12 +840,13 @@ export class TexeraAgent {
               if (stepNumber === 0) return undefined;
               let processed = currentMessages;
               // latestOnly first: removes whole tool-call/result pairs for stale operators
-              if (this.settings.latestOnly) {
+              // Skip latestOnly when noActionDetail is active (DAG summary replaces all tool messages)
+              if (this.settings.latestOnly && !this.settings.noActionDetail) {
                 processed = filterLatestOnlyMessages(processed, this.workflowState);
               }
-              // noActionDetail: replaces code/properties in definition tool calls with placeholder
+              // noActionDetail: replaces all tool-call/result messages with DAG summary
               if (this.settings.noActionDetail) {
-                processed = redactActionDetails(processed);
+                processed = redactActionDetails(processed, this.workflowState, this.operatorExecutionResults);
               }
               // context optimization last: trims execution result sections
               if (this.settings.enableContextOptimization) {
@@ -1042,6 +1057,7 @@ export class TexeraAgent {
     this.messages = [];
     this.reActSteps = [];
     this.workflowState.reset();
+    this.operatorExecutionResults.clear();
   }
 
   // ============================================================================

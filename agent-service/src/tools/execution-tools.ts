@@ -995,7 +995,8 @@ export async function executeOperatorAndFormat(
 export function createExecuteOperatorTool(
   workflowState: WorkflowState,
   getConfig: () => ExecutionConfig,
-  onResult?: (operatorId: string, backendStats?: Record<string, string>) => void
+  onResult?: (operatorId: string, backendStats?: Record<string, string>) => void,
+  onFormattedResult?: (operatorId: string, formattedResult: string) => void
 ) {
   return tool({
     description: "Execute the workflow and get the specified operator's result. The execution result(if succeeded) includes the shape of the input tables(if any) and output table, and the records in the output table",
@@ -1005,7 +1006,11 @@ export function createExecuteOperatorTool(
     execute: async (args: { operatorId: string }, options: { abortSignal?: AbortSignal }) => {
       // Get current config at execution time (allows settings updates to take effect)
       const config = getConfig();
-      return executeOperatorAndFormat(workflowState, config, args.operatorId, { ...options, onResult });
+      const result = await executeOperatorAndFormat(workflowState, config, args.operatorId, { ...options, onResult });
+      if (onFormattedResult) {
+        onFormattedResult(args.operatorId, result);
+      }
+      return result;
     },
   });
 }
