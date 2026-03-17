@@ -1090,6 +1090,26 @@
               >
             </div>
           </div>
+
+          <div class="settings-param-item">
+            <label class="settings-param-label">Carry Metadata</label>
+            <div class="settings-param-input">
+              <nz-switch
+                [(ngModel)]="settingsCarryMetadata"
+                nzSize="small"
+                style="margin-right: 12px"></nz-switch>
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                (click)="saveCarryMetadata()">
+                Save
+              </button>
+              <span class="settings-param-hint"
+                >When enabled, per-column statistics are included in the execution metadata section.</span
+              >
+            </div>
+          </div>
         </div>
       </nz-tab>
 

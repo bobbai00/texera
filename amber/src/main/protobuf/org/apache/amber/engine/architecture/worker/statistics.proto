@@ -56,6 +56,7 @@ message WorkerStatistics {
   int64 data_processing_time = 3;
   int64 control_processing_time = 4;
   int64 idle_time = 5;
+  map<string, string> result_statistics = 6;  // column_name -> stats JSON
 }
 
 message WorkerMetrics {

@@ -1,4 +1,4 @@
-/*
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,22 +17,7 @@
  * under the License.
  */
 
-package org.apache.texera.web.model.websocket.event
-
-case class OperatorAggregatedMetrics(
-    operatorState: String,
-    aggregatedInputRowCount: Long,
-    aggregatedInputSize: Long,
-    inputPortMetrics: Map[String, Long],
-    aggregatedOutputRowCount: Long,
-    aggregatedOutputSize: Long,
-    outputPortMetrics: Map[String, Long],
-    numWorkers: Long,
-    aggregatedDataProcessingTime: Long,
-    aggregatedControlProcessingTime: Long,
-    aggregatedIdleTime: Long,
-    operatorResultStats: Option[Map[String, String]] = None
-)
-
-case class OperatorStatisticsUpdateEvent(operatorStatistics: Map[String, OperatorAggregatedMetrics])
-    extends TexeraWebSocketEvent
+:host {
+  width: 100%;
+  display: block;
+}

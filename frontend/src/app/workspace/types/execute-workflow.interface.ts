@@ -86,6 +86,7 @@ export interface OperatorStatistics
     aggregatedOutputRowCount: number;
     outputPortMetrics: Record<string, number>;
     numWorkers?: number;
+    operatorResultStats?: Record<string, string>;
   }> {}
 
 export interface OperatorStatsUpdate

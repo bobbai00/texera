@@ -21,7 +21,7 @@
 # This file has been @generated
 
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List
 
 import betterproto
 
@@ -57,6 +57,9 @@ class WorkerStatistics(betterproto.Message):
     data_processing_time: int = betterproto.int64_field(3)
     control_processing_time: int = betterproto.int64_field(4)
     idle_time: int = betterproto.int64_field(5)
+    result_statistics: Dict[str, str] = betterproto.map_field(
+        6, betterproto.TYPE_STRING, betterproto.TYPE_STRING
+    )
 
 
 @dataclass(eq=False, repr=False)

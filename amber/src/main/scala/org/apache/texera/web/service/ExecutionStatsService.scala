@@ -103,6 +103,10 @@ class ExecutionStatsService(
                 .map(pm => pm.portId.id.toString -> pm.tupleMetrics.count)
                 .toMap
 
+              val resultStats =
+                if (metrics.operatorResultStats.nonEmpty) Some(metrics.operatorResultStats)
+                else None
+
               val res = OperatorAggregatedMetrics(
                 Utils.aggregatedStateToString(metrics.operatorState),
                 metrics.operatorStatistics.inputMetrics.map(_.tupleMetrics.count).sum,
@@ -114,7 +118,8 @@ class ExecutionStatsService(
                 metrics.operatorStatistics.numWorkers,
                 metrics.operatorStatistics.dataProcessingTime,
                 metrics.operatorStatistics.controlProcessingTime,
-                metrics.operatorStatistics.idleTime
+                metrics.operatorStatistics.idleTime,
+                resultStats
               )
               (x._1, res)
           })

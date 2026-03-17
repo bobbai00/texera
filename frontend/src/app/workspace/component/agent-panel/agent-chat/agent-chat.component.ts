@@ -127,6 +127,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public settingsSimplifiedTools = false; // Do not register getCurrentWorkflow tool
   public settingsNoActionDetail = false; // Replace code/properties with placeholder in message history
   public settingsNoLogFallback = false; // Non-frontier operators use minimum limit directly
+  public settingsCarryMetadata = false; // Include per-column statistics in execution metadata
   public agentInternalState: object | null = null;
   public isLoadingAgentState = false;
 
@@ -448,6 +449,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.settingsSimplifiedTools = settings.simplifiedTools ?? false;
         this.settingsNoActionDetail = settings.noActionDetail ?? false;
         this.settingsNoLogFallback = settings.noLogFallback ?? false;
+        this.settingsCarryMetadata = settings.carryMetadata ?? false;
       });
 
     // Also load agent internal state
@@ -1517,6 +1519,26 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         next: () =>
           this.notificationService.success(
             this.settingsNoLogFallback ? "No log fallback enabled" : "No log fallback disabled"
+          ),
+        error: () => {},
+      });
+  }
+
+  /**
+   * Save the carry metadata setting.
+   */
+  public saveCarryMetadata(): void {
+    this.copilotManagerService
+      .updateAgentSettings(this.agentInfo.id, {
+        carryMetadata: this.settingsCarryMetadata,
+      })
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: () =>
+          this.notificationService.success(
+            this.settingsCarryMetadata
+              ? "Carry metadata enabled"
+              : "Carry metadata disabled"
           ),
         error: () => {},
       });

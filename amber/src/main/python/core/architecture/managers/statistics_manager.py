@@ -16,7 +16,7 @@
 # under the License.
 
 from collections import defaultdict
-from typing import DefaultDict
+from typing import DefaultDict, Dict
 
 from proto.org.apache.amber.core import PortIdentity
 from proto.org.apache.amber.engine.architecture.worker import (
@@ -39,6 +39,7 @@ class StatisticsManager:
         self._control_processing_time: int = 0
         self._total_execution_time: int = 0
         self._worker_start_time: int = 0
+        self._result_statistics: Dict[str, str] = {}
 
     def get_statistics(self) -> WorkerStatistics:
         # Compile and return worker statistics
@@ -56,7 +57,11 @@ class StatisticsManager:
             self._total_execution_time
             - self._data_processing_time
             - self._control_processing_time,
+            self._result_statistics,
         )
+
+    def set_result_statistics(self, stats: Dict[str, str]) -> None:
+        self._result_statistics = stats
 
     def increase_input_statistics(
         self, port_id: PortIdentity, size: int, column_count: int = 0

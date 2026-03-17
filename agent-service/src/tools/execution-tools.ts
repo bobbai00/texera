@@ -66,6 +66,8 @@ export interface ExecutionConfig {
   executionBackend?: ExecutionBackend;
   /** When true, omit the execution metadata section from results */
   noExecutionMetadata?: boolean;
+  /** When true, include per-column statistics in the execution metadata section */
+  carryMetadata?: boolean;
 }
 
 // ============================================================================
@@ -645,6 +647,41 @@ function getUpstreamOperatorIds(workflowState: WorkflowState, operatorId: string
 }
 
 /**
+ * Format per-column statistics from backend as compact metadata lines.
+ * Header: "Column Stats:"
+ * Per column: '  "col_name" (Type): count=7, null=0, distinct=5, mean=3.14, ...'
+ */
+function formatColumnStatsMetadata(resultStatistics: Record<string, string>): string[] {
+  const colLines: string[] = [];
+  for (const [colName, statsJson] of Object.entries(resultStatistics)) {
+    try {
+      const parsed = JSON.parse(statsJson);
+      const dataType: string = parsed.data_type ?? "unknown";
+      const stats: Record<string, any> = parsed.statistics ?? {};
+
+      const kvPairs = Object.entries(stats)
+        .map(([k, v]) => {
+          if (v === null || v === undefined) return `${k}=N/A`;
+          if (typeof v === "object") {
+            const inner = Object.entries(v)
+              .map(([ik, iv]) => `${ik}=${iv}`)
+              .join(", ");
+            return `${k}={${inner}}`;
+          }
+          return `${k}=${v}`;
+        })
+        .join(", ");
+
+      colLines.push(`  "${colName}" (${dataType}): ${kvPairs}`);
+    } catch {
+      // skip unparseable columns
+    }
+  }
+  if (colLines.length === 0) return [];
+  return ["Column Stats:", ...colLines];
+}
+
+/**
  * Formats execution error with structured sections.
  */
 function formatExecutionError(
@@ -687,11 +724,26 @@ function formatExecutionError(
 function jsonToTableFormat(jsonResult: Record<string, any>[]): string {
   if (!jsonResult || jsonResult.length === 0) return "";
 
-  const headers = Object.keys(jsonResult[0]);
+  // Use __row_index__ from backend if present, otherwise fall back to array index
+  const hasRowIndex = jsonResult.length > 0 && "__row_index__" in jsonResult[0];
+  const headers = Object.keys(jsonResult[0]).filter(h => h !== "__row_index__");
   // Leading tab aligns headers with the index column (pandas style)
   const headerLine = "\t" + headers.join("\t");
 
-  const rows = jsonResult.map((row, idx) => {
+  const formattedRows: string[] = [];
+  let prevIndex = -1;
+
+  for (let i = 0; i < jsonResult.length; i++) {
+    const row = jsonResult[i];
+    const rowIndex = hasRowIndex ? (row["__row_index__"] as number) : i;
+
+    // Detect gap in row indices — insert pandas-style "..." separator
+    if (prevIndex >= 0 && rowIndex > prevIndex + 1) {
+      const dots = headers.map(() => "...").join("\t");
+      formattedRows.push(`...\t${dots}`);
+    }
+    prevIndex = rowIndex;
+
     const cells = headers.map(h => {
       const val = row[h];
       if (val === null) return "NaN";
@@ -703,10 +755,10 @@ function jsonToTableFormat(jsonResult: Record<string, any>[]): string {
       }
       return JSON.stringify(val);
     });
-    return `${idx}\t${cells.join("\t")}`;
-  });
+    formattedRows.push(`${rowIndex}\t${cells.join("\t")}`);
+  }
 
-  return [headerLine, ...rows].join("\n");
+  return [headerLine, ...formattedRows].join("\n");
 }
 
 /**
@@ -746,7 +798,7 @@ export async function executeOperatorAndFormat(
   workflowState: WorkflowState,
   config: ExecutionConfig,
   operatorId: string,
-  options: { abortSignal?: AbortSignal } = {}
+  options: { abortSignal?: AbortSignal; onResult?: (operatorId: string, backendStats?: Record<string, string>) => void } = {}
 ): Promise<string> {
   // Acquire mutex to serialize executions for this workflow
   // This prevents ConcurrentModificationException on the backend
@@ -821,7 +873,14 @@ export async function executeOperatorAndFormat(
 
     // Both Texera and Hamilton enforce per-cell truncation server-side.
     const jsonArray = opInfo.result as Record<string, any>[];
-    const columns = jsonArray.length > 0 ? Object.keys(jsonArray[0]).length : 0;
+    const columns = jsonArray.length > 0
+      ? Object.keys(jsonArray[0]).filter(k => k !== "__row_index__").length
+      : 0;
+
+    // Notify caller with backend stats (from ydata-profiling in Python worker)
+    if (options.onResult) {
+      options.onResult(operatorId, opInfo.resultStatistics);
+    }
 
     let dataString: string;
     let modeLabel: string;
@@ -897,11 +956,16 @@ export async function executeOperatorAndFormat(
     // Surface warnings (e.g., duplicate column renames) so the agent can adjust its code
     const warningLines = opInfo.warnings?.map(w => w) ?? [];
 
+    // carryMetadata: include per-column statistics in the metadata section
+    const columnStatsLines = (config.carryMetadata && opInfo.resultStatistics)
+      ? formatColumnStatsMetadata(opInfo.resultStatistics)
+      : [];
+
     // Build structured result with separate metadata and result sections.
     // Context optimization can trim the result section while preserving metadata.
     const metadataLines = config.noExecutionMetadata
       ? []
-      : [shapeLine, upstreamLine, ...warningLines].filter(Boolean);
+      : [shapeLine, upstreamLine, ...warningLines, ...columnStatsLines].filter(Boolean);
     const metadataSection = metadataLines.length > 0
       ? `${SECTION_EXECUTION_METADATA}\n${metadataLines.join("\n")}`
       : "";
@@ -928,7 +992,11 @@ export async function executeOperatorAndFormat(
  * @param workflowState - The workflow state
  * @param getConfig - Function that returns the current execution config (called at execution time)
  */
-export function createExecuteOperatorTool(workflowState: WorkflowState, getConfig: () => ExecutionConfig) {
+export function createExecuteOperatorTool(
+  workflowState: WorkflowState,
+  getConfig: () => ExecutionConfig,
+  onResult?: (operatorId: string, backendStats?: Record<string, string>) => void
+) {
   return tool({
     description: "Execute the workflow and get the specified operator's result. The execution result(if succeeded) includes the shape of the input tables(if any) and output table, and the records in the output table",
     inputSchema: z.object({
@@ -937,7 +1005,7 @@ export function createExecuteOperatorTool(workflowState: WorkflowState, getConfi
     execute: async (args: { operatorId: string }, options: { abortSignal?: AbortSignal }) => {
       // Get current config at execution time (allows settings updates to take effect)
       const config = getConfig();
-      return executeOperatorAndFormat(workflowState, config, args.operatorId, options);
+      return executeOperatorAndFormat(workflowState, config, args.operatorId, { ...options, onResult });
     },
   });
 }

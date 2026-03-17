@@ -36,7 +36,8 @@ object ExecutionUtils {
       // Return a default OperatorMetrics if metrics are empty
       return OperatorMetrics(
         WorkflowAggregatedState.UNINITIALIZED,
-        OperatorStatistics(Seq.empty, Seq.empty, 0, 0, 0, 0)
+        OperatorStatistics(Seq.empty, Seq.empty, 0, 0, 0, 0),
+        operatorResultStats = Map.empty
       )
     }
 
@@ -64,6 +65,7 @@ object ExecutionUtils {
     val dataProcessingTimeSum = metrics.map(_.operatorStatistics.dataProcessingTime).sum
     val controlProcessingTimeSum = metrics.map(_.operatorStatistics.controlProcessingTime).sum
     val idleTimeSum = metrics.map(_.operatorStatistics.idleTime).sum
+    val mergedResultStats = metrics.flatMap(_.operatorResultStats).toMap
 
     OperatorMetrics(
       aggregatedState,
@@ -74,7 +76,8 @@ object ExecutionUtils {
         dataProcessingTimeSum,
         controlProcessingTimeSum,
         idleTimeSum
-      )
+      ),
+      operatorResultStats = mergedResultStats
     )
   }
 

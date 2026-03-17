@@ -103,7 +103,8 @@ case class OperatorInfo(
     truncated: Option[Boolean],
     consoleLogs: Option[List[ConsoleMessageInfo]],
     error: Option[String],
-    warnings: Option[List[String]]
+    warnings: Option[List[String]],
+    resultStatistics: Option[Map[String, String]] // column_name -> stats JSON from DataProfiler
 )
 
 /**
@@ -516,6 +517,11 @@ class SyncExecutionResource extends LazyLogging {
         .map(_.filter(_.title.startsWith("WARNING: ")).map(_.title))
         .filter(_.nonEmpty)
 
+      // Extract result statistics from operator metrics (populated by Python DataProfiler)
+      val resultStatistics = stats
+        .map(_.operatorResultStats)
+        .filter(_.nonEmpty)
+
       operatorInfos(opId) = OperatorInfo(
         state = state,
         inputTuples = inputTuples,
@@ -528,7 +534,8 @@ class SyncExecutionResource extends LazyLogging {
         truncated = truncated,
         consoleLogs = consoleLogs,
         error = errorMsg,
-        warnings = warningMsgs
+        warnings = warningMsgs,
+        resultStatistics = resultStatistics
       )
     }
 
@@ -623,9 +630,11 @@ class SyncExecutionResource extends LazyLogging {
             )
           }
 
-          // Process first tuple
+          // Process first tuple — inject original row index for correct display after truncation
+          var rowIndex = 0
           val firstJson = ExecutionResultService.convertTuplesToJson(List(firstTuple)).head
           val truncatedFirst = truncateSingleTuple(firstJson, maxOperatorResultCellCharLimit)
+          truncatedFirst.put("__row_index__", rowIndex)
           val firstSize = estimateTupleSize(truncatedFirst, mapper)
 
           // If even one tuple exceeds limit, return truncated version
@@ -651,9 +660,11 @@ class SyncExecutionResource extends LazyLogging {
           // Collect front tuples until we reach half the limit
           while (tupleIterator.hasNext && frontSize < halfLimit) {
             val tuple = tupleIterator.next()
+            rowIndex += 1
             processedCount += 1
             val jsonTuple = ExecutionResultService.convertTuplesToJson(List(tuple)).head
             val truncatedTuple = truncateSingleTuple(jsonTuple, maxOperatorResultCellCharLimit)
+            truncatedTuple.put("__row_index__", rowIndex)
             val tupleSize = estimateTupleSize(truncatedTuple, mapper)
 
             if (frontSize + tupleSize <= halfLimit) {
@@ -669,9 +680,11 @@ class SyncExecutionResource extends LazyLogging {
               // Continue iterating, keeping a sliding window for the back
               while (tupleIterator.hasNext) {
                 val t = tupleIterator.next()
+                rowIndex += 1
                 processedCount += 1
                 val jt = ExecutionResultService.convertTuplesToJson(List(t)).head
                 val tt = truncateSingleTuple(jt, maxOperatorResultCellCharLimit)
+                tt.put("__row_index__", rowIndex)
                 val ts = estimateTupleSize(tt, mapper)
 
                 backBuffer += ((tt, ts))
@@ -708,9 +721,11 @@ class SyncExecutionResource extends LazyLogging {
 
             while (tupleIterator.hasNext) {
               val t = tupleIterator.next()
+              rowIndex += 1
               processedCount += 1
               val jt = ExecutionResultService.convertTuplesToJson(List(t)).head
               val tt = truncateSingleTuple(jt, maxOperatorResultCellCharLimit)
+              tt.put("__row_index__", rowIndex)
               val ts = estimateTupleSize(tt, mapper)
 
               backBuffer += ((tt, ts))

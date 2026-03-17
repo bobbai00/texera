@@ -90,6 +90,8 @@ export interface AgentSettingsApi {
   noActionDetail?: boolean;
   /** When true, non-frontier operators use minimumResultCharLimit directly instead of log-fallback decay */
   noLogFallback?: boolean;
+  /** When true, per-column statistics are included in the execution metadata section */
+  carryMetadata?: boolean;
 }
 
 /**
@@ -1309,6 +1311,7 @@ export class TexeraCopilotManagerService {
           simplifiedTools: false,
           noActionDetail: false,
           noLogFallback: false,
+          carryMetadata: false,
         })
       )
     );

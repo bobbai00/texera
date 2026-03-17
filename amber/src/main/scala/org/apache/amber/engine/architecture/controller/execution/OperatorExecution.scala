@@ -87,6 +87,7 @@ case class OperatorExecution() {
     val workerRawStats = workerExecutions.values.asScala.map(_.getStats)
     val inputMetrics = workerRawStats.flatMap(_.inputTupleMetrics)
     val outputMetrics = workerRawStats.flatMap(_.outputTupleMetrics)
+    val mergedResultStats = workerRawStats.flatMap(_.resultStatistics).toMap
     OperatorMetrics(
       getState,
       OperatorStatistics(
@@ -96,7 +97,8 @@ case class OperatorExecution() {
         dataProcessingTime = workerRawStats.map(_.dataProcessingTime).sum,
         controlProcessingTime = workerRawStats.map(_.controlProcessingTime).sum,
         idleTime = workerRawStats.map(_.idleTime).sum
-      )
+      ),
+      operatorResultStats = mergedResultStats
     )
   }
 

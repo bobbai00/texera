@@ -130,6 +130,9 @@ class OperatorMetrics(betterproto.Message):
         betterproto.enum_field(1)
     )
     operator_statistics: "OperatorStatistics" = betterproto.message_field(2)
+    operator_result_stats: Dict[str, str] = betterproto.map_field(
+        3, betterproto.TYPE_STRING, betterproto.TYPE_STRING
+    )
 
 
 @dataclass(eq=False, repr=False)

@@ -69,7 +69,8 @@ class StatisticsManager {
       }.toSeq,
       dataProcessingTime,
       controlProcessingTime,
-      totalExecutionTime - dataProcessingTime - controlProcessingTime
+      totalExecutionTime - dataProcessingTime - controlProcessingTime,
+      Map.empty
     )
   }
 

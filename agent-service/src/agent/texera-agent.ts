@@ -91,6 +91,7 @@ import {
 import { trimNonFrontierResults } from "./context-optimization";
 import { filterLatestOnlyMessages } from "./latest-only-filter";
 import { redactActionDetails } from "./no-action-detail-filter";
+import { parseBackendStats, type ResultStatistics } from "./result-summarization-filter";
 
 // ============================================================================
 // Constants
@@ -155,6 +156,8 @@ export class TexeraAgent {
   // State
   private state: AgentStateEnum = AgentStateEnum.AVAILABLE;
   private workflowState: WorkflowState;
+  /** Pre-computed execution result statistics per operator (for result summarization filter). */
+  private resultStatistics: Map<string, ResultStatistics> = new Map();
   // Uses global singleton - initialized once at server startup
   private metadataStore: OperatorMetadataStore;
   // Agent action manager for tracking workflow modifications
@@ -308,6 +311,7 @@ export class TexeraAgent {
           cacheEnabled: this.settings.cacheEnabled,
           executionBackend: this.settings.executionBackend,
           noExecutionMetadata: this.settings.noExecutionMetadata,
+          carryMetadata: this.settings.carryMetadata,
         })
       : undefined;
 
@@ -328,7 +332,13 @@ export class TexeraAgent {
       },
       // Provide execution helper when execution is configured
       executeOperator: getExecutionConfig
-        ? (operatorId: string) => executeOperatorAndFormat(this.workflowState, getExecutionConfig(), operatorId)
+        ? (operatorId: string) => executeOperatorAndFormat(this.workflowState, getExecutionConfig(), operatorId, {
+            onResult: (opId, backendStats) => {
+              if (backendStats && Object.keys(backendStats).length > 0) {
+                this.resultStatistics.set(opId, parseBackendStats(backendStats));
+              }
+            },
+          })
         : undefined,
       // Coordinate parallel tool calls with inter-operator dependencies
       parallelCoordinator: this.settings.parallelToolCalls
@@ -362,7 +372,15 @@ export class TexeraAgent {
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
     if (getExecutionConfig && !this.settings.simplifiedTools) {
-      tools[TOOL_NAME_EXECUTE_OPERATOR] = createExecuteOperatorTool(this.workflowState, getExecutionConfig);
+      tools[TOOL_NAME_EXECUTE_OPERATOR] = createExecuteOperatorTool(
+        this.workflowState,
+        getExecutionConfig,
+        (opId, backendStats) => {
+          if (backendStats && Object.keys(backendStats).length > 0) {
+            this.resultStatistics.set(opId, parseBackendStats(backendStats));
+          }
+        }
+      );
     }
 
     return tools;
@@ -529,6 +547,7 @@ export class TexeraAgent {
     simplifiedTools?: boolean;
     noActionDetail?: boolean;
     noLogFallback?: boolean;
+    carryMetadata?: boolean;
   }): void {
     let promptNeedsRebuild = false;
 
@@ -601,6 +620,9 @@ export class TexeraAgent {
     }
     if (updates.noLogFallback !== undefined) {
       this.settings.noLogFallback = updates.noLogFallback;
+    }
+    if (updates.carryMetadata !== undefined) {
+      this.settings.carryMetadata = updates.carryMetadata;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt

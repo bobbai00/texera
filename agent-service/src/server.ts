@@ -181,6 +181,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
     simplifiedTools: agentSettings.simplifiedTools,
     noActionDetail: agentSettings.noActionDetail,
     noLogFallback: agentSettings.noLogFallback,
+    carryMetadata: agentSettings.carryMetadata,
   };
 
   const delegateConfig = agent.getDelegateConfig();
@@ -287,6 +288,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
           simplifiedTools: settings.simplifiedTools,
           noActionDetail: settings.noActionDetail,
           noLogFallback: settings.noLogFallback,
+          carryMetadata: settings.carryMetadata,
         });
       }
 
@@ -325,6 +327,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             simplifiedTools: t.Optional(t.Boolean()),
             noActionDetail: t.Optional(t.Boolean()),
             noLogFallback: t.Optional(t.Boolean()),
+            carryMetadata: t.Optional(t.Boolean()),
           })
         ),
       }),
@@ -503,6 +506,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       simplifiedTools: agentSettings.simplifiedTools,
       noActionDetail: agentSettings.noActionDetail,
       noLogFallback: agentSettings.noLogFallback,
+      carryMetadata: agentSettings.carryMetadata,
     };
   })
 
@@ -547,6 +551,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         simplifiedTools: settings.simplifiedTools,
         noActionDetail: settings.noActionDetail,
         noLogFallback: settings.noLogFallback,
+        carryMetadata: settings.carryMetadata,
       });
 
       // Return updated settings
@@ -574,6 +579,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         simplifiedTools: agentSettings.simplifiedTools,
         noActionDetail: agentSettings.noActionDetail,
         noLogFallback: agentSettings.noLogFallback,
+        carryMetadata: agentSettings.carryMetadata,
       };
     },
     {
@@ -602,6 +608,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         simplifiedTools: t.Optional(t.Boolean()),
         noActionDetail: t.Optional(t.Boolean()),
         noLogFallback: t.Optional(t.Boolean()),
+        carryMetadata: t.Optional(t.Boolean()),
       }),
     }
   );

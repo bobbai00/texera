@@ -76,6 +76,7 @@ class DataProcessor(Runnable, Stoppable):
         self._running = Event()
         self._context = context
         self._schema_inferred = False  # Track if schema inference has been done
+        self._profiling_done = False  # Track if DataProfiler profiling has been done
 
     def run(self) -> None:
         """
@@ -194,6 +195,25 @@ class DataProcessor(Runnable, Stoppable):
             if isinstance(output, pandas.DataFrame):
                 output = self._deduplicate_dataframe_columns(output)
 
+            # Compute basic per-column statistics from the first DataFrame (once)
+            if not self._profiling_done and isinstance(output, pandas.DataFrame):
+                self._profiling_done = True
+                try:
+                    import json
+                    import math
+
+                    stats_dict = {}
+                    for col_name in output.columns:
+                        col = output[col_name]
+                        stats_dict[str(col_name)] = json.dumps(
+                            self._compute_column_stats(col)
+                        )
+                    self._context.statistics_manager.set_result_statistics(
+                        stats_dict
+                    )
+                except Exception as e:
+                    logger.warning(f"Result statistics failed: {e}")
+
             # For DataFrame outputs, infer schema from dtypes BEFORE converting to tuples
             # This is more reliable because DataFrame dtypes are consistent across all rows
             if not self._schema_inferred and isinstance(output, pandas.DataFrame):
@@ -304,6 +324,71 @@ class DataProcessor(Runnable, Stoppable):
             )
         )
         return renamed_df
+
+    @staticmethod
+    def _compute_column_stats(col: pandas.Series) -> dict:
+        """
+        Compute basic statistics for a single pandas Series.
+        Returns {data_type, statistics} with type-appropriate stats.
+        """
+        import math
+
+        total = len(col)
+        missing = int(col.isna().sum())
+        count = total - missing
+        distinct = int(col.nunique())
+
+        base: dict = {
+            "count": count,
+            "null": missing,
+            "distinct": distinct,
+        }
+
+        # Determine type and add type-specific stats
+        if pandas.api.types.is_numeric_dtype(col):
+            data_type = "Numeric"
+            if count > 0:
+                desc = col.describe()
+                base.update(
+                    {
+                        "mean": desc.get("mean"),
+                        "std": desc.get("std"),
+                        "min": desc.get("min"),
+                        "p25": desc.get("25%"),
+                        "median": desc.get("50%"),
+                        "p75": desc.get("75%"),
+                        "max": desc.get("max"),
+                    }
+                )
+        elif pandas.api.types.is_bool_dtype(col):
+            data_type = "Boolean"
+            vc = col.value_counts()
+            base["True"] = int(vc.get(True, 0))
+            base["False"] = int(vc.get(False, 0))
+        elif pandas.api.types.is_datetime64_any_dtype(col):
+            data_type = "DateTime"
+            if count > 0:
+                base["min"] = str(col.min())
+                base["max"] = str(col.max())
+        else:
+            if count > 0 and distinct <= count * 0.1:
+                data_type = "Categorical"
+                vc = col.value_counts().head(5)
+                base["top_values"] = {
+                    str(val): int(cnt) for val, cnt in vc.items()
+                }
+            else:
+                data_type = "String"
+
+        # Sanitize NaN/inf for JSON serialization
+        sanitized = {}
+        for k, v in base.items():
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                sanitized[k] = None
+            else:
+                sanitized[k] = v
+
+        return {"data_type": data_type, "statistics": sanitized}
 
     def _switch_context(self) -> None:
         """
