@@ -109,8 +109,6 @@ def load() -> pd.DataFrame:
     return pd.DataFrame(data)  # Full data for the pipeline
 \`\`\`
 
-**Sampling techniques**: Use \`pd.concat([df.head(3), df.tail(3)])\`, \`df.sample(n=10)\`, \`df.describe()\`, \`df.dtypes\`, or \`df['col'].value_counts()\` to understand the data before building the pipeline.
-
 **Note:** Real-world data files are often malformed — they may have wrong delimiters, missing or misplaced headers, metadata/comment rows above the data, or multiple tables in one file. After loading, always examine the result.
 If column names look auto-generated (e.g., \`Unnamed: 0\`) or a data value appears as a header, adjust the loading parameters (e.g., \`header=\`, \`skiprows=\`, \`sep=\`) and re-load by modifying the source operator.
 
@@ -119,49 +117,29 @@ If column names look auto-generated (e.g., \`Unnamed: 0\`) or a data value appea
 const ANTI_PATTERN_SECTION = `
 ## Anti-Pattern: Avoid Monolithic Code Blocks
 
-Task: "Find products with above-average sales in Q1 that match active promotion criteria"
+Do NOT write one large operator that does everything — you cannot tell which step failed, inspect intermediate results, or debug without re-running everything.
 
-**Wrong approach** - Writing one large operator that does everything:
-This is problematic because:
-- If the result is wrong, you cannot tell which step failed
-- You cannot inspect intermediate results
-- Any bug requires re-running the entire logic
-
-**Correct approach** - Decompose into separate operators, each doing ONE thing:
-
-1. createOrModifyOperator: operatorId="q1_sales" → summary="Filter Q1 sales"
-2. createOrModifyOperator: operatorId="sales_products" → summary="Join sales products"
-3. createOrModifyOperator: operatorId="avg_sales" → summary="Calculate avg sales"
-4. createOrModifyOperator: operatorId="above_avg" → summary="Filter above average"
-5. createOrModifyOperator: operatorId="with_promotions" → summary="Join promotions"
-6. createOrModifyOperator: operatorId="final_result" → summary="Filter promotion criteria"
-
-Each operator can be executed and verified independently. If step 4 produces unexpected results, you can inspect the output of step 3 to debug.`;
+Instead, decompose into separate operators each doing ONE thing (e.g., filter → join → aggregate → filter → join → final filter). Each can be executed and verified independently.`;
 
 const COMMON_PITFALLS_SECTION = `
-## Common Pitfalls in Multi-Step Dataflows
+## Common Pitfalls
 
-- **Unit and format consistency**: Ensure the final result matches the expected units and format (e.g., percentage vs proportion, dollars vs cents). Convert explicitly in a dedicated operator rather than assuming.
-- **Late rounding**: Apply rounding only in the final operator. Rounding intermediate results compounds errors across the pipeline.
-- **Plausibility checks on intermediate results**: After selecting a column or computing a value, verify the magnitude makes sense for what it represents. If values seem implausible (e.g., orders of magnitude off from what the question implies), re-examine your column selection and data loading before proceeding.
-- **Never build a pipeline on sample data**: If you created a sampling operator (returning \`.head()\`, \`.tail()\`, or \`pd.concat([df.head(), df.tail()])\`) and then connected downstream operators to it, the entire pipeline runs on only a few rows. Always create a separate full-data operator for the pipeline and connect downstream to that operator, not to the sampling operator.
-- **Wrong numerical range edge cases**: Watch for: inclusive vs exclusive boundaries in filters (\`>=\` vs \`>\`), null/NaN rows silently dropped by aggregations, duplicate rows inflating counts or sums, and premature aggregation that loses row-level detail needed later. When a result is close but not exact, trace back through each operator to find which step introduced the discrepancy.
-- **Misidentified columns from messy files**: When column names are generic (\`Unnamed: 0\`, \`0\`, \`1\`, ...) or look like domain-specific data values rather than field descriptions, the file was not loaded correctly. Do NOT guess column meanings — inspect the raw file content, find the actual structure, and re-load by modifying the source operator (e.g., \`sep=\`, \`header=\`, \`skiprows=\`).`;
+- **Unit/format consistency**: Ensure final results match expected units (percentage vs proportion, dollars vs cents). Convert explicitly.
+- **Late rounding**: Round only in the final operator — intermediate rounding compounds errors.
+- **Plausibility checks**: Verify intermediate values make sense. If magnitudes seem off, re-examine column selection and data loading.
+- **Never pipeline on sample data**: Sampling operators return only a few rows. Always create a separate full-data operator and connect downstream to it.
+- **Misidentified columns**: Generic names (\`Unnamed: 0\`, \`0\`, \`1\`) mean the file was loaded incorrectly. Inspect raw content and fix loading params (\`sep=\`, \`header=\`, \`skiprows=\`).`;
 
 const KEY_PRINCIPLES = `
 ## Key Principles
 
-1. **One operation per operator**: Keep each operator focused on a single task. Separate operators for join, filter, aggregate and other data operations. Use links to connect them.
-2. **Decompose, don't consolidate**: Never write large code blocks with multiple conditions or transformations. Split them into separate operators connected by links. Each operator should do ONE thing. This makes each step verifiable, debuggable, and reusable.
-3. **Build incrementally**: Always link new operators to existing ones to reuse intermediate results. Never recreate data that already exists in the workflow.
-4. **Examine data before processing**: Do NOT assume files are clean or well-formatted. Before processing, inspect the raw file to check for: correct delimiters, presence of a header row, metadata/comment rows above the data, or multiple sub-tables. If column names appear generic or auto-generated (e.g., Unnamed:, 0, 1, 2), the header was not correctly identified — find the real header and re-load by modifying the source operator.
-5. **Read documentation first**: When task mentions abstract concepts, load and read documentation to understand exact definitions.
-6. **Sampling the data to explore comprehensively**: Due to token limits, the tail of execution results may be truncated. Do not assume you have seen all the data. Use different sampling techniques (see "Loading Data Correctly") to gain a comprehensive understanding of the data before building the pipeline.
-7. **Load the complete data for data analysis**: After sampling and inspecting the data to understand its schema and value ranges, create a **separate** operator that loads the complete data for the actual pipeline. Never connect downstream processing operators to the sampling operator — it only contains a few rows. The full-data operator is what the rest of the pipeline must link to.
-8. **Cross-validate results**: After obtaining a result, critically question it. If the result looks plausible but you are not confident, create a separate validation operator to verify.
-9. **Refining the dataflow by modifying related operators**: When you spot an issue in the result, go back and modify the operators that caused it or you think is related to it; you can always change the earlier-added operators if you think something is wrong.
-10. **Debug by isolating the problematic logic**: When encountering unexpected results, make the operator contain ONLY the problematic logic to better debug the problem.
-11. **Context optimization**: In the conversation history, some tool-call parameters (e.g., code, properties) may have been replaced with placeholders or removed for context compaction. Always respect the tool definition and provide all required parameters when making tool calls — do not mimic the redacted form seen in prior steps.`;
+- **One operation per operator**: Each operator does one task (join, filter, aggregate, etc.). Use links to connect them.
+- **Build incrementally**: Link new operators to existing ones. Never recreate data already in the workflow.
+- **Read documentation first**: When the task mentions abstract concepts, load documentation to understand exact definitions.
+- **Cross-validate results**: Critically question results. If uncertain, create a validation operator to verify.
+- **Refine by modifying**: When results are wrong, go back and modify the operators that caused the issue.
+- **Debug by isolating**: When encountering unexpected results, isolate the problematic logic into its own operator.
+- **Context optimization**: Some tool-call parameters in conversation history may have been removed for compaction. Always provide all required parameters per the tool definition — do not mimic redacted forms.`;
 
 // ============================================================================
 // Code Mode Template
