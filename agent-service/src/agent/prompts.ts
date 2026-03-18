@@ -148,8 +148,8 @@ const KEY_PRINCIPLES_NO_ACTION_DETAIL = `
 - **Read documentation first**: When the task mentions abstract concepts, load documentation to understand exact definitions.
 - **Refine by modifying**: When results are wrong, go back and modify the operators that caused the issue.
 - **Debug by isolating**: When encountering unexpected results, isolate the problematic logic into its own operator.
-- **Descriptive summaries**: Each operator's summary is your only record of what DataProcessing operators do (their code is not preserved). Include enough detail to capture the semantics and significant processing logic — e.g., column names, thresholds, join keys, filter conditions, aggregation methods.
-- **Context optimization**: Your conversation history is compacted into a "Current Workflow" summary showing each operator's type, ID, summary, and results. DataLoading operators include their code; DataProcessing operators do not. Always write fresh code for every tool call.`;
+- **Descriptive summaries**: Each operator's summary is your only record of what it does (code is not preserved in history). For DataLoading operators, you must include the specific file or folder paths being loaded. For DataProcessing operators, include the semantics and significant processing logic — e.g., column names, thresholds, join keys, filter conditions, aggregation methods.
+- **Context optimization**: Your conversation history is compacted into a "Current Workflow" summary showing each operator's type, ID, summary, and results — but not its code. Always write fresh code for every tool call.`;
 
 // ============================================================================
 // Code Mode Template
@@ -550,7 +550,7 @@ Final answer: The top 5 premium customers (spending >= $1000) with recent purcha
 export const EXAMPLES_NO_ACTION_DETAIL = `
 ## Example
 
-**Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators and their results. You will not see individual tool results in history — only the cumulative DAG state. DataLoading operators include their code; DataProcessing operators do not.
+**Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators and their results. You will not see individual tool results in history — only the cumulative DAG state. Code is not preserved — write fresh code for every tool call.
 
 Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
 
@@ -559,16 +559,12 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
     with open('/data/readme.md', 'r') as f:
         content = f.read()
     return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
-  summary="Load readme.md to find definitions of premium customer and recent purchase"
+  summary="Load /data/readme.md to find definitions of premium customer and recent purchase"
 Observation:
 === Current Workflow ===
 
 [1] Created DataLoading Operator: readme
-  Summary: Load readme.md to find definitions of premium customer and recent purchase
-  Code: def load() -> pd.DataFrame:
-    with open('/data/readme.md', 'r') as f:
-        content = f.read()
-    return pd.DataFrame([{'file': 'readme.md', 'content': content}])
+  Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
   Result:
   --- Execution Result ---
   [table] 1 rows, 2 columns
@@ -579,26 +575,19 @@ Thought: Let me sample both data files to understand their schema.
 Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/customers.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample first and last 3 rows of customers.csv to inspect schema and data types"
+  summary="Sample first and last 3 rows of /data/customers.csv to inspect schema and data types"
 Observation:
 === Current Workflow ===
 
 [1] Created DataLoading Operator: readme
-  Summary: Load readme.md to find definitions of premium customer and recent purchase
-  Code: def load() -> pd.DataFrame:
-    with open('/data/readme.md', 'r') as f:
-        content = f.read()
-    return pd.DataFrame([{'file': 'readme.md', 'content': content}])
+  Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
   Result:
   --- Execution Result ---
   [table] 1 rows, 2 columns
   ...
 
 [2] Created DataLoading Operator: sample_customers
-  Summary: Sample first and last 3 rows of customers.csv to inspect schema and data types
-  Code: def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/customers.csv')
-    return pd.concat([df.head(3), df.tail(3)])
+  Summary: Sample first and last 3 rows of /data/customers.csv to inspect schema and data types
   Result:
   --- Execution Metadata ---
   Output shape: (6, 5)
@@ -612,29 +601,24 @@ Thought: Now sample the orders file.
 Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/orders.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample first and last 3 rows of orders.csv to inspect schema and data types"
+  summary="Sample first and last 3 rows of /data/orders.csv to inspect schema and data types"
 Observation:
 === Current Workflow ===
 
 [1] Created DataLoading Operator: readme
-  Summary: Load readme.md to find definitions of premium customer and recent purchase
-  Code: ...
+  Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
   Result:
   --- Execution Result ---
   ...
 
 [2] Created DataLoading Operator: sample_customers
-  Summary: Sample first and last 3 rows of customers.csv to inspect schema and data types
-  Code: ...
+  Summary: Sample first and last 3 rows of /data/customers.csv to inspect schema and data types
   Result:
   --- Execution Result ---
   ...
 
 [3] Created DataLoading Operator: sample_orders
-  Summary: Sample first and last 3 rows of orders.csv to inspect schema and data types
-  Code: def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/orders.csv')
-    return pd.concat([df.head(3), df.tail(3)])
+  Summary: Sample first and last 3 rows of /data/orders.csv to inspect schema and data types
   Result:
   --- Execution Metadata ---
   Output shape: (6, 4)
@@ -647,10 +631,10 @@ Observation:
 Thought: Now I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
-  summary="Load complete customers.csv with columns customer_id, name, email, signup_date, tier"
+  summary="Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
-  summary="Load complete orders.csv with columns order_id, customer_id, amount, order_date"
+  summary="Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date"
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -663,30 +647,25 @@ Observation:
 === Current Workflow ===
 
 [1] Created DataLoading Operator: readme
-  Summary: Load readme.md to find definitions of premium customer and recent purchase
-  Code: ...
+  Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
   Result:
   --- Execution Result ---
   ...
 
 [2] Created DataLoading Operator: sample_customers
-  Summary: Sample first and last 3 rows of customers.csv to inspect schema and data types
-  Code: ...
+  Summary: Sample first and last 3 rows of /data/customers.csv to inspect schema and data types
   Result:
   --- Execution Result ---
   ...
 
 [3] Created DataLoading Operator: sample_orders
-  Summary: Sample first and last 3 rows of orders.csv to inspect schema and data types
-  Code: ...
+  Summary: Sample first and last 3 rows of /data/orders.csv to inspect schema and data types
   Result:
   --- Execution Result ---
   ...
 
 [4] Created DataLoading Operator: customers
-  Summary: Load complete customers.csv with columns customer_id, name, email, signup_date, tier
-  Code: def load() -> pd.DataFrame:
-    return pd.read_csv('/data/customers.csv')
+  Summary: Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier
   Result:
   --- Execution Metadata ---
   Output shape: (10000, 5)
@@ -694,9 +673,7 @@ Observation:
   Executed successfully.
 
 [5] Created DataLoading Operator: orders
-  Summary: Load complete orders.csv with columns order_id, customer_id, amount, order_date
-  Code: def load() -> pd.DataFrame:
-    return pd.read_csv('/data/orders.csv')
+  Summary: Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date
   Result:
   --- Execution Metadata ---
   Output shape: (50000, 4)

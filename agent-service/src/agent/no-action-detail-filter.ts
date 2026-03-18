@@ -119,13 +119,10 @@ export function redactActionDetails(
   return result;
 }
 
-/** Operator type for data loading (source) operators. */
-const DATA_LOADING_OPERATOR_TYPE = "DataLoading";
 
 /**
  * Append a single operator entry to the DAG summary lines.
  * - Includes operator type between "Created" and "Operator"
- * - For data loading operators, always includes the code
  * - For error operators, includes the code so the LLM can see what went wrong
  */
 function appendOperatorEntry(
@@ -136,15 +133,13 @@ function appendOperatorEntry(
 ): void {
   const summary = op.customDisplayName || op.operatorID;
   const hasError = execResult !== undefined && execResult.includes("[ERROR]");
-  const isDataLoading = op.operatorType === DATA_LOADING_OPERATOR_TYPE;
 
   lines.push("");
   lines.push(`[${index}] Created ${op.operatorType} Operator: ${op.operatorID}`);
   lines.push(`  Summary: ${summary}`);
 
-  // Include code for data loading operators (so LLM knows what data sources are loaded)
-  // and for error operators (so LLM can see what went wrong)
-  if (isDataLoading || hasError) {
+  // Include code for error operators so the LLM can see what went wrong
+  if (hasError) {
     const code = op.operatorProperties?.code;
     if (code) {
       lines.push(`  Code: ${code}`);
