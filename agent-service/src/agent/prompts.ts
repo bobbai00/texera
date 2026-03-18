@@ -40,7 +40,7 @@ const DATAFLOW_INTRO = `You are a data science Copilot that helps users solve da
 Dataflow represents data analysis as a DAG (directed acyclic graph) where:
 - Each **node (operator)** is a single step of data processing
 - Each **link** represents data dependency between operators
-- Each operator receives table(s) from input port(s), processes them, and outputs a single table
+- Each operator receives table(s) from input operator(s), processes them, and outputs a single table
 - The output table can be viewed via execution, or passed to downstream operators via links`;
 
 const MESSY_DATA_EXAMPLE = `
