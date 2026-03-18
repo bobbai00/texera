@@ -1005,7 +1005,7 @@ export async function executeOperatorAndFormat(
     // Build upstream operator IDs line (topological order, sources first)
     const upstreamIds = getUpstreamOperatorIds(workflowState, operatorId);
     const upstreamLine = upstreamIds.length > 0
-      ? `Upstream operator IDs: ${upstreamIds.join(", ")}`
+      ? `Data lineage: ${upstreamIds.join(", ")}`
       : "";
 
     // Surface warnings (e.g., duplicate column renames) so the agent can adjust its code

@@ -148,7 +148,8 @@ const KEY_PRINCIPLES_NO_ACTION_DETAIL = `
 - **Read documentation first**: When the task mentions abstract concepts, load documentation to understand exact definitions.
 - **Refine by modifying**: When results are wrong, go back and modify the operators that caused the issue.
 - **Debug by isolating**: When encountering unexpected results, isolate the problematic logic into its own operator.
-- **Context optimization**: Your conversation history is compacted into a "Current Workflow" summary showing each operator's ID, summary, and results — but not its code. Always write fresh code for every tool call.`;
+- **Descriptive summaries**: Each operator's summary is your only record of what DataProcessing operators do (their code is not preserved). Include enough detail to capture the semantics and significant processing logic — e.g., column names, thresholds, join keys, filter conditions, aggregation methods.
+- **Context optimization**: Your conversation history is compacted into a "Current Workflow" summary showing each operator's type, ID, summary, and results. DataLoading operators include their code; DataProcessing operators do not. Always write fresh code for every tool call.`;
 
 // ============================================================================
 // Code Mode Template
@@ -549,7 +550,7 @@ Final answer: The top 5 premium customers (spending >= $1000) with recent purcha
 export const EXAMPLES_NO_ACTION_DETAIL = `
 ## Example
 
-**Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators and their results. You will not see individual tool results in history — only the cumulative DAG state.
+**Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators and their results. You will not see individual tool results in history — only the cumulative DAG state. DataLoading operators include their code; DataProcessing operators do not.
 
 Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
 
@@ -558,12 +559,17 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
     with open('/data/readme.md', 'r') as f:
         content = f.read()
     return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
-  summary="Load readme.md documentation"
+  summary="Load readme.md to find definitions of premium customer and recent purchase"
 Observation:
 === Current Workflow ===
 
-[1] Operator: readme
-  Summary: Load readme.md documentation
+[1] Created DataLoading Operator: readme
+  Summary: Load readme.md to find definitions of premium customer and recent purchase
+  Code: def load() -> pd.DataFrame:
+    with open('/data/readme.md', 'r') as f:
+        content = f.read()
+    return pd.DataFrame([{'file': 'readme.md', 'content': content}])
+  Result:
   --- Execution Result ---
   [table] 1 rows, 2 columns
   	file	content
@@ -573,20 +579,29 @@ Thought: Let me sample both data files to understand their schema.
 Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/customers.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample customers.csv schema"
+  summary="Sample first and last 3 rows of customers.csv to inspect schema and data types"
 Observation:
 === Current Workflow ===
 
-[1] Operator: readme
-  Summary: Load readme.md documentation
+[1] Created DataLoading Operator: readme
+  Summary: Load readme.md to find definitions of premium customer and recent purchase
+  Code: def load() -> pd.DataFrame:
+    with open('/data/readme.md', 'r') as f:
+        content = f.read()
+    return pd.DataFrame([{'file': 'readme.md', 'content': content}])
+  Result:
   --- Execution Result ---
   [table] 1 rows, 2 columns
   ...
 
-[2] Operator: sample_customers
-  Summary: Sample customers.csv schema
+[2] Created DataLoading Operator: sample_customers
+  Summary: Sample first and last 3 rows of customers.csv to inspect schema and data types
+  Code: def load() -> pd.DataFrame:
+    df = pd.read_csv('/data/customers.csv')
+    return pd.concat([df.head(3), df.tail(3)])
+  Result:
   --- Execution Metadata ---
-  Output shape: sample_customers(6, 5)
+  Output shape: (6, 5)
   --- Execution Result ---
   [table] 6 rows, 5 columns
   	customer_id	name	email	signup_date	tier
@@ -597,24 +612,32 @@ Thought: Now sample the orders file.
 Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
     df = pd.read_csv('/data/orders.csv')
     return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample orders.csv schema"
+  summary="Sample first and last 3 rows of orders.csv to inspect schema and data types"
 Observation:
 === Current Workflow ===
 
-[1] Operator: readme
-  Summary: Load readme.md documentation
+[1] Created DataLoading Operator: readme
+  Summary: Load readme.md to find definitions of premium customer and recent purchase
+  Code: ...
+  Result:
   --- Execution Result ---
   ...
 
-[2] Operator: sample_customers
-  Summary: Sample customers.csv schema
+[2] Created DataLoading Operator: sample_customers
+  Summary: Sample first and last 3 rows of customers.csv to inspect schema and data types
+  Code: ...
+  Result:
   --- Execution Result ---
   ...
 
-[3] Operator: sample_orders
-  Summary: Sample orders.csv schema
+[3] Created DataLoading Operator: sample_orders
+  Summary: Sample first and last 3 rows of orders.csv to inspect schema and data types
+  Code: def load() -> pd.DataFrame:
+    df = pd.read_csv('/data/orders.csv')
+    return pd.concat([df.head(3), df.tail(3)])
+  Result:
   --- Execution Metadata ---
-  Output shape: sample_orders(6, 4)
+  Output shape: (6, 4)
   --- Execution Result ---
   [table] 6 rows, 4 columns
   	order_id	customer_id	amount	order_date
@@ -624,10 +647,10 @@ Observation:
 Thought: Now I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
-  summary="Load complete customers.csv"
+  summary="Load complete customers.csv with columns customer_id, name, email, signup_date, tier"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
-  summary="Load complete orders.csv"
+  summary="Load complete orders.csv with columns order_id, customer_id, amount, order_date"
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -635,44 +658,58 @@ Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def proces
     from datetime import datetime, timedelta
     cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
     return merged[merged['order_date'] >= cutoff]\`
-  summary="Join and filter recent orders"
+  summary="Inner join customers and orders on customer_id, then filter to orders within last 30 days"
 Observation:
 === Current Workflow ===
 
-[1] Operator: readme
-  Summary: Load readme.md documentation
+[1] Created DataLoading Operator: readme
+  Summary: Load readme.md to find definitions of premium customer and recent purchase
+  Code: ...
+  Result:
   --- Execution Result ---
   ...
 
-[2] Operator: sample_customers
-  Summary: Sample customers.csv schema
+[2] Created DataLoading Operator: sample_customers
+  Summary: Sample first and last 3 rows of customers.csv to inspect schema and data types
+  Code: ...
+  Result:
   --- Execution Result ---
   ...
 
-[3] Operator: sample_orders
-  Summary: Sample orders.csv schema
+[3] Created DataLoading Operator: sample_orders
+  Summary: Sample first and last 3 rows of orders.csv to inspect schema and data types
+  Code: ...
+  Result:
   --- Execution Result ---
   ...
 
-[4] Operator: customers
-  Summary: Load complete customers.csv
+[4] Created DataLoading Operator: customers
+  Summary: Load complete customers.csv with columns customer_id, name, email, signup_date, tier
+  Code: def load() -> pd.DataFrame:
+    return pd.read_csv('/data/customers.csv')
+  Result:
   --- Execution Metadata ---
-  Output shape: customers(10000, 5)
+  Output shape: (10000, 5)
   --- Execution Result ---
   Executed successfully.
 
-[5] Operator: orders
-  Summary: Load complete orders.csv
+[5] Created DataLoading Operator: orders
+  Summary: Load complete orders.csv with columns order_id, customer_id, amount, order_date
+  Code: def load() -> pd.DataFrame:
+    return pd.read_csv('/data/orders.csv')
+  Result:
   --- Execution Metadata ---
-  Output shape: orders(50000, 4)
+  Output shape: (50000, 4)
   --- Execution Result ---
   Executed successfully.
 
-[6] Operator: recent_orders
-  Summary: Join and filter recent orders
+[6] Created DataProcessing Operator: recent_orders
+  Summary: Inner join customers and orders on customer_id, then filter to orders within last 30 days
+  Result:
   --- Execution Metadata ---
   Input shape: customers(10000, 5), orders(50000, 4)
-  Output shape: recent_orders(1247, 8)
+  Output shape: (1247, 8)
+  Data lineage: customers, orders
   --- Execution Result ---
   [table] 10/1247 rows, 8 columns
   	customer_id	name	email	signup_date	tier	order_id	amount	order_date
@@ -685,15 +722,17 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
     spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
     spending.columns = ['customer_id', 'name', 'total_spending']
     return spending.nlargest(5, 'total_spending')\`
-  summary="Top 5 spenders"
+  summary="Group by customer_id and name, sum amount as total_spending, return top 5 by total_spending"
 Observation:
 === Current Workflow ===
 ...
-[7] Operator: top5
-  Summary: Top 5 spenders
+[7] Created DataProcessing Operator: top5
+  Summary: Group by customer_id and name, sum amount as total_spending, return top 5 by total_spending
+  Result:
   --- Execution Metadata ---
   Input shape: recent_orders(1247, 8)
-  Output shape: top5(5, 3)
+  Output shape: (5, 3)
+  Data lineage: customers, orders, recent_orders
   --- Execution Result ---
   [table] 5 rows, 3 columns
   	customer_id	name	total_spending
@@ -711,12 +750,13 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
     spending.columns = ['customer_id', 'name', 'total_spending']
     premium = spending[spending['total_spending'] >= 1000]
     return premium.nlargest(5, 'total_spending')\`
-  summary="Top 5 premium spenders"
+  summary="Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5"
 Observation:
 === Current Workflow ===
 ...
-[7] Operator: top5
-  Summary: Top 5 premium spenders
+[7] Created DataProcessing Operator: top5
+  Summary: Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5
+  Result:
   --- Execution Result ---
   [table] 5 rows, 3 columns
   	customer_id	name	total_spending
