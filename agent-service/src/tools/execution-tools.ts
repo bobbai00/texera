@@ -570,14 +570,13 @@ function formatColumnStatsMetadata(resultStatistics: Record<string, string>): st
       const kvPairs = Object.entries(stats)
         .filter(([k]) => !EXCLUDED_STAT_KEYS.has(k))
         .map(([k, v]) => {
-          if (v === null || v === undefined) return `${k}=N/A`;
-          if (typeof v === "object") {
+          if (typeof v === "object" && v !== null && v !== undefined) {
             const inner = Object.entries(v)
-              .map(([ik, iv]) => `${ik}=${iv}`)
+              .map(([ik, iv]) => `${ik}=${formatStatValue(iv)}`)
               .join(", ");
             return `${k}={${inner}}`;
           }
-          return `${k}=${v}`;
+          return `${k}=${formatStatValue(v)}`;
         })
         .join(", ");
 
@@ -592,6 +591,18 @@ function formatColumnStatsMetadata(resultStatistics: Record<string, string>): st
 
 /** Stat keys to exclude from per-column stats (redundant with Output table shape). */
 const EXCLUDED_STAT_KEYS = new Set(["count"]);
+
+/** Maximum significant digits for floating-point stat values. */
+const STAT_PRECISION = 4;
+
+/** Format a stat value, rounding floats to STAT_PRECISION significant digits. */
+function formatStatValue(v: any): string {
+  if (v === null || v === undefined) return "N/A";
+  if (typeof v === "number" && !Number.isInteger(v)) {
+    return Number(v.toPrecision(STAT_PRECISION)).toString();
+  }
+  return String(v);
+}
 
 /**
  * Format per-column statistics as a single tab-separated footer row for TABLE format.
@@ -616,7 +627,7 @@ function formatColumnStatsRow(resultStatistics: Record<string, string>, headers:
 
       const kvPairs = Object.entries(stats)
         .filter(([k, v]) => v !== null && v !== undefined && typeof v !== "object" && !EXCLUDED_STAT_KEYS.has(k))
-        .map(([k, v]) => `${k}=${v}`)
+        .map(([k, v]) => `${k}=${formatStatValue(v)}`)
         .join(",");
 
       cells.push(kvPairs ? `${dataType},${kvPairs}` : dataType);
