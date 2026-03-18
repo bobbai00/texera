@@ -54,6 +54,8 @@ import {
   EXAMPLES_RESULT_PARAM,
   EXAMPLES_PARALLEL_RESULT_PARAM,
   EXAMPLES_NO_ACTION_DETAIL,
+  EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA,
+  EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA_PARALLEL,
 } from "./prompts";
 import {
   createGetCurrentWorkflowTool,
@@ -269,7 +271,11 @@ export class TexeraAgent {
       this.systemPrompt = buildGeneralModeSystemPrompt(this.metadataStore);
     } else {
       let examples: string;
-      if (this.settings.noActionDetail) {
+      if (this.settings.noActionDetail && this.settings.carryMetadata && this.settings.parallelToolCalls) {
+        examples = EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA_PARALLEL;
+      } else if (this.settings.noActionDetail && this.settings.carryMetadata) {
+        examples = EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA;
+      } else if (this.settings.noActionDetail) {
         examples = EXAMPLES_NO_ACTION_DETAIL;
       } else if (this.settings.fineGrainedPrompt) {
         examples = EXAMPLES_FINE_GRAINED;
@@ -636,8 +642,9 @@ export class TexeraAgent {
     if (updates.noLogFallback !== undefined) {
       this.settings.noLogFallback = updates.noLogFallback;
     }
-    if (updates.carryMetadata !== undefined) {
+    if (updates.carryMetadata !== undefined && updates.carryMetadata !== this.settings.carryMetadata) {
       this.settings.carryMetadata = updates.carryMetadata;
+      promptNeedsRebuild = true;
     }
 
     // If mode or fineGrainedPrompt changed, rebuild system prompt

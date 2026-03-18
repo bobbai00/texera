@@ -45,6 +45,7 @@ const DEFINITION_TOOLS = new Set([
 
 /**
  * Replace all tool-call / tool-result messages with a compact DAG summary.
+ * Assistant reasoning text is inlined with operators as "Agent thought:" sections.
  *
  * @param messages        - Current conversation messages
  * @param workflowState   - Live workflow state (operators + links)
@@ -56,27 +57,51 @@ export function redactActionDetails(
   workflowState: WorkflowState,
   operatorExecutionResults: Map<string, string>
 ): ModelMessage[] {
-  // --- Step 1: Extract operator creation order from tool calls ---
+  // --- Step 1: Extract operator creation order and associated thoughts from tool calls ---
   const creationOrder: string[] = [];
   const seen = new Set<string>();
+  // Map of operatorId → list of agent reasoning texts (accumulated across steps)
+  const operatorThoughts = new Map<string, string[]>();
 
   for (const msg of messages) {
     if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+
+    // Extract text parts (agent reasoning) from this assistant message
+    const textParts = (msg.content as any[])
+      .filter(p => p.type === "text" && p.text?.trim())
+      .map(p => p.text.trim());
+    const thoughtText = textParts.join("\n");
+
+    // Extract operator IDs from tool calls in this message
+    const opIdsInMessage: string[] = [];
     for (const part of msg.content as any[]) {
       if (part.type !== "tool-call" || !DEFINITION_TOOLS.has(part.toolName)) continue;
       const args = part.args || part.input || {};
       const opId = args.operatorId;
-      if (opId && !seen.has(opId)) {
-        seen.add(opId);
-        creationOrder.push(opId);
+      if (opId) {
+        if (!seen.has(opId)) {
+          seen.add(opId);
+          creationOrder.push(opId);
+        }
+        opIdsInMessage.push(opId);
+      }
+    }
+
+    // Associate the thought text with each operator in this message
+    if (thoughtText && opIdsInMessage.length > 0) {
+      for (const opId of opIdsInMessage) {
+        if (!operatorThoughts.has(opId)) operatorThoughts.set(opId, []);
+        operatorThoughts.get(opId)!.push(thoughtText);
       }
     }
   }
 
-  // --- Step 2: Serialize DAG summary ---
-  const dagSummary = serializeDag(creationOrder, workflowState, operatorExecutionResults);
+  // --- Step 2: Serialize DAG summary with inline thoughts ---
+  const dagSummary = serializeDag(creationOrder, workflowState, operatorExecutionResults, operatorThoughts);
 
   // --- Step 3: Reconstruct messages ---
+  // Drop all assistant text + tool-call messages and tool messages;
+  // assistant reasoning is now inlined in the DAG summary.
   const result: ModelMessage[] = [];
 
   for (const msg of messages) {
@@ -85,12 +110,8 @@ export function redactActionDetails(
       continue;
     }
 
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      // Keep only text parts; drop tool-call parts
-      const textParts = (msg.content as any[]).filter(p => p.type === "text" && p.text?.trim());
-      if (textParts.length > 0) {
-        result.push({ ...msg, content: textParts });
-      }
+    // Drop assistant messages (text is inlined in DAG summary)
+    if (msg.role === "assistant") {
       continue;
     }
 
@@ -123,13 +144,15 @@ export function redactActionDetails(
 /**
  * Append a single operator entry to the DAG summary lines.
  * - Includes operator type between "Created" and "Operator"
+ * - Includes agent reasoning text inline as "Agent thought:" section
  * - For error operators, includes the code so the LLM can see what went wrong
  */
 function appendOperatorEntry(
   lines: string[],
   index: number,
   op: OperatorPredicate,
-  execResult: string | undefined
+  execResult: string | undefined,
+  thoughts: string[] | undefined
 ): void {
   const summary = op.customDisplayName || op.operatorID;
   const hasError = execResult !== undefined && execResult.includes("[ERROR]");
@@ -137,6 +160,11 @@ function appendOperatorEntry(
   lines.push("");
   lines.push(`[${index}] Created ${op.operatorType} Operator: ${op.operatorID}`);
   lines.push(`  Summary: ${summary}`);
+
+  // Include agent reasoning text (accumulated from all steps that touched this operator)
+  if (thoughts && thoughts.length > 0) {
+    lines.push(`  Agent thought: ${thoughts.join("\n  ")}`);
+  }
 
   // Include code for error operators so the LLM can see what went wrong
   if (hasError) {
@@ -164,7 +192,8 @@ function appendOperatorEntry(
 function serializeDag(
   creationOrder: string[],
   workflowState: WorkflowState,
-  operatorExecutionResults: Map<string, string>
+  operatorExecutionResults: Map<string, string>,
+  operatorThoughts: Map<string, string[]>
 ): string | null {
   const allOperators = workflowState.getAllOperators();
   if (allOperators.length === 0 && creationOrder.length === 0) return null;
@@ -184,23 +213,15 @@ function serializeDag(
     if (!op) continue;
 
     included.add(opId);
-    appendOperatorEntry(lines, index, op, operatorExecutionResults.get(opId));
+    appendOperatorEntry(lines, index, op, operatorExecutionResults.get(opId), operatorThoughts.get(opId));
     index++;
   }
 
   // Include any operators that exist in workflow but weren't in creation order
   for (const op of allOperators) {
     if (included.has(op.operatorID)) continue;
-    appendOperatorEntry(lines, index, op, operatorExecutionResults.get(op.operatorID));
+    appendOperatorEntry(lines, index, op, operatorExecutionResults.get(op.operatorID), operatorThoughts.get(op.operatorID));
     index++;
-  }
-
-  // Links
-  const allLinks = workflowState.getAllLinks();
-  if (allLinks.length > 0) {
-    const linkStrs = allLinks.map(l => `${l.source.operatorID}-->${l.target.operatorID}`);
-    lines.push("");
-    lines.push(`Links: ${linkStrs.join(", ")}`);
   }
 
   return lines.join("\n");

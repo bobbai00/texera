@@ -34,7 +34,7 @@
 import type { ModelMessage } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
 import { TOOL_NAME_CREATE_OR_MODIFY_OPERATOR } from "../tools/code-op-tools";
-import { TOOL_NAME_EXECUTE_OPERATOR, SECTION_EXECUTION_RESULT } from "../tools/execution-tools";
+import { TOOL_NAME_EXECUTE_OPERATOR } from "../tools/execution-tools";
 import {
   TOOL_NAME_GET_CURRENT_WORKFLOW,
   TOOL_NAME_ADD_LINK,
@@ -269,13 +269,13 @@ export function filterLatestOnlyMessages(messages: ModelMessage[], workflowState
           // Always preserve errors — the agent needs to learn from failures
           if (resultStr.startsWith("[ERROR]")) return part;
 
-          const resultIdx = resultStr.indexOf(SECTION_EXECUTION_RESULT);
-          if (resultIdx < 0) return part; // no result section to trim
+          // Find the table header (first line starting with \t) to locate table data boundary
+          const lines = resultStr.split("\n");
+          const headerIdx = lines.findIndex(l => l.startsWith("\t"));
+          if (headerIdx < 0) return part; // no table data to trim
 
           const trimmedText =
-            resultStr.substring(0, resultIdx).trimEnd() +
-            "\n\n" +
-            SECTION_EXECUTION_RESULT +
+            lines.slice(0, headerIdx).join("\n").trimEnd() +
             "\n(execution result trimmed — superseded by a later version of this operator)";
 
           modified = true;

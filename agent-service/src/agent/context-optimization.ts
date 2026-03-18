@@ -33,7 +33,7 @@ import type { ModelMessage } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
 import { AgentMode } from "../types/agent";
 import { TOOL_NAME_CREATE_OR_MODIFY_OPERATOR } from "../tools/code-op-tools";
-import { TOOL_NAME_EXECUTE_OPERATOR, SECTION_EXECUTION_RESULT } from "../tools/execution-tools";
+import { TOOL_NAME_EXECUTE_OPERATOR } from "../tools/execution-tools";
 
 // ============================================================================
 // Frontier Computation
@@ -105,38 +105,42 @@ export function computeOperatorDepths(workflowState: WorkflowState): Map<string,
 const TRIMMED_NOTICE = "(execution result skipped due to the context compaction)";
 
 /**
- * Remove or partially keep the "--- Execution Result ---" section from a result string
- * while preserving everything before it (operator action description,
- * "--- Execution Metadata ---", etc.).
+ * Remove or partially keep the table data from a result string while
+ * preserving metadata lines (Data lineage, Input/Output shape, etc.).
+ *
+ * The table boundary is detected by finding the first line starting with \t
+ * (the tab-prefixed header row). Everything before it is metadata; everything
+ * from it onward is table data (header, optional [stats] row, data rows).
  *
  * @param resultStr - The full result string
- * @param charLimit - Max chars to keep from result rows (0 = fully trim)
- * @returns The original string unchanged if no result section is found.
+ * @param charLimit - Max chars to keep from table data rows (0 = fully trim)
+ * @returns The original string unchanged if no table data is found.
  */
 function trimExecutionResultSection(resultStr: string, charLimit: number): string {
-  const resultIdx = resultStr.indexOf(SECTION_EXECUTION_RESULT);
-  if (resultIdx < 0) return resultStr;
+  const lines = resultStr.split("\n");
 
-  const before = resultStr.substring(0, resultIdx).trimEnd();
+  // Find the table header (first line starting with \t)
+  const headerIdx = lines.findIndex(l => l.startsWith("\t"));
+  if (headerIdx < 0) return resultStr;
+
+  const metadataLines = lines.slice(0, headerIdx);
+  const before = metadataLines.join("\n").trimEnd();
+
+  const headerLine = lines[headerIdx];
+  const afterHeader = lines.slice(headerIdx + 1);
 
   if (charLimit <= 0) {
-    // Fully trim: replace data with notice
-    return before + "\n\n" + SECTION_EXECUTION_RESULT + "\n" + TRIMMED_NOTICE;
+    // Fully trim: keep metadata only, drop table data
+    return before + "\n" + TRIMMED_NOTICE;
   }
 
-  // Partial trim with symmetric truncation: keep first X rows + last Y rows
-  // matching the backend's approach in SyncExecutionResource.scala
-  const afterMarker = resultStr.substring(resultIdx + SECTION_EXECUTION_RESULT.length);
-  const allLines = afterMarker.split("\n");
-
-  // Separate into non-empty lines: first is header, rest are data rows
-  const nonEmptyLines = allLines.filter(l => l.trim() !== "");
-  if (nonEmptyLines.length === 0) {
-    return before + "\n\n" + SECTION_EXECUTION_RESULT + "\n" + TRIMMED_NOTICE;
+  // Separate [stats] row (if present) from data rows
+  const nonEmptyAfter = afterHeader.filter(l => l.trim() !== "");
+  if (nonEmptyAfter.length === 0) {
+    return before + "\n" + TRIMMED_NOTICE;
   }
 
-  const headerLine = nonEmptyLines[0];
-  const dataRows = nonEmptyLines.slice(1);
+  const dataRows = nonEmptyAfter;
   const totalDataRows = dataRows.length;
 
   // Allocate half the budget for front rows, half for back rows
@@ -171,7 +175,7 @@ function trimExecutionResultSection(resultStr: string, charLimit: number): strin
       ? `\n${keptCount}/${totalDataRows} rows are displayed due to the context compaction`
       : "";
 
-  return before + "\n\n" + SECTION_EXECUTION_RESULT + "\n" + keptResult + notice;
+  return before + "\n" + keptResult + notice;
 }
 
 /**

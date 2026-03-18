@@ -39,10 +39,11 @@ import { OperatorResultSerializationMode, ExecutionBackend, DEFAULT_AGENT_SETTIN
 
 export const TOOL_NAME_EXECUTE_OPERATOR = "executeOperator";
 
-// Section separators used in execution results.
-// These are also used by context-optimization.ts to selectively trim sections.
-export const SECTION_EXECUTION_METADATA = "--- Execution Metadata ---";
-export const SECTION_EXECUTION_RESULT = "--- Execution Result ---";
+// Marker used by context-optimization.ts and latest-only-filter.ts to locate
+// the boundary between metadata lines and table data within execution results.
+// The marker is a tab-prefixed header line (the first line starting with \t).
+// Legacy section separators have been removed — metadata and table data are
+// now rendered contiguously without visible section headers.
 
 // ============================================================================
 // Execution Configuration
@@ -511,35 +512,11 @@ async function executeWorkflowDagster(
 // ============================================================================
 
 /**
- * Meta info for execution result formatting.
- */
-interface ResultMeta {
-  mode: string;
-  displayedRows: number;
-  totalRows: number;
-  columns: number;
-  truncated: boolean;
-}
-
-/**
- * Formats the meta info line for execution results.
- * For table/toon: only shows truncation notice if truncated, empty otherwise
- * (shape arrow already conveys row/column counts).
- * For json: "json (items: 10/100 truncated due to token limit)"
- */
-function formatResultMeta(meta: ResultMeta): string {
-  const rowsPart = meta.truncated
-    ? `${meta.displayedRows}/${meta.totalRows} rows (truncated)`
-    : `${meta.totalRows} rows`;
-  return `[${meta.mode}] ${rowsPart}, ${meta.columns} columns`;
-}
-
-/**
  * Format compact Input/Output metadata lines for an operator.
  * Uses upstream operator IDs from workflow links to label each input port.
- * - Source operator (no inputs): "Output: opId(rows, cols)"
- * - Single input: "Input: upstream(rows, cols)\nOutput: opId(rows, cols)"
- * - Multi input: "Input: up1(rows, cols), up2(rows, cols)\nOutput: opId(rows, cols)"
+ * - Source operator (no inputs): "Output table shape: (rows, cols)"
+ * - Single input: "Input operator(table shape): upstream(rows, cols)\nOutput table shape: (rows, cols)"
+ * - Multi input: "Input operator(table shape): up1(rows, cols), up2(rows, cols)\nOutput table shape: (rows, cols)"
  */
 function formatInputOutput(
   workflowState: WorkflowState,
@@ -548,7 +525,7 @@ function formatInputOutput(
   outputColumns: number
 ): string {
   const outputRows = opInfo.totalRowCount ?? opInfo.outputTuples;
-  const outputLine = `Output shape: (${outputRows}, ${outputColumns})`;
+  const outputLine = `Output table shape: (${outputRows}, ${outputColumns})`;
 
   const inputShapes = opInfo.inputPortShapes;
   if (!inputShapes || inputShapes.length === 0) {
@@ -574,76 +551,7 @@ function formatInputOutput(
     })
     .join(", ");
 
-  return `Input shape: ${inputPart}\n${outputLine}`;
-}
-
-/**
- * Compute all upstream operator IDs for a given operator via reverse traversal,
- * then return them in topological order (sources first).
- * The target operator itself is excluded.
- */
-function getUpstreamOperatorIds(workflowState: WorkflowState, operatorId: string): string[] {
-  const links = workflowState.getAllLinks();
-
-  // Build adjacency: target -> sources
-  const reverseAdj = new Map<string, string[]>();
-  // Build adjacency: source -> targets (for topological sort)
-  const forwardAdj = new Map<string, string[]>();
-  for (const link of links) {
-    const src = link.source.operatorID;
-    const tgt = link.target.operatorID;
-    if (!reverseAdj.has(tgt)) reverseAdj.set(tgt, []);
-    reverseAdj.get(tgt)!.push(src);
-    if (!forwardAdj.has(src)) forwardAdj.set(src, []);
-    forwardAdj.get(src)!.push(tgt);
-  }
-
-  // BFS backward from operatorId to collect all upstream nodes
-  const upstream = new Set<string>();
-  const queue = reverseAdj.get(operatorId) ?? [];
-  for (const id of queue) upstream.add(id);
-  let i = 0;
-  while (i < queue.length) {
-    const current = queue[i++];
-    for (const parent of reverseAdj.get(current) ?? []) {
-      if (!upstream.has(parent)) {
-        upstream.add(parent);
-        queue.push(parent);
-      }
-    }
-  }
-
-  if (upstream.size === 0) return [];
-
-  // Kahn's algorithm on the upstream sub-DAG
-  const inDegree = new Map<string, number>();
-  for (const id of upstream) inDegree.set(id, 0);
-  for (const id of upstream) {
-    for (const next of forwardAdj.get(id) ?? []) {
-      if (upstream.has(next)) {
-        inDegree.set(next, (inDegree.get(next) ?? 0) + 1);
-      }
-    }
-  }
-
-  const sorted: string[] = [];
-  const topoQueue: string[] = [];
-  for (const [id, deg] of inDegree) {
-    if (deg === 0) topoQueue.push(id);
-  }
-  while (topoQueue.length > 0) {
-    const node = topoQueue.shift()!;
-    sorted.push(node);
-    for (const next of forwardAdj.get(node) ?? []) {
-      if (upstream.has(next)) {
-        const newDeg = (inDegree.get(next) ?? 1) - 1;
-        inDegree.set(next, newDeg);
-        if (newDeg === 0) topoQueue.push(next);
-      }
-    }
-  }
-
-  return sorted;
+  return `Input operator(table shape): ${inputPart}\n${outputLine}`;
 }
 
 /**
@@ -660,6 +568,7 @@ function formatColumnStatsMetadata(resultStatistics: Record<string, string>): st
       const stats: Record<string, any> = parsed.statistics ?? {};
 
       const kvPairs = Object.entries(stats)
+        .filter(([k]) => !EXCLUDED_STAT_KEYS.has(k))
         .map(([k, v]) => {
           if (v === null || v === undefined) return `${k}=N/A`;
           if (typeof v === "object") {
@@ -681,11 +590,14 @@ function formatColumnStatsMetadata(resultStatistics: Record<string, string>): st
   return ["Column Stats:", ...colLines];
 }
 
+/** Stat keys to exclude from per-column stats (redundant with Output table shape). */
+const EXCLUDED_STAT_KEYS = new Set(["count"]);
+
 /**
  * Format per-column statistics as a single tab-separated footer row for TABLE format.
  * Each cell: "dataType,key1=val1,key2=val2,..."
  * Aligned with table headers so column names are not duplicated.
- * Example: [stats]\tstr,count=50,null=0,uniq=48\tint,count=50,null=2,mean=35.2
+ * Example: [stats]\tstr,null=0,uniq=48\tint,null=2,mean=35.2
  */
 function formatColumnStatsRow(resultStatistics: Record<string, string>, headers: string[]): string | null {
   const cells: string[] = [];
@@ -703,7 +615,7 @@ function formatColumnStatsRow(resultStatistics: Record<string, string>, headers:
       const stats: Record<string, any> = parsed.statistics ?? {};
 
       const kvPairs = Object.entries(stats)
-        .filter(([_, v]) => v !== null && v !== undefined && typeof v !== "object")
+        .filter(([k, v]) => v !== null && v !== undefined && typeof v !== "object" && !EXCLUDED_STAT_KEYS.has(k))
         .map(([k, v]) => `${k}=${v}`)
         .join(",");
 
@@ -942,9 +854,6 @@ export async function executeOperatorAndFormat(
     // table/toon format may add padding beyond the raw record size estimate.
     // This ensures the final serialized string respects the character limit.
     const charLimit = config.maxOperatorResultCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit;
-    let displayedRows = opInfo.displayedRows ?? 0;
-    let totalRows = opInfo.totalRowCount ?? displayedRows;
-    let truncated = opInfo.truncated ?? displayedRows < totalRows;
 
     // Build stats row for TABLE mode (inserted right after header, before data rows)
     let statsRow: string | null = null;
@@ -987,8 +896,6 @@ export async function executeOperatorAndFormat(
       if (statsRow) parts.push(statsRow);
       parts.push(...keptRows);
       dataString = parts.join("\n");
-      displayedRows = keptRows.length;
-      truncated = true;
     } else if (statsRow) {
       // No truncation needed — insert stats row right after header
       const allLines = dataString.split("\n");
@@ -1000,35 +907,23 @@ export async function executeOperatorAndFormat(
     // Build compact Input/Output lines using upstream operator IDs from links
     const shapeLine = formatInputOutput(workflowState, operatorId, opInfo, columns);
 
-    const meta = formatResultMeta({ mode: modeLabel, displayedRows, totalRows, columns, truncated });
-
-    // Build upstream operator IDs line (topological order, sources first)
-    const upstreamIds = getUpstreamOperatorIds(workflowState, operatorId);
-    const upstreamLine = upstreamIds.length > 0
-      ? `Data lineage: ${upstreamIds.join(", ")}`
-      : "";
-
     // Surface warnings (e.g., duplicate column renames) so the agent can adjust its code
     const warningLines = opInfo.warnings?.map(w => w) ?? [];
 
     // carryMetadata: include per-column statistics
-    // For TABLE mode, stats are in the footer row — skip from metadata to avoid duplication
+    // For TABLE mode, stats are in the table row — skip from metadata to avoid duplication
     const columnStatsLines = (config.carryMetadata && opInfo.resultStatistics && serializationMode !== OperatorResultSerializationMode.TABLE)
       ? formatColumnStatsMetadata(opInfo.resultStatistics)
       : [];
 
-    // Build structured result with separate metadata and result sections.
-    // Context optimization can trim the result section while preserving metadata.
+    // Build contiguous result: metadata lines flow directly into table data.
+    // Context optimization / latest-only-filter locate the table by finding
+    // the first line starting with \t (the header row).
     const metadataLines = config.noExecutionMetadata
       ? []
-      : [shapeLine, upstreamLine, ...warningLines, ...columnStatsLines].filter(Boolean);
-    const metadataSection = metadataLines.length > 0
-      ? `${SECTION_EXECUTION_METADATA}\n${metadataLines.join("\n")}`
-      : "";
-    const resultHeader = [meta, dataString].filter(Boolean).join("\n");
-    const resultSection = `${SECTION_EXECUTION_RESULT}\n${resultHeader}`;
+      : [shapeLine, ...warningLines, ...columnStatsLines].filter(Boolean);
 
-    return [metadataSection, resultSection].filter(Boolean).join("\n\n");
+    return [...metadataLines, dataString].filter(Boolean).join("\n");
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw error;

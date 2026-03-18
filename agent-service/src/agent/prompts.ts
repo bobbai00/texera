@@ -544,13 +544,12 @@ Final answer: The top 5 premium customers (spending >= $1000) with recent purcha
 
 /**
  * No-action-detail examples — observations appear as Workflow State summaries
- * rather than individual tool results. This teaches the LLM the DAG summary
- * format so it knows what to expect in conversation history.
+ * rather than individual tool results. No per-column stats.
  */
 export const EXAMPLES_NO_ACTION_DETAIL = `
 ## Example
 
-**Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators and their results. You will not see individual tool results in history — only the cumulative DAG state. Code is not preserved — write fresh code for every tool call.
+**Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators, your reasoning, and their results. You will not see individual tool results or separate assistant messages in history — only the cumulative DAG state. Code is not preserved — write fresh code for every tool call.
 
 Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
 
@@ -565,9 +564,8 @@ Observation:
 
 [1] Created DataLoading Operator: readme
   Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
+  Agent thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
   Result:
-  --- Execution Result ---
-  [table] 1 rows, 2 columns
   	file	content
   0	readme.md	Premium customer: total historical spending >= $1000. Recent purchase: orders placed within last 30 days.
 
@@ -581,21 +579,21 @@ Observation:
 
 [1] Created DataLoading Operator: readme
   Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
+  Agent thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
   Result:
-  --- Execution Result ---
-  [table] 1 rows, 2 columns
   ...
 
 [2] Created DataLoading Operator: sample_customers
   Summary: Sample first and last 3 rows of /data/customers.csv to inspect schema and data types
+  Agent thought: Let me sample both data files to understand their schema.
   Result:
-  --- Execution Metadata ---
-  Output shape: (6, 5)
-  --- Execution Result ---
-  [table] 6 rows, 5 columns
+  Output table shape: (6, 5)
   	customer_id	name	email	signup_date	tier
   0	C001	Alice	alice@example.com	2023-01-15	gold
   1	C002	Bob	bob@example.com	2023-03-22	silver
+  ...
+  4	C004	Diana	diana@example.com	2023-07-10	gold
+  5	C005	Eve	eve@example.com	2023-09-01	bronze
 
 Thought: Now sample the orders file.
 Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
@@ -604,29 +602,18 @@ Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load()
   summary="Sample first and last 3 rows of /data/orders.csv to inspect schema and data types"
 Observation:
 === Current Workflow ===
-
-[1] Created DataLoading Operator: readme
-  Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
-  Result:
-  --- Execution Result ---
-  ...
-
-[2] Created DataLoading Operator: sample_customers
-  Summary: Sample first and last 3 rows of /data/customers.csv to inspect schema and data types
-  Result:
-  --- Execution Result ---
-  ...
-
+...
 [3] Created DataLoading Operator: sample_orders
   Summary: Sample first and last 3 rows of /data/orders.csv to inspect schema and data types
+  Agent thought: Now sample the orders file.
   Result:
-  --- Execution Metadata ---
-  Output shape: (6, 4)
-  --- Execution Result ---
-  [table] 6 rows, 4 columns
+  Output table shape: (6, 4)
   	order_id	customer_id	amount	order_date
   0	O001	C001	250.00	2024-11-05
   1	O002	C002	180.00	2024-10-28
+  ...
+  4	O004	C004	520.00	2024-09-15
+  5	O005	C005	95.00	2024-11-12
 
 Thought: Now I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
@@ -645,55 +632,17 @@ Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def proces
   summary="Inner join customers and orders on customer_id, then filter to orders within last 30 days"
 Observation:
 === Current Workflow ===
-
-[1] Created DataLoading Operator: readme
-  Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
-  Result:
-  --- Execution Result ---
-  ...
-
-[2] Created DataLoading Operator: sample_customers
-  Summary: Sample first and last 3 rows of /data/customers.csv to inspect schema and data types
-  Result:
-  --- Execution Result ---
-  ...
-
-[3] Created DataLoading Operator: sample_orders
-  Summary: Sample first and last 3 rows of /data/orders.csv to inspect schema and data types
-  Result:
-  --- Execution Result ---
-  ...
-
-[4] Created DataLoading Operator: customers
-  Summary: Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier
-  Result:
-  --- Execution Metadata ---
-  Output shape: (10000, 5)
-  --- Execution Result ---
-  Executed successfully.
-
-[5] Created DataLoading Operator: orders
-  Summary: Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date
-  Result:
-  --- Execution Metadata ---
-  Output shape: (50000, 4)
-  --- Execution Result ---
-  Executed successfully.
-
+...
 [6] Created DataProcessing Operator: recent_orders
   Summary: Inner join customers and orders on customer_id, then filter to orders within last 30 days
+  Agent thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
   Result:
-  --- Execution Metadata ---
-  Input shape: customers(10000, 5), orders(50000, 4)
-  Output shape: (1247, 8)
-  Data lineage: customers, orders
-  --- Execution Result ---
-  [table] 10/1247 rows, 8 columns
+  Input operator(table shape): customers(10000, 5), orders(50000, 4)
+  Output table shape: (1247, 8)
   	customer_id	name	email	signup_date	tier	order_id	amount	order_date
   0	C001	Alice	alice@example.com	2023-01-15	gold	O4521	1200.00	2024-11-10
   ...
-
-Links: customers-->recent_orders, orders-->recent_orders
+  1246	C312	Frank	frank@example.com	2023-12-01	gold	O49123	340.00	2024-10-19
 
 Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
     spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
@@ -706,20 +655,14 @@ Observation:
 [7] Created DataProcessing Operator: top5
   Summary: Group by customer_id and name, sum amount as total_spending, return top 5 by total_spending
   Result:
-  --- Execution Metadata ---
-  Input shape: recent_orders(1247, 8)
-  Output shape: (5, 3)
-  Data lineage: customers, orders, recent_orders
-  --- Execution Result ---
-  [table] 5 rows, 3 columns
+  Input operator(table shape): recent_orders(1247, 8)
+  Output table shape: (5, 3)
   	customer_id	name	total_spending
   0	C001	Alice	12450.00
   1	C002	Bob	9820.00
   2	C015	Carol	8150.00
   3	C008	David	7340.00
   4	C023	Eve	6290.00
-
-Links: customers-->recent_orders, orders-->recent_orders, recent_orders-->top5
 
 Thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
 Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
@@ -733,9 +676,10 @@ Observation:
 ...
 [7] Created DataProcessing Operator: top5
   Summary: Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5
+  Agent thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
   Result:
-  --- Execution Result ---
-  [table] 5 rows, 3 columns
+  Input operator(table shape): recent_orders(1247, 8)
+  Output table shape: (5, 3)
   	customer_id	name	total_spending
   0	C001	Alice	12450.00
   1	C002	Bob	9820.00
@@ -743,9 +687,293 @@ Observation:
   3	C008	David	7340.00
   4	C023	Eve	6290.00
 
-Links: customers-->recent_orders, orders-->recent_orders, recent_orders-->top5
+Final answer: The top 5 premium customers (spending >= $1000) with recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).`;
+
+// --------------- Example variant: No-action-detail + carry metadata ---------------
+
+/**
+ * No-action-detail + carry metadata — includes [stats] rows in table results.
+ */
+export const EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA = `
+## Example
+
+**Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators, your reasoning, and their results (including per-column statistics). You will not see individual tool results or separate assistant messages in history — only the cumulative DAG state. Code is not preserved — write fresh code for every tool call.
+
+Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
+
+Thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
+Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.DataFrame:
+    with open('/data/readme.md', 'r') as f:
+        content = f.read()
+    return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
+  summary="Load /data/readme.md to find definitions of premium customer and recent purchase"
+Observation:
+=== Current Workflow ===
+
+[1] Created DataLoading Operator: readme
+  Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
+  Agent thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
+  Result:
+  	file	content
+  0	readme.md	Premium customer: total historical spending >= $1000. Recent purchase: orders placed within last 30 days.
+
+Thought: Let me sample both data files to understand their schema.
+Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
+    df = pd.read_csv('/data/customers.csv')
+    return pd.concat([df.head(3), df.tail(3)])\`
+  summary="Sample first and last 3 rows of /data/customers.csv to inspect schema and data types"
+Observation:
+=== Current Workflow ===
+...
+[2] Created DataLoading Operator: sample_customers
+  Summary: Sample first and last 3 rows of /data/customers.csv to inspect schema and data types
+  Agent thought: Let me sample both data files to understand their schema.
+  Result:
+  Output table shape: (6, 5)
+  	customer_id	name	email	signup_date	tier
+  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	DateTime,null=0,min=2023-01-15,max=2023-09-01	Categorical,null=0,distinct=3
+  0	C001	Alice	alice@example.com	2023-01-15	gold
+  ...
+  5	C005	Eve	eve@example.com	2023-09-01	bronze
+
+Thought: Now sample the orders file.
+Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
+    df = pd.read_csv('/data/orders.csv')
+    return pd.concat([df.head(3), df.tail(3)])\`
+  summary="Sample first and last 3 rows of /data/orders.csv to inspect schema and data types"
+Observation:
+=== Current Workflow ===
+...
+[3] Created DataLoading Operator: sample_orders
+  Summary: Sample first and last 3 rows of /data/orders.csv to inspect schema and data types
+  Agent thought: Now sample the orders file.
+  Result:
+  Output table shape: (6, 4)
+  	order_id	customer_id	amount	order_date
+  [stats]	Categorical,null=0,distinct=6	Categorical,null=0,distinct=5	Numeric,null=0,mean=219.17,std=155.80,min=95.00,max=520.00	DateTime,null=0,min=2024-09-15,max=2024-11-12
+  0	O001	C001	250.00	2024-11-05
+  ...
+  5	O005	C005	95.00	2024-11-12
+
+Thought: Now I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data.
+Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/customers.csv')\`
+  summary="Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier"
+Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/orders.csv')\`
+  summary="Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date"
+
+Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
+Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
+    merged = customers.merge(orders, on='customer_id', how='inner')
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+    return merged[merged['order_date'] >= cutoff]\`
+  summary="Inner join customers and orders on customer_id, then filter to orders within last 30 days"
+Observation:
+=== Current Workflow ===
+...
+[6] Created DataProcessing Operator: recent_orders
+  Summary: Inner join customers and orders on customer_id, then filter to orders within last 30 days
+  Agent thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
+  Result:
+  Input operator(table shape): customers(10000, 5), orders(50000, 4)
+  Output table shape: (1247, 8)
+  	customer_id	name	email	signup_date	tier	order_id	amount	order_date
+  [stats]	Categorical,null=0,distinct=312	Categorical,null=0,distinct=312	Categorical,null=5,distinct=310	DateTime,null=0,min=2023-01-15,max=2024-06-30	Categorical,null=0,distinct=3	Categorical,null=0,distinct=1247	Numeric,null=0,mean=485.32,std=312.45,min=15.00,max=2500.00	DateTime,null=0,min=2024-10-18,max=2024-11-17
+  0	C001	Alice	alice@example.com	2023-01-15	gold	O4521	1200.00	2024-11-10
+  ...
+  1246	C312	Frank	frank@example.com	2023-12-01	gold	O49123	340.00	2024-10-19
+
+Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
+    spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+    spending.columns = ['customer_id', 'name', 'total_spending']
+    return spending.nlargest(5, 'total_spending')\`
+  summary="Group by customer_id and name, sum amount as total_spending, return top 5 by total_spending"
+Observation:
+=== Current Workflow ===
+...
+[7] Created DataProcessing Operator: top5
+  Summary: Group by customer_id and name, sum amount as total_spending, return top 5 by total_spending
+  Result:
+  Input operator(table shape): recent_orders(1247, 8)
+  Output table shape: (5, 3)
+  	customer_id	name	total_spending
+  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433.16,min=6290.00,max=12450.00
+  0	C001	Alice	12450.00
+  1	C002	Bob	9820.00
+  2	C015	Carol	8150.00
+  3	C008	David	7340.00
+  4	C023	Eve	6290.00
+
+Thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
+Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
+    spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+    spending.columns = ['customer_id', 'name', 'total_spending']
+    premium = spending[spending['total_spending'] >= 1000]
+    return premium.nlargest(5, 'total_spending')\`
+  summary="Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5"
+Observation:
+=== Current Workflow ===
+...
+[7] Created DataProcessing Operator: top5
+  Summary: Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5
+  Agent thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
+  Result:
+  Input operator(table shape): recent_orders(1247, 8)
+  Output table shape: (5, 3)
+  	customer_id	name	total_spending
+  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433.16,min=6290.00,max=12450.00
+  0	C001	Alice	12450.00
+  1	C002	Bob	9820.00
+  2	C015	Carol	8150.00
+  3	C008	David	7340.00
+  4	C023	Eve	6290.00
 
 Final answer: The top 5 premium customers (spending >= $1000) with recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).`;
+
+// --------------- Example variant: No-action-detail + carry metadata + parallel ---------------
+
+/**
+ * No-action-detail + carry metadata + parallel — includes [stats] rows and
+ * demonstrates batching independent operations in parallel tool calls.
+ */
+export const EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA_PARALLEL = `
+## Example
+
+**Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators, your reasoning, and their results (including per-column statistics). You will not see individual tool results or separate assistant messages in history — only the cumulative DAG state. Code is not preserved — write fresh code for every tool call.
+
+Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
+
+Thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
+Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.DataFrame:
+    with open('/data/readme.md', 'r') as f:
+        content = f.read()
+    return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
+  summary="Load /data/readme.md to find definitions of premium customer and recent purchase"
+Observation:
+=== Current Workflow ===
+
+[1] Created DataLoading Operator: readme
+  Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
+  Agent thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
+  Result:
+  	file	content
+  0	readme.md	Premium customer: total historical spending >= $1000. Recent purchase: orders placed within last 30 days.
+
+Thought: Let me sample both data files to understand their schema. These two operators are independent, so I'll create them in parallel.
+Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
+    df = pd.read_csv('/data/customers.csv')
+    return pd.concat([df.head(3), df.tail(3)])\`
+  summary="Sample first and last 3 rows of /data/customers.csv to inspect schema and data types"
+Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
+    df = pd.read_csv('/data/orders.csv')
+    return pd.concat([df.head(3), df.tail(3)])\`
+  summary="Sample first and last 3 rows of /data/orders.csv to inspect schema and data types"
+Observation:
+=== Current Workflow ===
+...
+[2] Created DataLoading Operator: sample_customers
+  Summary: Sample first and last 3 rows of /data/customers.csv to inspect schema and data types
+  Agent thought: Let me sample both data files to understand their schema. These two operators are independent, so I'll create them in parallel.
+  Result:
+  Output table shape: (6, 5)
+  	customer_id	name	email	signup_date	tier
+  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	DateTime,null=0,min=2023-01-15,max=2023-09-01	Categorical,null=0,distinct=3
+  0	C001	Alice	alice@example.com	2023-01-15	gold
+  ...
+  5	C005	Eve	eve@example.com	2023-09-01	bronze
+
+[3] Created DataLoading Operator: sample_orders
+  Summary: Sample first and last 3 rows of /data/orders.csv to inspect schema and data types
+  Agent thought: Let me sample both data files to understand their schema. These two operators are independent, so I'll create them in parallel.
+  Result:
+  Output table shape: (6, 4)
+  	order_id	customer_id	amount	order_date
+  [stats]	Categorical,null=0,distinct=6	Categorical,null=0,distinct=5	Numeric,null=0,mean=219.17,std=155.80,min=95.00,max=520.00	DateTime,null=0,min=2024-09-15,max=2024-11-12
+  0	O001	C001	250.00	2024-11-05
+  ...
+  5	O005	C005	95.00	2024-11-12
+
+Thought: Now I **MUST** load the full data to proceed. These loads are independent, so I'll batch them in parallel.
+Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/customers.csv')\`
+  summary="Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier"
+Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/orders.csv')\`
+  summary="Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date"
+
+Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
+Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
+    merged = customers.merge(orders, on='customer_id', how='inner')
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+    return merged[merged['order_date'] >= cutoff]\`
+  summary="Inner join customers and orders on customer_id, then filter to orders within last 30 days"
+Observation:
+=== Current Workflow ===
+...
+[6] Created DataProcessing Operator: recent_orders
+  Summary: Inner join customers and orders on customer_id, then filter to orders within last 30 days
+  Agent thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
+  Result:
+  Input operator(table shape): customers(10000, 5), orders(50000, 4)
+  Output table shape: (1247, 8)
+  	customer_id	name	email	signup_date	tier	order_id	amount	order_date
+  [stats]	Categorical,null=0,distinct=312	Categorical,null=0,distinct=312	Categorical,null=5,distinct=310	DateTime,null=0,min=2023-01-15,max=2024-06-30	Categorical,null=0,distinct=3	Categorical,null=0,distinct=1247	Numeric,null=0,mean=485.32,std=312.45,min=15.00,max=2500.00	DateTime,null=0,min=2024-10-18,max=2024-11-17
+  0	C001	Alice	alice@example.com	2023-01-15	gold	O4521	1200.00	2024-11-10
+  ...
+  1246	C312	Frank	frank@example.com	2023-12-01	gold	O49123	340.00	2024-10-19
+
+Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
+    spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+    spending.columns = ['customer_id', 'name', 'total_spending']
+    return spending.nlargest(5, 'total_spending')\`
+  summary="Group by customer_id and name, sum amount as total_spending, return top 5 by total_spending"
+Observation:
+=== Current Workflow ===
+...
+[7] Created DataProcessing Operator: top5
+  Summary: Group by customer_id and name, sum amount as total_spending, return top 5 by total_spending
+  Result:
+  Input operator(table shape): recent_orders(1247, 8)
+  Output table shape: (5, 3)
+  	customer_id	name	total_spending
+  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433.16,min=6290.00,max=12450.00
+  0	C001	Alice	12450.00
+  1	C002	Bob	9820.00
+  2	C015	Carol	8150.00
+  3	C008	David	7340.00
+  4	C023	Eve	6290.00
+
+Thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
+Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
+    spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+    spending.columns = ['customer_id', 'name', 'total_spending']
+    premium = spending[spending['total_spending'] >= 1000]
+    return premium.nlargest(5, 'total_spending')\`
+  summary="Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5"
+Observation:
+=== Current Workflow ===
+...
+[7] Created DataProcessing Operator: top5
+  Summary: Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5
+  Agent thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
+  Result:
+  Input operator(table shape): recent_orders(1247, 8)
+  Output table shape: (5, 3)
+  	customer_id	name	total_spending
+  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433.16,min=6290.00,max=12450.00
+  0	C001	Alice	12450.00
+  1	C002	Bob	9820.00
+  2	C015	Carol	8150.00
+  3	C008	David	7340.00
+  4	C023	Eve	6290.00
+
+Final answer: The top 5 premium customers (spending >= $1000) with recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).
+
+
+**[IMPORTANT]: Parallel tool calls**: When multiple data operations can be added together, (e.g., loading different data files, having a multi-operator data manipulation), create them all in a single step using parallel tool calls. This reduces round-trips and saves tokens.`;
 
 // ============================================================================
 // General Mode Template
