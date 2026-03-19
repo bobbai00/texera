@@ -224,5 +224,48 @@ function serializeDag(
     index++;
   }
 
+  // Append links section in topological order
+  const allLinks = workflowState.getAllLinks();
+  if (allLinks.length > 0) {
+    // Build topological ordering of operators (Kahn's algorithm)
+    const opIds = new Set(allOperators.map(op => op.operatorID));
+    const inDegree = new Map<string, number>();
+    const children = new Map<string, string[]>();
+    for (const id of opIds) {
+      inDegree.set(id, 0);
+      children.set(id, []);
+    }
+    for (const link of allLinks) {
+      children.get(link.source.operatorID)?.push(link.target.operatorID);
+      inDegree.set(link.target.operatorID, (inDegree.get(link.target.operatorID) ?? 0) + 1);
+    }
+    const queue: string[] = [...opIds].filter(id => (inDegree.get(id) ?? 0) === 0);
+    const topoOrder = new Map<string, number>();
+    let rank = 0;
+    while (queue.length > 0) {
+      const node = queue.shift()!;
+      topoOrder.set(node, rank++);
+      for (const child of children.get(node) ?? []) {
+        const newDeg = (inDegree.get(child) ?? 1) - 1;
+        inDegree.set(child, newDeg);
+        if (newDeg === 0) queue.push(child);
+      }
+    }
+
+    // Sort links by source topological rank, then target rank
+    const sortedLinks = [...allLinks].sort((a, b) => {
+      const srcA = topoOrder.get(a.source.operatorID) ?? 0;
+      const srcB = topoOrder.get(b.source.operatorID) ?? 0;
+      if (srcA !== srcB) return srcA - srcB;
+      return (topoOrder.get(a.target.operatorID) ?? 0) - (topoOrder.get(b.target.operatorID) ?? 0);
+    });
+
+    lines.push("");
+    lines.push("Links:");
+    for (const link of sortedLinks) {
+      lines.push(`  ${link.source.operatorID} --> ${link.target.operatorID}`);
+    }
+  }
+
   return lines.join("\n");
 }
