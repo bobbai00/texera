@@ -43,27 +43,16 @@ interface NumericColumnStats {
   p75: number;
 }
 
-interface CategoricalColumnStats {
-  type: "categorical";
-  name: string;
-  count: number;
-  nullCount: number;
-  uniqueCount: number;
-  distribution: { value: string; count: number; pct: number }[];
-}
-
 interface StringColumnStats {
   type: "string";
   name: string;
   count: number;
   nullCount: number;
   uniqueCount: number;
-  minLength: number;
-  maxLength: number;
   topValues: { value: string; count: number }[];
 }
 
-type ColumnStats = NumericColumnStats | CategoricalColumnStats | StringColumnStats;
+type ColumnStats = NumericColumnStats | StringColumnStats;
 
 export interface ResultStatistics {
   totalRows: number;
@@ -98,6 +87,15 @@ export function parseBackendStats(backendStats: Record<string, string>): ResultS
         totalRows = count + nullCount;
       }
 
+      // Parse top_10 if present (available for all types when distinct <= 10)
+      const topDistinct = stats.top_10 ?? {};
+      const topValues = Object.entries(topDistinct)
+        .map(([value, cnt]) => ({
+          value: value.length > 50 ? value.substring(0, 50) + "..." : value,
+          count: cnt as number,
+        }))
+        .sort((a, b) => b.count - a.count);
+
       if (dataType === "Numeric") {
         columns.push({
           type: "numeric",
@@ -113,35 +111,15 @@ export function parseBackendStats(backendStats: Record<string, string>): ResultS
           p25: stats.p25 ?? 0,
           p75: stats.p75 ?? 0,
         });
-      } else if (dataType === "Categorical") {
-        const topValues = stats.top_values ?? {};
-        const distribution = Object.entries(topValues)
-          .map(([value, cnt]) => ({
-            value: value.length > 50 ? value.substring(0, 50) + "..." : value,
-            count: cnt as number,
-            pct: count > 0 ? Math.round(((cnt as number) / count) * 100) : 0,
-          }))
-          .sort((a, b) => b.count - a.count);
-
-        columns.push({
-          type: "categorical",
-          name: colName,
-          count,
-          nullCount,
-          uniqueCount,
-          distribution,
-        });
       } else {
-        // DateTime, Boolean, String, Unsupported
+        // DateTime, Boolean, String, etc.
         columns.push({
           type: "string",
           name: colName,
           count,
           nullCount,
           uniqueCount,
-          minLength: 0,
-          maxLength: 0,
-          topValues: [],
+          topValues,
         });
       }
     } catch {

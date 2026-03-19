@@ -572,7 +572,7 @@ function formatColumnStatsMetadata(resultStatistics: Record<string, string>): st
         .map(([k, v]) => {
           if (typeof v === "object" && v !== null && v !== undefined) {
             const inner = Object.entries(v)
-              .map(([ik, iv]) => `${ik}=${formatStatValue(iv)}`)
+              .map(([ik, iv]) => `"${ik}"=${formatStatValue(iv)}`)
               .join(", ");
             return `${k}={${inner}}`;
           }
@@ -626,8 +626,18 @@ function formatColumnStatsRow(resultStatistics: Record<string, string>, headers:
       const stats: Record<string, any> = parsed.statistics ?? {};
 
       const kvPairs = Object.entries(stats)
-        .filter(([k, v]) => v !== null && v !== undefined && typeof v !== "object" && !EXCLUDED_STAT_KEYS.has(k))
-        .map(([k, v]) => `${k}=${formatStatValue(v)}`)
+        .filter(([k, v]) => v !== null && v !== undefined && !EXCLUDED_STAT_KEYS.has(k))
+        .map(([k, v]) => {
+          if (k === "top_10" && typeof v === "object") {
+            const inner = Object.entries(v)
+              .map(([ik, iv]) => `"${ik}"=${formatStatValue(iv)}`)
+              .join(",");
+            return `top_10={${inner}}`;
+          }
+          if (typeof v === "object") return null;
+          return `${k}=${formatStatValue(v)}`;
+        })
+        .filter(Boolean)
         .join(",");
 
       cells.push(kvPairs ? `${dataType},${kvPairs}` : dataType);

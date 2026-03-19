@@ -345,8 +345,14 @@ class DataProcessor(Runnable, Stoppable):
         }
 
         # Determine type and add type-specific stats
-        if pandas.api.types.is_numeric_dtype(col):
-            data_type = "Numeric"
+        # Check boolean BEFORE numeric, since is_numeric_dtype returns True for bool
+        if pandas.api.types.is_bool_dtype(col):
+            data_type = "bool"
+            vc = col.value_counts()
+            base["True"] = int(vc.get(True, 0))
+            base["False"] = int(vc.get(False, 0))
+        elif pandas.api.types.is_integer_dtype(col):
+            data_type = "int"
             if count > 0:
                 desc = col.describe()
                 base.update(
@@ -360,25 +366,50 @@ class DataProcessor(Runnable, Stoppable):
                         "max": desc.get("max"),
                     }
                 )
-        elif pandas.api.types.is_bool_dtype(col):
-            data_type = "Boolean"
-            vc = col.value_counts()
-            base["True"] = int(vc.get(True, 0))
-            base["False"] = int(vc.get(False, 0))
+        elif pandas.api.types.is_float_dtype(col):
+            data_type = "float"
+            if count > 0:
+                desc = col.describe()
+                base.update(
+                    {
+                        "mean": desc.get("mean"),
+                        "std": desc.get("std"),
+                        "min": desc.get("min"),
+                        "p25": desc.get("25%"),
+                        "median": desc.get("50%"),
+                        "p75": desc.get("75%"),
+                        "max": desc.get("max"),
+                    }
+                )
         elif pandas.api.types.is_datetime64_any_dtype(col):
-            data_type = "DateTime"
+            data_type = "datetime"
             if count > 0:
                 base["min"] = str(col.min())
                 base["max"] = str(col.max())
         else:
-            if count > 0 and distinct <= count * 0.1:
-                data_type = "Categorical"
-                vc = col.value_counts().head(5)
-                base["top_values"] = {
-                    str(val): int(cnt) for val, cnt in vc.items()
-                }
-            else:
-                data_type = "String"
+            # Try to detect datetime-like string columns by parsing a sample
+            data_type = "str"
+            if count > 0:
+                sample = col.dropna().head(10)
+                try:
+                    parsed = pandas.to_datetime(sample, infer_datetime_format=True)
+                    if not parsed.isna().all():
+                        data_type = "datetime"
+                        parsed_col = pandas.to_datetime(col, infer_datetime_format=True, errors="coerce")
+                        base["min"] = str(parsed_col.min())
+                        base["max"] = str(parsed_col.max())
+                except Exception:
+                    pass
+
+        # For all types: if distinct values (including null) <= 10 and not all unique,
+        # include a top_10 map of value -> count
+        total_distinct_with_null = distinct + (1 if missing > 0 else 0)
+        if count > 0 and total_distinct_with_null <= 10 and total_distinct_with_null < total:
+            vc = col.value_counts(dropna=False).head(10)
+            base["top_10"] = {
+                str(val) if not pandas.isna(val) else "null": int(cnt)
+                for val, cnt in vc.items()
+            }
 
         # Sanitize NaN/inf for JSON serialization
         sanitized = {}

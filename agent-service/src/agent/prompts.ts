@@ -745,7 +745,7 @@ Observation:
   Result:
   Output table shape: (6, 5)
   	customer_id	name	email	signup_date	tier
-  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	DateTime,null=0,min=2023-01-15,max=2023-09-01	Categorical,null=0,distinct=3
+  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	String,null=0,distinct=5	DateTime,null=0,min=2023-01-15,max=2023-09-01	String,null=0,distinct=3
   0	C001	Alice	alice@example.com	2023-01-15	gold
   ...
   5	C005	Eve	eve@example.com	2023-09-01	bronze
@@ -764,7 +764,7 @@ Observation:
   Result:
   Output table shape: (6, 4)
   	order_id	customer_id	amount	order_date
-  [stats]	Categorical,null=0,distinct=6	Categorical,null=0,distinct=5	Numeric,null=0,mean=219.17,std=155.80,min=95.00,max=520.00	DateTime,null=0,min=2024-09-15,max=2024-11-12
+  [stats]	String,null=0,distinct=6	String,null=0,distinct=5	Numeric,null=0,mean=219.17,std=155.80,min=95.00,max=520.00	DateTime,null=0,min=2024-09-15,max=2024-11-12
   0	O001	C001	250.00	2024-11-05
   ...
   5	O005	C005	95.00	2024-11-12
@@ -794,7 +794,7 @@ Observation:
   Input operator(table shape): customers(10000, 5), orders(50000, 4)
   Output table shape: (1247, 8)
   	customer_id	name	email	signup_date	tier	order_id	amount	order_date
-  [stats]	Categorical,null=0,distinct=312	Categorical,null=0,distinct=312	Categorical,null=5,distinct=310	DateTime,null=0,min=2023-01-15,max=2024-06-30	Categorical,null=0,distinct=3	Categorical,null=0,distinct=1247	Numeric,null=0,mean=485.32,std=312.45,min=15.00,max=2500.00	DateTime,null=0,min=2024-10-18,max=2024-11-17
+  [stats]	String,null=0,distinct=312	String,null=0,distinct=312	String,null=5,distinct=310	DateTime,null=0,min=2023-01-15,max=2024-06-30	String,null=0,distinct=3	String,null=0,distinct=1247	Numeric,null=0,mean=485.32,std=312.5,min=15.00,max=2500.00	DateTime,null=0,min=2024-10-18,max=2024-11-17
   0	C001	Alice	alice@example.com	2023-01-15	gold	O4521	1200.00	2024-11-10
   ...
   1246	C312	Frank	frank@example.com	2023-12-01	gold	O49123	340.00	2024-10-19
@@ -817,7 +817,7 @@ Observation:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
   	customer_id	name	total_spending
-  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433.16,min=6290.00,max=12450.00
+  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
   0	C001	Alice	12450.00
   1	C002	Bob	9820.00
   2	C015	Carol	8150.00
@@ -846,7 +846,7 @@ Observation:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
   	customer_id	name	total_spending
-  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433.16,min=6290.00,max=12450.00
+  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
   0	C001	Alice	12450.00
   1	C002	Bob	9820.00
   2	C015	Carol	8150.00
@@ -907,7 +907,7 @@ Observation:
   Result:
   Output table shape: (6, 5)
   	customer_id	name	email	signup_date	tier
-  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	DateTime,null=0,min=2023-01-15,max=2023-09-01	Categorical,null=0,distinct=3
+  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	String,null=0,distinct=5	DateTime,null=0,min=2023-01-15,max=2023-09-01	String,null=0,distinct=3
   0	C001	Alice	alice@example.com	2023-01-15	gold
   ...
   5	C005	Eve	eve@example.com	2023-09-01	bronze
@@ -918,7 +918,7 @@ Observation:
   Result:
   Output table shape: (6, 4)
   	order_id	customer_id	amount	order_date
-  [stats]	Categorical,null=0,distinct=6	Categorical,null=0,distinct=5	Numeric,null=0,mean=219.17,std=155.80,min=95.00,max=520.00	DateTime,null=0,min=2024-09-15,max=2024-11-12
+  [stats]	String,null=0,distinct=6	String,null=0,distinct=5	Numeric,null=0,mean=219.17,std=155.80,min=95.00,max=520.00	DateTime,null=0,min=2024-09-15,max=2024-11-12
   0	O001	C001	250.00	2024-11-05
   ...
   5	O005	C005	95.00	2024-11-12
@@ -948,7 +948,7 @@ Observation:
   Input operator(table shape): customers(10000, 5), orders(50000, 4)
   Output table shape: (1247, 8)
   	customer_id	name	email	signup_date	tier	order_id	amount	order_date
-  [stats]	Categorical,null=0,distinct=312	Categorical,null=0,distinct=312	Categorical,null=5,distinct=310	DateTime,null=0,min=2023-01-15,max=2024-06-30	Categorical,null=0,distinct=3	Categorical,null=0,distinct=1247	Numeric,null=0,mean=485.32,std=312.45,min=15.00,max=2500.00	DateTime,null=0,min=2024-10-18,max=2024-11-17
+  [stats]	String,null=0,distinct=312	String,null=0,distinct=312	String,null=5,distinct=310	DateTime,null=0,min=2023-01-15,max=2024-06-30	String,null=0,distinct=3	String,null=0,distinct=1247	Numeric,null=0,mean=485.32,std=312.5,min=15.00,max=2500.00	DateTime,null=0,min=2024-10-18,max=2024-11-17
   0	C001	Alice	alice@example.com	2023-01-15	gold	O4521	1200.00	2024-11-10
   ...
   1246	C312	Frank	frank@example.com	2023-12-01	gold	O49123	340.00	2024-10-19
@@ -971,7 +971,7 @@ Observation:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
   	customer_id	name	total_spending
-  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433.16,min=6290.00,max=12450.00
+  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
   0	C001	Alice	12450.00
   1	C002	Bob	9820.00
   2	C015	Carol	8150.00
@@ -1000,7 +1000,7 @@ Observation:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
   	customer_id	name	total_spending
-  [stats]	Categorical,null=0,distinct=5	Categorical,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433.16,min=6290.00,max=12450.00
+  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
   0	C001	Alice	12450.00
   1	C002	Bob	9820.00
   2	C015	Carol	8150.00
