@@ -48,33 +48,19 @@ const MESSY_DATA_EXAMPLE = `
 
 Task: "Load measurements.csv and compute the average temperature."
 
-Thought: Before loading, I should inspect the raw file to understand its structure — it may not be a clean CSV.
-Tool call: createOrModifyOperator: operatorId="sample_raw", code=\`def load() -> pd.DataFrame:
-    with open('/data/measurements.csv', 'r') as f:
-        lines = [f.readline() for _ in range(5)]
-    return pd.DataFrame([{'line_num': i+1, 'content': line.strip()} for i, line in enumerate(lines)])\`
-  summary="Inspect raw file structure of measurements.csv"
-Observation: Added operator "sample_raw".
-  line_num | content
-  1        | # Sensor log exported 2024-01-15
-  2        | station;date;temperature;humidity
-  3        | A1;2024-01-01;22.5;45
-  4        | A1;2024-01-02;23.1;42
-  5        | A2;2024-01-01;19.8;51
+Thought: Let me load the file directly. Real-world files may have wrong delimiters, metadata rows, or misplaced headers — I'll inspect the result after loading.
+Tool call: createOrModifyOperator: operatorId="measurements", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/measurements.csv')\`
+  summary="Load measurements.csv"
+Observation: Added operator "measurements". 1 column: "# Sensor log exported 2024-01-15" (all rows contain raw semicolon-delimited content)
 
-Thought: The file has a comment line at row 1, uses semicolons, and the header is on row 2. I need skiprows=1 and sep=';'. Let me verify with a sample.
-Tool call: createOrModifyOperator: operatorId="sample_measurements", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/measurements.csv', sep=';', skiprows=1)
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample measurements.csv parsing"
-Observation: Added operator "sample_measurements". 4 columns: station, date, temperature, humidity.
-
-Thought: Now I **MUST** load the full data. The sample operator was only for viewing.
+Thought: The column name is a comment line — the file uses semicolons and has a metadata row at line 1. I need \`sep=';'\` and \`skiprows=1\`. Let me fix the loading params.
 Tool call: createOrModifyOperator: operatorId="measurements", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/measurements.csv', sep=';', skiprows=1)\`
-  summary="Load complete measurements.csv"
+  summary="Load measurements.csv (semicolon-delimited, skip 1 comment row)"
+Observation: Modified operator "measurements". 4 columns: station, date, temperature, humidity.
 
-Thought: Now I can compute the average temperature on the full dataset.
+Thought: Now compute the average temperature.
 Tool call: createOrModifyOperator: operatorId="avg_temp", code=\`def process(measurements) -> pd.DataFrame:
     avg = measurements['temperature'].mean()
     return pd.DataFrame([{'average_temperature': round(avg, 2)}])\`
@@ -84,35 +70,11 @@ Observation: Added operator "avg_temp". Auto-created links: [measurements-->avg_
 Final answer: The average temperature is 21.80.`;
 
 const LOADING_DATA_SECTION = `
-## Loading Data Correctly
+## Loading Data
 
-When loading data files, use a two-step pattern: **(1) sample** with a sampling operator, then **(2) load complete data** in a separate operator for the actual pipeline.
+Load data files directly in a single operator. Real-world data files are often malformed — they may have wrong delimiters, missing or misplaced headers, metadata/comment rows, or multiple tables in one file.
 
-**Step 1** - Create a sampling operator to understand the schema (sampling only, NOT used by downstream):
-\`\`\`python
-# operatorId="sample_rules"
-def load() -> pd.DataFrame:
-    import json
-    with open('/data/rules.json', 'r') as f:
-        data = json.load(f)
-    df = pd.DataFrame(data)
-    return pd.concat([df.head(3), df.tail(3)])  # Sample for viewing only
-\`\`\`
-
-**Step 2** - Create a separate operator that loads the complete data (this is what downstream operators connect to):
-\`\`\`python
-# operatorId="rules"
-def load() -> pd.DataFrame:
-    import json
-    with open('/data/rules.json', 'r') as f:
-        data = json.load(f)
-    return pd.DataFrame(data)  # Full data for the pipeline
-\`\`\`
-
-**Note:** Real-world data files are often malformed — they may have wrong delimiters, missing or misplaced headers, metadata/comment rows above the data, or multiple tables in one file. After loading, always examine the result.
-If column names look auto-generated (e.g., \`Unnamed: 0\`) or a data value appears as a header, adjust the loading parameters (e.g., \`header=\`, \`skiprows=\`, \`sep=\`) and re-load by modifying the source operator.
-
-**CRITICAL**: Never build downstream operators on top of a sampling operator. The sampling operator returns only a few rows — any downstream processing on it will produce wrong results. Always create a new full-data operator and connect your pipeline to that.`;
+After loading, inspect the result. If column names look auto-generated (e.g., \`Unnamed: 0\`) or a data value appears as a header, adjust the loading parameters (e.g., \`header=\`, \`skiprows=\`, \`sep=\`) by modifying the source operator.`;
 
 const ANTI_PATTERN_SECTION = `
 ## Anti-Pattern: Avoid Monolithic Code Blocks
@@ -127,8 +89,7 @@ const COMMON_PITFALLS_SECTION = `
 - **Unit/format consistency**: Ensure final results match expected units (percentage vs proportion, dollars vs cents). Convert explicitly.
 - **Late rounding**: Round only in the final operator — intermediate rounding compounds errors.
 - **Plausibility checks**: Verify intermediate values make sense. If magnitudes seem off, re-examine column selection and data loading.
-- **Never pipeline on sample data**: Sampling operators return only a few rows. Always create a separate full-data operator and connect downstream to it.
-- **Misidentified columns**: Generic names (\`Unnamed: 0\`, \`0\`, \`1\`) mean the file was loaded incorrectly. Inspect raw content and fix loading params (\`sep=\`, \`header=\`, \`skiprows=\`).`;
+- **Misidentified columns**: Generic names (\`Unnamed: 0\`, \`0\`, \`1\`) mean the file was loaded incorrectly. Inspect the result and fix loading params (\`sep=\`, \`header=\`, \`skiprows=\`).`;
 
 const KEY_PRINCIPLES = `
 ## Key Principles
@@ -199,27 +160,15 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
   summary="Load readme.md documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
-Thought: Let me sample the customers file to understand its schema.
-Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/customers.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample customers.csv schema"
-Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
-
-Thought: Now sample the orders file.
-Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/orders.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample orders.csv schema"
-Observation: Added operator "sample_orders". 4 columns: order_id, customer_id, amount, order_date (6 sample rows)
-
-Thought: Now I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data.
+Thought: Let me load both data files.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
-  summary="Load complete customers.csv"
+  summary="Load customers.csv"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
-  summary="Load complete orders.csv"
+  summary="Load orders.csv"
+Observation: Added operator "customers". 5 columns: customer_id, name, email, signup_date, tier (10,000 rows)
+Observation: Added operator "orders". 4 columns: order_id, customer_id, amount, order_date (50,000 rows)
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -266,25 +215,15 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
   summary="Load readme.md documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
-Thought: Let me sample both data files to understand their schema. These two operators are independent, so I'll create them in parallel.
-Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/customers.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample customers.csv schema"
-Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/orders.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample orders.csv schema"
-Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
-Observation: Added operator "sample_orders". 4 columns: order_id, customer_id, amount, order_date (6 sample rows)
-
-Thought: Now I **MUST** load the full data to proceed. These loads are independent, so I'll batch them in parallel.
+Thought: Let me load both data files. These are independent, so I'll create them in parallel.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
-  summary="Load complete customers.csv"
+  summary="Load customers.csv"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
-  summary="Load complete orders.csv"
+  summary="Load orders.csv"
+Observation: Added operator "customers". 5 columns: customer_id, name, email, signup_date, tier (10,000 rows)
+Observation: Added operator "orders". 4 columns: order_id, customer_id, amount, order_date (50,000 rows)
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -340,27 +279,15 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
   summary="Load readme.md documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
-Thought: Let me sample the customers file to understand its schema.
-Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/customers.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample customers.csv schema"
-Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
-
-Thought: Now sample the orders file.
-Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/orders.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample orders.csv schema"
-Observation: Added operator "sample_orders". 4 columns: order_id, customer_id, amount, order_date (6 sample rows)
-
-Thought: Now I **MUST** load the full data. Each operator below contains exactly ONE data operation.
+Thought: Load both data files. Each is one operation.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
-  summary="Load complete customers.csv"
+  summary="Load customers.csv"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
-  summary="Load complete orders.csv"
+  summary="Load orders.csv"
+Observation: Added operator "customers". 5 columns: customer_id, name, email, signup_date, tier (10,000 rows)
+Observation: Added operator "orders". 4 columns: order_id, customer_id, amount, order_date (50,000 rows)
 
 Thought: Join customers and orders — ONE operation: merge.
 Tool call: createOrModifyOperator: operatorId="merged", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -418,27 +345,15 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
   retrieveResult=true, summary="Load documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
-Thought: Let me sample the customers file to understand its schema.
-Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/customers.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  retrieveResult=true, summary="Sample customers schema"
-Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
-
-Thought: Now sample the orders file.
-Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/orders.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  retrieveResult=true, summary="Sample orders schema"
-Observation: Added operator "sample_orders". 4 columns: order_id, customer_id, amount, order_date (6 sample rows)
-
-Thought: Now I **MUST** load the full data to proceed. No need to see full results for these loads.
+Thought: Load both data files. I'll use retrieveResult=true to verify the schemas.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
-  retrieveResult=false, summary="Load complete customers"
+  retrieveResult=true, summary="Load customers.csv"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
-  retrieveResult=false, summary="Load complete orders"
+  retrieveResult=true, summary="Load orders.csv"
+Observation: Added operator "customers". 5 columns: customer_id, name, email, signup_date, tier (10,000 rows)
+Observation: Added operator "orders". 4 columns: order_id, customer_id, amount, order_date (50,000 rows)
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -467,7 +382,7 @@ Observation: Modified operator "top5". Top 5 premium: Alice ($12,450), Bob ($9,8
 
 Final answer: The top 5 premium customers (spending >= $1000) with recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).
 
-**[IMPORTANT] optional result retrieval**: Use \`retrieveResult: false\` for full data loads and intermediate operators you don't need to inspect. Use \`retrieveResult: true\` for samples, final results, and outputs you need to verify. Errors are always reported regardless.`;
+**[IMPORTANT] optional result retrieval**: Use \`retrieveResult: false\` for intermediate operators you don't need to inspect. Use \`retrieveResult: true\` for initial data loads, final results, and outputs you need to verify. Errors are always reported regardless.`;
 
 // --------------- Example variant: Parallel + Result parameter ---------------
 
@@ -488,25 +403,15 @@ Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.
   retrieveResult=true, summary="Load documentation"
 Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
 
-Thought: Let me sample both data files to understand their schema. These two operators are independent, so I'll create them in parallel with retrieveResult=true to inspect schemas.
-Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/customers.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  retrieveResult=true, summary="Sample customers schema"
-Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/orders.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  retrieveResult=true, summary="Sample orders schema"
-Observation: Added operator "sample_customers". 5 columns: customer_id, name, email, signup_date, tier (6 sample rows)
-Observation: Added operator "sample_orders". 4 columns: order_id, customer_id, amount, order_date (6 sample rows)
-
-Thought: Now I **MUST** load the full data to proceed. These loads are independent, so I'll batch them in parallel with retrieveResult=false since I don't need to see the full data.
+Thought: Load both data files in parallel with retrieveResult=true to verify schemas.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
-  retrieveResult=false, summary="Load complete customers"
+  retrieveResult=true, summary="Load customers.csv"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
-  retrieveResult=false, summary="Load complete orders"
+  retrieveResult=true, summary="Load orders.csv"
+Observation: Added operator "customers". 5 columns: customer_id, name, email, signup_date, tier (10,000 rows)
+Observation: Added operator "orders". 4 columns: order_id, customer_id, amount, order_date (50,000 rows)
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data. I need to see the result to verify correctness.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -538,7 +443,7 @@ Final answer: The top 5 premium customers (spending >= $1000) with recent purcha
 
 **[IMPORTANT]: Parallel tool calls**: When multiple data operations can be added together, (e.g., loading different data files, having a multi-operator data manipulation), create them all in a single step using parallel tool calls. This reduces round-trips and saves tokens.
 
-**[IMPORTANT] optional result retrieval**: Use \`retrieveResult: false\` for full data loads and intermediate operators you don't need to inspect. Use \`retrieveResult: true\` for samples, final results, and outputs you need to verify. Errors are always reported regardless.`;
+**[IMPORTANT] optional result retrieval**: Use \`retrieveResult: false\` for intermediate operators you don't need to inspect. Use \`retrieveResult: true\` for initial data loads, final results, and outputs you need to verify. Errors are always reported regardless.`;
 
 // --------------- Example variant: No-action-detail (DAG summary) ---------------
 
@@ -566,14 +471,16 @@ Observation:
   Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
   Agent thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
   Result:
-  	file	content
-  0	readme.md	Premium customer: total historical spending >= $1000. Recent purchase: orders placed within last 30 days.
+  \tfile\tcontent
+  0\treadme.md\tPremium customer: total historical spending >= $1000. Recent purchase: orders placed within last 30 days.
 
-Thought: Let me sample both data files to understand their schema.
-Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/customers.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample first and last 3 rows of /data/customers.csv to inspect schema and data types"
+Thought: Let me load both data files.
+Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/customers.csv')\`
+  summary="Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier"
+Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/orders.csv')\`
+  summary="Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date"
 Observation:
 === Current Workflow ===
 
@@ -583,45 +490,23 @@ Observation:
   Result:
   ...
 
-[2] Created DataLoading Operator: sample_customers
-  Summary: Sample first and last 3 rows of /data/customers.csv to inspect schema and data types
-  Agent thought: Let me sample both data files to understand their schema.
+[2] Created DataLoading Operator: customers
+  Summary: Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier
+  Agent thought: Let me load both data files.
   Result:
-  Output table shape: (6, 5)
-  	customer_id	name	email	signup_date	tier
-  0	C001	Alice	alice@example.com	2023-01-15	gold
-  1	C002	Bob	bob@example.com	2023-03-22	silver
+  Output table shape: (10000, 5)
+  \tcustomer_id\tname\temail\tsignup_date\ttier
+  0\tC001\tAlice\talice@example.com\t2023-01-15\tgold
   ...
-  4	C004	Diana	diana@example.com	2023-07-10	gold
-  5	C005	Eve	eve@example.com	2023-09-01	bronze
 
-Thought: Now sample the orders file.
-Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/orders.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample first and last 3 rows of /data/orders.csv to inspect schema and data types"
-Observation:
-=== Current Workflow ===
-...
-[3] Created DataLoading Operator: sample_orders
-  Summary: Sample first and last 3 rows of /data/orders.csv to inspect schema and data types
-  Agent thought: Now sample the orders file.
+[3] Created DataLoading Operator: orders
+  Summary: Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date
+  Agent thought: Let me load both data files.
   Result:
-  Output table shape: (6, 4)
-  	order_id	customer_id	amount	order_date
-  0	O001	C001	250.00	2024-11-05
-  1	O002	C002	180.00	2024-10-28
+  Output table shape: (50000, 4)
+  \torder_id\tcustomer_id\tamount\torder_date
+  0\tO001\tC001\t250.00\t2024-11-05
   ...
-  4	O004	C004	520.00	2024-09-15
-  5	O005	C005	95.00	2024-11-12
-
-Thought: Now I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data.
-Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
-    return pd.read_csv('/data/customers.csv')\`
-  summary="Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier"
-Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
-    return pd.read_csv('/data/orders.csv')\`
-  summary="Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date"
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -633,16 +518,16 @@ Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def proces
 Observation:
 === Current Workflow ===
 ...
-[6] Created DataProcessing Operator: recent_orders
+[4] Created DataProcessing Operator: recent_orders
   Summary: Inner join customers and orders on customer_id, then filter to orders within last 30 days
   Agent thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
   Result:
   Input operator(table shape): customers(10000, 5), orders(50000, 4)
   Output table shape: (1247, 8)
-  	customer_id	name	email	signup_date	tier	order_id	amount	order_date
-  0	C001	Alice	alice@example.com	2023-01-15	gold	O4521	1200.00	2024-11-10
+  \tcustomer_id\tname\temail\tsignup_date\ttier\torder_id\tamount\torder_date
+  0\tC001\tAlice\talice@example.com\t2023-01-15\tgold\tO4521\t1200.00\t2024-11-10
   ...
-  1246	C312	Frank	frank@example.com	2023-12-01	gold	O49123	340.00	2024-10-19
+  1246\tC312\tFrank\tfrank@example.com\t2023-12-01\tgold\tO49123\t340.00\t2024-10-19
 
 Links:
   customers --> recent_orders
@@ -656,17 +541,17 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
 Observation:
 === Current Workflow ===
 ...
-[7] Created DataProcessing Operator: top5
+[5] Created DataProcessing Operator: top5
   Summary: Group by customer_id and name, sum amount as total_spending, return top 5 by total_spending
   Result:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
-  	customer_id	name	total_spending
-  0	C001	Alice	12450.00
-  1	C002	Bob	9820.00
-  2	C015	Carol	8150.00
-  3	C008	David	7340.00
-  4	C023	Eve	6290.00
+  \tcustomer_id\tname\ttotal_spending
+  0\tC001\tAlice\t12450.00
+  1\tC002\tBob\t9820.00
+  2\tC015\tCarol\t8150.00
+  3\tC008\tDavid\t7340.00
+  4\tC023\tEve\t6290.00
 
 Links:
   customers --> recent_orders
@@ -683,18 +568,18 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
 Observation:
 === Current Workflow ===
 ...
-[7] Created DataProcessing Operator: top5
+[5] Created DataProcessing Operator: top5
   Summary: Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5
   Agent thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
   Result:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
-  	customer_id	name	total_spending
-  0	C001	Alice	12450.00
-  1	C002	Bob	9820.00
-  2	C015	Carol	8150.00
-  3	C008	David	7340.00
-  4	C023	Eve	6290.00
+  \tcustomer_id\tname\ttotal_spending
+  0\tC001\tAlice\t12450.00
+  1\tC002\tBob\t9820.00
+  2\tC015\tCarol\t8150.00
+  3\tC008\tDavid\t7340.00
+  4\tC023\tEve\t6290.00
 
 Links:
   customers --> recent_orders
@@ -728,54 +613,38 @@ Observation:
   Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
   Agent thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
   Result:
-  	file	content
-  0	readme.md	Premium customer: total historical spending >= $1000. Recent purchase: orders placed within last 30 days.
+  \tfile\tcontent
+  0\treadme.md\tPremium customer: total historical spending >= $1000. Recent purchase: orders placed within last 30 days.
 
-Thought: Let me sample both data files to understand their schema.
-Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/customers.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample first and last 3 rows of /data/customers.csv to inspect schema and data types"
-Observation:
-=== Current Workflow ===
-...
-[2] Created DataLoading Operator: sample_customers
-  Summary: Sample first and last 3 rows of /data/customers.csv to inspect schema and data types
-  Agent thought: Let me sample both data files to understand their schema.
-  Result:
-  Output table shape: (6, 5)
-  	customer_id	name	email	signup_date	tier
-  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	String,null=0,distinct=5	DateTime,null=0,min=2023-01-15,max=2023-09-01	String,null=0,distinct=3
-  0	C001	Alice	alice@example.com	2023-01-15	gold
-  ...
-  5	C005	Eve	eve@example.com	2023-09-01	bronze
-
-Thought: Now sample the orders file.
-Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/orders.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample first and last 3 rows of /data/orders.csv to inspect schema and data types"
-Observation:
-=== Current Workflow ===
-...
-[3] Created DataLoading Operator: sample_orders
-  Summary: Sample first and last 3 rows of /data/orders.csv to inspect schema and data types
-  Agent thought: Now sample the orders file.
-  Result:
-  Output table shape: (6, 4)
-  	order_id	customer_id	amount	order_date
-  [stats]	String,null=0,distinct=6	String,null=0,distinct=5	Numeric,null=0,mean=219.17,std=155.80,min=95.00,max=520.00	DateTime,null=0,min=2024-09-15,max=2024-11-12
-  0	O001	C001	250.00	2024-11-05
-  ...
-  5	O005	C005	95.00	2024-11-12
-
-Thought: Now I **MUST** load the full data to proceed. The sample operators are only for viewing — I must create separate operators with the complete data.
+Thought: Let me load both data files.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
   summary="Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
   summary="Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date"
+Observation:
+=== Current Workflow ===
+...
+[2] Created DataLoading Operator: customers
+  Summary: Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier
+  Agent thought: Let me load both data files.
+  Result:
+  Output table shape: (10000, 5)
+  \tcustomer_id\tname\temail\tsignup_date\ttier
+  [stats]\tstr,null=0,distinct=10000\tstr,null=0,distinct=10000\tstr,null=0,distinct=9998\tdatetime,null=0,min=2023-01-15,max=2024-06-30\tstr,null=0,distinct=3,top_10={"gold"=4200,"silver"=3800,"bronze"=2000}
+  0\tC001\tAlice\talice@example.com\t2023-01-15\tgold
+  ...
+
+[3] Created DataLoading Operator: orders
+  Summary: Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date
+  Agent thought: Let me load both data files.
+  Result:
+  Output table shape: (50000, 4)
+  \torder_id\tcustomer_id\tamount\torder_date
+  [stats]\tstr,null=0,distinct=50000\tstr,null=0,distinct=10000\tfloat,null=0,mean=219.17,std=155.80,min=95.00,max=520.00\tdatetime,null=0,min=2024-09-15,max=2024-11-12
+  0\tO001\tC001\t250.00\t2024-11-05
+  ...
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -787,17 +656,17 @@ Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def proces
 Observation:
 === Current Workflow ===
 ...
-[6] Created DataProcessing Operator: recent_orders
+[4] Created DataProcessing Operator: recent_orders
   Summary: Inner join customers and orders on customer_id, then filter to orders within last 30 days
   Agent thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
   Result:
   Input operator(table shape): customers(10000, 5), orders(50000, 4)
   Output table shape: (1247, 8)
-  	customer_id	name	email	signup_date	tier	order_id	amount	order_date
-  [stats]	String,null=0,distinct=312	String,null=0,distinct=312	String,null=5,distinct=310	DateTime,null=0,min=2023-01-15,max=2024-06-30	String,null=0,distinct=3	String,null=0,distinct=1247	Numeric,null=0,mean=485.32,std=312.5,min=15.00,max=2500.00	DateTime,null=0,min=2024-10-18,max=2024-11-17
-  0	C001	Alice	alice@example.com	2023-01-15	gold	O4521	1200.00	2024-11-10
+  \tcustomer_id\tname\temail\tsignup_date\ttier\torder_id\tamount\torder_date
+  [stats]\tstr,null=0,distinct=312\tstr,null=0,distinct=312\tstr,null=5,distinct=310\tdatetime,null=0,min=2023-01-15,max=2024-06-30\tstr,null=0,distinct=3,top_10={"gold"=620,"silver"=390,"bronze"=237}\tstr,null=0,distinct=1247\tfloat,null=0,mean=485.32,std=312.5,min=15.00,max=2500.00\tdatetime,null=0,min=2024-10-18,max=2024-11-17
+  0\tC001\tAlice\talice@example.com\t2023-01-15\tgold\tO4521\t1200.00\t2024-11-10
   ...
-  1246	C312	Frank	frank@example.com	2023-12-01	gold	O49123	340.00	2024-10-19
+  1246\tC312\tFrank\tfrank@example.com\t2023-12-01\tgold\tO49123\t340.00\t2024-10-19
 
 Links:
   customers --> recent_orders
@@ -811,18 +680,18 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
 Observation:
 === Current Workflow ===
 ...
-[7] Created DataProcessing Operator: top5
+[5] Created DataProcessing Operator: top5
   Summary: Group by customer_id and name, sum amount as total_spending, return top 5 by total_spending
   Result:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
-  	customer_id	name	total_spending
-  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
-  0	C001	Alice	12450.00
-  1	C002	Bob	9820.00
-  2	C015	Carol	8150.00
-  3	C008	David	7340.00
-  4	C023	Eve	6290.00
+  \tcustomer_id\tname\ttotal_spending
+  [stats]\tstr,null=0,distinct=5\tstr,null=0,distinct=5\tfloat,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
+  0\tC001\tAlice\t12450.00
+  1\tC002\tBob\t9820.00
+  2\tC015\tCarol\t8150.00
+  3\tC008\tDavid\t7340.00
+  4\tC023\tEve\t6290.00
 
 Links:
   customers --> recent_orders
@@ -839,19 +708,19 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
 Observation:
 === Current Workflow ===
 ...
-[7] Created DataProcessing Operator: top5
+[5] Created DataProcessing Operator: top5
   Summary: Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5
   Agent thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
   Result:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
-  	customer_id	name	total_spending
-  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
-  0	C001	Alice	12450.00
-  1	C002	Bob	9820.00
-  2	C015	Carol	8150.00
-  3	C008	David	7340.00
-  4	C023	Eve	6290.00
+  \tcustomer_id\tname\ttotal_spending
+  [stats]\tstr,null=0,distinct=5\tstr,null=0,distinct=5\tfloat,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
+  0\tC001\tAlice\t12450.00
+  1\tC002\tBob\t9820.00
+  2\tC015\tCarol\t8150.00
+  3\tC008\tDavid\t7340.00
+  4\tC023\tEve\t6290.00
 
 Links:
   customers --> recent_orders
@@ -886,50 +755,38 @@ Observation:
   Summary: Load /data/readme.md to find definitions of premium customer and recent purchase
   Agent thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
   Result:
-  	file	content
-  0	readme.md	Premium customer: total historical spending >= $1000. Recent purchase: orders placed within last 30 days.
+  \tfile\tcontent
+  0\treadme.md\tPremium customer: total historical spending >= $1000. Recent purchase: orders placed within last 30 days.
 
-Thought: Let me sample both data files to understand their schema. These two operators are independent, so I'll create them in parallel.
-Tool call: createOrModifyOperator: operatorId="sample_customers", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/customers.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample first and last 3 rows of /data/customers.csv to inspect schema and data types"
-Tool call: createOrModifyOperator: operatorId="sample_orders", code=\`def load() -> pd.DataFrame:
-    df = pd.read_csv('/data/orders.csv')
-    return pd.concat([df.head(3), df.tail(3)])\`
-  summary="Sample first and last 3 rows of /data/orders.csv to inspect schema and data types"
-Observation:
-=== Current Workflow ===
-...
-[2] Created DataLoading Operator: sample_customers
-  Summary: Sample first and last 3 rows of /data/customers.csv to inspect schema and data types
-  Agent thought: Let me sample both data files to understand their schema. These two operators are independent, so I'll create them in parallel.
-  Result:
-  Output table shape: (6, 5)
-  	customer_id	name	email	signup_date	tier
-  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	String,null=0,distinct=5	DateTime,null=0,min=2023-01-15,max=2023-09-01	String,null=0,distinct=3
-  0	C001	Alice	alice@example.com	2023-01-15	gold
-  ...
-  5	C005	Eve	eve@example.com	2023-09-01	bronze
-
-[3] Created DataLoading Operator: sample_orders
-  Summary: Sample first and last 3 rows of /data/orders.csv to inspect schema and data types
-  Agent thought: Let me sample both data files to understand their schema. These two operators are independent, so I'll create them in parallel.
-  Result:
-  Output table shape: (6, 4)
-  	order_id	customer_id	amount	order_date
-  [stats]	String,null=0,distinct=6	String,null=0,distinct=5	Numeric,null=0,mean=219.17,std=155.80,min=95.00,max=520.00	DateTime,null=0,min=2024-09-15,max=2024-11-12
-  0	O001	C001	250.00	2024-11-05
-  ...
-  5	O005	C005	95.00	2024-11-12
-
-Thought: Now I **MUST** load the full data to proceed. These loads are independent, so I'll batch them in parallel.
+Thought: Load both data files in parallel.
 Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/customers.csv')\`
   summary="Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier"
 Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
     return pd.read_csv('/data/orders.csv')\`
   summary="Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date"
+Observation:
+=== Current Workflow ===
+...
+[2] Created DataLoading Operator: customers
+  Summary: Load complete /data/customers.csv with columns customer_id, name, email, signup_date, tier
+  Agent thought: Load both data files in parallel.
+  Result:
+  Output table shape: (10000, 5)
+  \tcustomer_id\tname\temail\tsignup_date\ttier
+  [stats]\tstr,null=0,distinct=10000\tstr,null=0,distinct=10000\tstr,null=0,distinct=9998\tdatetime,null=0,min=2023-01-15,max=2024-06-30\tstr,null=0,distinct=3,top_10={"gold"=4200,"silver"=3800,"bronze"=2000}
+  0\tC001\tAlice\talice@example.com\t2023-01-15\tgold
+  ...
+
+[3] Created DataLoading Operator: orders
+  Summary: Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date
+  Agent thought: Load both data files in parallel.
+  Result:
+  Output table shape: (50000, 4)
+  \torder_id\tcustomer_id\tamount\torder_date
+  [stats]\tstr,null=0,distinct=50000\tstr,null=0,distinct=10000\tfloat,null=0,mean=219.17,std=155.80,min=95.00,max=520.00\tdatetime,null=0,min=2024-09-15,max=2024-11-12
+  0\tO001\tC001\t250.00\t2024-11-05
+  ...
 
 Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -941,17 +798,17 @@ Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def proces
 Observation:
 === Current Workflow ===
 ...
-[6] Created DataProcessing Operator: recent_orders
+[4] Created DataProcessing Operator: recent_orders
   Summary: Inner join customers and orders on customer_id, then filter to orders within last 30 days
   Agent thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
   Result:
   Input operator(table shape): customers(10000, 5), orders(50000, 4)
   Output table shape: (1247, 8)
-  	customer_id	name	email	signup_date	tier	order_id	amount	order_date
-  [stats]	String,null=0,distinct=312	String,null=0,distinct=312	String,null=5,distinct=310	DateTime,null=0,min=2023-01-15,max=2024-06-30	String,null=0,distinct=3	String,null=0,distinct=1247	Numeric,null=0,mean=485.32,std=312.5,min=15.00,max=2500.00	DateTime,null=0,min=2024-10-18,max=2024-11-17
-  0	C001	Alice	alice@example.com	2023-01-15	gold	O4521	1200.00	2024-11-10
+  \tcustomer_id\tname\temail\tsignup_date\ttier\torder_id\tamount\torder_date
+  [stats]\tstr,null=0,distinct=312\tstr,null=0,distinct=312\tstr,null=5,distinct=310\tdatetime,null=0,min=2023-01-15,max=2024-06-30\tstr,null=0,distinct=3,top_10={"gold"=620,"silver"=390,"bronze"=237}\tstr,null=0,distinct=1247\tfloat,null=0,mean=485.32,std=312.5,min=15.00,max=2500.00\tdatetime,null=0,min=2024-10-18,max=2024-11-17
+  0\tC001\tAlice\talice@example.com\t2023-01-15\tgold\tO4521\t1200.00\t2024-11-10
   ...
-  1246	C312	Frank	frank@example.com	2023-12-01	gold	O49123	340.00	2024-10-19
+  1246\tC312\tFrank\tfrank@example.com\t2023-12-01\tgold\tO49123\t340.00\t2024-10-19
 
 Links:
   customers --> recent_orders
@@ -965,18 +822,18 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
 Observation:
 === Current Workflow ===
 ...
-[7] Created DataProcessing Operator: top5
+[5] Created DataProcessing Operator: top5
   Summary: Group by customer_id and name, sum amount as total_spending, return top 5 by total_spending
   Result:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
-  	customer_id	name	total_spending
-  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
-  0	C001	Alice	12450.00
-  1	C002	Bob	9820.00
-  2	C015	Carol	8150.00
-  3	C008	David	7340.00
-  4	C023	Eve	6290.00
+  \tcustomer_id\tname\ttotal_spending
+  [stats]\tstr,null=0,distinct=5\tstr,null=0,distinct=5\tfloat,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
+  0\tC001\tAlice\t12450.00
+  1\tC002\tBob\t9820.00
+  2\tC015\tCarol\t8150.00
+  3\tC008\tDavid\t7340.00
+  4\tC023\tEve\t6290.00
 
 Links:
   customers --> recent_orders
@@ -993,19 +850,19 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
 Observation:
 === Current Workflow ===
 ...
-[7] Created DataProcessing Operator: top5
+[5] Created DataProcessing Operator: top5
   Summary: Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5
   Agent thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
   Result:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
-  	customer_id	name	total_spending
-  [stats]	String,null=0,distinct=5	String,null=0,distinct=5	Numeric,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
-  0	C001	Alice	12450.00
-  1	C002	Bob	9820.00
-  2	C015	Carol	8150.00
-  3	C008	David	7340.00
-  4	C023	Eve	6290.00
+  \tcustomer_id\tname\ttotal_spending
+  [stats]\tstr,null=0,distinct=5\tstr,null=0,distinct=5\tfloat,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
+  0\tC001\tAlice\t12450.00
+  1\tC002\tBob\t9820.00
+  2\tC015\tCarol\t8150.00
+  3\tC008\tDavid\t7340.00
+  4\tC023\tEve\t6290.00
 
 Links:
   customers --> recent_orders
