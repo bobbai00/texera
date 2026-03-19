@@ -83,14 +83,6 @@ Do NOT write one large operator that does everything — you cannot tell which s
 
 Instead, decompose into separate operators each doing ONE thing (e.g., filter → join → aggregate → filter → join → final filter). Each can be executed and verified independently.`;
 
-const COMMON_PITFALLS_SECTION = `
-## Common Pitfalls
-
-- **Unit/format consistency**: Ensure final results match expected units (percentage vs proportion, dollars vs cents). Convert explicitly.
-- **Late rounding**: Round only in the final operator — intermediate rounding compounds errors.
-- **Plausibility checks**: Verify intermediate values make sense. If magnitudes seem off, re-examine column selection and data loading.
-- **Misidentified columns**: Generic names (\`Unnamed: 0\`, \`0\`, \`1\`) mean the file was loaded incorrectly. Inspect the result and fix loading params (\`sep=\`, \`header=\`, \`skiprows=\`).`;
-
 const KEY_PRINCIPLES = `
 ## Key Principles
 
@@ -99,6 +91,9 @@ const KEY_PRINCIPLES = `
 - **Read documentation first**: When the task mentions abstract concepts, load documentation to understand exact definitions.
 - **Refine by modifying**: When results are wrong, go back and modify the operators that caused the issue.
 - **Debug by isolating**: When encountering unexpected results, isolate the problematic logic into its own operator.
+- **Understand column semantics**: Before analysis, examine column names and their stats to understand what each column represents. Columns may carry semantic meaning that affects how data should be filtered or interpreted — respect these signals and apply appropriate preprocessing before computing results.
+- **Normalize before grouping or joining**: String keys may contain naming variants such as special character delimiters, encoding differences, or duplicate entries across files. Inspect sample values and stats of grouping/join columns, normalize where needed, and verify matched counts are plausible after joins.
+- **Load all data before subsetting**: When the question requires comparing across groups, load all relevant files first, then determine the correct subset.
 - **Context optimization**: Some tool-call parameters (e.g., \`code\`, \`properties\`) in conversation history may appear as "[REDACTED]" for compaction. Always provide the actual values for all required parameters — never pass "[REDACTED]" as a value.`;
 
 const KEY_PRINCIPLES_NO_ACTION_DETAIL = `
@@ -111,7 +106,11 @@ const KEY_PRINCIPLES_NO_ACTION_DETAIL = `
 - **Debug by isolating**: When encountering unexpected results, isolate the problematic logic into its own operator.
 - **Descriptive summaries**: Each operator's summary is your only record of what it does (code is not preserved in history). For DataLoading operators, you must include the specific file or folder paths being loaded. For DataProcessing operators, include the semantics and significant processing logic — e.g., column names, thresholds, join keys, filter conditions, aggregation methods.
 - **Context optimization**: Your conversation history is compacted into a "Current Workflow" summary showing each operator's type, ID, summary, and results — but not its code. Always write fresh code for every tool call.
-- **Use column stats**: If a \`[stats]\` row is included in a result table, it contains critical information — data types, null counts, distinct counts, value distributions, and top values. You MUST examine stats before deciding the next action. Use them to verify the data loaded correctly, validate join keys, catch data quality issues, and confirm results are plausible. If stats reveal a problem (unexpected nulls, wrong type, suspicious distribution), refine the current operator before proceeding.`;
+- **Use column stats**: If a \`[stats]\` row is included in a result table, it contains critical information — data types, null counts, distinct counts, value distributions, and top values. You MUST examine stats before deciding the next action. Use them to verify the data loaded correctly, validate join keys, catch data quality issues, and confirm results are plausible. If stats reveal a problem (unexpected nulls, wrong type, suspicious distribution), refine the current operator before proceeding.
+- **Understand column semantics**: Before analysis, examine column names and their stats to understand what each column represents. Columns may carry semantic meaning that affects how data should be filtered or interpreted — respect these signals and apply appropriate preprocessing before computing results.
+- **Normalize before grouping or joining**: String keys may contain naming variants such as special character delimiters, encoding differences, or duplicate entries across files. Inspect sample values and stats of grouping/join columns, normalize where needed, and verify matched counts are plausible after joins.
+- **Load all relevant data files then choosing the correct subset of data to process**: When the question requires comparing across groups, load all relevant files first, then determine the correct subset.`;
+
 
 // ============================================================================
 // Code Mode Template
@@ -124,7 +123,6 @@ const CODE_MODE_TEMPLATE = `${DATAFLOW_INTRO}
 {{EXAMPLES}}
 ${LOADING_DATA_SECTION}
 ${ANTI_PATTERN_SECTION}
-${COMMON_PITFALLS_SECTION}
 ${KEY_PRINCIPLES}
 `;
 
@@ -135,7 +133,6 @@ const CODE_MODE_TEMPLATE_NO_ACTION_DETAIL = `${DATAFLOW_INTRO}
 {{EXAMPLES}}
 ${LOADING_DATA_SECTION}
 ${ANTI_PATTERN_SECTION}
-${COMMON_PITFALLS_SECTION}
 ${KEY_PRINCIPLES_NO_ACTION_DETAIL}
 `;
 
@@ -886,7 +883,6 @@ Final answer: The top 5 premium customers (spending >= $1000) with recent purcha
 // ============================================================================
 
 const GENERAL_MODE_TEMPLATE = `${DATAFLOW_INTRO}
-${COMMON_PITFALLS_SECTION}
 ${KEY_PRINCIPLES}
 
 ## Available Operators
