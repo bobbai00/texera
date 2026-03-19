@@ -401,14 +401,13 @@ class DataProcessor(Runnable, Stoppable):
                 except Exception:
                     pass
 
-        # For all types: if distinct values (including null) <= 10 and not all unique,
-        # include a top_10 map of value -> count
-        total_distinct_with_null = distinct + (1 if missing > 0 else 0)
-        if count > 0 and total_distinct_with_null <= 10 and total_distinct_with_null < total:
-            vc = col.value_counts(dropna=False).head(10)
+        # For string columns: always include top_10 sorted by count desc, then value asc for ties
+        if data_type == "str" and count > 0:
+            vc_df = col.value_counts(dropna=False).rename_axis("value").reset_index(name="count")
+            vc_df = vc_df.sort_values(["count", "value"], ascending=[False, True]).head(10)
             base["top_10"] = {
-                str(val) if not pandas.isna(val) else "null": int(cnt)
-                for val, cnt in vc.items()
+                (str(row["value"]) if not pandas.isna(row["value"]) else "null"): int(row["count"])
+                for _, row in vc_df.iterrows()
             }
 
         # Sanitize NaN/inf for JSON serialization

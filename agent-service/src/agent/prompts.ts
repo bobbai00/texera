@@ -110,7 +110,8 @@ const KEY_PRINCIPLES_NO_ACTION_DETAIL = `
 - **Refine by modifying**: When results are wrong, go back and modify the operators that caused the issue.
 - **Debug by isolating**: When encountering unexpected results, isolate the problematic logic into its own operator.
 - **Descriptive summaries**: Each operator's summary is your only record of what it does (code is not preserved in history). For DataLoading operators, you must include the specific file or folder paths being loaded. For DataProcessing operators, include the semantics and significant processing logic — e.g., column names, thresholds, join keys, filter conditions, aggregation methods.
-- **Context optimization**: Your conversation history is compacted into a "Current Workflow" summary showing each operator's type, ID, summary, and results — but not its code. Always write fresh code for every tool call.`;
+- **Context optimization**: Your conversation history is compacted into a "Current Workflow" summary showing each operator's type, ID, summary, and results — but not its code. Always write fresh code for every tool call.
+- **Use column stats**: If a \`[stats]\` row is included in a result table, it contains critical information — data types, null counts, distinct counts, value distributions, and top values. You MUST examine stats before deciding the next action. Use them to verify the data loaded correctly, validate join keys, catch data quality issues, and confirm results are plausible. If stats reveal a problem (unexpected nulls, wrong type, suspicious distribution), refine the current operator before proceeding.`;
 
 // ============================================================================
 // Code Mode Template
@@ -598,6 +599,8 @@ export const EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA = `
 
 **Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators, your reasoning, and their results (including per-column statistics). You will not see individual tool results or separate assistant messages in history — only the cumulative DAG state. Code is not preserved — write fresh code for every tool call.
 
+**Column stats format**: Each result table includes a \`[stats]\` row below the header. Each cell shows the column's data type (\`str\`/\`int\`/\`float\`/\`datetime\`/\`bool\`), null count, and distinct count. Numeric types also show mean/std/min/max; columns with ≤10 distinct values show \`top_10\` value frequencies. Always examine stats before the next action — they reveal whether the data loaded correctly, whether join keys are valid, and whether results are plausible.
+
 Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
 
 Thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
@@ -646,7 +649,7 @@ Observation:
   0\tO001\tC001\t250.00\t2024-11-05
   ...
 
-Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
+Thought: Stats look clean — customers has 10,000 distinct customer_ids (all unique, valid join key), tier has only 3 distinct values (gold/silver/bronze) with gold being most common. Orders has 10,000 distinct customer_ids matching customers, amount ranges from $95 to $520 with no nulls, order_date spans Sep–Nov 2024. Join key customer_id aligns perfectly. Now I'll join, filter for recent orders (within last 30 days), and aggregate.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
     merged = customers.merge(orders, on='customer_id', how='inner')
     from datetime import datetime, timedelta
@@ -672,6 +675,7 @@ Links:
   customers --> recent_orders
   orders --> recent_orders
 
+Thought: Stats on recent_orders confirm the join worked correctly — 312 distinct customer_ids (down from 10,000, meaning only 312 customers had recent orders), 5 nulls in email (acceptable), amount mean=$485 with a plausible std=$312 ranging up to $2,500. However, I haven't enforced the premium threshold ($1,000 total spend) yet. Let me aggregate by customer and return the top 5 by total spending, then check whether the premium filter is needed.
 Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
     spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
     spending.columns = ['customer_id', 'name', 'total_spending']
@@ -698,7 +702,7 @@ Links:
   orders --> recent_orders
   recent_orders --> top5
 
-Thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
+Thought: Stats show total_spending min=$6,290 — all 5 values already exceed the $1,000 premium threshold, but I haven't applied the filter explicitly. The stats confirm the min is well above $1,000, yet I should enforce the threshold correctly in case future data has lower values. Let me modify the operator to apply the premium filter.
 Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
     spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
     spending.columns = ['customer_id', 'name', 'total_spending']
@@ -710,7 +714,7 @@ Observation:
 ...
 [5] Created DataProcessing Operator: top5
   Summary: Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5
-  Agent thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
+  Agent thought: Stats show total_spending min=$6,290 — all 5 values already exceed the $1,000 premium threshold, but I haven't applied the filter explicitly. The stats confirm the min is well above $1,000, yet I should enforce the threshold correctly in case future data has lower values. Let me modify the operator to apply the premium filter.
   Result:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
@@ -739,6 +743,8 @@ export const EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA_PARALLEL = `
 ## Example
 
 **Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators, your reasoning, and their results (including per-column statistics). You will not see individual tool results or separate assistant messages in history — only the cumulative DAG state. Code is not preserved — write fresh code for every tool call.
+
+**Column stats format**: Each result table includes a \`[stats]\` row below the header. Each cell shows the column's data type (\`str\`/\`int\`/\`float\`/\`datetime\`/\`bool\`), null count, and distinct count. Numeric types also show mean/std/min/max; columns with ≤10 distinct values show \`top_10\` value frequencies. Always examine stats before the next action — they reveal whether the data loaded correctly, whether join keys are valid, and whether results are plausible.
 
 Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
 
@@ -788,7 +794,7 @@ Observation:
   0\tO001\tC001\t250.00\t2024-11-05
   ...
 
-Thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
+Thought: Stats confirm both files loaded correctly — customers has 10,000 distinct customer_ids (all unique, valid join key), tier has 3 distinct values (gold/silver/bronze). Orders has 10,000 distinct customer_ids matching customers exactly, amount ranges $95–$520 with mean=$219 and no nulls, order_date spans Sep–Nov 2024. Join key customer_id is clean and aligned. Now I'll join on customer_id and filter to orders within the last 30 days.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
     merged = customers.merge(orders, on='customer_id', how='inner')
     from datetime import datetime, timedelta
@@ -800,7 +806,7 @@ Observation:
 ...
 [4] Created DataProcessing Operator: recent_orders
   Summary: Inner join customers and orders on customer_id, then filter to orders within last 30 days
-  Agent thought: Now I'll join, filter for recent orders, and aggregate on the complete data.
+  Agent thought: Stats confirm both files loaded correctly — customers has 10,000 distinct customer_ids (all unique, valid join key), tier has 3 distinct values (gold/silver/bronze). Orders has 10,000 distinct customer_ids matching customers exactly, amount ranges $95–$520 with mean=$219 and no nulls, order_date spans Sep–Nov 2024. Join key customer_id is clean and aligned. Now I'll join on customer_id and filter to orders within the last 30 days.
   Result:
   Input operator(table shape): customers(10000, 5), orders(50000, 4)
   Output table shape: (1247, 8)
@@ -814,6 +820,7 @@ Links:
   customers --> recent_orders
   orders --> recent_orders
 
+Thought: Stats on recent_orders confirm the join worked — 312 distinct customer_ids (customers with recent orders), 5 email nulls (acceptable), amount mean=$485 with plausible std=$312 ranging up to $2,500, and order_date correctly bounded to the last 30 days. However, I haven't applied the premium threshold ($1,000 total spend) yet. Let me aggregate by customer and return the top 5 by total spending.
 Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
     spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
     spending.columns = ['customer_id', 'name', 'total_spending']
@@ -840,7 +847,7 @@ Links:
   orders --> recent_orders
   recent_orders --> top5
 
-Thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
+Thought: Stats show total_spending min=$6,290 — all 5 values already exceed the $1,000 premium threshold, but I haven't applied the filter explicitly. I should enforce it correctly for robustness.
 Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
     spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
     spending.columns = ['customer_id', 'name', 'total_spending']
@@ -852,7 +859,7 @@ Observation:
 ...
 [5] Created DataProcessing Operator: top5
   Summary: Group by customer_id and name, sum amount as total_spending, filter >= $1000 (premium), return top 5
-  Agent thought: Wait — I haven't enforced the "premium" threshold (>= $1000). I should modify the operator.
+  Agent thought: Stats show total_spending min=$6,290 — all 5 values already exceed the $1,000 premium threshold, but I haven't applied the filter explicitly. I should enforce it correctly for robustness.
   Result:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
