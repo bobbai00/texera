@@ -554,43 +554,92 @@ function formatInputOutput(
   return `Input operator(table shape): ${inputPart}\n${outputLine}`;
 }
 
+/** Maximum number of columns to include in the Column Stats section. */
+const MAX_STATS_COLUMNS = 50;
+
 /**
- * Format per-column statistics from backend as compact metadata lines.
- * Header: "Column Stats:"
- * Per column: '  "col_name" (Type): count=7, null=0, distinct=5, mean=3.14, ...'
+ * Type priority for sorting columns in the stats section.
+ * Lower number = shown first (more informative types surface early).
  */
-function formatColumnStatsMetadata(resultStatistics: Record<string, string>): string[] {
-  const colLines: string[] = [];
-  for (const [colName, statsJson] of Object.entries(resultStatistics)) {
+function typePriority(dataType: string): number {
+  const t = dataType.toLowerCase();
+  if (t === "bool" || t === "boolean") return 0;
+  if (t === "str" || t === "string" || t === "object") return 1;
+  if (t.startsWith("date") || t === "datetime") return 2;
+  if (t === "int" || t === "integer" || t === "int64" || t === "int32") return 3;
+  if (t === "float" || t === "numeric" || t === "float64" || t === "float32" || t === "number") return 4;
+  return 5; // unknown types last among basic types but before numeric
+}
+
+/**
+ * Format per-column statistics as a vertical "Column Stats" section.
+ * Columns are sorted by type priority (bool > string > datetime > int > float)
+ * and capped at MAX_STATS_COLUMNS with a truncation notice.
+ *
+ * If `headers` is provided, only those columns are included (in sorted order).
+ * Otherwise, all columns in resultStatistics are used.
+ *
+ * Example output:
+ *   Column Stats (showing 50 of 179 columns):
+ *   - "Case_excluded" (str): null=0, distinct=2, top_10={"No"=144, "Yes"=9}
+ *   - "age" (int): null=0, mean=62.3, min=28, max=91
+ */
+function formatColumnStatsSection(resultStatistics: Record<string, string>, headers?: string[]): string[] {
+  // Parse all columns and their stats
+  const parsed: Array<{ colName: string; dataType: string; kvPairs: string }> = [];
+
+  const columnNames = headers ?? Object.keys(resultStatistics);
+  for (const colName of columnNames) {
+    const statsJson = resultStatistics[colName];
+    if (!statsJson) continue;
     try {
-      const parsed = JSON.parse(statsJson);
-      const dataType: string = parsed.data_type ?? "unknown";
-      const stats: Record<string, any> = parsed.statistics ?? {};
+      const p = JSON.parse(statsJson);
+      const dataType: string = p.data_type ?? "unknown";
+      const stats: Record<string, any> = p.statistics ?? {};
 
       const kvPairs = Object.entries(stats)
-        .filter(([k]) => !EXCLUDED_STAT_KEYS.has(k))
+        .filter(([k, v]) => v !== null && v !== undefined && !EXCLUDED_STAT_KEYS.has(k))
         .map(([k, v]) => {
-          if (typeof v === "object" && v !== null && v !== undefined) {
+          if (k === "top_10" && typeof v === "object") {
             const inner = Object.entries(v)
               .map(([ik, iv]) => `"${ik}"=${formatStatValue(iv)}`)
               .join(", ");
-            return `${k}={${inner}}`;
+            return `top_10={${inner}}`;
           }
+          if (typeof v === "object") return null;
           return `${k}=${formatStatValue(v)}`;
         })
+        .filter(Boolean)
         .join(", ");
 
-      colLines.push(`  "${colName}" (${dataType}): ${kvPairs}`);
+      parsed.push({ colName, dataType, kvPairs });
     } catch {
       // skip unparseable columns
     }
   }
-  if (colLines.length === 0) return [];
-  return ["Column Stats:", ...colLines];
+
+  if (parsed.length === 0) return [];
+
+  // Sort by type priority (bool > string > datetime > int > float)
+  parsed.sort((a, b) => typePriority(a.dataType) - typePriority(b.dataType));
+
+  const totalColumns = parsed.length;
+  const truncated = totalColumns > MAX_STATS_COLUMNS;
+  const shown = truncated ? parsed.slice(0, MAX_STATS_COLUMNS) : parsed;
+
+  const header = truncated
+    ? `Column Stats (showing ${MAX_STATS_COLUMNS} of ${totalColumns} columns):`
+    : `Column Stats:`;
+
+  const lines = shown.map(({ colName, dataType, kvPairs }) =>
+    kvPairs ? `- "${colName}" (${dataType}): ${kvPairs}` : `- "${colName}" (${dataType})`
+  );
+
+  return [header, ...lines];
 }
 
 /** Stat keys to exclude from per-column stats (redundant with Output table shape). */
-const EXCLUDED_STAT_KEYS = new Set(["count"]);
+const EXCLUDED_STAT_KEYS = new Set(["count", "std", "p25", "median", "p75"]);
 
 /** Maximum significant digits for floating-point stat values. */
 const STAT_PRECISION = 4;
@@ -604,51 +653,6 @@ function formatStatValue(v: any): string {
   return String(v);
 }
 
-/**
- * Format per-column statistics as a single tab-separated footer row for TABLE format.
- * Each cell: "dataType,key1=val1,key2=val2,..."
- * Aligned with table headers so column names are not duplicated.
- * Example: [stats]\tstr,null=0,uniq=48\tint,null=2,mean=35.2
- */
-function formatColumnStatsRow(resultStatistics: Record<string, string>, headers: string[]): string | null {
-  const cells: string[] = [];
-  let hasAny = false;
-
-  for (const colName of headers) {
-    const statsJson = resultStatistics[colName];
-    if (!statsJson) {
-      cells.push("");
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(statsJson);
-      const dataType: string = parsed.data_type ?? "?";
-      const stats: Record<string, any> = parsed.statistics ?? {};
-
-      const kvPairs = Object.entries(stats)
-        .filter(([k, v]) => v !== null && v !== undefined && !EXCLUDED_STAT_KEYS.has(k))
-        .map(([k, v]) => {
-          if (k === "top_10" && typeof v === "object") {
-            const inner = Object.entries(v)
-              .map(([ik, iv]) => `"${ik}"=${formatStatValue(iv)}`)
-              .join(",");
-            return `top_10={${inner}}`;
-          }
-          if (typeof v === "object") return null;
-          return `${k}=${formatStatValue(v)}`;
-        })
-        .filter(Boolean)
-        .join(",");
-
-      cells.push(kvPairs ? `${dataType},${kvPairs}` : dataType);
-      hasAny = true;
-    } catch {
-      cells.push("");
-    }
-  }
-
-  return hasAny ? `[stats]\t${cells.join("\t")}` : null;
-}
 
 /**
  * Formats execution error with structured sections.
@@ -876,20 +880,14 @@ export async function executeOperatorAndFormat(
     // This ensures the final serialized string respects the character limit.
     const charLimit = config.maxOperatorResultCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit;
 
-    // Build stats row for TABLE mode (inserted right after header, before data rows)
-    let statsRow: string | null = null;
-    if (config.carryMetadata && opInfo.resultStatistics && serializationMode === OperatorResultSerializationMode.TABLE) {
-      statsRow = formatColumnStatsRow(opInfo.resultStatistics, headers);
-    }
-
     if (dataString.length > charLimit) {
       const allLines = dataString.split("\n");
       // First line is the header (for table/toon) or opening bracket (for json)
       const headerLine = allLines[0];
       const dataRows = allLines.slice(1);
 
-      // Reserve space for header + stats row (if present)
-      const reservedSize = headerLine.length + 1 + (statsRow ? statsRow.length + 1 : 0);
+      // Reserve space for header
+      const reservedSize = headerLine.length + 1;
 
       // Symmetric truncation: keep first half + last half of rows within budget
       const halfLimit = Math.floor((charLimit - reservedSize) / 2);
@@ -913,16 +911,7 @@ export async function executeOperatorAndFormat(
       }
 
       const keptRows = [...frontRows, ...backRows];
-      const parts = [headerLine];
-      if (statsRow) parts.push(statsRow);
-      parts.push(...keptRows);
-      dataString = parts.join("\n");
-    } else if (statsRow) {
-      // No truncation needed — insert stats row right after header
-      const allLines = dataString.split("\n");
-      const headerLine = allLines[0];
-      const dataRows = allLines.slice(1);
-      dataString = [headerLine, statsRow, ...dataRows].join("\n");
+      dataString = [headerLine, ...keptRows].join("\n");
     }
 
     // Build compact Input/Output lines using upstream operator IDs from links
@@ -931,20 +920,20 @@ export async function executeOperatorAndFormat(
     // Surface warnings (e.g., duplicate column renames) so the agent can adjust its code
     const warningLines = opInfo.warnings?.map(w => w) ?? [];
 
-    // carryMetadata: include per-column statistics
-    // For TABLE mode, stats are in the table row — skip from metadata to avoid duplication
-    const columnStatsLines = (config.carryMetadata && opInfo.resultStatistics && serializationMode !== OperatorResultSerializationMode.TABLE)
-      ? formatColumnStatsMetadata(opInfo.resultStatistics)
+    // Per-column statistics as a vertical "Column Stats" section (after the table)
+    const columnStatsLines = (config.carryMetadata && opInfo.resultStatistics)
+      ? formatColumnStatsSection(opInfo.resultStatistics, headers)
       : [];
 
-    // Build contiguous result: metadata lines flow directly into table data.
+    // Build result: metadata lines → table data → column stats section.
     // Context optimization / latest-only-filter locate the table by finding
-    // the first line starting with \t (the header row).
+    // the first line starting with \t (the header row). Column stats go after
+    // the table so they don't interfere with table boundary detection.
     const metadataLines = config.noExecutionMetadata
       ? []
-      : [shapeLine, ...warningLines, ...columnStatsLines].filter(Boolean);
+      : [shapeLine, ...warningLines].filter(Boolean);
 
-    return [...metadataLines, dataString].filter(Boolean).join("\n");
+    return [...metadataLines, dataString, ...columnStatsLines].filter(Boolean).join("\n");
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw error;

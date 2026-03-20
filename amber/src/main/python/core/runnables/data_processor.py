@@ -401,8 +401,8 @@ class DataProcessor(Runnable, Stoppable):
                 except Exception:
                     pass
 
-        # For string columns: always include top_10 sorted by count desc, then value asc for ties
-        if data_type == "str" and count > 0:
+        # Include top_10 when distinct values (including nulls) are <= 10, or always for strings
+        if count > 0 and ((distinct + (1 if missing > 0 else 0)) <= 10 or data_type == "str"):
             vc_df = col.value_counts(dropna=False).rename_axis("value").reset_index(name="count")
             vc_df = vc_df.sort_values(["count", "value"], ascending=[False, True]).head(10)
             base["top_10"] = {

@@ -110,7 +110,8 @@ const TRIMMED_NOTICE = "(execution result skipped due to the context compaction)
  *
  * The table boundary is detected by finding the first line starting with \t
  * (the tab-prefixed header row). Everything before it is metadata; everything
- * from it onward is table data (header, optional [stats] row, data rows).
+ * from it onward is table data (header, data rows). Column stats appear after
+ * the table as a separate vertical section and are not part of the table rows.
  *
  * @param resultStr - The full result string
  * @param charLimit - Max chars to keep from table data rows (0 = fully trim)
@@ -134,7 +135,7 @@ function trimExecutionResultSection(resultStr: string, charLimit: number): strin
     return before + "\n" + TRIMMED_NOTICE;
   }
 
-  // Separate [stats] row (if present) from data rows
+  // Filter empty lines from data rows
   const nonEmptyAfter = afterHeader.filter(l => l.trim() !== "");
   if (nonEmptyAfter.length === 0) {
     return before + "\n" + TRIMMED_NOTICE;

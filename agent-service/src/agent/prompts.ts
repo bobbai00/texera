@@ -95,7 +95,7 @@ const KEY_PRINCIPLES_NO_ACTION_DETAIL = `
 - **Debug by isolating**: When encountering unexpected results, isolate the problematic logic into its own operator.
 - **Descriptive summaries**: Each operator's summary is your only record of what it does (code is not preserved in history). For DataLoading operators, you must include the specific file or folder paths being loaded. For DataProcessing operators, include the semantics and significant processing logic — e.g., column names, thresholds, join keys, filter conditions, aggregation methods.
 - **Context optimization**: Your conversation history is compacted into a "Current Workflow" summary showing each operator's type, ID, summary, and results — but not its code. Always write fresh code for every tool call.
-- **Use column stats**: If a \`[stats]\` row is included in a result table, it contains critical information — data types, null counts, distinct counts, value distributions, and top values. You MUST examine stats before deciding the next action. Use them to verify the data loaded correctly, validate join keys, catch data quality issues, and confirm results are plausible. If stats reveal a problem (unexpected nulls, wrong type, suspicious distribution), refine the current operator before proceeding.
+- **Use column stats**: If a "Column Stats" section appears after the result table, it contains critical information — data types, null counts, distinct counts, value distributions, and top values per column. You MUST examine stats before deciding the next action. Use them to verify the data loaded correctly, validate join keys, catch data quality issues, and confirm results are plausible. If stats reveal a problem (unexpected nulls, wrong type, suspicious distribution), refine the current operator before proceeding.
 - **Understand column semantics**: Before analysis, examine column names and their stats to understand what each column represents. Columns may carry semantic meaning that affects how data should be filtered or interpreted — respect these signals and apply appropriate preprocessing before computing results.
 - **Normalize before grouping or joining**: String keys may contain naming variants such as special character delimiters, encoding differences, or duplicate entries across files. Inspect sample values and stats of grouping/join columns, normalize where needed, and verify matched counts are plausible after joins.
 - **Load all relevant data files then choosing the correct subset of data to process**: When the question requires comparing across groups, load all relevant files first, then determine the correct subset.
@@ -576,14 +576,14 @@ Final answer: The top 5 premium customers (spending >= $1000) with recent purcha
 // --------------- Example variant: No-action-detail + carry metadata ---------------
 
 /**
- * No-action-detail + carry metadata — includes [stats] rows in table results.
+ * No-action-detail + carry metadata — includes Column Stats section after table results.
  */
 export const EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA = `
 ## Example
 
 **Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators, your reasoning, and their results (including per-column statistics). You will not see individual tool results or separate assistant messages in history — only the cumulative DAG state. Code is not preserved — write fresh code for every tool call.
 
-**Column stats format**: Each result table includes a \`[stats]\` row below the header. Each cell shows the column's data type (\`str\`/\`int\`/\`float\`/\`datetime\`/\`bool\`), null count, and distinct count. Numeric types also show mean/std/min/max; string columns show \`top_10\` value frequencies. Always examine stats before the next action — they reveal whether the data loaded correctly, whether join keys are valid, and whether results are plausible.
+**Column stats format**: After each result table, a "Column Stats" section lists per-column statistics. Each line shows the column name, data type (\`str\`/\`int\`/\`float\`/\`datetime\`/\`bool\`), null count, distinct count, and type-specific details (mean/min/max for numerics, top_10 value frequencies for strings). Columns are sorted by type (bool > string > datetime > int > float). For wide tables, only the first 50 columns are shown. Always examine column stats before the next action — they reveal whether data loaded correctly, whether join keys are valid, and whether results are plausible.
 
 Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
 
@@ -619,9 +619,14 @@ Observation:
   Result:
   Output table shape: (10000, 5)
   \tcustomer_id\tname\temail\tsignup_date\ttier
-  [stats]\tstr,null=0,distinct=10000\tstr,null=0,distinct=10000\tstr,null=0,distinct=9998\tdatetime,null=0,min=2023-01-15,max=2024-06-30\tstr,null=0,distinct=3,top_10={"gold"=4200,"silver"=3800,"bronze"=2000}
   0\tC001\tAlice\talice@example.com\t2023-01-15\tgold
   ...
+  Column Stats:
+  - "tier" (str): null=0, distinct=3, top_10={"gold"=4200, "silver"=3800, "bronze"=2000}
+  - "customer_id" (str): null=0, distinct=10000
+  - "name" (str): null=0, distinct=10000
+  - "email" (str): null=0, distinct=9998
+  - "signup_date" (datetime): null=0, min=2023-01-15, max=2024-06-30
 
 [3] Created DataLoading Operator: orders
   Summary: Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date
@@ -629,9 +634,13 @@ Observation:
   Result:
   Output table shape: (50000, 4)
   \torder_id\tcustomer_id\tamount\torder_date
-  [stats]\tstr,null=0,distinct=50000\tstr,null=0,distinct=10000\tfloat,null=0,mean=219.17,std=155.80,min=95.00,max=520.00\tdatetime,null=0,min=2024-09-15,max=2024-11-12
   0\tO001\tC001\t250.00\t2024-11-05
   ...
+  Column Stats:
+  - "order_id" (str): null=0, distinct=50000
+  - "customer_id" (str): null=0, distinct=10000
+  - "order_date" (datetime): null=0, min=2024-09-15, max=2024-11-12
+  - "amount" (float): null=0, mean=219.2, min=95.00, max=520.0
 
 Thought: Stats look clean — customers has 10,000 distinct customer_ids (all unique, valid join key), tier has only 3 distinct values (gold/silver/bronze) with gold being most common. Orders has 10,000 distinct customer_ids matching customers, amount ranges from $95 to $520 with no nulls, order_date spans Sep–Nov 2024. Join key customer_id aligns perfectly. Now I'll join, filter for recent orders (within last 30 days), and aggregate.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -650,16 +659,24 @@ Observation:
   Input operator(table shape): customers(10000, 5), orders(50000, 4)
   Output table shape: (1247, 8)
   \tcustomer_id\tname\temail\tsignup_date\ttier\torder_id\tamount\torder_date
-  [stats]\tstr,null=0,distinct=312\tstr,null=0,distinct=312\tstr,null=5,distinct=310\tdatetime,null=0,min=2023-01-15,max=2024-06-30\tstr,null=0,distinct=3,top_10={"gold"=620,"silver"=390,"bronze"=237}\tstr,null=0,distinct=1247\tfloat,null=0,mean=485.32,std=312.5,min=15.00,max=2500.00\tdatetime,null=0,min=2024-10-18,max=2024-11-17
   0\tC001\tAlice\talice@example.com\t2023-01-15\tgold\tO4521\t1200.00\t2024-11-10
   ...
   1246\tC312\tFrank\tfrank@example.com\t2023-12-01\tgold\tO49123\t340.00\t2024-10-19
+  Column Stats:
+  - "tier" (str): null=0, distinct=3, top_10={"gold"=620, "silver"=390, "bronze"=237}
+  - "customer_id" (str): null=0, distinct=312
+  - "name" (str): null=0, distinct=312
+  - "email" (str): null=5, distinct=310
+  - "order_id" (str): null=0, distinct=1247
+  - "signup_date" (datetime): null=0, min=2023-01-15, max=2024-06-30
+  - "order_date" (datetime): null=0, min=2024-10-18, max=2024-11-17
+  - "amount" (float): null=0, mean=485.3, min=15.00, max=2500
 
 Links:
   customers --> recent_orders
   orders --> recent_orders
 
-Thought: Stats on recent_orders confirm the join worked correctly — 312 distinct customer_ids (down from 10,000, meaning only 312 customers had recent orders), 5 nulls in email (acceptable), amount mean=$485 with a plausible std=$312 ranging up to $2,500. However, I haven't enforced the premium threshold ($1,000 total spend) yet. Let me aggregate by customer and return the top 5 by total spending, then check whether the premium filter is needed.
+Thought: Stats on recent_orders confirm the join worked correctly — 312 distinct customer_ids (down from 10,000, meaning only 312 customers had recent orders), 5 nulls in email (acceptable), amount mean=$485 ranging up to $2,500. However, I haven't enforced the premium threshold ($1,000 total spend) yet. Let me aggregate by customer and return the top 5 by total spending, then check whether the premium filter is needed.
 Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
     spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
     spending.columns = ['customer_id', 'name', 'total_spending']
@@ -674,12 +691,15 @@ Observation:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
   \tcustomer_id\tname\ttotal_spending
-  [stats]\tstr,null=0,distinct=5\tstr,null=0,distinct=5\tfloat,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
   0\tC001\tAlice\t12450.00
   1\tC002\tBob\t9820.00
   2\tC015\tCarol\t8150.00
   3\tC008\tDavid\t7340.00
   4\tC023\tEve\t6290.00
+  Column Stats:
+  - "customer_id" (str): null=0, distinct=5
+  - "name" (str): null=0, distinct=5
+  - "total_spending" (float): null=0, mean=8810, min=6290, max=12450
 
 Links:
   customers --> recent_orders
@@ -703,12 +723,15 @@ Observation:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
   \tcustomer_id\tname\ttotal_spending
-  [stats]\tstr,null=0,distinct=5\tstr,null=0,distinct=5\tfloat,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
   0\tC001\tAlice\t12450.00
   1\tC002\tBob\t9820.00
   2\tC015\tCarol\t8150.00
   3\tC008\tDavid\t7340.00
   4\tC023\tEve\t6290.00
+  Column Stats:
+  - "customer_id" (str): null=0, distinct=5
+  - "name" (str): null=0, distinct=5
+  - "total_spending" (float): null=0, mean=8810, min=6290, max=12450
 
 Links:
   customers --> recent_orders
@@ -720,7 +743,7 @@ Final answer: The top 5 premium customers (spending >= $1000) with recent purcha
 // --------------- Example variant: No-action-detail + carry metadata + parallel ---------------
 
 /**
- * No-action-detail + carry metadata + parallel — includes [stats] rows and
+ * No-action-detail + carry metadata + parallel — includes Column Stats section and
  * demonstrates batching independent operations in parallel tool calls.
  */
 export const EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA_PARALLEL = `
@@ -728,7 +751,7 @@ export const EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA_PARALLEL = `
 
 **Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators, your reasoning, and their results (including per-column statistics). You will not see individual tool results or separate assistant messages in history — only the cumulative DAG state. Code is not preserved — write fresh code for every tool call.
 
-**Column stats format**: Each result table includes a \`[stats]\` row below the header. Each cell shows the column's data type (\`str\`/\`int\`/\`float\`/\`datetime\`/\`bool\`), null count, and distinct count. Numeric types also show mean/std/min/max; columns with ≤10 distinct values show \`top_10\` value frequencies. Always examine stats before the next action — they reveal whether the data loaded correctly, whether join keys are valid, and whether results are plausible.
+**Column stats format**: After each result table, a "Column Stats" section lists per-column statistics. Each line shows the column name, data type (\`str\`/\`int\`/\`float\`/\`datetime\`/\`bool\`), null count, distinct count, and type-specific details (mean/min/max for numerics, top_10 value frequencies for strings). Columns are sorted by type (bool > string > datetime > int > float). For wide tables, only the first 50 columns are shown. Always examine column stats before the next action — they reveal whether data loaded correctly, whether join keys are valid, and whether results are plausible.
 
 Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
 
@@ -764,9 +787,14 @@ Observation:
   Result:
   Output table shape: (10000, 5)
   \tcustomer_id\tname\temail\tsignup_date\ttier
-  [stats]\tstr,null=0,distinct=10000\tstr,null=0,distinct=10000\tstr,null=0,distinct=9998\tdatetime,null=0,min=2023-01-15,max=2024-06-30\tstr,null=0,distinct=3,top_10={"gold"=4200,"silver"=3800,"bronze"=2000}
   0\tC001\tAlice\talice@example.com\t2023-01-15\tgold
   ...
+  Column Stats:
+  - "tier" (str): null=0, distinct=3, top_10={"gold"=4200, "silver"=3800, "bronze"=2000}
+  - "customer_id" (str): null=0, distinct=10000
+  - "name" (str): null=0, distinct=10000
+  - "email" (str): null=0, distinct=9998
+  - "signup_date" (datetime): null=0, min=2023-01-15, max=2024-06-30
 
 [3] Created DataLoading Operator: orders
   Summary: Load complete /data/orders.csv with columns order_id, customer_id, amount, order_date
@@ -774,9 +802,13 @@ Observation:
   Result:
   Output table shape: (50000, 4)
   \torder_id\tcustomer_id\tamount\torder_date
-  [stats]\tstr,null=0,distinct=50000\tstr,null=0,distinct=10000\tfloat,null=0,mean=219.17,std=155.80,min=95.00,max=520.00\tdatetime,null=0,min=2024-09-15,max=2024-11-12
   0\tO001\tC001\t250.00\t2024-11-05
   ...
+  Column Stats:
+  - "order_id" (str): null=0, distinct=50000
+  - "customer_id" (str): null=0, distinct=10000
+  - "order_date" (datetime): null=0, min=2024-09-15, max=2024-11-12
+  - "amount" (float): null=0, mean=219.2, min=95.00, max=520.0
 
 Thought: Stats confirm both files loaded correctly — customers has 10,000 distinct customer_ids (all unique, valid join key), tier has 3 distinct values (gold/silver/bronze). Orders has 10,000 distinct customer_ids matching customers exactly, amount ranges $95–$520 with mean=$219 and no nulls, order_date spans Sep–Nov 2024. Join key customer_id is clean and aligned. Now I'll join on customer_id and filter to orders within the last 30 days.
 Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
@@ -795,16 +827,24 @@ Observation:
   Input operator(table shape): customers(10000, 5), orders(50000, 4)
   Output table shape: (1247, 8)
   \tcustomer_id\tname\temail\tsignup_date\ttier\torder_id\tamount\torder_date
-  [stats]\tstr,null=0,distinct=312\tstr,null=0,distinct=312\tstr,null=5,distinct=310\tdatetime,null=0,min=2023-01-15,max=2024-06-30\tstr,null=0,distinct=3,top_10={"gold"=620,"silver"=390,"bronze"=237}\tstr,null=0,distinct=1247\tfloat,null=0,mean=485.32,std=312.5,min=15.00,max=2500.00\tdatetime,null=0,min=2024-10-18,max=2024-11-17
   0\tC001\tAlice\talice@example.com\t2023-01-15\tgold\tO4521\t1200.00\t2024-11-10
   ...
   1246\tC312\tFrank\tfrank@example.com\t2023-12-01\tgold\tO49123\t340.00\t2024-10-19
+  Column Stats:
+  - "tier" (str): null=0, distinct=3, top_10={"gold"=620, "silver"=390, "bronze"=237}
+  - "customer_id" (str): null=0, distinct=312
+  - "name" (str): null=0, distinct=312
+  - "email" (str): null=5, distinct=310
+  - "order_id" (str): null=0, distinct=1247
+  - "signup_date" (datetime): null=0, min=2023-01-15, max=2024-06-30
+  - "order_date" (datetime): null=0, min=2024-10-18, max=2024-11-17
+  - "amount" (float): null=0, mean=485.3, min=15.00, max=2500
 
 Links:
   customers --> recent_orders
   orders --> recent_orders
 
-Thought: Stats on recent_orders confirm the join worked — 312 distinct customer_ids (customers with recent orders), 5 email nulls (acceptable), amount mean=$485 with plausible std=$312 ranging up to $2,500, and order_date correctly bounded to the last 30 days. However, I haven't applied the premium threshold ($1,000 total spend) yet. Let me aggregate by customer and return the top 5 by total spending.
+Thought: Stats on recent_orders confirm the join worked — 312 distinct customer_ids (customers with recent orders), 5 email nulls (acceptable), amount mean=$485 ranging up to $2,500, and order_date correctly bounded to the last 30 days. However, I haven't applied the premium threshold ($1,000 total spend) yet. Let me aggregate by customer and return the top 5 by total spending.
 Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
     spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
     spending.columns = ['customer_id', 'name', 'total_spending']
@@ -819,12 +859,15 @@ Observation:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
   \tcustomer_id\tname\ttotal_spending
-  [stats]\tstr,null=0,distinct=5\tstr,null=0,distinct=5\tfloat,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
   0\tC001\tAlice\t12450.00
   1\tC002\tBob\t9820.00
   2\tC015\tCarol\t8150.00
   3\tC008\tDavid\t7340.00
   4\tC023\tEve\t6290.00
+  Column Stats:
+  - "customer_id" (str): null=0, distinct=5
+  - "name" (str): null=0, distinct=5
+  - "total_spending" (float): null=0, mean=8810, min=6290, max=12450
 
 Links:
   customers --> recent_orders
@@ -848,12 +891,15 @@ Observation:
   Input operator(table shape): recent_orders(1247, 8)
   Output table shape: (5, 3)
   \tcustomer_id\tname\ttotal_spending
-  [stats]\tstr,null=0,distinct=5\tstr,null=0,distinct=5\tfloat,null=0,mean=8810.00,std=2433,min=6290.00,max=12450.00
   0\tC001\tAlice\t12450.00
   1\tC002\tBob\t9820.00
   2\tC015\tCarol\t8150.00
   3\tC008\tDavid\t7340.00
   4\tC023\tEve\t6290.00
+  Column Stats:
+  - "customer_id" (str): null=0, distinct=5
+  - "name" (str): null=0, distinct=5
+  - "total_spending" (float): null=0, mean=8810, min=6290, max=12450
 
 Links:
   customers --> recent_orders
