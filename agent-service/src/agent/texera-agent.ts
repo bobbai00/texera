@@ -49,6 +49,7 @@ import {
   buildGeneralModeSystemPrompt,
   buildCodeModeSystemPrompt,
   EXAMPLES_STANDARD,
+  EXAMPLES_CARRY_METADATA,
   EXAMPLES_FINE_GRAINED,
   EXAMPLES_PARALLEL,
   EXAMPLES_RESULT_PARAM,
@@ -277,6 +278,8 @@ export class TexeraAgent {
         examples = EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA;
       } else if (this.settings.noActionDetail) {
         examples = EXAMPLES_NO_ACTION_DETAIL;
+      } else if (this.settings.carryMetadata) {
+        examples = EXAMPLES_CARRY_METADATA;
       } else if (this.settings.fineGrainedPrompt) {
         examples = EXAMPLES_FINE_GRAINED;
       } else if (this.settings.parallelToolCalls && this.settings.optionalResultRetrieval) {
@@ -366,9 +369,9 @@ export class TexeraAgent {
       [TOOL_NAME_DELETE_OPERATOR]: createDeleteOperatorTool(this.workflowState, context),
     };
 
-    // Register getCurrentWorkflow unless simplifiedTools or noActionDetail is enabled
-    // (noActionDetail already injects the DAG summary, making getCurrentWorkflow redundant)
-    if (!this.settings.simplifiedTools && !this.settings.noActionDetail) {
+    // Register getCurrentWorkflow only in GENERAL mode (not simplified, not noActionDetail)
+    // CODE mode doesn't need it — the agent builds the workflow incrementally
+    if (this.settings.agentMode !== AgentMode.CODE && !this.settings.simplifiedTools && !this.settings.noActionDetail) {
       tools[TOOL_NAME_GET_CURRENT_WORKFLOW] = createGetCurrentWorkflowTool(this.workflowState);
     }
 
@@ -387,8 +390,9 @@ export class TexeraAgent {
     }
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
-    // When noActionDetail is on, executeOperator is not needed — execution is handled inline by createOrModifyOperator
-    if (getExecutionConfig && !this.settings.simplifiedTools && !this.settings.noActionDetail) {
+    // In CODE mode, execution is handled inline by createOrModifyOperator — no separate executeOperator needed
+    // When noActionDetail is on, executeOperator is also not needed
+    if (getExecutionConfig && !this.settings.simplifiedTools && !this.settings.noActionDetail && this.settings.agentMode !== AgentMode.CODE) {
       tools[TOOL_NAME_EXECUTE_OPERATOR] = createExecuteOperatorTool(
         this.workflowState,
         getExecutionConfig,
@@ -842,6 +846,7 @@ export class TexeraAgent {
         system: this.systemPrompt,
         messages: this.messages,
         tools: this.tools,
+        temperature: 0.2,
         stopWhen: stepCountIs(this.settings.maxSteps),
         prepareStep: (this.settings.enableContextOptimization || this.settings.latestOnly || this.settings.noActionDetail)
           ? ({ stepNumber, messages: currentMessages }) => {

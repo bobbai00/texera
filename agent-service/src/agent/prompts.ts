@@ -43,32 +43,6 @@ Dataflow represents data analysis as a DAG (directed acyclic graph) where:
 - Each operator receives table(s) from input operator(s), processes them, and outputs a single table
 - The output table can be viewed via execution, or passed to downstream operators via links`;
 
-const MESSY_DATA_EXAMPLE = `
-## Example: Handling Messy Data Files
-
-Task: "Load measurements.csv and compute the average temperature."
-
-Thought: Let me load the file directly. Real-world files may have wrong delimiters, metadata rows, or misplaced headers — I'll inspect the result after loading.
-Tool call: createOrModifyOperator: operatorId="measurements", code=\`def load() -> pd.DataFrame:
-    return pd.read_csv('/data/measurements.csv')\`
-  summary="Load measurements.csv"
-Observation: Added operator "measurements". 1 column: "# Sensor log exported 2024-01-15" (all rows contain raw semicolon-delimited content)
-
-Thought: The column name is a comment line — the file uses semicolons and has a metadata row at line 1. I need \`sep=';'\` and \`skiprows=1\`. Let me fix the loading params.
-Tool call: createOrModifyOperator: operatorId="measurements", code=\`def load() -> pd.DataFrame:
-    return pd.read_csv('/data/measurements.csv', sep=';', skiprows=1)\`
-  summary="Load measurements.csv (semicolon-delimited, skip 1 comment row)"
-Observation: Modified operator "measurements". 4 columns: station, date, temperature, humidity.
-
-Thought: Now compute the average temperature.
-Tool call: createOrModifyOperator: operatorId="avg_temp", code=\`def process(measurements) -> pd.DataFrame:
-    avg = measurements['temperature'].mean()
-    return pd.DataFrame([{'average_temperature': round(avg, 2)}])\`
-  summary="Calculate average temperature"
-Observation: Added operator "avg_temp". Auto-created links: [measurements-->avg_temp]. average_temperature = 21.80
-
-Final answer: The average temperature is 21.80.`;
-
 
 const KEY_PRINCIPLES = `
 ## Key Principles
@@ -78,12 +52,12 @@ const KEY_PRINCIPLES = `
 - **Read documentation first**: When the task mentions abstract concepts, load documentation to understand exact definitions.
 - **Refine by modifying**: When results are wrong, go back and modify the operators that caused the issue.
 - **Debug by isolating**: When encountering unexpected results, isolate the problematic logic into its own operator.
+- **Use column stats**: If a "Column Stats" section appears after the result table, it contains critical information — data types, null counts, distinct counts, value distributions, and top values per column. You MUST examine stats before deciding the next action. Use them to verify the data loaded correctly, validate join keys, catch data quality issues, and confirm results are plausible. If stats reveal a problem (unexpected nulls, wrong type, suspicious distribution), refine the current operator before proceeding.
 - **Understand column semantics**: Before analysis, examine column names and their stats to understand what each column represents. Columns may carry semantic meaning that affects how data should be filtered or interpreted — respect these signals and apply appropriate preprocessing before computing results.
 - **Normalize before grouping or joining**: String keys may contain naming variants such as special character delimiters, encoding differences, or duplicate entries across files. Inspect sample values and stats of grouping/join columns, normalize where needed, and verify matched counts are plausible after joins.
 - **Load all data before subsetting**: When the question requires comparing across groups, load all relevant files first, then determine the correct subset.
 - **Handle messy data files**: Load data files directly in a single operator. Real-world data files are often malformed — they may have wrong delimiters, missing or misplaced headers, metadata/comment rows, or multiple tables in one file. After loading, inspect the result. If column names look auto-generated (e.g., \`Unnamed: 0\`) or a data value appears as a header, adjust the loading parameters (e.g., \`header=\`, \`skiprows=\`, \`sep=\`) by modifying the data loading operator.
-- **Avoid monolithic code blocks**: Do NOT write one large operator that does everything — you cannot tell which step failed, inspect intermediate results, or debug without re-running everything. Instead, decompose into separate operators each doing ONE thing (e.g., filter → join → aggregate → filter → join → final filter). Each can be executed and verified independently.
-- **Context optimization**: Some tool-call parameters (e.g., \`code\`, \`properties\`) in conversation history may appear as "[REDACTED]" for compaction. Always provide the actual values for all required parameters — never pass "[REDACTED]" as a value.`;
+- **Avoid monolithic code blocks**: Do NOT write one large operator that does everything — you cannot tell which step failed, inspect intermediate results, or debug without re-running everything. Instead, decompose into separate operators each doing ONE thing (e.g., filter → join → aggregate → filter → join → final filter). Each can be executed and verified independently.`
 
 const KEY_PRINCIPLES_NO_ACTION_DETAIL = `
 ## Key Principles
@@ -179,6 +153,92 @@ Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_
     return premium.nlargest(5, 'total_spending')\`
   summary="Top 5 premium spenders"
 Observation: Modified operator "top5". Top 5 premium: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
+
+Final answer: The top 5 premium customers (spending >= $1000) with recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).`;
+
+// --------------- Example variant: Standard + carry metadata ---------------
+
+/**
+ * Standard examples with Column Stats — sequential tool calls with per-column
+ * statistics shown after each observation table.
+ */
+export const EXAMPLES_CARRY_METADATA = `
+## Example
+
+Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
+
+Thought: The task mentions "premium customers" and "recent purchases" — these are abstract concepts that may have specific definitions. I should first check documentation.
+Tool call: createOrModifyOperator: operatorId="readme", code=\`def load() -> pd.DataFrame:
+    with open('/data/readme.md', 'r') as f:
+        content = f.read()
+    return pd.DataFrame([{'file': 'readme.md', 'content': content}])\`
+  summary="Load readme.md documentation"
+Observation: The readme defines: "Premium customer: customer with total historical spending >= $1000. Recent purchase: orders placed within the last 30 days."
+
+Thought: Let me load both data files.
+Tool call: createOrModifyOperator: operatorId="customers", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/customers.csv')\`
+  summary="Load customers.csv"
+Tool call: createOrModifyOperator: operatorId="orders", code=\`def load() -> pd.DataFrame:
+    return pd.read_csv('/data/orders.csv')\`
+  summary="Load orders.csv"
+Observation: Added operator "customers". 5 columns: customer_id, name, email, signup_date, tier (10,000 rows)
+Column Stats:
+- "tier" (str): null=0, distinct=3, top_10={"gold"=4200, "silver"=3800, "bronze"=2000}
+- "customer_id" (str): null=0, distinct=10000
+- "name" (str): null=0, distinct=10000
+- "email" (str): null=0, distinct=9998
+- "signup_date" (datetime): null=0, min=2023-01-15, max=2024-06-30
+
+Observation: Added operator "orders". 4 columns: order_id, customer_id, amount, order_date (50,000 rows)
+Column Stats:
+- "order_id" (str): null=0, distinct=50000
+- "customer_id" (str): null=0, distinct=10000
+- "order_date" (datetime): null=0, min=2024-09-15, max=2024-11-12
+- "amount" (float): null=0, mean=219.2, min=95.00, max=520.0
+
+Thought: Stats look clean — customers has 10,000 distinct customer_ids (all unique, valid join key), tier has only 3 distinct values (gold/silver/bronze) with gold being most common. Orders has 10,000 distinct customer_ids matching customers, amount ranges from $95 to $520 with no nulls, order_date spans Sep–Nov 2024. Join key customer_id aligns perfectly. Now I'll join, filter for recent orders, and aggregate.
+Tool call: createOrModifyOperator: operatorId="recent_orders", code=\`def process(customers, orders) -> pd.DataFrame:
+    merged = customers.merge(orders, on='customer_id', how='inner')
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+    return merged[merged['order_date'] >= cutoff]\`
+  summary="Join and filter recent orders"
+Observation: Added operator "recent_orders". Auto-created links: [customers-->recent_orders, orders-->recent_orders]. Filtered to 1,247 rows.
+Column Stats:
+- "tier" (str): null=0, distinct=3, top_10={"gold"=620, "silver"=390, "bronze"=237}
+- "customer_id" (str): null=0, distinct=312
+- "name" (str): null=0, distinct=312
+- "email" (str): null=5, distinct=310
+- "order_id" (str): null=0, distinct=1247
+- "signup_date" (datetime): null=0, min=2023-01-15, max=2024-06-30
+- "order_date" (datetime): null=0, min=2024-10-18, max=2024-11-17
+- "amount" (float): null=0, mean=485.3, min=15.00, max=2500
+
+Thought: Stats confirm the join worked — 312 distinct customer_ids (customers with recent orders), 5 email nulls (acceptable), amount mean=$485 ranging up to $2,500. Now aggregate and get top 5.
+Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
+    spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+    spending.columns = ['customer_id', 'name', 'total_spending']
+    return spending.nlargest(5, 'total_spending')\`
+  summary="Top 5 spenders"
+Observation: Added operator "top5". Auto-created links: [recent_orders-->top5]. Top 5: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
+Column Stats:
+- "customer_id" (str): null=0, distinct=5
+- "name" (str): null=0, distinct=5
+- "total_spending" (float): null=0, mean=8810, min=6290, max=12450
+
+Thought: Stats show total_spending min=$6,290 — all 5 values already exceed the $1,000 premium threshold, but I haven't applied the filter explicitly. I should modify the operator.
+Tool call: createOrModifyOperator: operatorId="top5", code=\`def process(recent_orders) -> pd.DataFrame:
+    spending = recent_orders.groupby(['customer_id', 'name']).agg({'amount': 'sum'}).reset_index()
+    spending.columns = ['customer_id', 'name', 'total_spending']
+    premium = spending[spending['total_spending'] >= 1000]
+    return premium.nlargest(5, 'total_spending')\`
+  summary="Top 5 premium spenders"
+Observation: Modified operator "top5". Top 5 premium: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290)
+Column Stats:
+- "customer_id" (str): null=0, distinct=5
+- "name" (str): null=0, distinct=5
+- "total_spending" (float): null=0, mean=8810, min=6290, max=12450
 
 Final answer: The top 5 premium customers (spending >= $1000) with recent purchases are: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), and Eve ($6,290).`;
 
