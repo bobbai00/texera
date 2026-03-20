@@ -69,19 +69,6 @@ Observation: Added operator "avg_temp". Auto-created links: [measurements-->avg_
 
 Final answer: The average temperature is 21.80.`;
 
-const LOADING_DATA_SECTION = `
-## Loading Data
-
-Load data files directly in a single operator. Real-world data files are often malformed — they may have wrong delimiters, missing or misplaced headers, metadata/comment rows, or multiple tables in one file.
-
-After loading, inspect the result. If column names look auto-generated (e.g., \`Unnamed: 0\`) or a data value appears as a header, adjust the loading parameters (e.g., \`header=\`, \`skiprows=\`, \`sep=\`) by modifying the source operator.`;
-
-const ANTI_PATTERN_SECTION = `
-## Anti-Pattern: Avoid Monolithic Code Blocks
-
-Do NOT write one large operator that does everything — you cannot tell which step failed, inspect intermediate results, or debug without re-running everything.
-
-Instead, decompose into separate operators each doing ONE thing (e.g., filter → join → aggregate → filter → join → final filter). Each can be executed and verified independently.`;
 
 const KEY_PRINCIPLES = `
 ## Key Principles
@@ -94,6 +81,8 @@ const KEY_PRINCIPLES = `
 - **Understand column semantics**: Before analysis, examine column names and their stats to understand what each column represents. Columns may carry semantic meaning that affects how data should be filtered or interpreted — respect these signals and apply appropriate preprocessing before computing results.
 - **Normalize before grouping or joining**: String keys may contain naming variants such as special character delimiters, encoding differences, or duplicate entries across files. Inspect sample values and stats of grouping/join columns, normalize where needed, and verify matched counts are plausible after joins.
 - **Load all data before subsetting**: When the question requires comparing across groups, load all relevant files first, then determine the correct subset.
+- **Handle messy data files**: Load data files directly in a single operator. Real-world data files are often malformed — they may have wrong delimiters, missing or misplaced headers, metadata/comment rows, or multiple tables in one file. After loading, inspect the result. If column names look auto-generated (e.g., \`Unnamed: 0\`) or a data value appears as a header, adjust the loading parameters (e.g., \`header=\`, \`skiprows=\`, \`sep=\`) by modifying the data loading operator.
+- **Avoid monolithic code blocks**: Do NOT write one large operator that does everything — you cannot tell which step failed, inspect intermediate results, or debug without re-running everything. Instead, decompose into separate operators each doing ONE thing (e.g., filter → join → aggregate → filter → join → final filter). Each can be executed and verified independently.
 - **Context optimization**: Some tool-call parameters (e.g., \`code\`, \`properties\`) in conversation history may appear as "[REDACTED]" for compaction. Always provide the actual values for all required parameters — never pass "[REDACTED]" as a value.`;
 
 const KEY_PRINCIPLES_NO_ACTION_DETAIL = `
@@ -109,7 +98,9 @@ const KEY_PRINCIPLES_NO_ACTION_DETAIL = `
 - **Use column stats**: If a \`[stats]\` row is included in a result table, it contains critical information — data types, null counts, distinct counts, value distributions, and top values. You MUST examine stats before deciding the next action. Use them to verify the data loaded correctly, validate join keys, catch data quality issues, and confirm results are plausible. If stats reveal a problem (unexpected nulls, wrong type, suspicious distribution), refine the current operator before proceeding.
 - **Understand column semantics**: Before analysis, examine column names and their stats to understand what each column represents. Columns may carry semantic meaning that affects how data should be filtered or interpreted — respect these signals and apply appropriate preprocessing before computing results.
 - **Normalize before grouping or joining**: String keys may contain naming variants such as special character delimiters, encoding differences, or duplicate entries across files. Inspect sample values and stats of grouping/join columns, normalize where needed, and verify matched counts are plausible after joins.
-- **Load all relevant data files then choosing the correct subset of data to process**: When the question requires comparing across groups, load all relevant files first, then determine the correct subset.`;
+- **Load all relevant data files then choosing the correct subset of data to process**: When the question requires comparing across groups, load all relevant files first, then determine the correct subset.
+- **Handle messy data files**: Load data files directly in a single operator. Real-world data files are often malformed — they may have wrong delimiters, missing or misplaced headers, metadata/comment rows, or multiple tables in one file. After loading, inspect the result. If column names look are generic (\`Unnamed: 0\`, \`0\`, \`1\`, ...) or a data value (e.g., a place name, a date, a measurement value appearing as a column header) appears as a header, inspect the raw file content, find the actual structure of the table, and re-load with the correct parameters (e.g., change the delimiter with \`sep=\`, set \`header=\` to the correct row number or \`None\`, or use \`skiprows=\` to skip metadata lines).
+- **Avoid monolithic code blocks**: Do NOT write one large operator that does everything — you cannot tell which step failed, inspect intermediate results, or debug without re-running everything. Instead, decompose into separate operators each doing ONE thing (e.g., filter → join → aggregate → filter → join → final filter). Each can be executed and verified independently.`;
 
 
 // ============================================================================
@@ -121,8 +112,6 @@ const KEY_PRINCIPLES_NO_ACTION_DETAIL = `
  */
 const CODE_MODE_TEMPLATE = `${DATAFLOW_INTRO}
 {{EXAMPLES}}
-${LOADING_DATA_SECTION}
-${ANTI_PATTERN_SECTION}
 ${KEY_PRINCIPLES}
 `;
 
@@ -131,8 +120,6 @@ ${KEY_PRINCIPLES}
  */
 const CODE_MODE_TEMPLATE_NO_ACTION_DETAIL = `${DATAFLOW_INTRO}
 {{EXAMPLES}}
-${LOADING_DATA_SECTION}
-${ANTI_PATTERN_SECTION}
 ${KEY_PRINCIPLES_NO_ACTION_DETAIL}
 `;
 
@@ -596,7 +583,7 @@ export const EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA = `
 
 **Note**: After each tool call, the conversation history is compacted into a Current Workflow summary showing all operators, your reasoning, and their results (including per-column statistics). You will not see individual tool results or separate assistant messages in history — only the cumulative DAG state. Code is not preserved — write fresh code for every tool call.
 
-**Column stats format**: Each result table includes a \`[stats]\` row below the header. Each cell shows the column's data type (\`str\`/\`int\`/\`float\`/\`datetime\`/\`bool\`), null count, and distinct count. Numeric types also show mean/std/min/max; columns with ≤10 distinct values show \`top_10\` value frequencies. Always examine stats before the next action — they reveal whether the data loaded correctly, whether join keys are valid, and whether results are plausible.
+**Column stats format**: Each result table includes a \`[stats]\` row below the header. Each cell shows the column's data type (\`str\`/\`int\`/\`float\`/\`datetime\`/\`bool\`), null count, and distinct count. Numeric types also show mean/std/min/max; string columns show \`top_10\` value frequencies. Always examine stats before the next action — they reveal whether the data loaded correctly, whether join keys are valid, and whether results are plausible.
 
 Task: "I have customers.csv and orders.csv files. Find the top 5 premium customers who made recent purchases."
 
