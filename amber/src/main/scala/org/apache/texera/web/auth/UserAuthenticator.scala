@@ -55,6 +55,7 @@ object UserAuthenticator extends Authenticator[JwtContext, SessionUser] with Laz
           comment,
           accountCreation,
           null,
+          null,
           null
         )
       Optional.of(new SessionUser(user))

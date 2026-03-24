@@ -80,6 +80,7 @@ class ServletAwareConfigurator extends ServerEndpointConfig.Configurator with La
             null,
             null,
             null,
+            null,
             null
           )
         )
@@ -111,7 +112,8 @@ class ServletAwareConfigurator extends ServerEndpointConfig.Configurator with La
                 null,
                 null,
                 null,
-                null
+                null,
+                null,
               )
             )
           })
