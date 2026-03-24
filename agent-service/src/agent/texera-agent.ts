@@ -59,13 +59,7 @@ import {
   EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA_PARALLEL,
 } from "./prompts";
 import {
-  createGetCurrentWorkflowTool,
-  createAddLinkTool,
-  createDeleteLinkTool,
   createDeleteOperatorTool,
-  TOOL_NAME_GET_CURRENT_WORKFLOW,
-  TOOL_NAME_ADD_LINK,
-  TOOL_NAME_DELETE_LINK,
   TOOL_NAME_DELETE_OPERATOR,
   type ToolContext,
 } from "../tools/workflow-tools";
@@ -80,12 +74,6 @@ import {
   createCreateOrModifyOperatorTool,
   TOOL_NAME_CREATE_OR_MODIFY_OPERATOR,
 } from "../tools/code-op-tools";
-import {
-  createListAllAvailableOperatorTypesTool,
-  createGetOperatorSchemaTool,
-  TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES,
-  TOOL_NAME_GET_OPERATOR_SCHEMA,
-} from "../tools/metadata-tools";
 import {
   createExecuteOperatorTool,
   executeOperatorAndFormat,
@@ -369,24 +357,15 @@ export class TexeraAgent {
       [TOOL_NAME_DELETE_OPERATOR]: createDeleteOperatorTool(this.workflowState, context),
     };
 
-    // Register getCurrentWorkflow only in GENERAL mode (not simplified, not noActionDetail)
-    // CODE mode doesn't need it — the agent builds the workflow incrementally
-    if (this.settings.agentMode !== AgentMode.CODE && !this.settings.simplifiedTools && !this.settings.noActionDetail) {
-      tools[TOOL_NAME_GET_CURRENT_WORKFLOW] = createGetCurrentWorkflowTool(this.workflowState);
-    }
-
     // Mode-specific tools
     if (this.settings.agentMode === AgentMode.CODE) {
       // CODE mode: Use unified coding tool (creates or modifies operators)
       tools[TOOL_NAME_CREATE_OR_MODIFY_OPERATOR] = createCreateOrModifyOperatorTool(this.workflowState, operatorSchemas, context);
     } else {
-      // GENERAL mode: Use workflow tools (addOperator, modifyOperator) + metadata tools
+      // GENERAL mode: Use workflow tools (addOperator, modifyOperator)
+      // Links are created automatically via inputOperatorIds in addOperator
       tools[TOOL_NAME_ADD_OPERATOR] = createAddOperatorTool(this.workflowState, operatorSchemas, context);
       tools[TOOL_NAME_MODIFY_OPERATOR] = createModifyOperatorTool(this.workflowState, context);
-      tools[TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES] = createListAllAvailableOperatorTypesTool(this.metadataStore, true);
-      tools[TOOL_NAME_GET_OPERATOR_SCHEMA] = createGetOperatorSchemaTool(this.metadataStore);
-      tools[TOOL_NAME_ADD_LINK] = createAddLinkTool(this.workflowState, context);
-      tools[TOOL_NAME_DELETE_LINK] = createDeleteLinkTool(this.workflowState, context);
     }
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
@@ -848,18 +827,22 @@ export class TexeraAgent {
         tools: this.tools,
         temperature: 0.2,
         stopWhen: stepCountIs(this.settings.maxSteps),
-        prepareStep: (this.settings.enableContextOptimization || this.settings.latestOnly || this.settings.noActionDetail)
+        prepareStep: (this.settings.enableContextOptimization || this.settings.latestOnly || this.settings.noActionDetail || this.settings.agentMode === AgentMode.GENERAL)
           ? ({ stepNumber, messages: currentMessages }) => {
               if (stepNumber === 0) return undefined;
               let processed = currentMessages;
               // latestOnly first: removes whole tool-call/result pairs for stale operators
-              // Skip latestOnly when noActionDetail is active (DAG summary replaces all tool messages)
-              if (this.settings.latestOnly && !this.settings.noActionDetail) {
+              // Skip latestOnly when noActionDetail is active or GENERAL mode (DAG summary replaces all tool messages)
+              const useRedact = this.settings.noActionDetail || this.settings.agentMode === AgentMode.GENERAL;
+              if (this.settings.latestOnly && !useRedact) {
                 processed = filterLatestOnlyMessages(processed, this.workflowState);
               }
-              // noActionDetail: replaces all tool-call/result messages with DAG summary
-              if (this.settings.noActionDetail) {
-                processed = redactActionDetails(processed, this.workflowState, this.operatorExecutionResults);
+              // Redact action details:
+              // - CODE mode: only when noActionDetail is enabled (removeProperties=true)
+              // - GENERAL mode: always called; removeProperties is controlled by noActionDetail
+              if (useRedact) {
+                const removeProperties = this.settings.noActionDetail;
+                processed = redactActionDetails(processed, this.workflowState, this.operatorExecutionResults, removeProperties);
               }
               // context optimization last: trims execution result sections
               if (this.settings.enableContextOptimization) {

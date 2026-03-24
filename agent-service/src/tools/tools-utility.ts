@@ -209,49 +209,59 @@ export function estimateCharCount(data: any): number {
 // Workflow Tool Result Formatters
 // ============================================================================
 
-import type { OperatorPredicate, OperatorLink } from "../types/workflow";
-
 /**
- * Formats a single operator for display in workflow results.
+ * Formats a link as "sourceId --> targetId".
  */
-export function formatOperator(op: OperatorPredicate): string {
-  const summary = op.customDisplayName || op.operatorID;
-  const lines = [
-    `\tOperatorId: ${op.operatorID}`,
-    `\tSummary: ${summary}`,
-    `\tOperatorType: ${op.operatorType}`,
-    `\tNumber of input ports: ${op.inputPorts.length}, Number of output ports: ${op.outputPorts.length}`,
-    `\tProperties: ${JSON.stringify(op.operatorProperties)}`,
-  ];
-  return lines.join("\n");
-}
-
-/**
- * Formats a single link for display in workflow results.
- */
-export function formatLink(link: OperatorLink): string {
-  return `${link.source.operatorID} -> ${link.target.operatorID}`;
+export function formatLinkDescription(sourceOperatorId: string, targetOperatorId: string): string {
+  return `${sourceOperatorId} --> ${targetOperatorId}`;
 }
 
 /**
  * Formats the result for addOperator tool.
+ * The first line is always a brief one-line summary (used by the action detail filter).
+ * Created/deleted links are appended to the first line.
  */
-export function formatAddOperatorResult(operatorId: string, numInputPorts: number, numOutputPorts: number): string {
-  return `Added operator ${operatorId}, number of input ports: ${numInputPorts}, number of output ports: ${numOutputPorts}`;
-}
-
-/**
- * Formats the result for addLink tool.
- */
-export function formatAddLinkResult(linkId: string): string {
-  return `Link ${linkId} added`;
+export function formatAddOperatorResult(
+  operatorId: string,
+  numInputPorts: number,
+  numOutputPorts: number,
+  createdLinks?: { source: string; target: string }[],
+  deletedLinks?: { source: string; target: string }[]
+): string {
+  let summary = `Added operator ${operatorId}, input ports: ${numInputPorts}, output ports: ${numOutputPorts}`;
+  if (deletedLinks && deletedLinks.length > 0) {
+    summary += `, deleted links: [${deletedLinks.map(l => formatLinkDescription(l.source, l.target)).join(", ")}]`;
+  }
+  if (createdLinks && createdLinks.length > 0) {
+    summary += `, created links: [${createdLinks.map(l => formatLinkDescription(l.source, l.target)).join(", ")}]`;
+  }
+  return summary;
 }
 
 /**
  * Formats the result for modifyOperator tool.
+ * Created/deleted links are appended to the first line.
  */
-export function formatModifyOperatorResult(operatorId: string): string {
-  return `Operator ${operatorId} modified`;
+export function formatModifyOperatorResult(
+  operatorId: string,
+  createdLinks?: { source: string; target: string }[],
+  deletedLinks?: { source: string; target: string }[]
+): string {
+  let summary = `Operator ${operatorId} modified`;
+  if (deletedLinks && deletedLinks.length > 0) {
+    summary += `, deleted links: [${deletedLinks.map(l => formatLinkDescription(l.source, l.target)).join(", ")}]`;
+  }
+  if (createdLinks && createdLinks.length > 0) {
+    summary += `, created links: [${createdLinks.map(l => formatLinkDescription(l.source, l.target)).join(", ")}]`;
+  }
+  return summary;
+}
+
+/**
+ * Formats the brief summary line for executeOperator tool.
+ */
+export function formatExecuteOperatorResult(operatorId: string): string {
+  return `Executed operator ${operatorId}`;
 }
 
 /**

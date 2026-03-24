@@ -36,9 +36,6 @@ import type { WorkflowState } from "../workflow/workflow-state";
 import { TOOL_NAME_CREATE_OR_MODIFY_OPERATOR } from "../tools/code-op-tools";
 import { TOOL_NAME_EXECUTE_OPERATOR } from "../tools/execution-tools";
 import {
-  TOOL_NAME_GET_CURRENT_WORKFLOW,
-  TOOL_NAME_ADD_LINK,
-  TOOL_NAME_DELETE_LINK,
   TOOL_NAME_DELETE_OPERATOR,
 } from "../tools/workflow-tools";
 import { TOOL_NAME_ADD_OPERATOR, TOOL_NAME_MODIFY_OPERATOR } from "../tools/general-op-tools";
@@ -50,7 +47,6 @@ import { TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES, TOOL_NAME_GET_OPERATOR_SCH
 
 /** Tools that never reference a specific operator — always keep. */
 const NO_OPERATOR_TOOLS = new Set([
-  TOOL_NAME_GET_CURRENT_WORKFLOW,
   TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES,
   TOOL_NAME_GET_OPERATOR_SCHEMA,
 ]);
@@ -68,14 +64,6 @@ function extractOperatorIds(toolName: string, params: Record<string, any>): stri
   // addOperator, modifyOperator)
   if (typeof params.operatorId === "string") {
     ids.push(params.operatorId);
-  }
-
-  // addLink references two operators
-  if (typeof params.sourceOperatorId === "string") {
-    ids.push(params.sourceOperatorId);
-  }
-  if (typeof params.targetOperatorId === "string") {
-    ids.push(params.targetOperatorId);
   }
 
   return ids;

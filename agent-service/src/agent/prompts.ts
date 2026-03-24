@@ -984,7 +984,7 @@ You have the following operators available:
 
 {{OPERATOR_SCHEMA}}
 
-**IMPORTANT**: You MUST try to use the native operators (e.g. Projection, Aggregate, Filter) as much as possible,
+**IMPORTANT**: You MUST try to use the native operators (e.g. Projection, Aggregate, Filter, Union) as much as possible,
 if not possible then use the python to define your own logic.
 `;
 

@@ -98,7 +98,7 @@ if (import.meta.main) {
   console.log("  - TexeraAgent: Core agent class");
   console.log("  - WorkflowState: Workflow state management");
   console.log("  - OperatorMetadataStore: Operator schema management");
-  console.log("  - Tool creators: createGetCurrentWorkflowTool, etc.");
+  console.log("  - Tool creators: createAddOperatorTool, createModifyOperatorTool, etc.");
   console.log("  - Types: All TypeScript types for workflow, execution, agent");
   console.log("");
   console.log("See src/index.ts for example usage.");

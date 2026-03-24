@@ -69,7 +69,10 @@ export const ALLOWED_OPERATOR_TYPES = [
   "Sort",
   "CSVFileScan",
   "Limit",
+  "Union",
   "LineChart",
+  "BarChart",
+  "DataProcessing",
 ] as const;
 
 // ============================================================================
@@ -363,8 +366,22 @@ export class OperatorMetadataStore {
  */
 export function formatValidationErrors(validation: Validation): string {
   if (validation.isValid) return "";
-  const errorMessages = Object.entries(validation.messages).map(([key, msg]) => `  - ${key}: ${msg}`);
-  return `Schema validation errors:\n${errorMessages.join("\n")}`;
+  const errorMessages = Object.entries(validation.messages).map(([key, msg]) => `${key}: ${msg}`);
+  return errorMessages.join("; ");
+}
+
+/**
+ * Format a compact schema summary showing only required properties.
+ * Returns a single-line string suitable for error messages.
+ */
+export function formatCompactSchemaForError(compactSchema: CompactOperatorSchema): string {
+  const requiredProps: Record<string, any> = {};
+  for (const key of compactSchema.required) {
+    if (compactSchema.properties[key]) {
+      requiredProps[key] = compactSchema.properties[key];
+    }
+  }
+  return `required: [${compactSchema.required.join(", ")}], properties: ${JSON.stringify(requiredProps)}`;
 }
 
 // ============================================================================

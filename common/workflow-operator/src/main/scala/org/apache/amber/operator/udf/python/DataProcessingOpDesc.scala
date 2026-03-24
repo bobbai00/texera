@@ -217,6 +217,7 @@ class DataProcessingOpDesc extends LogicalOp {
       "Data Processing",
       """Process input tables from input ports with a Python function. Do NOT use print statement
         |
+        |Function parameters correspond to input ports in order: the 1st parameter receives data from input port 0, the 2nd from input port 1, and so on.
         |
         |Example 1 - Filter and transform:
         |  def process(users) -> pd.DataFrame:

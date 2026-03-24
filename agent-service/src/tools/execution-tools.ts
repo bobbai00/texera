@@ -25,7 +25,7 @@
 import { z } from "zod";
 import { tool } from "ai";
 import { encode as toonEncode } from "@toon-format/toon";
-import { createErrorResult } from "./tools-utility";
+import { createErrorResult, formatExecuteOperatorResult } from "./tools-utility";
 import type { WorkflowState } from "../workflow/workflow-state";
 import { getBackendConfig } from "../api/backend-api";
 import type { LogicalPlan, LogicalLink } from "../api/execution-api";
@@ -933,7 +933,8 @@ export async function executeOperatorAndFormat(
       ? []
       : [shapeLine, ...warningLines].filter(Boolean);
 
-    return [...metadataLines, dataString, ...columnStatsLines].filter(Boolean).join("\n");
+    const briefSummary = formatExecuteOperatorResult(operatorId);
+    return [briefSummary, ...metadataLines, dataString, ...columnStatsLines].filter(Boolean).join("\n");
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw error;

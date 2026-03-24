@@ -79,7 +79,7 @@ const PYTHON_KEYWORDS = new Set([
  * Validates if a string is a valid Python variable name.
  * Returns null if valid, error message if invalid.
  */
-function validatePythonVariableName(name: string): string | null {
+export function validatePythonVariableName(name: string): string | null {
   if (!name || name.length === 0) {
     return "Variable name cannot be empty";
   }
@@ -400,6 +400,8 @@ Example: operatorId="filtered" (requires "customers" to exist)
         let resultMsg: string;
         let createdLinkIds: string[] = [];
         let deletedLinkIds: string[] = [];
+        let createdLinkPairs: { source: string; target: string }[] = [];
+        let deletedLinkPairs: { source: string; target: string }[] = [];
 
         if (!existingOperator) {
           // === ADD NEW OPERATOR ===
@@ -429,12 +431,16 @@ Example: operatorId="filtered" (requires "customers" to exist)
 
           if (isDataProcessing && inputOperators.length > 0) {
             createdLinkIds = createInputLinks(workflowState, operatorId, inputOperators);
+            createdLinkPairs = inputOperators.map(src => ({ source: src.operatorID, target: operatorId }));
           }
 
           autoLayoutWorkflow(workflowState);
 
           const finalOperator = workflowState.getOperator(operatorId) || operator;
-          resultMsg = formatAddOperatorResult(operatorId, finalOperator.inputPorts.length, finalOperator.outputPorts.length);
+          resultMsg = formatAddOperatorResult(
+            operatorId, finalOperator.inputPorts.length, finalOperator.outputPorts.length,
+            createdLinkPairs.length > 0 ? createdLinkPairs : undefined
+          );
 
           if (context?.agentActionManager && context.agentId) {
             context.agentActionManager.createAgentAction(
@@ -481,16 +487,22 @@ Example: operatorId="filtered" (requires "customers" to exist)
             const currentLinks = workflowState.getLinksConnectedToOperator(operatorId)
               .filter(link => link.target.operatorID === operatorId);
             for (const link of currentLinks) {
+              deletedLinkPairs.push({ source: link.source.operatorID, target: link.target.operatorID });
               workflowState.deleteLink(link.linkID);
               deletedLinkIds.push(link.linkID);
             }
 
             if (inputOperators.length > 0) {
               createdLinkIds = createInputLinks(workflowState, operatorId, inputOperators);
+              createdLinkPairs = inputOperators.map(src => ({ source: src.operatorID, target: operatorId }));
             }
           }
 
-          resultMsg = formatModifyOperatorResult(operatorId);
+          resultMsg = formatModifyOperatorResult(
+            operatorId,
+            createdLinkPairs.length > 0 ? createdLinkPairs : undefined,
+            deletedLinkPairs.length > 0 ? deletedLinkPairs : undefined
+          );
 
           if (context?.agentActionManager && context.agentId) {
             context.agentActionManager.createAgentAction(
@@ -507,14 +519,6 @@ Example: operatorId="filtered" (requires "customers" to exist)
               workflowState.getWorkflowContent()
             );
           }
-        }
-
-        // Append link info to result
-        if (deletedLinkIds.length > 0) {
-          resultMsg += `\nDeleted links: [${deletedLinkIds.join(", ")}]`;
-        }
-        if (createdLinkIds.length > 0) {
-          resultMsg += `\nAuto-created links: [${createdLinkIds.join(", ")}]`;
         }
 
         // Always auto-execute

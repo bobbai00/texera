@@ -27,6 +27,7 @@ import { tool } from "ai";
 import { WorkflowState } from "../workflow/workflow-state";
 import { autoLayoutWorkflow } from "../workflow/auto-layout";
 import { WorkflowUtilService } from "../workflow/workflow-util";
+import type { OperatorLink } from "../types/workflow";
 import {
   createToolResult,
   createErrorResult,
@@ -34,7 +35,8 @@ import {
   formatModifyOperatorResult,
   formatOperatorError,
 } from "./tools-utility";
-import { formatValidationErrors } from "./metadata-tools";
+import { formatValidationErrors, formatCompactSchemaForError } from "./metadata-tools";
+import { validatePythonVariableName } from "./code-op-tools";
 import type { ToolContext } from "./workflow-tools";
 
 // ============================================================================
@@ -43,6 +45,18 @@ import type { ToolContext } from "./workflow-tools";
 
 export const TOOL_NAME_ADD_OPERATOR = "addOperator";
 export const TOOL_NAME_MODIFY_OPERATOR = "modifyOperator";
+
+/**
+ * Format tool input args as a compact string for inclusion in error messages.
+ * Omits undefined values to keep it concise.
+ */
+function formatInputArgs(args: Record<string, any>): string {
+  const compact: Record<string, any> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (value !== undefined) compact[key] = value;
+  }
+  return `Input: ${JSON.stringify(compact)}`;
+}
 
 // ============================================================================
 // Add Operator Tool
@@ -56,25 +70,44 @@ export function createAddOperatorTool(
   const workflowUtil = context?.metadataStore ? new WorkflowUtilService(context.metadataStore, workflowState) : null;
 
   return tool({
-    description:
-      "Add a new operator to the workflow. Use getOperatorSchema first to understand required properties.",
+    description: `Add a new operator to the workflow. Use getOperatorSchema first to understand required properties.
+
+Examples:
+1. Add a source operator (no inputs):
+   { "operatorId": "load_csv", "operatorType": "CSVFileScan", "properties": { "fileName": "data.csv" }, "summary": "Load CSV data" }
+
+2. Add an operator with input connections:
+   { "operatorId": "filtered", "operatorType": "Filter", "properties": { "predicates": [...] }, "inputOperatorIds": { "0": ["load_csv"] }, "summary": "Filter rows by condition" }`,
     inputSchema: z.object({
-      operatorId: z.string().describe("Unique operator ID"),
+      operatorId: z.string().describe(
+        "Unique operator name (valid Python variable). Other operators reference this as input parameter."
+      ),
       operatorType: z.string().describe("The operator type (e.g., 'DataProcessing', 'Aggregate')"),
       properties: z.record(z.any()).describe("Properties to set on the operator"),
-      summary: z.string().optional().describe("Brief summary of operator behavior"),
+      inputOperatorIds: z
+        .record(z.array(z.string()))
+        .optional()
+        .describe(
+          "Mapping from input port index to an ordered list of source operator IDs that connect to that port. " +
+            'E.g. {"0": ["opA", "opB"], "1": ["opC"]} connects opA and opB to input port 0, opC to input port 1. ' +
+            "Source operators that load files (e.g. CSVFileScan) should NOT have any input operators."
+        ),
+      summary: z.string().describe("Brief summary of operator behavior"),
     }),
     execute: async (args: {
       operatorId: string;
       operatorType: string;
       properties?: Record<string, any>;
-      summary?: string;
+      inputOperatorIds?: Record<string, string[]>;
+      summary: string;
     }) => {
       try {
+        const inputInfo = formatInputArgs(args);
+
         const schemaEntry = operatorSchemas.get(args.operatorType);
         if (!schemaEntry) {
           return createErrorResult(
-            `Unknown operator type: ${args.operatorType}. Use listAllAvailableOperatorTypes to see available operators.`
+            `Unknown operator type: "${args.operatorType}". Available types: ${[...operatorSchemas.keys()].join(", ")}. ${inputInfo}`
           );
         }
 
@@ -82,22 +115,29 @@ export function createAddOperatorTool(
         if (context?.metadataStore && args.properties) {
           const validation = context.metadataStore.validateOperatorProperties(args.operatorType, args.properties);
           if (!validation.isValid) {
+            const compactSchema = context.metadataStore.getCompactSchema(args.operatorType);
+            const schemaStr = compactSchema ? ` Expected: ${formatCompactSchemaForError(compactSchema)}.` : "";
             return createErrorResult(
-              `Invalid operator properties for "${args.operatorType}". ${formatValidationErrors(validation)}\n` +
-                `Use getOperatorSchema("${args.operatorType}") to see the required property format.`
+              `Invalid properties for "${args.operatorType}": ${formatValidationErrors(validation)}.${schemaStr} ${inputInfo}`
             );
           }
         }
 
         if (!workflowUtil) {
-          return createErrorResult("Metadata store not available for operator creation");
+          return createErrorResult(`Metadata store not available for operator creation. ${inputInfo}`);
+        }
+
+        // Validate operatorId is a valid Python variable name
+        const nameValidationError = validatePythonVariableName(args.operatorId);
+        if (nameValidationError) {
+          return createErrorResult(`Invalid operatorId: ${nameValidationError}. ${inputInfo}`);
         }
 
         // Check for duplicate operatorId
         const existing = workflowState.getOperator(args.operatorId);
         if (existing) {
           return createErrorResult(
-            `Operator with ID "${args.operatorId}" already exists. Use modifyOperator to update it, or choose a different ID.`
+            `Operator with ID "${args.operatorId}" already exists. Use modifyOperator to update it, or choose a different ID. ${inputInfo}`
           );
         }
 
@@ -112,7 +152,47 @@ export function createAddOperatorTool(
 
         workflowState.addOperator(operator);
 
-        // Auto-layout the workflow after adding the operator
+        // Automatically create links from inputOperatorIds
+        const createdLinkIds: string[] = [];
+        const createdLinkPairs: { source: string; target: string }[] = [];
+        if (args.inputOperatorIds) {
+          const addedOperator = workflowState.getOperator(operator.operatorID)!;
+          for (const [portIndexStr, sourceOpIds] of Object.entries(args.inputOperatorIds)) {
+            const targetPortIdx = parseInt(portIndexStr, 10);
+            if (isNaN(targetPortIdx) || targetPortIdx < 0) {
+              return createErrorResult(`Invalid input port index: "${portIndexStr}". Must be a non-negative integer. ${inputInfo}`);
+            }
+            if (targetPortIdx >= addedOperator.inputPorts.length) {
+              return createErrorResult(
+                `Input port index ${targetPortIdx} out of range. Operator "${args.operatorId}" has ${addedOperator.inputPorts.length} input port(s). ${inputInfo}`
+              );
+            }
+            const targetPortId = addedOperator.inputPorts[targetPortIdx].portID;
+
+            for (const sourceOpId of sourceOpIds) {
+              const sourceOp = workflowState.getOperator(sourceOpId);
+              if (!sourceOp) {
+                return createErrorResult(
+                  `Source operator "${sourceOpId}" not found. Make sure it exists before referencing it in inputOperatorIds. ${inputInfo}`
+                );
+              }
+              const sourcePortId =
+                sourceOp.outputPorts.length > 0 ? sourceOp.outputPorts[0].portID : "output-0";
+
+              const linkId = workflowState.generateLinkId();
+              const link: OperatorLink = {
+                linkID: linkId,
+                source: { operatorID: sourceOpId, portID: sourcePortId },
+                target: { operatorID: args.operatorId, portID: targetPortId },
+              };
+              workflowState.addLink(link);
+              createdLinkIds.push(linkId);
+              createdLinkPairs.push({ source: sourceOpId, target: args.operatorId });
+            }
+          }
+        }
+
+        // Auto-layout the workflow after adding the operator and links
         autoLayoutWorkflow(workflowState);
 
         const updatedOperator = workflowState.getOperator(operator.operatorID);
@@ -124,7 +204,7 @@ export function createAddOperatorTool(
             context.agentId,
             context.agentName || `Agent-${context.agentId}`,
             args.summary || `Added ${args.operatorType}`,
-            { add: { operatorIds: [operator.operatorID], linkIds: [] } },
+            { add: { operatorIds: [operator.operatorID], linkIds: createdLinkIds } },
             context.workflowMetadata || {},
             beforeContent,
             afterContent
@@ -135,7 +215,10 @@ export function createAddOperatorTool(
         const numInputPorts = finalOperator.inputPorts.length;
         const numOutputPorts = finalOperator.outputPorts.length;
 
-        return createToolResult(formatAddOperatorResult(operator.operatorID, numInputPorts, numOutputPorts));
+        return createToolResult(formatAddOperatorResult(
+          operator.operatorID, numInputPorts, numOutputPorts,
+          createdLinkPairs.length > 0 ? createdLinkPairs : undefined
+        ));
       } catch (error: any) {
         return createErrorResult(error.message || String(error));
       }
@@ -149,38 +232,114 @@ export function createAddOperatorTool(
 
 export function createModifyOperatorTool(workflowState: WorkflowState, context?: ToolContext) {
   return tool({
-    description:
-      "Modify properties of an existing operator. Use this to fix errors or change operator logic.",
+    description: `Modify an existing operator's properties, input links, or both.
+
+Examples:
+1. Modify properties only:
+   { "operatorId": "agg", "properties": { "groupByKeys": ["city"] }, "summary": "Group by city" }
+
+2. Modify input links only (replaces all existing incoming links):
+   { "operatorId": "join_op", "inputOperatorIds": { "0": ["users"], "1": ["orders"] }, "summary": "Re-link join inputs" }
+
+3. Modify both properties and links:
+   { "operatorId": "filter", "properties": { "predicates": [...] }, "inputOperatorIds": { "0": ["cleaned"] }, "summary": "Update filter and re-link" }`,
     inputSchema: z.object({
       operatorId: z.string().describe("ID of the operator to modify"),
-      properties: z.record(z.any()).describe("Properties to update (merged with existing)"),
-      summary: z.string().optional().describe("Brief summary of operator behavior"),
+      properties: z.record(z.any()).optional().describe("Properties to update (merged with existing)"),
+      inputOperatorIds: z
+        .record(z.array(z.string()))
+        .optional()
+        .describe(
+          "Mapping from input port index to an ordered list of source operator IDs. " +
+            "If provided, all existing incoming links are deleted and replaced with these. " +
+            'E.g. {"0": ["opA", "opB"], "1": ["opC"]} connects opA and opB to input port 0, opC to input port 1.'
+        ),
+      summary: z.string().describe("Brief summary of operator behavior"),
     }),
     execute: async (args: {
       operatorId: string;
-      properties: Record<string, any>;
+      properties?: Record<string, any>;
+      inputOperatorIds?: Record<string, string[]>;
       summary?: string;
     }) => {
       try {
+        const inputInfo = formatInputArgs(args);
+
         const operator = workflowState.getOperator(args.operatorId);
-        if (!operator) return createErrorResult(`Operator ${args.operatorId} not found`);
+        if (!operator) return createErrorResult(`Operator ${args.operatorId} not found. ${inputInfo}`);
 
-        const mergedProperties = { ...operator.operatorProperties, ...args.properties };
-
-        // Validate properties
-        if (context?.metadataStore) {
+        // Validate properties if provided
+        if (args.properties && context?.metadataStore) {
+          const mergedProperties = { ...operator.operatorProperties, ...args.properties };
           const validation = context.metadataStore.validateOperatorProperties(operator.operatorType, mergedProperties);
           if (!validation.isValid) {
+            const compactSchema = context.metadataStore.getCompactSchema(operator.operatorType);
+            const schemaStr = compactSchema ? ` Expected: ${formatCompactSchemaForError(compactSchema)}.` : "";
             return createErrorResult(
-              `Invalid operator properties for "${operator.operatorType}". ${formatValidationErrors(validation)}\n` +
-                `Use getOperatorSchema("${operator.operatorType}") to see the required property format.`
+              `Invalid properties for "${operator.operatorType}": ${formatValidationErrors(validation)}.${schemaStr} ${inputInfo}`
             );
           }
         }
 
         const beforeContent = workflowState.getWorkflowContent();
+        const createdLinkPairs: { source: string; target: string }[] = [];
+        const deletedLinkPairs: { source: string; target: string }[] = [];
+        const createdLinkIds: string[] = [];
+        const deletedLinkIds: string[] = [];
 
-        workflowState.updateOperatorProperties(args.operatorId, args.properties);
+        // Update properties if provided
+        if (args.properties) {
+          workflowState.updateOperatorProperties(args.operatorId, args.properties);
+        }
+
+        // Replace incoming links if inputOperatorIds is provided
+        if (args.inputOperatorIds) {
+          // Delete all existing incoming links
+          const currentLinks = workflowState.getLinksConnectedToOperator(args.operatorId)
+            .filter(link => link.target.operatorID === args.operatorId);
+          for (const link of currentLinks) {
+            deletedLinkPairs.push({ source: link.source.operatorID, target: link.target.operatorID });
+            workflowState.deleteLink(link.linkID);
+            deletedLinkIds.push(link.linkID);
+          }
+
+          // Create new incoming links
+          for (const [portIndexStr, sourceOpIds] of Object.entries(args.inputOperatorIds)) {
+            const targetPortIdx = parseInt(portIndexStr, 10);
+            if (isNaN(targetPortIdx) || targetPortIdx < 0) {
+              return createErrorResult(`Invalid input port index: "${portIndexStr}". Must be a non-negative integer. ${inputInfo}`);
+            }
+            if (targetPortIdx >= operator.inputPorts.length) {
+              return createErrorResult(
+                `Input port index ${targetPortIdx} out of range. Operator "${args.operatorId}" has ${operator.inputPorts.length} input port(s). ${inputInfo}`
+              );
+            }
+            const targetPortId = operator.inputPorts[targetPortIdx].portID;
+
+            for (const sourceOpId of sourceOpIds) {
+              const sourceOp = workflowState.getOperator(sourceOpId);
+              if (!sourceOp) {
+                return createErrorResult(
+                  `Source operator "${sourceOpId}" not found. Make sure it exists before referencing it in inputOperatorIds. ${inputInfo}`
+                );
+              }
+              const sourcePortId =
+                sourceOp.outputPorts.length > 0 ? sourceOp.outputPorts[0].portID : "output-0";
+
+              const linkId = workflowState.generateLinkId();
+              const link: OperatorLink = {
+                linkID: linkId,
+                source: { operatorID: sourceOpId, portID: sourcePortId },
+                target: { operatorID: args.operatorId, portID: targetPortId },
+              };
+              workflowState.addLink(link);
+              createdLinkIds.push(linkId);
+              createdLinkPairs.push({ source: sourceOpId, target: args.operatorId });
+            }
+          }
+
+          autoLayoutWorkflow(workflowState);
+        }
 
         const afterContent = workflowState.getWorkflowContent();
 
@@ -190,14 +349,22 @@ export function createModifyOperatorTool(workflowState: WorkflowState, context?:
             context.agentId,
             context.agentName || `Agent-${context.agentId}`,
             args.summary || `Modified ${operator.customDisplayName || operator.operatorType}`,
-            { modify: { operatorIds: [args.operatorId] } },
+            {
+              modify: { operatorIds: [args.operatorId] },
+              add: { operatorIds: [], linkIds: createdLinkIds },
+              delete: { operatorIds: [], linkIds: deletedLinkIds },
+            },
             context.workflowMetadata || {},
             beforeContent,
             afterContent
           );
         }
 
-        return createToolResult(formatModifyOperatorResult(args.operatorId));
+        return createToolResult(formatModifyOperatorResult(
+          args.operatorId,
+          createdLinkPairs.length > 0 ? createdLinkPairs : undefined,
+          deletedLinkPairs.length > 0 ? deletedLinkPairs : undefined
+        ));
       } catch (error: any) {
         return createErrorResult(formatOperatorError(args.operatorId, error.message || String(error)));
       }
