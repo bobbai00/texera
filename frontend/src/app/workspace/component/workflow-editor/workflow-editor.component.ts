@@ -44,10 +44,7 @@ import { GuiConfigService } from "../../../common/service/gui-config.service";
 import { line, curveCatmullRomClosed } from "d3-shape";
 import concaveman from "concaveman";
 import { AgentActionService } from "../../service/agent-action/agent-action.service";
-import {
-  TexeraCopilotManagerService,
-  OperatorResultSummary,
-} from "../../service/copilot/texera-copilot-manager.service";
+import { TexeraCopilotManagerService } from "../../service/copilot/texera-copilot-manager.service";
 import { OperatorStepRef, ReActStep } from "../../service/copilot/copilot-types";
 import { ContextHighlightEvent } from "../agent-interaction/agent-interaction.component";
 import { isPythonUdf } from "../../service/workflow-graph/model/workflow-graph";
@@ -113,11 +110,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     isDiffMode: boolean;
     originalCode?: string;
   }[] = [];
-  public propertyOperators: {
-    operatorId: string;
-    displayName: string;
-    position: { x: number; y: number };
-  }[] = [];
   private agentActionPreviewActive: boolean = false;
   private beforeWorkflowOperatorCodes: Map<string, string> = new Map();
 
@@ -144,12 +136,11 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   private chatContextRegionElement: joint.dia.Element | null = null;
   private chatContextSteps: ReActStep[] = [];
 
-  // Operator result panels (one per operator, shown when annotations toggled on)
-  public resultPanels: Array<{
-    operatorId: string;
-    summary: OperatorResultSummary;
-    position: { x: number; y: number };
-  }> = [];
+  // Track which operators are currently expanded with result info
+  private expandedResultOperators = new Set<string>();
+  // Cached state for re-applying expansion after workflow reload
+  private resultAnnotationsVisible = false;
+  private currentResultSummaries = new Map<string, any>();
 
   // Message region highlighting state
   private messageRegionElement: joint.dia.Element | null = null;
@@ -1566,55 +1557,147 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   }
 
   /**
-   * Handle operator result annotation display.
-   * When toggled on, shows SVG shape labels on ports AND result panels next to each operator.
+   * Handle operator result display by expanding/collapsing operators.
+   * When toggled on, expands each operator with results to show info inside its box.
    */
   private handleOperatorResultAnnotations(): void {
+    // Subscribe to annotation state changes
     combineLatest([
       this.copilotManagerService.resultAnnotationsVisible$,
       this.copilotManagerService.operatorResultSummaries$,
     ])
       .pipe(untilDestroyed(this))
       .subscribe(([visible, summaries]) => {
-        // Clear all existing SVG annotations
-        const allOps = this.workflowActionService.getTexeraGraph().getAllOperators();
-        this.jointUIService.hideAllOperatorResultAnnotations(
-          this.paper,
-          allOps.map(op => op.operatorID)
-        );
-
-        if (!visible || summaries.size === 0) {
-          this.resultPanels = [];
-          return;
-        }
-
-        const panels: typeof this.resultPanels = [];
-        const scale = this.paper.scale();
-        const translate = this.paper.translate();
-
-        for (const [opId, summary] of summaries) {
-          if (!this.workflowActionService.getTexeraGraph().hasOperator(opId)) continue;
-
-          // Show SVG shape labels on ports
-          this.jointUIService.showOperatorResultAnnotation(this.paper, opId, {
-            inputPortShapes: summary.inputPortShapes,
-            outputTuples: summary.outputTuples,
-            outputColumns: summary.outputColumns,
-          });
-
-          // Compute panel position to the right of the operator
-          const jointCell = this.paper.getModelById(opId);
-          if (!jointCell) continue;
-          const bbox = jointCell.getBBox();
-          const x = (bbox.x + bbox.width + 20) * scale.sx + translate.tx;
-          const y = bbox.y * scale.sy + translate.ty;
-
-          panels.push({ operatorId: opId, summary, position: { x, y } });
-        }
-
-        this.resultPanels = panels;
-        this.changeDetectorRef.detectChanges();
+        this.resultAnnotationsVisible = visible;
+        this.currentResultSummaries = summaries;
+        this.applyOperatorExpansions();
       });
+
+    // Re-apply expansions after workflow reload recreates operators
+    this.workflowActionService
+      .getTexeraGraph()
+      .getOperatorAddStream()
+      .pipe(
+        auditTime(200), // Batch rapid adds during reload
+        untilDestroyed(this)
+      )
+      .subscribe(() => {
+        if (this.resultAnnotationsVisible && this.currentResultSummaries.size > 0) {
+          this.applyOperatorExpansions();
+        }
+      });
+  }
+
+  /**
+   * Apply or remove operator expansions based on current state.
+   */
+  private applyOperatorExpansions(): void {
+    // Collapse all previously expanded operators
+    this.jointUIService.collapseAllOperators(this.paper, [...this.expandedResultOperators]);
+    this.expandedResultOperators.clear();
+
+    if (!this.resultAnnotationsVisible || this.currentResultSummaries.size === 0) return;
+
+    for (const [opId, summary] of this.currentResultSummaries) {
+      if (!this.workflowActionService.getTexeraGraph().hasOperator(opId)) continue;
+
+      const operator = this.workflowActionService.getTexeraGraph().getOperator(opId);
+      const props = operator ? this.extractOperatorProperties(operator) : [];
+
+      this.jointUIService.expandOperatorWithResults(this.paper, opId, summary, props);
+      this.expandedResultOperators.add(opId);
+    }
+  }
+
+  /**
+   * Extract key properties from an operator for display in the expanded view.
+   * Ported from InlinePropertyPanelComponent.
+   */
+  private extractOperatorProperties(operator: OperatorPredicate): Array<{ label: string; value: string }> {
+    const props = operator.operatorProperties as Record<string, any>;
+    const type = operator.operatorType;
+
+    switch (type) {
+      case "Projection": {
+        const items: Array<{ label: string; value: string }> = [];
+        items.push({ label: "Mode", value: props["isDrop"] ? "Drop" : "Keep" });
+        const attrs = props["attributes"] as Array<{ originalAttribute?: string; alias?: string }> | undefined;
+        if (attrs && attrs.length > 0) {
+          const names = attrs
+            .map(a => (a.alias && a.alias !== a.originalAttribute ? `${a.originalAttribute}→${a.alias}` : a.originalAttribute || ""))
+            .filter(Boolean);
+          items.push({ label: "Attributes", value: names.join(", ") || "(none)" });
+        }
+        return items;
+      }
+      case "Sort": {
+        const attrs = props["attributes"] as Array<{ attribute?: string; sortPreference?: string }> | undefined;
+        if (attrs && attrs.length > 0) {
+          const spec = attrs.map(a => `${a.attribute || ""} ${a.sortPreference === "DESC" ? "↓" : "↑"}`).join(", ");
+          return [{ label: "Sort By", value: spec }];
+        }
+        return [];
+      }
+      case "Limit":
+        return props["limit"] !== undefined ? [{ label: "Limit", value: String(props["limit"]) }] : [];
+      case "CSVScanSource":
+      case "CSVFileScan": {
+        const items: Array<{ label: string; value: string }> = [];
+        if (props["fileName"]) {
+          const parts = String(props["fileName"]).split("/");
+          items.push({ label: "File", value: parts[parts.length - 1] || props["fileName"] });
+        }
+        if (props["customDelimiter"]) {
+          const d = props["customDelimiter"];
+          items.push({ label: "Delimiter", value: d === "," ? "comma" : d === "\t" ? "tab" : `"${d}"` });
+        }
+        return items;
+      }
+      case "HashJoin": {
+        const items: Array<{ label: string; value: string }> = [];
+        if (props["buildAttributeName"] && props["probeAttributeName"]) {
+          items.push({ label: "Join", value: `${props["buildAttributeName"]} = ${props["probeAttributeName"]}` });
+        }
+        if (props["joinType"]) {
+          items.push({ label: "Type", value: String(props["joinType"]).toLowerCase().replace(/_/g, " ") });
+        }
+        return items;
+      }
+      case "Aggregate": {
+        const items: Array<{ label: string; value: string }> = [];
+        const groupByKeys = props["groupByKeys"] as string[] | undefined;
+        if (groupByKeys && groupByKeys.length > 0) {
+          items.push({ label: "Group By", value: groupByKeys.join(", ") });
+        }
+        const aggs = props["aggregations"] as Array<{
+          aggFunction?: string;
+          attribute?: string;
+          "result attribute"?: string;
+        }> | undefined;
+        if (aggs && aggs.length > 0) {
+          for (const a of aggs) {
+            const fn = a.aggFunction || "?";
+            const attr = a.attribute || "?";
+            const resultAttr = a["result attribute"];
+            const desc = resultAttr ? `${fn}(${attr}) → ${resultAttr}` : `${fn}(${attr})`;
+            items.push({ label: fn, value: desc });
+          }
+        }
+        return items;
+      }
+      default: {
+        // Generic: show first few simple properties
+        const items: Array<{ label: string; value: string }> = [];
+        for (const key of Object.keys(props).slice(0, 3)) {
+          const val = props[key];
+          if (val !== undefined && val !== null && typeof val !== "object") {
+            const label = key.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase()).trim();
+            items.push({ label, value: String(val) });
+          }
+        }
+        return items;
+      }
+    }
   }
 
   /**
@@ -1681,7 +1764,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
           this.updatePanelPositions();
         } else {
           this.pythonUdfOperators = [];
-          this.propertyOperators = [];
           this.changeDetectorRef.detectChanges();
         }
       });
@@ -1766,8 +1848,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
 
     // Code panel width: 400px
     const CODE_PANEL_WIDTH = 400;
-    // Property panel width: 200px
-    const PROPERTY_PANEL_WIDTH = 200;
 
     this.pythonUdfOperators = openPythonUdfs
       .map(op => {
@@ -1803,33 +1883,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
       code: string;
       isDiffMode: boolean;
       originalCode?: string;
-    }[];
-
-    // Filter to non-Python UDF operators that have their panel open (show property panel)
-    const openPropertyOps = operators.filter(op => !isPythonUdf(op) && this.openPanelIds.has(op.operatorID));
-
-    this.propertyOperators = openPropertyOps
-      .map(op => {
-        const position = getOperatorPanelPosition(op.operatorID, PROPERTY_PANEL_WIDTH);
-        if (!position) {
-          return null;
-        }
-
-        // Get display name (custom or default)
-        const operatorSchema = this.dynamicSchemaService.getDynamicSchema(op.operatorID);
-        const displayName =
-          op.customDisplayName ?? operatorSchema?.additionalMetadata.userFriendlyName ?? op.operatorType;
-
-        return {
-          operatorId: op.operatorID,
-          displayName: displayName,
-          position: position,
-        };
-      })
-      .filter(op => op !== null) as {
-      operatorId: string;
-      displayName: string;
-      position: { x: number; y: number };
     }[];
 
     this.changeDetectorRef.detectChanges();

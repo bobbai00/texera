@@ -1069,113 +1069,234 @@ export class JointUIService {
     });
   }
 
+  private static readonly EXPANDED_WIDTH = 220;
+
   /**
-   * Show operator result annotations next to input/output ports.
-   * Dynamically injects SVG text elements into the operator's view.
+   * Expand an operator to show result + property information inside its box.
+   * Layout:
+   *   Row 1: [icon] [type]  In[0]: R×C  Out: R×C
+   *   Separator
+   *   Rows: Key properties of the operator
    */
-  public showOperatorResultAnnotation(
+  public expandOperatorWithResults(
     jointPaper: joint.dia.Paper,
     operatorID: string,
-    annotation: {
-      inputPortShapes?: { portIndex: number; rows: number; columns: number }[];
+    summary: {
+      state: string;
+      inputTuples: number;
       outputTuples: number;
+      inputPortShapes?: { portIndex: number; rows: number; columns: number }[];
       outputColumns?: number;
+      error?: string;
     },
-    onClick?: (operatorID: string) => void
+    properties?: Array<{ label: string; value: string }>
   ): void {
-    const view = jointPaper.findViewByModel(operatorID);
-    if (!view) return;
+    const element = jointPaper.getModelById(operatorID) as joint.shapes.devs.Model;
+    if (!element) return;
 
     const svgNs = "http://www.w3.org/2000/svg";
-    const groupEl = view.el.querySelector(".element-node") || view.el;
-
-    // Remove existing annotations first
-    groupEl.querySelectorAll(".result-annotation").forEach((el: Element) => el.remove());
-
-    const element = jointPaper.getModelById(operatorID) as joint.shapes.devs.Model;
-    const allPorts = element.getPorts();
-    const inPorts = allPorts.filter(p => p.group === "in");
-    const outPorts = allPorts.filter(p => p.group === "out");
-
-    const opWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
-    const opHeight = JointUIService.DEFAULT_OPERATOR_HEIGHT;
-
-    // Compute vertical positions for ports (JointJS distributes ports evenly)
-    const getPortY = (index: number, total: number): number => {
-      if (total <= 1) return opHeight / 2;
-      return (opHeight / (total + 1)) * (index + 1);
-    };
-
-    const makeClickable = (el: SVGElement): void => {
-      el.style.cursor = "pointer";
-      el.setAttribute("pointer-events", "all");
-      if (onClick) {
-        el.addEventListener("click", (e: Event) => {
-          e.stopPropagation();
-          onClick(operatorID);
-        });
-      }
-    };
-
-    // Input port annotations (left side)
-    if (annotation.inputPortShapes && annotation.inputPortShapes.length > 0) {
-      inPorts.forEach((port, idx) => {
-        const shape = annotation.inputPortShapes?.find(s => s.portIndex === idx);
-        if (!shape) return;
-
-        const label = `${shape.rows}×${shape.columns}`;
-        const textEl = document.createElementNS(svgNs, "text");
-        textEl.classList.add("result-annotation");
-        textEl.setAttribute("x", String(-12));
-        textEl.setAttribute("y", String(getPortY(idx, inPorts.length) + 4));
-        textEl.setAttribute("text-anchor", "end");
-        textEl.setAttribute("font-size", "10");
-        textEl.setAttribute("font-family", "sans-serif");
-        textEl.setAttribute("fill", "#1890ff");
-        textEl.setAttribute("font-weight", "500");
-        textEl.textContent = label;
-        makeClickable(textEl);
-        groupEl.appendChild(textEl);
-      });
-    }
-
-    // Output port annotations (right side)
-    if (annotation.outputColumns !== undefined) {
-      outPorts.forEach((_, idx) => {
-        const label = `${annotation.outputTuples}×${annotation.outputColumns}`;
-        const textEl = document.createElementNS(svgNs, "text");
-        textEl.classList.add("result-annotation");
-        textEl.setAttribute("x", String(opWidth + 12));
-        textEl.setAttribute("y", String(getPortY(idx, outPorts.length) + 4));
-        textEl.setAttribute("text-anchor", "start");
-        textEl.setAttribute("font-size", "10");
-        textEl.setAttribute("font-family", "sans-serif");
-        textEl.setAttribute("fill", "#52c41a");
-        textEl.setAttribute("font-weight", "500");
-        textEl.textContent = label;
-        makeClickable(textEl);
-        groupEl.appendChild(textEl);
-      });
-    }
-  }
-
-  /**
-   * Hide operator result annotations.
-   */
-  public hideOperatorResultAnnotation(jointPaper: joint.dia.Paper, operatorID: string): void {
     const view = jointPaper.findViewByModel(operatorID);
     if (!view) return;
-
     const groupEl = view.el.querySelector(".element-node") || view.el;
-    groupEl.querySelectorAll(".result-annotation").forEach((el: Element) => el.remove());
+
+    // Remove any previously injected result elements
+    groupEl.querySelectorAll(".result-info").forEach((el: Element) => el.remove());
+
+    const fontSize = 10;
+    const fontFamily = "'Inter', -apple-system, sans-serif";
+    const textColor = "#595959";
+    const headerColor = "#262626";
+    const padding = 8;
+    const lineH = 13;
+    const ew = JointUIService.EXPANDED_WIDTH;
+
+    // --- Helper to add SVG text ---
+    const addText = (
+      x: number,
+      y: number,
+      parts: Array<{ text: string; fill: string; bold?: boolean }>
+    ): void => {
+      const textEl = document.createElementNS(svgNs, "text");
+      textEl.classList.add("result-info");
+      textEl.setAttribute("x", String(x));
+      textEl.setAttribute("y", String(y));
+      textEl.setAttribute("font-size", String(fontSize));
+      textEl.setAttribute("font-family", fontFamily);
+      for (const part of parts) {
+        const tspan = document.createElementNS(svgNs, "tspan");
+        tspan.setAttribute("fill", part.fill);
+        if (part.bold) tspan.setAttribute("font-weight", "600");
+        tspan.textContent = part.text;
+        textEl.appendChild(tspan);
+      }
+      groupEl.appendChild(textEl);
+    };
+
+    // --- Header area: icon + type on left, shapes on right ---
+    let curY = padding;
+    const iconCenterY = curY + 12;
+    const shapeX = 140; // X offset for shape info (right side of header)
+
+    // Input shape line (right of type, same row as icon)
+    const inParts: Array<{ text: string; fill: string; bold?: boolean }> = [];
+    if (summary.inputPortShapes && summary.inputPortShapes.length > 0) {
+      for (const ps of summary.inputPortShapes) {
+        if (inParts.length > 0) inParts.push({ text: "  ", fill: textColor });
+        inParts.push({ text: `In[${ps.portIndex}]: `, fill: textColor });
+        inParts.push({ text: `${ps.rows}×${ps.columns}`, fill: "#1890ff", bold: true });
+      }
+    } else {
+      inParts.push({ text: "In: ", fill: textColor });
+      inParts.push({ text: `${summary.inputTuples}`, fill: "#1890ff", bold: true });
+    }
+    addText(shapeX, iconCenterY, inParts);
+
+    // Output shape line (right of type, one line below input)
+    const outVal =
+      summary.outputColumns !== undefined
+        ? `${summary.outputTuples}×${summary.outputColumns}`
+        : `${summary.outputTuples}`;
+    addText(shapeX, iconCenterY + lineH, [
+      { text: "Out: ", fill: textColor },
+      { text: outVal, fill: "#52c41a", bold: true },
+    ]);
+
+    curY += 32;
+
+    // --- Separator line ---
+    const sepLine = document.createElementNS(svgNs, "line");
+    sepLine.classList.add("result-info");
+    sepLine.setAttribute("x1", String(padding));
+    sepLine.setAttribute("x2", String(ew - padding));
+    sepLine.setAttribute("y1", String(curY));
+    sepLine.setAttribute("y2", String(curY));
+    sepLine.setAttribute("stroke", "#e8e8e8");
+    sepLine.setAttribute("stroke-width", "1");
+    groupEl.appendChild(sepLine);
+    curY += 4;
+
+    // --- Properties section ---
+    const props = properties ?? [];
+    if (props.length > 0) {
+      for (const prop of props) {
+        curY += lineH;
+        const truncVal =
+          prop.value.length > 30 ? prop.value.slice(0, 30) + "…" : prop.value;
+        addText(padding, curY, [
+          { text: `${prop.label}: `, fill: textColor },
+          { text: truncVal, fill: headerColor, bold: true },
+        ]);
+      }
+      curY += 4;
+    }
+
+    // --- Error (if any) ---
+    if (summary.error) {
+      curY += lineH;
+      const errText = summary.error.length > 35 ? summary.error.slice(0, 35) + "…" : summary.error;
+      addText(padding, curY, [{ text: errText, fill: "#ff4d4f" }]);
+      curY += 4;
+    }
+
+    curY += padding;
+    const eh = Math.max(curY, 50);
+
+    // --- Resize element ---
+    element.resize(ew, eh);
+
+    // --- Reposition controls for new size ---
+    element.attr({
+      "rect.boundary": { width: ew + 20, height: eh + 20 },
+      ".delete-button": { x: ew, y: -20 },
+      ".chat-button": { x: ew + 25, y: -20 },
+      ".add-input-port-button": { x: -25, y: eh + 5 },
+      ".remove-input-port-button": { x: -25, y: eh + 25 },
+      ".add-output-port-button": { x: ew + 5, y: eh + 5 },
+      ".remove-output-port-button": { x: ew + 5, y: eh + 25 },
+      ".texera-operator-icon": {
+        width: 24,
+        height: 24,
+        "ref-x": padding + 12,
+        "ref-y": iconCenterY,
+      },
+      ".texera-operator-friendly-name": {
+        visibility: "visible",
+        "ref-x": padding + 30,
+        "ref-y": iconCenterY,
+        "x-alignment": "start",
+        "text-anchor": "start",
+        fill: headerColor,
+        "font-size": "11px",
+        "font-weight": "bold",
+      },
+      ".texera-operator-name": {
+        "ref-x": 0.5,
+        "ref-y": eh + 14,
+        "x-alignment": "middle",
+      },
+      [`.${operatorStateClass}`]: { visibility: "hidden" },
+    });
   }
 
   /**
-   * Hide all operator result annotations on the paper.
+   * Collapse an operator back to its default size, removing result info.
    */
-  public hideAllOperatorResultAnnotations(jointPaper: joint.dia.Paper, operatorIDs: string[]): void {
+  public collapseOperator(jointPaper: joint.dia.Paper, operatorID: string): void {
+    const element = jointPaper.getModelById(operatorID) as joint.shapes.devs.Model;
+    if (!element) return;
+
+    const dw = JointUIService.DEFAULT_OPERATOR_WIDTH;
+    const dh = JointUIService.DEFAULT_OPERATOR_HEIGHT;
+
+    // Restore original size
+    element.resize(dw, dh);
+
+    // Restore boundary, buttons, and label positions
+    element.attr({
+      "rect.boundary": { width: dw + 20, height: dh + 20 },
+      ".delete-button": { x: 60, y: -20 },
+      ".chat-button": { x: 85, y: -20 },
+      ".add-input-port-button": { x: -25, y: 65 },
+      ".remove-input-port-button": { x: -25, y: 85 },
+      ".add-output-port-button": { x: 65, y: 65 },
+      ".remove-output-port-button": { x: 65, y: 85 },
+      ".texera-operator-icon": {
+        width: 35,
+        height: 35,
+        "ref-x": 0.5,
+        "ref-y": 0.5,
+      },
+      ".texera-operator-friendly-name": {
+        visibility: "visible",
+        "ref-x": 0.5,
+        "ref-y": -12,
+        "x-alignment": "middle",
+        "text-anchor": "middle",
+        fill: "#888888",
+        "font-size": "10px",
+        "font-weight": "normal",
+      },
+      ".texera-operator-name": {
+        "ref-x": 0.5,
+        "ref-y": 80,
+        "x-alignment": "middle",
+      },
+      [`.${operatorStateClass}`]: { visibility: "hidden" },
+    });
+
+    // Remove injected result info elements
+    const view = jointPaper.findViewByModel(operatorID);
+    if (!view) return;
+    const groupEl = view.el.querySelector(".element-node") || view.el;
+    groupEl.querySelectorAll(".result-info").forEach((el: Element) => el.remove());
+  }
+
+  /**
+   * Collapse all operators back to default size.
+   */
+  public collapseAllOperators(jointPaper: joint.dia.Paper, operatorIDs: string[]): void {
     for (const opId of operatorIDs) {
-      this.hideOperatorResultAnnotation(jointPaper, opId);
+      this.collapseOperator(jointPaper, opId);
     }
   }
 }

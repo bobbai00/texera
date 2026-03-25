@@ -70,17 +70,6 @@
   z-index: 10;
 }
 
-// Property panel wrapper - same width as code panel for consistency
-.property-panel-wrapper {
-  position: absolute;
-  width: 400px;
-  height: auto;
-  min-height: 60px;
-  max-height: 180px;
-  pointer-events: auto;
-  z-index: 10;
-}
-
 // Step badges overlay container
 .step-badges-container {
   position: absolute;
@@ -144,13 +133,6 @@
   &:active {
     transform: scale(1.05);
   }
-}
-
-// Operator result panel overlay
-.result-panel-overlay {
-  position: absolute;
-  pointer-events: auto;
-  z-index: 20;
 }
 
 // Chat popover container for operator chat button

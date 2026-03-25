@@ -45,22 +45,6 @@
     </div>
   </div>
 
-  <!-- Property Panels Container -->
-  <div
-    class="panels-container"
-    *ngIf="propertyOperators.length > 0">
-    <div
-      *ngFor="let op of propertyOperators"
-      class="property-panel-wrapper"
-      [style.left.px]="op.position.x"
-      [style.top.px]="op.position.y">
-      <texera-inline-property-panel
-        [operatorId]="op.operatorId"
-        [displayName]="op.displayName"
-        (closePanel)="closePanel($event)"></texera-inline-property-panel>
-    </div>
-  </div>
-
   <!-- Step Badge Overlay Container -->
   <div
     class="step-badges-container"
@@ -100,18 +84,6 @@
       {{ badge.stepId }}
     </div>
   </div>
-
-  <!-- Operator Result Panels (shown for all operators when toggled on) -->
-  <ng-container *ngIf="resultPanels.length > 0">
-    <texera-operator-result-panel
-      *ngFor="let panel of resultPanels"
-      class="result-panel-overlay"
-      [style.left.px]="panel.position.x"
-      [style.top.px]="panel.position.y"
-      [operatorId]="panel.operatorId"
-      [summary]="panel.summary">
-    </texera-operator-result-panel>
-  </ng-container>
 
   <!-- Chat Popover for Operator -->
   <div
