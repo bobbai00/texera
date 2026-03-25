@@ -771,7 +771,12 @@ export async function executeOperatorAndFormat(
   workflowState: WorkflowState,
   config: ExecutionConfig,
   operatorId: string,
-  options: { abortSignal?: AbortSignal; onResult?: (operatorId: string, backendStats?: Record<string, string>) => void } = {}
+  options: {
+    abortSignal?: AbortSignal;
+    onResult?: (operatorId: string, operatorInfo: OperatorInfo) => void;
+    /** @deprecated Use onResult with OperatorInfo instead */
+    onResultLegacy?: (operatorId: string, backendStats?: Record<string, string>) => void;
+  } = {}
 ): Promise<string> {
   // Acquire mutex to serialize executions for this workflow
   // This prevents ConcurrentModificationException on the backend
@@ -862,9 +867,9 @@ export async function executeOperatorAndFormat(
       : [];
     const columns = headers.length;
 
-    // Notify caller with backend stats (from ydata-profiling in Python worker)
+    // Notify caller with the full OperatorInfo (structured data for versioned storage)
     if (options.onResult) {
-      options.onResult(operatorId, opInfo.resultStatistics);
+      options.onResult(operatorId, opInfo);
     }
 
     let dataString: string;
@@ -968,8 +973,7 @@ export async function executeOperatorAndFormat(
 export function createExecuteOperatorTool(
   workflowState: WorkflowState,
   getConfig: () => ExecutionConfig,
-  onResult?: (operatorId: string, backendStats?: Record<string, string>) => void,
-  onFormattedResult?: (operatorId: string, formattedResult: string) => void
+  onResult?: (operatorId: string, operatorInfo: OperatorInfo) => void
 ) {
   return tool({
     description: "Execute the workflow and get the specified operator's result. The execution result(if succeeded) includes the shape of the input tables(if any) and output table, and the records in the output table",
@@ -977,13 +981,8 @@ export function createExecuteOperatorTool(
       operatorId: z.string().describe("The operator ID to view result for."),
     }),
     execute: async (args: { operatorId: string }, options: { abortSignal?: AbortSignal }) => {
-      // Get current config at execution time (allows settings updates to take effect)
       const config = getConfig();
-      const result = await executeOperatorAndFormat(workflowState, config, args.operatorId, { ...options, onResult });
-      if (onFormattedResult) {
-        onFormattedResult(args.operatorId, result);
-      }
-      return result;
+      return await executeOperatorAndFormat(workflowState, config, args.operatorId, { ...options, onResult });
     },
   });
 }

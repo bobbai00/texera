@@ -196,15 +196,18 @@ export class AgentActionManager {
    */
   getAncestorPath(actionId?: string): string[] {
     const target = actionId ?? this.head;
-    if (!target || target === INITIAL_ACTION_ID) return [];
+    if (!target) return [];
+    if (target === INITIAL_ACTION_ID) return [INITIAL_ACTION_ID];
 
-    const path: string[] = [];
+    // Walk from target to root, collecting real action IDs
+    const chain: string[] = [];
     let current: string | undefined = target;
     while (current && current !== INITIAL_ACTION_ID) {
-      path.unshift(current);
+      chain.unshift(current);
       current = this.actions.get(current)?.parentId;
     }
-    return path;
+    // Prepend the initial action so results stored there are visible
+    return [INITIAL_ACTION_ID, ...chain];
   }
 
   /**

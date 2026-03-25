@@ -27,6 +27,8 @@ import { debounceTime } from "rxjs/operators";
 import { WorkflowState } from "../workflow/workflow-state";
 import { OperatorMetadataStore } from "../tools/metadata-tools";
 import { AgentActionManager, INITIAL_ACTION_ID } from "./agent-action-manager";
+import { OperatorResultStore } from "./operator-result-store";
+import { formatOperatorResult, type FormatOptions } from "../tools/result-formatting";
 import type {
   AgentSettings,
   ReActStep,
@@ -83,7 +85,6 @@ import {
 import { trimNonFrontierResults } from "./context-optimization";
 import { filterLatestOnlyMessages } from "./latest-only-filter";
 import { redactActionDetails } from "./no-action-detail-filter";
-import { parseBackendStats, type ResultStatistics } from "./result-summarization-filter";
 
 // ============================================================================
 // Constants
@@ -148,14 +149,12 @@ export class TexeraAgent {
   // State
   private state: AgentStateEnum = AgentStateEnum.AVAILABLE;
   private workflowState: WorkflowState;
-  /** Pre-computed execution result statistics per operator (for result summarization filter). */
-  private resultStatistics: Map<string, ResultStatistics> = new Map();
-  /** Stores formatted execution result text per operator (for DAG serialization in noActionDetail). */
-  private operatorExecutionResults: Map<string, string> = new Map();
   // Uses global singleton - initialized once at server startup
   private metadataStore: OperatorMetadataStore;
   // Agent action manager for tracking workflow modifications
   private agentActionManager: AgentActionManager;
+  // Versioned operator result store
+  private operatorResultStore: OperatorResultStore;
 
   // Server-managed state (for HTTP/WebSocket handling)
   /** RxJS subscription for agent action streaming */
@@ -215,6 +214,8 @@ export class TexeraAgent {
     this.metadataStore = OperatorMetadataStore.getInstance();
     // Initialize agent action manager
     this.agentActionManager = new AgentActionManager();
+    // Initialize versioned operator result store
+    this.operatorResultStore = new OperatorResultStore(this.agentActionManager);
 
     // Initialize settings with defaults
     this.settings = {
@@ -333,13 +334,12 @@ export class TexeraAgent {
       executeOperator: getExecutionConfig
         ? async (operatorId: string) => {
             const result = await executeOperatorAndFormat(this.workflowState, getExecutionConfig(), operatorId, {
-              onResult: (opId, backendStats) => {
-                if (backendStats && Object.keys(backendStats).length > 0) {
-                  this.resultStatistics.set(opId, parseBackendStats(backendStats));
-                }
+              onResult: (opId, operatorInfo) => {
+                // Store raw OperatorInfo in versioned store at the current HEAD action
+                const actionId = this.agentActionManager.getHead();
+                this.operatorResultStore.set(opId, actionId, operatorInfo);
               },
             });
-            this.operatorExecutionResults.set(operatorId, typeof result === "string" ? result : String(result));
             return result;
           }
         : undefined,
@@ -372,13 +372,9 @@ export class TexeraAgent {
       tools[TOOL_NAME_EXECUTE_OPERATOR] = createExecuteOperatorTool(
         this.workflowState,
         getExecutionConfig,
-        (opId, backendStats) => {
-          if (backendStats && Object.keys(backendStats).length > 0) {
-            this.resultStatistics.set(opId, parseBackendStats(backendStats));
-          }
-        },
-        (opId, result) => {
-          this.operatorExecutionResults.set(opId, typeof result === "string" ? result : String(result));
+        (opId, operatorInfo) => {
+          const actionId = this.agentActionManager.getHead();
+          this.operatorResultStore.set(opId, actionId, operatorInfo);
         }
       );
     }
@@ -404,6 +400,10 @@ export class TexeraAgent {
 
   getAgentActionManager(): AgentActionManager {
     return this.agentActionManager;
+  }
+
+  getOperatorResultStore(): OperatorResultStore {
+    return this.operatorResultStore;
   }
 
   /**
@@ -998,7 +998,7 @@ export class TexeraAgent {
               let processed: ModelMessage[];
               if (useRedact) {
                 const removeProperties = this.settings.noActionDetail;
-                processed = redactActionDetails(historicalInteractions, this.workflowState, this.operatorExecutionResults, removeProperties);
+                processed = redactActionDetails(historicalInteractions, this.workflowState, this.getFormattedResultsForDAG(), removeProperties);
               } else {
                 // Without redact: use historical interactions + current messages (which contain tool calls/results from prior steps)
                 processed = [...historicalInteractions, ...currentMessages];
@@ -1248,6 +1248,25 @@ export class TexeraAgent {
   }
 
   /**
+   * Build a Map<operatorId, formattedString> from the versioned result store
+   * using the current HEAD. Used for DAG serialization in no-action-detail filter.
+   */
+  private getFormattedResultsForDAG(): Map<string, string> {
+    const result = new Map<string, string>();
+    const visible = this.operatorResultStore.getAllVisible();
+    const formatOpts: FormatOptions = {
+      serializationMode: this.settings.operatorResultSerializationMode,
+      maxCharLimit: this.settings.maxOperatorResultCharLimit,
+      carryMetadata: this.settings.carryMetadata,
+      noExecutionMetadata: this.settings.noExecutionMetadata,
+    };
+    for (const [operatorId, entry] of visible) {
+      result.set(operatorId, formatOperatorResult(operatorId, entry.operatorInfo, this.workflowState, formatOpts));
+    }
+    return result;
+  }
+
+  /**
    * Stop the current message processing immediately.
    * This aborts any ongoing LLM calls and tool executions.
    */
@@ -1277,7 +1296,7 @@ export class TexeraAgent {
     this.currentMessageId = undefined;
     this.agentActionManager.clearAllAgentActions();
     this.workflowState.reset();
-    this.operatorExecutionResults.clear();
+    this.operatorResultStore.clear();
   }
 
   // ============================================================================
