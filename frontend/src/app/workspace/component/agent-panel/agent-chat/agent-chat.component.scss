@@ -55,55 +55,110 @@
   flex-direction: row;
 }
 
-// Timeline Styles
+// Action Tree Styles
 .timeline-container {
-  width: 160px;
-  min-width: 160px;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #f0f0f0;
   background: #fafafa;
-}
+  flex-shrink: 0;
+  transition: width 0.15s ease;
 
-.timeline-track {
-  flex: 1;
-  overflow-y: auto;
-  position: relative;
-  padding: 12px 0;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  &::-webkit-scrollbar {
-    display: none;
+  &.collapsed {
+    border-right: none;
   }
 }
 
-.timeline-line {
-  position: absolute;
-  left: 30px;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: #d9d9d9;
-  z-index: 0;
+.tree-panel-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px;
+  flex-shrink: 0;
 }
 
-.timeline-node {
+.tree-collapse-btn {
+  background: none;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 2px 4px;
+  color: #8c8c8c;
+  font-size: 10px;
+  line-height: 1;
+
+  &:hover {
+    background: #e8e8e8;
+    color: #595959;
+  }
+}
+
+.tree-viewport {
+  flex: 1;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.tree-canvas {
   position: relative;
+}
+
+// Resize handle
+.tree-resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s;
+
+  &:hover,
+  &:active {
+    background: #1890ff;
+  }
+}
+
+// SVG edges
+.tree-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.tree-edge {
+  fill: none;
+  stroke: #d9d9d9;
+  stroke-width: 1.5;
+
+  &.on-path {
+    stroke: #bfbfbf;
+    stroke-width: 2;
+  }
+
+  &.off-path {
+    opacity: 0.4;
+  }
+}
+
+// Tree nodes — single row, rounded rectangle, flexible width
+.tree-node {
+  position: absolute;
   display: flex;
   flex-direction: row;
   align-items: center;
-  margin-bottom: 8px;
-  padding-left: 6px;
-  z-index: 1;
+  justify-content: flex-start;
+  height: 24px;
+  padding: 0 8px;
+  background: #fff;
+  border: 1.5px solid #d9d9d9;
+  border-radius: 6px;
   cursor: pointer;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s ease, background 0.2s ease;
+  z-index: 1;
 
-  &:hover .node-capsule {
-    filter: brightness(1.1);
-    box-shadow: 0 0 8px rgba(0, 0, 0, 0.25);
+  &:hover {
+    background: #f5f5f5;
   }
 
-  // Dim nodes not on the current HEAD path
   &.off-path {
     opacity: 0.4;
     &:hover {
@@ -111,57 +166,24 @@
     }
   }
 
-  .node-capsule {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2px 8px;
-    border-radius: 10px;
-    border: 2px solid;
-    background: white;
-    transition: all 0.2s ease;
-    flex-shrink: 0;
-    min-width: 40px;
+  // HEAD node: green
+  &.is-head {
+    background: #52c41a;
+    border-color: #389e0d;
 
-    .capsule-label {
-      font-size: 9px;
-      font-weight: 600;
+    .node-text {
       color: #fff;
-      white-space: nowrap;
     }
   }
 
-  .node-operator-id {
-    margin-left: 6px;
+  .node-text {
     font-size: 10px;
+    font-weight: 500;
     color: #595959;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 80px;
-  }
-
-  &.is-head .node-capsule {
-    box-shadow: 0 0 0 3px #722ed1, 0 0 8px rgba(114, 46, 209, 0.4);
-  }
-}
-
-.timeline-arrow {
-  display: flex;
-  justify-content: flex-start;
-  padding-left: 18px;
-  margin-top: 4px;
-  color: #d9d9d9;
-  font-size: 14px;
-}
-
-.timeline-track:has(.timeline-node.highlighted) {
-  .timeline-node:not(.highlighted) {
-    opacity: 0.4;
-    &:hover,
-    &.hovered {
-      opacity: 1;
-    }
+    line-height: 1;
   }
 }
 

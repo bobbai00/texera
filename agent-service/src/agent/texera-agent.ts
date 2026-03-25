@@ -564,14 +564,17 @@ export class TexeraAgent {
    * Serialize a single message's ReActSteps into a summary string.
    */
   private serializeInteraction(messageId: string, steps: ReActStep[]): string {
+    const isOngoing = messageId === this.currentMessageId;
     const lines: string[] = [];
-    lines.push("Here is a summary of user-assistant interaction that has been done");
+
+    // Header differentiates completed vs ongoing
+    lines.push(isOngoing ? "[Current Task - You Are Working On This]" : "[Completed Task]");
 
     for (const step of steps) {
       if (step.role === "user") {
-        lines.push(`User Task: ${step.content}`);
+        lines.push(`User Request: ${step.content}`);
       } else {
-        lines.push(`Assistant Step ${step.stepId}:`);
+        lines.push(`Agent Step ${step.stepId}:`);
         if (step.content) {
           lines.push(`- thought: ${step.content}`);
         }
@@ -594,12 +597,12 @@ export class TexeraAgent {
       }
     }
 
-    // Status line
-    if (messageId === this.currentMessageId) {
-      lines.push("Interaction ongoing");
-    } else {
-      lines.push("Interaction finished");
-    }
+    // Footer
+    lines.push(
+      isOngoing
+        ? "[Please continue working on this task. Check the current workflow to decide next steps.]"
+        : "[Task Completed]"
+    );
 
     return lines.join("\n");
   }

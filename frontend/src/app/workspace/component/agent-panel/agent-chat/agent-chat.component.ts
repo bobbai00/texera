@@ -43,15 +43,13 @@ import { WorkflowActionService } from "../../../service/workflow-graph/model/wor
 import { NotificationService } from "../../../../common/service/notification/notification.service";
 import { WorkflowVersionService } from "../../../../dashboard/service/user/workflow-version/workflow-version.service";
 import { WorkflowPersistService } from "../../../../common/service/workflow-persist/workflow-persist.service";
-import {
-} from "../../../service/copilot/tool/tool-groups";
+import * as dagre from "dagre";
 
 /**
- * Represents a single node in the tool call timeline.
+ * Represents a single node in the action tree.
  */
 export interface TimelineNode {
   id: string;
-  color: string;
   timestamp: Date;
   agentActionId: string;
   /** Whether this node is the current HEAD in the action tree */
@@ -62,6 +60,24 @@ export interface TimelineNode {
   actionLabel: string;
   /** Operator ID affected by this action */
   operatorId: string;
+  /** Action summary */
+  summary: string;
+  /** Layout position computed by dagre (x, y in pixels) */
+  x: number;
+  y: number;
+  /** Computed width based on text length */
+  width: number;
+}
+
+/**
+ * Represents an edge between parent and child nodes in the action tree.
+ */
+export interface TreeEdge {
+  sourceId: string;
+  targetId: string;
+  /** SVG path data for the edge */
+  path: string;
+  isOnHeadPath: boolean;
 }
 
 @UntilDestroy()
@@ -90,8 +106,13 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public isStatsModalVisible = false;
   public messageStats: CopilotMessageStats[] = [];
 
-  // Timeline-related properties
+  // Tree-related properties
   public timelineNodes: TimelineNode[] = [];
+  public treeEdges: TreeEdge[] = [];
+  public treeCanvasWidth: number = 200;
+  public treeHeight: number = 100;
+  public treePanelWidth: number = 260;
+  public treePanelCollapsed: boolean = false;
 
   // Agent actions for this agent (from copilot manager)
   public agentActions: AgentAction[] = [];
@@ -830,6 +851,14 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
    * Each tool call becomes a node in the timeline.
    */
   private buildTimelineNodes(): void {
+    if (this.agentActions.length === 0) {
+      this.timelineNodes = [];
+      this.treeEdges = [];
+      this.treeCanvasWidth = 200;
+      this.treeHeight = 100;
+      return;
+    }
+
     // Build the HEAD ancestor path for highlighting
     const headPath = new Set<string>();
     if (this.currentHeadId) {
@@ -841,18 +870,81 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       }
     }
 
-    // Sort actions chronologically and build nodes
-    const sorted = [...this.agentActions].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-    this.timelineNodes = sorted.map(action => ({
-      id: action.id,
-      color: this.getActionColor(this.getActionLabel(action)),
-      timestamp: action.createdAt,
-      agentActionId: action.id,
-      isHead: action.id === this.currentHeadId,
-      isOnHeadPath: headPath.has(action.id),
-      actionLabel: this.getActionLabel(action),
-      operatorId: this.getActionOperatorId(action),
-    }));
+    // Build dagre graph for tree layout
+    const g = new dagre.graphlib.Graph();
+    g.setGraph({
+      rankdir: "TB",
+      nodesep: 24,
+      ranksep: 30,
+      marginx: 16,
+      marginy: 16,
+    });
+    g.setDefaultEdgeLabel(() => ({}));
+
+    const nodeHeight = 24;
+    const charWidth = 5.5; // approximate px per character at 10px font-weight:500
+    const nodePadding = 20; // 8px padding each side + border
+    const minNodeWidth = 60;
+    const maxNodeWidth = 240;
+
+    // Compute per-node width based on text length
+    const nodeWidths = new Map<string, number>();
+    for (const action of this.agentActions) {
+      const label = this.getActionLabel(action);
+      const opId = this.getActionOperatorId(action);
+      const textLen = (label + " " + opId).length;
+      const w = Math.max(minNodeWidth, Math.min(maxNodeWidth, textLen * charWidth + nodePadding));
+      nodeWidths.set(action.id, w);
+      g.setNode(action.id, { width: w, height: nodeHeight });
+    }
+
+    // Add edges from parentId → id
+    // Only add edges where parentId refers to an actual action (not the initial dummy)
+    const actionIds = new Set(this.agentActions.map(a => a.id));
+    for (const action of this.agentActions) {
+      if (action.parentId && actionIds.has(action.parentId)) {
+        g.setEdge(action.parentId, action.id);
+      }
+    }
+
+    dagre.layout(g);
+
+    // Extract layout positions and build TimelineNodes
+    this.timelineNodes = this.agentActions.map(action => {
+      const nodeLayout = g.node(action.id);
+      return {
+        id: action.id,
+        timestamp: action.createdAt,
+        agentActionId: action.id,
+        isHead: action.id === this.currentHeadId,
+        isOnHeadPath: headPath.has(action.id),
+        actionLabel: this.getActionLabel(action),
+        operatorId: this.getActionOperatorId(action),
+        summary: action.summary,
+        x: nodeLayout.x,
+        y: nodeLayout.y,
+        width: nodeWidths.get(action.id) ?? minNodeWidth,
+      };
+    });
+
+    // Build edges with SVG paths
+    const nodeMap = new Map(this.timelineNodes.map(n => [n.id, n]));
+    this.treeEdges = g.edges().map(e => {
+      const source = nodeMap.get(e.v)!;
+      const target = nodeMap.get(e.w)!;
+      const isOnPath = headPath.has(e.v) && headPath.has(e.w);
+      const halfH = nodeHeight / 2;
+      const path =
+        source.x === target.x
+          ? `M ${source.x} ${source.y + halfH} L ${target.x} ${target.y - halfH}`
+          : `M ${source.x} ${source.y + halfH} C ${source.x} ${(source.y + target.y) / 2}, ${target.x} ${(source.y + target.y) / 2}, ${target.x} ${target.y - halfH}`;
+      return { sourceId: e.v, targetId: e.w, path, isOnHeadPath: isOnPath };
+    });
+
+    // Compute total tree canvas dimensions
+    const graphLabel = g.graph();
+    this.treeCanvasWidth = Math.max(200, (graphLabel.width ?? 200) + 20);
+    this.treeHeight = (graphLabel.height ?? 100) + 20;
   }
 
   /** Extract the primary operator ID from an agent action's operations. */
@@ -873,23 +965,6 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     return "Action";
   }
 
-  /** Get color for an action label. */
-  private getActionColor(label: string): string {
-    switch (label) {
-      case "Add":
-        return "#52c41a"; // green
-      case "Delete":
-        return "#ff4d4f"; // red
-      case "Modify":
-        return "#fa8c16"; // orange
-      default:
-        return "#1890ff"; // blue
-    }
-  }
-
-  public onTimelineNodeHover(_node: TimelineNode): void {}
-  public onTimelineNodeLeave(): void {}
-
   /**
    * Handle click on a timeline node.
    * For Modify group nodes: checkout to that action (move HEAD) and show preview.
@@ -902,6 +977,26 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.previewAgentAction(node.agentActionId);
       },
     });
+  }
+
+  /** Start resizing the tree panel by dragging the handle. */
+  public onResizeStart(event: MouseEvent): void {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = this.treePanelWidth;
+
+    const onMouseMove = (e: MouseEvent) => {
+      const delta = e.clientX - startX;
+      this.treePanelWidth = Math.max(120, Math.min(500, startWidth + delta));
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
   }
 
   /**

@@ -124,40 +124,52 @@
 
   <!-- Custom Chat Interface -->
   <div class="chat-content-wrapper">
-    <!-- Agent Action Timeline (Git-like vertical axis) -->
+    <!-- Agent Action Tree (Git-style version tree) -->
     <div
       #timelineContainer
-      class="timeline-container">
-      <!-- Timeline Track -->
-      <div class="timeline-track">
-        <div class="timeline-line"></div>
-        <!-- Timeline Nodes (only workflow modifications) -->
-        <div
-          *ngFor="let node of timelineNodes"
-          class="timeline-node"
-          [class.is-head]="node.isHead"
-          [class.on-path]="node.isOnHeadPath"
-          [class.off-path]="!node.isOnHeadPath"
-          (click)="onTimelineNodeClick(node)"
-          (mouseenter)="onTimelineNodeHover(node)"
-          (mouseleave)="onTimelineNodeLeave()">
+      class="timeline-container"
+      [class.collapsed]="treePanelCollapsed"
+      [style.width.px]="treePanelCollapsed ? 24 : treePanelWidth">
+      <!-- Collapse toggle -->
+      <div class="tree-panel-header">
+        <button class="tree-collapse-btn" (click)="treePanelCollapsed = !treePanelCollapsed"
+          [title]="treePanelCollapsed ? 'Expand action tree' : 'Collapse action tree'">
+          <i nz-icon [nzType]="treePanelCollapsed ? 'right' : 'left'" nzTheme="outline"></i>
+        </button>
+      </div>
+      <!-- Tree content (hidden when collapsed) -->
+      <div class="tree-viewport" *ngIf="!treePanelCollapsed">
+        <div class="tree-canvas" [style.width.px]="treeCanvasWidth" [style.height.px]="treeHeight">
+          <!-- SVG layer for edges -->
+          <svg class="tree-edges" [attr.width]="treeCanvasWidth" [attr.height]="treeHeight">
+            <path
+              *ngFor="let edge of treeEdges"
+              [attr.d]="edge.path"
+              [class.on-path]="edge.isOnHeadPath"
+              [class.off-path]="!edge.isOnHeadPath"
+              class="tree-edge" />
+          </svg>
+          <!-- Nodes layer -->
           <div
-            class="node-capsule"
-            [style.background-color]="node.color"
-            [style.border-color]="node.color">
-            <span class="capsule-label">{{ node.actionLabel }}</span>
+            *ngFor="let node of timelineNodes"
+            class="tree-node"
+            [class.is-head]="node.isHead"
+            [class.on-path]="node.isOnHeadPath"
+            [class.off-path]="!node.isOnHeadPath"
+            [style.left.px]="node.x - node.width / 2"
+            [style.top.px]="node.y - 12"
+            [style.width.px]="node.width"
+            (click)="onTimelineNodeClick(node)">
+            <span class="node-text"><b>{{ node.actionLabel }}</b> {{ node.operatorId }}</span>
           </div>
-          <span class="node-operator-id">{{ node.operatorId }}</span>
-        </div>
-        <!-- Downward arrow at the end -->
-        <div class="timeline-arrow">
-          <i
-            nz-icon
-            nzType="arrow-down"
-            nzTheme="outline"></i>
         </div>
       </div>
     </div>
+    <!-- Resize handle between tree panel and chat -->
+    <div
+      *ngIf="!treePanelCollapsed"
+      class="tree-resize-handle"
+      (mousedown)="onResizeStart($event)"></div>
 
     <!-- Messages and Input Column -->
     <div class="chat-main-column">

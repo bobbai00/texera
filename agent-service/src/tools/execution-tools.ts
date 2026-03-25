@@ -785,9 +785,20 @@ export async function executeOperatorAndFormat(
       return createErrorResult("Cannot execute: workflow has no operators.");
     }
 
+    // Validate entire workflow but only block on the target operator's errors.
+    // Other operators' errors are irrelevant — if upstream has issues, execution
+    // will fail with a runtime error that correctly identifies the failing operator.
     const validationResult = validateWorkflow(workflowState);
     if (!validationResult.isValid) {
-      return createErrorResult(formatWorkflowValidationErrors(validationResult));
+      const targetErrors = validationResult.errors[operatorId];
+      if (targetErrors) {
+        const lines = [`Operator ${operatorId}:`];
+        for (const [field, message] of Object.entries(targetErrors)) {
+          lines.push(`  - ${field}: ${message}`);
+        }
+        return createErrorResult(lines.join("\n"));
+      }
+      // Target operator is valid — proceed with execution despite other operators' errors
     }
 
     let result: SyncExecutionResult;
