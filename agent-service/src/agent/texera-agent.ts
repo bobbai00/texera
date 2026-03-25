@@ -567,14 +567,18 @@ export class TexeraAgent {
     const isOngoing = messageId === this.currentMessageId;
     const lines: string[] = [];
 
-    // Header differentiates completed vs ongoing
-    lines.push(isOngoing ? "[Current Task - You Are Working On This]" : "[Completed Task]");
+    // Extract user task content first, then assistant steps
+    const userStep = steps.find(s => s.role === "user");
+    const assistantSteps = steps.filter(s => s.role !== "user");
 
-    for (const step of steps) {
-      if (step.role === "user") {
-        lines.push(`User Request: ${step.content}`);
-      } else {
-        lines.push(`Agent Step ${step.stepId}:`);
+    // Task header
+    lines.push(`[Task: ${userStep?.content ?? ""}]`);
+
+    // Assistant steps (if any)
+    if (assistantSteps.length > 0) {
+      lines.push("The steps you as an assistant already took:");
+      for (const step of assistantSteps) {
+        lines.push(`[Assistant Step ${step.stepId}]`);
         if (step.content) {
           lines.push(`- thought: ${step.content}`);
         }
@@ -594,15 +598,14 @@ export class TexeraAgent {
             }
           }
         }
+        lines.push(`[Step ${step.stepId} Finished]`);
       }
     }
 
-    // Footer
-    lines.push(
-      isOngoing
-        ? "[Please continue working on this task. Check the current workflow to decide next steps.]"
-        : "[Task Completed]"
-    );
+    // Footer: only for completed tasks
+    if (!isOngoing) {
+      lines.push("[Task Completed]");
+    }
 
     return lines.join("\n");
   }

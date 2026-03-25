@@ -101,6 +101,18 @@
     </div>
   </div>
 
+  <!-- Operator Result Panels (shown for all operators when toggled on) -->
+  <ng-container *ngIf="resultPanels.length > 0">
+    <texera-operator-result-panel
+      *ngFor="let panel of resultPanels"
+      class="result-panel-overlay"
+      [style.left.px]="panel.position.x"
+      [style.top.px]="panel.position.y"
+      [operatorId]="panel.operatorId"
+      [summary]="panel.summary">
+    </texera-operator-result-panel>
+  </ng-container>
+
   <!-- Chat Popover for Operator -->
   <div
     class="chat-popover-container"

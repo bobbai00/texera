@@ -103,6 +103,23 @@
         </button>
       </div>
 
+      <!-- Toggle operator result annotations -->
+      <div class="toolbar-item">
+        <button
+          nz-button
+          nzType="text"
+          nzSize="small"
+          (click)="toggleResultAnnotations()"
+          nz-tooltip
+          nzTooltipTitle="Toggle operator result annotations"
+          [style.color]="resultAnnotationsVisible ? '#1890ff' : ''">
+          <i
+            nz-icon
+            nzType="fund-projection-screen"
+            nzTheme="outline"></i>
+        </button>
+      </div>
+
       <!-- Clear button (when available) -->
       <div class="toolbar-item">
         <button

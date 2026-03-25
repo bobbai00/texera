@@ -1068,6 +1068,116 @@ export class JointUIService {
       },
     });
   }
+
+  /**
+   * Show operator result annotations next to input/output ports.
+   * Dynamically injects SVG text elements into the operator's view.
+   */
+  public showOperatorResultAnnotation(
+    jointPaper: joint.dia.Paper,
+    operatorID: string,
+    annotation: {
+      inputPortShapes?: { portIndex: number; rows: number; columns: number }[];
+      outputTuples: number;
+      outputColumns?: number;
+    },
+    onClick?: (operatorID: string) => void
+  ): void {
+    const view = jointPaper.findViewByModel(operatorID);
+    if (!view) return;
+
+    const svgNs = "http://www.w3.org/2000/svg";
+    const groupEl = view.el.querySelector(".element-node") || view.el;
+
+    // Remove existing annotations first
+    groupEl.querySelectorAll(".result-annotation").forEach((el: Element) => el.remove());
+
+    const element = jointPaper.getModelById(operatorID) as joint.shapes.devs.Model;
+    const allPorts = element.getPorts();
+    const inPorts = allPorts.filter(p => p.group === "in");
+    const outPorts = allPorts.filter(p => p.group === "out");
+
+    const opWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
+    const opHeight = JointUIService.DEFAULT_OPERATOR_HEIGHT;
+
+    // Compute vertical positions for ports (JointJS distributes ports evenly)
+    const getPortY = (index: number, total: number): number => {
+      if (total <= 1) return opHeight / 2;
+      return (opHeight / (total + 1)) * (index + 1);
+    };
+
+    const makeClickable = (el: SVGElement): void => {
+      el.style.cursor = "pointer";
+      el.setAttribute("pointer-events", "all");
+      if (onClick) {
+        el.addEventListener("click", (e: Event) => {
+          e.stopPropagation();
+          onClick(operatorID);
+        });
+      }
+    };
+
+    // Input port annotations (left side)
+    if (annotation.inputPortShapes && annotation.inputPortShapes.length > 0) {
+      inPorts.forEach((port, idx) => {
+        const shape = annotation.inputPortShapes?.find(s => s.portIndex === idx);
+        if (!shape) return;
+
+        const label = `${shape.rows}×${shape.columns}`;
+        const textEl = document.createElementNS(svgNs, "text");
+        textEl.classList.add("result-annotation");
+        textEl.setAttribute("x", String(-12));
+        textEl.setAttribute("y", String(getPortY(idx, inPorts.length) + 4));
+        textEl.setAttribute("text-anchor", "end");
+        textEl.setAttribute("font-size", "10");
+        textEl.setAttribute("font-family", "sans-serif");
+        textEl.setAttribute("fill", "#1890ff");
+        textEl.setAttribute("font-weight", "500");
+        textEl.textContent = label;
+        makeClickable(textEl);
+        groupEl.appendChild(textEl);
+      });
+    }
+
+    // Output port annotations (right side)
+    if (annotation.outputColumns !== undefined) {
+      outPorts.forEach((_, idx) => {
+        const label = `${annotation.outputTuples}×${annotation.outputColumns}`;
+        const textEl = document.createElementNS(svgNs, "text");
+        textEl.classList.add("result-annotation");
+        textEl.setAttribute("x", String(opWidth + 12));
+        textEl.setAttribute("y", String(getPortY(idx, outPorts.length) + 4));
+        textEl.setAttribute("text-anchor", "start");
+        textEl.setAttribute("font-size", "10");
+        textEl.setAttribute("font-family", "sans-serif");
+        textEl.setAttribute("fill", "#52c41a");
+        textEl.setAttribute("font-weight", "500");
+        textEl.textContent = label;
+        makeClickable(textEl);
+        groupEl.appendChild(textEl);
+      });
+    }
+  }
+
+  /**
+   * Hide operator result annotations.
+   */
+  public hideOperatorResultAnnotation(jointPaper: joint.dia.Paper, operatorID: string): void {
+    const view = jointPaper.findViewByModel(operatorID);
+    if (!view) return;
+
+    const groupEl = view.el.querySelector(".element-node") || view.el;
+    groupEl.querySelectorAll(".result-annotation").forEach((el: Element) => el.remove());
+  }
+
+  /**
+   * Hide all operator result annotations on the paper.
+   */
+  public hideAllOperatorResultAnnotations(jointPaper: joint.dia.Paper, operatorIDs: string[]): void {
+    for (const opId of operatorIDs) {
+      this.hideOperatorResultAnnotation(jointPaper, opId);
+    }
+  }
 }
 
 export function fromJointPaperEvent<T extends keyof joint.dia.Paper.EventMap = keyof joint.dia.Paper.EventMap>(

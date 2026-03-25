@@ -105,6 +105,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public agentState: CopilotState = CopilotState.UNAVAILABLE;
   public isStatsModalVisible = false;
   public messageStats: CopilotMessageStats[] = [];
+  public resultAnnotationsVisible = false;
 
   // Tree-related properties
   public timelineNodes: TimelineNode[] = [];
@@ -333,6 +334,12 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     // Subscribe to message highlighting state
     this.copilotManagerService.highlightedMessageId$.pipe(untilDestroyed(this)).subscribe(messageId => {
       this.highlightedMessageId = messageId;
+      this.cdr.detectChanges();
+    });
+
+    // Subscribe to result annotations visibility
+    this.copilotManagerService.resultAnnotationsVisible$.pipe(untilDestroyed(this)).subscribe(visible => {
+      this.resultAnnotationsVisible = visible;
       this.cdr.detectChanges();
     });
   }
@@ -676,6 +683,13 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
 
   public clearMessages(): void {
     this.copilotManagerService.clearMessages(this.agentInfo.id);
+  }
+
+  /**
+   * Toggle operator result annotations on the workflow canvas.
+   */
+  public toggleResultAnnotations(): void {
+    this.copilotManagerService.toggleResultAnnotations(this.agentInfo.id);
   }
 
   /**

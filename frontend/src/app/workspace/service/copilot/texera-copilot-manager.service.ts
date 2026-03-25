@@ -127,6 +127,21 @@ export interface ModelType {
 /**
  * API response types
  */
+/**
+ * Summary of operator execution results for annotation display.
+ */
+export interface OperatorResultSummary {
+  state: string;
+  inputTuples: number;
+  outputTuples: number;
+  inputPortShapes?: { portIndex: number; rows: number; columns: number }[];
+  outputColumns?: number;
+  error?: string;
+  warnings?: string[];
+  consoleLogCount?: number;
+  totalRowCount?: number;
+}
+
 interface ApiAgentInfo {
   id: string;
   name: string;
@@ -540,6 +555,10 @@ export class TexeraCopilotManagerService {
         if (message.headId !== undefined) {
           tracking.headIdSubject.next(message.headId);
         }
+        // Handle initial operator results
+        if (message.operatorResults) {
+          this.updateOperatorResultSummaries(message.operatorResults);
+        }
         break;
 
       case "step":
@@ -600,6 +619,10 @@ export class TexeraCopilotManagerService {
           updatedStats.set(stat.messageId, stat);
           tracking.messageStatsSubject.next(updatedStats);
         }
+        // Update operator results on completion
+        if (message.operatorResults) {
+          this.updateOperatorResultSummaries(message.operatorResults);
+        }
         break;
 
       case "agentAction":
@@ -620,6 +643,10 @@ export class TexeraCopilotManagerService {
           const steps = message.steps.map((s: any) => this.convertApiReActStep(s));
           tracking.reActStepsSubject.next(steps);
           this.updateOperatorStepsMap();
+        }
+        // Update operator results on HEAD change
+        if (message.operatorResults) {
+          this.updateOperatorResultSummaries(message.operatorResults);
         }
         break;
 
@@ -1691,5 +1718,63 @@ export class TexeraCopilotManagerService {
     }
 
     return operatorIds;
+  }
+
+  // ============================================================================
+  // Operator Result Annotation Methods
+  // ============================================================================
+
+  /** Whether operator result annotations are currently visible */
+  private resultAnnotationsVisibleSubject = new BehaviorSubject<boolean>(false);
+  public resultAnnotationsVisible$ = this.resultAnnotationsVisibleSubject.asObservable();
+
+  /** Current operator result summaries (operatorId → summary) */
+  private operatorResultSummariesSubject = new BehaviorSubject<Map<string, OperatorResultSummary>>(new Map());
+  public operatorResultSummaries$ = this.operatorResultSummariesSubject.asObservable();
+
+  /**
+   * Toggle operator result annotations on/off.
+   * When toggling on, fetches the latest results from the active agent.
+   */
+  public toggleResultAnnotations(agentId: string): void {
+    const newState = !this.resultAnnotationsVisibleSubject.getValue();
+    if (newState) {
+      this.fetchOperatorResults(agentId);
+    } else {
+      this.resultAnnotationsVisibleSubject.next(false);
+    }
+  }
+
+  /**
+   * Update operator result summaries from a WebSocket or API response.
+   */
+  private updateOperatorResultSummaries(results: Record<string, OperatorResultSummary>): void {
+    const summaries = new Map<string, OperatorResultSummary>();
+    for (const [opId, data] of Object.entries(results)) {
+      summaries.set(opId, data);
+    }
+    this.operatorResultSummariesSubject.next(summaries);
+  }
+
+  /**
+   * Fetch operator results from the backend (fallback if WebSocket data not available).
+   */
+  public fetchOperatorResults(agentId: string): void {
+    this.http
+      .get<{ results: Record<string, OperatorResultSummary> }>(
+        `${this.AGENT_API_BASE}/agents/${agentId}/operator-results`
+      )
+      .pipe(catchError(() => of({ results: {} as Record<string, OperatorResultSummary> })))
+      .subscribe(response => {
+        this.updateOperatorResultSummaries(response.results);
+        this.resultAnnotationsVisibleSubject.next(true);
+      });
+  }
+
+  /**
+   * Get current result annotations visibility.
+   */
+  public getResultAnnotationsVisible(): boolean {
+    return this.resultAnnotationsVisibleSubject.getValue();
   }
 }

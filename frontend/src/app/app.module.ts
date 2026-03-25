@@ -105,6 +105,7 @@ import { AgentChatComponent } from "./workspace/component/agent-panel/agent-chat
 import { AgentRegistrationComponent } from "./workspace/component/agent-panel/agent-registration/agent-registration.component";
 import { ReActStepDetailModalComponent } from "./workspace/component/agent-panel/react-step-detail-modal/react-step-detail-modal.component";
 import { ReActStepListComponent } from "./workspace/component/agent-panel/react-step-list/react-step-list.component";
+import { OperatorResultPanelComponent } from "./workspace/component/agent-panel/operator-result-panel/operator-result-panel.component";
 import { InputAutoCompleteComponent } from "./workspace/component/input-autocomplete/input-autocomplete.component";
 import { CollabWrapperComponent } from "./common/formly/collab-wrapper/collab-wrapper/collab-wrapper.component";
 import { NzSwitchModule } from "ng-zorro-antd/switch";
@@ -263,6 +264,7 @@ registerLocaleData(en);
     AgentRegistrationComponent,
     ReActStepDetailModalComponent,
     ReActStepListComponent,
+    OperatorResultPanelComponent,
     InputAutoCompleteComponent,
     FileSelectionComponent,
     CollabWrapperComponent,

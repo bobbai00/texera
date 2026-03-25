@@ -402,6 +402,12 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     return { agentActions: agent.getAgentActions() };
   })
 
+  // Get all visible operator results (summarized for annotation)
+  .get("/:id/operator-results", ({ params: { id } }) => {
+    const agent = getAgent(id);
+    return { results: getOperatorResultSummaries(agent) };
+  })
+
   // Get workflow (returns workflow content directly, not wrapped)
   .get("/:id/workflow", ({ params: { id } }) => {
     const agent = getAgent(id);
@@ -489,8 +495,13 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 
     const visibleSteps = agent.getVisibleReActSteps();
 
-    // Broadcast HEAD change + visible steps to all WebSocket clients
-    broadcastToAgent(id, { type: "headChange", headId: actionId, steps: visibleSteps });
+    // Broadcast HEAD change + visible steps + operator results to all WebSocket clients
+    broadcastToAgent(id, {
+      type: "headChange",
+      headId: actionId,
+      steps: visibleSteps,
+      operatorResults: getOperatorResultSummaries(agent),
+    });
 
     return {
       status: "checked out",
@@ -645,6 +656,18 @@ interface WsMessage {
   trace?: TraceContent;
 }
 
+interface OperatorResultSummaryWs {
+  state: string;
+  inputTuples: number;
+  outputTuples: number;
+  inputPortShapes?: { portIndex: number; rows: number; columns: number }[];
+  outputColumns?: number;
+  error?: string;
+  warnings?: string[];
+  consoleLogCount?: number;
+  totalRowCount?: number;
+}
+
 interface WsOutgoingMessage {
   type: "step" | "state" | "error" | "complete" | "init" | "agentAction" | "headChange";
   step?: ReActStep;
@@ -655,6 +678,34 @@ interface WsOutgoingMessage {
   agentActions?: AgentAction[];
   stats?: AgentMessageStats;
   headId?: string;
+  operatorResults?: Record<string, OperatorResultSummaryWs>;
+}
+
+/**
+ * Compute operator result summaries from an agent's result store.
+ */
+function getOperatorResultSummaries(agent: TexeraAgent): Record<string, OperatorResultSummaryWs> {
+  const store = agent.getOperatorResultStore();
+  const visible = store.getAllVisible();
+  const results: Record<string, OperatorResultSummaryWs> = {};
+  for (const [opId, entry] of visible) {
+    const info = entry.operatorInfo;
+    results[opId] = {
+      state: info.state,
+      inputTuples: info.inputTuples,
+      outputTuples: info.outputTuples,
+      inputPortShapes: info.inputPortShapes,
+      outputColumns:
+        info.result && info.result.length > 0
+          ? Object.keys(info.result[0]).filter(k => k !== "__row_index__").length
+          : undefined,
+      error: info.error,
+      warnings: info.warnings,
+      consoleLogCount: info.consoleLogs?.length,
+      totalRowCount: info.totalRowCount,
+    };
+  }
+  return results;
 }
 
 /**
@@ -704,13 +755,14 @@ const app = new Elysia()
       // Add this websocket to the agent's set
       agent.addWebsocket(ws);
 
-      // Send initial state, visible steps (based on HEAD), and agent actions
+      // Send initial state, visible steps (based on HEAD), agent actions, and operator results
       const initMessage: WsOutgoingMessage = {
         type: "init",
         state: agent.getState(),
         steps: agent.getVisibleReActSteps(),
         agentActions: agent.getAgentActions(),
         headId: agent.getAgentActionManager().getHead(),
+        operatorResults: getOperatorResultSummaries(agent),
       };
       ws.send(JSON.stringify(initMessage));
     },
@@ -773,11 +825,12 @@ const app = new Elysia()
             broadcastToAgent(agentId, { type: "step", step: lastStep });
           }
 
-          // Broadcast completion with stats
+          // Broadcast completion with stats and latest operator results
           broadcastToAgent(agentId, {
             type: "complete",
             state: agent.getState(),
             stats: result.stats,
+            operatorResults: getOperatorResultSummaries(agent),
           });
 
           console.log(`[WS] Agent ${agentId} completed with ${result.messages.length} steps`);
@@ -813,10 +866,11 @@ const app = new Elysia()
           }
         );
 
-        // Broadcast completion with final state
+        // Broadcast completion with final state and operator results
         broadcastToAgent(agentId, {
           type: "complete",
           state: agent.getState(),
+          operatorResults: getOperatorResultSummaries(agent),
         });
 
         console.log(`[WS] Agent ${agentId} replay completed`);

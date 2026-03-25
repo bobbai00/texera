@@ -146,6 +146,13 @@
   }
 }
 
+// Operator result panel overlay
+.result-panel-overlay {
+  position: absolute;
+  pointer-events: auto;
+  z-index: 20;
+}
+
 // Chat popover container for operator chat button
 .chat-popover-container {
   position: absolute;

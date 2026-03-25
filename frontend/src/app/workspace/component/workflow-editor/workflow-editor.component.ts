@@ -44,7 +44,10 @@ import { GuiConfigService } from "../../../common/service/gui-config.service";
 import { line, curveCatmullRomClosed } from "d3-shape";
 import concaveman from "concaveman";
 import { AgentActionService } from "../../service/agent-action/agent-action.service";
-import { TexeraCopilotManagerService } from "../../service/copilot/texera-copilot-manager.service";
+import {
+  TexeraCopilotManagerService,
+  OperatorResultSummary,
+} from "../../service/copilot/texera-copilot-manager.service";
 import { OperatorStepRef, ReActStep } from "../../service/copilot/copilot-types";
 import { ContextHighlightEvent } from "../agent-interaction/agent-interaction.component";
 import { isPythonUdf } from "../../service/workflow-graph/model/workflow-graph";
@@ -141,6 +144,13 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   private chatContextRegionElement: joint.dia.Element | null = null;
   private chatContextSteps: ReActStep[] = [];
 
+  // Operator result panels (one per operator, shown when annotations toggled on)
+  public resultPanels: Array<{
+    operatorId: string;
+    summary: OperatorResultSummary;
+    position: { x: number; y: number };
+  }> = [];
+
   // Message region highlighting state
   private messageRegionElement: joint.dia.Element | null = null;
   private highlightedMessageOperators: joint.dia.Cell[] = [];
@@ -228,6 +238,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     this.handleRegionEvents();
     this.handleOperatorSuggestionHighlightEvent();
     this.handleAgentHoverHighlight();
+    this.handleOperatorResultAnnotations();
     this.handleCodePanels();
     this.handleElementDelete();
     this.handleElementSelectAll();
@@ -1551,6 +1562,58 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
       .getAllOperators()
       .forEach(op => {
         this.jointUIService.hideAgentActionLabel(this.paper, op.operatorID);
+      });
+  }
+
+  /**
+   * Handle operator result annotation display.
+   * When toggled on, shows SVG shape labels on ports AND result panels next to each operator.
+   */
+  private handleOperatorResultAnnotations(): void {
+    combineLatest([
+      this.copilotManagerService.resultAnnotationsVisible$,
+      this.copilotManagerService.operatorResultSummaries$,
+    ])
+      .pipe(untilDestroyed(this))
+      .subscribe(([visible, summaries]) => {
+        // Clear all existing SVG annotations
+        const allOps = this.workflowActionService.getTexeraGraph().getAllOperators();
+        this.jointUIService.hideAllOperatorResultAnnotations(
+          this.paper,
+          allOps.map(op => op.operatorID)
+        );
+
+        if (!visible || summaries.size === 0) {
+          this.resultPanels = [];
+          return;
+        }
+
+        const panels: typeof this.resultPanels = [];
+        const scale = this.paper.scale();
+        const translate = this.paper.translate();
+
+        for (const [opId, summary] of summaries) {
+          if (!this.workflowActionService.getTexeraGraph().hasOperator(opId)) continue;
+
+          // Show SVG shape labels on ports
+          this.jointUIService.showOperatorResultAnnotation(this.paper, opId, {
+            inputPortShapes: summary.inputPortShapes,
+            outputTuples: summary.outputTuples,
+            outputColumns: summary.outputColumns,
+          });
+
+          // Compute panel position to the right of the operator
+          const jointCell = this.paper.getModelById(opId);
+          if (!jointCell) continue;
+          const bbox = jointCell.getBBox();
+          const x = (bbox.x + bbox.width + 20) * scale.sx + translate.tx;
+          const y = bbox.y * scale.sy + translate.ty;
+
+          panels.push({ operatorId: opId, summary, position: { x, y } });
+        }
+
+        this.resultPanels = panels;
+        this.changeDetectorRef.detectChanges();
       });
   }
 
