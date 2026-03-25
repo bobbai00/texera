@@ -394,12 +394,9 @@ Example: operatorId="filtered" (requires "customers" to exist)
         }
 
         const existingOperator = findOperatorByName(workflowState, operatorId);
-        const beforeContent = workflowState.getWorkflowContent();
         const displayName = summary || operatorId;
 
         let resultMsg: string;
-        let createdLinkIds: string[] = [];
-        let deletedLinkIds: string[] = [];
         let createdLinkPairs: { source: string; target: string }[] = [];
         let deletedLinkPairs: { source: string; target: string }[] = [];
 
@@ -430,7 +427,7 @@ Example: operatorId="filtered" (requires "customers" to exist)
           }
 
           if (isDataProcessing && inputOperators.length > 0) {
-            createdLinkIds = createInputLinks(workflowState, operatorId, inputOperators);
+            createInputLinks(workflowState, operatorId, inputOperators);
             createdLinkPairs = inputOperators.map(src => ({ source: src.operatorID, target: operatorId }));
           }
 
@@ -441,18 +438,6 @@ Example: operatorId="filtered" (requires "customers" to exist)
             operatorId, finalOperator.inputPorts.length, finalOperator.outputPorts.length,
             createdLinkPairs.length > 0 ? createdLinkPairs : undefined
           );
-
-          if (context?.agentActionManager && context.agentId) {
-            context.agentActionManager.createAgentAction(
-              context.agentId,
-              context.agentName || `Agent-${context.agentId}`,
-              summary || `Added ${type} operator: ${operatorId}`,
-              { add: { operatorIds: [operatorId], linkIds: createdLinkIds } },
-              context.workflowMetadata || {},
-              beforeContent,
-              workflowState.getWorkflowContent()
-            );
-          }
         } else {
           // === MODIFY EXISTING OPERATOR ===
           const isExistingDataLoading = existingOperator.operatorType === DATA_LOADING_OPERATOR_TYPE;
@@ -489,11 +474,10 @@ Example: operatorId="filtered" (requires "customers" to exist)
             for (const link of currentLinks) {
               deletedLinkPairs.push({ source: link.source.operatorID, target: link.target.operatorID });
               workflowState.deleteLink(link.linkID);
-              deletedLinkIds.push(link.linkID);
             }
 
             if (inputOperators.length > 0) {
-              createdLinkIds = createInputLinks(workflowState, operatorId, inputOperators);
+              createInputLinks(workflowState, operatorId, inputOperators);
               createdLinkPairs = inputOperators.map(src => ({ source: src.operatorID, target: operatorId }));
             }
           }
@@ -503,22 +487,6 @@ Example: operatorId="filtered" (requires "customers" to exist)
             createdLinkPairs.length > 0 ? createdLinkPairs : undefined,
             deletedLinkPairs.length > 0 ? deletedLinkPairs : undefined
           );
-
-          if (context?.agentActionManager && context.agentId) {
-            context.agentActionManager.createAgentAction(
-              context.agentId,
-              context.agentName || `Agent-${context.agentId}`,
-              summary || `Modified operator: ${operatorId}`,
-              {
-                modify: { operatorIds: [operatorId] },
-                add: { operatorIds: [], linkIds: createdLinkIds },
-                delete: { operatorIds: [], linkIds: deletedLinkIds },
-              },
-              context.workflowMetadata || {},
-              beforeContent,
-              workflowState.getWorkflowContent()
-            );
-          }
         }
 
         // Always auto-execute

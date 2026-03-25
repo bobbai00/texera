@@ -187,6 +187,8 @@ interface AgentStateTracking {
   }>;
   /** Agent actions received from the backend */
   agentActionsSubject: BehaviorSubject<AgentAction[]>;
+  /** Current HEAD action ID in the action tree */
+  headIdSubject: BehaviorSubject<string | null>;
   workflowSubject: BehaviorSubject<Workflow | null>;
   workflowId?: number;
   stopPolling$: Subject<void>;
@@ -374,6 +376,8 @@ export class TexeraCopilotManagerService {
       summary: apiAction.summary,
       operations,
       createdAt: new Date(apiAction.createdAt),
+      toolCallId: apiAction.toolCallId,
+      parentId: apiAction.parentId,
       operatorIds,
       linkIds,
       workflowMetadata: apiAction.workflowMetadata || {},
@@ -420,6 +424,7 @@ export class TexeraCopilotManagerService {
           modifiedOperatorIds: string[];
         }>({ viewedOperatorIds: [], addedOperatorIds: [], modifiedOperatorIds: [] }),
         agentActionsSubject: new BehaviorSubject<AgentAction[]>([]),
+        headIdSubject: new BehaviorSubject<string | null>(null),
         workflowSubject: new BehaviorSubject<Workflow | null>(null),
         workflowId,
         stopPolling$: new Subject<void>(),
@@ -531,6 +536,10 @@ export class TexeraCopilotManagerService {
         if (message.agentActions && Array.isArray(message.agentActions)) {
           this.handleInitialAgentActions(tracking, message.agentActions);
         }
+        // Handle initial HEAD pointer
+        if (message.headId !== undefined) {
+          tracking.headIdSubject.next(message.headId);
+        }
         break;
 
       case "step":
@@ -597,6 +606,20 @@ export class TexeraCopilotManagerService {
         // New agent action received from agent-service
         if (message.agentAction) {
           this.handleAgentActionFromApi(agentId, tracking, message.agentAction);
+          // HEAD advances to the latest action
+          tracking.headIdSubject.next(message.agentAction.id);
+        }
+        break;
+
+      case "headChange":
+        // HEAD moved (checkout) — update HEAD and visible steps
+        if (message.headId !== undefined) {
+          tracking.headIdSubject.next(message.headId);
+        }
+        if (message.steps && Array.isArray(message.steps)) {
+          const steps = message.steps.map((s: any) => this.convertApiReActStep(s));
+          tracking.reActStepsSubject.next(steps);
+          this.updateOperatorStepsMap();
         }
         break;
 
@@ -1134,6 +1157,30 @@ export class TexeraCopilotManagerService {
   public getAgentActions(agentId: string): AgentAction[] {
     const tracking = this.agentStateTracking.get(agentId);
     return tracking ? tracking.agentActionsSubject.getValue() : [];
+  }
+
+  /**
+   * Get HEAD action ID observable for an agent.
+   */
+  public getHeadIdObservable(agentId: string): Observable<string | null> {
+    const tracking = this.getOrCreateStateTracking(agentId);
+    return tracking.headIdSubject.asObservable();
+  }
+
+  /**
+   * Get current HEAD action ID for an agent.
+   */
+  public getHeadId(agentId: string): string | null {
+    const tracking = this.agentStateTracking.get(agentId);
+    return tracking ? tracking.headIdSubject.getValue() : null;
+  }
+
+  /**
+   * Checkout to a specific agent action (move HEAD, restore workflow).
+   * The backend broadcasts headChange + visible steps via WebSocket to all clients.
+   */
+  public checkoutAction(agentId: string, actionId: string): Observable<any> {
+    return this.http.post(`${this.AGENT_API_BASE}/agents/${agentId}/checkout`, { actionId });
   }
 
   /**

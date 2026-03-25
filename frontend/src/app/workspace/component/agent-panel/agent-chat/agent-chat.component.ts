@@ -44,11 +44,6 @@ import { NotificationService } from "../../../../common/service/notification/not
 import { WorkflowVersionService } from "../../../../dashboard/service/user/workflow-version/workflow-version.service";
 import { WorkflowPersistService } from "../../../../common/service/workflow-persist/workflow-persist.service";
 import {
-  ToolGroup,
-  TOOL_GROUP_CONFIGS,
-  getToolGroup,
-  getToolColor,
-  getToolGroupConfig,
 } from "../../../service/copilot/tool/tool-groups";
 
 /**
@@ -56,13 +51,17 @@ import {
  */
 export interface TimelineNode {
   id: string;
-  toolName: string;
-  toolGroup: ToolGroup;
   color: string;
-  stepIndex: number;
-  toolCallIndex: number;
-  messageId: string;
   timestamp: Date;
+  agentActionId: string;
+  /** Whether this node is the current HEAD in the action tree */
+  isHead: boolean;
+  /** Whether this node is on the ancestor path from root to HEAD */
+  isOnHeadPath: boolean;
+  /** Short action label: "Add", "Modify", or "Delete" */
+  actionLabel: string;
+  /** Operator ID affected by this action */
+  operatorId: string;
 }
 
 @UntilDestroy()
@@ -93,12 +92,11 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
 
   // Timeline-related properties
   public timelineNodes: TimelineNode[] = [];
-  public hoveredTimelineNodeId: string | null = null;
-  public toolGroupConfigs = TOOL_GROUP_CONFIGS;
-  public ToolGroup = ToolGroup;
 
   // Agent actions for this agent (from copilot manager)
   public agentActions: AgentAction[] = [];
+  // Current HEAD action ID in the action tree
+  public currentHeadId: string | null = null;
 
   // Agent action preview state
   public previewState: AgentActionPreviewState | null = null;
@@ -227,6 +225,17 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       .pipe(untilDestroyed(this))
       .subscribe(actions => {
         this.agentActions = actions;
+        this.buildTimelineNodes();
+        this.cdr.detectChanges();
+      });
+
+    // Subscribe to HEAD changes
+    this.copilotManagerService
+      .getHeadIdObservable(this.agentInfo.id)
+      .pipe(untilDestroyed(this))
+      .subscribe(headId => {
+        this.currentHeadId = headId;
+        this.buildTimelineNodes();
         this.cdr.detectChanges();
       });
 
@@ -821,76 +830,78 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
    * Each tool call becomes a node in the timeline.
    */
   private buildTimelineNodes(): void {
-    const nodes: TimelineNode[] = [];
-
-    this.agentResponses.forEach((step, stepIndex) => {
-      if (step.toolCalls && step.toolCalls.length > 0) {
-        step.toolCalls.forEach((toolCall, toolCallIndex) => {
-          const toolName = toolCall.toolName || "unknown";
-          const toolGroup = getToolGroup(toolName);
-          const node: TimelineNode = {
-            id: `${step.messageId}-${stepIndex}-${toolCallIndex}`,
-            toolName,
-            toolGroup,
-            color: getToolColor(toolName),
-            stepIndex,
-            toolCallIndex,
-            messageId: step.messageId,
-            timestamp: step.timestamp,
-          };
-          nodes.push(node);
-        });
+    // Build the HEAD ancestor path for highlighting
+    const headPath = new Set<string>();
+    if (this.currentHeadId) {
+      const actionMap = new Map(this.agentActions.map(a => [a.id, a]));
+      let current: string | undefined = this.currentHeadId;
+      while (current) {
+        headPath.add(current);
+        current = actionMap.get(current)?.parentId;
       }
-    });
-
-    this.timelineNodes = nodes;
-  }
-
-  /**
-   * Check if a timeline node belongs to the currently hovered message.
-   */
-  public isNodeHighlighted(node: TimelineNode): boolean {
-    if (this.hoveredMessageIndex === null) {
-      return false;
     }
-    return node.stepIndex === this.hoveredMessageIndex;
+
+    // Sort actions chronologically and build nodes
+    const sorted = [...this.agentActions].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    this.timelineNodes = sorted.map(action => ({
+      id: action.id,
+      color: this.getActionColor(this.getActionLabel(action)),
+      timestamp: action.createdAt,
+      agentActionId: action.id,
+      isHead: action.id === this.currentHeadId,
+      isOnHeadPath: headPath.has(action.id),
+      actionLabel: this.getActionLabel(action),
+      operatorId: this.getActionOperatorId(action),
+    }));
   }
 
-  /**
-   * Handle mouse enter on timeline node.
-   * Scrolls chat to the corresponding message on hover.
-   */
-  public onTimelineNodeHover(node: TimelineNode): void {
-    this.hoveredTimelineNodeId = node.id;
-    // Highlight the corresponding message
-    this.setHoveredMessage(node.stepIndex);
-    // Scroll chat to the message
-    this.scrollToMessage(node.stepIndex);
+  /** Extract the primary operator ID from an agent action's operations. */
+  private getActionOperatorId(action: AgentAction): string {
+    return (
+      action.operations.add?.operatorIds?.[0] ||
+      action.operations.modify?.operatorIds?.[0] ||
+      action.operations.delete?.operatorIds?.[0] ||
+      "unknown"
+    );
   }
 
-  /**
-   * Handle mouse leave on timeline node.
-   */
-  public onTimelineNodeLeave(): void {
-    this.hoveredTimelineNodeId = null;
+  /** Derive a short label (Add/Modify/Delete) from an agent action's operations. */
+  private getActionLabel(action: AgentAction): string {
+    if (action.operations.add?.operatorIds?.length) return "Add";
+    if (action.operations.delete?.operatorIds?.length) return "Delete";
+    if (action.operations.modify?.operatorIds?.length) return "Modify";
+    return "Action";
   }
 
-  /**
-   * Get the icon for a timeline node based on its group.
-   */
-  public getTimelineNodeIcon(node: TimelineNode): string {
-    return getToolGroupConfig(node.toolGroup).icon;
+  /** Get color for an action label. */
+  private getActionColor(label: string): string {
+    switch (label) {
+      case "Add":
+        return "#52c41a"; // green
+      case "Delete":
+        return "#ff4d4f"; // red
+      case "Modify":
+        return "#fa8c16"; // orange
+      default:
+        return "#1890ff"; // blue
+    }
   }
+
+  public onTimelineNodeHover(_node: TimelineNode): void {}
+  public onTimelineNodeLeave(): void {}
 
   /**
    * Handle click on a timeline node.
-   * Shows agent action preview for Modify group nodes.
+   * For Modify group nodes: checkout to that action (move HEAD) and show preview.
    */
   public onTimelineNodeClick(node: TimelineNode): void {
-    // For Modify group nodes, show the agent action preview
-    if (node.toolGroup === ToolGroup.MODIFY) {
-      this.showAgentActionPreviewForNode(node);
-    }
+    this.copilotManagerService.checkoutAction(this.agentInfo.id, node.agentActionId).subscribe({
+      next: () => this.previewAgentAction(node.agentActionId),
+      error: err => {
+        console.error("[Timeline] Checkout failed:", err);
+        this.previewAgentAction(node.agentActionId);
+      },
+    });
   }
 
   /**
@@ -906,95 +917,6 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
 
     if (stepIndex >= 0 && stepIndex < messages.length) {
       messages[stepIndex].scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }
-
-  /**
-   * Show agent action preview for a Modify group timeline node.
-   * Finds the agent action associated with the tool call and displays diff preview.
-   */
-  private showAgentActionPreviewForNode(node: TimelineNode): void {
-    const step = this.agentResponses[node.stepIndex];
-    if (!step || !step.toolCalls || node.toolCallIndex >= step.toolCalls.length) {
-      console.log("[Timeline] No step or tool calls found for node", node);
-      return;
-    }
-
-    const toolCall = step.toolCalls[node.toolCallIndex];
-    const toolResult = step.toolResults?.[node.toolCallIndex];
-
-    console.log("[Timeline] Looking for agent action in tool call:", toolCall.toolName, {
-      toolCall,
-      toolResult,
-      nodeTimestamp: node.timestamp,
-    });
-
-    // Try to extract agent action ID from the tool result
-    let agentActionId: string | null = null;
-
-    if (toolResult) {
-      // Check if result contains agent action ID directly
-      if (typeof toolResult === "object" && toolResult.agentActionId) {
-        agentActionId = toolResult.agentActionId;
-      } else if (typeof toolResult === "object" && toolResult.id) {
-        agentActionId = toolResult.id;
-      } else if (typeof toolResult === "string") {
-        // Try to parse JSON result
-        try {
-          const parsed = JSON.parse(toolResult);
-          agentActionId = parsed.agentActionId || parsed.id;
-        } catch {
-          // Not JSON, check for ID pattern in string
-          const match = toolResult.match(/agent-action-[\w-]+/);
-          if (match) {
-            agentActionId = match[0];
-          }
-        }
-      }
-    }
-
-    // Also check tool call input for agent action ID
-    if (!agentActionId && toolCall.input) {
-      try {
-        const input = typeof toolCall.input === "string" ? JSON.parse(toolCall.input) : toolCall.input;
-        agentActionId = input.agentActionId || input.id;
-      } catch {
-        // Ignore parse errors
-      }
-    }
-
-    // Fallback: Find agent action by matching timestamp (closest before or at the node timestamp)
-    if (!agentActionId) {
-      const allActions = this.agentActions;
-      console.log("[Timeline] No agent action ID found, matching by timestamp. Actions:", allActions.length);
-
-      if (allActions.length > 0) {
-        const nodeTime = node.timestamp.getTime();
-
-        // Sort actions by creation time (oldest first)
-        const sortedActions = [...allActions].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-
-        // Find actions created before or at the node timestamp
-        const actionsBeforeNode = sortedActions.filter(a => a.createdAt.getTime() <= nodeTime);
-
-        if (actionsBeforeNode.length > 0) {
-          // Get the latest action that was created before or at the node timestamp
-          agentActionId = actionsBeforeNode[actionsBeforeNode.length - 1].id;
-        } else {
-          // If no actions before, use the first (oldest) action
-          agentActionId = sortedActions[0].id;
-        }
-
-        console.log("[Timeline] Found agent action by timestamp:", agentActionId);
-      }
-    }
-
-    if (agentActionId) {
-      console.log("[Timeline] Previewing agent action:", agentActionId);
-      this.previewAgentAction(agentActionId);
-    } else {
-      console.log("[Timeline] No agent action found to preview");
-      this.notificationService.warning("No agent action found for this operation");
     }
   }
 

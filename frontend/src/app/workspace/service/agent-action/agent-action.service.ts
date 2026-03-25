@@ -68,6 +68,8 @@ export interface AgentAction {
   summary: string; // Overall summary of the agent action
   operations: AgentActionOperations; // Operations performed (add/modify/delete)
   createdAt: Date; // Creation timestamp
+  toolCallId?: string; // The tool call ID that produced this action
+  parentId?: string; // Parent action ID in the action tree
   operatorIds: string[]; // For highlighting
   linkIds: string[]; // For highlighting
   workflowMetadata: WorkflowMetadata; // Workflow metadata (wid, name, etc.)

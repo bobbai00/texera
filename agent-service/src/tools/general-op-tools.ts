@@ -141,8 +141,6 @@ Examples:
           );
         }
 
-        const beforeContent = workflowState.getWorkflowContent();
-
         let operator = workflowUtil.getNewOperatorPredicate(args.operatorType, args.summary);
         operator = {
           ...operator,
@@ -153,7 +151,6 @@ Examples:
         workflowState.addOperator(operator);
 
         // Automatically create links from inputOperatorIds
-        const createdLinkIds: string[] = [];
         const createdLinkPairs: { source: string; target: string }[] = [];
         if (args.inputOperatorIds) {
           const addedOperator = workflowState.getOperator(operator.operatorID)!;
@@ -186,7 +183,6 @@ Examples:
                 target: { operatorID: args.operatorId, portID: targetPortId },
               };
               workflowState.addLink(link);
-              createdLinkIds.push(linkId);
               createdLinkPairs.push({ source: sourceOpId, target: args.operatorId });
             }
           }
@@ -195,30 +191,26 @@ Examples:
         // Auto-layout the workflow after adding the operator and links
         autoLayoutWorkflow(workflowState);
 
-        const updatedOperator = workflowState.getOperator(operator.operatorID);
-        const afterContent = workflowState.getWorkflowContent();
-
-        // Create agent action for tracking
-        if (context?.agentActionManager && context.agentId) {
-          context.agentActionManager.createAgentAction(
-            context.agentId,
-            context.agentName || `Agent-${context.agentId}`,
-            args.summary || `Added ${args.operatorType}`,
-            { add: { operatorIds: [operator.operatorID], linkIds: createdLinkIds } },
-            context.workflowMetadata || {},
-            beforeContent,
-            afterContent
-          );
-        }
-
-        const finalOperator = updatedOperator || operator;
+        const finalOperator = workflowState.getOperator(operator.operatorID) || operator;
         const numInputPorts = finalOperator.inputPorts.length;
         const numOutputPorts = finalOperator.outputPorts.length;
 
-        return createToolResult(formatAddOperatorResult(
+        let resultMsg = formatAddOperatorResult(
           operator.operatorID, numInputPorts, numOutputPorts,
           createdLinkPairs.length > 0 ? createdLinkPairs : undefined
-        ));
+        );
+
+        // Auto-execute the operator after adding
+        if (context?.executeOperator) {
+          const executionResult = await context.executeOperator(operator.operatorID);
+          if (executionResult.startsWith("[ERROR]")) {
+            resultMsg += `\n\n${executionResult}`;
+          } else {
+            resultMsg += `\n\n${executionResult}`;
+          }
+        }
+
+        return createToolResult(resultMsg);
       } catch (error: any) {
         return createErrorResult(error.message || String(error));
       }
@@ -281,11 +273,8 @@ Examples:
           }
         }
 
-        const beforeContent = workflowState.getWorkflowContent();
         const createdLinkPairs: { source: string; target: string }[] = [];
         const deletedLinkPairs: { source: string; target: string }[] = [];
-        const createdLinkIds: string[] = [];
-        const deletedLinkIds: string[] = [];
 
         // Update properties if provided
         if (args.properties) {
@@ -300,7 +289,6 @@ Examples:
           for (const link of currentLinks) {
             deletedLinkPairs.push({ source: link.source.operatorID, target: link.target.operatorID });
             workflowState.deleteLink(link.linkID);
-            deletedLinkIds.push(link.linkID);
           }
 
           // Create new incoming links
@@ -333,7 +321,6 @@ Examples:
                 target: { operatorID: args.operatorId, portID: targetPortId },
               };
               workflowState.addLink(link);
-              createdLinkIds.push(linkId);
               createdLinkPairs.push({ source: sourceOpId, target: args.operatorId });
             }
           }
@@ -341,30 +328,19 @@ Examples:
           autoLayoutWorkflow(workflowState);
         }
 
-        const afterContent = workflowState.getWorkflowContent();
-
-        // Create agent action for tracking
-        if (context?.agentActionManager && context.agentId) {
-          context.agentActionManager.createAgentAction(
-            context.agentId,
-            context.agentName || `Agent-${context.agentId}`,
-            args.summary || `Modified ${operator.customDisplayName || operator.operatorType}`,
-            {
-              modify: { operatorIds: [args.operatorId] },
-              add: { operatorIds: [], linkIds: createdLinkIds },
-              delete: { operatorIds: [], linkIds: deletedLinkIds },
-            },
-            context.workflowMetadata || {},
-            beforeContent,
-            afterContent
-          );
-        }
-
-        return createToolResult(formatModifyOperatorResult(
+        let resultMsg = formatModifyOperatorResult(
           args.operatorId,
           createdLinkPairs.length > 0 ? createdLinkPairs : undefined,
           deletedLinkPairs.length > 0 ? deletedLinkPairs : undefined
-        ));
+        );
+
+        // Auto-execute the operator after modifying
+        if (context?.executeOperator) {
+          const executionResult = await context.executeOperator(args.operatorId);
+          resultMsg += `\n\n${executionResult}`;
+        }
+
+        return createToolResult(resultMsg);
       } catch (error: any) {
         return createErrorResult(formatOperatorError(args.operatorId, error.message || String(error)));
       }

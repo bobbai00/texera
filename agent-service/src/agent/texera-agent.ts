@@ -26,7 +26,7 @@ import { Subscription } from "rxjs";
 import { debounceTime } from "rxjs/operators";
 import { WorkflowState } from "../workflow/workflow-state";
 import { OperatorMetadataStore } from "../tools/metadata-tools";
-import { AgentActionManager } from "./agent-action-manager";
+import { AgentActionManager, INITIAL_ACTION_ID } from "./agent-action-manager";
 import type {
   AgentSettings,
   ReActStep,
@@ -168,11 +168,14 @@ export class TexeraAgent {
   private systemPrompt: string;
   private settings: AgentSettings;
 
-  // Conversation history
-  private messages: ModelMessage[] = [];
+  // ReActSteps grouped by messageId
+  private reActStepsByMessageId: Map<string, ReActStep[]> = new Map();
 
-  // ReActSteps - accumulated reasoning steps
-  private reActSteps: ReActStep[] = [];
+  // messageId → (startActionId, endActionId) — which HEAD range a message spans
+  private messageActionRange: Map<string, { startActionId: string; endActionId: string }> = new Map();
+
+  // Current messageId during an ongoing generateText call; undefined otherwise
+  private currentMessageId: string | undefined = undefined;
 
   // Delegate configuration for backend operations
   private delegateConfig?: {
@@ -317,15 +320,9 @@ export class TexeraAgent {
         })
       : undefined;
 
-    // Build tool context for agent action tracking
+    // Build tool context
     const context: ToolContext = {
       metadataStore: this.metadataStore,
-      agentActionManager: this.agentActionManager,
-      agentId: this.agentId,
-      agentName: this.agentName,
-      workflowMetadata: this.delegateConfig
-        ? { wid: this.delegateConfig.workflowId, name: this.delegateConfig.workflowName }
-        : undefined,
       settings: {
         maxOperatorResultCharLimit: this.settings.maxOperatorResultCharLimit,
         toolTimeoutMs: this.settings.toolTimeoutMs,
@@ -369,9 +366,9 @@ export class TexeraAgent {
     }
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
-    // In CODE mode, execution is handled inline by createOrModifyOperator — no separate executeOperator needed
+    // In both CODE and GENERAL modes, execution is handled inline — no separate executeOperator needed
     // When noActionDetail is on, executeOperator is also not needed
-    if (getExecutionConfig && !this.settings.simplifiedTools && !this.settings.noActionDetail && this.settings.agentMode !== AgentMode.CODE) {
+    if (getExecutionConfig && !this.settings.simplifiedTools && !this.settings.noActionDetail && this.settings.agentMode !== AgentMode.CODE && this.settings.agentMode !== AgentMode.GENERAL) {
       tools[TOOL_NAME_EXECUTE_OPERATOR] = createExecuteOperatorTool(
         this.workflowState,
         getExecutionConfig,
@@ -459,15 +456,165 @@ export class TexeraAgent {
     return this.agentActionSubscription;
   }
 
-  getMessages(): ModelMessage[] {
-    return [...this.messages];
+  /**
+   * Get all ReActSteps across all messages (flat list, all branches).
+   */
+  getReActSteps(): ReActStep[] {
+    const all: ReActStep[] = [];
+    for (const steps of this.reActStepsByMessageId.values()) {
+      all.push(...steps);
+    }
+    return all;
+  }
+
+  // ============================================================================
+  // HEAD-based visibility
+  // ============================================================================
+
+  /**
+   * Get the visible ReActSteps for a messageId, truncated to the cutoff step.
+   *
+   * For completed messages on the HEAD path, only steps up to (and including) the step
+   * that contains the last action's toolCallId are returned. This prevents showing steps
+   * from sibling branches that share the same messageId.
+   *
+   * For the current in-flight message, all steps are returned (no truncation).
+   */
+  private getStepsForMessage(
+    msgId: string,
+    lastActionPerMessage: Map<string, string>
+  ): ReActStep[] {
+    const allSteps = this.reActStepsByMessageId.get(msgId);
+    if (!allSteps || allSteps.length === 0) return [];
+
+    // Current in-flight message: return all steps (no truncation)
+    if (msgId === this.currentMessageId) return allSteps;
+
+    // Find the last action on the path for this messageId
+    const lastActionId = lastActionPerMessage.get(msgId);
+    if (!lastActionId) return allSteps; // no action for this message — return all
+
+    // Find the toolCallId for that action
+    const action = this.agentActionManager.getAgentAction(lastActionId);
+    if (!action?.toolCallId) return allSteps;
+
+    // Find the step that contains this toolCallId and truncate
+    const toolCallId = action.toolCallId;
+    let cutoffStepId = -1;
+    for (const step of allSteps) {
+      if (step.toolCalls?.some(tc => tc.toolCallId === toolCallId)) {
+        cutoffStepId = step.stepId;
+      }
+    }
+
+    if (cutoffStepId === -1) return allSteps; // toolCallId not found — return all
+    return allSteps.filter(s => s.stepId <= cutoffStepId);
   }
 
   /**
-   * Get all accumulated ReActSteps.
+   * Get ReActSteps visible from the current HEAD.
+   *
+   * 1. Walk the action tree from root to HEAD → get messageIds on that path.
+   * 2. For each messageId, truncate steps to the cutoff point (last action on path).
+   * 3. Include the current in-flight messageId with all its steps.
    */
-  getReActSteps(): ReActStep[] {
-    return [...this.reActSteps];
+  getVisibleReActSteps(): ReActStep[] {
+    const lastActionPerMessage = this.agentActionManager.getLastActionPerMessageOnPath();
+    const messageIds = this.agentActionManager.getMessageIdsOnPath();
+    if (this.currentMessageId && !messageIds.includes(this.currentMessageId)) {
+      messageIds.push(this.currentMessageId);
+    }
+
+    if (messageIds.length === 0) return [];
+
+    const result: ReActStep[] = [];
+    for (const msgId of messageIds) {
+      result.push(...this.getStepsForMessage(msgId, lastActionPerMessage));
+    }
+    return result;
+  }
+
+  /**
+   * Get the historical interactions as ModelMessage[] for the current HEAD path.
+   *
+   * 1. Get messageIds on the ancestor path (chronological order).
+   * 2. Include the current in-flight messageId.
+   * 3. For each messageId, get truncated steps, serialize into a summary text.
+   * 4. Wrap each as a user-type ModelMessage.
+   */
+  getHistoricalInteractions(): ModelMessage[] {
+    const lastActionPerMessage = this.agentActionManager.getLastActionPerMessageOnPath();
+    const messageIds = this.agentActionManager.getMessageIdsOnPath();
+    if (this.currentMessageId && !messageIds.includes(this.currentMessageId)) {
+      messageIds.push(this.currentMessageId);
+    }
+
+    const result: ModelMessage[] = [];
+    for (const msgId of messageIds) {
+      const steps = this.getStepsForMessage(msgId, lastActionPerMessage);
+      if (steps.length === 0) continue;
+
+      const text = this.serializeInteraction(msgId, steps);
+      result.push({ role: "user", content: text });
+    }
+    return result;
+  }
+
+  /**
+   * Serialize a single message's ReActSteps into a summary string.
+   */
+  private serializeInteraction(messageId: string, steps: ReActStep[]): string {
+    const lines: string[] = [];
+    lines.push("Here is a summary of user-assistant interaction that has been done");
+
+    for (const step of steps) {
+      if (step.role === "user") {
+        lines.push(`User Task: ${step.content}`);
+      } else {
+        lines.push(`Assistant Step ${step.stepId}:`);
+        if (step.content) {
+          lines.push(`- thought: ${step.content}`);
+        }
+        if (step.toolCalls && step.toolCalls.length > 0) {
+          lines.push(`- actions:`);
+          for (let i = 0; i < step.toolCalls.length; i++) {
+            const tc = step.toolCalls[i];
+            const tr = step.toolResults?.[i];
+            if (tr && !tr.isError) {
+              const outputStr = typeof tr.output === "string" ? tr.output : String(tr.output ?? "");
+              const firstLine = outputStr.split("\n")[0];
+              lines.push(`    - ${tc.toolName}: ${firstLine}`);
+            } else if (tr?.isError) {
+              lines.push(`    - ${tc.toolName}: [ERROR]`);
+            } else {
+              lines.push(`    - ${tc.toolName}`);
+            }
+          }
+        }
+      }
+    }
+
+    // Status line
+    if (messageId === this.currentMessageId) {
+      lines.push("Interaction ongoing");
+    } else {
+      lines.push("Interaction finished");
+    }
+
+    return lines.join("\n");
+  }
+
+  /**
+   * Checkout to a specific agent action: move HEAD, restore workflow state.
+   * Returns false if the action doesn't exist.
+   */
+  checkout(actionId: string): boolean {
+    const result = this.agentActionManager.checkout(actionId);
+    if (!result) return false;
+    if (result.workflowContent) {
+      this.workflowState.setWorkflowContent(result.workflowContent);
+    }
+    return true;
   }
 
   /**
@@ -482,7 +629,12 @@ export class TexeraAgent {
    * Add a ReActStep and notify the callback if set.
    */
   private addStep(step: ReActStep): void {
-    this.reActSteps.push(step);
+    let steps = this.reActStepsByMessageId.get(step.messageId);
+    if (!steps) {
+      steps = [];
+      this.reActStepsByMessageId.set(step.messageId, steps);
+    }
+    steps.push(step);
     if (this.stepCallback) {
       this.stepCallback(step);
     }
@@ -655,6 +807,12 @@ export class TexeraAgent {
    * Called before processing each message to ensure we have the latest workflow.
    */
   async refreshWorkflowFromBackend(): Promise<void> {
+    // If HEAD points to a real action (not the initial dummy), the workflow is determined
+    // by that action's snapshot. Only load from backend when HEAD is the initial state.
+    if (this.agentActionManager.getHead() !== INITIAL_ACTION_ID) {
+      return;
+    }
+
     if (!this.delegateConfig?.workflowId || !this.delegateConfig?.userToken) {
       return;
     }
@@ -789,23 +947,20 @@ export class TexeraAgent {
     // Set state to generating
     this.state = AgentStateEnum.GENERATING;
 
-    try {
-      // Add user message to history (with context prepended if applicable)
-      this.messages.push({
-        role: "user",
-        content: actualUserMessage,
-      });
+    // Track this message's action range: starts at current HEAD
+    const startActionId = this.agentActionManager.getHead();
+    this.currentMessageId = messageId;
 
+    try {
       // Create user message step (stepId 0) - show original message for display
-      // Estimate input tokens for the user message (rough approximation: ~4 chars per token)
       const estimatedInputTokens = Math.ceil(actualUserMessage.length / 4);
       const userStep: ReActStep = {
         messageId,
         stepId: 0,
         timestamp: Date.now(),
         role: "user",
-        content: userMessage, // Original message for display
-        actualContent: actualUserMessage !== userMessage ? actualUserMessage : undefined, // Full message with context if different
+        content: userMessage,
+        actualContent: actualUserMessage !== userMessage ? actualUserMessage : undefined,
         isBegin: true,
         isEnd: true,
         usage: {
@@ -818,33 +973,39 @@ export class TexeraAgent {
 
       let isFirstStep = true;
       let lastPreparedMessages: ModelMessage[] | undefined;
+      // Capture workflow state before each step for action before/after snapshots
+      let beforeStepContent = this.workflowState.getWorkflowContent();
 
-      // Call the model with tools - uses full message history
+      // Pass only the current user message to generateText.
+      // prepareStep will build the full context (historical interactions + DAG + this message).
+      const currentUserMessage: ModelMessage[] = [{ role: "user", content: actualUserMessage }];
       const result = await generateText({
         model: this.model,
         system: this.systemPrompt,
-        messages: this.messages,
+        messages: currentUserMessage,
         tools: this.tools,
         temperature: 0.2,
         stopWhen: stepCountIs(this.settings.maxSteps),
-        prepareStep: (this.settings.enableContextOptimization || this.settings.latestOnly || this.settings.noActionDetail || this.settings.agentMode === AgentMode.GENERAL)
-          ? ({ stepNumber, messages: currentMessages }) => {
-              if (stepNumber === 0) return undefined;
-              let processed = currentMessages;
-              // latestOnly first: removes whole tool-call/result pairs for stale operators
-              // Skip latestOnly when noActionDetail is active or GENERAL mode (DAG summary replaces all tool messages)
+        prepareStep: ({ stepNumber, messages: currentMessages }) => {
+              // Build historical interactions from HEAD path + current message
+              const historicalInteractions = this.getHistoricalInteractions();
+
+              // Use redactActionDetails to combine historicalInteractions + DAG summary
               const useRedact = this.settings.noActionDetail || this.settings.agentMode === AgentMode.GENERAL;
+              let processed: ModelMessage[];
+              if (useRedact) {
+                const removeProperties = this.settings.noActionDetail;
+                processed = redactActionDetails(historicalInteractions, this.workflowState, this.operatorExecutionResults, removeProperties);
+              } else {
+                // Without redact: use historical interactions + current messages (which contain tool calls/results from prior steps)
+                processed = [...historicalInteractions, ...currentMessages];
+              }
+
+              // latestOnly: removes whole tool-call/result pairs for stale operators
               if (this.settings.latestOnly && !useRedact) {
                 processed = filterLatestOnlyMessages(processed, this.workflowState);
               }
-              // Redact action details:
-              // - CODE mode: only when noActionDetail is enabled (removeProperties=true)
-              // - GENERAL mode: always called; removeProperties is controlled by noActionDetail
-              if (useRedact) {
-                const removeProperties = this.settings.noActionDetail;
-                processed = redactActionDetails(processed, this.workflowState, this.operatorExecutionResults, removeProperties);
-              }
-              // context optimization last: trims execution result sections
+              // context optimization: trims execution result sections
               if (this.settings.enableContextOptimization) {
                 const effectiveDepth = this.settings.dynamicDepthEnabled
                   ? this.workflowState.computeAveragePathLength()
@@ -861,8 +1022,7 @@ export class TexeraAgent {
               }
               lastPreparedMessages = processed;
               return { messages: processed };
-            }
-          : undefined,
+            },
         abortSignal: this.abortController?.signal,
         // Note: reasoning_effort is NOT passed here — it's configured per-model in
         // litellm-config.yaml via extra_body to bypass LiteLLM's param validation.
@@ -889,6 +1049,47 @@ export class TexeraAgent {
             output: tr.output,
             isError: !!(tr.output as any)?.error,
           }));
+
+          // Create agent actions for workflow-modifying tool calls that succeeded.
+          // We have full context here: toolCallId, tool result (success/error), and
+          // before/after workflow snapshots.
+          const afterStepContent = this.workflowState.getWorkflowContent();
+          if (toolCalls && toolResults) {
+            const ACTION_TOOL_NAMES = new Set([
+              TOOL_NAME_ADD_OPERATOR, TOOL_NAME_MODIFY_OPERATOR,
+              TOOL_NAME_CREATE_OR_MODIFY_OPERATOR, TOOL_NAME_DELETE_OPERATOR,
+            ]);
+            for (let i = 0; i < toolCalls.length; i++) {
+              const tc = toolCalls[i];
+              const tr = toolResults[i];
+              if (!ACTION_TOOL_NAMES.has(tc.toolName)) continue;
+              // Skip failed tool calls
+              const resultText = typeof tr?.output === "string" ? tr.output : String(tr?.output ?? "");
+              if (resultText.startsWith("[ERROR]")) continue;
+
+              const operatorId = (tc.input as any)?.operatorId || "unknown";
+              const summary = (tc.input as any)?.summary || `${tc.toolName} ${operatorId}`;
+              const action = this.agentActionManager.createAgentAction(
+                this.agentId,
+                this.agentName,
+                summary,
+                this.parseOperations(tc.toolName, operatorId),
+                this.delegateConfig
+                  ? { wid: this.delegateConfig.workflowId, name: this.delegateConfig.workflowName }
+                  : {},
+                beforeStepContent,
+                afterStepContent,
+                undefined,
+                tc.toolCallId
+              );
+              // Link this action to the current messageId
+              this.agentActionManager.setActionMessageId(action.id, messageId);
+              // Progressively update the action range for this message
+              this.messageActionRange.set(messageId, { startActionId, endActionId: action.id });
+            }
+          }
+          // Update before snapshot for next step
+          beforeStepContent = afterStepContent;
 
           // Create agent step
           const agentStep: ReActStep = {
@@ -920,15 +1121,13 @@ export class TexeraAgent {
       });
 
       // Mark the last step as isEnd: true (instead of creating a duplicate final step)
-      if (this.reActSteps.length > 0) {
-        const lastStep = this.reActSteps[this.reActSteps.length - 1];
-        if (lastStep.messageId === messageId && lastStep.role === "agent") {
+      const msgSteps = this.reActStepsByMessageId.get(messageId);
+      if (msgSteps && msgSteps.length > 0) {
+        const lastStep = msgSteps[msgSteps.length - 1];
+        if (lastStep.role === "agent") {
           lastStep.isEnd = true;
         }
       }
-
-      // Add the response messages to history
-      this.messages.push(...result.response.messages);
 
       // Update final stats - use totalUsage from result (aggregate across all steps)
       // Note: result.usage is only the final step, result.totalUsage is the aggregate
@@ -1023,7 +1222,25 @@ export class TexeraAgent {
       };
     } finally {
       this.abortController = null;
+      this.currentMessageId = undefined;
       this.state = AgentStateEnum.AVAILABLE;
+    }
+  }
+
+  /**
+   * Derive AgentActionOperations from a tool name and operator ID.
+   */
+  private parseOperations(toolName: string, operatorId: string): import("../types/agent").AgentActionOperations {
+    switch (toolName) {
+      case TOOL_NAME_ADD_OPERATOR:
+      case TOOL_NAME_CREATE_OR_MODIFY_OPERATOR:
+        return { add: { operatorIds: [operatorId], linkIds: [] } };
+      case TOOL_NAME_MODIFY_OPERATOR:
+        return { modify: { operatorIds: [operatorId] } };
+      case TOOL_NAME_DELETE_OPERATOR:
+        return { delete: { operatorIds: [operatorId], linkIds: [] } };
+      default:
+        return { modify: { operatorIds: [operatorId] } };
     }
   }
 
@@ -1042,16 +1259,20 @@ export class TexeraAgent {
    * Clear conversation history and ReActSteps.
    */
   clearHistory(): void {
-    this.messages = [];
-    this.reActSteps = [];
+    this.reActStepsByMessageId.clear();
+    this.messageActionRange.clear();
+    this.currentMessageId = undefined;
+    this.agentActionManager.clearAllAgentActions();
   }
 
   /**
-   * Reset the agent (clear history, ReActSteps, and workflow).
+   * Reset the agent (clear history, ReActSteps, actions, and workflow).
    */
   reset(): void {
-    this.messages = [];
-    this.reActSteps = [];
+    this.reActStepsByMessageId.clear();
+    this.messageActionRange.clear();
+    this.currentMessageId = undefined;
+    this.agentActionManager.clearAllAgentActions();
     this.workflowState.reset();
     this.operatorExecutionResults.clear();
   }
@@ -1125,14 +1346,15 @@ export class TexeraAgent {
    * @returns Array of relevant ReActSteps
    */
   public getReActStepsByOperatorIds(operatorIds: string[]): ReActStep[] {
+    const allSteps = this.getReActSteps();
     if (!operatorIds || operatorIds.length === 0) {
-      return [...this.reActSteps];
+      return allSteps;
     }
 
     const operatorIdSet = new Set(operatorIds);
     const relevantSteps: ReActStep[] = [];
 
-    for (const step of this.reActSteps) {
+    for (const step of allSteps) {
       const { added, modified } = this.getOperatorIdsFromStep(step);
 
       // Check if any of the step's operators match the requested IDs
@@ -1232,8 +1454,9 @@ export class TexeraAgent {
     this.websockets.clear();
 
     // Clear conversation history
-    this.messages = [];
-    this.reActSteps = [];
+    this.reActStepsByMessageId.clear();
+    this.messageActionRange.clear();
+    this.currentMessageId = undefined;
   }
 
   // ============================================================================
@@ -1245,20 +1468,6 @@ export class TexeraAgent {
    */
   setState(state: AgentStateEnum): void {
     this.state = state;
-  }
-
-  /**
-   * Set the conversation messages directly (for loading trace).
-   */
-  setMessages(messages: ModelMessage[]): void {
-    this.messages = [...messages];
-  }
-
-  /**
-   * Append a single message to the conversation history.
-   */
-  appendMessage(message: ModelMessage): void {
-    this.messages.push(message);
   }
 
   /**
@@ -1375,9 +1584,6 @@ export class TexeraAgent {
 
         this.addStep(userStep);
         onStep(userStep);
-
-        // Add to message history
-        this.messages.push(message);
       } else if (message.role === "assistant") {
         // Parse assistant message content
         const { textContent, toolCalls } = this.parseAssistantMessage(message);
@@ -1423,13 +1629,8 @@ export class TexeraAgent {
 
         this.addStep(assistantStep);
         onStep(assistantStep);
-
-        // Add assistant message to history
-        this.messages.push(message);
       } else if (message.role === "tool") {
-        // Tool messages are already processed into the map
-        // Just add to message history for completeness
-        this.messages.push(message);
+        // Tool messages are already processed into the map — no storage needed
       }
     }
 

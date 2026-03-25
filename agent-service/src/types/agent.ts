@@ -38,22 +38,6 @@ export enum AgentState {
 }
 
 // ============================================================================
-// Tool Result Types
-// ============================================================================
-
-/**
- * Base interface for all tool execution results.
- * Tools return either a success result with a message, or an error.
- * The message field provides human-readable feedback to the agent.
- */
-export interface BaseToolResult {
-  /** Human-readable message describing what happened */
-  message: string;
-  /** Error message if the tool failed (presence indicates failure) */
-  error?: string;
-}
-
-// ============================================================================
 // Agent Action Types
 // ============================================================================
 
@@ -77,6 +61,10 @@ export interface AgentAction {
   summary: string;
   operations: AgentActionOperations;
   createdAt: Date;
+  /** The tool call ID that produced this action (patched in onStepFinish) */
+  toolCallId?: string;
+  /** Parent action ID in the action tree (null/undefined for the first action) */
+  parentId?: string;
   workflowMetadata?: {
     wid?: number;
     name?: string;
@@ -243,13 +231,13 @@ export interface AgentSettings {
  */
 export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   disabledTools: new Set(),
-  maxOperatorResultCharLimit: 40000, // 20,000 characters (matches smolagents)
-  maxOperatorResultCellCharLimit: 20000, // 4,000 characters per cell
+  maxOperatorResultCharLimit: 2000, // 20,000 characters (matches smolagents)
+  maxOperatorResultCellCharLimit: 2000, // 4,000 characters per cell
   operatorResultSerializationMode: OperatorResultSerializationMode.TABLE,
   toolTimeoutMs: 240000, // 4 minutes
   executionTimeoutMs: 240000, // 4 minutes
   maxSteps: 100,
-  agentMode: AgentMode.CODE, // Default to CODE mode
+  agentMode: AgentMode.GENERAL, // Default to CODE mode
   fineGrainedPrompt: false, // Default to standard prompts
   enableContextOptimization: false,
   frontierDepth: 1,

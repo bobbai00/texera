@@ -340,7 +340,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     return {
       ...getAgentInfo(id, agent),
       workflow: agent.getWorkflowState().getWorkflowContent(),
-      messageCount: agent.getMessages().length,
+      stepCount: agent.getReActSteps().length,
     };
   })
 
@@ -377,7 +377,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 
       return {
         response: result.response,
-        messages: agent.getMessages(),
         usage: result.usage,
         stats: result.stats,
         stopped: result.stopped,
@@ -419,7 +418,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       agentName: agent.agentName,
       agentState: agent.getState(),
       workflow: workflowState.getWorkflowContent(),
-      messageCount: agent.getMessages().length,
+      stepCount: agent.getReActSteps().length,
       reActStepsCount: agent.getReActSteps().length,
       createdAt: agent.createdAt,
       delegate: delegateConfig
@@ -431,10 +430,10 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     };
   })
 
-  // Get messages
+  // Get all ReActSteps
   .get("/:id/messages", ({ params: { id } }) => {
     const agent = getAgent(id);
-    return { messages: agent.getMessages() };
+    return { steps: agent.getReActSteps() };
   })
 
   // Get ReActSteps filtered by operator IDs (for context preview)
@@ -477,6 +476,27 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     const agent = getAgent(id);
     agent.clearHistory();
     return { status: "cleared" };
+  })
+
+  // Checkout to a specific agent action (move HEAD, restore workflow)
+  .post("/:id/checkout", ({ params: { id }, body }) => {
+    const agent = getAgent(id);
+    const { actionId } = body as { actionId: string };
+    if (!actionId) throw new Error("actionId is required");
+
+    const success = agent.checkout(actionId);
+    if (!success) throw new Error(`Action ${actionId} not found or checkout failed`);
+
+    const visibleSteps = agent.getVisibleReActSteps();
+
+    // Broadcast HEAD change + visible steps to all WebSocket clients
+    broadcastToAgent(id, { type: "headChange", headId: actionId, steps: visibleSteps });
+
+    return {
+      status: "checked out",
+      headId: actionId,
+      visibleSteps,
+    };
   })
 
   // Get agent settings
@@ -626,7 +646,7 @@ interface WsMessage {
 }
 
 interface WsOutgoingMessage {
-  type: "step" | "state" | "error" | "complete" | "init" | "agentAction";
+  type: "step" | "state" | "error" | "complete" | "init" | "agentAction" | "headChange";
   step?: ReActStep;
   state?: string;
   error?: string;
@@ -634,6 +654,7 @@ interface WsOutgoingMessage {
   agentAction?: AgentAction;
   agentActions?: AgentAction[];
   stats?: AgentMessageStats;
+  headId?: string;
 }
 
 /**
@@ -683,12 +704,13 @@ const app = new Elysia()
       // Add this websocket to the agent's set
       agent.addWebsocket(ws);
 
-      // Send initial state, existing steps, and agent actions
+      // Send initial state, visible steps (based on HEAD), and agent actions
       const initMessage: WsOutgoingMessage = {
         type: "init",
         state: agent.getState(),
-        steps: agent.getReActSteps(),
+        steps: agent.getVisibleReActSteps(),
         agentActions: agent.getAgentActions(),
+        headId: agent.getAgentActionManager().getHead(),
       };
       ws.send(JSON.stringify(initMessage));
     },

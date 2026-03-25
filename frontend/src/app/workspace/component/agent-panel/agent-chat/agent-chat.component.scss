@@ -57,42 +57,12 @@
 
 // Timeline Styles
 .timeline-container {
-  width: 100px;
-  min-width: 100px;
+  width: 160px;
+  min-width: 160px;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #f0f0f0;
   background: #fafafa;
-}
-
-.timeline-legend {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 6px;
-  border-bottom: 1px solid #f0f0f0;
-  background: white;
-
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-
-    .legend-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-
-    .legend-label {
-      font-size: 9px;
-      color: #8c8c8c;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-  }
 }
 
 .timeline-track {
@@ -109,7 +79,7 @@
 
 .timeline-line {
   position: absolute;
-  left: 24px;
+  left: 30px;
   top: 0;
   bottom: 0;
   width: 2px;
@@ -123,54 +93,56 @@
   flex-direction: row;
   align-items: center;
   margin-bottom: 8px;
-  padding-left: 12px;
+  padding-left: 6px;
   z-index: 1;
   cursor: pointer;
-  transition: transform 0.2s ease;
+  transition: opacity 0.2s ease;
 
-  &:hover,
-  &.hovered {
-    .node-circle {
-      transform: scale(1.1);
-      box-shadow: 0 0 8px rgba(0, 0, 0, 0.3);
+  &:hover .node-capsule {
+    filter: brightness(1.1);
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.25);
+  }
+
+  // Dim nodes not on the current HEAD path
+  &.off-path {
+    opacity: 0.4;
+    &:hover {
+      opacity: 0.8;
     }
   }
 
-  &.highlighted .node-circle {
-    transform: scale(1.2);
-    box-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
-  }
-
-  &.modify-node {
-    cursor: pointer;
-    &:hover .node-circle {
-      box-shadow: 0 0 10px rgba(250, 140, 22, 0.6);
-    }
-  }
-
-  .node-circle {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    border: 2px solid;
+  .node-capsule {
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 2px solid;
     background: white;
     transition: all 0.2s ease;
     flex-shrink: 0;
+    min-width: 40px;
 
-    .node-icon {
-      font-size: 10px;
-      color: white;
+    .capsule-label {
+      font-size: 9px;
+      font-weight: 600;
+      color: #fff;
+      white-space: nowrap;
     }
   }
 
-  .node-label {
-    margin-left: 8px;
+  .node-operator-id {
+    margin-left: 6px;
     font-size: 10px;
-    font-weight: 500;
+    color: #595959;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 80px;
+  }
+
+  &.is-head .node-capsule {
+    box-shadow: 0 0 0 3px #722ed1, 0 0 8px rgba(114, 46, 209, 0.4);
   }
 }
 

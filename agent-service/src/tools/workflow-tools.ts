@@ -30,7 +30,6 @@ import {
   createErrorResult,
 } from "./tools-utility";
 import type { OperatorMetadataStore } from "./metadata-tools";
-import type { AgentActionManager } from "../agent/agent-action-manager";
 import type { ParallelCallCoordinator } from "./parallel-call-coordinator";
 
 // ============================================================================
@@ -39,10 +38,6 @@ import type { ParallelCallCoordinator } from "./parallel-call-coordinator";
 
 export interface ToolContext {
   metadataStore?: OperatorMetadataStore;
-  agentActionManager?: AgentActionManager;
-  agentId?: string;
-  agentName?: string;
-  workflowMetadata?: { wid?: number; name?: string };
   settings?: {
     maxOperatorResultCharLimit?: number;
     toolTimeoutMs?: number;
@@ -52,8 +47,6 @@ export interface ToolContext {
   /**
    * Execute a specific operator and return formatted result.
    * Available when execution is configured for the agent.
-   * @param operatorId - The operator to execute
-   * @returns Formatted result string or null if execution is not available
    */
   executeOperator?: (operatorId: string) => Promise<string>;
   /** Coordinates parallel tool calls with inter-operator dependencies */
@@ -78,28 +71,10 @@ export function createDeleteOperatorTool(workflowState: WorkflowState, context?:
     }),
     execute: async (args: { operatorId: string }) => {
       try {
-        const beforeContent = workflowState.getWorkflowContent();
-
         const deleted = workflowState.deleteOperator(args.operatorId);
         if (!deleted) {
           return createErrorResult(`Operator ${args.operatorId} not found`);
         }
-
-        const afterContent = workflowState.getWorkflowContent();
-
-        // Create agent action for tracking
-        if (context?.agentActionManager && context.agentId) {
-          context.agentActionManager.createAgentAction(
-            context.agentId,
-            context.agentName || `Agent-${context.agentId}`,
-            `Deleted operator ${args.operatorId}`,
-            { delete: { operatorIds: [args.operatorId], linkIds: [] } },
-            context.workflowMetadata || {},
-            beforeContent,
-            afterContent
-          );
-        }
-
         return createToolResult(`Deleted operator: ${args.operatorId}`);
       } catch (error: any) {
         return createErrorResult(error.message || String(error));

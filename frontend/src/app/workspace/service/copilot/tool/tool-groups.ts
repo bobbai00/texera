@@ -60,32 +60,22 @@ export const TOOL_GROUP_CONFIGS: Record<ToolGroup, ToolGroupConfig> = {
 };
 
 // Tool name constants (must match agent-service tool names)
-const TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES = "listAllAvailableOperatorTypes";
-const TOOL_NAME_GET_OPERATOR_SCHEMA = "getOperatorSchema";
-const TOOL_NAME_GET_CURRENT_WORKFLOW = "getCurrentWorkflow";
 const TOOL_NAME_ADD_OPERATOR = "addOperator";
-const TOOL_NAME_ADD_LINK = "addLink";
 const TOOL_NAME_MODIFY_OPERATOR = "modifyOperator";
-const TOOL_NAME_DELETE_FROM_WORKFLOW = "deleteFromWorkflow";
-const TOOL_NAME_EXECUTE_WORKFLOW = "executeWorkflow";
+const TOOL_NAME_DELETE_OPERATOR = "deleteOperator";
+const TOOL_NAME_CREATE_OR_MODIFY_OPERATOR = "createOrModifyOperator";
+const TOOL_NAME_EXECUTE_OPERATOR = "executeOperator";
 
 // Mapping of tool names to their groups
 export const TOOL_NAME_TO_GROUP: Record<string, ToolGroup> = {
-  // Observe group - workflow metadata tools
-  [TOOL_NAME_LIST_ALL_AVAILABLE_OPERATOR_TYPES]: ToolGroup.OBSERVE,
-  [TOOL_NAME_GET_OPERATOR_SCHEMA]: ToolGroup.OBSERVE,
+  // Execute group
+  [TOOL_NAME_EXECUTE_OPERATOR]: ToolGroup.EXECUTE,
 
-  // Observe group - workflow inspection tools
-  [TOOL_NAME_GET_CURRENT_WORKFLOW]: ToolGroup.OBSERVE,
-
-  // Execute group - workflow execution tools
-  [TOOL_NAME_EXECUTE_WORKFLOW]: ToolGroup.EXECUTE,
-
-  // Modify group - operator tools
+  // Modify group - tools that create agent actions
   [TOOL_NAME_ADD_OPERATOR]: ToolGroup.MODIFY,
-  [TOOL_NAME_ADD_LINK]: ToolGroup.MODIFY,
   [TOOL_NAME_MODIFY_OPERATOR]: ToolGroup.MODIFY,
-  [TOOL_NAME_DELETE_FROM_WORKFLOW]: ToolGroup.MODIFY,
+  [TOOL_NAME_DELETE_OPERATOR]: ToolGroup.MODIFY,
+  [TOOL_NAME_CREATE_OR_MODIFY_OPERATOR]: ToolGroup.MODIFY,
 };
 
 /**
