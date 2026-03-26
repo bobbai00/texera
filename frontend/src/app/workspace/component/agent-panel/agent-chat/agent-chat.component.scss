@@ -138,6 +138,19 @@
   flex-shrink: 0;
 }
 
+.time-axis-icon {
+  font-size: 10px;
+  flex-shrink: 0;
+
+  &.user-icon {
+    color: #1890ff;
+  }
+
+  &.agent-icon {
+    color: #52c41a;
+  }
+}
+
 .time-axis-label {
   font-size: 9px;
   font-family: monospace;
@@ -218,6 +231,18 @@
     .node-text {
       color: #fff;
     }
+  }
+
+  // User request node: blue tint
+  &.user-request:not(.is-head) {
+    border-color: #91d5ff;
+    background: #e6f7ff;
+  }
+
+  // Agent response node: green tint
+  &.agent-response:not(.is-head) {
+    border-color: #b7eb8f;
+    background: #f6ffed;
   }
 
   .node-text {

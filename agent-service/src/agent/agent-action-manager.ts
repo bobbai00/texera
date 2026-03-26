@@ -30,7 +30,7 @@
  */
 
 import { Subject, Observable } from "rxjs";
-import type { AgentAction, AgentActionOperations } from "../types/agent";
+import type { AgentAction, AgentActionOperations, AgentActionType } from "../types/agent";
 import type { WorkflowContent } from "../types/workflow";
 
 // ============================================================================
@@ -135,7 +135,8 @@ export class AgentActionManager {
     beforeWorkflowContent: WorkflowContent,
     afterWorkflowContent: WorkflowContent,
     executorAgentId?: string,
-    toolCallId?: string
+    toolCallId?: string,
+    actionType?: AgentActionType
   ): AgentAction {
     const id = this.generateId();
 
@@ -149,6 +150,7 @@ export class AgentActionManager {
       createdAt: new Date(),
       toolCallId,
       parentId: this.head,
+      actionType: actionType || "tool_call",
       workflowMetadata,
       beforeWorkflowContent,
       afterWorkflowContent,

@@ -42,6 +42,14 @@ export enum AgentState {
 // ============================================================================
 
 /**
+ * The kind of agent action.
+ * - "tool_call"       — a workflow-modifying tool call (existing behaviour)
+ * - "user_request"    — the user sent a message
+ * - "agent_response"  — the agent finished responding
+ */
+export type AgentActionType = "tool_call" | "user_request" | "agent_response";
+
+/**
  * Operations performed by an agent action
  */
 export interface AgentActionOperations {
@@ -65,6 +73,8 @@ export interface AgentAction {
   toolCallId?: string;
   /** Parent action ID in the action tree (null/undefined for the first action) */
   parentId?: string;
+  /** Distinguishes tool-call actions from user/agent message actions */
+  actionType?: AgentActionType;
   workflowMetadata?: {
     wid?: number;
     name?: string;

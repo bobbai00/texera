@@ -396,6 +396,7 @@ export class TexeraCopilotManagerService {
       createdAt: new Date(apiAction.createdAt),
       toolCallId: apiAction.toolCallId,
       parentId: apiAction.parentId,
+      actionType: apiAction.actionType,
       operatorIds,
       linkIds,
       workflowMetadata: apiAction.workflowMetadata || {},

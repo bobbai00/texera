@@ -52,12 +52,14 @@ export interface TimelineNode {
   isHead: boolean;
   /** Whether this node is on the ancestor path from root to HEAD */
   isOnHeadPath: boolean;
-  /** Short action label: "Add", "Modify", or "Delete" */
+  /** Short action label: "Add", "Modify", "Delete", "User", or "Agent" */
   actionLabel: string;
-  /** Operator ID affected by this action */
+  /** Operator ID affected by this action, or summary text for non-tool actions */
   operatorId: string;
   /** Action summary */
   summary: string;
+  /** Action type: "tool_call", "user_request", or "agent_response" */
+  actionType?: string;
   /** Layout position computed by dagre (x, y in pixels) */
   x: number;
   y: number;
@@ -73,6 +75,8 @@ export interface TimeAxisNode {
   y: number;
   /** Time label in HH:MM:SS format */
   timeLabel: string;
+  /** Action type for icon display */
+  actionType?: string;
 }
 
 /**
@@ -950,6 +954,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         actionLabel: this.getActionLabel(action),
         operatorId: this.getActionOperatorId(action),
         summary: action.summary,
+        actionType: action.actionType,
         x: pos.x,
         y: pos.y,
         width: nodeWidths.get(action.id) ?? minNodeWidth,
@@ -963,7 +968,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       const hh = String(d.getHours()).padStart(2, "0");
       const mm = String(d.getMinutes()).padStart(2, "0");
       const ss = String(d.getSeconds()).padStart(2, "0");
-      return { y, timeLabel: `${hh}:${mm}:${ss}` };
+      return { y, timeLabel: `${hh}:${mm}:${ss}`, actionType: action.actionType };
     });
 
     // Build edges with SVG paths
@@ -989,8 +994,11 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     this.treeHeight = maxY + marginY;
   }
 
-  /** Extract the primary operator ID from an agent action's operations. */
+  /** Extract the primary operator ID (or summary text for non-tool actions). */
   private getActionOperatorId(action: AgentAction): string {
+    if (action.actionType === "user_request" || action.actionType === "agent_response") {
+      return action.summary;
+    }
     return (
       action.operations.add?.operatorIds?.[0] ||
       action.operations.modify?.operatorIds?.[0] ||
@@ -999,8 +1007,10 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     );
   }
 
-  /** Derive a short label (Add/Modify/Delete) from an agent action's operations. */
+  /** Derive a short label from an agent action. */
   private getActionLabel(action: AgentAction): string {
+    if (action.actionType === "user_request") return "User";
+    if (action.actionType === "agent_response") return "Agent";
     if (action.operations.add?.operatorIds?.length) return "Add";
     if (action.operations.delete?.operatorIds?.length) return "Delete";
     if (action.operations.modify?.operatorIds?.length) return "Modify";

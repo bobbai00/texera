@@ -494,11 +494,23 @@ export class TexeraAgent {
     const lastActionId = lastActionPerMessage.get(msgId);
     if (!lastActionId) return allSteps; // no action for this message — return all
 
-    // Find the toolCallId for that action
     const action = this.agentActionManager.getAgentAction(lastActionId);
-    if (!action?.toolCallId) return allSteps;
+    if (!action) return allSteps;
 
-    // Find the step that contains this toolCallId and truncate
+    // Truncation based on action type:
+    // - user_request: only show the user step (nothing has happened yet)
+    // - agent_response: show all steps (everything is done)
+    // - tool_call: truncate to the step containing the tool call
+    if (action.actionType === "user_request") {
+      return allSteps.filter(s => s.role === "user");
+    }
+
+    if (action.actionType === "agent_response") {
+      return allSteps;
+    }
+
+    // tool_call: find the step containing the toolCallId and truncate there
+    if (!action.toolCallId) return allSteps;
     const toolCallId = action.toolCallId;
     let cutoffStepId = -1;
     for (const step of allSteps) {
@@ -953,8 +965,6 @@ export class TexeraAgent {
     // Set state to generating
     this.state = AgentStateEnum.GENERATING;
 
-    // Track this message's action range: starts at current HEAD
-    const startActionId = this.agentActionManager.getHead();
     this.currentMessageId = messageId;
 
     try {
@@ -981,6 +991,24 @@ export class TexeraAgent {
       let lastPreparedMessages: ModelMessage[] | undefined;
       // Capture workflow state before each step for action before/after snapshots
       let beforeStepContent = this.workflowState.getWorkflowContent();
+
+      // Create "user_request" action so every user message appears in the action tree
+      const userAction = this.agentActionManager.createAgentAction(
+        this.agentId,
+        this.agentName,
+        `User: ${userMessage.substring(0, 50)}${userMessage.length > 50 ? "..." : ""}`,
+        {}, // empty operations — no workflow changes
+        this.delegateConfig
+          ? { wid: this.delegateConfig.workflowId, name: this.delegateConfig.workflowName }
+          : {},
+        beforeStepContent,
+        beforeStepContent, // after = same (no change)
+        undefined,
+        undefined,
+        "user_request"
+      );
+      this.agentActionManager.setActionMessageId(userAction.id, messageId);
+      const startActionId = userAction.id;
 
       // Pass only the current user message to generateText.
       // prepareStep will build the full context (historical interactions + DAG + this message).
@@ -1134,6 +1162,26 @@ export class TexeraAgent {
           lastStep.isEnd = true;
         }
       }
+
+      // Create "agent_response" action so every agent reply appears in the action tree
+      const finalContent = this.workflowState.getWorkflowContent();
+      const responseText = result.text || "";
+      const agentResponseAction = this.agentActionManager.createAgentAction(
+        this.agentId,
+        this.agentName,
+        `Agent: ${responseText.substring(0, 50)}${responseText.length > 50 ? "..." : ""}`,
+        {}, // empty operations
+        this.delegateConfig
+          ? { wid: this.delegateConfig.workflowId, name: this.delegateConfig.workflowName }
+          : {},
+        finalContent,
+        finalContent, // after = same
+        undefined,
+        undefined,
+        "agent_response"
+      );
+      this.agentActionManager.setActionMessageId(agentResponseAction.id, messageId);
+      this.messageActionRange.set(messageId, { startActionId, endActionId: agentResponseAction.id });
 
       // Update final stats - use totalUsage from result (aggregate across all steps)
       // Note: result.usage is only the final step, result.totalUsage is the aggregate
