@@ -134,6 +134,7 @@ export const operatorAgentActionProgressClass = "texera-operator-agent-action-pr
 export const operatorIconClass = "texera-operator-icon";
 export const operatorNameClass = "texera-operator-name";
 export const operatorFriendlyNameClass = "texera-operator-friendly-name";
+export const operatorTypeClass = "texera-operator-type";
 export const operatorPortMetricsClass = "texera-operator-port-metrics";
 const operatorWorkerCountClass = "operator-worker-count";
 
@@ -151,6 +152,7 @@ class TexeraCustomJointElement extends joint.shapes.devs.Model {
       <rect class="body"></rect>
       <image class="${operatorIconClass}"></image>
       <text class="${operatorFriendlyNameClass}"></text>
+      <text class="${operatorTypeClass}"></text>
       <text class="${operatorNameClass}"></text>
       <text class="${operatorPortMetricsClass}"></text>
       <text class="${operatorWorkerCountClass}"></text>
@@ -820,19 +822,33 @@ export class JointUIService {
         fill: "#595959",
         "font-size": "14px",
         "ref-x": 0.5,
-        "ref-y": 80,
+        "ref-y": 100,
         ref: "rect.body",
         "y-alignment": "middle",
         "x-alignment": "middle",
         cursor: "pointer",
         event: "element:name:pointerclick",
+        textWrap: {
+          width: 250,
+          height: 80,
+        },
       },
       ".texera-operator-friendly-name": {
-        text: operatorFriendlyName,
+        text: operator.operatorID,
         fill: "#888888",
         "font-size": "10px",
         "ref-x": 0.5,
         "ref-y": -12,
+        ref: "rect.body",
+        "y-alignment": "middle",
+        "x-alignment": "middle",
+      },
+      [`.${operatorTypeClass}`]: {
+        text: operatorFriendlyName,
+        fill: "#888888",
+        "font-size": "9px",
+        "ref-x": 0.5,
+        "ref-y": 52,
         ref: "rect.body",
         "y-alignment": "middle",
         "x-alignment": "middle",
@@ -1135,7 +1151,7 @@ export class JointUIService {
     // --- Header area: icon + type on left, shapes on right ---
     let curY = padding;
     const iconCenterY = curY + 12;
-    const shapeX = 140; // X offset for shape info (right side of header)
+    const shapeX = ew - 68; // X offset for shape info (near right edge of expanded box)
 
     // Input shape line (right of type, same row as icon)
     const inParts: Array<{ text: string; fill: string; bold?: boolean }> = [];
@@ -1220,6 +1236,8 @@ export class JointUIService {
         "ref-y": iconCenterY,
       },
       ".texera-operator-friendly-name": {
+        // In expanded mode, show the operator type (read from the type element)
+        text: element.attr(`.${operatorTypeClass}/text`) || "",
         visibility: "visible",
         "ref-x": padding + 30,
         "ref-y": iconCenterY,
@@ -1229,9 +1247,12 @@ export class JointUIService {
         "font-size": "11px",
         "font-weight": "bold",
       },
+      [`.${operatorTypeClass}`]: {
+        visibility: "hidden",
+      },
       ".texera-operator-name": {
         "ref-x": 0.5,
-        "ref-y": eh + 14,
+        "ref-y": eh + 20,
         "x-alignment": "middle",
       },
       [`.${operatorStateClass}`]: { visibility: "hidden" },
@@ -1267,6 +1288,8 @@ export class JointUIService {
         "ref-y": 0.5,
       },
       ".texera-operator-friendly-name": {
+        // Restore operator ID text
+        text: operatorID,
         visibility: "visible",
         "ref-x": 0.5,
         "ref-y": -12,
@@ -1276,9 +1299,18 @@ export class JointUIService {
         "font-size": "10px",
         "font-weight": "normal",
       },
+      [`.${operatorTypeClass}`]: {
+        visibility: "visible",
+        "ref-x": 0.5,
+        "ref-y": 52,
+        "x-alignment": "middle",
+        "text-anchor": "middle",
+        fill: "#888888",
+        "font-size": "9px",
+      },
       ".texera-operator-name": {
         "ref-x": 0.5,
-        "ref-y": 80,
+        "ref-y": 100,
         "x-alignment": "middle",
       },
       [`.${operatorStateClass}`]: { visibility: "hidden" },

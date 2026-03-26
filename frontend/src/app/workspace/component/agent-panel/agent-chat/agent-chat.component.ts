@@ -70,6 +70,16 @@ export interface TimelineNode {
 }
 
 /**
+ * Represents a node on the vertical time axis, horizontally aligned with a timeline node.
+ */
+export interface TimeAxisNode {
+  /** Y position (same as the corresponding timeline node) */
+  y: number;
+  /** Time label in HH:MM:SS format */
+  timeLabel: string;
+}
+
+/**
  * Represents an edge between parent and child nodes in the action tree.
  */
 export interface TreeEdge {
@@ -110,6 +120,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   // Tree-related properties
   public timelineNodes: TimelineNode[] = [];
   public treeEdges: TreeEdge[] = [];
+  public timeAxisNodes: TimeAxisNode[] = [];
   public treeCanvasWidth: number = 200;
   public treeHeight: number = 100;
   public treePanelWidth: number = 260;
@@ -868,6 +879,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     if (this.agentActions.length === 0) {
       this.timelineNodes = [];
       this.treeEdges = [];
+      this.timeAxisNodes = [];
       this.treeCanvasWidth = 200;
       this.treeHeight = 100;
       return;
@@ -884,22 +896,25 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       }
     }
 
-    // Build dagre graph for tree layout
-    const g = new dagre.graphlib.Graph();
-    g.setGraph({
-      rankdir: "TB",
-      nodesep: 24,
-      ranksep: 30,
-      marginx: 16,
-      marginy: 16,
-    });
-    g.setDefaultEdgeLabel(() => ({}));
+    // Sort actions chronologically for consistent ordering
+    const sortedActions = [...this.agentActions].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
 
+    // Assign each action a chronological index for constant vertical spacing
+    const actionChronIndex = new Map<string, number>();
+    sortedActions.forEach((action, idx) => actionChronIndex.set(action.id, idx));
+
+    // Constants for layout
     const nodeHeight = 24;
-    const charWidth = 5.5; // approximate px per character at 10px font-weight:500
-    const nodePadding = 20; // 8px padding each side + border
+    const charWidth = 5.5;
+    const nodePadding = 20;
     const minNodeWidth = 60;
-    const maxNodeWidth = 240;
+    const maxNodeWidth = 200;
+    const constantRowSpacing = 40; // Constant distance between each row
+    const marginX = 16;
+    const marginY = 16;
+    const timeAxisWidth = 60; // Width reserved for the time axis on the left
 
     // Compute per-node width based on text length
     const nodeWidths = new Map<string, number>();
@@ -909,11 +924,23 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       const textLen = (label + " " + opId).length;
       const w = Math.max(minNodeWidth, Math.min(maxNodeWidth, textLen * charWidth + nodePadding));
       nodeWidths.set(action.id, w);
-      g.setNode(action.id, { width: w, height: nodeHeight });
     }
 
-    // Add edges from parentId → id
-    // Only add edges where parentId refers to an actual action (not the initial dummy)
+    // Use dagre for horizontal positioning (tree structure), but override Y with constant spacing
+    const g = new dagre.graphlib.Graph();
+    g.setGraph({
+      rankdir: "TB",
+      nodesep: 24,
+      ranksep: constantRowSpacing,
+      marginx: marginX + timeAxisWidth,
+      marginy: marginY,
+    });
+    g.setDefaultEdgeLabel(() => ({}));
+
+    for (const action of this.agentActions) {
+      g.setNode(action.id, { width: nodeWidths.get(action.id)!, height: nodeHeight });
+    }
+
     const actionIds = new Set(this.agentActions.map(a => a.id));
     for (const action of this.agentActions) {
       if (action.parentId && actionIds.has(action.parentId)) {
@@ -923,9 +950,18 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
 
     dagre.layout(g);
 
-    // Extract layout positions and build TimelineNodes
+    // Override Y positions with constant spacing based on chronological order
+    const nodePositions = new Map<string, { x: number; y: number }>();
+    for (const action of this.agentActions) {
+      const dagreNode = g.node(action.id);
+      const chronIdx = actionChronIndex.get(action.id) ?? 0;
+      const y = marginY + chronIdx * constantRowSpacing + nodeHeight / 2;
+      nodePositions.set(action.id, { x: dagreNode.x, y });
+    }
+
+    // Build TimelineNodes
     this.timelineNodes = this.agentActions.map(action => {
-      const nodeLayout = g.node(action.id);
+      const pos = nodePositions.get(action.id)!;
       return {
         id: action.id,
         timestamp: action.createdAt,
@@ -935,10 +971,20 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         actionLabel: this.getActionLabel(action),
         operatorId: this.getActionOperatorId(action),
         summary: action.summary,
-        x: nodeLayout.x,
-        y: nodeLayout.y,
+        x: pos.x,
+        y: pos.y,
         width: nodeWidths.get(action.id) ?? minNodeWidth,
       };
+    });
+
+    // Build time axis nodes (one per action, sorted chronologically)
+    this.timeAxisNodes = sortedActions.map((action, idx) => {
+      const y = marginY + idx * constantRowSpacing + nodeHeight / 2;
+      const d = new Date(action.createdAt);
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      const ss = String(d.getSeconds()).padStart(2, "0");
+      return { y, timeLabel: `${hh}:${mm}:${ss}` };
     });
 
     // Build edges with SVG paths
@@ -956,9 +1002,12 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     });
 
     // Compute total tree canvas dimensions
-    const graphLabel = g.graph();
-    this.treeCanvasWidth = Math.max(200, (graphLabel.width ?? 200) + 20);
-    this.treeHeight = (graphLabel.height ?? 100) + 20;
+    const maxX = Math.max(...this.timelineNodes.map(n => n.x + n.width / 2), 200);
+    const maxY = this.timeAxisNodes.length > 0
+      ? this.timeAxisNodes[this.timeAxisNodes.length - 1].y + nodeHeight
+      : 100;
+    this.treeCanvasWidth = Math.max(200, maxX + marginX);
+    this.treeHeight = maxY + marginY;
   }
 
   /** Extract the primary operator ID from an agent action's operations. */

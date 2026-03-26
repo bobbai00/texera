@@ -17,8 +17,8 @@
  under the License.
 -->
 
-<div class="agent-interaction" [class.compact]="compact" [class.expanded]="showContextExpanded">
-  <!-- Header Row: Agent Selection + Popover Toggle (only in compact mode) -->
+<div class="agent-interaction">
+  <!-- Agent Selection -->
   <div class="header-row">
     <nz-select
       [(ngModel)]="selectedAgentId"
@@ -48,161 +48,36 @@
       </span>
       {{ selected.nzLabel }}
     </ng-template>
-
-    <!-- Popover trigger button - only show when NOT in expanded mode -->
-    <button
-      *ngIf="!showContextExpanded && selectedAgentId && isSelectedAgentConnected()"
-      nz-button
-      nzType="text"
-      nzSize="small"
-      nz-popover
-      [nzPopoverContent]="popoverContent"
-      nzPopoverTrigger="click"
-      nzPopoverPlacement="topRight"
-      [(nzPopoverVisible)]="showContextPreview"
-      (nzPopoverVisibleChange)="onPopoverVisibleChange($event)"
-      [nzPopoverOverlayStyle]="{ width: '400px' }"
-      class="context-toggle-btn">
-      <i nz-icon nzType="message" nzTheme="outline"></i>
-      <span class="context-count">{{ relevantSteps.length }}</span>
-    </button>
   </div>
 
-  <!-- Expanded Inline View - shown when showContextExpanded is true -->
-  <div *ngIf="showContextExpanded && selectedAgentId && isSelectedAgentConnected()" class="expanded-panel">
-    <!-- Context List -->
-    <div class="context-list-container">
-      <div class="context-list-header">
-        <span>Relevant Context</span>
-        <nz-tag>{{ relevantSteps.length }} steps</nz-tag>
-      </div>
-      <div class="context-list">
-        <nz-spin *ngIf="isLoadingContext" nzSimple nzSize="small"></nz-spin>
+  <!-- Input Section -->
+  <div *ngIf="selectedAgentId && isSelectedAgentConnected()" class="input-section">
+    <textarea
+      nz-input
+      [(ngModel)]="feedbackMessage"
+      placeholder="Send feedback to agent about this operator..."
+      [nzAutosize]="{ minRows: 2, maxRows: 4 }"
+      class="feedback-input"
+      (keydown.control.enter)="sendFeedbackToAgent()"></textarea>
 
-        <div *ngIf="!isLoadingContext && relevantSteps.length === 0" class="no-context">
-          No previous steps about these operators.
-        </div>
-
-        <div
-          *ngFor="let step of relevantSteps; let i = index"
-          class="context-item"
-          [class.user-step]="step.role === 'user'">
-          <div class="context-header">
-            <span class="step-badge-inline" nz-tooltip [nzTooltipTitle]="'Message: ' + step.messageId">
-              {{ step.stepId }}
-            </span>
-            <nz-tag nzColor="geekblue" class="step-id-tag">
-              {{ getStepLabel(step) }}
-            </nz-tag>
-            <nz-tag [nzColor]="step.role === 'user' ? 'cyan' : 'purple'">
-              {{ step.role === "user" ? "User" : "Agent" }}
-            </nz-tag>
-            <nz-tag *ngIf="getToolCallCount(step) > 0" nzColor="orange">
-              {{ getToolCallCount(step) }} tools
-            </nz-tag>
-            <span class="context-time">{{ step.timestamp | date : "short" }}</span>
-          </div>
-          <div class="context-message">{{ getStepSummary(step) }}</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Input Section -->
-    <div class="input-section">
-      <textarea
-        nz-input
-        [(ngModel)]="feedbackMessage"
-        placeholder="Send feedback to agent about this operator..."
-        [nzAutosize]="{ minRows: 2, maxRows: 4 }"
-        class="feedback-input"
-        (keydown.control.enter)="sendFeedbackToAgent()"></textarea>
-
-      <div class="controls-row">
-        <span class="hint-text">Ctrl+Enter to send</span>
-        <button
-          nz-button
-          nzType="primary"
-          nzSize="small"
-          [disabled]="!canSend()"
-          (click)="sendFeedbackToAgent()"
-          class="send-btn">
-          <i nz-icon nzType="send" nzTheme="outline"></i>
-          Send
-        </button>
-      </div>
+    <div class="controls-row">
+      <span class="hint-text">Ctrl+Enter to send</span>
+      <button
+        nz-button
+        nzType="primary"
+        nzSize="small"
+        [disabled]="!canSend()"
+        (click)="sendFeedbackToAgent()"
+        class="send-btn">
+        <i nz-icon nzType="send" nzTheme="outline"></i>
+        Send
+      </button>
     </div>
   </div>
 
-  <!-- Not connected message for expanded view -->
-  <div *ngIf="showContextExpanded && (!selectedAgentId || !isSelectedAgentConnected())" class="not-connected-message">
+  <!-- Not connected message -->
+  <div *ngIf="!selectedAgentId || !isSelectedAgentConnected()" class="not-connected-message">
     <i nz-icon nzType="disconnect" nzTheme="outline"></i>
     <span>Select a connected agent to chat</span>
   </div>
 </div>
-
-<!-- Popover Content Template (used in non-expanded mode) -->
-<ng-template #popoverContent>
-  <div class="popover-panel">
-    <!-- Context List -->
-    <div class="context-list-container">
-      <div class="context-list-header">
-        <span>Relevant Context</span>
-        <nz-tag>{{ relevantSteps.length }} steps</nz-tag>
-      </div>
-      <div class="context-list">
-        <nz-spin *ngIf="isLoadingContext" nzSimple nzSize="small"></nz-spin>
-
-        <div *ngIf="!isLoadingContext && relevantSteps.length === 0" class="no-context">
-          No previous steps about these operators.
-        </div>
-
-        <div
-          *ngFor="let step of relevantSteps; let i = index"
-          class="context-item"
-          [class.user-step]="step.role === 'user'">
-          <div class="context-header">
-            <span class="step-badge-inline" nz-tooltip [nzTooltipTitle]="'Message: ' + step.messageId">
-              {{ step.stepId }}
-            </span>
-            <nz-tag nzColor="geekblue" class="step-id-tag">
-              {{ getStepLabel(step) }}
-            </nz-tag>
-            <nz-tag [nzColor]="step.role === 'user' ? 'cyan' : 'purple'">
-              {{ step.role === "user" ? "User" : "Agent" }}
-            </nz-tag>
-            <nz-tag *ngIf="getToolCallCount(step) > 0" nzColor="orange">
-              {{ getToolCallCount(step) }} tools
-            </nz-tag>
-            <span class="context-time">{{ step.timestamp | date : "short" }}</span>
-          </div>
-          <div class="context-message">{{ getStepSummary(step) }}</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Input Section -->
-    <div class="input-section">
-      <textarea
-        nz-input
-        [(ngModel)]="feedbackMessage"
-        placeholder="Send feedback to agent about this operator..."
-        [nzAutosize]="{ minRows: 2, maxRows: 4 }"
-        class="feedback-input"
-        (keydown.control.enter)="sendFeedbackToAgent()"></textarea>
-
-      <div class="controls-row">
-        <span class="hint-text">Ctrl+Enter to send</span>
-        <button
-          nz-button
-          nzType="primary"
-          nzSize="small"
-          [disabled]="!canSend()"
-          (click)="sendFeedbackToAgent()"
-          class="send-btn">
-          <i nz-icon nzType="send" nzTheme="outline"></i>
-          Send
-        </button>
-      </div>
-    </div>
-  </div>
-</ng-template>

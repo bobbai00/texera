@@ -45,7 +45,7 @@
     </div>
   </div>
 
-  <!-- Step Badge Overlay Container -->
+  <!-- Step Badge Overlay Container (for message highlighting) -->
   <div
     class="step-badges-container"
     *ngIf="showStepBadges && stepBadges.length > 0">
@@ -65,23 +65,48 @@
     </div>
   </div>
 
-  <!-- Chat Context Badges (shown when chat popover is open) -->
-  <!-- Uses same style as step badges for consistency -->
+  <!-- Action Preview Panel (go back decision, shown below delta operator) -->
   <div
-    class="step-badges-container"
-    *ngIf="chatContextBadges.length > 0">
+    class="panels-container"
+    *ngIf="actionPreviewPanel">
     <div
-      *ngFor="let badge of chatContextBadges"
-      class="step-badge"
-      [class.added]="badge.action === 'added'"
-      [class.modified]="badge.action === 'modified'"
-      [class.executed]="badge.action === 'executed'"
-      [style.left.px]="badge.position.x"
-      [style.top.px]="badge.position.y"
-      nz-tooltip
-      [nzTooltipTitle]="'Step ' + badge.stepId + ' (' + badge.action + ')'"
-      nzTooltipPlacement="top">
-      {{ badge.stepId }}
+      class="action-preview-panel"
+      [style.left.px]="actionPreviewPanel.position.x"
+      [style.top.px]="actionPreviewPanel.position.y">
+      <div class="action-preview-summary">{{ actionPreviewPanel.summary }}</div>
+      <div class="action-preview-badges">
+        <span *ngIf="actionPreviewPanel.addedCount > 0" class="action-badge added">
+          +{{ actionPreviewPanel.addedCount }}
+        </span>
+        <span *ngIf="actionPreviewPanel.modifiedCount > 0" class="action-badge modified">
+          ~{{ actionPreviewPanel.modifiedCount }}
+        </span>
+        <span *ngIf="actionPreviewPanel.deletedCount > 0" class="action-badge deleted">
+          -{{ actionPreviewPanel.deletedCount }}
+        </span>
+      </div>
+      <div class="action-preview-buttons">
+        <button
+          nz-button
+          nzType="primary"
+          nzSize="small"
+          (click)="onAcceptPreview()"
+          nz-tooltip
+          nzTooltipTitle="Apply this version">
+          <i nz-icon nzType="check" nzTheme="outline"></i>
+          Apply
+        </button>
+        <button
+          nz-button
+          nzType="default"
+          nzSize="small"
+          (click)="onRejectPreview()"
+          nz-tooltip
+          nzTooltipTitle="Cancel and restore">
+          <i nz-icon nzType="close" nzTheme="outline"></i>
+          Cancel
+        </button>
+      </div>
     </div>
   </div>
 
@@ -111,10 +136,7 @@
       <div class="chat-popover-content">
         <texera-agent-interaction
           [operatorId]="chatPopoverOperator.operatorId"
-          [operatorDisplayName]="chatPopoverOperator.displayName"
-          [compact]="false"
-          [showContextExpanded]="true"
-          (contextHighlightChange)="onChatContextHighlightChange($event)">
+          [operatorDisplayName]="chatPopoverOperator.displayName">
         </texera-agent-interaction>
       </div>
     </div>

@@ -45,8 +45,7 @@ import { line, curveCatmullRomClosed } from "d3-shape";
 import concaveman from "concaveman";
 import { AgentActionService } from "../../service/agent-action/agent-action.service";
 import { TexeraCopilotManagerService } from "../../service/copilot/texera-copilot-manager.service";
-import { OperatorStepRef, ReActStep } from "../../service/copilot/copilot-types";
-import { ContextHighlightEvent } from "../agent-interaction/agent-interaction.component";
+import { OperatorStepRef } from "../../service/copilot/copilot-types";
 import { isPythonUdf } from "../../service/workflow-graph/model/workflow-graph";
 
 // jointjs interactive options for enabling and disabling interactivity
@@ -113,39 +112,8 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   private agentActionPreviewActive: boolean = false;
   private beforeWorkflowOperatorCodes: Map<string, string> = new Map();
 
-  // Step badge overlay state
+  // Step badge overlay state (for message highlighting)
   public showStepBadges = false;
-
-  // Chat popover state (operator chat button)
-  public chatPopoverOperator: {
-    operatorId: string;
-    displayName: string;
-    position: { x: number; y: number };
-  } | null = null;
-
-  // Chat context highlight state (badges and region for chat popover)
-  // Uses the same structure as stepBadges for consistency
-  public chatContextBadges: Array<{
-    operatorId: string;
-    stepId: number;
-    messageId: string;
-    action: "added" | "modified" | "executed";
-    position: { x: number; y: number };
-  }> = [];
-  private chatContextOperatorIds: string[] = [];
-  private chatContextRegionElement: joint.dia.Element | null = null;
-  private chatContextSteps: ReActStep[] = [];
-
-  // Track which operators are currently expanded with result info
-  private expandedResultOperators = new Set<string>();
-  // Cached state for re-applying expansion after workflow reload
-  private resultAnnotationsVisible = false;
-  private currentResultSummaries = new Map<string, any>();
-
-  // Message region highlighting state
-  private messageRegionElement: joint.dia.Element | null = null;
-  private highlightedMessageOperators: joint.dia.Cell[] = [];
-  private highlightedMessageId: string | null = null;
   public stepBadges: Array<{
     operatorId: string;
     stepId: number;
@@ -154,6 +122,33 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     action: "added" | "modified" | "executed";
     position: { x: number; y: number };
   }> = [];
+
+  // Chat popover state (operator chat button)
+  public chatPopoverOperator: {
+    operatorId: string;
+    displayName: string;
+    position: { x: number; y: number };
+  } | null = null;
+
+  // Track which operators are currently expanded with result info
+  private expandedResultOperators = new Set<string>();
+  // Cached state for re-applying expansion after workflow reload
+  private resultAnnotationsVisible = false;
+  private currentResultSummaries = new Map<string, any>();
+
+  // Action preview overlay state (go back panel on canvas)
+  public actionPreviewPanel: {
+    position: { x: number; y: number };
+    summary: string;
+    addedCount: number;
+    modifiedCount: number;
+    deletedCount: number;
+  } | null = null;
+
+  // Message region highlighting state
+  private messageRegionElement: joint.dia.Element | null = null;
+  private highlightedMessageOperators: joint.dia.Cell[] = [];
+  private highlightedMessageId: string | null = null;
   private currentOperatorStepsMap: Map<string, OperatorStepRef[]> = new Map();
 
   constructor(
@@ -247,6 +242,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     this.handleStepBadges();
     this.handleMessageRegion();
     this.handleOperatorChatButton();
+    this.handleActionPreviewOverlay();
   }
 
   ngOnDestroy(): void {
@@ -2184,12 +2180,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
         }
       }
 
-      // Update context region and badges if any context operator moves
-      if (this.chatContextOperatorIds.includes(cellId)) {
-        this.drawChatContextRegion(this.chatContextOperatorIds);
-        this.updateChatContextBadges(this.chatContextSteps, this.chatContextOperatorIds);
-      }
-
       this.changeDetectorRef.detectChanges();
     });
 
@@ -2203,11 +2193,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
           if (position) {
             this.chatPopoverOperator = { ...this.chatPopoverOperator, position };
           }
-        }
-
-        // Update context badges positions on zoom
-        if (this.chatContextOperatorIds.length > 0) {
-          this.updateChatContextBadges(this.chatContextSteps, this.chatContextOperatorIds);
         }
 
         this.changeDetectorRef.detectChanges();
@@ -2238,179 +2223,98 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
    * Close the chat popover.
    */
   closeChatPopover(): void {
-    // Clear highlight FIRST before destroying the component
-    this.clearChatContextHighlight();
     this.chatPopoverOperator = null;
     this.changeDetectorRef.detectChanges();
   }
 
   /**
-   * Handle context highlight change from the chat panel.
-   * Shows badges and region for the operators in the chat context.
+   * Handle action preview overlay on the canvas.
+   * Shows a floating "Apply / Cancel" panel below the primary delta operator.
    */
-  onChatContextHighlightChange(event: ContextHighlightEvent | null): void {
-    if (!event || event.operatorIds.length === 0) {
-      this.clearChatContextHighlight();
-      return;
-    }
+  private handleActionPreviewOverlay(): void {
+    this.agentActionService
+      .getPreviewStateStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(previewState => {
+        if (!previewState) {
+          this.actionPreviewPanel = null;
+          this.changeDetectorRef.detectChanges();
+          return;
+        }
 
-    this.chatContextOperatorIds = event.operatorIds;
-    this.chatContextSteps = event.steps;
+        const ops = previewState.agentAction.operations;
+        // Find the primary delta operator (first added, then modified)
+        const primaryOpId =
+          ops.add?.operatorIds?.[0] || ops.modify?.operatorIds?.[0] || ops.delete?.operatorIds?.[0];
 
-    // Draw region around all context operators
-    this.drawChatContextRegion(event.operatorIds);
+        if (!primaryOpId) {
+          this.actionPreviewPanel = null;
+          this.changeDetectorRef.detectChanges();
+          return;
+        }
 
-    // Create badges for each step (showing the actual stepId)
-    this.updateChatContextBadges(event.steps, event.operatorIds);
+        const position = this.getActionPreviewPanelPosition(primaryOpId);
+        if (position) {
+          this.actionPreviewPanel = {
+            position,
+            summary: previewState.agentAction.summary,
+            addedCount: ops.add?.operatorIds?.length ?? 0,
+            modifiedCount: ops.modify?.operatorIds?.length ?? 0,
+            deletedCount: ops.delete?.operatorIds?.length ?? 0,
+          };
+        }
 
-    this.changeDetectorRef.detectChanges();
+        this.changeDetectorRef.detectChanges();
+      });
+
+    // Update position on zoom/pan
+    this.wrapper
+      .getWorkflowEditorZoomStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(() => {
+        if (this.actionPreviewPanel && this.agentActionService.getPreviewState()) {
+          const ops = this.agentActionService.getPreviewState()!.agentAction.operations;
+          const primaryOpId =
+            ops.add?.operatorIds?.[0] || ops.modify?.operatorIds?.[0] || ops.delete?.operatorIds?.[0];
+          if (primaryOpId) {
+            const position = this.getActionPreviewPanelPosition(primaryOpId);
+            if (position) {
+              this.actionPreviewPanel = { ...this.actionPreviewPanel!, position };
+              this.changeDetectorRef.detectChanges();
+            }
+          }
+        }
+      });
   }
 
   /**
-   * Draw a region around all chat context operators.
+   * Get the screen position for the action preview panel below an operator.
    */
-  private drawChatContextRegion(operatorIds: string[]): void {
-    // Remove existing region
-    if (this.chatContextRegionElement) {
-      this.chatContextRegionElement.remove();
-      this.chatContextRegionElement = null;
-    }
-
-    if (operatorIds.length === 0) {
-      return;
-    }
-
-    // Collect all operator bounding boxes
-    const points: [number, number][] = [];
-    const padding = 30;
-
-    operatorIds.forEach(opId => {
-      const cell = this.paper.getModelById(opId);
-      if (cell) {
-        const bbox = cell.getBBox();
-        // Add corners with padding
-        points.push([bbox.x - padding, bbox.y - padding]);
-        points.push([bbox.x + bbox.width + padding, bbox.y - padding]);
-        points.push([bbox.x + bbox.width + padding, bbox.y + bbox.height + padding]);
-        points.push([bbox.x - padding, bbox.y + bbox.height + padding]);
-      }
-    });
-
-    if (points.length < 3) {
-      return;
-    }
-
-    // Use concaveman to create a hull around the operators
-    const hull = concaveman(points, 2, 10);
-
-    // Create SVG path from hull
-    const pathData = hull.map((p, i) => (i === 0 ? `M ${p[0]} ${p[1]}` : `L ${p[0]} ${p[1]}`)).join(" ") + " Z";
-
-    // Create a JointJS element for the region
-    const Region = joint.dia.Element.define(
-      "custom.ChatContextRegion",
-      {
-        attrs: {
-          region: {
-            d: pathData,
-            fill: "rgba(24, 144, 255, 0.08)",
-            stroke: "#1890ff",
-            strokeWidth: 2,
-            strokeDasharray: "8,4",
-          },
-        },
-      },
-      {
-        markup: [{ tagName: "path", selector: "region" }],
-      }
-    );
-
-    this.chatContextRegionElement = new Region();
-    this.chatContextRegionElement.addTo(this.paper.model);
-    this.chatContextRegionElement.toBack();
-  }
-
-  /**
-   * Update badges for chat context based on steps.
-   * Uses operatorStepsMap to properly map steps to operators (same as updateStepBadgePositions).
-   */
-  private updateChatContextBadges(steps: ReActStep[], operatorIds: string[]): void {
-    this.chatContextBadges = [];
-
-    if (steps.length === 0 || operatorIds.length === 0) {
-      return;
-    }
-
-    // Get the operator steps map to properly map steps to operators
-    const operatorStepsMap = this.copilotManagerService.getOperatorStepsMap();
-
-    // Create a set of step identifiers for quick lookup
-    const relevantStepKeys = new Set(steps.map(s => `${s.messageId}-${s.stepId}`));
-
-    // Iterate through operatorStepsMap (same approach as updateStepBadgePositions)
-    for (const [operatorId, stepRefs] of operatorStepsMap) {
-      // Only consider operators that are in our upstream context
-      if (!operatorIds.includes(operatorId)) {
-        continue;
-      }
-
-      // Filter to only show badges for steps that are in our relevant steps
-      const filteredRefs = stepRefs.filter(ref => relevantStepKeys.has(`${ref.messageId}-${ref.stepId}`));
-      if (filteredRefs.length === 0) {
-        continue;
-      }
-
+  private getActionPreviewPanelPosition(operatorId: string): { x: number; y: number } | null {
+    try {
       const jointCell = this.paper.getModelById(operatorId);
-      if (!jointCell) {
-        continue;
-      }
+      if (!jointCell) return null;
 
       const bbox = jointCell.getBBox();
       const scale = this.paper.scale();
       const translate = this.paper.translate();
 
-      // Position badges at top-left corner of operator
-      // Each badge is offset horizontally to stack them (same as updateStepBadgePositions)
-      const BADGE_SIZE = 22;
-      const BADGE_GAP = 4;
+      // Position below the operator, centered
+      const screenX = (bbox.x + bbox.width / 2) * scale.sx + translate.tx - 100; // 100 = half panel width
+      const screenY = (bbox.y + bbox.height) * scale.sy + translate.ty + 20;
 
-      filteredRefs.forEach((stepRef, index) => {
-        const screenX = bbox.x * scale.sx + translate.tx - 8 + index * (BADGE_SIZE + BADGE_GAP);
-        const screenY = bbox.y * scale.sy + translate.ty - 8;
-
-        this.chatContextBadges.push({
-          operatorId,
-          stepId: stepRef.stepId,
-          messageId: stepRef.messageId,
-          action: stepRef.action,
-          position: { x: screenX, y: screenY },
-        });
-      });
+      return { x: screenX, y: screenY };
+    } catch {
+      return null;
     }
   }
 
-  /**
-   * Clear chat context highlighting (region and badges).
-   */
-  private clearChatContextHighlight(): void {
-    // Remove region element from the graph
-    if (this.chatContextRegionElement) {
-      try {
-        // Use graph's removeCells for more reliable removal
-        this.paper.model.removeCells([this.chatContextRegionElement]);
-      } catch (e) {
-        // Fallback to direct removal
-        try {
-          this.chatContextRegionElement.remove();
-        } catch {
-          // Element might already be removed
-        }
-      }
-      this.chatContextRegionElement = null;
-    }
-    this.chatContextBadges = [];
-    this.chatContextOperatorIds = [];
-    this.chatContextSteps = [];
+  onAcceptPreview(): void {
+    this.agentActionService.endPreview(true);
+  }
+
+  onRejectPreview(): void {
+    this.agentActionService.endPreview(false);
   }
 
   /**

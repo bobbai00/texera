@@ -157,6 +157,17 @@
       <!-- Tree content (hidden when collapsed) -->
       <div class="tree-viewport" *ngIf="!treePanelCollapsed">
         <div class="tree-canvas" [style.width.px]="treeCanvasWidth" [style.height.px]="treeHeight">
+          <!-- Time axis (vertical line with dots and labels) -->
+          <div class="time-axis">
+            <div class="time-axis-line" [style.height.px]="treeHeight"></div>
+            <div
+              *ngFor="let tn of timeAxisNodes"
+              class="time-axis-node"
+              [style.top.px]="tn.y - 4">
+              <span class="time-axis-dot"></span>
+              <span class="time-axis-label">{{ tn.timeLabel }}</span>
+            </div>
+          </div>
           <!-- SVG layer for edges -->
           <svg class="tree-edges" [attr.width]="treeCanvasWidth" [attr.height]="treeHeight">
             <path
@@ -322,7 +333,7 @@
 
       <!-- Input Area -->
       <div class="input-area">
-        <!-- Agent Action Preview state -->
+        <!-- Agent Action Preview navigation (Apply/Cancel is on the canvas) -->
         <ng-container *ngIf="previewState">
           <div class="preview-details">
             <div class="preview-header">
@@ -330,8 +341,7 @@
                 nz-icon
                 nzType="eye"
                 nzTheme="outline"></i>
-              <span class="preview-title">Agent Action Preview</span>
-              <!-- Navigation arrows for agent actions -->
+              <span class="preview-title">Previewing</span>
               <div class="preview-navigation">
                 <button
                   nz-button
@@ -362,62 +372,6 @@
                 </button>
               </div>
             </div>
-            <div class="preview-summary">{{ previewState.agentAction.summary }}</div>
-            <div class="preview-operations">
-              <span
-                *ngIf="previewState.agentAction.operations.add.operatorIds.length > 0"
-                class="op-badge add">
-                +{{ previewState.agentAction.operations.add.operatorIds.length }} operators
-              </span>
-              <span
-                *ngIf="previewState.agentAction.operations.add.linkIds.length > 0"
-                class="op-badge add">
-                +{{ previewState.agentAction.operations.add.linkIds.length }} links
-              </span>
-              <span
-                *ngIf="previewState.agentAction.operations.modify.operatorIds.length > 0"
-                class="op-badge modify">
-                ~{{ previewState.agentAction.operations.modify.operatorIds.length }} modified
-              </span>
-              <span
-                *ngIf="previewState.agentAction.operations.delete.operatorIds.length > 0"
-                class="op-badge delete">
-                -{{ previewState.agentAction.operations.delete.operatorIds.length }} operators
-              </span>
-              <span
-                *ngIf="previewState.agentAction.operations.delete.linkIds.length > 0"
-                class="op-badge delete">
-                -{{ previewState.agentAction.operations.delete.linkIds.length }} links
-              </span>
-            </div>
-          </div>
-          <div class="preview-actions">
-            <button
-              nz-button
-              nzType="primary"
-              nzSize="small"
-              (click)="onAcceptAgentAction()"
-              nz-tooltip
-              nzTooltipTitle="Apply this version to the workflow">
-              <i
-                nz-icon
-                nzType="check"
-                nzTheme="outline"></i>
-              Apply
-            </button>
-            <button
-              nz-button
-              nzType="default"
-              nzSize="small"
-              (click)="onRejectAgentAction()"
-              nz-tooltip
-              nzTooltipTitle="Cancel preview and restore original">
-              <i
-                nz-icon
-                nzType="close"
-                nzTheme="outline"></i>
-              Cancel
-            </button>
           </div>
         </ng-container>
 

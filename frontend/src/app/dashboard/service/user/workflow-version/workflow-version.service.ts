@@ -149,8 +149,10 @@ export class WorkflowVersionService {
    * @param beforeWorkflowContent Before workflow content for rendering deleted operator brackets
    */
   public highlightOpVersionDiffSimple(differentOpIDsList: DifferentOpIDsList, beforeWorkflowContent: WorkflowContent) {
-    differentOpIDsList.modified.map(id => this.highlightOpBoundary(id, "255,118,20,0.5"));
-    differentOpIDsList.added.map(id => this.highlightOpBoundary(id, "0,255,0,0.5"));
+    // Use dashed borderline instead of filled shading
+    // Red for modified, green for added
+    differentOpIDsList.modified.map(id => this.highlightOpBoundaryDashed(id, "255,0,0,0.7"));
+    differentOpIDsList.added.map(id => this.highlightOpBoundaryDashed(id, "0,200,0,0.7"));
 
     // Render red brackets for deleted operators using beforeWorkflowContent
     if (differentOpIDsList.deleted.length > 0) {
@@ -171,6 +173,23 @@ export class WorkflowVersionService {
       .getMainJointPaper()
       ?.getModelById(id)
       .attr("rect.boundary/fill", "rgba(" + color + ")");
+  }
+
+  public highlightOpBoundaryDashed(id: string, color: string) {
+    const element = this.workflowActionService
+      .getJointGraphWrapper()
+      .getMainJointPaper()
+      ?.getModelById(id);
+    if (element) {
+      element.attr({
+        "rect.boundary": {
+          fill: "transparent",
+          stroke: "rgba(" + color + ")",
+          "stroke-width": 2,
+          "stroke-dasharray": "8,4",
+        },
+      });
+    }
   }
 
   public highlightOpBracket(id: string, color: string, position: string) {
@@ -294,6 +313,20 @@ export class WorkflowVersionService {
   public unhighlightOpVersionDiff(differentOpIDsList: DifferentOpIDsList) {
     for (const id of differentOpIDsList.added.concat(differentOpIDsList.modified)) {
       this.highlightOpBoundary(id, "0,0,0,0");
+      // Also clear dashed border styles
+      const element = this.workflowActionService
+        .getJointGraphWrapper()
+        .getMainJointPaper()
+        ?.getModelById(id);
+      if (element) {
+        element.attr({
+          "rect.boundary": {
+            stroke: "none",
+            "stroke-width": 0,
+            "stroke-dasharray": "none",
+          },
+        });
+      }
     }
     this.operatorPropertyDiff = {};
   }
