@@ -24,6 +24,7 @@ import {
   Subject,
   BehaviorSubject,
   catchError,
+  filter,
   map,
   of,
   shareReplay,
@@ -207,6 +208,8 @@ interface AgentStateTracking {
   workflowSubject: BehaviorSubject<Workflow | null>;
   workflowId?: number;
   stopPolling$: Subject<void>;
+  /** When true, workflow updates come from WS — polling is suppressed */
+  wsWorkflowActive: boolean;
   /** WebSocket connection for real-time updates */
   websocket?: WebSocket;
   /** Whether this agent is currently active (tab selected) */
@@ -443,6 +446,7 @@ export class TexeraCopilotManagerService {
         workflowSubject: new BehaviorSubject<Workflow | null>(null),
         workflowId,
         stopPolling$: new Subject<void>(),
+        wsWorkflowActive: false,
         isActive: false,
       };
       this.agentStateTracking.set(agentId, tracking);
@@ -457,6 +461,7 @@ export class TexeraCopilotManagerService {
   /**
    * Start workflow polling for an existing tracking.
    * Polls workflow content from backend database every second.
+   * Polling is suppressed when the agent service provides workflow via WebSocket.
    */
   private startWorkflowPolling(tracking: AgentStateTracking): void {
     if (!tracking.workflowId) return;
@@ -464,6 +469,7 @@ export class TexeraCopilotManagerService {
     const wid = tracking.workflowId;
     interval(1000)
       .pipe(
+        filter(() => !tracking.wsWorkflowActive),
         switchMap(() => this.workflowPersistService.retrieveWorkflow(wid).pipe(catchError(() => of(null)))),
         takeUntil(tracking.stopPolling$)
       )
@@ -555,6 +561,15 @@ export class TexeraCopilotManagerService {
         if (message.headId !== undefined) {
           tracking.headIdSubject.next(message.headId);
         }
+        // Handle initial workflow content from agent service (ground truth)
+        if (message.workflowContent) {
+          tracking.wsWorkflowActive = true;
+          const workflow: Workflow = {
+            ...(message.workflowMetadata || tracking.workflowSubject.getValue() || {}),
+            content: message.workflowContent,
+          };
+          tracking.workflowSubject.next(workflow as Workflow);
+        }
         // Handle initial operator results
         if (message.operatorResults) {
           this.updateOperatorResultSummaries(message.operatorResults);
@@ -631,11 +646,21 @@ export class TexeraCopilotManagerService {
           this.handleAgentActionFromApi(agentId, tracking, message.agentAction);
           // HEAD advances to the latest action
           tracking.headIdSubject.next(message.agentAction.id);
+          // Update workflow from the action's afterWorkflowContent (ground truth from agent service)
+          const actionContent = message.agentAction.afterWorkflowContent;
+          if (actionContent) {
+            tracking.wsWorkflowActive = true;
+            const workflow: Workflow = {
+              ...(message.agentAction.workflowMetadata || tracking.workflowSubject.getValue() || {}),
+              content: actionContent,
+            };
+            tracking.workflowSubject.next(workflow as Workflow);
+          }
         }
         break;
 
       case "headChange":
-        // HEAD moved (checkout) — update HEAD and visible steps
+        // HEAD moved (checkout) — update HEAD, visible steps, and workflow
         if (message.headId !== undefined) {
           tracking.headIdSubject.next(message.headId);
         }
@@ -643,6 +668,28 @@ export class TexeraCopilotManagerService {
           const steps = message.steps.map((s: any) => this.convertApiReActStep(s));
           tracking.reActStepsSubject.next(steps);
           this.updateOperatorStepsMap();
+        }
+        // Update workflow content from agent service (ground truth)
+        if (message.workflowContent) {
+          // Backend sent workflow content directly — use it
+          tracking.wsWorkflowActive = true;
+          const workflow: Workflow = {
+            ...(message.workflowMetadata || tracking.workflowSubject.getValue() || {}),
+            content: message.workflowContent,
+          };
+          tracking.workflowSubject.next(workflow as Workflow);
+        } else if (message.headId) {
+          // Fallback: look up the action's afterWorkflowContent from local cache
+          const actions = tracking.agentActionsSubject.getValue();
+          const headAction = actions.find(a => a.id === message.headId);
+          if (headAction?.afterWorkflowContent) {
+            tracking.wsWorkflowActive = true;
+            const workflow: Workflow = {
+              ...(headAction.workflowMetadata || tracking.workflowSubject.getValue() || {}),
+              content: headAction.afterWorkflowContent,
+            };
+            tracking.workflowSubject.next(workflow as Workflow);
+          }
         }
         // Update operator results on HEAD change
         if (message.operatorResults) {

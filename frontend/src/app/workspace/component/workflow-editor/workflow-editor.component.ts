@@ -136,14 +136,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   private resultAnnotationsVisible = false;
   private currentResultSummaries = new Map<string, any>();
 
-  // Action preview overlay state (go back panel on canvas)
-  public actionPreviewPanel: {
-    position: { x: number; y: number };
-    summary: string;
-    addedCount: number;
-    modifiedCount: number;
-    deletedCount: number;
-  } | null = null;
 
   // Message region highlighting state
   private messageRegionElement: joint.dia.Element | null = null;
@@ -242,7 +234,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     this.handleStepBadges();
     this.handleMessageRegion();
     this.handleOperatorChatButton();
-    this.handleActionPreviewOverlay();
   }
 
   ngOnDestroy(): void {
@@ -1718,17 +1709,18 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
         this.togglePanel(operatorId);
       });
 
-    // Subscribe to preview state changes for diff mode
+    // Subscribe to diff visibility changes for diff mode in code panels
     this.agentActionService
-      .getPreviewStateStream()
+      .getDiffVisibleStream()
       .pipe(untilDestroyed(this))
-      .subscribe(previewState => {
-        if (previewState) {
-          // Agent action preview is active - store the original code from beforeWorkflowContent
+      .subscribe(diffVisible => {
+        const diffAction = this.agentActionService.getCurrentDiffAction();
+        if (diffVisible && diffAction) {
+          // Diff is active - store the original code from beforeWorkflowContent
           this.agentActionPreviewActive = true;
           this.beforeWorkflowOperatorCodes.clear();
 
-          const beforeOperators = previewState.agentAction.beforeWorkflowContent?.operators || [];
+          const beforeOperators = diffAction.beforeWorkflowContent?.operators || [];
           beforeOperators.forEach(op => {
             if (isPythonUdf(op)) {
               const properties = op.operatorProperties as { code?: string };
@@ -1738,7 +1730,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
             }
           });
         } else {
-          // Agent action preview is not active
+          // Diff is not active
           this.agentActionPreviewActive = false;
           this.beforeWorkflowOperatorCodes.clear();
         }
@@ -2227,95 +2219,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     this.changeDetectorRef.detectChanges();
   }
 
-  /**
-   * Handle action preview overlay on the canvas.
-   * Shows a floating "Apply / Cancel" panel below the primary delta operator.
-   */
-  private handleActionPreviewOverlay(): void {
-    this.agentActionService
-      .getPreviewStateStream()
-      .pipe(untilDestroyed(this))
-      .subscribe(previewState => {
-        if (!previewState) {
-          this.actionPreviewPanel = null;
-          this.changeDetectorRef.detectChanges();
-          return;
-        }
-
-        const ops = previewState.agentAction.operations;
-        // Find the primary delta operator (first added, then modified)
-        const primaryOpId =
-          ops.add?.operatorIds?.[0] || ops.modify?.operatorIds?.[0] || ops.delete?.operatorIds?.[0];
-
-        if (!primaryOpId) {
-          this.actionPreviewPanel = null;
-          this.changeDetectorRef.detectChanges();
-          return;
-        }
-
-        const position = this.getActionPreviewPanelPosition(primaryOpId);
-        if (position) {
-          this.actionPreviewPanel = {
-            position,
-            summary: previewState.agentAction.summary,
-            addedCount: ops.add?.operatorIds?.length ?? 0,
-            modifiedCount: ops.modify?.operatorIds?.length ?? 0,
-            deletedCount: ops.delete?.operatorIds?.length ?? 0,
-          };
-        }
-
-        this.changeDetectorRef.detectChanges();
-      });
-
-    // Update position on zoom/pan
-    this.wrapper
-      .getWorkflowEditorZoomStream()
-      .pipe(untilDestroyed(this))
-      .subscribe(() => {
-        if (this.actionPreviewPanel && this.agentActionService.getPreviewState()) {
-          const ops = this.agentActionService.getPreviewState()!.agentAction.operations;
-          const primaryOpId =
-            ops.add?.operatorIds?.[0] || ops.modify?.operatorIds?.[0] || ops.delete?.operatorIds?.[0];
-          if (primaryOpId) {
-            const position = this.getActionPreviewPanelPosition(primaryOpId);
-            if (position) {
-              this.actionPreviewPanel = { ...this.actionPreviewPanel!, position };
-              this.changeDetectorRef.detectChanges();
-            }
-          }
-        }
-      });
-  }
-
-  /**
-   * Get the screen position for the action preview panel below an operator.
-   */
-  private getActionPreviewPanelPosition(operatorId: string): { x: number; y: number } | null {
-    try {
-      const jointCell = this.paper.getModelById(operatorId);
-      if (!jointCell) return null;
-
-      const bbox = jointCell.getBBox();
-      const scale = this.paper.scale();
-      const translate = this.paper.translate();
-
-      // Position below the operator, centered
-      const screenX = (bbox.x + bbox.width / 2) * scale.sx + translate.tx - 100; // 100 = half panel width
-      const screenY = (bbox.y + bbox.height) * scale.sy + translate.ty + 20;
-
-      return { x: screenX, y: screenY };
-    } catch {
-      return null;
-    }
-  }
-
-  onAcceptPreview(): void {
-    this.agentActionService.endPreview(true);
-  }
-
-  onRejectPreview(): void {
-    this.agentActionService.endPreview(false);
-  }
 
   /**
    * Info button on link between operator shown when user hovers over links

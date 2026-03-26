@@ -34,11 +34,7 @@ import { Subject } from "rxjs";
 import { distinctUntilChanged, filter, pairwise, startWith, takeUntil } from "rxjs/operators";
 import { CopilotState, ReActStep, CopilotMessageStats } from "../../../service/copilot/copilot-types";
 import { AgentInfo, TexeraCopilotManagerService } from "../../../service/copilot/texera-copilot-manager.service";
-import {
-  AgentAction,
-  AgentActionService,
-  AgentActionPreviewState,
-} from "../../../service/agent-action/agent-action.service";
+import { AgentAction, AgentActionService } from "../../../service/agent-action/agent-action.service";
 import { WorkflowActionService } from "../../../service/workflow-graph/model/workflow-action.service";
 import { NotificationService } from "../../../../common/service/notification/notification.service";
 import { WorkflowVersionService } from "../../../../dashboard/service/user/workflow-version/workflow-version.service";
@@ -131,8 +127,8 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   // Current HEAD action ID in the action tree
   public currentHeadId: string | null = null;
 
-  // Agent action preview state
-  public previewState: AgentActionPreviewState | null = null;
+  // Diff toggle state
+  public diffVisible: boolean = false;
 
   // System info modal state (with editing capabilities)
   public isEditingSystemPrompt = false;
@@ -272,19 +268,12 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         this.cdr.detectChanges();
       });
 
-    // Subscribe to preview state
+    // Subscribe to diff visibility state
     this.agentActionService
-      .getPreviewStateStream()
+      .getDiffVisibleStream()
       .pipe(untilDestroyed(this))
-      .subscribe(state => {
-        // Only show preview UI if the agent action belongs to this agent
-        if (state && state.agentAction.agentId === this.agentInfo.id) {
-          this.previewState = state;
-          this.shouldScrollToBottom = true;
-          console.log("[Agent Chat] Preview state updated", state);
-        } else {
-          this.previewState = null;
-        }
+      .subscribe(visible => {
+        this.diffVisible = visible;
         this.cdr.detectChanges();
       });
 
@@ -844,27 +833,17 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   }
 
   /**
-   * Apply the previewed agent action to the workflow.
+   * Toggle diff highlighting for the current HEAD action.
    */
-  public onAcceptAgentAction(): void {
-    if (!this.previewState) {
+  public toggleDiff(): void {
+    if (!this.currentHeadId) {
       return;
     }
-
-    // End preview and apply the changes
-    this.agentActionService.endPreview(true);
-  }
-
-  /**
-   * Cancel the preview and restore the original workflow.
-   */
-  public onRejectAgentAction(): void {
-    if (!this.previewState) {
+    const headAction = this.agentActions.find(a => a.id === this.currentHeadId);
+    if (!headAction) {
       return;
     }
-
-    // End preview and reject the changes (restore to before state)
-    this.agentActionService.endPreview(false);
+    this.agentActionService.toggleDiff(headAction);
   }
 
   // =====================
@@ -1030,15 +1009,16 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
 
   /**
    * Handle click on a timeline node.
-   * For Modify group nodes: checkout to that action (move HEAD) and show preview.
+   * Checkout to that action (move HEAD). The backend broadcasts a headChange WS message
+   * which includes the workflow content — the frontend renders whatever the agent service sends.
    */
   public onTimelineNodeClick(node: TimelineNode): void {
+    // Clear any existing diff when switching actions
+    this.agentActionService.clearDiff();
+
     this.copilotManagerService.checkoutAction(this.agentInfo.id, node.agentActionId).subscribe({
-      next: () => this.previewAgentAction(node.agentActionId),
-      error: err => {
-        console.error("[Timeline] Checkout failed:", err);
-        this.previewAgentAction(node.agentActionId);
-      },
+      next: () => console.log(`[Timeline] Checked out action ${node.agentActionId}`),
+      error: err => console.error("[Timeline] Checkout failed:", err),
     });
   }
 
@@ -1078,107 +1058,6 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     }
   }
 
-  /**
-   * Preview an agent action by ID.
-   */
-  public previewAgentAction(agentActionId: string): void {
-    const agentAction = this.agentActions.find(a => a.id === agentActionId);
-    if (!agentAction) {
-      console.error(`Agent action ${agentActionId} not found`);
-      this.notificationService.error("Agent action not found");
-      return;
-    }
-
-    try {
-      this.agentActionService.startPreview(agentAction);
-    } catch (err) {
-      console.error("Failed to preview agent action:", err);
-      this.notificationService.error("Failed to preview agent action");
-    }
-  }
-
-  // =====================
-  // Agent Action Navigation
-  // =====================
-
-  /**
-   * Get all agent actions for this agent sorted by creation time (chronological order).
-   */
-  private getAgentActionsForAgent(): AgentAction[] {
-    // Agent actions are already filtered by agent (from copilot manager), just sort
-    return [...this.agentActions].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-  }
-
-  /**
-   * Get the index of the current preview agent action in the sorted list.
-   */
-  private getCurrentAgentActionIndex(): number {
-    if (!this.previewState) {
-      return -1;
-    }
-    const actions = this.getAgentActionsForAgent();
-    return actions.findIndex(a => a.id === this.previewState!.agentAction.id);
-  }
-
-  /**
-   * Check if there is a previous agent action to navigate to.
-   */
-  public hasPreviousAgentAction(): boolean {
-    return this.getCurrentAgentActionIndex() > 0;
-  }
-
-  /**
-   * Check if there is a next agent action to navigate to.
-   */
-  public hasNextAgentAction(): boolean {
-    const actions = this.getAgentActionsForAgent();
-    const currentIndex = this.getCurrentAgentActionIndex();
-    return currentIndex >= 0 && currentIndex < actions.length - 1;
-  }
-
-  /**
-   * Navigate to the previous agent action in chronological order.
-   */
-  public navigateToPreviousAgentAction(): void {
-    if (!this.hasPreviousAgentAction()) {
-      return;
-    }
-    const actions = this.getAgentActionsForAgent();
-    const currentIndex = this.getCurrentAgentActionIndex();
-    const previousAction = actions[currentIndex - 1];
-
-    // End current preview without applying changes, then start new preview
-    this.agentActionService.endPreview(false);
-    this.agentActionService.startPreview(previousAction);
-  }
-
-  /**
-   * Navigate to the next agent action in chronological order.
-   */
-  public navigateToNextAgentAction(): void {
-    if (!this.hasNextAgentAction()) {
-      return;
-    }
-    const actions = this.getAgentActionsForAgent();
-    const currentIndex = this.getCurrentAgentActionIndex();
-    const nextAction = actions[currentIndex + 1];
-
-    // End current preview without applying changes, then start new preview
-    this.agentActionService.endPreview(false);
-    this.agentActionService.startPreview(nextAction);
-  }
-
-  /**
-   * Get the current agent action position string (e.g., "2 / 5").
-   */
-  public getAgentActionPositionLabel(): string {
-    const actions = this.getAgentActionsForAgent();
-    const currentIndex = this.getCurrentAgentActionIndex();
-    if (currentIndex < 0 || actions.length === 0) {
-      return "";
-    }
-    return `${currentIndex + 1} / ${actions.length}`;
-  }
 
   // =====================
   // System Info Modal Editing Methods

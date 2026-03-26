@@ -19,19 +19,9 @@
 
 import { Injectable } from "@angular/core";
 import { BehaviorSubject, Observable } from "rxjs";
-import { WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
 import { WorkflowVersionService } from "../../../dashboard/service/user/workflow-version/workflow-version.service";
-import { UndoRedoService } from "../undo-redo/undo-redo.service";
-import { WorkflowPersistService } from "../../../common/service/workflow-persist/workflow-persist.service";
-import { Workflow, WorkflowContent } from "../../../common/type/workflow";
+import { WorkflowContent } from "../../../common/type/workflow";
 import { WorkflowMetadata } from "../../../dashboard/type/workflow-metadata.interface";
-
-/**
- * Preview state for agent actions
- */
-export interface AgentActionPreviewState {
-  agentAction: AgentAction;
-}
 
 /**
  * Diff structure for operators (reusing workflow-version.service structure)
@@ -78,156 +68,90 @@ export interface AgentAction {
 }
 
 /**
- * Service to manage agent action preview rendering.
- * This service is responsible ONLY for showing/hiding previews on the canvas.
- * Agent actions are stored in TexeraCopilotManagerService per agent.
+ * Service to manage agent action diff rendering on the canvas.
+ * Simplified: no preview mode, just toggle diff highlighting for the current action.
+ * Switching between actions changes the head & workflow via WS; this service only handles diff display.
  */
 @Injectable({
   providedIn: "root",
 })
 export class AgentActionService {
-  // Preview state
-  private previewStateSubject = new BehaviorSubject<AgentActionPreviewState | null>(null);
+  // Whether diff highlighting is currently shown
+  private diffVisibleSubject = new BehaviorSubject<boolean>(false);
 
-  // Diff preview state
+  // The action currently being diffed
+  private currentDiffAction: AgentAction | null = null;
+
+  // Current diff state for cleanup
   private currentDiff: DifferentOpIDsList | null = null;
 
-  // Saved workflow content before starting a preview (for cancel/restore)
-  private savedWorkflowContentBeforePreview: WorkflowContent | null = null;
-
-  constructor(
-    private workflowVersionService: WorkflowVersionService,
-    private undoRedoService: UndoRedoService,
-    private workflowPersistService: WorkflowPersistService,
-    private workflowActionService: WorkflowActionService
-  ) {}
+  constructor(private workflowVersionService: WorkflowVersionService) {}
 
   /**
-   * Get the preview state stream.
-   * Emits when an agent action is being previewed.
+   * Get observable for diff visibility state.
    */
-  public getPreviewStateStream(): Observable<AgentActionPreviewState | null> {
-    return this.previewStateSubject.asObservable();
+  public getDiffVisibleStream(): Observable<boolean> {
+    return this.diffVisibleSubject.asObservable();
   }
 
   /**
-   * Get the current preview state (synchronous access)
+   * Check if diff is currently visible.
    */
-  public getPreviewState(): AgentActionPreviewState | null {
-    return this.previewStateSubject.getValue();
+  public isDiffVisible(): boolean {
+    return this.diffVisibleSubject.getValue();
   }
 
   /**
-   * Check if currently in preview mode
+   * Show diff highlighting for an agent action on the canvas.
    */
-  public isPreviewActive(): boolean {
-    return this.previewStateSubject.getValue() !== null;
-  }
+  public showDiff(agentAction: AgentAction): void {
+    // Clear any existing diff first
+    this.clearDiff();
 
-  /**
-   * Start previewing an agent action.
-   * Shows the diff between before and after workflow content.
-   */
-  public startPreview(agentAction: AgentAction): void {
-    // Save the current workflow content BEFORE showing the preview
-    // This is what we'll restore to if the user cancels
-    this.savedWorkflowContentBeforePreview = this.workflowActionService.getWorkflowContent();
-
-    this.showPreviewDiff(agentAction);
-    this.previewStateSubject.next({ agentAction });
-    console.log(`[AgentActionService] Started preview for agent action: ${agentAction.id}`);
-  }
-
-  /**
-   * End the current preview.
-   * @param accept If true, apply the agent action's afterWorkflowContent; if false, restore to saved content.
-   */
-  public endPreview(accept: boolean): void {
-    const previewState = this.previewStateSubject.getValue();
-    if (!previewState) {
-      console.warn("[AgentActionService] No active preview to end");
-      return;
-    }
-
-    // Determine which content to load
-    const contentToLoad = accept
-      ? previewState.agentAction.afterWorkflowContent
-      : this.savedWorkflowContentBeforePreview!;
-
-    this.loadWorkflowContent(previewState.agentAction.workflowMetadata, contentToLoad);
-
-    // Clear state
-    this.savedWorkflowContentBeforePreview = null;
-    this.previewStateSubject.next(null);
-    console.log(`[AgentActionService] Ended preview, accept=${accept}`);
-  }
-
-  // ===== PREVIEW INTERNAL METHODS =====
-
-  /**
-   * Display agent action diff on canvas.
-   * Shows the AFTER content with highlights indicating what changed from BEFORE.
-   */
-  private showPreviewDiff(agentAction: AgentAction): void {
     // Calculate diff between BEFORE and AFTER
     const diff = this.workflowVersionService.getWorkflowsDifference(
       agentAction.beforeWorkflowContent,
       agentAction.afterWorkflowContent
     );
 
-    // Create AFTER workflow
-    const afterWorkflow: Workflow = { ...agentAction.workflowMetadata, content: agentAction.afterWorkflowContent };
-
-    // Save modification state
-    this.workflowVersionService.saveModificationState();
-
-    // Disable persist and undo/redo before reloading
-    this.workflowPersistService.setWorkflowPersistFlag(false);
-    this.undoRedoService.disableWorkFlowModification();
-
-    // Display the AFTER content on canvas as readonly, preserving the current viewport
-    this.workflowActionService.reloadWorkflow(afterWorkflow, undefined, true);
-    this.workflowActionService.disableWorkflowModification();
-
     // Render highlights with beforeWorkflowContent for deleted operator brackets
     this.workflowVersionService.highlightOpVersionDiffSimple(diff, agentAction.beforeWorkflowContent);
 
-    // Store the current diff
+    // Store state
     this.currentDiff = diff;
+    this.currentDiffAction = agentAction;
+    this.diffVisibleSubject.next(true);
   }
 
   /**
-   * Load workflow content and restore normal editing state.
-   * Clears highlights, loads the specified content, and re-enables modifications.
+   * Clear diff highlighting from the canvas.
    */
-  private loadWorkflowContent(metadata: WorkflowMetadata, content: WorkflowContent): void {
-    // Clear highlights
+  public clearDiff(): void {
     if (this.currentDiff) {
       this.workflowVersionService.unhighlightOpVersionDiff(this.currentDiff);
       this.currentDiff = null;
     }
+    this.currentDiffAction = null;
+    this.diffVisibleSubject.next(false);
+  }
 
-    // Clear undo/redo stacks
-    this.undoRedoService.clearRedoStack();
-    this.undoRedoService.clearUndoStack();
+  /**
+   * Toggle diff highlighting for an agent action.
+   * If diff is already showing for this action, clear it.
+   * If diff is showing for a different action or not showing, show it for the given action.
+   */
+  public toggleDiff(agentAction: AgentAction): void {
+    if (this.diffVisibleSubject.getValue() && this.currentDiffAction?.id === agentAction.id) {
+      this.clearDiff();
+    } else {
+      this.showDiff(agentAction);
+    }
+  }
 
-    // Enable modifications to allow reloading
-    this.workflowActionService.enableWorkflowModification();
-
-    // Disable undo/redo to not capture the reload as an action
-    this.undoRedoService.disableWorkFlowModification();
-
-    // Reload the workflow content, preserving the current viewport
-    const workflow: Workflow = { ...metadata, content };
-    this.workflowActionService.reloadWorkflow(workflow, undefined, true);
-
-    // Re-enable undo/redo
-    this.undoRedoService.enableWorkFlowModification();
-
-    // Re-enable persist to DB
-    this.workflowPersistService.setWorkflowPersistFlag(true);
-
-    // Restore modification state
-    this.workflowVersionService.restoreModificationState();
+  /**
+   * Get the action currently being diffed (if any).
+   */
+  public getCurrentDiffAction(): AgentAction | null {
+    return this.currentDiffAction;
   }
 }

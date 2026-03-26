@@ -120,6 +120,24 @@
         </button>
       </div>
 
+      <!-- Toggle diff highlighting for current action -->
+      <div class="toolbar-item">
+        <button
+          nz-button
+          nzType="text"
+          nzSize="small"
+          (click)="toggleDiff()"
+          [disabled]="!currentHeadId"
+          nz-tooltip
+          nzTooltipTitle="Toggle diff highlighting for current action"
+          [style.color]="diffVisible ? '#1890ff' : ''">
+          <i
+            nz-icon
+            nzType="diff"
+            nzTheme="outline"></i>
+        </button>
+      </div>
+
       <!-- Clear button (when available) -->
       <div class="toolbar-item">
         <button
@@ -333,50 +351,6 @@
 
       <!-- Input Area -->
       <div class="input-area">
-        <!-- Agent Action Preview navigation (Apply/Cancel is on the canvas) -->
-        <ng-container *ngIf="previewState">
-          <div class="preview-details">
-            <div class="preview-header">
-              <i
-                nz-icon
-                nzType="eye"
-                nzTheme="outline"></i>
-              <span class="preview-title">Previewing</span>
-              <div class="preview-navigation">
-                <button
-                  nz-button
-                  nzType="text"
-                  nzSize="small"
-                  [disabled]="!hasPreviousAgentAction()"
-                  (click)="navigateToPreviousAgentAction()"
-                  nz-tooltip
-                  nzTooltipTitle="Previous agent action">
-                  <i
-                    nz-icon
-                    nzType="left"
-                    nzTheme="outline"></i>
-                </button>
-                <span class="preview-position">{{ getAgentActionPositionLabel() }}</span>
-                <button
-                  nz-button
-                  nzType="text"
-                  nzSize="small"
-                  [disabled]="!hasNextAgentAction()"
-                  (click)="navigateToNextAgentAction()"
-                  nz-tooltip
-                  nzTooltipTitle="Next agent action">
-                  <i
-                    nz-icon
-                    nzType="right"
-                    nzTheme="outline"></i>
-                </button>
-              </div>
-            </div>
-          </div>
-        </ng-container>
-
-        <!-- Normal input state -->
-        <ng-container *ngIf="!previewState">
           <textarea
             #messageInput
             nz-input
@@ -406,7 +380,6 @@
               nzType="stop"
               nzTheme="outline"></i>
           </button>
-        </ng-container>
       </div>
     </div>
   </div>
