@@ -73,7 +73,7 @@ export const ALLOWED_OPERATOR_TYPES = [
   "LineChart",
   "BarChart",
   "HashJoin",
-  "PythonUDF",
+  "PythonUDFV2",
 ] as const;
 
 // ============================================================================

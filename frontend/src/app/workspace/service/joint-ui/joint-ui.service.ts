@@ -1089,9 +1089,127 @@ export class JointUIService {
   }
 
   /**
-   * Expand an operator to show result + property information inside its box.
+   * Extract key properties from an operator for display in the expanded view.
+   */
+  public static extractOperatorProperties(operator: OperatorPredicate): Array<{ label: string; value: string }> {
+    const props = operator.operatorProperties as Record<string, any>;
+    const type = operator.operatorType;
+
+    switch (type) {
+      case "Projection": {
+        const items: Array<{ label: string; value: string }> = [];
+        items.push({ label: "Mode", value: props["isDrop"] ? "Drop" : "Keep" });
+        const attrs = props["attributes"] as Array<{ originalAttribute?: string; alias?: string }> | undefined;
+        if (attrs && attrs.length > 0) {
+          const names = attrs
+            .map(a => (a.alias && a.alias !== a.originalAttribute ? `${a.originalAttribute}→${a.alias}` : a.originalAttribute || ""))
+            .filter(Boolean);
+          items.push({ label: "Attributes", value: names.join(", ") || "(none)" });
+        }
+        return items;
+      }
+      case "Sort": {
+        const attrs = props["attributes"] as Array<{ attribute?: string; sortPreference?: string }> | undefined;
+        if (attrs && attrs.length > 0) {
+          const spec = attrs.map(a => `${a.attribute || ""} ${a.sortPreference === "DESC" ? "↓" : "↑"}`).join(", ");
+          return [{ label: "Sort By", value: spec }];
+        }
+        return [];
+      }
+      case "Limit":
+        return props["limit"] !== undefined ? [{ label: "Limit", value: String(props["limit"]) }] : [];
+      case "CSVScanSource":
+      case "CSVFileScan": {
+        const items: Array<{ label: string; value: string }> = [];
+        if (props["fileName"]) {
+          const parts = String(props["fileName"]).split("/");
+          items.push({ label: "File", value: parts[parts.length - 1] || props["fileName"] });
+        }
+        if (props["customDelimiter"]) {
+          const d = props["customDelimiter"];
+          items.push({ label: "Delimiter", value: d === "," ? "comma" : d === "\t" ? "tab" : `"${d}"` });
+        }
+        return items;
+      }
+      case "HashJoin": {
+        const items: Array<{ label: string; value: string }> = [];
+        if (props["buildAttributeName"] && props["probeAttributeName"]) {
+          items.push({ label: "Join", value: `${props["buildAttributeName"]} = ${props["probeAttributeName"]}` });
+        }
+        if (props["joinType"]) {
+          items.push({ label: "Type", value: String(props["joinType"]).toLowerCase().replace(/_/g, " ") });
+        }
+        return items;
+      }
+      case "Aggregate": {
+        const items: Array<{ label: string; value: string }> = [];
+        const groupByKeys = props["groupByKeys"] as string[] | undefined;
+        if (groupByKeys && groupByKeys.length > 0) {
+          items.push({ label: "Group By", value: groupByKeys.join(", ") });
+        }
+        const aggs = props["aggregations"] as Array<{
+          aggFunction?: string;
+          attribute?: string;
+          "result attribute"?: string;
+        }> | undefined;
+        if (aggs && aggs.length > 0) {
+          for (const a of aggs) {
+            const fn = a.aggFunction || "?";
+            const attr = a.attribute || "?";
+            const resultAttr = a["result attribute"];
+            const desc = resultAttr ? `${fn}(${attr}) → ${resultAttr}` : `${fn}(${attr})`;
+            items.push({ label: fn, value: desc });
+          }
+        }
+        return items;
+      }
+      case "PythonUDFV2":
+      case "PythonUDFSourceV2":
+      case "DualInputPortsPythonUDFV2": {
+        const items: Array<{ label: string; value: string }> = [];
+        const code = props["code"] as string | undefined;
+        if (code) {
+          // Show first meaningful line of code (skip empty lines and comments)
+          const lines = code.split("\n").filter(l => l.trim() && !l.trim().startsWith("#"));
+          const preview = lines.length > 0 ? lines[0].trim() : "(empty)";
+          items.push({ label: "Code", value: preview });
+          if (lines.length > 1) {
+            items.push({ label: "", value: `(${lines.length} lines total)` });
+          }
+        }
+        return items;
+      }
+      default: {
+        const items: Array<{ label: string; value: string }> = [];
+        for (const key of Object.keys(props).slice(0, 3)) {
+          const val = props[key];
+          if (val !== undefined && val !== null && typeof val !== "object") {
+            const label = key.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase()).trim();
+            items.push({ label, value: String(val) });
+          }
+        }
+        return items;
+      }
+    }
+  }
+
+  /**
+   * Apply the expanded detail layout to an operator on the paper.
+   * This is the default layout — no toggle needed.
+   */
+  public applyExpandedLayout(
+    jointPaper: joint.dia.Paper,
+    operatorID: string,
+    operator: OperatorPredicate
+  ): void {
+    const properties = JointUIService.extractOperatorProperties(operator);
+    this.expandOperatorWithResults(jointPaper, operatorID, undefined, properties);
+  }
+
+  /**
+   * Apply expanded layout to an operator, optionally with agent result summary.
    * Layout:
-   *   In/Out info written to port labels (same location as execution metrics)
+   *   In/Out info written to port labels (when summary provided)
    *   Inside the box:
    *     Left: [icon] [type]   Right: key properties (full text, no truncation)
    *   Width is flexible based on content.
@@ -1099,7 +1217,7 @@ export class JointUIService {
   public expandOperatorWithResults(
     jointPaper: joint.dia.Paper,
     operatorID: string,
-    summary: {
+    summary?: {
       state: string;
       inputTuples: number;
       outputTuples: number;
@@ -1152,44 +1270,35 @@ export class JointUIService {
       return textEl;
     };
 
-    // --- Write in/out info to port labels (same position as execution metrics) ---
-    const allPorts = element.getPorts();
-    const inPorts = allPorts.filter(p => p.group === "in");
-    const outPorts = allPorts.filter(p => p.group === "out");
+    // --- Write in/out info to port labels when agent summary is available ---
+    if (summary) {
+      const allPorts = element.getPorts();
+      const inPorts = allPorts.filter(p => p.group === "in");
+      const outPorts = allPorts.filter(p => p.group === "out");
 
-    // Save original port label text before overwriting
-    for (const portDef of allPorts) {
-      if (portDef.id) {
-        const key = `${operatorID}::${portDef.id}`;
-        if (!this.savedPortLabels.has(key)) {
-          const rawAttrs = (portDef.attrs as any) || {};
-          this.savedPortLabels.set(key, rawAttrs[".port-label"]?.text ?? "");
+      inPorts.forEach((portDef, idx) => {
+        if (!portDef.id) return;
+        let labelText: string;
+        if (summary.inputPortShapes && summary.inputPortShapes.length > 0) {
+          const ps = summary.inputPortShapes.find(s => s.portIndex === idx) ?? summary.inputPortShapes[0];
+          labelText = `${ps.rows}×${ps.columns}`;
+        } else {
+          labelText = `${summary.inputTuples}`;
         }
-      }
+        element.portProp(portDef.id, "attrs/.port-label/text", labelText);
+        element.portProp(portDef.id, "attrs/.port-label/fill", "#1890ff");
+      });
+
+      outPorts.forEach(portDef => {
+        if (!portDef.id) return;
+        const outVal =
+          summary.outputColumns !== undefined
+            ? `${summary.outputTuples}×${summary.outputColumns}`
+            : `${summary.outputTuples}`;
+        element.portProp(portDef.id, "attrs/.port-label/text", outVal);
+        element.portProp(portDef.id, "attrs/.port-label/fill", "#52c41a");
+      });
     }
-
-    inPorts.forEach((portDef, idx) => {
-      if (!portDef.id) return;
-      let labelText: string;
-      if (summary.inputPortShapes && summary.inputPortShapes.length > 0) {
-        const ps = summary.inputPortShapes.find(s => s.portIndex === idx) ?? summary.inputPortShapes[0];
-        labelText = `${ps.rows}×${ps.columns}`;
-      } else {
-        labelText = `${summary.inputTuples}`;
-      }
-      element.portProp(portDef.id, "attrs/.port-label/text", labelText);
-      element.portProp(portDef.id, "attrs/.port-label/fill", "#1890ff");
-    });
-
-    outPorts.forEach(portDef => {
-      if (!portDef.id) return;
-      const outVal =
-        summary.outputColumns !== undefined
-          ? `${summary.outputTuples}×${summary.outputColumns}`
-          : `${summary.outputTuples}`;
-      element.portProp(portDef.id, "attrs/.port-label/text", outVal);
-      element.portProp(portDef.id, "attrs/.port-label/fill", "#52c41a");
-    });
 
     // --- Layout constants ---
     const iconSize = 30;
@@ -1212,7 +1321,7 @@ export class JointUIService {
     for (const prop of props) {
       maxPropWidth = Math.max(maxPropWidth, (prop.label.length + 2 + prop.value.length) * charW);
     }
-    if (summary.error) {
+    if (summary?.error) {
       maxPropWidth = Math.max(maxPropWidth, summary.error.length * charW);
     }
 
@@ -1228,7 +1337,7 @@ export class JointUIService {
         propBottomY += lineH;
       }
     }
-    if (summary.error) {
+    if (summary?.error) {
       propBottomY += lineH;
     }
     propBottomY += pad;
@@ -1260,7 +1369,7 @@ export class JointUIService {
     }
 
     // Error below properties
-    if (summary.error) {
+    if (summary?.error) {
       curY += lineH;
       addText(propX, curY, [{ text: summary.error, fill: "#ff4d4f" }]);
     }

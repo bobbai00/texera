@@ -130,10 +130,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     position: { x: number; y: number };
   } | null = null;
 
-  // Track which operators are currently expanded with result info
-  private expandedResultOperators = new Set<string>();
-  // Cached state for re-applying expansion after workflow reload
-  private resultAnnotationsVisible = false;
+  // Cached agent result summaries for port label display
   private currentResultSummaries = new Map<string, any>();
 
 
@@ -354,16 +351,13 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
               };
             }
 
-            // Skip execution port metrics for operators expanded with agent details
-            if (!this.expandedResultOperators.has(op.operatorID)) {
-              this.jointUIService.changeOperatorStatistics(
-                this.paper,
-                op.operatorID,
-                status[op.operatorID],
-                this.isSource(op.operatorID),
-                this.isSink(op.operatorID)
-              );
-            }
+            this.jointUIService.changeOperatorStatistics(
+              this.paper,
+              op.operatorID,
+              status[op.operatorID],
+              this.isSource(op.operatorID),
+              this.isSink(op.operatorID)
+            );
           });
       });
 
@@ -1547,23 +1541,12 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   }
 
   /**
-   * Handle operator result display by expanding/collapsing operators.
-   * When toggled on, expands each operator with results to show info inside its box.
+   * Apply expanded detail layout to all operators.
+   * Every operator is always shown in expanded form (icon + type + properties).
+   * Agent result summaries update port labels when available.
    */
   private handleOperatorResultAnnotations(): void {
-    // Subscribe to annotation state changes
-    combineLatest([
-      this.copilotManagerService.resultAnnotationsVisible$,
-      this.copilotManagerService.operatorResultSummaries$,
-    ])
-      .pipe(untilDestroyed(this))
-      .subscribe(([visible, summaries]) => {
-        this.resultAnnotationsVisible = visible;
-        this.currentResultSummaries = summaries;
-        this.applyOperatorExpansions();
-      });
-
-    // Re-apply expansions after workflow reload recreates operators
+    // Apply expanded layout to every new operator added to the graph
     this.workflowActionService
       .getTexeraGraph()
       .getOperatorAddStream()
@@ -1572,121 +1555,28 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
         untilDestroyed(this)
       )
       .subscribe(() => {
-        if (this.resultAnnotationsVisible && this.currentResultSummaries.size > 0) {
-          this.applyOperatorExpansions();
+        this.applyExpandedLayoutToAll();
+      });
+
+    // Update port labels when agent result summaries change
+    this.copilotManagerService.operatorResultSummaries$
+      .pipe(untilDestroyed(this))
+      .subscribe(summaries => {
+        this.currentResultSummaries = summaries;
+        if (summaries.size > 0) {
+          this.applyExpandedLayoutToAll();
         }
       });
   }
 
   /**
-   * Apply or remove operator expansions based on current state.
+   * Apply expanded layout to all operators on the canvas.
    */
-  private applyOperatorExpansions(): void {
-    // Collapse all previously expanded operators
-    this.jointUIService.collapseAllOperators(this.paper, [...this.expandedResultOperators]);
-    this.expandedResultOperators.clear();
-
-    if (!this.resultAnnotationsVisible || this.currentResultSummaries.size === 0) return;
-
-    for (const [opId, summary] of this.currentResultSummaries) {
-      if (!this.workflowActionService.getTexeraGraph().hasOperator(opId)) continue;
-
-      const operator = this.workflowActionService.getTexeraGraph().getOperator(opId);
-      const props = operator ? this.extractOperatorProperties(operator) : [];
-
-      this.jointUIService.expandOperatorWithResults(this.paper, opId, summary, props);
-      this.expandedResultOperators.add(opId);
-    }
-  }
-
-  /**
-   * Extract key properties from an operator for display in the expanded view.
-   * Ported from InlinePropertyPanelComponent.
-   */
-  private extractOperatorProperties(operator: OperatorPredicate): Array<{ label: string; value: string }> {
-    const props = operator.operatorProperties as Record<string, any>;
-    const type = operator.operatorType;
-
-    switch (type) {
-      case "Projection": {
-        const items: Array<{ label: string; value: string }> = [];
-        items.push({ label: "Mode", value: props["isDrop"] ? "Drop" : "Keep" });
-        const attrs = props["attributes"] as Array<{ originalAttribute?: string; alias?: string }> | undefined;
-        if (attrs && attrs.length > 0) {
-          const names = attrs
-            .map(a => (a.alias && a.alias !== a.originalAttribute ? `${a.originalAttribute}→${a.alias}` : a.originalAttribute || ""))
-            .filter(Boolean);
-          items.push({ label: "Attributes", value: names.join(", ") || "(none)" });
-        }
-        return items;
-      }
-      case "Sort": {
-        const attrs = props["attributes"] as Array<{ attribute?: string; sortPreference?: string }> | undefined;
-        if (attrs && attrs.length > 0) {
-          const spec = attrs.map(a => `${a.attribute || ""} ${a.sortPreference === "DESC" ? "↓" : "↑"}`).join(", ");
-          return [{ label: "Sort By", value: spec }];
-        }
-        return [];
-      }
-      case "Limit":
-        return props["limit"] !== undefined ? [{ label: "Limit", value: String(props["limit"]) }] : [];
-      case "CSVScanSource":
-      case "CSVFileScan": {
-        const items: Array<{ label: string; value: string }> = [];
-        if (props["fileName"]) {
-          const parts = String(props["fileName"]).split("/");
-          items.push({ label: "File", value: parts[parts.length - 1] || props["fileName"] });
-        }
-        if (props["customDelimiter"]) {
-          const d = props["customDelimiter"];
-          items.push({ label: "Delimiter", value: d === "," ? "comma" : d === "\t" ? "tab" : `"${d}"` });
-        }
-        return items;
-      }
-      case "HashJoin": {
-        const items: Array<{ label: string; value: string }> = [];
-        if (props["buildAttributeName"] && props["probeAttributeName"]) {
-          items.push({ label: "Join", value: `${props["buildAttributeName"]} = ${props["probeAttributeName"]}` });
-        }
-        if (props["joinType"]) {
-          items.push({ label: "Type", value: String(props["joinType"]).toLowerCase().replace(/_/g, " ") });
-        }
-        return items;
-      }
-      case "Aggregate": {
-        const items: Array<{ label: string; value: string }> = [];
-        const groupByKeys = props["groupByKeys"] as string[] | undefined;
-        if (groupByKeys && groupByKeys.length > 0) {
-          items.push({ label: "Group By", value: groupByKeys.join(", ") });
-        }
-        const aggs = props["aggregations"] as Array<{
-          aggFunction?: string;
-          attribute?: string;
-          "result attribute"?: string;
-        }> | undefined;
-        if (aggs && aggs.length > 0) {
-          for (const a of aggs) {
-            const fn = a.aggFunction || "?";
-            const attr = a.attribute || "?";
-            const resultAttr = a["result attribute"];
-            const desc = resultAttr ? `${fn}(${attr}) → ${resultAttr}` : `${fn}(${attr})`;
-            items.push({ label: fn, value: desc });
-          }
-        }
-        return items;
-      }
-      default: {
-        // Generic: show first few simple properties
-        const items: Array<{ label: string; value: string }> = [];
-        for (const key of Object.keys(props).slice(0, 3)) {
-          const val = props[key];
-          if (val !== undefined && val !== null && typeof val !== "object") {
-            const label = key.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase()).trim();
-            items.push({ label, value: String(val) });
-          }
-        }
-        return items;
-      }
+  private applyExpandedLayoutToAll(): void {
+    for (const op of this.workflowActionService.getTexeraGraph().getAllOperators()) {
+      const summary = this.currentResultSummaries.get(op.operatorID);
+      const props = JointUIService.extractOperatorProperties(op);
+      this.jointUIService.expandOperatorWithResults(this.paper, op.operatorID, summary, props);
     }
   }
 
