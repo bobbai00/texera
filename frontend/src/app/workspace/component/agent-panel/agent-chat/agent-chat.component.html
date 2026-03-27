@@ -103,24 +103,6 @@
         </button>
       </div>
 
-      <!-- Toggle diff highlighting for current action -->
-      <div class="toolbar-item">
-        <button
-          nz-button
-          nzType="text"
-          nzSize="small"
-          (click)="toggleDiff()"
-          [disabled]="!currentHeadId"
-          nz-tooltip
-          nzTooltipTitle="Toggle diff highlighting for current action"
-          [style.color]="diffVisible ? '#1890ff' : ''">
-          <i
-            nz-icon
-            nzType="diff"
-            nzTheme="outline"></i>
-        </button>
-      </div>
-
       <!-- Clear button (when available) -->
       <div class="toolbar-item">
         <button
@@ -198,7 +180,9 @@
             [style.left.px]="node.x - node.width / 2"
             [style.top.px]="node.y - 12"
             [style.width.px]="node.width"
-            (click)="onTimelineNodeClick(node)">
+            (click)="onTimelineNodeClick(node)"
+            (mouseenter)="onTimelineNodeMouseEnter(node)"
+            (mouseleave)="onTimelineNodeMouseLeave()">
             <span class="node-text">
               <ng-container *ngIf="node.actionType === 'user_request' || node.actionType === 'agent_response'; else toolCallNode">
                 {{ node.summary }}
@@ -1140,3 +1124,4 @@
     </div>
   </ng-container>
 </nz-modal>
+

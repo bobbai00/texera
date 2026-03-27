@@ -27,6 +27,9 @@ import { fromEventPattern, Observable } from "rxjs";
 import { Coeditor } from "../../../common/type/user";
 import { OperatorResultCacheStatus } from "../../types/workflow-websocket.interface";
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const Diff = require("diff");
+
 /**
  * Defines the SVG path for the delete button
  */
@@ -1586,6 +1589,152 @@ export class JointUIService {
     for (const opId of operatorIDs) {
       this.collapseOperator(jointPaper, opId);
     }
+  }
+
+  /**
+   * Render a diff view on an operator's expanded panel.
+   * For code operators: shows git-style line diff with +/- coloring.
+   * For regular operators: shows before→after property changes.
+   */
+  public applyDiffLayout(
+    jointPaper: joint.dia.Paper,
+    operatorID: string,
+    beforeOp: OperatorPredicate,
+    afterOp: OperatorPredicate
+  ): void {
+    const beforeProps = JointUIService.extractOperatorProperties(beforeOp);
+    const afterProps = JointUIService.extractOperatorProperties(afterOp);
+
+    const beforeCode = beforeProps.find(p => p.label === "__code__");
+    const afterCode = afterProps.find(p => p.label === "__code__");
+
+    if (beforeCode && afterCode && beforeCode.value !== afterCode.value) {
+      // Code diff: render git-style diff in the operator box
+      const diffHtml = JointUIService.renderCodeDiffHtml(beforeCode.value, afterCode.value);
+      this.expandOperatorWithDiffHtml(jointPaper, operatorID, diffHtml);
+    } else {
+      // Property diff: build diff properties array
+      const diffProps: Array<{ label: string; value: string }> = [];
+      const beforeNonCode = beforeProps.filter(p => p.label !== "__code__");
+      const afterNonCode = afterProps.filter(p => p.label !== "__code__");
+      const allLabels = new Set([...beforeNonCode.map(p => p.label), ...afterNonCode.map(p => p.label)]);
+      for (const label of allLabels) {
+        const bVal = beforeNonCode.find(p => p.label === label)?.value || "";
+        const aVal = afterNonCode.find(p => p.label === label)?.value || "";
+        if (bVal !== aVal) {
+          if (bVal) diffProps.push({ label: `- ${label}`, value: bVal });
+          if (aVal) diffProps.push({ label: `+ ${label}`, value: aVal });
+        } else {
+          diffProps.push({ label, value: aVal });
+        }
+      }
+      this.expandOperatorWithResults(jointPaper, operatorID, undefined, diffProps);
+    }
+  }
+
+  /**
+   * Render an operator box with diff HTML content (for code diffs).
+   */
+  private expandOperatorWithDiffHtml(
+    jointPaper: joint.dia.Paper,
+    operatorID: string,
+    diffHtml: string
+  ): void {
+    const element = jointPaper.getModelById(operatorID) as joint.shapes.devs.Model;
+    if (!element) return;
+
+    const svgNs = "http://www.w3.org/2000/svg";
+    const view = jointPaper.findViewByModel(operatorID);
+    if (!view) return;
+    const groupEl = view.el.querySelector(".element-node") || view.el;
+
+    // Remove previous result elements
+    groupEl.querySelectorAll(".result-info").forEach((el: Element) => el.remove());
+
+    const pad = 8;
+    const codeCharW = 5.5;
+    const codeFontSize = 9;
+    const codeLineH = codeFontSize + 2;
+
+    // Measure diff content
+    const lines = diffHtml.split("\n");
+    const maxLineLen = Math.max(...lines.map(l => l.replace(/<[^>]*>/g, "").length), 20);
+
+    const iconSize = 30;
+    const typeFontSize = 7;
+    const iconTypeGap = 2;
+    const leftGroupH = iconSize + iconTypeGap + typeFontSize;
+    const leftColumnEnd = pad + iconSize;
+    const gap = 6;
+    const propX = leftColumnEnd + gap;
+    const rightContentWidth = maxLineLen * codeCharW + 16;
+
+    const minWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
+    const ew = Math.max(minWidth, propX + rightContentWidth + pad);
+
+    const contentH = lines.length * codeLineH + 8;
+    const minH = leftGroupH + pad * 2;
+    const eh = Math.max(contentH + pad * 2, minH);
+
+    // Render diff using foreignObject
+    const codeBlockWidth = ew - propX - pad + 2;
+    const codeBlockHeight = eh - pad * 2;
+    const fo = document.createElementNS(svgNs, "foreignObject");
+    fo.classList.add("result-info");
+    fo.setAttribute("x", String(propX));
+    fo.setAttribute("y", String(pad));
+    fo.setAttribute("width", String(codeBlockWidth));
+    fo.setAttribute("height", String(codeBlockHeight));
+
+    const div = document.createElement("div");
+    div.style.cssText = `
+      width: 100%; height: 100%; overflow: hidden;
+      background: transparent; padding: 2px 4px;
+      box-sizing: border-box;
+    `;
+
+    const pre = document.createElement("pre");
+    pre.style.cssText = `
+      margin: 0; padding: 0; font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+      font-size: 9px; line-height: 11px; white-space: pre; color: #333;
+    `;
+    pre.innerHTML = diffHtml;
+    div.appendChild(pre);
+    fo.appendChild(div);
+    groupEl.appendChild(fo);
+
+    // Resize element
+    element.resize(ew, eh);
+    element.attr({
+      "rect.boundary": { width: ew + 20, height: eh + 20 },
+      ".delete-button": { x: ew, y: -20 },
+      ".chat-button": { x: ew + 25, y: -20 },
+    });
+  }
+
+  /**
+   * Generate HTML for a git-style code diff using the 'diff' library.
+   */
+  private static renderCodeDiffHtml(before: string, after: string): string {
+    const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const changes = Diff.diffLines(before, after);
+    const htmlLines: string[] = [];
+
+    for (const change of changes) {
+      const text = change.value.replace(/\n$/, "");
+      const splitLines = text.split("\n");
+      for (const line of splitLines) {
+        const escaped = escape(line);
+        if (change.added) {
+          htmlLines.push(`<span style="background:#e6ffed;color:#22863a;display:inline-block;width:100%">+ ${escaped}</span>`);
+        } else if (change.removed) {
+          htmlLines.push(`<span style="background:#ffeef0;color:#cb2431;display:inline-block;width:100%">- ${escaped}</span>`);
+        } else {
+          htmlLines.push(`<span style="color:#586069;display:inline-block;width:100%">  ${escaped}</span>`);
+        }
+      }
+    }
+    return htmlLines.join("\n");
   }
 }
 

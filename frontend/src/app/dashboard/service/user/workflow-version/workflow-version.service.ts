@@ -168,11 +168,13 @@ export class WorkflowVersionService {
   }
 
   public highlightOpBoundary(id: string, color: string) {
-    this.workflowActionService
+    const element = this.workflowActionService
       .getJointGraphWrapper()
       .getMainJointPaper()
-      ?.getModelById(id)
-      .attr("rect.boundary/fill", "rgba(" + color + ")");
+      ?.getModelById(id);
+    if (element) {
+      element.attr("rect.boundary/fill", "rgba(" + color + ")");
+    }
   }
 
   public highlightOpBoundaryDashed(id: string, color: string) {

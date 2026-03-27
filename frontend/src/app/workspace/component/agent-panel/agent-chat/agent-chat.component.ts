@@ -40,6 +40,8 @@ import { NotificationService } from "../../../../common/service/notification/not
 import { WorkflowVersionService } from "../../../../dashboard/service/user/workflow-version/workflow-version.service";
 import { WorkflowPersistService } from "../../../../common/service/workflow-persist/workflow-persist.service";
 import * as dagre from "dagre";
+import { JointUIService } from "../../../service/joint-ui/joint-ui.service";
+import { OperatorPredicate } from "../../../../workspace/types/workflow-common.interface";
 
 /**
  * Represents a single node in the action tree.
@@ -136,6 +138,9 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   // Diff toggle state
   public diffVisible: boolean = false;
 
+  // Hover diff state — tracks which operators had their expanded layout replaced with diff
+  private hoveredDiffOperatorIds: string[] = [];
+
   // System info modal state (with editing capabilities)
   public isEditingSystemPrompt = false;
   public editingSystemPrompt = "";
@@ -186,7 +191,8 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     private notificationService: NotificationService,
     private cdr: ChangeDetectorRef,
     private workflowVersionService: WorkflowVersionService,
-    private workflowPersistService: WorkflowPersistService
+    private workflowPersistService: WorkflowPersistService,
+    private jointUIService: JointUIService
   ) {}
 
   ngOnInit(): void {
@@ -827,17 +833,60 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   }
 
   /**
-   * Toggle diff highlighting for the current HEAD action.
+   * Show diff highlighting when hovering over a tree node.
+   * Highlights added/modified operators on the canvas and shows code/property diffs
+   * in the operator's expanded panel.
    */
-  public toggleDiff(): void {
-    if (!this.currentHeadId) {
-      return;
+  public onTimelineNodeMouseEnter(node: TimelineNode): void {
+    const action = this.agentActions.find(a => a.id === node.agentActionId);
+    if (!action) return;
+
+    // Show border highlighting (green for added, red for modified)
+    this.agentActionService.showDiff(action);
+
+    // For modified operators, render the diff view on the operator's expanded panel
+    const paper = this.workflowActionService.getJointGraphWrapper().getMainJointPaper();
+    if (!paper || !action.beforeWorkflowContent || !action.afterWorkflowContent) return;
+
+    if (action.operations.modify?.operatorIds?.length) {
+      for (const opId of action.operations.modify.operatorIds) {
+        const beforeOp = action.beforeWorkflowContent.operators?.find(
+          (o: OperatorPredicate) => o.operatorID === opId
+        );
+        const afterOp = action.afterWorkflowContent.operators?.find(
+          (o: OperatorPredicate) => o.operatorID === opId
+        );
+        if (!beforeOp || !afterOp) continue;
+
+        this.jointUIService.applyDiffLayout(paper, opId, beforeOp, afterOp);
+        this.hoveredDiffOperatorIds.push(opId);
+      }
     }
-    const headAction = this.agentActions.find(a => a.id === this.currentHeadId);
-    if (!headAction) {
-      return;
+  }
+
+  /**
+   * Clear diff highlighting and restore normal expanded view when mouse leaves.
+   */
+  public onTimelineNodeMouseLeave(): void {
+    this.agentActionService.clearDiff();
+
+    // Restore normal expanded layout for operators that had diff view
+    if (this.hoveredDiffOperatorIds.length > 0) {
+      const paper = this.workflowActionService.getJointGraphWrapper().getMainJointPaper();
+      if (paper) {
+        for (const opId of this.hoveredDiffOperatorIds) {
+          try {
+            const operator = this.workflowActionService.getTexeraGraph().getOperator(opId);
+            if (operator) {
+              this.jointUIService.applyExpandedLayout(paper, opId, operator);
+            }
+          } catch {
+            // Operator may have been removed from graph (e.g., after checkout)
+          }
+        }
+      }
+      this.hoveredDiffOperatorIds = [];
     }
-    this.agentActionService.toggleDiff(headAction);
   }
 
   // =====================

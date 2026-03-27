@@ -187,7 +187,7 @@
   stroke-width: 1.5;
 
   &.on-path {
-    stroke: #bfbfbf;
+    stroke: #91d5ff;
     stroke-width: 2;
   }
 
@@ -216,6 +216,7 @@
     background: #f5f5f5;
   }
 
+  // Off-path nodes: default black/white style, dimmed
   &.off-path {
     opacity: 0.4;
     &:hover {
@@ -223,26 +224,20 @@
     }
   }
 
-  // HEAD node: green
+  // HEAD node: custom green
   &.is-head {
-    background: #52c41a;
-    border-color: #389e0d;
+    background: #97D077;
+    border-color: #7abb5c;
 
     .node-text {
       color: #fff;
     }
   }
 
-  // User request node: blue tint
-  &.user-request:not(.is-head) {
+  // On-path nodes (not HEAD): blue tint
+  &.on-path:not(.is-head) {
     border-color: #91d5ff;
     background: #e6f7ff;
-  }
-
-  // Agent response node: green tint
-  &.agent-response:not(.is-head) {
-    border-color: #b7eb8f;
-    background: #f6ffed;
   }
 
   .node-text {
@@ -655,3 +650,4 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
