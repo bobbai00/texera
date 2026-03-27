@@ -341,46 +341,7 @@ export class JointUIService {
     const workerCount = statistics.numWorkers ?? 1;
     element.attr(`.${operatorWorkerCountClass}/text`, "#workers: " + String(workerCount));
 
-    inPorts.forEach(portDef => {
-      const portId = portDef.id;
-      if (portId != null) {
-        const parts = portId.split("-");
-        const numericSuffix = parts.length > 1 ? parts[1] : portId;
-
-        const count: number = inputMetrics[numericSuffix] ?? 0;
-        const rawAttrs = (portDef.attrs as any) || {};
-        const oldText: string = (rawAttrs[".port-label"] && rawAttrs[".port-label"].text) || "";
-        let originalName = oldText.includes(":") ? oldText.split(":", 1)[0].trim() : oldText;
-
-        if (!originalName) {
-          originalName = portId;
-        }
-
-        const labelText = `${count}`;
-        element.portProp(portId, "attrs/.port-label/text", labelText);
-      }
-    });
-
-    outPorts.forEach(portDef => {
-      const portId = portDef.id;
-      if (portId != null) {
-        const parts = portId.split("-");
-        const numericSuffix = parts.length > 1 ? parts[1] : portId;
-
-        const count: number = outputMetrics[numericSuffix] ?? 0;
-        const rawAttrs = (portDef.attrs as any) || {};
-        const oldText: string = (rawAttrs[".port-label"] && rawAttrs[".port-label"].text) || "";
-        let originalName = oldText.includes(":") ? oldText.split(":", 1)[0].trim() : oldText;
-
-        if (!originalName) {
-          originalName = portId;
-        }
-
-        const labelText = `${count}`;
-
-        element.portProp(portId, "attrs/.port-label/text", labelText);
-      }
-    });
+    // Port labels are managed by agent shape info only — skip execution metrics
     this.changeOperatorState(jointPaper, operatorID, statistics.operatorState);
   }
   public foldOperatorDetails(jointPaper: joint.dia.Paper, operatorID: string): void {
@@ -1165,19 +1126,16 @@ export class JointUIService {
       }
       case "PythonUDFV2":
       case "PythonUDFSourceV2":
-      case "DualInputPortsPythonUDFV2": {
-        const items: Array<{ label: string; value: string }> = [];
+      case "DualInputPortsPythonUDFV2":
+      case "PythonTableUDF":
+      case "DataProcessing":
+      case "DataLoading": {
         const code = props["code"] as string | undefined;
         if (code) {
-          // Show first meaningful line of code (skip empty lines and comments)
-          const lines = code.split("\n").filter(l => l.trim() && !l.trim().startsWith("#"));
-          const preview = lines.length > 0 ? lines[0].trim() : "(empty)";
-          items.push({ label: "Code", value: preview });
-          if (lines.length > 1) {
-            items.push({ label: "", value: `(${lines.length} lines total)` });
-          }
+          // Special marker: label "__code__" signals the renderer to use a code block
+          return [{ label: "__code__", value: code }];
         }
-        return items;
+        return [];
       }
       default: {
         const items: Array<{ label: string; value: string }> = [];
@@ -1281,20 +1239,20 @@ export class JointUIService {
         let labelText: string;
         if (summary.inputPortShapes && summary.inputPortShapes.length > 0) {
           const ps = summary.inputPortShapes.find(s => s.portIndex === idx) ?? summary.inputPortShapes[0];
-          labelText = `${ps.rows}×${ps.columns}`;
+          labelText = `(${ps.rows}, ${ps.columns})`;
         } else {
-          labelText = `${summary.inputTuples}`;
+          labelText = `(${summary.inputTuples})`;
         }
         element.portProp(portDef.id, "attrs/.port-label/text", labelText);
-        element.portProp(portDef.id, "attrs/.port-label/fill", "#1890ff");
+        element.portProp(portDef.id, "attrs/.port-label/fill", "#52c41a");
       });
 
       outPorts.forEach(portDef => {
         if (!portDef.id) return;
         const outVal =
           summary.outputColumns !== undefined
-            ? `${summary.outputTuples}×${summary.outputColumns}`
-            : `${summary.outputTuples}`;
+            ? `(${summary.outputTuples}, ${summary.outputColumns})`
+            : `(${summary.outputTuples})`;
         element.portProp(portDef.id, "attrs/.port-label/text", outVal);
         element.portProp(portDef.id, "attrs/.port-label/fill", "#52c41a");
       });
@@ -1304,6 +1262,7 @@ export class JointUIService {
     const iconSize = 30;
     const pad = 6; // inner padding
     const charW = 5; // approx character width at 10px font
+    const codeCharW = 6.02; // approx character width for monospace 9px font
     const typeFontSize = 7;
     const typeCharW = 3.5; // approx character width at 7px font
     const typeText = element.attr(`.${operatorTypeClass}/text`) || "";
@@ -1315,25 +1274,42 @@ export class JointUIService {
     const leftContentWidth = Math.max(iconSize, typeTextWidth);
     const leftColumnEnd = pad + leftContentWidth; // right edge of left column
 
-    // Right column: properties
+    // Detect code block mode (PythonUDF)
     const props = properties ?? [];
-    let maxPropWidth = 0;
-    for (const prop of props) {
-      maxPropWidth = Math.max(maxPropWidth, (prop.label.length + 2 + prop.value.length) * charW);
-    }
-    if (summary?.error) {
-      maxPropWidth = Math.max(maxPropWidth, summary.error.length * charW);
-    }
+    const isCodeBlock = props.length === 1 && props[0].label === "__code__";
+    const codeContent = isCodeBlock ? props[0].value : "";
+    const regularProps = isCodeBlock ? [] : props;
 
+    // Right column: compute width
     const gap = 6;
     const propX = leftColumnEnd + gap;
-    const minWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
-    const ew = Math.max(minWidth, propX + maxPropWidth + pad);
+    let rightContentWidth = 0;
 
-    // --- Compute box height from properties first ---
+    if (isCodeBlock) {
+      const codeLines = codeContent.split("\n");
+      const maxLineLen = Math.max(...codeLines.map(l => l.length), 10);
+      rightContentWidth = maxLineLen * codeCharW + 12; // 12 for code block padding
+    } else {
+      for (const prop of regularProps) {
+        rightContentWidth = Math.max(rightContentWidth, (prop.label.length + 2 + prop.value.length) * charW);
+      }
+    }
+    if (summary?.error) {
+      rightContentWidth = Math.max(rightContentWidth, summary.error.length * charW);
+    }
+
+    const minWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
+    const ew = Math.max(minWidth, propX + rightContentWidth + pad);
+
+    // --- Compute box height ---
     let propBottomY = pad;
-    if (props.length > 0) {
-      for (const prop of props) {
+    if (isCodeBlock) {
+      const codeLines = codeContent.split("\n");
+      const codeFontSize = 9;
+      const codeLineH = codeFontSize + 2;
+      propBottomY += codeLines.length * codeLineH + 8; // 8 for code block padding
+    } else if (regularProps.length > 0) {
+      for (const prop of regularProps) {
         propBottomY += lineH;
       }
     }
@@ -1356,22 +1332,52 @@ export class JointUIService {
     ]);
     typeEl.setAttribute("font-size", String(typeFontSize));
 
-    // Properties on the right side (full text, no truncation)
-    let curY = pad;
-    if (props.length > 0) {
-      for (const prop of props) {
-        curY += lineH;
-        addText(propX, curY, [
-          { text: `${prop.label}: `, fill: textColor },
-          { text: prop.value, fill: headerColor, bold: true },
-        ]);
-      }
-    }
+    // --- Render right side content ---
+    if (isCodeBlock) {
+      // Render Python code block using foreignObject for HTML-based syntax highlighting
+      const codeBlockWidth = ew - propX - pad + 2;
+      const codeBlockHeight = eh - pad * 2;
+      const fo = document.createElementNS(svgNs, "foreignObject");
+      fo.classList.add("result-info");
+      fo.setAttribute("x", String(propX));
+      fo.setAttribute("y", String(pad));
+      fo.setAttribute("width", String(codeBlockWidth));
+      fo.setAttribute("height", String(codeBlockHeight));
 
-    // Error below properties
-    if (summary?.error) {
-      curY += lineH;
-      addText(propX, curY, [{ text: summary.error, fill: "#ff4d4f" }]);
+      const div = document.createElement("div");
+      div.style.cssText = `
+        width: 100%; height: 100%; overflow: hidden;
+        background: transparent; padding: 2px 4px;
+        box-sizing: border-box;
+      `;
+
+      const pre = document.createElement("pre");
+      pre.style.cssText = `
+        margin: 0; padding: 0; font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+        font-size: 9px; line-height: 11px; white-space: pre; color: #333;
+      `;
+      pre.innerHTML = JointUIService.highlightPython(codeContent);
+      div.appendChild(pre);
+      fo.appendChild(div);
+      groupEl.appendChild(fo);
+    } else {
+      // Regular properties
+      let curY = pad;
+      if (regularProps.length > 0) {
+        for (const prop of regularProps) {
+          curY += lineH;
+          addText(propX, curY, [
+            { text: `${prop.label}: `, fill: textColor },
+            { text: prop.value, fill: headerColor, bold: true },
+          ]);
+        }
+      }
+
+      // Error below properties
+      if (summary?.error) {
+        curY += lineH;
+        addText(propX, curY, [{ text: summary.error, fill: "#ff4d4f" }]);
+      }
     }
 
     // --- Resize element ---
@@ -1415,6 +1421,85 @@ export class JointUIService {
       },
       [`.${operatorStateClass}`]: { visibility: "hidden" },
     });
+  }
+
+  /**
+   * Basic Python syntax highlighting. Returns HTML with colored spans.
+   */
+  private static highlightPython(code: string): string {
+    const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    const keywords = new Set([
+      "def", "class", "return", "if", "elif", "else", "for", "while", "in", "not", "and", "or",
+      "import", "from", "as", "try", "except", "finally", "raise", "with", "yield", "lambda",
+      "pass", "break", "continue", "is", "None", "True", "False", "self", "async", "await",
+    ]);
+
+    const builtins = new Set([
+      "print", "len", "range", "int", "str", "float", "list", "dict", "tuple", "set",
+      "type", "isinstance", "enumerate", "zip", "map", "filter", "sorted", "reversed",
+      "open", "super", "property", "staticmethod", "classmethod",
+    ]);
+
+    return code.split("\n").map(line => {
+      const escaped = escape(line);
+      let result = "";
+      let i = 0;
+      while (i < escaped.length) {
+        // Comments
+        if (escaped[i] === "#") {
+          result += `<span style="color:#6a737d">${escaped.slice(i)}</span>`;
+          break;
+        }
+        // Strings
+        if (escaped[i] === "'" || escaped[i] === '"') {
+          const quote = escaped[i];
+          let j = i + 1;
+          while (j < escaped.length && escaped[j] !== quote) {
+            if (escaped[j] === "\\") j++;
+            j++;
+          }
+          j++;
+          result += `<span style="color:#032f62">${escaped.slice(i, j)}</span>`;
+          i = j;
+          continue;
+        }
+        // Words
+        if (/[a-zA-Z_]/.test(escaped[i])) {
+          let j = i;
+          while (j < escaped.length && /[a-zA-Z0-9_]/.test(escaped[j])) j++;
+          const word = escaped.slice(i, j);
+          if (keywords.has(word)) {
+            result += `<span style="color:#d73a49">${word}</span>`;
+          } else if (builtins.has(word)) {
+            result += `<span style="color:#6f42c1">${word}</span>`;
+          } else {
+            result += word;
+          }
+          i = j;
+          continue;
+        }
+        // Numbers
+        if (/[0-9]/.test(escaped[i])) {
+          let j = i;
+          while (j < escaped.length && /[0-9.]/.test(escaped[j])) j++;
+          result += `<span style="color:#005cc5">${escaped.slice(i, j)}</span>`;
+          i = j;
+          continue;
+        }
+        // Decorators
+        if (escaped[i] === "@") {
+          let j = i + 1;
+          while (j < escaped.length && /[a-zA-Z0-9_.]/.test(escaped[j])) j++;
+          result += `<span style="color:#6f42c1">${escaped.slice(i, j)}</span>`;
+          i = j;
+          continue;
+        }
+        result += escaped[i];
+        i++;
+      }
+      return result;
+    }).join("\n");
   }
 
   /**
