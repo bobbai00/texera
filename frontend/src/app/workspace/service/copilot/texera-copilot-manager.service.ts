@@ -660,6 +660,10 @@ export class TexeraCopilotManagerService {
             };
             tracking.workflowSubject.next(workflow as Workflow);
           }
+          // Update operator results if included (so shapes appear during step generation)
+          if (message.operatorResults) {
+            this.updateOperatorResultSummaries(message.operatorResults);
+          }
         }
         break;
 
