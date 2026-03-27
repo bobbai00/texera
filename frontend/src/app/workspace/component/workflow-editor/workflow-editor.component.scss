@@ -151,10 +151,19 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+
+  &.chat-popover-visualization {
+    width: 620px;
+    max-height: 600px;
+  }
 }
 
 .chat-popover-content {
   padding: 12px;
   overflow-y: auto;
   max-height: 500px;
+
+  .chat-popover-visualization & {
+    max-height: 600px;
+  }
 }

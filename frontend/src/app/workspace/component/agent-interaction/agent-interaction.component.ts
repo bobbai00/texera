@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { ChangeDetectorRef, Component, Input, OnInit } from "@angular/core";
+import { ChangeDetectorRef, Component, Input, OnChanges, OnInit, SimpleChanges } from "@angular/core";
 import { DomSanitizer, SafeHtml } from "@angular/platform-browser";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { TexeraCopilotManagerService } from "../../service/copilot/texera-copilot-manager.service";
@@ -35,7 +35,7 @@ import { NotificationService } from "../../../common/service/notification/notifi
   templateUrl: "./agent-interaction.component.html",
   styleUrls: ["./agent-interaction.component.scss"],
 })
-export class AgentInteractionComponent implements OnInit {
+export class AgentInteractionComponent implements OnInit, OnChanges {
   @Input() operatorId!: string;
   @Input() operatorDisplayName?: string;
   @Input() sampleRecords?: Record<string, any>[];
@@ -43,6 +43,10 @@ export class AgentInteractionComponent implements OnInit {
   public availableAgents: Array<{ id: string; name: string; isConnected: boolean }> = [];
   public selectedAgentId: string | null = null;
   public feedbackMessage: string = "";
+
+  // Cached visualization HTML to avoid iframe re-render on every WS update
+  private cachedVisualizationHtml: SafeHtml | null = null;
+  private cachedVisualizationRawHtml: string | null = null;
 
   constructor(
     private copilotManagerService: TexeraCopilotManagerService,
@@ -57,6 +61,18 @@ export class AgentInteractionComponent implements OnInit {
     this.copilotManagerService.agentChange$.pipe(untilDestroyed(this)).subscribe(() => {
       this.loadAvailableAgents();
     });
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes["sampleRecords"]) {
+      // Only update cached visualization HTML when the actual content changes
+      const newRecords = changes["sampleRecords"].currentValue as Record<string, any>[] | undefined;
+      const newHtml = newRecords?.[0]?.["html-content"] || null;
+      if (newHtml !== this.cachedVisualizationRawHtml) {
+        this.cachedVisualizationRawHtml = newHtml;
+        this.cachedVisualizationHtml = newHtml ? this.sanitizer.bypassSecurityTrustHtml(newHtml) : null;
+      }
+    }
   }
 
   private loadAvailableAgents(): void {
@@ -135,14 +151,10 @@ export class AgentInteractionComponent implements OnInit {
   }
 
   /**
-   * Get the sanitized HTML content from a visualization record for iframe srcdoc.
+   * Get the cached sanitized HTML content from a visualization record for iframe srcdoc.
    */
   public getVisualizationHtml(): SafeHtml {
-    if (!this.sampleRecords || this.sampleRecords.length === 0) {
-      return this.sanitizer.bypassSecurityTrustHtml("");
-    }
-    const htmlContent = this.sampleRecords[0]["html-content"] || "";
-    return this.sanitizer.bypassSecurityTrustHtml(htmlContent);
+    return this.cachedVisualizationHtml || this.sanitizer.bypassSecurityTrustHtml("");
   }
 
   /**

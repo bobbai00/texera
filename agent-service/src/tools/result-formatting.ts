@@ -81,12 +81,29 @@ export function formatOperatorResult(
 
   const jsonArray = opInfo.result as Record<string, any>[];
   const headers = jsonArray.length > 0
-    ? Object.keys(jsonArray[0]).filter(k => k !== "__row_index__")
+    ? Object.keys(jsonArray[0]).filter(k => k !== "__row_index__" && k !== "__is_visualization__")
     : [];
   const columns = headers.length;
 
+  // For visualization results, replace large html/json cells with a placeholder
+  const isViz = jsonArray.length > 0 && jsonArray[0]["__is_visualization__"] === true;
+  const serializableArray = isViz
+    ? jsonArray.map(row => {
+        const cleaned: Record<string, any> = {};
+        for (const key of Object.keys(row)) {
+          if (key === "__is_visualization__") continue;
+          if (key === "html-content" || key === "json-content") {
+            cleaned[key] = "<skipped: visualization content>";
+          } else {
+            cleaned[key] = row[key];
+          }
+        }
+        return cleaned;
+      })
+    : jsonArray;
+
   // Serialize data
-  let dataString = serializeData(jsonArray, serializationMode);
+  let dataString = serializeData(serializableArray, serializationMode);
 
   // Truncate if needed
   if (dataString.length > charLimit) {
