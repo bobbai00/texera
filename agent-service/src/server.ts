@@ -148,7 +148,11 @@ function setupAgentActionStreaming(agentId: string, agent: TexeraAgent): Subscri
 
   return agentActionStream$.subscribe((agentAction: AgentAction) => {
     console.log(`[Server] Agent ${agentId} created action: ${agentAction.id} - ${agentAction.summary}`);
-    broadcastToAgent(agentId, { type: "agentAction", agentAction });
+    broadcastToAgent(agentId, {
+      type: "agentAction",
+      agentAction,
+      operatorResults: getOperatorResultSummaries(agent),
+    });
   });
 }
 
