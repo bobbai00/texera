@@ -54,6 +54,7 @@ import { ComputingUnitStatusService } from "../../service/computing-unit-status/
 import { ComputingUnitState } from "../../types/computing-unit-connection.interface";
 import { ComputingUnitSelectionComponent } from "../power-button/computing-unit-selection.component";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
+import { TexeraCopilotManagerService } from "../../service/copilot/texera-copilot-manager.service";
 import { DashboardWorkflowComputingUnit } from "../../types/workflow-computing-unit";
 import { Privilege } from "../../../dashboard/type/share-access.interface";
 
@@ -91,6 +92,7 @@ export class MenuComponent implements OnInit, OnDestroy {
   public showRegion: boolean = false;
   public showGrid: boolean = false;
   public showNumWorkers: boolean = false;
+  public showOperatorDetails: boolean = false;
   protected readonly DASHBOARD_USER_WORKFLOW = DASHBOARD_USER_WORKFLOW;
 
   @Input() public writeAccess: boolean = false;
@@ -141,7 +143,8 @@ export class MenuComponent implements OnInit, OnDestroy {
     private reportGenerationService: ReportGenerationService,
     private panelService: PanelService,
     private computingUnitStatusService: ComputingUnitStatusService,
-    protected config: GuiConfigService
+    protected config: GuiConfigService,
+    private copilotManagerService: TexeraCopilotManagerService
   ) {
     workflowWebsocketService
       .subscribeToEvent("ExecutionDurationUpdateEvent")
@@ -199,6 +202,10 @@ export class MenuComponent implements OnInit, OnDestroy {
       .subscribe(hasResultToExport => {
         this.isExportDeactivate = !this.config.env.exportExecutionResultEnabled || !hasResultToExport;
       });
+
+    this.copilotManagerService.resultAnnotationsVisible$.pipe(untilDestroyed(this)).subscribe(visible => {
+      this.showOperatorDetails = visible;
+    });
 
     this.registerWorkflowMetadataDisplayRefresh();
     this.handleWorkflowVersionDisplay();
@@ -259,6 +266,10 @@ export class MenuComponent implements OnInit, OnDestroy {
     this.workflowActionService
       .getJointGraphWrapper()
       .mainPaper.el.classList.toggle("hide-worker-count", !this.showNumWorkers);
+  }
+
+  toggleOperatorDetails() {
+    this.copilotManagerService.toggleResultAnnotations();
   }
 
   public async onClickOpenShareAccess(): Promise<void> {

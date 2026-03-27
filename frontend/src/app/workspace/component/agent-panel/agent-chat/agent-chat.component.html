@@ -103,23 +103,6 @@
         </button>
       </div>
 
-      <!-- Toggle operator result annotations -->
-      <div class="toolbar-item">
-        <button
-          nz-button
-          nzType="text"
-          nzSize="small"
-          (click)="toggleResultAnnotations()"
-          nz-tooltip
-          nzTooltipTitle="Toggle operator result annotations"
-          [style.color]="resultAnnotationsVisible ? '#1890ff' : ''">
-          <i
-            nz-icon
-            nzType="fund-projection-screen"
-            nzTheme="outline"></i>
-        </button>
-      </div>
-
       <!-- Toggle diff highlighting for current action -->
       <div class="toolbar-item">
         <button
@@ -182,11 +165,15 @@
               *ngFor="let tn of timeAxisNodes"
               class="time-axis-node"
               [style.top.px]="tn.y - 4">
-              <ng-container [ngSwitch]="tn.actionType">
-                <i *ngSwitchCase="'user_request'" nz-icon nzType="user" nzTheme="outline" class="time-axis-icon user-icon"></i>
-                <i *ngSwitchCase="'agent_response'" nz-icon nzType="robot" nzTheme="outline" class="time-axis-icon agent-icon"></i>
-                <span *ngSwitchDefault class="time-axis-dot"></span>
-              </ng-container>
+              <i *ngIf="tn.actionType === 'user_request'; else agentIcon"
+                nz-icon nzType="user" nzTheme="outline"
+                class="time-axis-icon user-icon"
+                nz-tooltip nzTooltipTitle="User"></i>
+              <ng-template #agentIcon>
+                <i nz-icon nzType="robot" nzTheme="outline"
+                  class="time-axis-icon agent-icon"
+                  nz-tooltip [nzTooltipTitle]="tn.agentName || 'Agent'"></i>
+              </ng-template>
               <span class="time-axis-label">{{ tn.timeLabel }}</span>
             </div>
           </div>

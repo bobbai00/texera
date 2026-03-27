@@ -212,6 +212,9 @@ export class JointUIService {
 
   private operatorSchemas: ReadonlyArray<OperatorSchema> = [];
 
+  /** Stores original port label text before expansion, keyed by "operatorId::portId" */
+  private savedPortLabels = new Map<string, string>();
+
   constructor(private operatorMetadataService: OperatorMetadataService) {
     // initialize the operator information
     // subscribe to operator metadata observable
@@ -822,9 +825,9 @@ export class JointUIService {
         fill: "#595959",
         "font-size": "14px",
         "ref-x": 0.5,
-        "ref-y": 100,
+        "ref-y": this.DEFAULT_OPERATOR_HEIGHT + 8,
         ref: "rect.body",
-        "y-alignment": "middle",
+        "y-alignment": "top",
         "x-alignment": "middle",
         cursor: "pointer",
         event: "element:name:pointerclick",
@@ -1085,14 +1088,13 @@ export class JointUIService {
     });
   }
 
-  private static readonly EXPANDED_WIDTH = 220;
-
   /**
    * Expand an operator to show result + property information inside its box.
    * Layout:
-   *   Row 1: [icon] [type]  In[0]: R×C  Out: R×C
-   *   Separator
-   *   Rows: Key properties of the operator
+   *   In/Out info written to port labels (same location as execution metrics)
+   *   Inside the box:
+   *     Left: [icon] [type]   Right: key properties (full text, no truncation)
+   *   Width is flexible based on content.
    */
   public expandOperatorWithResults(
     jointPaper: joint.dia.Paper,
@@ -1124,20 +1126,21 @@ export class JointUIService {
     const headerColor = "#262626";
     const padding = 8;
     const lineH = 13;
-    const ew = JointUIService.EXPANDED_WIDTH;
 
-    // --- Helper to add SVG text ---
+    // --- Helper to add SVG text, returns the element for measurement ---
     const addText = (
       x: number,
       y: number,
-      parts: Array<{ text: string; fill: string; bold?: boolean }>
-    ): void => {
+      parts: Array<{ text: string; fill: string; bold?: boolean }>,
+      anchor?: string
+    ): SVGTextElement => {
       const textEl = document.createElementNS(svgNs, "text");
       textEl.classList.add("result-info");
       textEl.setAttribute("x", String(x));
       textEl.setAttribute("y", String(y));
       textEl.setAttribute("font-size", String(fontSize));
       textEl.setAttribute("font-family", fontFamily);
+      if (anchor) textEl.setAttribute("text-anchor", anchor);
       for (const part of parts) {
         const tspan = document.createElementNS(svgNs, "tspan");
         tspan.setAttribute("fill", part.fill);
@@ -1146,76 +1149,121 @@ export class JointUIService {
         textEl.appendChild(tspan);
       }
       groupEl.appendChild(textEl);
+      return textEl;
     };
 
-    // --- Header area: icon + type on left, shapes on right ---
-    let curY = padding;
-    const iconCenterY = curY + 12;
-    const shapeX = ew - 68; // X offset for shape info (near right edge of expanded box)
+    // --- Write in/out info to port labels (same position as execution metrics) ---
+    const allPorts = element.getPorts();
+    const inPorts = allPorts.filter(p => p.group === "in");
+    const outPorts = allPorts.filter(p => p.group === "out");
 
-    // Input shape line (right of type, same row as icon)
-    const inParts: Array<{ text: string; fill: string; bold?: boolean }> = [];
-    if (summary.inputPortShapes && summary.inputPortShapes.length > 0) {
-      for (const ps of summary.inputPortShapes) {
-        if (inParts.length > 0) inParts.push({ text: "  ", fill: textColor });
-        inParts.push({ text: `In[${ps.portIndex}]: `, fill: textColor });
-        inParts.push({ text: `${ps.rows}×${ps.columns}`, fill: "#1890ff", bold: true });
+    // Save original port label text before overwriting
+    for (const portDef of allPorts) {
+      if (portDef.id) {
+        const key = `${operatorID}::${portDef.id}`;
+        if (!this.savedPortLabels.has(key)) {
+          const rawAttrs = (portDef.attrs as any) || {};
+          this.savedPortLabels.set(key, rawAttrs[".port-label"]?.text ?? "");
+        }
       }
-    } else {
-      inParts.push({ text: "In: ", fill: textColor });
-      inParts.push({ text: `${summary.inputTuples}`, fill: "#1890ff", bold: true });
     }
-    addText(shapeX, iconCenterY, inParts);
 
-    // Output shape line (right of type, one line below input)
-    const outVal =
-      summary.outputColumns !== undefined
-        ? `${summary.outputTuples}×${summary.outputColumns}`
-        : `${summary.outputTuples}`;
-    addText(shapeX, iconCenterY + lineH, [
-      { text: "Out: ", fill: textColor },
-      { text: outVal, fill: "#52c41a", bold: true },
-    ]);
+    inPorts.forEach((portDef, idx) => {
+      if (!portDef.id) return;
+      let labelText: string;
+      if (summary.inputPortShapes && summary.inputPortShapes.length > 0) {
+        const ps = summary.inputPortShapes.find(s => s.portIndex === idx) ?? summary.inputPortShapes[0];
+        labelText = `${ps.rows}×${ps.columns}`;
+      } else {
+        labelText = `${summary.inputTuples}`;
+      }
+      element.portProp(portDef.id, "attrs/.port-label/text", labelText);
+      element.portProp(portDef.id, "attrs/.port-label/fill", "#1890ff");
+    });
 
-    curY += 32;
+    outPorts.forEach(portDef => {
+      if (!portDef.id) return;
+      const outVal =
+        summary.outputColumns !== undefined
+          ? `${summary.outputTuples}×${summary.outputColumns}`
+          : `${summary.outputTuples}`;
+      element.portProp(portDef.id, "attrs/.port-label/text", outVal);
+      element.portProp(portDef.id, "attrs/.port-label/fill", "#52c41a");
+    });
 
-    // --- Separator line ---
-    const sepLine = document.createElementNS(svgNs, "line");
-    sepLine.classList.add("result-info");
-    sepLine.setAttribute("x1", String(padding));
-    sepLine.setAttribute("x2", String(ew - padding));
-    sepLine.setAttribute("y1", String(curY));
-    sepLine.setAttribute("y2", String(curY));
-    sepLine.setAttribute("stroke", "#e8e8e8");
-    sepLine.setAttribute("stroke-width", "1");
-    groupEl.appendChild(sepLine);
-    curY += 4;
+    // --- Layout constants ---
+    const iconSize = 30;
+    const pad = 6; // inner padding
+    const charW = 5; // approx character width at 10px font
+    const typeFontSize = 7;
+    const typeCharW = 3.5; // approx character width at 7px font
+    const typeText = element.attr(`.${operatorTypeClass}/text`) || "";
+    const iconTypeGap = 1; // minimal gap between icon bottom and type text baseline
+    const leftGroupH = iconSize + iconTypeGap + typeFontSize; // total height of icon+type group
 
-    // --- Properties section ---
+    // Left column width: max of icon width and type text width, plus left padding
+    const typeTextWidth = typeText.length * typeCharW;
+    const leftContentWidth = Math.max(iconSize, typeTextWidth);
+    const leftColumnEnd = pad + leftContentWidth; // right edge of left column
+
+    // Right column: properties
     const props = properties ?? [];
+    let maxPropWidth = 0;
+    for (const prop of props) {
+      maxPropWidth = Math.max(maxPropWidth, (prop.label.length + 2 + prop.value.length) * charW);
+    }
+    if (summary.error) {
+      maxPropWidth = Math.max(maxPropWidth, summary.error.length * charW);
+    }
+
+    const gap = 6;
+    const propX = leftColumnEnd + gap;
+    const minWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
+    const ew = Math.max(minWidth, propX + maxPropWidth + pad);
+
+    // --- Compute box height from properties first ---
+    let propBottomY = pad;
+    if (props.length > 0) {
+      for (const prop of props) {
+        propBottomY += lineH;
+      }
+    }
+    if (summary.error) {
+      propBottomY += lineH;
+    }
+    propBottomY += pad;
+
+    const minH = leftGroupH + pad * 2; // minimum height to fit icon+type with padding
+    const eh = Math.max(propBottomY, minH);
+
+    // --- Vertically center icon+type group within the box ---
+    const groupTopY = (eh - leftGroupH) / 2;
+    const iconTopY = groupTopY + iconSize / 2; // ref-y needs icon center, not top edge
+    const typeLabelY = groupTopY + iconSize + iconTypeGap + typeFontSize; // text baseline
+
+    // Type label below icon, left-aligned, smaller font
+    const typeEl = addText(pad, typeLabelY, [
+      { text: typeText, fill: textColor, bold: false },
+    ]);
+    typeEl.setAttribute("font-size", String(typeFontSize));
+
+    // Properties on the right side (full text, no truncation)
+    let curY = pad;
     if (props.length > 0) {
       for (const prop of props) {
         curY += lineH;
-        const truncVal =
-          prop.value.length > 30 ? prop.value.slice(0, 30) + "…" : prop.value;
-        addText(padding, curY, [
+        addText(propX, curY, [
           { text: `${prop.label}: `, fill: textColor },
-          { text: truncVal, fill: headerColor, bold: true },
+          { text: prop.value, fill: headerColor, bold: true },
         ]);
       }
-      curY += 4;
     }
 
-    // --- Error (if any) ---
+    // Error below properties
     if (summary.error) {
       curY += lineH;
-      const errText = summary.error.length > 35 ? summary.error.slice(0, 35) + "…" : summary.error;
-      addText(padding, curY, [{ text: errText, fill: "#ff4d4f" }]);
-      curY += 4;
+      addText(propX, curY, [{ text: summary.error, fill: "#ff4d4f" }]);
     }
-
-    curY += padding;
-    const eh = Math.max(curY, 50);
 
     // --- Resize element ---
     element.resize(ew, eh);
@@ -1230,30 +1278,31 @@ export class JointUIService {
       ".add-output-port-button": { x: ew + 5, y: eh + 5 },
       ".remove-output-port-button": { x: ew + 5, y: eh + 25 },
       ".texera-operator-icon": {
-        width: 24,
-        height: 24,
-        "ref-x": padding + 12,
-        "ref-y": iconCenterY,
+        width: iconSize,
+        height: iconSize,
+        "ref-x": pad,       // left edge at padding
+        "ref-y": iconTopY,  // top edge at padding
+        "x-alignment": "none",
       },
       ".texera-operator-friendly-name": {
-        // In expanded mode, show the operator type (read from the type element)
-        text: element.attr(`.${operatorTypeClass}/text`) || "",
+        // Keep operator ID above the box
         visibility: "visible",
-        "ref-x": padding + 30,
-        "ref-y": iconCenterY,
-        "x-alignment": "start",
-        "text-anchor": "start",
-        fill: headerColor,
-        "font-size": "11px",
-        "font-weight": "bold",
+        "ref-x": 0.5,
+        "ref-y": -12,
+        "x-alignment": "middle",
+        "text-anchor": "middle",
+        fill: "#888888",
+        "font-size": "10px",
+        "font-weight": "normal",
       },
       [`.${operatorTypeClass}`]: {
         visibility: "hidden",
       },
       ".texera-operator-name": {
         "ref-x": 0.5,
-        "ref-y": eh + 20,
+        "ref-y": eh + 8,
         "x-alignment": "middle",
+        "y-alignment": "top",
       },
       [`.${operatorStateClass}`]: { visibility: "hidden" },
     });
@@ -1310,11 +1359,24 @@ export class JointUIService {
       },
       ".texera-operator-name": {
         "ref-x": 0.5,
-        "ref-y": 100,
+        "ref-y": dh + 8,
         "x-alignment": "middle",
+        "y-alignment": "top",
       },
       [`.${operatorStateClass}`]: { visibility: "hidden" },
     });
+
+    // Restore port labels from saved state
+    const allPorts = element.getPorts();
+    for (const portDef of allPorts) {
+      if (portDef.id) {
+        const key = `${operatorID}::${portDef.id}`;
+        const originalText = this.savedPortLabels.get(key) ?? "";
+        this.savedPortLabels.delete(key);
+        element.portProp(portDef.id, "attrs/.port-label/text", originalText);
+        element.portProp(portDef.id, "attrs/.port-label/fill", "#000");
+      }
+    }
 
     // Remove injected result info elements
     const view = jointPaper.findViewByModel(operatorID);

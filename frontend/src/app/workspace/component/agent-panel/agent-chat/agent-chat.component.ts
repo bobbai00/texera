@@ -77,6 +77,8 @@ export interface TimeAxisNode {
   timeLabel: string;
   /** Action type for icon display */
   actionType?: string;
+  /** Agent name for tooltip on robot icons */
+  agentName?: string;
 }
 
 /**
@@ -115,7 +117,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public agentState: CopilotState = CopilotState.UNAVAILABLE;
   public isStatsModalVisible = false;
   public messageStats: CopilotMessageStats[] = [];
-  public resultAnnotationsVisible = false;
+
 
   // Tree-related properties
   public timelineNodes: TimelineNode[] = [];
@@ -341,11 +343,6 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       this.cdr.detectChanges();
     });
 
-    // Subscribe to result annotations visibility
-    this.copilotManagerService.resultAnnotationsVisible$.pipe(untilDestroyed(this)).subscribe(visible => {
-      this.resultAnnotationsVisible = visible;
-      this.cdr.detectChanges();
-    });
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -690,13 +687,6 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   }
 
   /**
-   * Toggle operator result annotations on the workflow canvas.
-   */
-  public toggleResultAnnotations(): void {
-    this.copilotManagerService.toggleResultAnnotations(this.agentInfo.id);
-  }
-
-  /**
    * Export the conversation history as a JSON file in TraceContent format.
    * This format is compatible with the import/replay functionality.
    */
@@ -968,7 +958,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       const hh = String(d.getHours()).padStart(2, "0");
       const mm = String(d.getMinutes()).padStart(2, "0");
       const ss = String(d.getSeconds()).padStart(2, "0");
-      return { y, timeLabel: `${hh}:${mm}:${ss}`, actionType: action.actionType };
+      return { y, timeLabel: `${hh}:${mm}:${ss}`, actionType: action.actionType, agentName: action.agentName };
     });
 
     // Build edges with SVG paths

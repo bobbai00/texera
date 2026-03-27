@@ -1784,10 +1784,15 @@ export class TexeraCopilotManagerService {
    * Toggle operator result annotations on/off.
    * When toggling on, fetches the latest results from the active agent.
    */
-  public toggleResultAnnotations(agentId: string): void {
+  public toggleResultAnnotations(agentId?: string): void {
     const newState = !this.resultAnnotationsVisibleSubject.getValue();
     if (newState) {
-      this.fetchOperatorResults(agentId);
+      const id = agentId ?? this.getActivelyConnectedAgentIds()[0];
+      if (!id) {
+        // No active agent — nothing to fetch
+        return;
+      }
+      this.fetchOperatorResults(id);
     } else {
       this.resultAnnotationsVisibleSubject.next(false);
     }

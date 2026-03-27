@@ -354,13 +354,16 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
               };
             }
 
-            this.jointUIService.changeOperatorStatistics(
-              this.paper,
-              op.operatorID,
-              status[op.operatorID],
-              this.isSource(op.operatorID),
-              this.isSink(op.operatorID)
-            );
+            // Skip execution port metrics for operators expanded with agent details
+            if (!this.expandedResultOperators.has(op.operatorID)) {
+              this.jointUIService.changeOperatorStatistics(
+                this.paper,
+                op.operatorID,
+                status[op.operatorID],
+                this.isSource(op.operatorID),
+                this.isSink(op.operatorID)
+              );
+            }
           });
       });
 
