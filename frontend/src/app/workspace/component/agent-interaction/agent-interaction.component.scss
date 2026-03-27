@@ -29,6 +29,19 @@
   }
 }
 
+// Visualization rendering
+.visualization-section {
+  margin-bottom: 10px;
+}
+
+.visualization-iframe {
+  width: 100%;
+  height: 300px;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  background: #fff;
+}
+
 // Sample Records Table
 .sample-records-section {
   margin-bottom: 10px;

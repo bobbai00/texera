@@ -621,6 +621,10 @@ class SyncExecutionResource extends LazyLogging {
           if (totalCount == 1 && isVisualizationTuple(firstTuple)) {
             val jsonResults =
               ExecutionResultService.convertTuplesToJson(List(firstTuple), isVisualization = true)
+            // Inject __is_visualization__ flag so frontend can render HTML instead of table
+            jsonResults.foreach(
+              _.asInstanceOf[ObjectNode].put("__is_visualization__", true)
+            )
             return (
               "visualization",
               Some(jsonResults),

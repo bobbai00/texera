@@ -18,6 +18,7 @@
  */
 
 import { ChangeDetectorRef, Component, Input, OnInit } from "@angular/core";
+import { DomSanitizer, SafeHtml } from "@angular/platform-browser";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { TexeraCopilotManagerService } from "../../service/copilot/texera-copilot-manager.service";
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
@@ -47,7 +48,8 @@ export class AgentInteractionComponent implements OnInit {
     private copilotManagerService: TexeraCopilotManagerService,
     private workflowActionService: WorkflowActionService,
     private notificationService: NotificationService,
-    private changeDetectorRef: ChangeDetectorRef
+    private changeDetectorRef: ChangeDetectorRef,
+    private sanitizer: DomSanitizer
   ) {}
 
   ngOnInit(): void {
@@ -122,6 +124,25 @@ export class AgentInteractionComponent implements OnInit {
 
   public canSend(): boolean {
     return !!this.selectedAgentId && !!this.feedbackMessage.trim();
+  }
+
+  /**
+   * Check if sample records represent a visualization (has __is_visualization__ flag).
+   */
+  public isVisualization(): boolean {
+    if (!this.sampleRecords || this.sampleRecords.length === 0) return false;
+    return this.sampleRecords[0]["__is_visualization__"] === true;
+  }
+
+  /**
+   * Get the sanitized HTML content from a visualization record for iframe srcdoc.
+   */
+  public getVisualizationHtml(): SafeHtml {
+    if (!this.sampleRecords || this.sampleRecords.length === 0) {
+      return this.sanitizer.bypassSecurityTrustHtml("");
+    }
+    const htmlContent = this.sampleRecords[0]["html-content"] || "";
+    return this.sanitizer.bypassSecurityTrustHtml(htmlContent);
   }
 
   /**

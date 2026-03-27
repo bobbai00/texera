@@ -18,8 +18,13 @@
 -->
 
 <div class="agent-interaction">
+  <!-- Visualization HTML rendering -->
+  <div *ngIf="sampleRecords && sampleRecords.length > 0 && isVisualization()" class="visualization-section">
+    <iframe [srcdoc]="getVisualizationHtml()" class="visualization-iframe" sandbox="allow-scripts"></iframe>
+  </div>
+
   <!-- Sample Records Table -->
-  <div *ngIf="sampleRecords && sampleRecords.length > 0" class="sample-records-section">
+  <div *ngIf="sampleRecords && sampleRecords.length > 0 && !isVisualization()" class="sample-records-section">
     <div class="sample-records-table-wrapper">
       <table class="sample-records-table">
         <thead>
