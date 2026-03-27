@@ -67,6 +67,11 @@ export function formatOperatorResult(
   workflowState: WorkflowState,
   options: FormatOptions = {}
 ): string {
+  // If the operator has an error, surface it instead of result data
+  if (opInfo.error) {
+    return `[ERROR] ${opInfo.error}`;
+  }
+
   const serializationMode = options.serializationMode ?? OperatorResultSerializationMode.TABLE;
   const charLimit = options.maxCharLimit ?? DEFAULT_AGENT_SETTINGS.maxOperatorResultCharLimit;
 

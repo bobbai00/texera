@@ -82,3 +82,16 @@ I want to change this layout by:
 2. Once we move that display out, I want to change the layout to be one section:
    (a) On the left is the operator icon and operator type
    (b) On the right are the key properties that vary based on operators
+
+# Section 6: polish the feedback feature
+Currently, each operator has a small button at the top right where the user can click it to open a panel and provide feedback. I want to display sample records within that panel and make a few specific improvements:
+
+1. Remove the blue header from the panel. It is redundant, so we don't need to show it anymore; just show the area directly.
+
+2. Add a new section above the text input area to display the sample records as a table.
+   (a) The sample records come from the operator info, which should contain an array of JSON with the row index and the sample records for each field.
+   (b) Note that there is a special column in each record called ___row_index___ (starting with an underscore) that shows the row index; please render that as well.
+   (c) Since we use truncation (keeping the front and the end), there will be some ellipses between records. You should show these ellipses when you detect that the row index is jumping to the end.
+
+3. Please make sure sample records come purely from the operator info sent from the agent's WebSocket, and use that as a ground truth to render information.
+Please implement these suggestions.

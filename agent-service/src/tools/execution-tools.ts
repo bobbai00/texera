@@ -838,7 +838,21 @@ export async function executeOperatorAndFormat(
       const generalErrors =
         result.state === "Killed" ? ["Workflow execution was killed (timeout)."] : result.errors;
 
-      return createErrorResult(formatExecutionError(compilationErrors, operatorErrors, generalErrors));
+      const errorText = formatExecutionError(compilationErrors, operatorErrors, generalErrors);
+
+      // Store a synthetic OperatorInfo with the error so it appears in the DAG summary
+      if (options.onResult) {
+        const errorInfo: OperatorInfo = {
+          state: result.state,
+          inputTuples: 0,
+          outputTuples: 0,
+          resultMode: "table",
+          error: errorText,
+        };
+        options.onResult(operatorId, errorInfo);
+      }
+
+      return createErrorResult(errorText);
     }
 
     // Check operator result
@@ -850,6 +864,10 @@ export async function executeOperatorAndFormat(
     }
 
     if (opInfo.error) {
+      // Store the OperatorInfo with error so it appears in the DAG summary
+      if (options.onResult) {
+        options.onResult(operatorId, opInfo);
+      }
       return createErrorResult(formatExecutionError(undefined, [{ operatorId, error: opInfo.error }]));
     }
 

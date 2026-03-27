@@ -282,7 +282,7 @@ export class JointUIService {
         id: port.portID,
         attrs: {
           ".port-label": {
-            text: port.displayName ?? "",
+            text: "",
             event: "input-port-label:pointerdown",
           },
         },
@@ -300,7 +300,7 @@ export class JointUIService {
         id: port.portID,
         attrs: {
           ".port-label": {
-            text: port.displayName ?? "",
+            text: "",
             event: "output-port-label:pointerdown",
           },
         },

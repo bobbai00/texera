@@ -1551,7 +1551,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
       .getTexeraGraph()
       .getOperatorAddStream()
       .pipe(
-        auditTime(200), // Batch rapid adds during reload
+        auditTime(0), // Batch synchronous adds, apply immediately after
         untilDestroyed(this)
       )
       .subscribe(() => {

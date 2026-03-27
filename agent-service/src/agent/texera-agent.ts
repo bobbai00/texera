@@ -366,9 +366,9 @@ export class TexeraAgent {
     }
 
     // Add execution tools if delegateConfig is available (requires user token and workflow ID)
-    // In both CODE and GENERAL modes, execution is handled inline — no separate executeOperator needed
+    // In CODE mode, execution is handled inline — no separate executeOperator needed
     // When noActionDetail is on, executeOperator is also not needed
-    if (getExecutionConfig && !this.settings.simplifiedTools && !this.settings.noActionDetail && this.settings.agentMode !== AgentMode.CODE && this.settings.agentMode !== AgentMode.GENERAL) {
+    if (getExecutionConfig && !this.settings.simplifiedTools && !this.settings.noActionDetail && this.settings.agentMode !== AgentMode.CODE) {
       tools[TOOL_NAME_EXECUTE_OPERATOR] = createExecuteOperatorTool(
         this.workflowState,
         getExecutionConfig,
@@ -1084,7 +1084,7 @@ export class TexeraAgent {
             isError: !!(tr.output as any)?.error,
           }));
 
-          // Create agent actions for workflow-modifying tool calls that succeeded.
+          // Create agent actions for workflow-modifying tool calls and executions.
           // We have full context here: toolCallId, tool result (success/error), and
           // before/after workflow snapshots.
           const afterStepContent = this.workflowState.getWorkflowContent();
@@ -1092,14 +1092,16 @@ export class TexeraAgent {
             const ACTION_TOOL_NAMES = new Set([
               TOOL_NAME_ADD_OPERATOR, TOOL_NAME_MODIFY_OPERATOR,
               TOOL_NAME_CREATE_OR_MODIFY_OPERATOR, TOOL_NAME_DELETE_OPERATOR,
+              TOOL_NAME_EXECUTE_OPERATOR,
             ]);
             for (let i = 0; i < toolCalls.length; i++) {
               const tc = toolCalls[i];
               const tr = toolResults[i];
               if (!ACTION_TOOL_NAMES.has(tc.toolName)) continue;
-              // Skip failed tool calls
+              // Skip failed tool calls — but always create actions for executeOperator
+              // so that errors are versioned and visible in the DAG summary
               const resultText = typeof tr?.output === "string" ? tr.output : String(tr?.output ?? "");
-              if (resultText.startsWith("[ERROR]")) continue;
+              if (resultText.startsWith("[ERROR]") && tc.toolName !== TOOL_NAME_EXECUTE_OPERATOR) continue;
 
               const operatorId = (tc.input as any)?.operatorId || "unknown";
               const summary = (tc.input as any)?.summary || `${tc.toolName} ${operatorId}`;
@@ -1293,6 +1295,9 @@ export class TexeraAgent {
         return { modify: { operatorIds: [operatorId] } };
       case TOOL_NAME_DELETE_OPERATOR:
         return { delete: { operatorIds: [operatorId], linkIds: [] } };
+      case TOOL_NAME_EXECUTE_OPERATOR:
+        // Execute doesn't modify the workflow — it just runs an operator
+        return { modify: { operatorIds: [operatorId] } };
       default:
         return { modify: { operatorIds: [operatorId] } };
     }
