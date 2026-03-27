@@ -153,18 +153,6 @@ export class WorkflowVersionService {
     // Red for modified, green for added
     differentOpIDsList.modified.map(id => this.highlightOpBoundaryDashed(id, "255,0,0,0.7"));
     differentOpIDsList.added.map(id => this.highlightOpBoundaryDashed(id, "0,200,0,0.7"));
-
-    // Render red brackets for deleted operators using beforeWorkflowContent
-    if (differentOpIDsList.deleted.length > 0) {
-      for (const link of beforeWorkflowContent.links) {
-        if (differentOpIDsList.deleted.includes(link.source.operatorID) && link.target.operatorID != undefined) {
-          this.highlightOpBracket(link.target.operatorID, "255,0,0,0.5", "left-");
-        }
-        if (differentOpIDsList.deleted.includes(link.target.operatorID) && link.source.operatorID != undefined) {
-          this.highlightOpBracket(link.source.operatorID, "255,0,0,0.5", "right-");
-        }
-      }
-    }
   }
 
   public highlightOpBoundary(id: string, color: string) {

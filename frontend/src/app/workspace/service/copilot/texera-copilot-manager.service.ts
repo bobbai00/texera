@@ -142,6 +142,7 @@ export interface OperatorResultSummary {
   consoleLogCount?: number;
   totalRowCount?: number;
   sampleRecords?: Record<string, any>[];
+  resultStatistics?: Record<string, string>;
 }
 
 interface ApiAgentInfo {

@@ -671,6 +671,7 @@ interface OperatorResultSummaryWs {
   consoleLogCount?: number;
   totalRowCount?: number;
   sampleRecords?: Record<string, any>[];
+  resultStatistics?: Record<string, string>;
 }
 
 interface WsOutgoingMessage {
@@ -709,6 +710,7 @@ function getOperatorResultSummaries(agent: TexeraAgent): Record<string, Operator
       consoleLogCount: info.consoleLogs?.length,
       totalRowCount: info.totalRowCount,
       sampleRecords: info.result,
+      resultStatistics: info.resultStatistics,
     };
   }
   return results;

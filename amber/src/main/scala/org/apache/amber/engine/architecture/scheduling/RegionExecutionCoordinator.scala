@@ -406,10 +406,16 @@ class RegionExecutionCoordinator(
       }
       createOutputPortStorageObjects(outputPortConfigs)
 
+      // Only connect links whose target operators had their ports assigned in this phase.
+      // Links to downstream operators (e.g., Histogram after HashJoin) are deferred to the
+      // non-dependee phase, where those operators' ports are assigned first.
+      val opsIds = ops.map(_.id)
+      val dependeePhaseLinks = region.getLinks.filter(link => opsIds.contains(link.toOpId))
+
       launchPhaseExecutionInternal(
         ops,
         () => assignAllPortsIncludingOutput(region, ops),
-        () => connectChannels(region.getLinks),
+        () => connectChannels(dependeePhaseLinks),
         () => sendStarts(region, isDependeePhase = true)
       )
     } else {

@@ -263,7 +263,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   simplifiedTools: false,
   noActionDetail: false,
   noLogFallback: false,
-  carryMetadata: false,
+  carryMetadata: true,
 };
 
 // ============================================================================

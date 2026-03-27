@@ -2117,6 +2117,11 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     return summary?.sampleRecords;
   }
 
+  getOperatorResultStatistics(operatorId: string): Record<string, string> | undefined {
+    const summary = this.currentResultSummaries.get(operatorId);
+    return summary?.resultStatistics;
+  }
+
   isOperatorVisualization(operatorId: string): boolean {
     const records = this.getOperatorSampleRecords(operatorId);
     return !!records && records.length > 0 && records[0]["__is_visualization__"] === true;

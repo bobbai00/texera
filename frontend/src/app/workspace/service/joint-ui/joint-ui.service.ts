@@ -1302,7 +1302,9 @@ export class JointUIService {
     }
 
     const minWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
-    const ew = Math.max(minWidth, propX + rightContentWidth + pad);
+    const maxWidth = 500;
+    const maxHeight = 300;
+    const ew = Math.min(maxWidth, Math.max(minWidth, propX + rightContentWidth + pad));
 
     // --- Compute box height ---
     let propBottomY = pad;
@@ -1322,7 +1324,7 @@ export class JointUIService {
     propBottomY += pad;
 
     const minH = leftGroupH + pad * 2; // minimum height to fit icon+type with padding
-    const eh = Math.max(propBottomY, minH);
+    const eh = Math.min(maxHeight, Math.max(propBottomY, minH));
 
     // --- Vertically center icon+type group within the box ---
     const groupTopY = (eh - leftGroupH) / 2;
@@ -1335,24 +1337,37 @@ export class JointUIService {
     ]);
     typeEl.setAttribute("font-size", String(typeFontSize));
 
+    // Thin scrollbar CSS shared by code and property foreignObjects
+    const thinScrollbarCss = `
+      scrollbar-width: thin; scrollbar-color: #ccc transparent;
+    `;
+    // Webkit thin scrollbar (injected as a <style> inside the foreignObject)
+    const thinScrollbarStyleTag = `<style>
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+    </style>`;
+
     // --- Render right side content ---
+    const contentWidth = ew - propX - pad + 2;
+    const contentHeight = eh - pad * 2;
+
     if (isCodeBlock) {
       // Render Python code block using foreignObject for HTML-based syntax highlighting
-      const codeBlockWidth = ew - propX - pad + 2;
-      const codeBlockHeight = eh - pad * 2;
       const fo = document.createElementNS(svgNs, "foreignObject");
       fo.classList.add("result-info");
       fo.setAttribute("x", String(propX));
       fo.setAttribute("y", String(pad));
-      fo.setAttribute("width", String(codeBlockWidth));
-      fo.setAttribute("height", String(codeBlockHeight));
+      fo.setAttribute("width", String(contentWidth));
+      fo.setAttribute("height", String(contentHeight));
 
       const div = document.createElement("div");
       div.style.cssText = `
-        width: 100%; height: 100%; overflow: hidden;
+        width: 100%; height: 100%; overflow: auto;
         background: transparent; padding: 2px 4px;
-        box-sizing: border-box;
+        box-sizing: border-box; ${thinScrollbarCss}
       `;
+      div.innerHTML = thinScrollbarStyleTag;
 
       const pre = document.createElement("pre");
       pre.style.cssText = `
@@ -1364,23 +1379,49 @@ export class JointUIService {
       fo.appendChild(div);
       groupEl.appendChild(fo);
     } else {
-      // Regular properties
-      let curY = pad;
+      // Regular properties + error rendered via foreignObject for overflow handling
+      const fo = document.createElementNS(svgNs, "foreignObject");
+      fo.classList.add("result-info");
+      fo.setAttribute("x", String(propX));
+      fo.setAttribute("y", String(pad));
+      fo.setAttribute("width", String(contentWidth));
+      fo.setAttribute("height", String(contentHeight));
+
+      const div = document.createElement("div");
+      div.style.cssText = `
+        width: 100%; height: 100%; overflow: auto;
+        background: transparent; padding: 2px 0;
+        box-sizing: border-box; font-family: ${fontFamily};
+        font-size: ${fontSize}px; line-height: ${lineH}px;
+        ${thinScrollbarCss}
+      `;
+      div.innerHTML = thinScrollbarStyleTag;
+
       if (regularProps.length > 0) {
         for (const prop of regularProps) {
-          curY += lineH;
-          addText(propX, curY, [
-            { text: `${prop.label}: `, fill: textColor },
-            { text: prop.value, fill: headerColor, bold: true },
-          ]);
+          const row = document.createElement("div");
+          row.style.cssText = "white-space: nowrap;";
+          const labelSpan = document.createElement("span");
+          labelSpan.style.color = textColor;
+          labelSpan.textContent = `${prop.label}: `;
+          const valueSpan = document.createElement("span");
+          valueSpan.style.cssText = `color: ${headerColor}; font-weight: 600;`;
+          valueSpan.textContent = prop.value;
+          row.appendChild(labelSpan);
+          row.appendChild(valueSpan);
+          div.appendChild(row);
         }
       }
 
-      // Error below properties
       if (summary?.error) {
-        curY += lineH;
-        addText(propX, curY, [{ text: summary.error, fill: "#ff4d4f" }]);
+        const errDiv = document.createElement("div");
+        errDiv.style.cssText = "color: #ff4d4f; white-space: nowrap;";
+        errDiv.textContent = summary.error;
+        div.appendChild(errDiv);
       }
+
+      fo.appendChild(div);
+      groupEl.appendChild(fo);
     }
 
     // --- Resize element ---
@@ -1421,6 +1462,10 @@ export class JointUIService {
         "ref-y": eh + 8,
         "x-alignment": "middle",
         "y-alignment": "top",
+        textWrap: {
+          width: ew,
+          height: 80,
+        },
       },
       [`.${operatorStateClass}`]: { visibility: "hidden" },
     });
@@ -1609,18 +1654,19 @@ export class JointUIService {
     const afterCode = afterProps.find(p => p.label === "__code__");
 
     if (beforeCode && afterCode && beforeCode.value !== afterCode.value) {
-      // Code diff: render git-style diff in the operator box
+      // Code changed: render git-style diff in the operator box
       const diffHtml = JointUIService.renderCodeDiffHtml(beforeCode.value, afterCode.value);
       this.expandOperatorWithDiffHtml(jointPaper, operatorID, diffHtml);
+    } else if (afterCode) {
+      // Code operator but code unchanged: show the code as-is (normal expanded view)
+      this.expandOperatorWithResults(jointPaper, operatorID, undefined, afterProps);
     } else {
-      // Property diff: build diff properties array
+      // Non-code operator: build diff properties array
       const diffProps: Array<{ label: string; value: string }> = [];
-      const beforeNonCode = beforeProps.filter(p => p.label !== "__code__");
-      const afterNonCode = afterProps.filter(p => p.label !== "__code__");
-      const allLabels = new Set([...beforeNonCode.map(p => p.label), ...afterNonCode.map(p => p.label)]);
+      const allLabels = new Set([...beforeProps.map(p => p.label), ...afterProps.map(p => p.label)]);
       for (const label of allLabels) {
-        const bVal = beforeNonCode.find(p => p.label === label)?.value || "";
-        const aVal = afterNonCode.find(p => p.label === label)?.value || "";
+        const bVal = beforeProps.find(p => p.label === label)?.value || "";
+        const aVal = afterProps.find(p => p.label === label)?.value || "";
         if (bVal !== aVal) {
           if (bVal) diffProps.push({ label: `- ${label}`, value: bVal });
           if (aVal) diffProps.push({ label: `+ ${label}`, value: aVal });
@@ -1670,11 +1716,13 @@ export class JointUIService {
     const rightContentWidth = maxLineLen * codeCharW + 16;
 
     const minWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
-    const ew = Math.max(minWidth, propX + rightContentWidth + pad);
+    const maxWidth = 500;
+    const maxHeight = 300;
+    const ew = Math.min(maxWidth, Math.max(minWidth, propX + rightContentWidth + pad));
 
     const contentH = lines.length * codeLineH + 8;
     const minH = leftGroupH + pad * 2;
-    const eh = Math.max(contentH + pad * 2, minH);
+    const eh = Math.min(maxHeight, Math.max(contentH + pad * 2, minH));
 
     // Render diff using foreignObject
     const codeBlockWidth = ew - propX - pad + 2;
@@ -1686,12 +1734,20 @@ export class JointUIService {
     fo.setAttribute("width", String(codeBlockWidth));
     fo.setAttribute("height", String(codeBlockHeight));
 
+    const thinScrollbarCss = `scrollbar-width: thin; scrollbar-color: #ccc transparent;`;
+    const thinScrollbarStyleTag = `<style>
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+    </style>`;
+
     const div = document.createElement("div");
     div.style.cssText = `
-      width: 100%; height: 100%; overflow: hidden;
+      width: 100%; height: 100%; overflow: auto;
       background: transparent; padding: 2px 4px;
-      box-sizing: border-box;
+      box-sizing: border-box; ${thinScrollbarCss}
     `;
+    div.innerHTML = thinScrollbarStyleTag;
 
     const pre = document.createElement("pre");
     pre.style.cssText = `
