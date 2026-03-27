@@ -848,8 +848,11 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
    * Build timeline nodes from agent responses.
    * Each tool call becomes a node in the timeline.
    */
+  /** Sentinel ID for the initial dummy action — must match agent-service INITIAL_ACTION_ID. */
+  private static readonly INITIAL_ACTION_ID = "agent-action-initial";
+
   private buildTimelineNodes(): void {
-    if (this.agentActions.length === 0) {
+    if (this.agentActions.length === 0 && this.currentHeadId !== AgentChatComponent.INITIAL_ACTION_ID) {
       this.timelineNodes = [];
       this.treeEdges = [];
       this.timeAxisNodes = [];
@@ -858,10 +861,35 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       return;
     }
 
+    // Inject a synthetic "Ready" action for the initial state so it appears as the root node.
+    // Use the earliest real action's timestamp (minus 1ms) or now if no actions yet.
+    const earliestTime = this.agentActions.length > 0
+      ? new Date(Math.min(...this.agentActions.map(a => new Date(a.createdAt).getTime())) - 1)
+      : new Date();
+    const initialAction: AgentAction = {
+      id: AgentChatComponent.INITIAL_ACTION_ID,
+      agentId: this.agentInfo?.id || "",
+      agentName: this.agentInfo?.name || "Agent",
+      executorAgentId: this.agentInfo?.id || "",
+      summary: "Ready",
+      operations: { add: { operatorIds: [], linkIds: [] }, modify: { operatorIds: [] }, delete: { operatorIds: [], linkIds: [] }, execute: { operatorIds: [] } },
+      createdAt: earliestTime,
+      parentId: undefined,
+      actionType: "initial",
+      operatorIds: [],
+      linkIds: [],
+      workflowMetadata: {} as any,
+      beforeWorkflowContent: { operators: [], links: [], operatorPositions: {}, commentBoxes: [], settings: {} as any },
+      afterWorkflowContent: { operators: [], links: [], operatorPositions: {}, commentBoxes: [], settings: {} as any },
+    };
+
+    // Merge: prepend the initial action, filtering out any duplicate
+    const allActions = [initialAction, ...this.agentActions.filter(a => a.id !== AgentChatComponent.INITIAL_ACTION_ID)];
+
     // Build the HEAD ancestor path for highlighting
     const headPath = new Set<string>();
     if (this.currentHeadId) {
-      const actionMap = new Map(this.agentActions.map(a => [a.id, a]));
+      const actionMap = new Map(allActions.map(a => [a.id, a]));
       let current: string | undefined = this.currentHeadId;
       while (current) {
         headPath.add(current);
@@ -870,7 +898,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     }
 
     // Sort actions chronologically for consistent ordering
-    const sortedActions = [...this.agentActions].sort(
+    const sortedActions = [...allActions].sort(
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     );
 
@@ -891,7 +919,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
 
     // Compute per-node width based on text length
     const nodeWidths = new Map<string, number>();
-    for (const action of this.agentActions) {
+    for (const action of allActions) {
       const label = this.getActionLabel(action);
       const opId = this.getActionOperatorId(action);
       const textLen = (label + " " + opId).length;
@@ -910,12 +938,12 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     });
     g.setDefaultEdgeLabel(() => ({}));
 
-    for (const action of this.agentActions) {
+    for (const action of allActions) {
       g.setNode(action.id, { width: nodeWidths.get(action.id)!, height: nodeHeight });
     }
 
-    const actionIds = new Set(this.agentActions.map(a => a.id));
-    for (const action of this.agentActions) {
+    const actionIds = new Set(allActions.map(a => a.id));
+    for (const action of allActions) {
       if (action.parentId && actionIds.has(action.parentId)) {
         g.setEdge(action.parentId, action.id);
       }
@@ -925,7 +953,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
 
     // Override Y positions with constant spacing based on chronological order
     const nodePositions = new Map<string, { x: number; y: number }>();
-    for (const action of this.agentActions) {
+    for (const action of allActions) {
       const dagreNode = g.node(action.id);
       const chronIdx = actionChronIndex.get(action.id) ?? 0;
       const y = marginY + chronIdx * constantRowSpacing + nodeHeight / 2;
@@ -933,7 +961,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     }
 
     // Build TimelineNodes
-    this.timelineNodes = this.agentActions.map(action => {
+    this.timelineNodes = allActions.map(action => {
       const pos = nodePositions.get(action.id)!;
       return {
         id: action.id,
@@ -986,11 +1014,13 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
 
   /** Extract the primary operator ID (or summary text for non-tool actions). */
   private getActionOperatorId(action: AgentAction): string {
+    if (action.actionType === "initial") return "";
     if (action.actionType === "user_request" || action.actionType === "agent_response") {
       return action.summary;
     }
     return (
       action.operations.add?.operatorIds?.[0] ||
+      action.operations.execute?.operatorIds?.[0] ||
       action.operations.modify?.operatorIds?.[0] ||
       action.operations.delete?.operatorIds?.[0] ||
       "unknown"
@@ -1001,8 +1031,10 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   private getActionLabel(action: AgentAction): string {
     if (action.actionType === "user_request") return "User";
     if (action.actionType === "agent_response") return "Agent";
+    if (action.actionType === "initial") return "Ready";
     if (action.operations.add?.operatorIds?.length) return "Add";
     if (action.operations.delete?.operatorIds?.length) return "Delete";
+    if (action.operations.execute?.operatorIds?.length) return "Execute";
     if (action.operations.modify?.operatorIds?.length) return "Modify";
     return "Action";
   }

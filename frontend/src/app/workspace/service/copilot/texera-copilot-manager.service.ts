@@ -141,6 +141,7 @@ export interface OperatorResultSummary {
   warnings?: string[];
   consoleLogCount?: number;
   totalRowCount?: number;
+  sampleRecords?: Record<string, any>[];
 }
 
 interface ApiAgentInfo {
@@ -376,6 +377,7 @@ export class TexeraCopilotManagerService {
       add: apiAction.operations?.add || { operatorIds: [], linkIds: [] },
       modify: apiAction.operations?.modify || { operatorIds: [] },
       delete: apiAction.operations?.delete || { operatorIds: [], linkIds: [] },
+      execute: apiAction.operations?.execute || { operatorIds: [] },
     };
 
     // Collect all operator and link IDs for highlighting
@@ -383,6 +385,7 @@ export class TexeraCopilotManagerService {
       ...(operations.add.operatorIds || []),
       ...(operations.modify.operatorIds || []),
       ...(operations.delete.operatorIds || []),
+      ...(operations.execute.operatorIds || []),
     ];
     const linkIds = [...(operations.add.linkIds || []), ...(operations.delete.linkIds || [])];
 

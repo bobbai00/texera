@@ -56,6 +56,7 @@ export interface AgentActionOperations {
   add?: { operatorIds: string[]; linkIds: string[] };
   modify?: { operatorIds: string[] };
   delete?: { operatorIds: string[]; linkIds: string[] };
+  execute?: { operatorIds: string[] };
 }
 
 /**

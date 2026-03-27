@@ -1296,8 +1296,7 @@ export class TexeraAgent {
       case TOOL_NAME_DELETE_OPERATOR:
         return { delete: { operatorIds: [operatorId], linkIds: [] } };
       case TOOL_NAME_EXECUTE_OPERATOR:
-        // Execute doesn't modify the workflow — it just runs an operator
-        return { modify: { operatorIds: [operatorId] } };
+        return { execute: { operatorIds: [operatorId] } };
       default:
         return { modify: { operatorIds: [operatorId] } };
     }

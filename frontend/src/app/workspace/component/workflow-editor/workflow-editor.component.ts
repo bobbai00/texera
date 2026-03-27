@@ -2112,6 +2112,11 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     this.changeDetectorRef.detectChanges();
   }
 
+  getOperatorSampleRecords(operatorId: string): Record<string, any>[] | undefined {
+    const summary = this.currentResultSummaries.get(operatorId);
+    return summary?.sampleRecords;
+  }
+
 
   /**
    * Info button on link between operator shown when user hovers over links

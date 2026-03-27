@@ -72,26 +72,11 @@
     [style.left.px]="chatPopoverOperator.position.x"
     [style.top.px]="chatPopoverOperator.position.y">
     <div class="chat-popover">
-      <div class="chat-popover-header">
-        <i
-          nz-icon
-          nzType="message"
-          nzTheme="outline"></i>
-        <span class="chat-popover-title">Agent Chat: {{ chatPopoverOperator.displayName }}</span>
-        <button
-          class="chat-popover-close"
-          (click)="closeChatPopover()"
-          title="Close">
-          <i
-            nz-icon
-            nzType="close"
-            nzTheme="outline"></i>
-        </button>
-      </div>
       <div class="chat-popover-content">
         <texera-agent-interaction
           [operatorId]="chatPopoverOperator.operatorId"
-          [operatorDisplayName]="chatPopoverOperator.displayName">
+          [operatorDisplayName]="chatPopoverOperator.displayName"
+          [sampleRecords]="getOperatorSampleRecords(chatPopoverOperator.operatorId)">
         </texera-agent-interaction>
       </div>
     </div>

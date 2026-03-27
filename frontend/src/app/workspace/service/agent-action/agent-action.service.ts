@@ -45,6 +45,9 @@ export interface AgentActionOperations {
     operatorIds: string[];
     linkIds: string[];
   };
+  execute: {
+    operatorIds: string[];
+  };
 }
 
 /**

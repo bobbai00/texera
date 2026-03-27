@@ -18,6 +18,29 @@
 -->
 
 <div class="agent-interaction">
+  <!-- Sample Records Table -->
+  <div *ngIf="sampleRecords && sampleRecords.length > 0" class="sample-records-section">
+    <div class="sample-records-table-wrapper">
+      <table class="sample-records-table">
+        <thead>
+          <tr>
+            <th *ngFor="let col of getSampleColumns()">{{ getColumnDisplayName(col) }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <ng-container *ngFor="let row of getDisplayRows()">
+            <tr *ngIf="row.isEllipsis" class="ellipsis-row">
+              <td [attr.colspan]="getSampleColumns().length">...</td>
+            </tr>
+            <tr *ngIf="!row.isEllipsis">
+              <td *ngFor="let col of getSampleColumns()">{{ row.record?.[col] }}</td>
+            </tr>
+          </ng-container>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Agent Selection -->
   <div class="header-row">
     <nz-select

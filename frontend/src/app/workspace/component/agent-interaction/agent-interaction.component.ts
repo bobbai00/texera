@@ -37,6 +37,7 @@ import { NotificationService } from "../../../common/service/notification/notifi
 export class AgentInteractionComponent implements OnInit {
   @Input() operatorId!: string;
   @Input() operatorDisplayName?: string;
+  @Input() sampleRecords?: Record<string, any>[];
 
   public availableAgents: Array<{ id: string; name: string; isConnected: boolean }> = [];
   public selectedAgentId: string | null = null;
@@ -121,5 +122,49 @@ export class AgentInteractionComponent implements OnInit {
 
   public canSend(): boolean {
     return !!this.selectedAgentId && !!this.feedbackMessage.trim();
+  }
+
+  /**
+   * Get column names from sample records, placing __row_index__ first (displayed as "Row").
+   */
+  public getSampleColumns(): string[] {
+    if (!this.sampleRecords || this.sampleRecords.length === 0) return [];
+    const allKeys = Object.keys(this.sampleRecords[0]);
+    const rowIndexKey = allKeys.find(k => k.startsWith("_") && k.includes("row_index"));
+    const otherKeys = allKeys.filter(k => k !== rowIndexKey);
+    return rowIndexKey ? [rowIndexKey, ...otherKeys] : otherKeys;
+  }
+
+  /**
+   * Get display name for a column header.
+   */
+  public getColumnDisplayName(col: string): string {
+    if (col.startsWith("_") && col.includes("row_index")) return "Row";
+    return col;
+  }
+
+  /**
+   * Build display rows with ellipsis indicators for truncated (front+end) records.
+   * Returns objects with { record, isEllipsis } where isEllipsis rows indicate a gap.
+   */
+  public getDisplayRows(): Array<{ record?: Record<string, any>; isEllipsis: boolean }> {
+    if (!this.sampleRecords || this.sampleRecords.length === 0) return [];
+    const rowIndexKey = Object.keys(this.sampleRecords[0]).find(k => k.startsWith("_") && k.includes("row_index"));
+    if (!rowIndexKey) {
+      return this.sampleRecords.map(r => ({ record: r, isEllipsis: false }));
+    }
+
+    const rows: Array<{ record?: Record<string, any>; isEllipsis: boolean }> = [];
+    for (let i = 0; i < this.sampleRecords.length; i++) {
+      if (i > 0) {
+        const prevIdx = this.sampleRecords[i - 1][rowIndexKey];
+        const currIdx = this.sampleRecords[i][rowIndexKey];
+        if (typeof prevIdx === "number" && typeof currIdx === "number" && currIdx - prevIdx > 1) {
+          rows.push({ isEllipsis: true });
+        }
+      }
+      rows.push({ record: this.sampleRecords[i], isEllipsis: false });
+    }
+    return rows;
   }
 }
