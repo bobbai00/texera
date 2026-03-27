@@ -259,6 +259,13 @@ class DataProcessor(Runnable, Stoppable):
 
         # Check if schemas match
         if not self._schemas_are_equal(declared_schema, inferred_schema):
+            # If the user declared a non-empty output schema, enforce it strictly
+            if declared_schema.get_attr_names():
+                raise RuntimeError(
+                    f"Output schema mismatch: expected {declared_schema} "
+                    f"but got {inferred_schema}"
+                )
+
             # Emit info about schema inference
             self._emit_schema_info(declared_schema, inferred_schema)
 
@@ -685,6 +692,13 @@ class DataProcessor(Runnable, Stoppable):
 
         # Check if schemas match
         if not self._schemas_are_equal(declared_schema, inferred_schema):
+            # If the user declared a non-empty output schema, enforce it strictly
+            if declared_schema.get_attr_names():
+                raise RuntimeError(
+                    f"Output schema mismatch: expected {declared_schema} "
+                    f"but got {inferred_schema}"
+                )
+
             # Emit info about schema inference
             self._emit_schema_info(declared_schema, inferred_schema)
 

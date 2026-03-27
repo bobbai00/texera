@@ -170,15 +170,9 @@ object TestOperators {
 
   def pythonOpDesc(): PythonUDFOpDescV2 = {
     val udf = new PythonUDFOpDescV2()
-    udf.workers = 1
-    udf.code = """
-        |from pytexera import *
-        |
-        |class ProcessTupleOperator(UDFOperatorV2):
-        |    @overrides
-        |    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
-        |        yield tuple_
-        |""".stripMargin
+    udf.code =
+      "def process(input_0) -> pd.DataFrame:\n" +
+        "    return input_0\n"
     udf
   }
 }
