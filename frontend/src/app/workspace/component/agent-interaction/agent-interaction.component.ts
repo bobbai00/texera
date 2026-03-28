@@ -23,6 +23,7 @@ import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { TexeraCopilotManagerService } from "../../service/copilot/texera-copilot-manager.service";
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
 import { NotificationService } from "../../../common/service/notification/notification.service";
+import { AgentAction } from "../../service/agent-action/agent-action.service";
 
 /**
  * AgentInteractionComponent provides a compact interface for users to send feedback
@@ -44,6 +45,7 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
   public availableAgents: Array<{ id: string; name: string; isConnected: boolean }> = [];
   public selectedAgentId: string | null = null;
   public feedbackMessage: string = "";
+  public checkoutBeforeSend: boolean = true;
 
   // Cached visualization HTML to avoid iframe re-render on every WS update
   private cachedVisualizationHtml: SafeHtml | null = null;
@@ -120,14 +122,61 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
       return;
     }
 
+    const agentId = this.selectedAgentId;
     const operatorName = this.operatorDisplayName || this.getOperatorName() || "this operator";
     const contextMessage = `Regarding operator "${operatorName}" (ID: ${this.operatorId}): ${this.feedbackMessage.trim()}`;
 
-    this.copilotManagerService.sendMessage(this.selectedAgentId, contextMessage);
+    if (this.checkoutBeforeSend) {
+      const actionToCheckout = this.findLatestActionForOperatorOnHeadBranch(agentId, this.operatorId);
+      if (actionToCheckout) {
+        this.copilotManagerService.checkoutAction(agentId, actionToCheckout.id).subscribe({
+          next: () => {
+            this.copilotManagerService.sendMessage(agentId, contextMessage);
+            this.notificationService.success("Checked out version and sent message to agent");
+            this.feedbackMessage = "";
+            this.changeDetectorRef.detectChanges();
+          },
+          error: err => {
+            console.error("[AgentInteraction] Checkout failed:", err);
+            this.notificationService.error("Failed to checkout version. Message not sent.");
+          },
+        });
+        return;
+      }
+    }
 
+    this.copilotManagerService.sendMessage(agentId, contextMessage);
     this.notificationService.success("Message sent to agent successfully");
     this.feedbackMessage = "";
     this.changeDetectorRef.detectChanges();
+  }
+
+  /**
+   * Traverse the current head branch (from head to root via parentId) and find the latest
+   * action that added or modified the given operator. "Latest" = closest to head on the branch.
+   */
+  private findLatestActionForOperatorOnHeadBranch(agentId: string, operatorId: string): AgentAction | null {
+    const allActions = this.copilotManagerService.getAgentActions(agentId);
+    const headId = this.copilotManagerService.getHeadId(agentId);
+    if (!headId || allActions.length === 0) return null;
+
+    const actionMap = new Map(allActions.map(a => [a.id, a]));
+    let currentId: string | undefined = headId;
+
+    while (currentId) {
+      const action = actionMap.get(currentId);
+      if (!action) break;
+
+      const addedOps = action.operations?.add?.operatorIds || [];
+      const modifiedOps = action.operations?.modify?.operatorIds || [];
+      if (addedOps.includes(operatorId) || modifiedOps.includes(operatorId)) {
+        return action;
+      }
+
+      currentId = action.parentId;
+    }
+
+    return null;
   }
 
   private getOperatorName(): string | undefined {

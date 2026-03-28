@@ -1237,19 +1237,7 @@ export class JointUIService {
       const inPorts = allPorts.filter(p => p.group === "in");
       const outPorts = allPorts.filter(p => p.group === "out");
 
-      inPorts.forEach((portDef, idx) => {
-        if (!portDef.id) return;
-        let labelText: string;
-        if (summary.inputPortShapes && summary.inputPortShapes.length > 0) {
-          const ps = summary.inputPortShapes.find(s => s.portIndex === idx) ?? summary.inputPortShapes[0];
-          labelText = `(${ps.rows}, ${ps.columns})`;
-        } else {
-          labelText = `(${summary.inputTuples})`;
-        }
-        element.portProp(portDef.id, "attrs/.port-label/text", labelText);
-        element.portProp(portDef.id, "attrs/.port-label/fill", "#52c41a");
-      });
-
+      // Only show shape on output ports (input shape is symmetric — same as upstream output)
       outPorts.forEach(portDef => {
         if (!portDef.id) return;
         const outVal =

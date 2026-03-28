@@ -173,12 +173,24 @@ export class WorkflowVersionService {
     if (element) {
       element.attr({
         "rect.boundary": {
-          fill: "transparent",
+          fill: "rgba(" + color.replace(/,[^,]*$/, ",0.08") + ")",
           stroke: "rgba(" + color + ")",
-          "stroke-width": 2,
-          "stroke-dasharray": "8,4",
+          "stroke-width": 3,
+          "stroke-dasharray": "none",
+          rx: 8,
+          ry: 8,
         },
       });
+      // Apply CSS filter for glow halo effect via DOM
+      const paper = this.workflowActionService.getJointGraphWrapper().getMainJointPaper();
+      if (paper) {
+        const view = paper.findViewByModel(element);
+        const boundaryRect = view?.el?.querySelector("rect.boundary") as SVGElement | null;
+        if (boundaryRect) {
+          boundaryRect.style.filter =
+            "drop-shadow(0 0 10px rgba(" + color + ")) drop-shadow(0 0 4px rgba(" + color + "))";
+        }
+      }
     }
   }
 
@@ -301,9 +313,9 @@ export class WorkflowVersionService {
   }
 
   public unhighlightOpVersionDiff(differentOpIDsList: DifferentOpIDsList) {
+    const paper = this.workflowActionService.getJointGraphWrapper().getMainJointPaper();
     for (const id of differentOpIDsList.added.concat(differentOpIDsList.modified)) {
       this.highlightOpBoundary(id, "0,0,0,0");
-      // Also clear dashed border styles
       const element = this.workflowActionService
         .getJointGraphWrapper()
         .getMainJointPaper()
@@ -316,6 +328,14 @@ export class WorkflowVersionService {
             "stroke-dasharray": "none",
           },
         });
+        // Clear CSS filter glow
+        if (paper) {
+          const view = paper.findViewByModel(element);
+          const boundaryRect = view?.el?.querySelector("rect.boundary") as SVGElement | null;
+          if (boundaryRect) {
+            boundaryRect.style.filter = "";
+          }
+        }
       }
     }
     this.operatorPropertyDiff = {};

@@ -506,10 +506,14 @@ class SyncExecutionResource extends LazyLogging {
       }
 
       // Check for error in console logs
+      // Prefer the longer of title/message to avoid truncation.
+      // Python errors store the full text in `message`; Scala errors
+      // store the full text in `title` (with stack trace in `message`).
       val errorMsg = consoleLogs.flatMap(
-        _.find(_.msgType == "ERROR").map(e =>
-          if (e.message.nonEmpty) s"${e.title}: ${e.message}" else e.title
-        )
+        _.find(_.msgType == "ERROR").map { e =>
+          if (e.message.nonEmpty && e.message.length > e.title.length) e.message
+          else e.title
+        }
       )
 
       // Extract warnings (PRINT messages with "WARNING: " prefix)

@@ -782,6 +782,11 @@ class DataProcessor(Runnable, Stoppable):
                 else f"{exception_type}: {exception_msg}"
             )[:300]
 
+        # Store the full, untruncated error in `message` so that downstream
+        # consumers (e.g. agent service via SyncExecutionResource) can access
+        # the complete error text.  `title` is kept short for UI display.
+        full_message = f"{exception_type}: {exception_msg}"
+
         self._context.console_message_manager.put_message(
             ConsoleMessage(
                 worker_id=self._context.worker_id,
@@ -789,7 +794,7 @@ class DataProcessor(Runnable, Stoppable):
                 msg_type=ConsoleMessageType.ERROR,
                 source=source,
                 title=title,
-                message="",
+                message=full_message,
             )
         )
 
