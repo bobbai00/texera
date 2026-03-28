@@ -28,7 +28,6 @@ import { Coeditor } from "../../../common/type/user";
 import { OperatorResultCacheStatus } from "../../types/workflow-websocket.interface";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const Diff = require("diff");
 
 /**
  * Defines the SVG path for the delete button
@@ -1060,7 +1059,8 @@ export class JointUIService {
     const type = operator.operatorType;
 
     switch (type) {
-      case "Projection": {
+      case "Projection":
+      case "TableProjection": {
         const items: Array<{ label: string; value: string }> = [];
         items.push({ label: "Mode", value: props["isDrop"] ? "Drop" : "Keep" });
         const attrs = props["attributes"] as Array<{ originalAttribute?: string; alias?: string }> | undefined;
@@ -1072,7 +1072,8 @@ export class JointUIService {
         }
         return items;
       }
-      case "Sort": {
+      case "Sort":
+      case "TableSort": {
         const attrs = props["attributes"] as Array<{ attribute?: string; sortPreference?: string }> | undefined;
         if (attrs && attrs.length > 0) {
           const spec = attrs.map(a => `${a.attribute || ""} ${a.sortPreference === "DESC" ? "↓" : "↑"}`).join(", ");
@@ -1081,6 +1082,7 @@ export class JointUIService {
         return [];
       }
       case "Limit":
+      case "TableLimit":
         return props["limit"] !== undefined ? [{ label: "Limit", value: String(props["limit"]) }] : [];
       case "CSVScanSource":
       case "CSVFileScan": {
@@ -1095,7 +1097,8 @@ export class JointUIService {
         }
         return items;
       }
-      case "HashJoin": {
+      case "HashJoin":
+      case "Join": {
         const items: Array<{ label: string; value: string }> = [];
         if (props["buildAttributeName"] && props["probeAttributeName"]) {
           items.push({ label: "Join", value: `${props["buildAttributeName"]} = ${props["probeAttributeName"]}` });
@@ -1105,7 +1108,8 @@ export class JointUIService {
         }
         return items;
       }
-      case "Aggregate": {
+      case "Aggregate":
+      case "TableAggregate": {
         const items: Array<{ label: string; value: string }> = [];
         const groupByKeys = props["groupByKeys"] as string[] | undefined;
         if (groupByKeys && groupByKeys.length > 0) {
@@ -1132,14 +1136,9 @@ export class JointUIService {
       case "DualInputPortsPythonUDFV2":
       case "PythonTableUDF":
       case "DataProcessing":
-      case "DataLoading": {
-        const code = props["code"] as string | undefined;
-        if (code) {
-          // Special marker: label "__code__" signals the renderer to use a code block
-          return [{ label: "__code__", value: code }];
-        }
+      case "DataLoading":
+        // Only show icon + type name, no code display
         return [];
-      }
       default: {
         const items: Array<{ label: string; value: string }> = [];
         for (const key of Object.keys(props).slice(0, 3)) {
@@ -1250,80 +1249,64 @@ export class JointUIService {
     }
 
     // --- Layout constants ---
-    const iconSize = 30;
+    const regularProps = properties ?? [];
+    const hasProps = regularProps.length > 0 || summary?.error;
+
+    // Icon size: larger when no properties to display
+    const iconSize = hasProps ? 36 : 48;
     const pad = 6; // inner padding
-    const charW = 5; // approx character width at 10px font
-    const codeCharW = 6.02; // approx character width for monospace 9px font
-    const typeFontSize = 7;
-    const typeCharW = 3.5; // approx character width at 7px font
-    const typeText = element.attr(`.${operatorTypeClass}/text`) || "";
-    const iconTypeGap = 1; // minimal gap between icon bottom and type text baseline
-    const leftGroupH = iconSize + iconTypeGap + typeFontSize; // total height of icon+type group
+    const propFontSize = 12; // larger text for key properties
+    const propCharW = 6.2; // approx character width at 12px font
+    const propLineH = 16; // line height for 12px font
 
-    // Left column width: max of icon width and type text width, plus left padding
-    const typeTextWidth = typeText.length * typeCharW;
-    const leftContentWidth = Math.max(iconSize, typeTextWidth);
-    const leftColumnEnd = pad + leftContentWidth; // right edge of left column
+    if (hasProps) {
+      // Two-column layout: icon left, properties right
+      const leftColumnEnd = pad + iconSize;
+      const gap = 6;
+      const propX = leftColumnEnd + gap;
+      let rightContentWidth = 0;
 
-    // Detect code block mode (PythonUDF)
-    const props = properties ?? [];
-    const isCodeBlock = props.length === 1 && props[0].label === "__code__";
-    const codeContent = isCodeBlock ? props[0].value : "";
-    const regularProps = isCodeBlock ? [] : props;
+      for (const prop of regularProps) {
+        rightContentWidth = Math.max(rightContentWidth, (prop.label.length + 2 + prop.value.length) * propCharW);
+      }
+      if (summary?.error) {
+        rightContentWidth = Math.max(rightContentWidth, summary.error.length * propCharW);
+      }
 
-    // Right column: compute width
-    const gap = 6;
-    const propX = leftColumnEnd + gap;
-    let rightContentWidth = 0;
+      const minWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
+      const maxWidth = 500;
+      const maxHeight = 300;
+      var ew = Math.min(maxWidth, Math.max(minWidth, propX + rightContentWidth + pad));
 
-    if (isCodeBlock) {
-      const codeLines = codeContent.split("\n");
-      const maxLineLen = Math.max(...codeLines.map(l => l.length), 10);
-      rightContentWidth = maxLineLen * codeCharW + 12; // 12 for code block padding
+      // Compute box height
+      let propBottomY = pad;
+      for (const _prop of regularProps) {
+        propBottomY += propLineH;
+      }
+      if (summary?.error) {
+        propBottomY += propLineH;
+      }
+      propBottomY += pad;
+
+      const minH = iconSize + pad * 2;
+      var eh = Math.min(maxHeight, Math.max(propBottomY, minH));
+      var iconTopY = (eh - iconSize) / 2 + iconSize / 2;
+      var iconRefX: number | string = pad;
+      var iconXAlignment = "none";
+      var contentPropX = propX;
+      var contentWidth = ew - propX - pad + 2;
+      var contentHeight = eh - pad * 2;
     } else {
-      for (const prop of regularProps) {
-        rightContentWidth = Math.max(rightContentWidth, (prop.label.length + 2 + prop.value.length) * charW);
-      }
+      // Centered icon layout for operators with no properties (e.g. Python UDF)
+      var ew = iconSize + pad * 2;
+      var eh = iconSize + pad * 2;
+      var iconTopY = 0.5;
+      var iconRefX: number | string = 0.5;
+      var iconXAlignment = "middle";
+      var contentPropX = 0;
+      var contentWidth = 0;
+      var contentHeight = 0;
     }
-    if (summary?.error) {
-      rightContentWidth = Math.max(rightContentWidth, summary.error.length * charW);
-    }
-
-    const minWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
-    const maxWidth = 500;
-    const maxHeight = 300;
-    const ew = Math.min(maxWidth, Math.max(minWidth, propX + rightContentWidth + pad));
-
-    // --- Compute box height ---
-    let propBottomY = pad;
-    if (isCodeBlock) {
-      const codeLines = codeContent.split("\n");
-      const codeFontSize = 9;
-      const codeLineH = codeFontSize + 2;
-      propBottomY += codeLines.length * codeLineH + 8; // 8 for code block padding
-    } else if (regularProps.length > 0) {
-      for (const prop of regularProps) {
-        propBottomY += lineH;
-      }
-    }
-    if (summary?.error) {
-      propBottomY += lineH;
-    }
-    propBottomY += pad;
-
-    const minH = leftGroupH + pad * 2; // minimum height to fit icon+type with padding
-    const eh = Math.min(maxHeight, Math.max(propBottomY, minH));
-
-    // --- Vertically center icon+type group within the box ---
-    const groupTopY = (eh - leftGroupH) / 2;
-    const iconTopY = groupTopY + iconSize / 2; // ref-y needs icon center, not top edge
-    const typeLabelY = groupTopY + iconSize + iconTypeGap + typeFontSize; // text baseline
-
-    // Type label below icon, left-aligned, smaller font
-    const typeEl = addText(pad, typeLabelY, [
-      { text: typeText, fill: textColor, bold: false },
-    ]);
-    typeEl.setAttribute("font-size", String(typeFontSize));
 
     // Thin scrollbar CSS shared by code and property foreignObjects
     const thinScrollbarCss = `
@@ -1336,41 +1319,11 @@ export class JointUIService {
       ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
     </style>`;
 
-    // --- Render right side content ---
-    const contentWidth = ew - propX - pad + 2;
-    const contentHeight = eh - pad * 2;
-
-    if (isCodeBlock) {
-      // Render Python code block using foreignObject for HTML-based syntax highlighting
+    // --- Render right side content (only if there are properties) ---
+    if (hasProps) {
       const fo = document.createElementNS(svgNs, "foreignObject");
       fo.classList.add("result-info");
-      fo.setAttribute("x", String(propX));
-      fo.setAttribute("y", String(pad));
-      fo.setAttribute("width", String(contentWidth));
-      fo.setAttribute("height", String(contentHeight));
-
-      const div = document.createElement("div");
-      div.style.cssText = `
-        width: 100%; height: 100%; overflow: auto;
-        background: transparent; padding: 2px 4px;
-        box-sizing: border-box; ${thinScrollbarCss}
-      `;
-      div.innerHTML = thinScrollbarStyleTag;
-
-      const pre = document.createElement("pre");
-      pre.style.cssText = `
-        margin: 0; padding: 0; font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-        font-size: 9px; line-height: 11px; white-space: pre; color: #333;
-      `;
-      pre.innerHTML = JointUIService.highlightPython(codeContent);
-      div.appendChild(pre);
-      fo.appendChild(div);
-      groupEl.appendChild(fo);
-    } else {
-      // Regular properties + error rendered via foreignObject for overflow handling
-      const fo = document.createElementNS(svgNs, "foreignObject");
-      fo.classList.add("result-info");
-      fo.setAttribute("x", String(propX));
+      fo.setAttribute("x", String(contentPropX));
       fo.setAttribute("y", String(pad));
       fo.setAttribute("width", String(contentWidth));
       fo.setAttribute("height", String(contentHeight));
@@ -1380,25 +1333,23 @@ export class JointUIService {
         width: 100%; height: 100%; overflow: auto;
         background: transparent; padding: 2px 0;
         box-sizing: border-box; font-family: ${fontFamily};
-        font-size: ${fontSize}px; line-height: ${lineH}px;
+        font-size: ${propFontSize}px; line-height: ${propLineH}px;
         ${thinScrollbarCss}
       `;
       div.innerHTML = thinScrollbarStyleTag;
 
-      if (regularProps.length > 0) {
-        for (const prop of regularProps) {
-          const row = document.createElement("div");
-          row.style.cssText = "white-space: nowrap;";
-          const labelSpan = document.createElement("span");
-          labelSpan.style.color = textColor;
-          labelSpan.textContent = `${prop.label}: `;
-          const valueSpan = document.createElement("span");
-          valueSpan.style.cssText = `color: ${headerColor}; font-weight: 600;`;
-          valueSpan.textContent = prop.value;
-          row.appendChild(labelSpan);
-          row.appendChild(valueSpan);
-          div.appendChild(row);
-        }
+      for (const prop of regularProps) {
+        const row = document.createElement("div");
+        row.style.cssText = "white-space: nowrap;";
+        const labelSpan = document.createElement("span");
+        labelSpan.style.color = textColor;
+        labelSpan.textContent = `${prop.label}: `;
+        const valueSpan = document.createElement("span");
+        valueSpan.style.cssText = `color: ${headerColor}; font-weight: 600;`;
+        valueSpan.textContent = prop.value;
+        row.appendChild(labelSpan);
+        row.appendChild(valueSpan);
+        div.appendChild(row);
       }
 
       if (summary?.error) {
@@ -1427,31 +1378,26 @@ export class JointUIService {
       ".texera-operator-icon": {
         width: iconSize,
         height: iconSize,
-        "ref-x": pad,       // left edge at padding
-        "ref-y": iconTopY,  // top edge at padding
-        "x-alignment": "none",
+        "ref-x": iconRefX,
+        "ref-y": iconTopY,
+        "x-alignment": iconXAlignment,
+        "y-alignment": hasProps ? "none" : "middle",
       },
       ".texera-operator-friendly-name": {
-        // Keep operator ID above the box
-        visibility: "visible",
-        "ref-x": 0.5,
-        "ref-y": -12,
-        "x-alignment": "middle",
-        "text-anchor": "middle",
-        fill: "#888888",
-        "font-size": "10px",
-        "font-weight": "normal",
+        // Hide operator ID above the box — it's now shown in the display name area
+        visibility: "hidden",
       },
       [`.${operatorTypeClass}`]: {
         visibility: "hidden",
       },
       ".texera-operator-name": {
+        text: `${element.attr(`.${operatorFriendlyNameClass}/text`) || operatorID}: ${element.attr(`.${operatorNameClass}/text`) || ""}`,
         "ref-x": 0.5,
         "ref-y": eh + 8,
         "x-alignment": "middle",
         "y-alignment": "top",
         textWrap: {
-          width: ew,
+          width: Math.max(200, ew),
           height: 80,
         },
       },
@@ -1459,84 +1405,6 @@ export class JointUIService {
     });
   }
 
-  /**
-   * Basic Python syntax highlighting. Returns HTML with colored spans.
-   */
-  private static highlightPython(code: string): string {
-    const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-    const keywords = new Set([
-      "def", "class", "return", "if", "elif", "else", "for", "while", "in", "not", "and", "or",
-      "import", "from", "as", "try", "except", "finally", "raise", "with", "yield", "lambda",
-      "pass", "break", "continue", "is", "None", "True", "False", "self", "async", "await",
-    ]);
-
-    const builtins = new Set([
-      "print", "len", "range", "int", "str", "float", "list", "dict", "tuple", "set",
-      "type", "isinstance", "enumerate", "zip", "map", "filter", "sorted", "reversed",
-      "open", "super", "property", "staticmethod", "classmethod",
-    ]);
-
-    return code.split("\n").map(line => {
-      const escaped = escape(line);
-      let result = "";
-      let i = 0;
-      while (i < escaped.length) {
-        // Comments
-        if (escaped[i] === "#") {
-          result += `<span style="color:#6a737d">${escaped.slice(i)}</span>`;
-          break;
-        }
-        // Strings
-        if (escaped[i] === "'" || escaped[i] === '"') {
-          const quote = escaped[i];
-          let j = i + 1;
-          while (j < escaped.length && escaped[j] !== quote) {
-            if (escaped[j] === "\\") j++;
-            j++;
-          }
-          j++;
-          result += `<span style="color:#032f62">${escaped.slice(i, j)}</span>`;
-          i = j;
-          continue;
-        }
-        // Words
-        if (/[a-zA-Z_]/.test(escaped[i])) {
-          let j = i;
-          while (j < escaped.length && /[a-zA-Z0-9_]/.test(escaped[j])) j++;
-          const word = escaped.slice(i, j);
-          if (keywords.has(word)) {
-            result += `<span style="color:#d73a49">${word}</span>`;
-          } else if (builtins.has(word)) {
-            result += `<span style="color:#6f42c1">${word}</span>`;
-          } else {
-            result += word;
-          }
-          i = j;
-          continue;
-        }
-        // Numbers
-        if (/[0-9]/.test(escaped[i])) {
-          let j = i;
-          while (j < escaped.length && /[0-9.]/.test(escaped[j])) j++;
-          result += `<span style="color:#005cc5">${escaped.slice(i, j)}</span>`;
-          i = j;
-          continue;
-        }
-        // Decorators
-        if (escaped[i] === "@") {
-          let j = i + 1;
-          while (j < escaped.length && /[a-zA-Z0-9_.]/.test(escaped[j])) j++;
-          result += `<span style="color:#6f42c1">${escaped.slice(i, j)}</span>`;
-          i = j;
-          continue;
-        }
-        result += escaped[i];
-        i++;
-      }
-      return result;
-    }).join("\n");
-  }
 
   /**
    * Collapse an operator back to its default size, removing result info.
@@ -1638,148 +1506,22 @@ export class JointUIService {
     const beforeProps = JointUIService.extractOperatorProperties(beforeOp);
     const afterProps = JointUIService.extractOperatorProperties(afterOp);
 
-    const beforeCode = beforeProps.find(p => p.label === "__code__");
-    const afterCode = afterProps.find(p => p.label === "__code__");
-
-    if (beforeCode && afterCode && beforeCode.value !== afterCode.value) {
-      // Code changed: render git-style diff in the operator box
-      const diffHtml = JointUIService.renderCodeDiffHtml(beforeCode.value, afterCode.value);
-      this.expandOperatorWithDiffHtml(jointPaper, operatorID, diffHtml);
-    } else if (afterCode) {
-      // Code operator but code unchanged: show the code as-is (normal expanded view)
-      this.expandOperatorWithResults(jointPaper, operatorID, undefined, afterProps);
-    } else {
-      // Non-code operator: build diff properties array
-      const diffProps: Array<{ label: string; value: string }> = [];
-      const allLabels = new Set([...beforeProps.map(p => p.label), ...afterProps.map(p => p.label)]);
-      for (const label of allLabels) {
-        const bVal = beforeProps.find(p => p.label === label)?.value || "";
-        const aVal = afterProps.find(p => p.label === label)?.value || "";
-        if (bVal !== aVal) {
-          if (bVal) diffProps.push({ label: `- ${label}`, value: bVal });
-          if (aVal) diffProps.push({ label: `+ ${label}`, value: aVal });
-        } else {
-          diffProps.push({ label, value: aVal });
-        }
-      }
-      this.expandOperatorWithResults(jointPaper, operatorID, undefined, diffProps);
-    }
-  }
-
-  /**
-   * Render an operator box with diff HTML content (for code diffs).
-   */
-  private expandOperatorWithDiffHtml(
-    jointPaper: joint.dia.Paper,
-    operatorID: string,
-    diffHtml: string
-  ): void {
-    const element = jointPaper.getModelById(operatorID) as joint.shapes.devs.Model;
-    if (!element) return;
-
-    const svgNs = "http://www.w3.org/2000/svg";
-    const view = jointPaper.findViewByModel(operatorID);
-    if (!view) return;
-    const groupEl = view.el.querySelector(".element-node") || view.el;
-
-    // Remove previous result elements
-    groupEl.querySelectorAll(".result-info").forEach((el: Element) => el.remove());
-
-    const pad = 8;
-    const codeCharW = 5.5;
-    const codeFontSize = 9;
-    const codeLineH = codeFontSize + 2;
-
-    // Measure diff content
-    const lines = diffHtml.split("\n");
-    const maxLineLen = Math.max(...lines.map(l => l.replace(/<[^>]*>/g, "").length), 20);
-
-    const iconSize = 30;
-    const typeFontSize = 7;
-    const iconTypeGap = 2;
-    const leftGroupH = iconSize + iconTypeGap + typeFontSize;
-    const leftColumnEnd = pad + iconSize;
-    const gap = 6;
-    const propX = leftColumnEnd + gap;
-    const rightContentWidth = maxLineLen * codeCharW + 16;
-
-    const minWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
-    const maxWidth = 500;
-    const maxHeight = 300;
-    const ew = Math.min(maxWidth, Math.max(minWidth, propX + rightContentWidth + pad));
-
-    const contentH = lines.length * codeLineH + 8;
-    const minH = leftGroupH + pad * 2;
-    const eh = Math.min(maxHeight, Math.max(contentH + pad * 2, minH));
-
-    // Render diff using foreignObject
-    const codeBlockWidth = ew - propX - pad + 2;
-    const codeBlockHeight = eh - pad * 2;
-    const fo = document.createElementNS(svgNs, "foreignObject");
-    fo.classList.add("result-info");
-    fo.setAttribute("x", String(propX));
-    fo.setAttribute("y", String(pad));
-    fo.setAttribute("width", String(codeBlockWidth));
-    fo.setAttribute("height", String(codeBlockHeight));
-
-    const thinScrollbarCss = `scrollbar-width: thin; scrollbar-color: #ccc transparent;`;
-    const thinScrollbarStyleTag = `<style>
-      ::-webkit-scrollbar { width: 4px; height: 4px; }
-      ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
-    </style>`;
-
-    const div = document.createElement("div");
-    div.style.cssText = `
-      width: 100%; height: 100%; overflow: auto;
-      background: transparent; padding: 2px 4px;
-      box-sizing: border-box; ${thinScrollbarCss}
-    `;
-    div.innerHTML = thinScrollbarStyleTag;
-
-    const pre = document.createElement("pre");
-    pre.style.cssText = `
-      margin: 0; padding: 0; font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-      font-size: 9px; line-height: 11px; white-space: pre; color: #333;
-    `;
-    pre.innerHTML = diffHtml;
-    div.appendChild(pre);
-    fo.appendChild(div);
-    groupEl.appendChild(fo);
-
-    // Resize element
-    element.resize(ew, eh);
-    element.attr({
-      "rect.boundary": { width: ew + 20, height: eh + 20 },
-      ".delete-button": { x: ew, y: -20 },
-      ".chat-button": { x: ew + 25, y: -20 },
-    });
-  }
-
-  /**
-   * Generate HTML for a git-style code diff using the 'diff' library.
-   */
-  private static renderCodeDiffHtml(before: string, after: string): string {
-    const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const changes = Diff.diffLines(before, after);
-    const htmlLines: string[] = [];
-
-    for (const change of changes) {
-      const text = change.value.replace(/\n$/, "");
-      const splitLines = text.split("\n");
-      for (const line of splitLines) {
-        const escaped = escape(line);
-        if (change.added) {
-          htmlLines.push(`<span style="background:#e6ffed;color:#22863a;display:inline-block;width:100%">+ ${escaped}</span>`);
-        } else if (change.removed) {
-          htmlLines.push(`<span style="background:#ffeef0;color:#cb2431;display:inline-block;width:100%">- ${escaped}</span>`);
-        } else {
-          htmlLines.push(`<span style="color:#586069;display:inline-block;width:100%">  ${escaped}</span>`);
-        }
+    // Build diff properties array showing before→after changes
+    const diffProps: Array<{ label: string; value: string }> = [];
+    const allLabels = new Set([...beforeProps.map(p => p.label), ...afterProps.map(p => p.label)]);
+    for (const label of allLabels) {
+      const bVal = beforeProps.find(p => p.label === label)?.value || "";
+      const aVal = afterProps.find(p => p.label === label)?.value || "";
+      if (bVal !== aVal) {
+        if (bVal) diffProps.push({ label: `- ${label}`, value: bVal });
+        if (aVal) diffProps.push({ label: `+ ${label}`, value: aVal });
+      } else {
+        diffProps.push({ label, value: aVal });
       }
     }
-    return htmlLines.join("\n");
+    this.expandOperatorWithResults(jointPaper, operatorID, undefined, diffProps);
   }
+
 }
 
 export function fromJointPaperEvent<T extends keyof joint.dia.Paper.EventMap = keyof joint.dia.Paper.EventMap>(

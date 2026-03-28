@@ -22,8 +22,6 @@ package org.apache.amber.operator.aggregate
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
 import org.apache.amber.core.tuple.{Attribute, AttributeType, AttributeTypeUtils, Tuple}
-import org.apache.amber.operator.metadata.annotations.AutofillAttributeName
-
 import javax.validation.constraints.NotNull
 
 case class AveragePartialObj(sum: Double, count: Double) extends Serializable {}
@@ -66,7 +64,6 @@ class AggregationOperation {
 
   @JsonProperty(value = "attribute", required = true)
   @JsonPropertyDescription("column to calculate average value")
-  @AutofillAttributeName
   var attribute: String = _
 
   @JsonProperty(value = "result attribute", required = true)

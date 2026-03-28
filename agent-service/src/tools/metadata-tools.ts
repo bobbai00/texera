@@ -64,15 +64,14 @@ export interface CompactOperatorSchema {
 // ============================================================================
 
 export const ALLOWED_OPERATOR_TYPES = [
-  "Aggregate",
-  "Projection",
-  "Sort",
+  "TableAggregate",
+  "TableProjection",
+  "TableSort",
   "CSVFileScan",
-  "Limit",
-  "Union",
+  "TableLimit",
   "LineChart",
   "BarChart",
-  "HashJoin",
+  "Join",
   "Histogram",
   "PythonUDFV2",
 ] as const;

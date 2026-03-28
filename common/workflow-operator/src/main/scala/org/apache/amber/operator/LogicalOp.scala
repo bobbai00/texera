@@ -27,7 +27,7 @@ import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.virtualidentity.{ExecutionIdentity, OperatorIdentity, WorkflowIdentity}
 import org.apache.amber.core.workflow.WorkflowContext.{DEFAULT_EXECUTION_ID, DEFAULT_WORKFLOW_ID}
 import org.apache.amber.core.workflow.{PhysicalOp, PhysicalPlan, PortIdentity}
-import org.apache.amber.operator.aggregate.AggregateOpDesc
+import org.apache.amber.operator.aggregate.{AggregateOpDesc, TableAggregateOpDesc}
 import org.apache.amber.operator.cartesianProduct.CartesianProductOpDesc
 import org.apache.amber.operator.dictionary.DictionaryMatcherOpDesc
 import org.apache.amber.operator.difference.DifferenceOpDesc
@@ -43,9 +43,10 @@ import org.apache.amber.operator.huggingFace.{
 }
 import org.apache.amber.operator.ifStatement.IfOpDesc
 import org.apache.amber.operator.intersect.IntersectOpDesc
+import org.apache.amber.operator.join.JoinOpDesc
 import org.apache.amber.operator.intervalJoin.IntervalJoinOpDesc
 import org.apache.amber.operator.keywordSearch.KeywordSearchOpDesc
-import org.apache.amber.operator.limit.LimitOpDesc
+import org.apache.amber.operator.limit.{LimitOpDesc, TableLimitOpDesc}
 import org.apache.amber.operator.machineLearning.Scorer.MachineLearningScorerOpDesc
 import org.apache.amber.operator.machineLearning.sklearnAdvanced.KNNTrainer.{
   SklearnAdvancedKNNClassifierTrainerOpDesc,
@@ -54,14 +55,14 @@ import org.apache.amber.operator.machineLearning.sklearnAdvanced.KNNTrainer.{
 import org.apache.amber.operator.machineLearning.sklearnAdvanced.SVCTrainer.SklearnAdvancedSVCTrainerOpDesc
 import org.apache.amber.operator.machineLearning.sklearnAdvanced.SVRTrainer.SklearnAdvancedSVRTrainerOpDesc
 import org.apache.amber.operator.metadata.{OPVersion, OperatorInfo, PropertyNameConstants}
-import org.apache.amber.operator.projection.ProjectionOpDesc
+import org.apache.amber.operator.projection.{ProjectionOpDesc, TableProjectionOpDesc}
 import org.apache.amber.operator.randomksampling.RandomKSamplingOpDesc
 import org.apache.amber.operator.regex.RegexOpDesc
 import org.apache.amber.operator.reservoirsampling.ReservoirSamplingOpDesc
 import org.apache.amber.operator.sklearn._
 import org.apache.amber.operator.sklearn.training._
 import org.apache.amber.operator.sleep.SleepOpDesc
-import org.apache.amber.operator.sort.{SortOpDesc, StableMergeSortOpDesc}
+import org.apache.amber.operator.sort.{SortOpDesc, StableMergeSortOpDesc, TableSortOpDesc}
 import org.apache.amber.operator.sortPartitions.SortPartitionsOpDesc
 import org.apache.amber.operator.source.apis.reddit.RedditSearchSourceOpDesc
 import org.apache.amber.operator.source.apis.twitter.v2.{
@@ -171,11 +172,13 @@ trait StateTransferFunc
     new Type(value = classOf[RegexOpDesc], name = "Regex"),
     new Type(value = classOf[SpecializedFilterOpDesc], name = "Filter"),
     new Type(value = classOf[ProjectionOpDesc], name = "Projection"),
+    new Type(value = classOf[TableProjectionOpDesc], name = "TableProjection"),
     new Type(value = classOf[StripChartOpDesc], name = "StripChart"),
     new Type(value = classOf[UnionOpDesc], name = "Union"),
     new Type(value = classOf[KeywordSearchOpDesc], name = "KeywordSearch"),
     new Type(value = classOf[SubstringSearchOpDesc], name = "SubstringSearch"),
     new Type(value = classOf[AggregateOpDesc], name = "Aggregate"),
+    new Type(value = classOf[TableAggregateOpDesc], name = "TableAggregate"),
     new Type(value = classOf[LineChartOpDesc], name = "LineChart"),
     new Type(value = classOf[WaterfallChartOpDesc], name = "WaterfallChart"),
     new Type(value = classOf[BarChartOpDesc], name = "BarChart"),
@@ -195,10 +198,12 @@ trait StateTransferFunc
     new Type(value = classOf[AsterixDBSourceOpDesc], name = "AsterixDBSource"),
     new Type(value = classOf[TypeCastingOpDesc], name = "TypeCasting"),
     new Type(value = classOf[LimitOpDesc], name = "Limit"),
+    new Type(value = classOf[TableLimitOpDesc], name = "TableLimit"),
     new Type(value = classOf[SleepOpDesc], name = "Sleep"),
     new Type(value = classOf[RandomKSamplingOpDesc], name = "RandomKSampling"),
     new Type(value = classOf[ReservoirSamplingOpDesc], name = "ReservoirSampling"),
     new Type(value = classOf[HashJoinOpDesc[String]], name = "HashJoin"),
+    new Type(value = classOf[JoinOpDesc], name = "Join"),
     new Type(value = classOf[DistinctOpDesc], name = "Distinct"),
     new Type(value = classOf[IntersectOpDesc], name = "Intersect"),
     new Type(value = classOf[SymmetricDifferenceOpDesc], name = "SymmetricDifference"),
@@ -247,6 +252,7 @@ trait StateTransferFunc
     new Type(value = classOf[ArrowSourceOpDesc], name = "ArrowSource"),
     new Type(value = classOf[MachineLearningScorerOpDesc], name = "Scorer"),
     new Type(value = classOf[SortOpDesc], name = "Sort"),
+    new Type(value = classOf[TableSortOpDesc], name = "TableSort"),
     new Type(value = classOf[StableMergeSortOpDesc], name = "StableMergeSort"),
     new Type(value = classOf[SklearnLogisticRegressionOpDesc], name = "SklearnLogisticRegression"),
     new Type(

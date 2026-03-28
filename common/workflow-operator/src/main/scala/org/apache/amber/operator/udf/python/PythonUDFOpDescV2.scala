@@ -22,7 +22,7 @@ package org.apache.amber.operator.udf.python
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.amber.core.executor.OpExecWithCode
-import org.apache.amber.core.tuple.{Attribute, Schema}
+import org.apache.amber.core.tuple.Schema
 import org.apache.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.amber.core.workflow._
 import org.apache.amber.operator.{
@@ -50,13 +50,6 @@ class PythonUDFOpDescV2 extends LogicalOp {
   @JsonSchemaTitle("Python function")
   @JsonPropertyDescription("input your code here")
   var code: String = ""
-
-  @JsonProperty(required = true)
-  @JsonSchemaTitle("Output column(s)")
-  @JsonPropertyDescription(
-    "The output schema must be specified and match the output schema of the code."
-  )
-  var outputColumns: List[Attribute] = List()
 
   /**
     * Parses the function definition to extract parameter names.
@@ -130,12 +123,7 @@ class PythonUDFOpDescV2 extends LogicalOp {
       }
 
     val propagateSchema = (_: Map[PortIdentity, Schema]) => {
-      val outputSchema = if (outputColumns != null && outputColumns.nonEmpty) {
-        Schema().add(outputColumns)
-      } else {
-        Schema()
-      }
-      Map(operatorInfo.outputPorts.head.id -> outputSchema)
+      Map(operatorInfo.outputPorts.head.id -> Schema())
     }
 
     val physicalOp = PhysicalOp
