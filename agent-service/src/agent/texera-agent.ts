@@ -927,7 +927,7 @@ export class TexeraAgent {
    * @param contextOperatorIds - Optional operator IDs to filter context.
    *                             If provided, relevant ReActSteps are prepended as text context.
    */
-  async sendMessage(userMessage: string, contextOperatorIds?: string[]): Promise<AgentMessageResult> {
+  async sendMessage(userMessage: string, contextOperatorIds?: string[], messageSource?: "chat" | "feedback"): Promise<AgentMessageResult> {
     const messageId = `msg-${this.agentId}-${++this.messageCounter}-${Date.now()}`;
     const startTime = Date.now();
     let stepIndex = 0;
@@ -1005,7 +1005,8 @@ export class TexeraAgent {
         beforeStepContent, // after = same (no change)
         undefined,
         undefined,
-        "user_request"
+        "user_request",
+        messageSource
       );
       this.agentActionManager.setActionMessageId(userAction.id, messageId);
       const startActionId = userAction.id;

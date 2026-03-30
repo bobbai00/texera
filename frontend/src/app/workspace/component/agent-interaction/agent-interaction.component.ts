@@ -131,7 +131,7 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
       if (actionToCheckout) {
         this.copilotManagerService.checkoutAction(agentId, actionToCheckout.id).subscribe({
           next: () => {
-            this.copilotManagerService.sendMessage(agentId, contextMessage);
+            this.copilotManagerService.sendMessage(agentId, contextMessage, [], "feedback");
             this.notificationService.success("Checked out version and sent message to agent");
             this.feedbackMessage = "";
             this.changeDetectorRef.detectChanges();
@@ -145,7 +145,7 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
       }
     }
 
-    this.copilotManagerService.sendMessage(agentId, contextMessage);
+    this.copilotManagerService.sendMessage(agentId, contextMessage, [], "feedback");
     this.notificationService.success("Message sent to agent successfully");
     this.feedbackMessage = "";
     this.changeDetectorRef.detectChanges();
@@ -236,7 +236,8 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
    */
   public getParsedColumnStats(): Array<{ column: string; dataType: string; stats: Array<{ key: string; value: string }> }> {
     if (!this.resultStatistics) return [];
-    const columns = this.getSampleColumns().filter(c => !c.startsWith("_") || !c.includes("row_index"));
+    const sampleCols = this.getSampleColumns().filter(c => !c.startsWith("_") || !c.includes("row_index"));
+    const columns = sampleCols.length > 0 ? sampleCols : Object.keys(this.resultStatistics);
     const result: Array<{ column: string; dataType: string; stats: Array<{ key: string; value: string }> }> = [];
     const excludedKeys = new Set(["count", "std", "p25", "median", "p75"]);
 
@@ -250,13 +251,15 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
         const statEntries: Array<{ key: string; value: string }> = [];
 
         for (const [key, value] of Object.entries(statistics)) {
-          if (value === null || value === undefined || excludedKeys.has(key)) continue;
+          if (value === undefined || excludedKeys.has(key)) continue;
           if (key === "top_10" && typeof value === "object") {
             const topEntries = Object.entries(value as Record<string, any>)
               .slice(0, 5)
               .map(([k, v]) => `${k}: ${v}`)
               .join(", ");
             statEntries.push({ key: "top values", value: topEntries });
+          } else if (value === null || String(value) === "null") {
+            statEntries.push({ key, value: "NaN" });
           } else if (typeof value !== "object") {
             const formatted =
               typeof value === "number" && !Number.isInteger(value)

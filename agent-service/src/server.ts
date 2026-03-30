@@ -98,7 +98,7 @@ async function createAgentInstance(
     model: openai.chat(effectiveModelType),
     modelType: effectiveModelType,
     agentId,
-    agentName: customName || `Agent-${agentId}`,
+    agentName: customName || "Bob",
   });
 
   // Initialize agent (loads operator metadata from backend and rebuilds tools)
@@ -657,6 +657,8 @@ interface WsMessage {
   content?: string;
   /** Optional operator IDs for context filtering - only messages that affected these operators will be included */
   contextOperatorIds?: string[];
+  /** Source of the message: "chat" (agent panel) or "feedback" (operator feedback panel) */
+  messageSource?: "chat" | "feedback";
   trace?: TraceContent;
 }
 
@@ -820,7 +822,7 @@ const app = new Elysia()
         broadcastToAgent(agentId, { type: "state", state: "GENERATING" });
 
         try {
-          const result = await agent.sendMessage(msg.content, msg.contextOperatorIds);
+          const result = await agent.sendMessage(msg.content, msg.contextOperatorIds, msg.messageSource);
 
           // Clear the callback
           agent.setStepCallback(null);

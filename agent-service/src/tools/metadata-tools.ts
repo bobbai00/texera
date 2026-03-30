@@ -67,7 +67,7 @@ export const ALLOWED_OPERATOR_TYPES = [
   "TableAggregate",
   "TableProjection",
   "TableSort",
-  "CSVFileScan",
+  "TableFileScan",
   "TableLimit",
   "LineChart",
   "BarChart",

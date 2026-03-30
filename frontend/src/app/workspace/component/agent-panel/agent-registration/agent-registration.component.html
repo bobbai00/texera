@@ -19,8 +19,8 @@
 
 <div class="agent-registration-container">
   <div class="registration-header">
-    <h3>Create New Agent</h3>
-    <p>Select a model type and create an AI agent to assist with your workflows</p>
+    <h3>Welcome to Bobflow!</h3>
+    <p>Select a model type and create an AI agent to assist with your data science tasks</p>
   </div>
 
   <div class="model-type-selection">
@@ -82,6 +82,7 @@
       [disabled]="!selectedModelType" />
   </div>
 
+  <!-- Baseline Mode - temporarily hidden
   <div class="baseline-mode-toggle">
     <label
       nz-checkbox
@@ -93,7 +94,9 @@
       When enabled, the agent can only use a single PythonUDF operator to read data and perform data operations.
     </p>
   </div>
+  -->
 
+  <!-- Import from Trace - temporarily hidden
   <div class="trace-import-section">
     <h4>Import from Trace (Optional)</h4>
     <nz-upload
@@ -127,6 +130,7 @@
       </button>
     </div>
   </div>
+  -->
 
   <div class="action-buttons">
     <button

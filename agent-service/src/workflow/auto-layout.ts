@@ -35,7 +35,7 @@ import type { WorkflowState } from "./workflow-state";
 const LAYOUT_CONFIG: dagre.GraphLabel = {
   nodesep: 100, // Vertical spacing between nodes at the same rank
   edgesep: 150, // Spacing for edge routing
-  ranksep: 330, // Horizontal spacing between ranks
+  ranksep: 100, // Horizontal spacing between ranks
   ranker: "tight-tree", // Layout algorithm for tight, tree-like structures
   rankdir: "LR", // Left-to-right direction
 };

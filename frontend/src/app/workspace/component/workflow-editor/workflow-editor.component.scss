@@ -140,11 +140,12 @@
   position: absolute;
   pointer-events: auto;
   z-index: 20;
+  transform: translateX(-50%);
 }
 
 .chat-popover {
   width: 400px;
-  max-height: 500px;
+  max-height: 400px;
   background: white;
   border-radius: 8px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
@@ -154,16 +155,16 @@
 
   &.chat-popover-visualization {
     width: 620px;
-    max-height: 600px;
+    max-height: 480px;
   }
 }
 
 .chat-popover-content {
   padding: 12px;
   overflow-y: auto;
-  max-height: 500px;
+  max-height: 400px;
 
   .chat-popover-visualization & {
-    max-height: 600px;
+    max-height: 480px;
   }
 }

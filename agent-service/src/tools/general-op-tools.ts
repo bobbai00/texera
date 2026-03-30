@@ -36,7 +36,7 @@ import {
   formatOperatorError,
 } from "./tools-utility";
 import { formatValidationErrors, formatCompactSchemaForError } from "./metadata-tools";
-import { validatePythonVariableName } from "./code-op-tools";
+
 import type { ToolContext } from "./workflow-tools";
 
 // ============================================================================
@@ -74,13 +74,13 @@ export function createAddOperatorTool(
 
 Examples:
 1. Add a source operator (no inputs):
-   { "operatorId": "load_csv", "operatorType": "CSVFileScan", "properties": { "fileName": "data.csv" }, "summary": "Load CSV data" }
+   { "operatorId": "op1", "operatorType": "TableFileScan", "properties": { "fileName": "data.csv" }, "summary": "Load CSV data" }
 
 2. Add an operator with input connections:
-   { "operatorId": "filtered", "operatorType": "Filter", "properties": { "predicates": [...] }, "inputOperatorIds": { "0": ["load_csv"] }, "summary": "Filter rows by condition" }`,
+   { "operatorId": "op2", "operatorType": "TableFilter", "properties": { "predicates": [...] }, "inputOperatorIds": { "0": ["op1"] }, "summary": "Filter rows by condition" }`,
     inputSchema: z.object({
       operatorId: z.string().describe(
-        "Unique operator name (valid Python variable). Other operators reference this as input parameter."
+        "Name of Operator. Use the format 'op' followed by an incrementing number starting from 1 (e.g., op1, op2, op3)."
       ),
       operatorType: z.string().describe("The operator type (e.g., 'DataProcessing', 'Aggregate')"),
       properties: z.record(z.any()).describe("Properties to set on the operator"),
@@ -92,7 +92,7 @@ Examples:
             'E.g. {"0": ["opA", "opB"], "1": ["opC"]} connects opA and opB to input port 0, opC to input port 1. ' +
             "Source operators that load files (e.g. CSVFileScan) should NOT have any input operators."
         ),
-      summary: z.string().describe("Brief summary of operator behavior"),
+      summary: z.string().describe("Very brief summary of operator behavior. Within 5 words"),
     }),
     execute: async (args: {
       operatorId: string;
@@ -127,10 +127,11 @@ Examples:
           return createErrorResult(`Metadata store not available for operator creation. ${inputInfo}`);
         }
 
-        // Validate operatorId is a valid Python variable name
-        const nameValidationError = validatePythonVariableName(args.operatorId);
-        if (nameValidationError) {
-          return createErrorResult(`Invalid operatorId: ${nameValidationError}. ${inputInfo}`);
+        // Validate operatorId follows the "op{number}" naming convention
+        if (!/^op\d+$/.test(args.operatorId)) {
+          return createErrorResult(
+            `Invalid operatorId: "${args.operatorId}". Must follow the format "op" followed by a number (e.g., op1, op2, op3). ${inputInfo}`
+          );
         }
 
         // Check for duplicate operatorId
@@ -246,7 +247,7 @@ Examples:
             "If provided, all existing incoming links are deleted and replaced with these. " +
             'E.g. {"0": ["opA", "opB"], "1": ["opC"]} connects opA and opB to input port 0, opC to input port 1.'
         ),
-      summary: z.string().describe("Brief summary of operator behavior"),
+      summary: z.string().describe("Very brief summary of operator behavior after your modification. Within 5 words"),
     }),
     execute: async (args: {
       operatorId: string;
@@ -279,6 +280,11 @@ Examples:
         // Update properties if provided
         if (args.properties) {
           workflowState.updateOperatorProperties(args.operatorId, args.properties);
+        }
+
+        // Update summary (customDisplayName) if provided
+        if (args.summary) {
+          workflowState.updateOperatorDisplayName(args.operatorId, args.summary);
         }
 
         // Replace incoming links if inputOperatorIds is provided

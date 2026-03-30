@@ -246,6 +246,10 @@ export class TexeraCopilotManagerService {
   // Step Badge Feature State
   // ============================================================================
 
+  /** Whether to show output port shapes (rows, columns) on operators */
+  private showPortShapesSubject = new BehaviorSubject<boolean>(true);
+  public showPortShapes$ = this.showPortShapesSubject.asObservable();
+
   /** Whether to show step badges on operators */
   private showStepBadgesSubject = new BehaviorSubject<boolean>(false);
   public showStepBadges$ = this.showStepBadgesSubject.asObservable();
@@ -401,6 +405,7 @@ export class TexeraCopilotManagerService {
       toolCallId: apiAction.toolCallId,
       parentId: apiAction.parentId,
       actionType: apiAction.actionType,
+      messageSource: apiAction.messageSource,
       operatorIds,
       linkIds,
       workflowMetadata: apiAction.workflowMetadata || {},
@@ -1067,7 +1072,7 @@ export class TexeraCopilotManagerService {
    * @param contextOperatorIds - Optional operator IDs for context filtering.
    *                             If provided, only messages that affected these operators will be included as context.
    */
-  public sendMessage(agentId: string, message: string, contextOperatorIds: string[] = []): void {
+  public sendMessage(agentId: string, message: string, contextOperatorIds: string[] = [], messageSource: "chat" | "feedback" = "chat"): void {
     const agent = this.agents.get(agentId);
     if (!agent) {
       this.notificationService.error(`Agent with ID ${agentId} not found`);
@@ -1080,10 +1085,11 @@ export class TexeraCopilotManagerService {
       return;
     }
 
-    // Send message via WebSocket with optional context operator IDs
-    const wsMessage: { type: string; content: string; contextOperatorIds?: string[] } = {
+    // Send message via WebSocket with optional context operator IDs and message source
+    const wsMessage: { type: string; content: string; contextOperatorIds?: string[]; messageSource?: string } = {
       type: "message",
       content: message,
+      messageSource,
     };
 
     // Only include contextOperatorIds if it's a non-empty array
@@ -1505,6 +1511,14 @@ export class TexeraCopilotManagerService {
    * Toggle whether step badges are shown on operators.
    * When enabled, updates the operator steps map from current steps.
    */
+  public togglePortShapes(show: boolean): void {
+    this.showPortShapesSubject.next(show);
+  }
+
+  public getShowPortShapes(): boolean {
+    return this.showPortShapesSubject.getValue();
+  }
+
   public toggleStepBadges(show: boolean): void {
     this.showStepBadgesSubject.next(show);
     if (show) {

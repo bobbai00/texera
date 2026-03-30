@@ -136,7 +136,8 @@ export class AgentActionManager {
     afterWorkflowContent: WorkflowContent,
     executorAgentId?: string,
     toolCallId?: string,
-    actionType?: AgentActionType
+    actionType?: AgentActionType,
+    messageSource?: "chat" | "feedback"
   ): AgentAction {
     const id = this.generateId();
 
@@ -151,6 +152,7 @@ export class AgentActionManager {
       toolCallId,
       parentId: this.head,
       actionType: actionType || "tool_call",
+      messageSource,
       workflowMetadata,
       beforeWorkflowContent,
       afterWorkflowContent,

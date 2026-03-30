@@ -45,7 +45,7 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
 
   public modelTypes: ModelType[] = [];
   public selectedModelType: string | null = null;
-  public customAgentName: string = "";
+  public customAgentName: string = "Bob";
   public isBaselineMode: boolean = false;
   public isLoadingModels: boolean = false;
   public hasLoadingError: boolean = false;

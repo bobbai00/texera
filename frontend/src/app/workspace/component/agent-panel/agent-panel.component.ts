@@ -163,25 +163,20 @@ export class AgentPanelComponent implements OnInit, OnDestroy, OnChanges {
     }
 
     // Set the new agent as active immediately
-    // The service's internal Map is already populated, so activation will work
     this.activeAgentId = agentId;
     this.copilotManagerService.activateAgent(agentId);
 
-    // Find the agent in the array to switch to the correct tab
-    // Note: Due to async getAllAgents(), the agent might not be in the array yet
-    const agentIndex = this.agents.findIndex(agent => agent.id === agentId);
-    if (agentIndex !== -1) {
-      this.selectedTabIndex = agentIndex + 1; // +1 because tab 0 is registration
-    } else {
-      // Agent not in array yet - subscribe to agentChange$ to switch tab when available
-      const subscription = this.copilotManagerService.agentChange$.pipe(untilDestroyed(this)).subscribe(() => {
-        const index = this.agents.findIndex(agent => agent.id === agentId);
-        if (index !== -1) {
-          this.selectedTabIndex = index + 1;
-          subscription.unsubscribe();
+    // Fetch the latest agent list and switch to the new agent's tab
+    this.copilotManagerService
+      .getAllAgents()
+      .pipe(untilDestroyed(this))
+      .subscribe(agents => {
+        this.agents = agents;
+        const agentIndex = agents.findIndex(agent => agent.id === agentId);
+        if (agentIndex !== -1) {
+          this.selectedTabIndex = agentIndex + 1; // +1 because tab 0 is registration
         }
       });
-    }
   }
 
   /**

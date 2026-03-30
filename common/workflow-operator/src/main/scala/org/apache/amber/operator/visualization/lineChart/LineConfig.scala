@@ -43,14 +43,12 @@ class LineConfig {
   @JsonProperty(value = "y", required = true)
   @JsonSchemaTitle("Y Value")
   @JsonPropertyDescription("value for y axis")
-  @AutofillAttributeName
   @NotNull(message = "Y Value cannot be empty")
   var yValue: String = ""
 
   @JsonProperty(value = "x", required = true)
   @JsonSchemaTitle("X Value")
   @JsonPropertyDescription("value for x axis")
-  @AutofillAttributeName
   @NotNull(message = "X Value cannot be empty")
   var xValue: String = ""
 

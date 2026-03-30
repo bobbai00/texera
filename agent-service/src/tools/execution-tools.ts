@@ -885,9 +885,14 @@ export async function executeOperatorAndFormat(
       : [];
     const columns = headers.length;
 
-    // Notify caller with the full OperatorInfo (structured data for versioned storage)
+    // Notify caller with OperatorInfo for all operators in the execution (not just the target)
+    // This ensures upstream operators (CSVFileScan, Join, etc.) also get their stats stored
     if (options.onResult) {
-      options.onResult(operatorId, opInfo);
+      for (const [opId, info] of Object.entries(result.operators)) {
+        if (info && !info.error) {
+          options.onResult(opId, info);
+        }
+      }
     }
 
     let dataString: string;

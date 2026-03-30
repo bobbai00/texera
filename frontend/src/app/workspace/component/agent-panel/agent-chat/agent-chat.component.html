@@ -130,11 +130,15 @@
       class="timeline-container"
       [class.collapsed]="treePanelCollapsed"
       [style.width.px]="treePanelCollapsed ? 24 : treePanelWidth">
-      <!-- Collapse toggle -->
+      <!-- Collapse toggle and controls -->
       <div class="tree-panel-header">
         <button class="tree-collapse-btn" (click)="treePanelCollapsed = !treePanelCollapsed"
           [title]="treePanelCollapsed ? 'Expand action tree' : 'Collapse action tree'">
           <i nz-icon [nzType]="treePanelCollapsed ? 'right' : 'left'" nzTheme="outline"></i>
+        </button>
+        <button *ngIf="!treePanelCollapsed" class="tree-toggle-btn" (click)="togglePortShapes()"
+          [title]="showPortShapes ? 'Hide output port shapes' : 'Show output port shapes'">
+          <i nz-icon [nzType]="showPortShapes ? 'eye' : 'eye-invisible'" nzTheme="outline"></i>
         </button>
       </div>
       <!-- Tree content (hidden when collapsed) -->
@@ -146,7 +150,7 @@
             <div
               *ngFor="let tn of timeAxisNodes"
               class="time-axis-node"
-              [style.top.px]="tn.y - 4">
+              [style.top.px]="tn.y - 8">
               <i *ngIf="tn.actionType === 'user_request'; else agentIcon"
                 nz-icon nzType="user" nzTheme="outline"
                 class="time-axis-icon user-icon"
@@ -175,8 +179,11 @@
             [class.is-head]="node.isHead"
             [class.on-path]="node.isOnHeadPath"
             [class.off-path]="!node.isOnHeadPath"
-            [class.user-request]="node.actionType === 'user_request'"
+            [class.user-request]="node.actionType === 'user_request' && node.messageSource !== 'feedback'"
+            [class.user-feedback]="node.actionType === 'user_request' && node.messageSource === 'feedback'"
             [class.agent-response]="node.actionType === 'agent_response'"
+            [class.initial]="node.actionType === 'initial'"
+            [class.action-delete]="node.actionLabel === 'Delete'"
             [style.left.px]="node.x - node.width / 2"
             [style.top.px]="node.y - 12"
             [style.width.px]="node.width"
@@ -184,10 +191,12 @@
             (mouseenter)="onTimelineNodeMouseEnter(node)"
             (mouseleave)="onTimelineNodeMouseLeave()">
             <span class="node-text">
-              <ng-container *ngIf="node.actionType === 'user_request' || node.actionType === 'agent_response'; else toolCallNode">
-                {{ node.summary }}
+              <ng-container *ngIf="node.actionType === 'user_request'">{{ node.messageSource === 'feedback' ? 'Feedback' : 'Input Task' }}</ng-container>
+              <ng-container *ngIf="node.actionType === 'agent_response'">Task Done</ng-container>
+              <ng-container *ngIf="node.actionType === 'initial'">Ready</ng-container>
+              <ng-container *ngIf="node.actionType !== 'user_request' && node.actionType !== 'agent_response' && node.actionType !== 'initial'">
+                {{ node.actionLabel }} {{ node.operatorId }}
               </ng-container>
-              <ng-template #toolCallNode><b>{{ node.actionLabel }}</b> {{ node.operatorId }}</ng-template>
             </span>
           </div>
         </div>
@@ -337,7 +346,7 @@
             #messageInput
             nz-input
             [(ngModel)]="currentMessage"
-            placeholder="Ask me anything about workflows..."
+            placeholder="Ask me anything about your data science tasks..."
             [nzAutosize]="{ minRows: 1, maxRows: 4 }"
             (keydown.enter)="onEnterPress($any($event))"
             [disabled]="!canSendMessage()"></textarea>

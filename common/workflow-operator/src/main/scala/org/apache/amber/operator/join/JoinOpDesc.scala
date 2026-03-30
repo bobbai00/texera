@@ -49,13 +49,11 @@ class JoinOpDesc extends LogicalOp {
   @JsonProperty(required = true)
   @JsonSchemaTitle("Left Input Attribute")
   @JsonPropertyDescription("attribute to be joined on the Left Input")
-  @AutofillAttributeName
   var buildAttributeName: String = _
 
   @JsonProperty(required = true)
   @JsonSchemaTitle("Right Input Attribute")
   @JsonPropertyDescription("attribute to be joined on the Right Input")
-  @AutofillAttributeNameOnPort1
   var probeAttributeName: String = _
 
   @JsonProperty(required = true, defaultValue = "inner")

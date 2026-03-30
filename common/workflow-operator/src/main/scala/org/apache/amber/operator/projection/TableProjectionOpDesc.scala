@@ -38,9 +38,11 @@ class TableProjectionOpDesc extends LogicalOp {
   var attributes: List[AttributeUnit] = List()
 
   private def generatePythonCode(): String = {
-    val columns = attributes.map { attr =>
-      s"""("${attr.getOriginalAttribute}", "${attr.getAlias}")"""
-    }.mkString(", ")
+    val columns = attributes
+      .map { attr =>
+        s"""("${attr.getOriginalAttribute}", "${attr.getAlias}")"""
+      }
+      .mkString(", ")
 
     s"""from pytexera import *
        |import pandas as pd
@@ -50,7 +52,7 @@ class TableProjectionOpDesc extends LogicalOp {
        |
        |    def process_tables(self) -> Iterator[Optional[TableLike]]:
        |        table = self.input_1
-       |        is_drop = ${ if (isDrop) "True" else "False" }
+       |        is_drop = ${if (isDrop) "True" else "False"}
        |        columns = [$columns]
        |        if is_drop:
        |            drop_cols = [orig for orig, alias in columns]

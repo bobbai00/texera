@@ -216,6 +216,7 @@ export class JointUIService {
 
   /** Stores original port label text before expansion, keyed by "operatorId::portId" */
   private savedPortLabels = new Map<string, string>();
+  private savedDisplayNames = new Map<string, string>();
 
   constructor(private operatorMetadataService: OperatorMetadataService) {
     // initialize the operator information
@@ -795,7 +796,7 @@ export class JointUIService {
         cursor: "pointer",
         event: "element:name:pointerclick",
         textWrap: {
-          width: 250,
+          width: 330,
           height: 80,
         },
       },
@@ -1054,103 +1055,131 @@ export class JointUIService {
   /**
    * Extract key properties from an operator for display in the expanded view.
    */
-  public static extractOperatorProperties(operator: OperatorPredicate): Array<{ label: string; value: string }> {
+  /**
+   * Derive a clean, short type name from the raw operatorType string.
+   * Strips "Table", "CSV", "Hash" prefixes and "Source", "V2", "File" suffixes.
+   */
+  private static getCleanTypeName(operatorType: string): string {
+    let name = operatorType;
+    name = name.replace(/^Table/, "");
+    name = name.replace(/^CSV/, "");
+    name = name.replace(/^Hash/, "");
+    name = name.replace(/File/g, "");
+    name = name.replace(/Source$/, "");
+    name = name.replace(/V2$/, "");
+    return name || operatorType;
+  }
+
+  public static extractOperatorProperties(
+    operator: OperatorPredicate,
+    inputLinks?: OperatorLink[]
+  ): Array<{ label: string; value: string }> {
     const props = operator.operatorProperties as Record<string, any>;
     const type = operator.operatorType;
+
+    // UDF operators: show opid: customDisplayName
+    const udfTypes = [
+      "PythonUDFV2",
+      "PythonUDFSourceV2",
+      "DualInputPortsPythonUDFV2",
+      "PythonTableUDF",
+      "DataProcessing",
+      "DataLoading",
+    ];
+    if (udfTypes.includes(type)) {
+      return [{ label: operator.operatorID, value: operator.customDisplayName || "UDF" }];
+    }
+
+    // Header property: opid: cleanTypeName
+    const headerProp = { label: operator.operatorID, value: JointUIService.getCleanTypeName(type) };
+
+    // Type-specific properties
+    let specificProps: Array<{ label: string; value: string }> = [];
 
     switch (type) {
       case "Projection":
       case "TableProjection": {
-        const items: Array<{ label: string; value: string }> = [];
-        items.push({ label: "Mode", value: props["isDrop"] ? "Drop" : "Keep" });
+        specificProps.push({ label: "mode", value: props["isDrop"] ? "Drop" : "Keep" });
         const attrs = props["attributes"] as Array<{ originalAttribute?: string; alias?: string }> | undefined;
         if (attrs && attrs.length > 0) {
           const names = attrs
             .map(a => (a.alias && a.alias !== a.originalAttribute ? `${a.originalAttribute}→${a.alias}` : a.originalAttribute || ""))
             .filter(Boolean);
-          items.push({ label: "Attributes", value: names.join(", ") || "(none)" });
+          specificProps.push({ label: "attributes", value: names.join(", ") || "(none)" });
         }
-        return items;
+        break;
       }
       case "Sort":
       case "TableSort": {
         const attrs = props["attributes"] as Array<{ attribute?: string; sortPreference?: string }> | undefined;
         if (attrs && attrs.length > 0) {
           const spec = attrs.map(a => `${a.attribute || ""} ${a.sortPreference === "DESC" ? "↓" : "↑"}`).join(", ");
-          return [{ label: "Sort By", value: spec }];
+          specificProps.push({ label: "sort by", value: spec });
         }
-        return [];
+        break;
       }
       case "Limit":
       case "TableLimit":
-        return props["limit"] !== undefined ? [{ label: "Limit", value: String(props["limit"]) }] : [];
+        if (props["limit"] !== undefined) {
+          specificProps.push({ label: "limit", value: String(props["limit"]) });
+        }
+        break;
       case "CSVScanSource":
+      case "TableFileScan":
       case "CSVFileScan": {
-        const items: Array<{ label: string; value: string }> = [];
         if (props["fileName"]) {
           const parts = String(props["fileName"]).split("/");
-          items.push({ label: "File", value: parts[parts.length - 1] || props["fileName"] });
+          specificProps.push({ label: "file", value: parts[parts.length - 1] || props["fileName"] });
         }
-        if (props["customDelimiter"]) {
-          const d = props["customDelimiter"];
-          items.push({ label: "Delimiter", value: d === "," ? "comma" : d === "\t" ? "tab" : `"${d}"` });
-        }
-        return items;
+        break;
       }
       case "HashJoin":
       case "Join": {
-        const items: Array<{ label: string; value: string }> = [];
-        if (props["buildAttributeName"] && props["probeAttributeName"]) {
-          items.push({ label: "Join", value: `${props["buildAttributeName"]} = ${props["probeAttributeName"]}` });
+        const buildAttr = props["buildAttributeName"];
+        if (buildAttr) {
+          const buildOpId = inputLinks?.find(l => l.target.portID === "input-0")?.source.operatorID;
+          specificProps.push({ label: "key", value: buildOpId ? `${buildOpId}.${buildAttr}` : String(buildAttr) });
         }
-        if (props["joinType"]) {
-          items.push({ label: "Type", value: String(props["joinType"]).toLowerCase().replace(/_/g, " ") });
-        }
-        return items;
+        break;
       }
       case "Aggregate":
       case "TableAggregate": {
-        const items: Array<{ label: string; value: string }> = [];
         const groupByKeys = props["groupByKeys"] as string[] | undefined;
         if (groupByKeys && groupByKeys.length > 0) {
-          items.push({ label: "Group By", value: groupByKeys.join(", ") });
+          specificProps.push({ label: "group by", value: groupByKeys.join(", ") });
         }
         const aggs = props["aggregations"] as Array<{
           aggFunction?: string;
           attribute?: string;
-          "result attribute"?: string;
         }> | undefined;
         if (aggs && aggs.length > 0) {
           for (const a of aggs) {
             const fn = a.aggFunction || "?";
             const attr = a.attribute || "?";
-            const resultAttr = a["result attribute"];
-            const desc = resultAttr ? `${fn}(${attr}) → ${resultAttr}` : `${fn}(${attr})`;
-            items.push({ label: fn, value: desc });
+            specificProps.push({ label: fn.toLowerCase(), value: `${fn}(${attr})` });
           }
         }
-        return items;
+        break;
       }
-      case "PythonUDFV2":
-      case "PythonUDFSourceV2":
-      case "DualInputPortsPythonUDFV2":
-      case "PythonTableUDF":
-      case "DataProcessing":
-      case "DataLoading":
-        // Only show icon + type name, no code display
-        return [];
+      case "BarChart": {
+        if (props["fields"]) {
+          specificProps.push({ label: "fields", value: String(props["fields"]) });
+        }
+        break;
+      }
       default: {
-        const items: Array<{ label: string; value: string }> = [];
         for (const key of Object.keys(props).slice(0, 3)) {
           const val = props[key];
           if (val !== undefined && val !== null && typeof val !== "object") {
-            const label = key.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase()).trim();
-            items.push({ label, value: String(val) });
+            const label = key.replace(/([A-Z])/g, " $1").trim();
+            specificProps.push({ label, value: String(val) });
           }
         }
-        return items;
+        break;
       }
     }
+
+    return [headerProp, ...specificProps];
   }
 
   /**
@@ -1185,7 +1214,9 @@ export class JointUIService {
       outputColumns?: number;
       error?: string;
     },
-    properties?: Array<{ label: string; value: string }>
+    properties?: Array<{ label: string; value: string }>,
+    showPortShapes: boolean = true,
+    operatorType?: string
   ): void {
     const element = jointPaper.getModelById(operatorID) as joint.shapes.devs.Model;
     if (!element) return;
@@ -1198,42 +1229,13 @@ export class JointUIService {
     // Remove any previously injected result elements
     groupEl.querySelectorAll(".result-info").forEach((el: Element) => el.remove());
 
-    const fontSize = 10;
     const fontFamily = "'Inter', -apple-system, sans-serif";
     const textColor = "#595959";
     const headerColor = "#262626";
-    const padding = 8;
-    const lineH = 13;
-
-    // --- Helper to add SVG text, returns the element for measurement ---
-    const addText = (
-      x: number,
-      y: number,
-      parts: Array<{ text: string; fill: string; bold?: boolean }>,
-      anchor?: string
-    ): SVGTextElement => {
-      const textEl = document.createElementNS(svgNs, "text");
-      textEl.classList.add("result-info");
-      textEl.setAttribute("x", String(x));
-      textEl.setAttribute("y", String(y));
-      textEl.setAttribute("font-size", String(fontSize));
-      textEl.setAttribute("font-family", fontFamily);
-      if (anchor) textEl.setAttribute("text-anchor", anchor);
-      for (const part of parts) {
-        const tspan = document.createElementNS(svgNs, "tspan");
-        tspan.setAttribute("fill", part.fill);
-        if (part.bold) tspan.setAttribute("font-weight", "600");
-        tspan.textContent = part.text;
-        textEl.appendChild(tspan);
-      }
-      groupEl.appendChild(textEl);
-      return textEl;
-    };
 
     // --- Write in/out info to port labels when agent summary is available ---
-    if (summary) {
+    if (summary && showPortShapes) {
       const allPorts = element.getPorts();
-      const inPorts = allPorts.filter(p => p.group === "in");
       const outPorts = allPorts.filter(p => p.group === "out");
 
       // Only show shape on output ports (input shape is symmetric — same as upstream output)
@@ -1255,9 +1257,18 @@ export class JointUIService {
     // Icon size: larger when no properties to display
     const iconSize = hasProps ? 36 : 48;
     const pad = 6; // inner padding
-    const propFontSize = 12; // larger text for key properties
-    const propCharW = 6.2; // approx character width at 12px font
-    const propLineH = 16; // line height for 12px font
+    const propFontSize = 15; // text for key properties
+    const propCharW = 7.8; // approx character width at 15px font
+    const propLineH = 20; // line height for 15px font
+
+    let ew: number;
+    let eh: number;
+    let iconTopY: number;
+    let iconRefX: number | string;
+    let iconXAlignment: string;
+    let contentPropX = 0;
+    let contentWidth = 0;
+    let contentHeight = 0;
 
     if (hasProps) {
       // Two-column layout: icon left, properties right
@@ -1273,39 +1284,44 @@ export class JointUIService {
         rightContentWidth = Math.max(rightContentWidth, summary.error.length * propCharW);
       }
 
+      const udfTypes = ["PythonUDFV2", "PythonUDFSourceV2", "DualInputPortsPythonUDFV2", "PythonTableUDF", "DataProcessing", "DataLoading"];
+      const isUdf = operatorType ? udfTypes.includes(operatorType) : false;
       const minWidth = JointUIService.DEFAULT_OPERATOR_WIDTH;
-      const maxWidth = 500;
+      const maxWidth = isUdf ? 180 : 350;
       const maxHeight = 300;
-      var ew = Math.min(maxWidth, Math.max(minWidth, propX + rightContentWidth + pad));
+      ew = isUdf ? 200 : Math.min(maxWidth, Math.max(minWidth, propX + rightContentWidth + pad));
 
-      // Compute box height
+      // Content area width for text wrapping estimation
+      const availTextWidth = ew - propX - pad + 2;
+
+      // Compute box height — estimate wrapped lines per property
       let propBottomY = pad;
-      for (const _prop of regularProps) {
-        propBottomY += propLineH;
+      for (const prop of regularProps) {
+        const textLen = (prop.label.length + 2 + prop.value.length) * propCharW;
+        const lines = Math.max(1, Math.ceil(textLen / availTextWidth));
+        propBottomY += propLineH * lines;
       }
       if (summary?.error) {
-        propBottomY += propLineH;
+        const errLines = Math.max(1, Math.ceil((summary.error.length * propCharW) / availTextWidth));
+        propBottomY += propLineH * errLines;
       }
       propBottomY += pad;
 
       const minH = iconSize + pad * 2;
-      var eh = Math.min(maxHeight, Math.max(propBottomY, minH));
-      var iconTopY = (eh - iconSize) / 2 + iconSize / 2;
-      var iconRefX: number | string = pad;
-      var iconXAlignment = "none";
-      var contentPropX = propX;
-      var contentWidth = ew - propX - pad + 2;
-      var contentHeight = eh - pad * 2;
+      eh = Math.min(maxHeight, Math.max(propBottomY, minH));
+      iconTopY = (eh - iconSize) / 2;
+      iconRefX = pad;
+      iconXAlignment = "none";
+      contentPropX = propX;
+      contentWidth = availTextWidth;
+      contentHeight = eh - pad * 2;
     } else {
       // Centered icon layout for operators with no properties (e.g. Python UDF)
-      var ew = iconSize + pad * 2;
-      var eh = iconSize + pad * 2;
-      var iconTopY = 0.5;
-      var iconRefX: number | string = 0.5;
-      var iconXAlignment = "middle";
-      var contentPropX = 0;
-      var contentWidth = 0;
-      var contentHeight = 0;
+      ew = iconSize + pad * 2;
+      eh = iconSize + pad * 2;
+      iconTopY = 0.5;
+      iconRefX = 0.5;
+      iconXAlignment = "middle";
     }
 
     // Thin scrollbar CSS shared by code and property foreignObjects
@@ -1340,12 +1356,12 @@ export class JointUIService {
 
       for (const prop of regularProps) {
         const row = document.createElement("div");
-        row.style.cssText = "white-space: nowrap;";
+        row.style.cssText = "word-wrap: break-word;";
         const labelSpan = document.createElement("span");
-        labelSpan.style.color = textColor;
+        labelSpan.style.cssText = `color: ${headerColor}; font-weight: 600;`;
         labelSpan.textContent = `${prop.label}: `;
         const valueSpan = document.createElement("span");
-        valueSpan.style.cssText = `color: ${headerColor}; font-weight: 600;`;
+        valueSpan.style.cssText = `color: ${textColor}; font-weight: 400;`;
         valueSpan.textContent = prop.value;
         row.appendChild(labelSpan);
         row.appendChild(valueSpan);
@@ -1354,13 +1370,18 @@ export class JointUIService {
 
       if (summary?.error) {
         const errDiv = document.createElement("div");
-        errDiv.style.cssText = "color: #ff4d4f; white-space: nowrap;";
+        errDiv.style.cssText = "color: #ff4d4f; word-wrap: break-word;";
         errDiv.textContent = summary.error;
         div.appendChild(errDiv);
       }
 
       fo.appendChild(div);
       groupEl.appendChild(fo);
+    }
+
+    // --- Save original display name before modifying ---
+    if (!this.savedDisplayNames.has(operatorID)) {
+      this.savedDisplayNames.set(operatorID, element.attr(`.${operatorNameClass}/text`) || "");
     }
 
     // --- Resize element ---
@@ -1391,15 +1412,8 @@ export class JointUIService {
         visibility: "hidden",
       },
       ".texera-operator-name": {
-        text: `${element.attr(`.${operatorFriendlyNameClass}/text`) || operatorID}: ${element.attr(`.${operatorNameClass}/text`) || ""}`,
-        "ref-x": 0.5,
-        "ref-y": eh + 8,
-        "x-alignment": "middle",
-        "y-alignment": "top",
-        textWrap: {
-          width: Math.max(200, ew),
-          height: 80,
-        },
+        text: "",
+        visibility: "hidden",
       },
       [`.${operatorStateClass}`]: { visibility: "hidden" },
     });
@@ -1433,6 +1447,8 @@ export class JointUIService {
         height: 35,
         "ref-x": 0.5,
         "ref-y": 0.5,
+        "x-alignment": "middle",
+        "y-alignment": "middle",
       },
       ".texera-operator-friendly-name": {
         // Restore operator ID text
@@ -1456,6 +1472,8 @@ export class JointUIService {
         "font-size": "9px",
       },
       ".texera-operator-name": {
+        text: this.savedDisplayNames.get(operatorID) ?? element.attr(`.${operatorNameClass}/text`) ?? "",
+        visibility: "visible",
         "ref-x": 0.5,
         "ref-y": dh + 8,
         "x-alignment": "middle",
@@ -1463,6 +1481,9 @@ export class JointUIService {
       },
       [`.${operatorStateClass}`]: { visibility: "hidden" },
     });
+
+    // Clean up saved display name
+    this.savedDisplayNames.delete(operatorID);
 
     // Restore port labels from saved state
     const allPorts = element.getPorts();

@@ -62,6 +62,8 @@ export interface TimelineNode {
   summary: string;
   /** Action type: "tool_call", "user_request", or "agent_response" */
   actionType?: string;
+  /** Message source: "chat" or "feedback" (only for user_request) */
+  messageSource?: string;
   /** Layout position computed by dagre (x, y in pixels) */
   x: number;
   y: number;
@@ -129,6 +131,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   public treeHeight: number = 100;
   public treePanelWidth: number = 260;
   public treePanelCollapsed: boolean = false;
+  public showPortShapes: boolean = true;
 
   // Agent actions for this agent (from copilot manager)
   public agentActions: AgentAction[] = [];
@@ -876,7 +879,8 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       if (paper) {
         for (const opId of this.hoveredDiffOperatorIds) {
           try {
-            const operator = this.workflowActionService.getTexeraGraph().getOperator(opId);
+            const graph = this.workflowActionService.getTexeraGraph();
+            const operator = graph.getOperator(opId);
             if (operator) {
               this.jointUIService.applyExpandedLayout(paper, opId, operator);
             }
@@ -957,24 +961,11 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
 
     // Constants for layout
     const nodeHeight = 24;
-    const charWidth = 5.5;
-    const nodePadding = 20;
-    const minNodeWidth = 60;
-    const maxNodeWidth = 200;
+    const uniformNodeWidth = 90; // Fixed width for all nodes
     const constantRowSpacing = 40; // Constant distance between each row
     const marginX = 16;
     const marginY = 16;
-    const timeAxisWidth = 60; // Width reserved for the time axis on the left
-
-    // Compute per-node width based on text length
-    const nodeWidths = new Map<string, number>();
-    for (const action of allActions) {
-      const label = this.getActionLabel(action);
-      const opId = this.getActionOperatorId(action);
-      const textLen = (label + " " + opId).length;
-      const w = Math.max(minNodeWidth, Math.min(maxNodeWidth, textLen * charWidth + nodePadding));
-      nodeWidths.set(action.id, w);
-    }
+    const timeAxisWidth = 72; // Width reserved for the time axis on the left
 
     // Use dagre for horizontal positioning (tree structure), but override Y with constant spacing
     const g = new dagre.graphlib.Graph();
@@ -988,7 +979,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     g.setDefaultEdgeLabel(() => ({}));
 
     for (const action of allActions) {
-      g.setNode(action.id, { width: nodeWidths.get(action.id)!, height: nodeHeight });
+      g.setNode(action.id, { width: uniformNodeWidth, height: nodeHeight });
     }
 
     const actionIds = new Set(allActions.map(a => a.id));
@@ -1022,9 +1013,10 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
         operatorId: this.getActionOperatorId(action),
         summary: action.summary,
         actionType: action.actionType,
+        messageSource: action.messageSource,
         x: pos.x,
         y: pos.y,
-        width: nodeWidths.get(action.id) ?? minNodeWidth,
+        width: uniformNodeWidth,
       };
     });
 
@@ -1104,6 +1096,11 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   }
 
   /** Start resizing the tree panel by dragging the handle. */
+  public togglePortShapes(): void {
+    this.showPortShapes = !this.showPortShapes;
+    this.copilotManagerService.togglePortShapes(this.showPortShapes);
+  }
+
   public onResizeStart(event: MouseEvent): void {
     event.preventDefault();
     const startX = event.clientX;

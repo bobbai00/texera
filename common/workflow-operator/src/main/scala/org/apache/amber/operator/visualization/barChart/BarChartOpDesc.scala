@@ -45,21 +45,18 @@ class BarChartOpDesc extends PythonOperatorDescriptor {
   @JsonProperty(value = "value", required = true)
   @JsonSchemaTitle("Value Column")
   @JsonPropertyDescription("The value associated with each category")
-  @AutofillAttributeName
   @NotNull(message = "Value column cannot be empty")
   var value: String = ""
 
   @JsonProperty(required = true)
   @JsonSchemaTitle("Fields")
   @JsonPropertyDescription("Visualize categorical data in a Bar Chart")
-  @AutofillAttributeName
   @NotNull(message = "Fields cannot be empty")
   var fields: String = ""
 
   @JsonProperty(defaultValue = "No Selection", required = false)
   @JsonSchemaTitle("Category Column")
   @JsonPropertyDescription("Optional - Select a column to Color Code the Categories")
-  @AutofillAttributeName
   var categoryColumn: String = ""
 
   @JsonProperty(defaultValue = "false")
@@ -70,7 +67,6 @@ class BarChartOpDesc extends PythonOperatorDescriptor {
   @JsonProperty(required = false)
   @JsonSchemaTitle("Pattern")
   @JsonPropertyDescription("Add texture to the chart based on an attribute")
-  @AutofillAttributeName
   var pattern: String = ""
 
   override def getOutputSchemas(

@@ -76,6 +76,8 @@ export interface AgentAction {
   parentId?: string;
   /** Distinguishes tool-call actions from user/agent message actions */
   actionType?: AgentActionType;
+  /** Source of the user message: "chat" (agent panel) or "feedback" (operator feedback panel) */
+  messageSource?: "chat" | "feedback";
   workflowMetadata?: {
     wid?: number;
     name?: string;

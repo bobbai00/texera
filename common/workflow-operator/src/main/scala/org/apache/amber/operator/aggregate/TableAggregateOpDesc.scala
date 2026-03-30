@@ -45,17 +45,19 @@ class TableAggregateOpDesc extends LogicalOp {
   private def generatePythonCode(): String = {
     if (groupByKeys == null) groupByKeys = List()
 
-    val aggMap = aggregations.map { agg =>
-      val func = agg.aggFunction match {
-        case AggregationFunction.SUM     => "\"sum\""
-        case AggregationFunction.COUNT   => "\"count\""
-        case AggregationFunction.AVERAGE => "\"mean\""
-        case AggregationFunction.MIN     => "\"min\""
-        case AggregationFunction.MAX     => "\"max\""
-        case AggregationFunction.CONCAT  => "lambda x: \",\".join(x.astype(str))"
+    val aggMap = aggregations
+      .map { agg =>
+        val func = agg.aggFunction match {
+          case AggregationFunction.SUM     => "\"sum\""
+          case AggregationFunction.COUNT   => "\"count\""
+          case AggregationFunction.AVERAGE => "\"mean\""
+          case AggregationFunction.MIN     => "\"min\""
+          case AggregationFunction.MAX     => "\"max\""
+          case AggregationFunction.CONCAT  => "lambda x: \",\".join(x.astype(str))"
+        }
+        s"""("${agg.attribute}", ${func}, "${agg.resultAttribute}")"""
       }
-      s"""("${agg.attribute}", ${func}, "${agg.resultAttribute}")"""
-    }.mkString(", ")
+      .mkString(", ")
 
     val groupByList = groupByKeys.map(k => s""""$k"""").mkString(", ")
 

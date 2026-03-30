@@ -27,7 +27,6 @@ public class SortCriteriaUnit {
 
     @JsonProperty(value = "attribute", required = true)
     @JsonPropertyDescription("Attribute name to sort by")
-    @AutofillAttributeName
     public String attributeName;
 
     @JsonProperty(value = "sortPreference", required = true)

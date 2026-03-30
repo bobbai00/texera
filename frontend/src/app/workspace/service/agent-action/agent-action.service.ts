@@ -64,6 +64,7 @@ export interface AgentAction {
   toolCallId?: string; // The tool call ID that produced this action
   parentId?: string; // Parent action ID in the action tree
   actionType?: string; // "tool_call" | "user_request" | "agent_response"
+  messageSource?: string; // "chat" | "feedback"
   operatorIds: string[]; // For highlighting
   linkIds: string[]; // For highlighting
   workflowMetadata: WorkflowMetadata; // Workflow metadata (wid, name, etc.)

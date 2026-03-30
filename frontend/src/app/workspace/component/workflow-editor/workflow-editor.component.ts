@@ -1567,16 +1567,26 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
           this.applyExpandedLayoutToAll();
         }
       });
+
+    // Re-render when port shapes toggle changes
+    this.copilotManagerService.showPortShapes$
+      .pipe(untilDestroyed(this))
+      .subscribe(() => {
+        this.applyExpandedLayoutToAll();
+      });
   }
 
   /**
    * Apply expanded layout to all operators on the canvas.
    */
   private applyExpandedLayoutToAll(): void {
-    for (const op of this.workflowActionService.getTexeraGraph().getAllOperators()) {
+    const graph = this.workflowActionService.getTexeraGraph();
+    const showPortShapes = this.copilotManagerService.getShowPortShapes();
+    for (const op of graph.getAllOperators()) {
       const summary = this.currentResultSummaries.get(op.operatorID);
-      const props = JointUIService.extractOperatorProperties(op);
-      this.jointUIService.expandOperatorWithResults(this.paper, op.operatorID, summary, props);
+      const inputLinks = graph.getInputLinksByOperatorId(op.operatorID);
+      const props = JointUIService.extractOperatorProperties(op, inputLinks);
+      this.jointUIService.expandOperatorWithResults(this.paper, op.operatorID, summary, props, showPortShapes, op.operatorType);
     }
   }
 
@@ -2097,9 +2107,10 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     const scale = this.paper.scale();
     const translate = this.paper.translate();
 
-    // Position popover to the right of the operator (where the chat button is at top-right)
-    const screenX = (bbox.x + bbox.width) * scale.sx + translate.tx + 30;
-    const screenY = bbox.y * scale.sy + translate.ty - 20;
+    // Position popover below the operator, centered horizontally
+    // Add extra offset for the display name text below the operator box
+    const screenX = (bbox.x + bbox.width / 2) * scale.sx + translate.tx;
+    const screenY = (bbox.y + bbox.height) * scale.sy + translate.ty + 40;
 
     return { x: screenX, y: screenY };
   }
