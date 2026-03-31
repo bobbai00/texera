@@ -344,8 +344,6 @@ export class JointUIService {
     const workerCount = statistics.numWorkers ?? 1;
     element.attr(`.${operatorWorkerCountClass}/text`, "#workers: " + String(workerCount));
 
-    // Port labels are managed by agent shape info only — skip execution metrics
-    this.changeOperatorState(jointPaper, operatorID, statistics.operatorState);
   }
   public foldOperatorDetails(jointPaper: joint.dia.Paper, operatorID: string): void {
     jointPaper.getModelById(operatorID).attr({
@@ -371,11 +369,6 @@ export class JointUIService {
       ".remove-input-port-button": { visibility: "visible" },
       ".remove-output-port-button": { visibility: "visible" },
     });
-
-    const element = jointPaper.getModelById(operatorID) as joint.shapes.devs.Model;
-    if (!element) {
-      return;
-    }
   }
 
   public changeOperatorState(jointPaper: joint.dia.Paper, operatorID: string, operatorState: OperatorState): void {

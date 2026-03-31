@@ -103,10 +103,6 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
       });
   }
 
-  public onAgentSelectionChange(): void {
-    // No additional logic needed after simplification
-  }
-
   public isSelectedAgentConnected(): boolean {
     if (!this.selectedAgentId) return false;
     return this.copilotManagerService.isAgentActivelyConnected(this.selectedAgentId);
@@ -226,10 +222,6 @@ export class AgentInteractionComponent implements OnInit, OnChanges {
     return col;
   }
 
-  /**
-   * Build display rows with ellipsis indicators for truncated (front+end) records.
-   * Returns objects with { record, isEllipsis } where isEllipsis rows indicate a gap.
-   */
   /**
    * Parse resultStatistics into displayable column stats.
    * Each entry in resultStatistics is a JSON string with { data_type, statistics: { ... } }.

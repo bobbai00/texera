@@ -27,9 +27,6 @@ import { WorkflowContent } from "../../../../common/type/workflow";
 import { Subject, takeUntil } from "rxjs";
 import { NzUploadFile } from "ng-zorro-antd/upload";
 
-/**
- * Trace content structure (exported from agent conversation)
- */
 interface TraceContent {
   response: string;
   messages: any[];
@@ -46,11 +43,9 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
   public modelTypes: ModelType[] = [];
   public selectedModelType: string | null = null;
   public customAgentName: string = "Bob";
-  public isBaselineMode: boolean = false;
   public isLoadingModels: boolean = false;
   public hasLoadingError: boolean = false;
 
-  // Trace import properties
   public traceFileList: NzUploadFile[] = [];
   public traceContent: TraceContent | null = null;
 
@@ -101,29 +96,18 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
   public isCreating: boolean = false;
 
   /**
-   * Handle file upload before it starts.
-   * Parses the JSON file and stores its content.
-   * Supports two formats:
-   * 1. Wrapped format: { response: string, messages: any[] }
-   * 2. Plain array format: [ { role: "user", content: "..." }, ... ]
+   * Handle trace file upload. Supports wrapped format ({ response, messages }) or plain array.
    */
   public beforeUpload = (file: NzUploadFile): boolean => {
     const reader = new FileReader();
     reader.onload = (e: ProgressEvent<FileReader>) => {
       try {
         const parsed = JSON.parse(e.target?.result as string);
-
         let content: TraceContent;
 
-        // Check if it's a plain array of messages (new format)
         if (Array.isArray(parsed)) {
-          // Wrap it in the expected TraceContent structure
-          content = {
-            response: "", // Will be extracted from the last assistant message if needed
-            messages: parsed,
-          };
+          content = { response: "", messages: parsed };
         } else if (parsed.messages && Array.isArray(parsed.messages)) {
-          // Already in wrapped format
           content = parsed as TraceContent;
         } else {
           this.notificationService.error("Invalid trace file: expected array of messages or object with messages array");
@@ -133,19 +117,16 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
         this.traceContent = content;
         this.traceFileList = [file];
         this.notificationService.success(`Trace loaded: ${content.messages.length} messages`);
-      } catch (error) {
+      } catch {
         this.notificationService.error("Invalid JSON file");
         this.traceContent = null;
         this.traceFileList = [];
       }
     };
     reader.readAsText(file as unknown as File);
-    return false; // Prevent auto upload
+    return false;
   };
 
-  /**
-   * Clear the loaded trace.
-   */
   public clearTrace(): void {
     this.traceContent = null;
     this.traceFileList = [];
@@ -162,19 +143,16 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
 
     this.isCreating = true;
 
-    // If trace is loaded, create a new workflow and then create agent with replay
     if (this.traceContent) {
       this.createAgentWithReplay();
       return;
     }
 
-    // Normal agent creation (no trace)
-    // Get current workflow ID for delegate mode
     const workflowMetadata = this.workflowActionService.getWorkflowMetadata();
     const workflowId = workflowMetadata?.wid;
 
     this.copilotManagerService
-      .createAgent(this.selectedModelType!, this.customAgentName || undefined, this.isBaselineMode, workflowId)
+      .createAgent(this.selectedModelType!, this.customAgentName || undefined, workflowId)
       .pipe(takeUntil(this.destroy$))
       .subscribe({
         next: agentInfo => {
@@ -188,14 +166,8 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
       });
   }
 
-  /**
-   * Create a new workflow and agent, then initiate trace replay.
-   */
   private createAgentWithReplay(): void {
-    // Generate workflow name
     const workflowName = `Imported - ${new Date().toISOString().split("T")[0]}`;
-
-    // Create empty workflow content
     const emptyWorkflowContent: WorkflowContent = {
       operators: [],
       commentBoxes: [],
@@ -206,24 +178,18 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
       },
     };
 
-    // Step 1: Create a new empty workflow
     this.workflowPersistService
       .createWorkflow(emptyWorkflowContent, workflowName)
       .pipe(takeUntil(this.destroy$))
       .subscribe({
         next: createdWorkflow => {
           const workflowId = createdWorkflow.workflow.wid;
-
-          // Step 2: Create agent bound to the new workflow
           this.copilotManagerService
-            .createAgent(this.selectedModelType!, this.customAgentName || undefined, this.isBaselineMode, workflowId)
+            .createAgent(this.selectedModelType!, this.customAgentName || undefined, workflowId)
             .pipe(takeUntil(this.destroy$))
             .subscribe({
               next: agentInfo => {
-                // Step 3: Activate agent and initiate replay
                 this.copilotManagerService.activateAgent(agentInfo.id);
-
-                // Small delay to ensure WebSocket is connected
                 setTimeout(() => {
                   if (this.traceContent) {
                     this.copilotManagerService.sendReplayMessage(agentInfo.id, this.traceContent);
@@ -245,13 +211,9 @@ export class AgentRegistrationComponent implements OnInit, OnDestroy {
       });
   }
 
-  /**
-   * Reset the form after successful creation.
-   */
   private resetForm(): void {
     this.selectedModelType = null;
     this.customAgentName = "";
-    this.isBaselineMode = false;
     this.traceContent = null;
     this.traceFileList = [];
     this.isCreating = false;

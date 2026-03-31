@@ -849,15 +849,9 @@ export class TexeraCopilotManagerService {
    * Uses the user's current auth token for delegate mode.
    * @param modelType - The LLM model type to use
    * @param customName - Optional custom name for the agent
-   * @param isBaselineMode - Whether the agent is in baseline mode
    * @param workflowId - Optional workflow ID for delegate mode
    */
-  public createAgent(
-    modelType: string,
-    customName?: string,
-    isBaselineMode: boolean = false,
-    workflowId?: number
-  ): Observable<AgentInfo> {
+  public createAgent(modelType: string, customName?: string, workflowId?: number): Observable<AgentInfo> {
     return defer(() => {
       const userToken = AuthService.getAccessToken();
 
@@ -885,7 +879,7 @@ export class TexeraCopilotManagerService {
             id: response.id,
             name: response.name,
             modelType: response.modelType,
-            isBaselineMode,
+            isBaselineMode: false,
             createdAt: new Date(response.createdAt),
             state: this.mapStateToCopilotState(response.state),
             delegate: response.delegate
