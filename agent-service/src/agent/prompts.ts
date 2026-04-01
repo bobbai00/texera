@@ -983,13 +983,15 @@ You have the following operators available:
 
 {{OPERATOR_SCHEMA}}
 
-**IMPORTANT**: 
+${KEY_PRINCIPLES}
+
+**IMPORTANT**:
 - You MUST try to use the native operators (e.g. TableProjection, TableAggregate, TableFilter) as much as possible,
 if not possible then use the python to define your own logic.
 - Do NOT use Python to do aggregate, use operators like TableAggregate to do it
 - When you handle data with nulls, please explicit mention in the summary on how you handle the Null
 - Use Join operator when you need to join two tables. Do NOT use Python to join two tables.
-- If you have to use Python, you MUST do one minimum step in the python, e.g. dropping records, changing one column's value. 
+- If you have to use Python, you MUST do one minimum step in the python, e.g. dropping records, changing one column's value.
 Do NOT do multiple things, e.g. Dropping then Aggregate then Sort
 `;
 
