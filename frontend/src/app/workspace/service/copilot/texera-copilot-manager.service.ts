@@ -93,6 +93,8 @@ export interface AgentSettingsApi {
   noLogFallback?: boolean;
   /** When true, per-column statistics are included in the execution metadata section */
   carryMetadata?: boolean;
+  /** List of allowed operator types for general mode (empty = all operators allowed) */
+  allowedOperatorTypes?: string[];
 }
 
 /**
@@ -1442,6 +1444,7 @@ export class TexeraCopilotManagerService {
           noActionDetail: false,
           noLogFallback: false,
           carryMetadata: false,
+          allowedOperatorTypes: [],
         })
       )
     );
@@ -1468,6 +1471,17 @@ export class TexeraCopilotManagerService {
         return throwError(() => new Error(errorMsg));
       })
     );
+  }
+
+  /**
+   * Get all available operator types for an agent.
+   */
+  public getAvailableOperatorTypes(agentId: string): Observable<Array<{ type: string; description: string }>> {
+    return this.http
+      .get<Array<{ type: string; description: string }>>(
+        `${this.AGENT_API_BASE}/agents/${agentId}/operator-types`
+      )
+      .pipe(catchError(() => of([])));
   }
 
   // ============================================================================

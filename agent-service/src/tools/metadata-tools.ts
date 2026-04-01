@@ -60,10 +60,10 @@ export interface CompactOperatorSchema {
 }
 
 // ============================================================================
-// Whitelist of Allowed Operator Types
+// Default Allowed Operator Types
 // ============================================================================
 
-export const ALLOWED_OPERATOR_TYPES = [
+export const DEFAULT_ALLOWED_OPERATOR_TYPES = [
   "TableAggregate",
   "TableProjection",
   "TableSort",
@@ -74,7 +74,8 @@ export const ALLOWED_OPERATOR_TYPES = [
   "Join",
   "Histogram",
   "PythonUDFV2",
-] as const;
+  "RUDF",
+];
 
 // ============================================================================
 // Schema Processing Utilities
@@ -392,7 +393,7 @@ export function formatCompactSchemaForError(compactSchema: CompactOperatorSchema
 /**
  * Create tool to list all available operator types with descriptions.
  * @param metadataStore - The operator metadata store
- * @param onlyUseRelationalOperators - If true, only return operators from ALLOWED_OPERATOR_TYPES list
+ * @param onlyUseRelationalOperators - If true, only return operators from DEFAULT_ALLOWED_OPERATOR_TYPES list
  */
 export function createListAllAvailableOperatorTypesTool(
   metadataStore: OperatorMetadataStore,
@@ -408,7 +409,7 @@ export function createListAllAvailableOperatorTypesTool(
 
       // Filter to only allowed relational operators if setting is enabled
       if (onlyUseRelationalOperators) {
-        const allowedSet = new Set<string>(ALLOWED_OPERATOR_TYPES);
+        const allowedSet = new Set<string>(DEFAULT_ALLOWED_OPERATOR_TYPES);
         operators = Object.fromEntries(Object.entries(operators).filter(([type]) => allowedSet.has(type)));
       }
 
