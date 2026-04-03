@@ -42,14 +42,16 @@ case class CachedPortMetrics(tupleCount: Long, columnCount: Int = 0)
 /**
   * Cached data for an operator including metrics and console messages.
   *
-  * @param inputPortMetrics  Map of input port ID to its cached metrics
-  * @param outputPortMetrics Map of output port ID to its cached metrics
-  * @param consoleMessagesUri Optional URI to the cached console messages
+  * @param inputPortMetrics    Map of input port ID to its cached metrics
+  * @param outputPortMetrics   Map of output port ID to its cached metrics
+  * @param consoleMessagesUri  Optional URI to the cached console messages
+  * @param operatorResultStats Per-column profiling statistics (column name -> stats JSON)
   */
 case class CachedOperatorData(
     inputPortMetrics: Map[PortIdentity, CachedPortMetrics],
     outputPortMetrics: Map[PortIdentity, CachedPortMetrics],
-    consoleMessagesUri: Option[URI]
+    consoleMessagesUri: Option[URI],
+    operatorResultStats: Map[String, String] = Map.empty
 )
 
 /**

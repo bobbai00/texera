@@ -143,7 +143,8 @@ case class WorkflowExecution(executionId: Option[ExecutionIdentity] = None) {
                 dataProcessingTime = 0L,
                 controlProcessingTime = 0L,
                 idleTime = 0L
-              )
+              ),
+              operatorResultStats = cachedData.operatorResultStats
             )
             opId -> metrics
         }

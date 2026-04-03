@@ -250,11 +250,18 @@ class RegionExecutionCoordinator(
           )
         )
 
+        // Collect operator result statistics (e.g., column profiling from Python DataProfiler)
+        val operatorResultStats: Map[String, String] =
+          operatorExecution.getWorkerIds.flatMap { workerId =>
+            operatorExecution.getWorkerExecution(workerId).getStats.resultStatistics
+          }.toMap
+
         // Store the cached operator data
         val cachedData = CachedOperatorData(
           inputPortMetrics = inputPortMetrics,
           outputPortMetrics = outputPortMetrics,
-          consoleMessagesUri = consoleMessagesUri
+          consoleMessagesUri = consoleMessagesUri,
+          operatorResultStats = operatorResultStats
         )
         PortResultCache.storeOperatorData(operatorCacheKey, cachedData)
       }
