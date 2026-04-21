@@ -80,7 +80,6 @@ class ServletAwareConfigurator extends ServerEndpointConfig.Configurator with La
             null,
             null,
             null,
-            null,
             null
           )
         )
@@ -105,7 +104,6 @@ class ServletAwareConfigurator extends ServerEndpointConfig.Configurator with La
                 claims.getClaimValue("userId").asInstanceOf[Long].toInt,
                 claims.getSubject,
                 String.valueOf(claims.getClaimValue("email").asInstanceOf[String]),
-                null,
                 null,
                 null,
                 null,
