@@ -214,8 +214,8 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   operatorResultSerializationMode: OperatorResultSerializationMode.TABLE,
   toolTimeoutMs: 240000, // 4 minutes
   executionTimeoutMs: 240000, // 4 minutes
-  maxSteps: 100,
-  agentMode: AgentMode.GENERAL, // Default to CODE mode
+  maxSteps: 50,
+  agentMode: AgentMode.CODE, // Default to CODE mode
   fineGrainedPrompt: false, // Default to standard prompts
   enableContextOptimization: false,
   frontierDepth: 1,
@@ -230,7 +230,7 @@ export const DEFAULT_AGENT_SETTINGS: Omit<AgentSettings, "systemPrompt"> = {
   simplifiedTools: false,
   noActionDetail: false,
   noLogFallback: false,
-  carryMetadata: true,
+  carryMetadata: false,
   allowedOperatorTypes: [
     "TableAggregate",
     "TableProjection",

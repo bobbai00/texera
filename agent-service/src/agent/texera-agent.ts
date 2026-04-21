@@ -49,15 +49,6 @@ import {
   BASE_SYSTEM_PROMPT,
   buildGeneralModeSystemPrompt,
   buildCodeModeSystemPrompt,
-  EXAMPLES_STANDARD,
-  EXAMPLES_CARRY_METADATA,
-  EXAMPLES_FINE_GRAINED,
-  EXAMPLES_PARALLEL,
-  EXAMPLES_RESULT_PARAM,
-  EXAMPLES_PARALLEL_RESULT_PARAM,
-  EXAMPLES_NO_ACTION_DETAIL,
-  EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA,
-  EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA_PARALLEL,
 } from "./prompts";
 import {
   createDeleteOperatorTool,
@@ -264,35 +255,19 @@ export class TexeraAgent {
 
   /**
    * Rebuild system prompt based on current agent mode and settings.
-   * GENERAL mode: includes operator schemas in the prompt
-   * CODE mode: uses structured prompt with examples
-   * fineGrainedPrompt: uses stricter atomic operation constraints
+   * GENERAL mode: includes operator schemas in the prompt.
+   * CODE mode: composes one compact example with feature appendices
+   *   selected by noActionDetail / carryMetadata / parallelToolCalls.
    */
   private rebuildSystemPrompt(): void {
     if (this.settings.agentMode === AgentMode.GENERAL) {
       this.systemPrompt = buildGeneralModeSystemPrompt(this.metadataStore, this.settings.allowedOperatorTypes);
     } else {
-      let examples: string;
-      if (this.settings.noActionDetail && this.settings.carryMetadata && this.settings.parallelToolCalls) {
-        examples = EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA_PARALLEL;
-      } else if (this.settings.noActionDetail && this.settings.carryMetadata) {
-        examples = EXAMPLES_NO_ACTION_DETAIL_CARRY_METADATA;
-      } else if (this.settings.noActionDetail) {
-        examples = EXAMPLES_NO_ACTION_DETAIL;
-      } else if (this.settings.carryMetadata) {
-        examples = EXAMPLES_CARRY_METADATA;
-      } else if (this.settings.fineGrainedPrompt) {
-        examples = EXAMPLES_FINE_GRAINED;
-      } else if (this.settings.parallelToolCalls && this.settings.optionalResultRetrieval) {
-        examples = EXAMPLES_PARALLEL_RESULT_PARAM;
-      } else if (this.settings.parallelToolCalls) {
-        examples = EXAMPLES_PARALLEL;
-      } else if (this.settings.optionalResultRetrieval) {
-        examples = EXAMPLES_RESULT_PARAM;
-      } else {
-        examples = EXAMPLES_STANDARD;
-      }
-      this.systemPrompt = buildCodeModeSystemPrompt(examples, this.settings.noActionDetail);
+      this.systemPrompt = buildCodeModeSystemPrompt({
+        noActionDetail: this.settings.noActionDetail,
+        carryMetadata: this.settings.carryMetadata,
+        parallelToolCalls: this.settings.parallelToolCalls,
+      });
     }
     this.settings.systemPrompt = this.systemPrompt;
   }
