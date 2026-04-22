@@ -33,14 +33,18 @@ import type { ReActStep } from "../types/agent";
  *
  * Layout:
  *   # Completed Tasks
- *   <task status="completed">...</task>
- *   ...
+ *   ## Task (completed)
+ *   ### User request / ### Turn N ...
  *   # Ongoing Task
- *   <task status="ongoing">...</task>
+ *   ## Task (ongoing)
+ *   ### User request / ### Turn N ...
  *   (instruction line)
- *   # Current Workflow
- *   <operator ...>...</operator>
- *   <links>...</links>
+ *   # Current Dataflow
+ *   ## Operators
+ *   ### Operator `id` (type, status)
+ *   ...
+ *   ## Links
+ *   - src → tgt
  *
  * @param visibleSteps  - ReActSteps on the HEAD ancestor path (ordered root→HEAD)
  * @param workflowState - Live workflow state
@@ -82,6 +86,7 @@ export function assembleContext(
       if (completedCount === 0) {
         sections.push("# Completed Tasks");
       }
+      sections.push("");
       sections.push(serializeTask(steps, "completed"));
       completedCount++;
     } else {
@@ -94,11 +99,11 @@ export function assembleContext(
     }
   }
 
-  // --- Current Workflow ---
+  // --- Current Dataflow ---
   const dagSection = serializeDag(workflowState, operatorExecutionResults, useRedact);
   if (dagSection) {
     sections.push("");
-    sections.push("# Current Workflow");
+    sections.push("# Current Dataflow");
     sections.push(dagSection);
   }
 
@@ -117,28 +122,32 @@ export function assembleContext(
 // ============================================================================
 
 /**
- * Serialize a task (one user message + its assistant steps) into XML-like format.
+ * Serialize a task (one user message + its assistant steps) into a markdown
+ * block. The format deliberately avoids XML/tag-like structures to reduce
+ * format mimicry, where the model echoes the context shape into its output
+ * instead of calling tools via the native protocol.
  */
 function serializeTask(steps: ReActStep[], status: "completed" | "ongoing"): string {
   const lines: string[] = [];
-  lines.push(`<task status="${status}">`);
+  lines.push(`## Task (${status})`);
+  lines.push("");
 
   const userStep = steps.find(s => s.role === "user");
   const assistantSteps = steps.filter(s => s.role === "agent");
 
   // User request
   if (userStep) {
-    lines.push(`<user-request>`);
+    lines.push("### User request");
+    lines.push("");
     lines.push(userStep.content);
-    lines.push(`</user-request>`);
+    lines.push("");
   }
 
-  // Assistant steps
+  // Assistant steps, one block per turn.
   for (const step of assistantSteps) {
-    lines.push("");
-    lines.push(`<assistant-step${step.stepId}>`);
+    lines.push(`### Turn ${step.stepId}`);
     if (step.content) {
-      lines.push(`<thought>${step.content}</thought>`);
+      lines.push(`Thought: ${step.content}`);
     }
     if (step.toolCalls && step.toolCalls.length > 0) {
       for (let i = 0; i < step.toolCalls.length; i++) {
@@ -147,14 +156,13 @@ function serializeTask(steps: ReActStep[], status: "completed" | "ongoing"): str
         const isError = tr?.isError;
         const statusAttr = isError ? "failed" : "succeeded";
         const outputStr = tr ? (typeof tr.output === "string" ? tr.output : String(tr.output ?? "")) : "";
-        lines.push(`<action tool="${tc.toolName}" status="${statusAttr}">${outputStr}</action>`);
+        lines.push(`- ${tc.toolName} (${statusAttr}): ${outputStr}`);
       }
     }
-    lines.push(`</assistant-step${step.stepId}>`);
+    lines.push("");
   }
 
-  lines.push(`</task>`);
-  return lines.join("\n");
+  return lines.join("\n").trimEnd();
 }
 
 // ============================================================================
@@ -204,8 +212,12 @@ function serializeDag(
     (a, b) => (topoOrder.get(a.operatorID) ?? 0) - (topoOrder.get(b.operatorID) ?? 0)
   );
 
+  lines.push("## Operators");
+  lines.push("");
+
   for (const op of sortedOps) {
     lines.push(serializeOperator(op, operatorExecutionResults.get(op.operatorID), useRedact));
+    lines.push("");
   }
 
   // Links section
@@ -217,19 +229,18 @@ function serializeDag(
       return (topoOrder.get(a.target.operatorID) ?? 0) - (topoOrder.get(b.target.operatorID) ?? 0);
     });
 
-    lines.push("");
-    lines.push("<links>");
+    lines.push("## Links");
     for (const link of sortedLinks) {
-      lines.push(`${link.source.operatorID} --> ${link.target.operatorID}`);
+      lines.push(`- ${link.source.operatorID} → ${link.target.operatorID}`);
     }
-    lines.push("</links>");
   }
 
-  return lines.join("\n");
+  return lines.join("\n").trimEnd();
 }
 
 /**
- * Serialize a single operator entry.
+ * Serialize a single operator as a markdown block (heading + labelled fields).
+ * Avoids XML tags so the model doesn't mimic them in its output.
  */
 function serializeOperator(
   op: OperatorPredicate,
@@ -245,28 +256,27 @@ function serializeOperator(
   const showProperties = !useRedact || hasError;
 
   const lines: string[] = [];
-  lines.push(`<operator type="${op.operatorType}" id="${op.operatorID}" status="${status}">`);
-  lines.push(`  Summary: ${summary}`);
+  lines.push(`### Operator \`${op.operatorID}\` (${op.operatorType}, ${status})`);
+  lines.push(`Summary: ${summary}`);
 
   if (showProperties) {
     const props = op.operatorProperties;
     if (props && Object.keys(props).length > 0) {
-      lines.push(`  Properties:`);
+      lines.push("Properties:");
       for (const [key, value] of Object.entries(props)) {
         if (value !== undefined && value !== null && value !== "") {
           const valueStr = typeof value === "string" ? value : JSON.stringify(value);
-          lines.push(`    ${key}: ${valueStr}`);
+          lines.push(`  ${key}: ${valueStr}`);
         }
       }
     }
   }
 
   if (execResult) {
-    lines.push(`  Result:`);
+    lines.push("Result:");
     const indented = execResult.split("\n").map(l => "  " + l).join("\n");
     lines.push(indented);
   }
 
-  lines.push(`</operator>`);
   return lines.join("\n");
 }
