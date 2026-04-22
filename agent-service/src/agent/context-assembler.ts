@@ -27,6 +27,7 @@ import type { ModelMessage } from "ai";
 import type { WorkflowState } from "../workflow/workflow-state";
 import type { OperatorPredicate } from "../types/workflow";
 import type { ReActStep } from "../types/agent";
+import { stripExecutionErrorPreamble } from "../tools/result-formatting";
 
 /**
  * Build the full model context as a single user message.
@@ -56,7 +57,20 @@ export function assembleContext(
   visibleSteps: ReActStep[],
   workflowState: WorkflowState,
   operatorExecutionResults: Map<string, string>,
-  useRedact: boolean = false
+  useRedact: boolean = false,
+  /**
+   * Optional lookup for post-step execution errors. Given (stepId, operatorId),
+   * returns the error text produced at that step along with whether that error
+   * is still the current visible state in the DAG. When provided, serializeTask
+   * uses this to avoid duplicating error content that the agent can already see
+   * live: if the error is still current in the DAG, the timeline bullet is kept
+   * minimal (skip Summary and Execution Error); if the error has been resolved
+   * or replaced, the timeline preserves the historical detail.
+   */
+  getExecutionErrorForStep?: (
+    stepId: string,
+    operatorId: string
+  ) => { error: string; isCurrentInDag: boolean } | undefined
 ): ModelMessage[] {
   // Group steps by messageId, preserving insertion order
   const messageIds: string[] = [];
@@ -87,13 +101,13 @@ export function assembleContext(
         sections.push("# Completed Tasks");
       }
       sections.push("");
-      sections.push(serializeTask(steps, "completed"));
+      sections.push(serializeTask(steps, "completed", getExecutionErrorForStep));
       completedCount++;
     } else {
       hasOngoing = true;
       sections.push("");
       sections.push("# Ongoing Task");
-      sections.push(serializeTask(steps, "ongoing"));
+      sections.push(serializeTask(steps, "ongoing", getExecutionErrorForStep));
       sections.push("");
       sections.push("Above is user's request and the steps you already took. You as an assistant please keep working on solving user's request based on the progress of current workflow.");
     }
@@ -127,7 +141,14 @@ export function assembleContext(
  * format mimicry, where the model echoes the context shape into its output
  * instead of calling tools via the native protocol.
  */
-function serializeTask(steps: ReActStep[], status: "completed" | "ongoing"): string {
+function serializeTask(
+  steps: ReActStep[],
+  status: "completed" | "ongoing",
+  getExecutionErrorForStep?: (
+    stepId: string,
+    operatorId: string
+  ) => { error: string; isCurrentInDag: boolean } | undefined
+): string {
   const lines: string[] = [];
   lines.push(`## Task (${status})`);
   lines.push("");
@@ -156,7 +177,50 @@ function serializeTask(steps: ReActStep[], status: "completed" | "ongoing"): str
         const isError = tr?.isError;
         const statusAttr = isError ? "failed" : "succeeded";
         const outputStr = tr ? (typeof tr.output === "string" ? tr.output : String(tr.output ?? "")) : "";
-        lines.push(`- ${tc.toolName} (${statusAttr}): ${outputStr}`);
+        const summary = (tc.input && typeof (tc.input as any).summary === "string")
+          ? (tc.input as any).summary as string
+          : undefined;
+        const operatorId = (tc.input && typeof (tc.input as any).operatorId === "string")
+          ? (tc.input as any).operatorId as string
+          : undefined;
+        const execInfo = (operatorId && getExecutionErrorForStep)
+          ? getExecutionErrorForStep(step.id, operatorId)
+          : undefined;
+
+        lines.push(`- ${tc.toolName} (${statusAttr})`);
+
+        // De-duplication rule: if this step produced an execution error that
+        // is still the current state in the DAG, the agent will see the full
+        // error live there — skip Summary and Execution Error here to avoid
+        // re-emitting the same text every turn while the op stays failed.
+        // Once the error is resolved (op modified or the current state is
+        // success), the DAG no longer carries it, so the timeline preserves
+        // the historical detail.
+        const errorIsLiveInDag = !!execInfo?.isCurrentInDag;
+
+        if (!errorIsLiveInDag && summary) {
+          lines.push(`  - Summary: ${summary}`);
+        }
+        if (outputStr) {
+          const label = isError ? "Error" : "Output";
+          const lines_ = outputStr.split("\n");
+          if (lines_.length === 1) {
+            lines.push(`  - ${label}: ${outputStr}`);
+          } else {
+            lines.push(`  - ${label}:`);
+            for (const l of lines_) lines.push(`    ${l}`);
+          }
+        }
+        if (!errorIsLiveInDag && execInfo?.error && operatorId) {
+          const cleaned = stripExecutionErrorPreamble(execInfo.error, operatorId);
+          const execLines = cleaned.split("\n");
+          if (execLines.length === 1) {
+            lines.push(`  - Execution Error: ${cleaned}`);
+          } else {
+            lines.push(`  - Execution Error:`);
+            for (const l of execLines) lines.push(`    ${l}`);
+          }
+        }
       }
     }
     lines.push("");

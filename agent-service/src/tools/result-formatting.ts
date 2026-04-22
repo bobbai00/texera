@@ -37,6 +37,25 @@ import { formatExecuteOperatorResult } from "./tools-utility";
 // Public API
 // ============================================================================
 
+/**
+ * Strip the redundant preamble that `formatExecutionError` in execution-tools.ts
+ * adds when it packages a per-operator error (banner + section header + "opId: ").
+ * Used wherever the error text is being re-labelled (e.g., the DAG's `[ERROR] `
+ * prefix, or the timeline's `Execution Error:` sub-bullet) — the inner preamble
+ * duplicates the outer label.
+ *
+ * Safe: each regex is anchored to the start of the string, so unrelated text is
+ * never touched, and raw backend errors (which lack the preamble) pass through.
+ */
+export function stripExecutionErrorPreamble(error: string, operatorId: string): string {
+  let s = error;
+  s = s.replace(/^Execution failed due to the following error:\s*\n?/, "");
+  s = s.replace(/^(Execution error|Compilation error|Error):\s*\n?/, "");
+  const escaped = operatorId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  s = s.replace(new RegExp(`^\\s*${escaped}:\\s*`), "");
+  return s.trim();
+}
+
 export interface FormatOptions {
   /** Serialization mode for result data (TABLE, TOON, JSON). Default: TABLE */
   serializationMode?: OperatorResultSerializationMode;
@@ -67,9 +86,12 @@ export function formatOperatorResult(
   workflowState: WorkflowState,
   options: FormatOptions = {}
 ): string {
-  // If the operator has an error, surface it instead of result data
+  // If the operator has an error, surface it instead of result data.
+  // The raw error text may carry a redundant preamble from formatExecutionError;
+  // strip it so the `[ERROR] ` prefix here doesn't stack labels with the inner
+  // "Execution failed due to..." banner.
   if (opInfo.error) {
-    return `[ERROR] ${opInfo.error}`;
+    return `[ERROR] ${stripExecutionErrorPreamble(opInfo.error, operatorId)}`;
   }
 
   const serializationMode = options.serializationMode ?? OperatorResultSerializationMode.TABLE;

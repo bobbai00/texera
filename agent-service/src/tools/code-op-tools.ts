@@ -338,7 +338,7 @@ Example: operatorId="filtered" (requires "customers" to exist)
         "Unique operator name (valid Python variable). Other operators reference this as input parameter."
       ),
       code: z.string().describe("Python function: def load() or def process(...)"),
-      summary: z.string().optional().describe("Detailed summary of the operator behavior. For load() operators, include the filename(s) being loaded."),
+      summary: z.string().describe("Detailed summary of the operator behavior. For load() operators, you MUST include the filename(s) being loaded."),
     }),
     execute: async (args: { operatorId: string; code: string; summary?: string }) => {
       const coordinator = context?.parallelCoordinator;

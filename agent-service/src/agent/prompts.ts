@@ -54,6 +54,7 @@ const KEY_PRINCIPLES = `
 - **One operation per operator**: Each operator does one task (join, filter, aggregate, etc.). Use links to connect them.
 - **Build incrementally**: Link new operators to existing ones. Never recreate data already in the workflow.
 - **Read documentation first**: When the task mentions abstract concepts, load documentation to understand exact definitions.
+- **Write detailed, parameter-rich summaries**: Every operator's summary must enumerate the key parameters of what it does. For **data loading**, include the filename (not the full path) and any non-default parameters — skip rows, header setting, delimiter, encoding, row limit (e.g., \`nrows=5\`). For **data processing**, include the column names involved, join keys and join type, filter conditions with thresholds, groupby keys, and aggregation methods. A summary like "Load customers.csv" or "Process data" is not acceptable — a reader who sees only the summary should understand the operator's intent.
 - **Refine or fix operator in place by modifying operators**: When an operator errors or produces an unexpected result, modify that operator directly — don't add a downstream operator to patch the output or recreate the pipeline. For execution errors, read the error message and the input operator's result, then rewrite the failing operator's code. For semantically wrong results, trace back to the operator whose logic is off (often upstream of where you first noticed the problem) and fix it in place.
 - **Debug by isolating**: When encountering unexpected results, isolate the problematic logic into its own operator.
 - **Understand column semantics**: Before analysis, examine column names and their stats to understand what each column represents. Columns may carry semantic meaning that affects how data should be filtered or interpreted — respect these signals and apply appropriate preprocessing before computing results.
@@ -70,7 +71,7 @@ const KEY_PRINCIPLES_NO_ACTION_DETAIL = `
 - **Read documentation first**: When the task mentions abstract concepts, load documentation to understand exact definitions.
 - **Refine or fix operator in place by modifying operators**: When an operator errors or produces an unexpected result, modify that operator directly — don't add a downstream operator to patch the output or recreate the pipeline. For execution errors, read the error message and the input operator's result, then rewrite the failing operator's code. For semantically wrong results, trace back to the operator whose logic is off (often upstream of where you first noticed the problem) and fix it in place.
 - **Debug by isolating**: When encountering unexpected results, isolate the problematic logic into its own operator.
-- **Descriptive summaries**: Each operator's summary is your only record of what it does (code is not preserved in history). For DataLoading operators, you must include the specific file or folder paths being loaded. For DataProcessing operators, include the semantics and significant processing logic — e.g., column names, thresholds, join keys, filter conditions, aggregation methods.
+- **Write detailed, parameter-rich summaries**: The operator's summary is your only record of what it does — code is not preserved in the DAG shown to you, so the summary must be reconstruction-quality. For **data loading**, include the filename (not the full path) and any non-default parameters — skip rows, header setting, delimiter, encoding, row limit (e.g., \`nrows=5\`). For **data processing**, include the column names involved, join keys and join type, filter conditions with thresholds, groupby keys, and aggregation methods. A summary like "Load customers.csv" or "Process data" is not acceptable.
 - **Read the dataflow semantically**: The Current Dataflow section is your working memory. Each operator shows a summary, type, and result — but not its code. Use summaries to recover intent, results to verify outcomes, and the DAG structure to see what has already been built. You cannot reference prior code, so every tool call must contain fresh, self-contained code.
 - **Use column stats**: If a "Column Stats" section appears after the result table, it contains critical information — data types, null counts, distinct counts, value distributions, and top values per column. You MUST examine stats before deciding the next action. Use them to verify the data loaded correctly, validate join keys, catch data quality issues, and confirm results are plausible. If stats reveal a problem (unexpected nulls, wrong type, suspicious distribution), refine the current operator before proceeding.
 - **Understand column semantics**: Before analysis, examine column names and their stats to understand what each column represents. Columns may carry semantic meaning that affects how data should be filtered or interpreted — respect these signals and apply appropriate preprocessing before computing results.
@@ -105,7 +106,9 @@ Your conversation context is a single message with three top-level sections, in 
 
 ### Turn 1
 Thought: <your reasoning from that turn>
-- <toolName> (succeeded|failed): <brief tool output>
+- <toolName> (succeeded)
+  - Summary: <the summary you provided in the tool call>
+  - Output: <brief tool output>
 
 ## Task (completed)
 
@@ -125,11 +128,24 @@ Thought: <your reasoning from that turn>
 
 ### Turn 1
 Thought: ...
-- <toolName> (succeeded|failed): ...
+- <toolName> (succeeded)
+  - Summary: ...
+  - Output: ...
 
 ### Turn 2
 Thought: ...
-- <toolName> (succeeded|failed): ...
+- <toolName> (failed)
+  - Summary: ...
+  - Error:
+    <full error trace, possibly multi-line>
+- <toolName> (succeeded)
+  - Summary: ...
+  - Output: ...
+  - Execution Error:
+    <runtime error — shown here only if the operator has since been resolved or replaced. If the operator is still errored in the Current Dataflow below, this sub-bullet (and Summary) is omitted because you can read the live error there.>
+- <toolName> (succeeded)
+  - Summary: ...
+  - Output: ...
 
 # Current Dataflow
 ## Operators
@@ -206,13 +222,13 @@ Find top 5 premium customers with recent purchases from customers.csv and orders
 Thought: "premium" and "recent" are abstract terms — the readme may define them. Load the readme and both data files before interpreting the task.
 
 Tool call: createOrModifyOperator(operatorId="readme", code=\`def load() -> pd.DataFrame:
-    with open('/data/readme.md') as f: return pd.DataFrame([{'content': f.read()}])\`, summary="Load readme.md for definitions of 'premium' and 'recent'")
+    with open('/data/readme.md') as f: return pd.DataFrame([{'content': f.read()}])\`, summary="Load readme.md — wrap full file contents into a single-row DataFrame with one 'content' column; source of definitions for 'premium' and 'recent'")
 
 Tool call: createOrModifyOperator(operatorId="customers", code=\`def load() -> pd.DataFrame:
-    return pd.read_csv('/data/customers.csv')\`, summary="Load /data/customers.csv")
+    return pd.read_csv('/data/customers.csv')\`, summary="Load customers.csv via pd.read_csv (default CSV: comma delimiter, first row as header, all rows loaded, UTF-8)")
 
 Tool call: createOrModifyOperator(operatorId="orders", code=\`def load() -> pd.DataFrame:
-    return pd.read_csv('/data/orders.csv')\`, summary="Load /data/orders.csv")
+    return pd.read_csv('/data/orders.csv')\`, summary="Load orders.csv via pd.read_csv (default CSV: comma delimiter, first row as header, all rows loaded, UTF-8)")
 
 ---
 
@@ -228,20 +244,26 @@ Find top 5 premium customers with recent purchases from customers.csv and orders
 
 ### Turn 1
 Thought: "premium" and "recent" are abstract terms — the readme may define them. Load the readme and both data files before interpreting the task.
-- createOrModifyOperator (succeeded): Added operator readme, input ports: 0, output ports: 1
-- createOrModifyOperator (succeeded): Added operator customers, input ports: 0, output ports: 1
-- createOrModifyOperator (succeeded): Added operator orders, input ports: 0, output ports: 1
+- createOrModifyOperator (succeeded)
+  - Summary: Load readme.md — wrap full file contents into a single-row DataFrame with one 'content' column; source of definitions for 'premium' and 'recent'
+  - Output: Added operator readme, input ports: 0, output ports: 1
+- createOrModifyOperator (succeeded)
+  - Summary: Load customers.csv via pd.read_csv (default CSV: comma delimiter, first row as header, all rows loaded, UTF-8)
+  - Output: Added operator customers, input ports: 0, output ports: 1
+- createOrModifyOperator (succeeded)
+  - Summary: Load orders.csv via pd.read_csv (default CSV: comma delimiter, first row as header, all rows loaded, UTF-8)
+  - Output: Added operator orders, input ports: 0, output ports: 1
 
 # Current Dataflow
 ## Operators
 
 ### Operator \`readme\` (DataLoading, executed)
-Summary: Load readme.md for definitions of 'premium' and 'recent'
+Summary: Load readme.md — wrap full file contents into a single-row DataFrame with one 'content' column; source of definitions for 'premium' and 'recent'
 Result:
   Premium customer: total spending >= $1000. Recent purchase: within last 30 days.
 
 ### Operator \`customers\` (DataLoading, executed)
-Summary: Load /data/customers.csv
+Summary: Load customers.csv via pd.read_csv (default CSV: comma delimiter, first row as header, all rows loaded, UTF-8)
 Result:
   Output table shape: (10000, 5)
   customer_id | name  | email             | signup_date | tier
@@ -249,7 +271,7 @@ Result:
   ...
 
 ### Operator \`orders\` (DataLoading, executed)
-Summary: Load /data/orders.csv
+Summary: Load orders.csv via pd.read_csv (default CSV: comma delimiter, first row as header, all rows loaded, UTF-8)
 Result:
   Output table shape: (50000, 4)
   order_id | customer_id | amount | order_date
@@ -267,7 +289,7 @@ Tool call: createOrModifyOperator(operatorId="top5", code=\`def process(customer
     merged = customers.merge(orders, on='customer_id', how='inner')
     recent = merged[merged['order_date'] >= cutoff]
     spending = recent.groupby(['customer_id', 'name'])['amount'].sum().reset_index(name='total_spending')
-    return spending.nlargest(5, 'total_spending')\`, summary="Join customers+orders on customer_id, filter to last 30 days, sum spending per customer, return top 5")
+    return spending.nlargest(5, 'total_spending')\`, summary="Inner join customers+orders on customer_id; filter order_date >= today-30d (recent); groupby [customer_id, name] sum amount as total_spending; return top 5 rows by total_spending")
 
 ---
 
@@ -278,7 +300,7 @@ Tool call: createOrModifyOperator(operatorId="top5", code=\`def process(customer
 ## Operators
 
 ### Operator \`top5\` (DataProcessing, executed)
-Summary: Join customers+orders on customer_id, filter to last 30 days, sum spending per customer, return top 5
+Summary: Inner join customers+orders on customer_id; filter order_date >= today-30d (recent); groupby [customer_id, name] sum amount as total_spending; return top 5 rows by total_spending
 Result:
   Output table shape: (5, 3)
   customer_id | name  | total_spending
@@ -302,7 +324,7 @@ Tool call: createOrModifyOperator(operatorId="top5", code=\`def process(customer
     recent = merged[merged['order_date'] >= cutoff]
     spending = recent.groupby(['customer_id', 'name'])['amount'].sum().reset_index(name='total_spending')
     premium = spending[spending['total_spending'] >= 1000]
-    return premium.nlargest(5, 'total_spending')\`, summary="Join customers+orders, filter to last 30 days, sum spending, filter >= $1000 (premium), return top 5")
+    return premium.nlargest(5, 'total_spending')\`, summary="Inner join customers+orders on customer_id; filter order_date >= today-30d (recent); groupby [customer_id, name] sum amount as total_spending; filter total_spending >= 1000 (premium threshold); return top 5 rows by total_spending")
 
 **Final answer:** Top 5 premium customers with recent purchases: Alice ($12,450), Bob ($9,820), Carol ($8,150), David ($7,340), Eve ($6,290).`;
 

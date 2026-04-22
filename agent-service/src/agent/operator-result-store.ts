@@ -92,6 +92,15 @@ export class OperatorResultStore {
   }
 
   /**
+   * Get the result for an operator at a specific step version, ignoring the
+   * ancestor path. Used when callers want to attach a per-step execution
+   * outcome to that exact step (e.g., in the task timeline).
+   */
+  getAtStep(operatorId: string, stepId: string): OperatorResultEntry | undefined {
+    return this.store.get(operatorId)?.get(stepId);
+  }
+
+  /**
    * Get all operator results visible from the current HEAD.
    * Returns a Map<operatorId, OperatorResultEntry> with one entry per operator.
    */

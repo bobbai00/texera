@@ -893,7 +893,34 @@ export class TexeraAgent {
               // (properties are always shown for operators with execution errors).
               const useRedact = this.settings.noActionDetail;
               const visibleSteps = this.getVisibleReActSteps();
-              let processed = assembleContext(visibleSteps, this.workflowState, this.getFormattedResultsForDAG(), useRedact);
+              // Callback that attaches post-step execution errors to the
+              // exact turn where they happened in the task timeline.
+              // Also reports whether that error is still the current state in
+              // the DAG, so the timeline can avoid duplicating live content.
+              const getExecutionErrorForStep = (
+                stepId: string,
+                operatorId: string
+              ): { error: string; isCurrentInDag: boolean } | undefined => {
+                const entry = this.operatorResultStore.getAtStep(operatorId, stepId);
+                const err = entry?.operatorInfo?.error;
+                if (!err || err.trim().length === 0) return undefined;
+                const opInWorkflow = !!this.workflowState.getOperator(operatorId);
+                const currentEntry = this.operatorResultStore.get(operatorId);
+                const currentErr = currentEntry?.operatorInfo?.error;
+                const isCurrentInDag =
+                  opInWorkflow &&
+                  currentEntry?.stepId === stepId &&
+                  !!currentErr &&
+                  currentErr.trim().length > 0;
+                return { error: err, isCurrentInDag };
+              };
+              let processed = assembleContext(
+                visibleSteps,
+                this.workflowState,
+                this.getFormattedResultsForDAG(),
+                useRedact,
+                getExecutionErrorForStep
+              );
               // context optimization: trims execution result sections
               if (this.settings.enableContextOptimization) {
                 const effectiveDepth = this.settings.dynamicDepthEnabled
