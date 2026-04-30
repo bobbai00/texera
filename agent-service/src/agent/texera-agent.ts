@@ -74,6 +74,7 @@ import {
 } from "../tools/execution-tools";
 import { trimNonFrontierResults } from "./context-optimization";
 import { assembleContext } from "./context-assembler";
+import { looksLikeFunctionCall, parseFunctionCall } from "./debug-parser";
 
 // ============================================================================
 // Constants
@@ -81,6 +82,13 @@ import { assembleContext } from "./context-assembler";
 
 /** Debounce interval for auto-persistence (ms) */
 const PERSIST_DEBOUNCE_MS = 500;
+
+/** Tools whose successful invocation triggers post-step operator execution. */
+const EXECUTE_AFTER_TOOLS: ReadonlySet<string> = new Set([
+  TOOL_NAME_ADD_OPERATOR,
+  TOOL_NAME_MODIFY_OPERATOR,
+  TOOL_NAME_CREATE_OR_MODIFY_OPERATOR,
+]);
 
 // ============================================================================
 // Agent Configuration
@@ -480,6 +488,42 @@ export class TexeraAgent {
    */
   getAllSteps(): ReActStep[] {
     return Array.from(this.stepsById.values()).filter(s => s.id !== INITIAL_STEP_ID);
+  }
+
+  /**
+   * Find the messageId of the most recent ongoing user task on the HEAD
+   * ancestor path. A task is "ongoing" if it contains a user step but no
+   * agent step with isEnd=true. Returns undefined if no such task exists,
+   * or if the most recent task is already completed (we don't reach back
+   * across completion boundaries).
+   *
+   * Used by handleDebugInput so consecutive debug Function(...) actions
+   * accumulate as Turn 1, 2, 3 of the user's open task instead of each
+   * becoming its own one-step "completed" task.
+   */
+  private findOngoingUserTaskMessageId(): string | undefined {
+    const visible = this.getVisibleReActSteps();
+    const messageIds: string[] = [];
+    const stepsByMessage = new Map<string, ReActStep[]>();
+    for (const step of visible) {
+      let group = stepsByMessage.get(step.messageId);
+      if (!group) {
+        group = [];
+        stepsByMessage.set(step.messageId, group);
+        messageIds.push(step.messageId);
+      }
+      group.push(step);
+    }
+    for (let i = messageIds.length - 1; i >= 0; i--) {
+      const msgId = messageIds[i];
+      const group = stepsByMessage.get(msgId)!;
+      const hasAgentEnd = group.some(s => s.role === "agent" && s.isEnd);
+      // Most recent task is already completed — don't reach further back.
+      if (hasAgentEnd) return undefined;
+      const hasUser = group.some(s => s.role === "user");
+      if (hasUser) return msgId;
+    }
+    return undefined;
   }
 
   /**
@@ -888,57 +932,10 @@ export class TexeraAgent {
         temperature: 0.2,
         stopWhen: stepCountIs(this.settings.maxSteps),
         prepareStep: ({ stepNumber, messages: currentMessages }) => {
-              // Assemble context: completed tasks + ongoing task + current workflow DAG.
-              // useRedact controls whether operator properties are shown in the DAG
-              // (properties are always shown for operators with execution errors).
-              const useRedact = this.settings.noActionDetail;
-              const visibleSteps = this.getVisibleReActSteps();
-              // Callback that attaches post-step execution errors to the
-              // exact turn where they happened in the task timeline.
-              // Also reports whether that error is still the current state in
-              // the DAG, so the timeline can avoid duplicating live content.
-              const getExecutionErrorForStep = (
-                stepId: string,
-                operatorId: string
-              ): { error: string; isCurrentInDag: boolean } | undefined => {
-                const entry = this.operatorResultStore.getAtStep(operatorId, stepId);
-                const err = entry?.operatorInfo?.error;
-                if (!err || err.trim().length === 0) return undefined;
-                const opInWorkflow = !!this.workflowState.getOperator(operatorId);
-                const currentEntry = this.operatorResultStore.get(operatorId);
-                const currentErr = currentEntry?.operatorInfo?.error;
-                const isCurrentInDag =
-                  opInWorkflow &&
-                  currentEntry?.stepId === stepId &&
-                  !!currentErr &&
-                  currentErr.trim().length > 0;
-                return { error: err, isCurrentInDag };
-              };
-              let processed = assembleContext(
-                visibleSteps,
-                this.workflowState,
-                this.getFormattedResultsForDAG(),
-                useRedact,
-                getExecutionErrorForStep
-              );
-              // context optimization: trims execution result sections
-              if (this.settings.enableContextOptimization) {
-                const effectiveDepth = this.settings.dynamicDepthEnabled
-                  ? this.workflowState.computeAveragePathLength()
-                  : this.settings.frontierDepth;
-                processed = trimNonFrontierResults(
-                  processed,
-                  this.workflowState,
-                  effectiveDepth,
-                  this.settings.agentMode,
-                  this.settings.minimumResultCharLimit,
-                  this.settings.maxOperatorResultCharLimit,
-                  this.settings.noLogFallback
-                );
-              }
-              lastPreparedMessages = processed;
-              return { messages: processed };
-            },
+          const processed = this.buildNextStepMessages();
+          lastPreparedMessages = processed;
+          return { messages: processed };
+        },
         abortSignal: this.abortController?.signal,
         // Note: reasoning_effort is NOT passed here — it's configured per-model in
         // litellm-config.yaml via extra_body to bypass LiteLLM's param validation.
@@ -1000,43 +997,7 @@ export class TexeraAgent {
 
           // Post-step auto-execution: execute operators that were successfully added/modified.
           // Results are stored at the new HEAD (this step's ID).
-          const execConfig = this.buildExecutionConfig();
-          if (execConfig && toolCalls && toolResults) {
-            const EXECUTE_AFTER_TOOLS = new Set([
-              TOOL_NAME_ADD_OPERATOR, TOOL_NAME_MODIFY_OPERATOR,
-              TOOL_NAME_CREATE_OR_MODIFY_OPERATOR,
-            ]);
-
-            for (let i = 0; i < toolCalls.length; i++) {
-              const tc = toolCalls[i];
-              const tr = toolResults[i];
-              if (!EXECUTE_AFTER_TOOLS.has(tc.toolName)) continue;
-
-              // Skip failed tool calls
-              const resultText = typeof tr?.output === "string" ? tr.output : String(tr?.output ?? "");
-              if (resultText.startsWith("[ERROR]")) continue;
-
-              const operatorId = (tc.input as any)?.operatorId;
-              if (!operatorId) continue;
-
-              try {
-                await executeOperatorAndFormat(
-                  this.workflowState,
-                  execConfig,
-                  operatorId,
-                  {
-                    abortSignal: this.abortController?.signal,
-                    onResult: (opId, operatorInfo) => {
-                      this.operatorResultStore.set(opId, this.head, operatorInfo);
-                    },
-                  }
-                );
-              } catch (e: any) {
-                // Non-fatal: log but don't fail the step
-                console.warn(`[PostStepExecution] Failed to execute ${operatorId}:`, e?.message || e);
-              }
-            }
-          }
+          await this.runPostStepExecution(toolCalls, toolResults);
 
           // Update before snapshot for next step
           beforeStepContent = afterStepContent;
@@ -1159,6 +1120,268 @@ export class TexeraAgent {
       this.currentMessageId = undefined;
       this.state = AgentStateEnum.AVAILABLE;
     }
+  }
+
+  /**
+   * Process a debug-mode input. Bypasses the LLM completely:
+   *   - Plain text → emits a single user ReActStep.
+   *   - `Function(name='X', arguments='{...}')` → emits a user step (raw input)
+   *     and an agent step that records the tool call + result, executes the tool,
+   *     and runs the same post-step auto-execution as the LLM path.
+   *
+   * Tool execution and post-step execution happen exactly as they would after
+   * an LLM-produced tool call — only the model call and ReAct loop are skipped.
+   */
+  async handleDebugInput(
+    content: string,
+    messageSource?: "chat" | "feedback"
+  ): Promise<{ kind: "user_message" | "function_call"; stopped: boolean; error?: string }> {
+    this.abortController = new AbortController();
+    this.state = AgentStateEnum.GENERATING;
+
+    try {
+      const beforeContent = this.workflowState.getWorkflowContent();
+
+      // Plain user text — start a new task (new messageId, fresh stepId 0).
+      if (!looksLikeFunctionCall(content)) {
+        const messageId = `dbg-${this.agentId}-${++this.messageCounter}-${Date.now()}`;
+        this.currentMessageId = messageId;
+
+        const userStepId = this.generateStepId();
+        const userStep: ReActStep = {
+          id: userStepId,
+          parentId: this.head,
+          messageId,
+          stepId: 0,
+          timestamp: Date.now(),
+          role: "user",
+          content,
+          isBegin: true,
+          isEnd: true,
+          messageSource,
+          beforeWorkflowContent: beforeContent,
+          afterWorkflowContent: beforeContent,
+        };
+        this.addStep(userStep);
+        this.head = userStepId;
+        return { kind: "user_message", stopped: false };
+      }
+
+      // Function(...) — attach to the most recent ongoing user task as the next
+      // turn (Turn 1, 2, 3, …) so consecutive debug actions don't fragment into
+      // separate one-step "completed" tasks. If no ongoing user task exists,
+      // start a fresh task. isEnd stays false in debug mode — there's no model
+      // deciding "this turn is final"; the task closes naturally when the user
+      // moves on.
+      const attachedMessageId = this.findOngoingUserTaskMessageId();
+      let messageId: string;
+      let stepId: number;
+      let isBegin: boolean;
+      if (attachedMessageId) {
+        messageId = attachedMessageId;
+        const groupSteps = this.getVisibleReActSteps().filter(s => s.messageId === messageId);
+        const maxStepId = groupSteps.reduce((m, s) => Math.max(m, s.stepId), -1);
+        stepId = maxStepId + 1;
+        isBegin = false;
+      } else {
+        messageId = `dbg-${this.agentId}-${++this.messageCounter}-${Date.now()}`;
+        stepId = 0;
+        isBegin = true;
+      }
+      this.currentMessageId = messageId;
+
+      // Function(...) input — emit ONLY an agent step that records the parsed
+      // tool call. No user step is created.
+      let parsed;
+      try {
+        parsed = parseFunctionCall(content);
+      } catch (e: any) {
+        const message = `Failed to parse Function(...): ${e?.message || String(e)}`;
+        const errorStepId = this.generateStepId();
+        const errorStep: ReActStep = {
+          id: errorStepId,
+          parentId: this.head,
+          messageId,
+          stepId,
+          timestamp: Date.now(),
+          role: "agent",
+          content: `[ERROR] ${message}`,
+          isBegin,
+          isEnd: false,
+          beforeWorkflowContent: beforeContent,
+          afterWorkflowContent: beforeContent,
+        };
+        this.addStep(errorStep);
+        this.head = errorStepId;
+        return { kind: "function_call", stopped: false, error: message };
+      }
+
+      // Execute the tool — same code path as the LLM-driven case.
+      const toolCallId = `dbg-tc-${this.stepCounter}-${Date.now()}`;
+      let output: any;
+      let isError = false;
+      try {
+        output = await this.executeTool(parsed.name, parsed.arguments);
+      } catch (e: any) {
+        output = `[ERROR] ${e?.message || String(e)}`;
+        isError = true;
+      }
+      // Match sendMessage's error-detection convention used by runPostStepExecution.
+      if (!isError) {
+        if (typeof output === "string" && output.startsWith("[ERROR]")) isError = true;
+        else if (output && typeof output === "object" && (output as any).error) isError = true;
+      }
+
+      const afterContent = this.workflowState.getWorkflowContent();
+
+      const formattedToolCalls = [
+        { toolName: parsed.name, toolCallId, input: parsed.arguments },
+      ];
+      const formattedToolResults = [{ toolCallId, output, isError }];
+
+      const agentStepId = this.generateStepId();
+      const agentStep: ReActStep = {
+        id: agentStepId,
+        parentId: this.head,
+        messageId,
+        stepId,
+        timestamp: Date.now(),
+        role: "agent",
+        content: "",
+        isBegin,
+        isEnd: false,
+        toolCalls: formattedToolCalls,
+        toolResults: formattedToolResults,
+        beforeWorkflowContent: beforeContent,
+        afterWorkflowContent: afterContent,
+      };
+      this.addStep(agentStep);
+      this.head = agentStepId;
+
+      // Post-step auto-execution — same helper used by sendMessage.
+      await this.runPostStepExecution(formattedToolCalls, formattedToolResults);
+
+      return { kind: "function_call", stopped: false, error: isError ? String(output) : undefined };
+    } finally {
+      this.abortController = null;
+      this.currentMessageId = undefined;
+      this.state = AgentStateEnum.AVAILABLE;
+    }
+  }
+
+  /**
+   * Run the post-step operator execution loop for tool calls that just modified
+   * the workflow. Skips when there is no execution config (no delegate mode),
+   * when the tool is not in EXECUTE_AFTER_TOOLS, or when the tool result was an error.
+   * Results are stored at the current HEAD via operatorResultStore.
+   */
+  private async runPostStepExecution(
+    toolCalls: ReadonlyArray<{ toolName: string; toolCallId: string; input: any }> | undefined,
+    toolResults: ReadonlyArray<{ toolCallId: string; output: any; isError?: boolean }> | undefined
+  ): Promise<void> {
+    const execConfig = this.buildExecutionConfig();
+    if (!execConfig || !toolCalls || !toolResults) return;
+
+    for (let i = 0; i < toolCalls.length; i++) {
+      const tc = toolCalls[i];
+      const tr = toolResults[i];
+      if (!EXECUTE_AFTER_TOOLS.has(tc.toolName)) continue;
+
+      // Skip failed tool calls (either marked isError or output starts with "[ERROR]")
+      if (tr?.isError) continue;
+      const resultText = typeof tr?.output === "string" ? tr.output : String(tr?.output ?? "");
+      if (resultText.startsWith("[ERROR]")) continue;
+
+      const operatorId = (tc.input as any)?.operatorId;
+      if (!operatorId) continue;
+
+      try {
+        await executeOperatorAndFormat(
+          this.workflowState,
+          execConfig,
+          operatorId,
+          {
+            abortSignal: this.abortController?.signal,
+            onResult: (opId, operatorInfo) => {
+              this.operatorResultStore.set(opId, this.head, operatorInfo);
+            },
+          }
+        );
+      } catch (e: any) {
+        // Non-fatal: log but don't fail the step
+        console.warn(`[PostStepExecution] Failed to execute ${operatorId}:`, e?.message || e);
+      }
+    }
+  }
+
+  /**
+   * Build the next-step model context: completed tasks + ongoing task + current
+   * workflow DAG, with optional context-optimization trimming applied. Single
+   * source of truth used by prepareStep (during generateText) and by
+   * getNextStepContext (for the WS preview frame). Both modes — LLM and debug —
+   * see the same assembled content.
+   */
+  private buildNextStepMessages(): ModelMessage[] {
+    // Assemble context: completed tasks + ongoing task + current workflow DAG.
+    // useRedact controls whether operator properties are shown in the DAG
+    // (properties are always shown for operators with execution errors).
+    const useRedact = this.settings.noActionDetail;
+    const visibleSteps = this.getVisibleReActSteps();
+    // Callback that attaches post-step execution errors to the exact turn where
+    // they happened in the task timeline. Also reports whether that error is
+    // still the current state in the DAG, so the timeline can avoid duplicating
+    // live content.
+    const getExecutionErrorForStep = (
+      stepId: string,
+      operatorId: string
+    ): { error: string; isCurrentInDag: boolean } | undefined => {
+      const entry = this.operatorResultStore.getAtStep(operatorId, stepId);
+      const err = entry?.operatorInfo?.error;
+      if (!err || err.trim().length === 0) return undefined;
+      const opInWorkflow = !!this.workflowState.getOperator(operatorId);
+      const currentEntry = this.operatorResultStore.get(operatorId);
+      const currentErr = currentEntry?.operatorInfo?.error;
+      const isCurrentInDag =
+        opInWorkflow &&
+        currentEntry?.stepId === stepId &&
+        !!currentErr &&
+        currentErr.trim().length > 0;
+      return { error: err, isCurrentInDag };
+    };
+    let processed = assembleContext(
+      visibleSteps,
+      this.workflowState,
+      this.getFormattedResultsForDAG(),
+      useRedact,
+      getExecutionErrorForStep
+    );
+    if (this.settings.enableContextOptimization) {
+      const effectiveDepth = this.settings.dynamicDepthEnabled
+        ? this.workflowState.computeAveragePathLength()
+        : this.settings.frontierDepth;
+      processed = trimNonFrontierResults(
+        processed,
+        this.workflowState,
+        effectiveDepth,
+        this.settings.agentMode,
+        this.settings.minimumResultCharLimit,
+        this.settings.maxOperatorResultCharLimit,
+        this.settings.noLogFallback
+      );
+    }
+    return processed;
+  }
+
+  /**
+   * Public preview of the next-step user-message content as a single string.
+   * Same code path as prepareStep; safe to call at any time (including outside
+   * an active sendMessage / handleDebugInput cycle).
+   */
+  getNextStepContext(): string {
+    const processed = this.buildNextStepMessages();
+    const first = processed[0];
+    if (!first) return "";
+    return typeof first.content === "string" ? first.content : JSON.stringify(first.content);
   }
 
   /**

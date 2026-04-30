@@ -174,6 +174,33 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
   // Message highlighting state
   public highlightedMessageId: string | null = null;
 
+  /**
+   * Debug mode toggle. When true, the input is interpreted directly:
+   *   - `Function(name='...', arguments='...')` → parsed and executed as a single
+   *     tool call (no LLM, no ReAct loop).
+   *   - anything else → recorded as a plain user ReActStep (no LLM call).
+   * Tool execution and post-step operator execution still happen, exactly as if
+   * the LLM had produced the same tool call.
+   */
+  public debugMode = false;
+
+  /** Placeholder for the message input, switches with debug mode. */
+  public get inputPlaceholder(): string {
+    return this.debugMode
+      ? "Function(name='...', arguments='{...}') or plain text user step"
+      : "Ask me anything about your data science tasks...";
+  }
+
+  /**
+   * Preview of the next-step model context (markdown). Pushed by the agent
+   * service whenever steps, HEAD, workflow, results or settings change.
+   * Same code path the LLM actually receives via prepareStep — useful for both
+   * normal and debug modes to inspect what the next turn will see.
+   */
+  public nextStepContext: string = "";
+  /** Whether the "Next-Step Context" panel is expanded. Collapsed by default. */
+  public showNextContext: boolean = false;
+
   // Track if we disabled auto-persist so we can re-enable it on destroy
   private disabledAutoPersist = false;
 
@@ -324,6 +351,66 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
       this.cdr.detectChanges();
     });
 
+    // Subscribe to next-step context updates (live preview of what the model
+    // would receive on the next prepareStep). Works in both LLM and debug modes.
+    this.copilotManagerService
+      .getNextContextObservable(this.agentInfo.id)
+      .pipe(untilDestroyed(this))
+      .subscribe(content => {
+        this.nextStepContext = content;
+        this.cdr.detectChanges();
+      });
+
+  }
+
+  /** Toggle the Next-Step Context preview panel. */
+  public toggleNextContext(): void {
+    this.showNextContext = !this.showNextContext;
+  }
+
+  /** Copy the raw next-step context (the markdown source, not the rendered HTML). */
+  public copyNextContext(event: Event): void {
+    event.stopPropagation();
+    if (!this.nextStepContext) {
+      this.notificationService.warning("Next-step context is empty");
+      return;
+    }
+    const text = this.nextStepContext;
+    const done = () => this.notificationService.success(`Copied next-step context (${text.length} chars)`);
+    const fail = (err: unknown) => {
+      console.error("Copy failed:", err);
+      this.notificationService.error("Failed to copy to clipboard");
+    };
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => {
+        // Fall back to execCommand if the async API is rejected (e.g. insecure context)
+        if (this.fallbackCopy(text)) done();
+        else fail(new Error("clipboard API rejected and fallback failed"));
+      });
+    } else if (this.fallbackCopy(text)) {
+      done();
+    } else {
+      fail(new Error("no clipboard API available"));
+    }
+  }
+
+  /** Legacy synchronous clipboard write — used when navigator.clipboard is unavailable. */
+  private fallbackCopy(text: string): boolean {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    document.body.removeChild(ta);
+    return ok;
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -584,6 +671,7 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
 
   /**
    * Send a message to the agent via the copilot manager service.
+   * In debug mode the input bypasses the LLM and is dispatched via sendDebugInput.
    */
   public sendMessage(): void {
     if (!this.currentMessage.trim() || !this.canSendMessage()) {
@@ -593,8 +681,11 @@ export class AgentChatComponent implements OnInit, AfterViewChecked, OnDestroy, 
     const userMessage = this.currentMessage.trim();
     this.currentMessage = "";
 
-    // Send to copilot via manager service (fire-and-forget)
-    this.copilotManagerService.sendMessage(this.agentInfo.id, userMessage);
+    if (this.debugMode) {
+      this.copilotManagerService.sendDebugInput(this.agentInfo.id, userMessage);
+    } else {
+      this.copilotManagerService.sendMessage(this.agentInfo.id, userMessage);
+    }
   }
 
   /**

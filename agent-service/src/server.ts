@@ -452,6 +452,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
   .post("/:id/reset", ({ params: { id } }) => {
     const agent = getAgent(id);
     agent.reset();
+    broadcastNextContext(id, agent);
     return { status: "reset" };
   })
 
@@ -459,6 +460,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
   .post("/:id/clear", ({ params: { id } }) => {
     const agent = getAgent(id);
     agent.clearHistory();
+    broadcastNextContext(id, agent);
     return { status: "cleared" };
   })
 
@@ -482,6 +484,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       workflowContent,
       operatorResults: getOperatorResultSummaries(agent),
     });
+    broadcastNextContext(id, agent);
 
     return {
       status: "checked out",
@@ -574,6 +577,10 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         allowedOperatorTypes: settings.allowedOperatorTypes,
       });
 
+      // Settings affect context assembly (redact, frontier depth, optimization, …)
+      // — re-broadcast the next-step preview so connected clients stay live.
+      broadcastNextContext(id, agent);
+
       // Return updated settings
       const agentSettings = agent.getSettings();
       return {
@@ -640,7 +647,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
 // ============================================================================
 
 interface WsMessage {
-  type: "message" | "stop" | "replay";
+  type: "message" | "stop" | "replay" | "debug";
   content?: string;
   /** Optional operator IDs for context filtering - only messages that affected these operators will be included */
   contextOperatorIds?: string[];
@@ -664,7 +671,7 @@ interface OperatorResultSummaryWs {
 }
 
 interface WsOutgoingMessage {
-  type: "step" | "state" | "error" | "complete" | "init" | "headChange";
+  type: "step" | "state" | "error" | "complete" | "init" | "headChange" | "nextContext";
   step?: ReActStep;
   state?: string;
   error?: string;
@@ -673,6 +680,9 @@ interface WsOutgoingMessage {
   headId?: string;
   operatorResults?: Record<string, OperatorResultSummaryWs>;
   workflowContent?: any;
+  /** Assembled next-step user-message content (markdown). Updated whenever steps,
+   *  HEAD, workflow, results or settings change. Same code path as prepareStep. */
+  content?: string;
 }
 
 /**
@@ -702,6 +712,20 @@ function getOperatorResultSummaries(agent: TexeraAgent): Record<string, Operator
     };
   }
   return results;
+}
+
+/**
+ * Broadcast the assembled next-step context to all WebSocket clients of an agent.
+ * Re-uses TexeraAgent.getNextStepContext() so the preview matches what the
+ * model would actually receive on the next prepareStep.
+ */
+function broadcastNextContext(agentId: string, agent: TexeraAgent): void {
+  try {
+    const content = agent.getNextStepContext();
+    broadcastToAgent(agentId, { type: "nextContext", content });
+  } catch (e: any) {
+    console.warn(`[WS] Failed to compute nextContext for ${agentId}:`, e?.message || e);
+  }
 }
 
 /**
@@ -760,6 +784,13 @@ const app = new Elysia()
         operatorResults: getOperatorResultSummaries(agent),
       };
       ws.send(JSON.stringify(initMessage));
+
+      // Send the initial next-step context preview right after init.
+      try {
+        ws.send(JSON.stringify({ type: "nextContext", content: agent.getNextStepContext() }));
+      } catch (e: any) {
+        console.warn(`[WS] Failed to send initial nextContext for ${agentId}:`, e?.message || e);
+      }
     },
 
     async message(ws, messageData) {
@@ -806,6 +837,7 @@ const app = new Elysia()
             step,
             ...(hasToolCalls ? { operatorResults: getOperatorResultSummaries(agent) } : {}),
           });
+          broadcastNextContext(agentId, agent);
         });
 
         // Broadcast GENERATING state immediately before starting processing
@@ -833,12 +865,55 @@ const app = new Elysia()
             stats: result.stats,
             operatorResults: getOperatorResultSummaries(agent),
           });
+          broadcastNextContext(agentId, agent);
 
           console.log(`[WS] Agent ${agentId} completed with ${result.messages.length} steps`);
         } catch (error: any) {
           agent.setStepCallback(null);
           broadcastToAgent(agentId, { type: "error", error: error.message });
         }
+      }
+
+      // Handle debug input - bypasses LLM, runs the parsed tool call directly.
+      // Mirrors the "message" branch: same step callback, same state frames.
+      if (msg.type === "debug") {
+        if (!msg.content || typeof msg.content !== "string") {
+          ws.send(JSON.stringify({ type: "error", error: "Debug content is required" }));
+          return;
+        }
+
+        console.log(`[WS] Agent ${agentId} debug input: ${msg.content.substring(0, 80)}...`);
+
+        agent.setStepCallback((step: ReActStep) => {
+          const hasToolCalls = step.toolCalls && step.toolCalls.length > 0;
+          broadcastToAgent(agentId, {
+            type: "step",
+            step,
+            ...(hasToolCalls ? { operatorResults: getOperatorResultSummaries(agent) } : {}),
+          });
+          broadcastNextContext(agentId, agent);
+        });
+
+        broadcastToAgent(agentId, { type: "state", state: "GENERATING" });
+
+        try {
+          await agent.handleDebugInput(msg.content, msg.messageSource);
+          agent.setStepCallback(null);
+
+          broadcastToAgent(agentId, {
+            type: "complete",
+            state: agent.getState(),
+            operatorResults: getOperatorResultSummaries(agent),
+          });
+          broadcastNextContext(agentId, agent);
+
+          console.log(`[WS] Agent ${agentId} debug input completed`);
+        } catch (error: any) {
+          agent.setStepCallback(null);
+          broadcastToAgent(agentId, { type: "error", error: error.message || String(error) });
+          broadcastToAgent(agentId, { type: "state", state: agent.getState() });
+        }
+        return;
       }
 
       // Handle replay message - replay a trace by executing tool calls step by step
@@ -878,6 +953,7 @@ const app = new Elysia()
           state: agent.getState(),
           operatorResults: getOperatorResultSummaries(agent),
         });
+        broadcastNextContext(agentId, agent);
 
         console.log(`[WS] Agent ${agentId} replay completed`);
       }

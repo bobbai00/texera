@@ -206,6 +206,9 @@ interface AgentStateTracking {
   }>;
   /** Current HEAD step ID in the version tree */
   headIdSubject: BehaviorSubject<string | null>;
+  /** Assembled next-step user-message content (markdown). Empty until the agent
+   *  reports the first nextContext frame. */
+  nextContextSubject: BehaviorSubject<string>;
   workflowSubject: BehaviorSubject<Workflow | null>;
   workflowId?: number;
   stopPolling$: Subject<void>;
@@ -395,6 +398,7 @@ export class TexeraCopilotManagerService {
           modifiedOperatorIds: string[];
         }>({ viewedOperatorIds: [], addedOperatorIds: [], modifiedOperatorIds: [] }),
         headIdSubject: new BehaviorSubject<string | null>(null),
+        nextContextSubject: new BehaviorSubject<string>(""),
         workflowSubject: new BehaviorSubject<Workflow | null>(null),
         workflowId,
         stopPolling$: new Subject<void>(),
@@ -626,6 +630,13 @@ export class TexeraCopilotManagerService {
         // Update operator results on HEAD change
         if (message.operatorResults) {
           this.updateOperatorResultSummaries(message.operatorResults);
+        }
+        break;
+
+      case "nextContext":
+        // Real-time preview of the next-step user-message content (markdown).
+        if (typeof message.content === "string") {
+          tracking.nextContextSubject.next(message.content);
         }
         break;
 
@@ -1057,6 +1068,40 @@ export class TexeraCopilotManagerService {
   }
 
   /**
+   * Send a debug input to an agent via WebSocket.
+   * Bypasses the LLM. Plain text becomes a user ReActStep; a `Function(name='...',
+   * arguments='...')` literal is parsed and executed as a single tool call,
+   * with the same post-step execution as the LLM-driven path.
+   */
+  public sendDebugInput(agentId: string, content: string, messageSource: "chat" | "feedback" = "chat"): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      this.notificationService.error(`Agent with ID ${agentId} not found`);
+      return;
+    }
+
+    const tracking = this.agentStateTracking.get(agentId);
+    if (!tracking || !tracking.websocket || tracking.websocket.readyState !== WebSocket.OPEN) {
+      this.notificationService.error("WebSocket connection not available");
+      return;
+    }
+
+    const wsMessage = {
+      type: "debug",
+      content,
+      messageSource,
+    };
+
+    try {
+      tracking.websocket.send(JSON.stringify(wsMessage));
+      console.log(`[CopilotManager] Sent debug input to agent ${agentId}: ${content.substring(0, 60)}...`);
+    } catch (error) {
+      console.error("[CopilotManager] Failed to send debug input:", error);
+      this.notificationService.error("Failed to send debug input");
+    }
+  }
+
+  /**
    * Get the ReActSteps observable stream.
    */
   public getReActStepsObservable(agentId: string): Observable<ReActStep[]> {
@@ -1149,6 +1194,16 @@ export class TexeraCopilotManagerService {
   public getHeadIdObservable(agentId: string): Observable<string | null> {
     const tracking = this.getOrCreateStateTracking(agentId);
     return tracking.headIdSubject.asObservable();
+  }
+
+  /**
+   * Get the assembled next-step context (markdown) observable for an agent.
+   * Updates whenever the agent service broadcasts a nextContext frame
+   * (after init / step / complete / headChange / settings / reset / clear).
+   */
+  public getNextContextObservable(agentId: string): Observable<string> {
+    const tracking = this.getOrCreateStateTracking(agentId);
+    return tracking.nextContextSubject.asObservable();
   }
 
   /**
