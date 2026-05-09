@@ -69,7 +69,7 @@ class ExecutionRuntimeService(
   // Receive execution state update from Amber
   addSubscription(client.registerCallback[ExecutionStateUpdate]((evt: ExecutionStateUpdate) => {
     stateStore.metadataStore.updateState(metadataStore =>
-      updateWorkflowState(evt.state, metadataStore)
+      updateWorkflowState(evt.state, metadataStore, stateStore.jwt)
     )
 
     emailNotificationService.foreach(_.processEmailNotificationIfNeeded(evt.state))
@@ -83,7 +83,7 @@ class ExecutionRuntimeService(
   // Receive Pause
   addSubscription(wsInput.subscribe((req: WorkflowPauseRequest, uidOpt) => {
     stateStore.metadataStore.updateState(metadataStore =>
-      updateWorkflowState(PAUSING, metadataStore)
+      updateWorkflowState(PAUSING, metadataStore, stateStore.jwt)
     )
     client.controllerInterface.pauseWorkflow(EmptyRequest(), ())
   }))
@@ -92,13 +92,13 @@ class ExecutionRuntimeService(
   addSubscription(wsInput.subscribe((req: WorkflowResumeRequest, uidOpt) => {
     reconfigurationService.performReconfigurationOnResume()
     stateStore.metadataStore.updateState(metadataStore =>
-      updateWorkflowState(RESUMING, metadataStore)
+      updateWorkflowState(RESUMING, metadataStore, stateStore.jwt)
     )
     client.controllerInterface
       .resumeWorkflow(EmptyRequest(), ())
       .onSuccess(_ =>
         stateStore.metadataStore.updateState(metadataStore =>
-          updateWorkflowState(RUNNING, metadataStore)
+          updateWorkflowState(RUNNING, metadataStore, stateStore.jwt)
         )
       )
   }))
@@ -108,7 +108,7 @@ class ExecutionRuntimeService(
     client.shutdown()
     stateStore.statsStore.updateState(stats => stats.withEndTimeStamp(System.currentTimeMillis()))
     stateStore.metadataStore.updateState(metadataStore =>
-      updateWorkflowState(KILLED, metadataStore)
+      updateWorkflowState(KILLED, metadataStore, stateStore.jwt)
     )
   }))
 

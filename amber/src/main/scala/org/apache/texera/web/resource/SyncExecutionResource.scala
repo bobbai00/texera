@@ -289,7 +289,7 @@ class SyncExecutionResource extends LazyLogging {
             // Override to COMPLETED — we have everything we asked for, even though the engine
             // sees this as a kill.
             executionService.executionStateStore.metadataStore.updateState(metadataStore =>
-              updateWorkflowState(COMPLETED, metadataStore)
+              updateWorkflowState(COMPLETED, metadataStore, executionService.executionStateStore.jwt)
             )
             (executionService.executionStateStore.metadataStore.getState, false, true)
         }
@@ -367,7 +367,7 @@ class SyncExecutionResource extends LazyLogging {
         stats.withEndTimeStamp(System.currentTimeMillis())
       )
       executionService.executionStateStore.metadataStore.updateState(metadataStore =>
-        updateWorkflowState(KILLED, metadataStore)
+        updateWorkflowState(KILLED, metadataStore, executionService.executionStateStore.jwt)
       )
     } catch {
       case e: Exception =>

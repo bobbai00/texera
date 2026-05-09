@@ -86,6 +86,42 @@ object WebAppClient extends LazyLogging {
     ExecutionIdentity(parsed.eid)
   }
 
+  /**
+    * Applies a partial update to a workflow_executions row. Only non-None
+    * fields are sent; the server applies them and ignores absent ones.
+    */
+  def updateExecution(
+      jwt: String,
+      eid: ExecutionIdentity,
+      status: Option[Short] = None,
+      lastUpdateTime: Option[Long] = None,
+      logLocation: Option[String] = None,
+      runtimeStatsUri: Option[String] = None,
+      runtimeStatsSize: Option[Int] = None,
+      result: Option[String] = None
+  ): Unit = {
+    val body = UpdateExecutionRequestBody(
+      status = status,
+      lastUpdateTime = lastUpdateTime,
+      logLocation = logLocation,
+      runtimeStatsUri = runtimeStatsUri,
+      runtimeStatsSize = runtimeStatsSize,
+      result = result
+    )
+    val request = HttpRequest
+      .newBuilder()
+      .uri(URI.create(s"$baseUrl/api/executions/${eid.id}/update"))
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .header("Content-Type", "application/json")
+      .POST(
+        HttpRequest.BodyPublishers
+          .ofString(objectMapper.writeValueAsString(body), StandardCharsets.UTF_8)
+      )
+      .build()
+    sendWithRetry(request)
+  }
+
   private def sendWithRetry(request: HttpRequest): String = {
     var lastError: Throwable = null
     var attempt = 1
@@ -127,4 +163,13 @@ object WebAppClient extends LazyLogging {
   )
 
   private case class CreateExecutionResponseBody(@JsonProperty("eid") eid: Long)
+
+  private case class UpdateExecutionRequestBody(
+      @JsonProperty("status") status: Option[Short],
+      @JsonProperty("lastUpdateTime") lastUpdateTime: Option[Long],
+      @JsonProperty("logLocation") logLocation: Option[String],
+      @JsonProperty("runtimeStatsUri") runtimeStatsUri: Option[String],
+      @JsonProperty("runtimeStatsSize") runtimeStatsSize: Option[Int],
+      @JsonProperty("result") result: Option[String]
+  )
 }

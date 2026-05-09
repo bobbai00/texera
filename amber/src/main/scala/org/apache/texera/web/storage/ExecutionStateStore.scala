@@ -27,29 +27,36 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
   ExecutionMetadataStore,
   ExecutionStatsStore
 }
-import org.apache.texera.web.service.ExecutionsMetadataPersistService
-
-import java.sql.Timestamp
+import org.apache.texera.web.client.WebAppClient
 
 object ExecutionStateStore {
 
-  // Update the state of the specified execution if user system is enabled.
-  // Update the execution only from backend
+  /**
+    * Persists a workflow's status transition through web-app and returns the
+    * mutated metadata store. The jwt is the originating user's bearer token,
+    * forwarded so web-app authorizes the write against the same user that
+    * started the execution. Pass an empty string to skip the web-app call
+    * (used by tests that don't have a live web-app).
+    */
   def updateWorkflowState(
       state: WorkflowAggregatedState,
-      metadataStore: ExecutionMetadataStore
+      metadataStore: ExecutionMetadataStore,
+      jwt: String
   ): ExecutionMetadataStore = {
-    ExecutionsMetadataPersistService.tryUpdateExistingExecution(metadataStore.executionId) {
-      execution =>
-        execution.setStatus(maptoStatusCode(state))
-        execution.setLastUpdateTime(new Timestamp(System.currentTimeMillis()))
+    if (jwt.nonEmpty) {
+      WebAppClient.updateExecution(
+        jwt = jwt,
+        eid = metadataStore.executionId,
+        status = Some(maptoStatusCode(state)),
+        lastUpdateTime = Some(System.currentTimeMillis())
+      )
     }
     metadataStore.withState(state)
   }
 }
 
 // states that within one execution.
-class ExecutionStateStore {
+class ExecutionStateStore(val jwt: String = "") {
   val statsStore = new StateStore(ExecutionStatsStore())
   val metadataStore = new StateStore(ExecutionMetadataStore())
   val consoleStore = new StateStore(ExecutionConsoleStore())

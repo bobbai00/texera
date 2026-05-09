@@ -323,7 +323,7 @@ class ExecutionStatsService(
           )
           stateStore.metadataStore.updateState { metadataStore =>
             logger.error("error occurred in execution", evt.e)
-            updateWorkflowState(FAILED, metadataStore).addFatalErrors(
+            updateWorkflowState(FAILED, metadataStore, stateStore.jwt).addFatalErrors(
               WorkflowFatalError(
                 EXECUTION_FAILURE,
                 Timestamp(Instant.now),

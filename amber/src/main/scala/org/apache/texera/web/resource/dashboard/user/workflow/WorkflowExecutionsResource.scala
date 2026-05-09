@@ -558,6 +558,15 @@ case class CreateExecutionRequest(
 
 case class CreateExecutionResponse(eid: Long)
 
+case class UpdateExecutionRequest(
+    status: Option[Short] = None,
+    lastUpdateTime: Option[Long] = None,
+    logLocation: Option[String] = None,
+    runtimeStatsUri: Option[String] = None,
+    runtimeStatsSize: Option[Int] = None,
+    result: Option[String] = None
+)
+
 @Produces(Array(MediaType.APPLICATION_JSON, MediaType.APPLICATION_OCTET_STREAM, "application/zip"))
 @Path("/executions")
 class WorkflowExecutionsResource {
@@ -826,6 +835,33 @@ class WorkflowExecutionsResource {
       request.computingUnitId
     )
     CreateExecutionResponse(eid.id)
+  }
+
+  /**
+    * Applies a partial update to a workflow_executions row. Called by CU Master
+    * during execution lifecycle (state transitions, artifact attachments).
+    * Only fields present in the request body are applied.
+    */
+  @POST
+  @Consumes(Array(MediaType.APPLICATION_JSON))
+  @Path("/{eid}/update")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def updateExecution(
+      @PathParam("eid") eid: Long,
+      request: UpdateExecutionRequest,
+      @Auth sessionUser: SessionUser
+  ): Unit = {
+    ExecutionsMetadataPersistService.tryUpdateExistingExecution(ExecutionIdentity(eid)) {
+      execution =>
+        request.status.foreach(s => execution.setStatus(java.lang.Short.valueOf(s)))
+        request.lastUpdateTime.foreach(t => execution.setLastUpdateTime(new Timestamp(t)))
+        request.logLocation.foreach(execution.setLogLocation)
+        request.runtimeStatsUri.foreach(execution.setRuntimeStatsUri)
+        request.runtimeStatsSize.foreach(s =>
+          execution.setRuntimeStatsSize(Integer.valueOf(s))
+        )
+        request.result.foreach(execution.setResult)
+    }
   }
 
   /**

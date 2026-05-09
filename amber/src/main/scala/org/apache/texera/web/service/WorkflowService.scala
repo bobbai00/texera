@@ -192,6 +192,7 @@ class WorkflowService(
     }
 
     val userEmailOpt = userOpt.map(_.getEmail)
+    val jwt = extractJwtFromUri(sessionUri)
 
     val workflowContext: WorkflowContext = createWorkflowContext()
     var controllerConf = ControllerConfig.default
@@ -204,7 +205,7 @@ class WorkflowService(
     }) // TODO: change this behavior after enabling cache.
 
     workflowContext.executionId = WebAppClient.createExecution(
-      jwt = extractJwtFromUri(sessionUri),
+      jwt = jwt,
       workflowId = workflowContext.workflowId,
       executionName = req.executionName,
       engineVersion = convertToJson(req.engineVersion),
@@ -239,7 +240,7 @@ class WorkflowService(
         }
     }
 
-    val executionStateStore = new ExecutionStateStore()
+    val executionStateStore = new ExecutionStateStore(jwt)
     // assign execution id to find the execution from DB in case the constructor fails.
     executionStateStore.metadataStore.updateState(state =>
       state.withExecutionId(workflowContext.executionId)
@@ -258,7 +259,7 @@ class WorkflowService(
           stats.withEndTimeStamp(System.currentTimeMillis())
         )
         executionStateStore.metadataStore.updateState { metadataStore =>
-          updateWorkflowState(FAILED, metadataStore).addFatalErrors(
+          updateWorkflowState(FAILED, metadataStore, executionStateStore.jwt).addFatalErrors(
             WorkflowFatalError(
               EXECUTION_FAILURE,
               Timestamp(Instant.now),

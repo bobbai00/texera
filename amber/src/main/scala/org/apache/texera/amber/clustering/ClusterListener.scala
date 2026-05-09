@@ -87,7 +87,7 @@ class ClusterListener extends Actor with AmberLogging {
     )
     executionService.executionStateStore.metadataStore.updateState { metadataStore =>
       logger.error("forcefully stopping execution", cause)
-      updateWorkflowState(FAILED, metadataStore).addFatalErrors(
+      updateWorkflowState(FAILED, metadataStore, executionService.executionStateStore.jwt).addFatalErrors(
         WorkflowFatalError(
           EXECUTION_FAILURE,
           Timestamp(Instant.now),

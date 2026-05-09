@@ -143,7 +143,7 @@ class WorkflowExecutionService(
       client
     )
     executionStateStore.metadataStore.updateState(metadataStore =>
-      updateWorkflowState(READY, metadataStore)
+      updateWorkflowState(READY, metadataStore, executionStateStore.jwt)
         .withFatalErrors(Seq.empty)
     )
     executionStateStore.statsStore.updateState(stats =>
@@ -157,7 +157,7 @@ class WorkflowExecutionService(
       .onSuccess(resp =>
         executionStateStore.metadataStore.updateState(metadataStore =>
           if (metadataStore.state != FAILED) {
-            updateWorkflowState(resp.workflowState, metadataStore)
+            updateWorkflowState(resp.workflowState, metadataStore, executionStateStore.jwt)
           } else {
             metadataStore
           }
