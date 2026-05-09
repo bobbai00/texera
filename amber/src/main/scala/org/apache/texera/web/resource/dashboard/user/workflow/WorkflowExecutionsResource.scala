@@ -33,6 +33,7 @@ import org.apache.texera.amber.engine.architecture.logreplay.{ReplayDestination,
 import org.apache.texera.amber.engine.common.Utils.{maptoStatusCode, stringToAggregatedState}
 import org.apache.texera.amber.engine.common.storage.SequentialRecordStorage
 import org.apache.texera.amber.util.JSONUtils.objectMapper
+import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtParser, SessionUser}
 import org.apache.texera.dao.SqlServer
@@ -579,6 +580,20 @@ case class UpdateOperatorPortResultSizeRequest(globalPortId: String, size: Long)
 
 case class RecomputeConsoleMessageSizeRequest(operatorId: String)
 
+case class OperatorPortResultUriRequest(globalPortId: String, uri: String)
+
+case class OperatorConsoleUriRequest(operatorId: String, uri: String)
+
+case class ExecutionUrisResponse(
+    resultUris: List[String],
+    consoleMessageUris: List[String],
+    runtimeStatsUri: Option[String]
+)
+
+case class OptionalUriResponse(uri: Option[String])
+
+case class OptionalEidResponse(eid: Option[Long])
+
 @Produces(Array(MediaType.APPLICATION_JSON, MediaType.APPLICATION_OCTET_STREAM, "application/zip"))
 @Path("/executions")
 class WorkflowExecutionsResource {
@@ -900,6 +915,131 @@ class WorkflowExecutionsResource {
         )
         request.result.foreach(execution.setResult)
     }
+  }
+
+  /**
+    * Returns the most recent execution id for (workflowId, computingUnitId).
+    */
+  @GET
+  @Produces(Array(MediaType.APPLICATION_JSON))
+  @Path("/latest-eid")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def getLatestEid(
+      @QueryParam("wid") wid: Integer,
+      @QueryParam("cuid") cuid: Integer,
+      @Auth sessionUser: SessionUser
+  ): OptionalEidResponse = {
+    OptionalEidResponse(
+      getLatestExecutionID(wid, cuid).map(_.longValue())
+    )
+  }
+
+  /**
+    * Inserts an output port -> result URI mapping for an execution.
+    */
+  @POST
+  @Consumes(Array(MediaType.APPLICATION_JSON))
+  @Path("/by_eid/{eid}/operator-port-result-uri")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def insertOperatorPortResultUriEndpoint(
+      @PathParam("eid") eid: Long,
+      request: OperatorPortResultUriRequest,
+      @Auth sessionUser: SessionUser
+  ): Unit = {
+    val globalPortId = GlobalPortIdentitySerde.deserializeFromString(request.globalPortId)
+    insertOperatorPortResultUri(ExecutionIdentity(eid), globalPortId, URI.create(request.uri))
+  }
+
+  /**
+    * Inserts an operator -> console-messages URI mapping for an execution.
+    */
+  @POST
+  @Consumes(Array(MediaType.APPLICATION_JSON))
+  @Path("/by_eid/{eid}/operator-console-uri")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def insertOperatorConsoleUriEndpoint(
+      @PathParam("eid") eid: Long,
+      request: OperatorConsoleUriRequest,
+      @Auth sessionUser: SessionUser
+  ): Unit = {
+    insertOperatorExecutions(eid, request.operatorId, URI.create(request.uri))
+  }
+
+  /**
+    * Returns the bundle of URIs CU Master needs at runtime / cleanup time:
+    * per-port results, per-operator console messages, runtime stats.
+    */
+  @GET
+  @Produces(Array(MediaType.APPLICATION_JSON))
+  @Path("/by_eid/{eid}/uris")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def getExecutionUrisEndpoint(
+      @PathParam("eid") eid: Long,
+      @Auth sessionUser: SessionUser
+  ): ExecutionUrisResponse = {
+    val executionId = ExecutionIdentity(eid)
+    ExecutionUrisResponse(
+      resultUris = getResultUrisByExecutionId(executionId).map(_.toString),
+      consoleMessageUris = getConsoleMessagesUriByExecutionId(executionId).map(_.toString),
+      runtimeStatsUri = getRuntimeStatsUriByExecutionId(executionId).map(_.toString)
+    )
+  }
+
+  /**
+    * Resolves an output port's result URI by logical operator id + port id.
+    */
+  @GET
+  @Produces(Array(MediaType.APPLICATION_JSON))
+  @Path("/by_eid/{eid}/operator-port-result-uri")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def getOperatorPortResultUriEndpoint(
+      @PathParam("eid") eid: Long,
+      @QueryParam("logicalOpId") logicalOpId: String,
+      @QueryParam("portId") portId: Int,
+      @QueryParam("portInternal") portInternal: Boolean,
+      @Auth sessionUser: SessionUser
+  ): OptionalUriResponse = {
+    val opIdentity = OperatorIdentity(logicalOpId)
+    val portIdentity = PortIdentity(portId, portInternal)
+    OptionalUriResponse(
+      getResultUriByLogicalPortId(ExecutionIdentity(eid), opIdentity, portIdentity)
+        .map(_.toString)
+    )
+  }
+
+  /**
+    * Resolves the console-messages URI for an operator within an execution.
+    */
+  @GET
+  @Produces(Array(MediaType.APPLICATION_JSON))
+  @Path("/by_eid/{eid}/operator-console-uri")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def getOperatorConsoleUriEndpoint(
+      @PathParam("eid") eid: Long,
+      @QueryParam("operatorId") operatorId: String,
+      @Auth sessionUser: SessionUser
+  ): OptionalUriResponse = {
+    val maybeUri = context
+      .select(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI)
+      .from(OPERATOR_EXECUTIONS)
+      .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.toInt))
+      .and(OPERATOR_EXECUTIONS.OPERATOR_ID.eq(operatorId))
+      .fetchOneInto(classOf[String])
+    OptionalUriResponse(Option(maybeUri).filter(_.nonEmpty))
+  }
+
+  /**
+    * Deletes all per-operator URI rows (operator_port_executions and
+    * operator_executions) for an execution. Used before re-running a workflow.
+    */
+  @POST
+  @Path("/by_eid/{eid}/uris/clear")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def clearOperatorUrisEndpoint(
+      @PathParam("eid") eid: Long,
+      @Auth sessionUser: SessionUser
+  ): Unit = {
+    deleteConsoleMessageAndExecutionResultUris(ExecutionIdentity(eid))
   }
 
   /**

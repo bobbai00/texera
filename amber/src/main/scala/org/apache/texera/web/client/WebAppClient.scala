@@ -30,6 +30,7 @@ import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.charset.StandardCharsets
 import java.time.Duration
+import java.util.concurrent.ConcurrentHashMap
 
 /**
   * HTTP client CU Master uses to delegate DB writes to texera-web-application.
@@ -271,6 +272,199 @@ object WebAppClient extends LazyLogging {
     )
   }
 
+  /**
+    * Per-execution JWT registry. Engine-internal code (e.g. region coordinators)
+    * typically has eid in scope but no service-level reference to the JWT;
+    * looking it up here decouples those layers from auth plumbing.
+    * WorkflowService stores at execution start and clears at lifecycle end.
+    */
+  private val jwtsByEid = new ConcurrentHashMap[Long, String]()
+
+  def storeJwt(eid: ExecutionIdentity, jwt: String): Unit =
+    jwtsByEid.put(eid.id, jwt)
+
+  def removeJwt(eid: ExecutionIdentity): Unit =
+    jwtsByEid.remove(eid.id)
+
+  /**
+    * Returns the registered JWT for an execution, or None if not registered
+    * (e.g. tests that run engine code without a real WebSocket session).
+    * Engine-internal callers that hit web-app should silently skip when None.
+    */
+  def jwtFor(eid: ExecutionIdentity): Option[String] =
+    Option(jwtsByEid.get(eid.id))
+
+  /**
+    * Inserts a row into operator_port_executions linking an output port to its
+    * Iceberg result document URI.
+    */
+  def insertOperatorPortResultUri(
+      jwt: String,
+      eid: ExecutionIdentity,
+      globalPortId: String,
+      uri: URI
+  ): Unit = {
+    val body = OperatorPortResultUriBody(globalPortId, uri.toString)
+    val request = HttpRequest
+      .newBuilder()
+      .uri(URI.create(s"$baseUrl/api/executions/by_eid/${eid.id}/operator-port-result-uri"))
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .header("Content-Type", "application/json")
+      .POST(
+        HttpRequest.BodyPublishers
+          .ofString(objectMapper.writeValueAsString(body), StandardCharsets.UTF_8)
+      )
+      .build()
+    sendWithRetry(request)
+  }
+
+  /**
+    * Inserts a row into operator_executions linking an operator to its
+    * Iceberg console-messages document URI.
+    */
+  def insertOperatorConsoleUri(
+      jwt: String,
+      eid: ExecutionIdentity,
+      operatorId: String,
+      uri: URI
+  ): Unit = {
+    val body = OperatorConsoleUriBody(operatorId, uri.toString)
+    val request = HttpRequest
+      .newBuilder()
+      .uri(URI.create(s"$baseUrl/api/executions/by_eid/${eid.id}/operator-console-uri"))
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .header("Content-Type", "application/json")
+      .POST(
+        HttpRequest.BodyPublishers
+          .ofString(objectMapper.writeValueAsString(body), StandardCharsets.UTF_8)
+      )
+      .build()
+    sendWithRetry(request)
+  }
+
+  /**
+    * Returns all URIs CU Master needs for a single execution: per-port result
+    * URIs, per-operator console URIs, and the runtime stats URI.
+    */
+  def getExecutionUris(
+      jwt: String,
+      eid: ExecutionIdentity
+  ): ExecutionUrisBody = {
+    val request = HttpRequest
+      .newBuilder()
+      .uri(URI.create(s"$baseUrl/api/executions/by_eid/${eid.id}/uris"))
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .header("Accept", "application/json")
+      .GET()
+      .build()
+    val responseBody = sendWithRetry(request)
+    objectMapper.readValue(responseBody, classOf[ExecutionUrisBody])
+  }
+
+  /**
+    * Looks up the result URI of a specific output port within an execution.
+    */
+  def getOperatorPortResultUri(
+      jwt: String,
+      eid: ExecutionIdentity,
+      logicalOpId: String,
+      portId: Int,
+      portInternal: Boolean
+  ): Option[URI] = {
+    val query =
+      s"logicalOpId=${URI.create(logicalOpId).toASCIIString}&portId=$portId&portInternal=$portInternal"
+    val request = HttpRequest
+      .newBuilder()
+      .uri(
+        URI.create(
+          s"$baseUrl/api/executions/by_eid/${eid.id}/operator-port-result-uri?$query"
+        )
+      )
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .header("Accept", "application/json")
+      .GET()
+      .build()
+    val responseBody = sendWithRetry(request)
+    objectMapper
+      .readValue(responseBody, classOf[OptionalUriBody])
+      .uri
+      .map(URI.create)
+  }
+
+  /**
+    * Looks up the console-messages URI for a specific operator in an execution.
+    */
+  def getOperatorConsoleUri(
+      jwt: String,
+      eid: ExecutionIdentity,
+      operatorId: String
+  ): Option[URI] = {
+    val query = s"operatorId=$operatorId"
+    val request = HttpRequest
+      .newBuilder()
+      .uri(
+        URI.create(
+          s"$baseUrl/api/executions/by_eid/${eid.id}/operator-console-uri?$query"
+        )
+      )
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .header("Accept", "application/json")
+      .GET()
+      .build()
+    val responseBody = sendWithRetry(request)
+    objectMapper
+      .readValue(responseBody, classOf[OptionalUriBody])
+      .uri
+      .map(URI.create)
+  }
+
+  /**
+    * Returns the most recent execution id for (workflowId, computingUnitId).
+    */
+  def getLatestExecutionId(
+      jwt: String,
+      workflowId: WorkflowIdentity,
+      computingUnitId: Int
+  ): Option[ExecutionIdentity] = {
+    val request = HttpRequest
+      .newBuilder()
+      .uri(
+        URI.create(
+          s"$baseUrl/api/executions/latest-eid?wid=${workflowId.id}&cuid=$computingUnitId"
+        )
+      )
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .header("Accept", "application/json")
+      .GET()
+      .build()
+    val responseBody = sendWithRetry(request)
+    objectMapper
+      .readValue(responseBody, classOf[OptionalEidBody])
+      .eid
+      .map(ExecutionIdentity.apply)
+  }
+
+  /**
+    * Removes operator_port_executions and operator_executions rows for an
+    * execution. Called by clearExecutionResources before re-running a workflow.
+    */
+  def clearOperatorUris(jwt: String, eid: ExecutionIdentity): Unit = {
+    val request = HttpRequest
+      .newBuilder()
+      .uri(URI.create(s"$baseUrl/api/executions/by_eid/${eid.id}/uris/clear"))
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .POST(HttpRequest.BodyPublishers.noBody())
+      .build()
+    sendWithRetry(request)
+  }
+
   private case class CreateExecutionRequestBody(
       @JsonProperty("workflowId") workflowId: Long,
       @JsonProperty("executionName") executionName: String,
@@ -296,6 +490,26 @@ object WebAppClient extends LazyLogging {
   private case class RecomputeConsoleMessageSizeRequestBody(
       @JsonProperty("operatorId") operatorId: String
   )
+
+  private case class OperatorPortResultUriBody(
+      @JsonProperty("globalPortId") globalPortId: String,
+      @JsonProperty("uri") uri: String
+  )
+
+  private case class OperatorConsoleUriBody(
+      @JsonProperty("operatorId") operatorId: String,
+      @JsonProperty("uri") uri: String
+  )
+
+  case class ExecutionUrisBody(
+      @JsonProperty("resultUris") resultUris: List[String],
+      @JsonProperty("consoleMessageUris") consoleMessageUris: List[String],
+      @JsonProperty("runtimeStatsUri") runtimeStatsUri: Option[String]
+  )
+
+  private case class OptionalUriBody(@JsonProperty("uri") uri: Option[String])
+
+  private case class OptionalEidBody(@JsonProperty("eid") eid: Option[Long])
 
   private case class UpdateExecutionRequestBody(
       @JsonProperty("status") status: Option[Short],

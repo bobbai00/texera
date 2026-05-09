@@ -22,6 +22,8 @@ package org.apache.texera.web.service
 import org.apache.pekko.actor.Cancellable
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.web.client.WebAppClient
+
+import java.net.URI
 import com.fasterxml.jackson.annotation.{JsonTypeInfo, JsonTypeName}
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
@@ -55,9 +57,7 @@ import org.apache.texera.web.model.websocket.event.{
   WebResultUpdateEvent
 }
 import org.apache.texera.web.model.websocket.request.ResultPaginationRequest
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.ExecutionResultService.convertTuplesToJson
-import org.apache.texera.web.service.WorkflowExecutionService.getLatestExecutionId
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
 
 import java.lang.Byte.{SIZE => BitsPerByte}
@@ -174,7 +174,8 @@ object ExecutionResultService {
       executionId: ExecutionIdentity,
       physicalOps: List[PhysicalOp],
       oldTupleCount: Int,
-      newTupleCount: Int
+      newTupleCount: Int,
+      jwt: String
   ): WebResultUpdate = {
     val outputMode = physicalOps
       .flatMap(op => op.outputPorts)
@@ -203,10 +204,12 @@ object ExecutionResultService {
 
     // Cannot assume the storage is available at this point. The storage object is only available
     // after a region is scheduled to execute.
-    val storageUriOption = WorkflowExecutionsResource.getResultUriByLogicalPortId(
-      executionId,
-      physicalOps.head.id.logicalOpId,
-      PortIdentity()
+    val storageUriOption = WebAppClient.getOperatorPortResultUri(
+      jwt = jwt,
+      eid = executionId,
+      logicalOpId = physicalOps.head.id.logicalOpId.id,
+      portId = PortIdentity().id,
+      portInternal = PortIdentity().internal
     )
     storageUriOption match {
       case Some(storageUri) =>
@@ -372,7 +375,8 @@ class ExecutionResultService(
                 executionId,
                 physicalPlan.getPhysicalOpsOfLogicalOp(opId),
                 oldInfo.tupleCount,
-                info.tupleCount
+                info.tupleCount,
+                stateStore.jwt
               )
               // using the first port for now. TODO: support multiple ports
               val outputPortsMap = physicalPlan
@@ -387,12 +391,13 @@ class ExecutionResultService(
               }
 
               if (!hasSingleSnapshot) {
-                val storageUri = WorkflowExecutionsResource
-                  .getResultUriByLogicalPortId(
-                    executionId,
-                    opId,
-                    PortIdentity()
-                  )
+                val storageUri = WebAppClient.getOperatorPortResultUri(
+                  jwt = stateStore.jwt,
+                  eid = executionId,
+                  logicalOpId = opId.id,
+                  portId = PortIdentity().id,
+                  portInternal = PortIdentity().internal
+                )
 
                 if (storageUri.nonEmpty) {
                   val (_, _, globalPortIdOption, _) = VFSURIFactory.decodeURI(storageUri.get)
@@ -429,14 +434,17 @@ class ExecutionResultService(
   def handleResultPagination(request: ResultPaginationRequest): TexeraWebSocketEvent = {
     // calculate from index (pageIndex starts from 1 instead of 0)
     val from = request.pageSize * (request.pageIndex - 1)
-    val latestExecutionId = getLatestExecutionId(workflowIdentity, computingUnitId).getOrElse(
-      throw new IllegalStateException("No execution is recorded")
-    )
+    val jwt = workflowStateStore.jwt
+    val latestExecutionId = WebAppClient
+      .getLatestExecutionId(jwt, workflowIdentity, computingUnitId)
+      .getOrElse(throw new IllegalStateException("No execution is recorded"))
 
-    val storageUriOption = WorkflowExecutionsResource.getResultUriByLogicalPortId(
-      latestExecutionId,
-      OperatorIdentity(request.operatorID),
-      PortIdentity()
+    val storageUriOption = WebAppClient.getOperatorPortResultUri(
+      jwt = jwt,
+      eid = latestExecutionId,
+      logicalOpId = request.operatorID,
+      portId = PortIdentity().id,
+      portInternal = PortIdentity().internal
     )
 
     storageUriOption match {
@@ -480,8 +488,10 @@ class ExecutionResultService(
   ): Unit = {
     workflowStateStore.resultStore.updateState { _ =>
       val newInfo: Map[OperatorIdentity, OperatorResultMetadata] = {
-        WorkflowExecutionsResource
-          .getResultUrisByExecutionId(executionId)
+        WebAppClient
+          .getExecutionUris(workflowStateStore.jwt, executionId)
+          .resultUris
+          .map(URI.create)
           .map(uri => {
             val count = DocumentFactory.openDocument(uri)._1.getCount.toInt
 

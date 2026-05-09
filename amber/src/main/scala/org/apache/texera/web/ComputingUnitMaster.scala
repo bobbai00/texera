@@ -25,7 +25,7 @@ import io.dropwizard.Configuration
 import io.dropwizard.configuration.{EnvironmentVariableSubstitutor, SubstitutingSourceProvider}
 import io.dropwizard.setup.{Bootstrap, Environment}
 import io.dropwizard.websockets.WebsocketBundle
-import org.apache.texera.amber.config.{ApplicationConfig, StorageConfig}
+import org.apache.texera.amber.config.ApplicationConfig
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.controller.ControllerConfig
 import org.apache.texera.amber.engine.common.client.AmberClient
@@ -33,7 +33,6 @@ import org.apache.texera.amber.engine.common.{AmberRuntime, Utils}
 import org.apache.texera.amber.util.ObjectMapperUtils
 import org.apache.commons.jcs3.access.exception.InvalidArgumentException
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.dao.SqlServer
 import org.apache.texera.web.auth.JwtAuth.setupJwtAuth
 import org.apache.texera.web.resource.{
   SyncExecutionResource,
@@ -126,11 +125,9 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
   override def run(configuration: Configuration, environment: Environment): Unit = {
     ObjectMapperUtils.warmupObjectMapperForOperatorsSerde()
 
-    SqlServer.initConnection(
-      StorageConfig.jdbcUrl,
-      StorageConfig.jdbcUsername,
-      StorageConfig.jdbcPassword
-    )
+    // CU Master no longer holds Postgres credentials. All persistent-state
+    // interactions go through web-app via WebAppClient (forwarding the user's
+    // JWT extracted from the WebSocket session URI).
 
     environment.jersey.setUrlPattern("/api/*")
 

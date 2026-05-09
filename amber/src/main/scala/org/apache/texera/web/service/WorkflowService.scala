@@ -53,7 +53,6 @@ import org.apache.texera.service.util.LargeBinaryManager
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.client.WebAppClient
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.WorkflowService.mkWorkflowStateId
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
@@ -112,12 +111,10 @@ class WorkflowService(
     s"workflowId=$workflowId",
     cleanUpTimeout,
     () => {
-      // clear the storage resources associated with the latest execution
-      WorkflowExecutionService
-        .getLatestExecutionId(workflowId, computingUnitId)
-        .foreach(eid => {
-          clearExecutionResources(eid)
-        })
+      // Lifecycle cleanup runs after the user has disconnected, so no JWT
+      // is available to authorize per-execution cleanup. Web-app's recurring
+      // sweeper (ExecutionCleanupService.scheduleRecurringCleanup) will
+      // garbage-collect the data after sinkStorageTTLInSecs.
       WorkflowService.workflowServiceMapping.remove(mkWorkflowStateId(workflowId))
       if (executionService.getValue != null) {
         // shutdown client
@@ -193,15 +190,16 @@ class WorkflowService(
 
     val userEmailOpt = userOpt.map(_.getEmail)
     val jwt = extractJwtFromUri(sessionUri)
+    stateStore.jwt = jwt
 
     val workflowContext: WorkflowContext = createWorkflowContext()
     var controllerConf = ControllerConfig.default
 
     // clean up results from previous run
     val previousExecutionId =
-      WorkflowExecutionService.getLatestExecutionId(workflowId, req.computingUnitId)
+      WebAppClient.getLatestExecutionId(jwt, workflowId, req.computingUnitId)
     previousExecutionId.foreach(eid => {
-      clearExecutionResources(eid)
+      clearExecutionResources(eid, jwt)
     }) // TODO: change this behavior after enabling cache.
 
     workflowContext.executionId = WebAppClient.createExecution(
@@ -211,6 +209,10 @@ class WorkflowService(
       engineVersion = convertToJson(req.engineVersion),
       computingUnitId = req.computingUnitId
     )
+    // Register the per-execution JWT so engine-internal callers (e.g.
+    // RegionExecutionCoordinator) can authorize calls back to web-app without
+    // explicit plumbing through the engine layers.
+    WebAppClient.storeJwt(workflowContext.executionId, jwt)
 
     if (ApplicationConfig.faultToleranceLogRootFolder.isDefined) {
       val writeLocation = ApplicationConfig.faultToleranceLogRootFolder.get.resolve(
@@ -338,15 +340,15 @@ class WorkflowService(
     *
     * @param eid The execution identity to clean up resources for
     */
-  private def clearExecutionResources(eid: ExecutionIdentity): Unit = {
-    // Retrieve URIs for all resources associated with this execution
-    val resultUris = WorkflowExecutionsResource.getResultUrisByExecutionId(eid)
-    val consoleMessagesUris = WorkflowExecutionsResource.getConsoleMessagesUriByExecutionId(eid)
+  private def clearExecutionResources(eid: ExecutionIdentity, jwt: String): Unit = {
+    val uris = WebAppClient.getExecutionUris(jwt, eid)
+    val resultUris = uris.resultUris.map(URI.create)
+    val consoleMessagesUris = uris.consoleMessageUris.map(URI.create)
 
-    // Remove references from registry first
-    WorkflowExecutionsResource.deleteConsoleMessageAndExecutionResultUris(eid)
+    // Remove references from registry first.
+    WebAppClient.clearOperatorUris(jwt, eid)
 
-    // Clean up all result and console message documents
+    // Clean up all result and console message documents.
     (resultUris ++ consoleMessagesUris).foreach { uri =>
       try DocumentFactory.openDocument(uri)._1.clear()
       catch {
@@ -355,8 +357,8 @@ class WorkflowService(
       }
     }
 
-    // Expire any Iceberg snapshots for runtime statistics
-    WorkflowExecutionsResource.getRuntimeStatsUriByExecutionId(eid).foreach { uri =>
+    // Expire any Iceberg snapshots for runtime statistics.
+    uris.runtimeStatsUri.map(URI.create).foreach { uri =>
       try {
         DocumentFactory.openDocument(uri)._1 match {
           case iceberg: OnIceberg => iceberg.expireSnapshots()
@@ -371,7 +373,7 @@ class WorkflowService(
           logger.debug(s"Error processing document at $uri: ${error.getMessage}")
       }
     }
-    // Delete large binaries
+    // Delete large binaries.
     LargeBinaryManager.deleteAllObjects()
   }
 }

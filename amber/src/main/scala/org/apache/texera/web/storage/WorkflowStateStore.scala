@@ -25,6 +25,14 @@ import org.apache.texera.amber.core.storage.result.WorkflowResultStore
 class WorkflowStateStore {
   val resultStore = new StateStore(WorkflowResultStore())
 
+  /**
+    * Bearer JWT of the user currently driving this workflow over WebSocket.
+    * Set by WorkflowService.initExecutionService each time an execution starts;
+    * read by ExecutionResultService when it needs to call back into web-app.
+    * Empty string when no execution is active or in test contexts.
+    */
+  @volatile var jwt: String = ""
+
   def getAllStores: Iterable[StateStore[_]] = {
     Iterable(resultStore)
   }

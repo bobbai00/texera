@@ -85,13 +85,11 @@ object ComputingUnitManagingResource {
     }
   }
 
-  // Environment variables passed to the created computing unit(pod)
+  // Environment variables passed to the created computing unit(pod).
+  // CU pods no longer hold Postgres credentials; they call back to web-app
+  // (TEXERA_DASHBOARD_SERVICE_ENDPOINT below) for any DB-backed operation.
   private lazy val computingUnitEnvironmentVariables: Map[String, Any] =
     icebergEnvironmentVariables ++ Map(
-      // Variables for saving the metadata of the results, i.e. URIs of results/stats
-      EnvironmentalVariable.ENV_JDBC_URL -> StorageConfig.jdbcUrl,
-      EnvironmentalVariable.ENV_JDBC_USERNAME -> StorageConfig.jdbcUsername,
-      EnvironmentalVariable.ENV_JDBC_PASSWORD -> StorageConfig.jdbcPassword,
       // Variables for reading files & exporting results
       // LakeFS endpoint is passed to CU to make CU work in dev mode(using localhost & using default LakeFS credentials)
       // LakeFS credentials should NOT be passed to CU

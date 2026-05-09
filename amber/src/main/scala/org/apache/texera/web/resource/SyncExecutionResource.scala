@@ -46,11 +46,9 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
 }
 import io.reactivex.rxjava3.core.Observable
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
+import org.apache.texera.web.client.WebAppClient
 import org.apache.texera.web.model.websocket.request.{LogicalPlanPojo, WorkflowExecuteRequest}
 import org.apache.texera.workflow.{LogicalLink, WorkflowCompiler}
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.{ExecutionResultService, WorkflowService}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
@@ -128,8 +126,16 @@ class SyncExecutionResource extends LazyLogging {
       @PathParam("wid") workflowId: Long,
       @PathParam("cuid") computingUnitId: Int,
       request: SyncExecutionRequest,
+      @HeaderParam("Authorization") authHeader: String,
       @Auth user: SessionUser
   ): SyncExecutionResult = {
+    val jwt = Option(authHeader)
+      .map(_.stripPrefix("Bearer "))
+      .getOrElse(
+        throw new IllegalStateException(
+          "Sync execution endpoint requires Authorization header for web-app callbacks"
+        )
+      )
     val timeoutSeconds = request.timeoutSeconds
 
     val maxOperatorResultCharLimit =
@@ -427,12 +433,17 @@ class SyncExecutionResource extends LazyLogging {
           executionId,
           opId,
           maxOperatorResultCharLimit,
-          maxOperatorResultCellCharLimit
+          maxOperatorResultCellCharLimit,
+          executionService.executionStateStore.jwt
         )
 
       // DB is authoritative once written; fall back to in-memory state for in-flight runs
       // where the console row hasn't been persisted yet.
-      val dbConsoleLogs = collectConsoleLogs(executionId, opId)
+      val dbConsoleLogs = collectConsoleLogs(
+        executionId,
+        opId,
+        executionService.executionStateStore.jwt
+      )
       val consoleLogs = dbConsoleLogs.orElse {
         inMemoryConsoleState.flatMap { consoleState =>
           consoleState.operatorConsole
@@ -520,15 +531,18 @@ class SyncExecutionResource extends LazyLogging {
       executionId: ExecutionIdentity,
       opId: String,
       maxOperatorResultCharLimit: Int,
-      maxOperatorResultCellCharLimit: Int
+      maxOperatorResultCellCharLimit: Int,
+      jwt: String
   ): (String, Option[Any], Option[Int], Option[Int], Option[Boolean]) = {
     import com.fasterxml.jackson.databind.node.ObjectNode
 
     try {
-      val storageUriOption = WorkflowExecutionsResource.getResultUriByLogicalPortId(
-        executionId,
-        OperatorIdentity(opId),
-        PortIdentity()
+      val storageUriOption = WebAppClient.getOperatorPortResultUri(
+        jwt = jwt,
+        eid = executionId,
+        logicalOpId = opId,
+        portId = PortIdentity().id,
+        portInternal = PortIdentity().internal
       )
 
       storageUriOption match {
@@ -761,10 +775,11 @@ class SyncExecutionResource extends LazyLogging {
 
   private def collectConsoleLogs(
       executionId: ExecutionIdentity,
-      opId: String
+      opId: String,
+      jwt: String
   ): Option[List[ConsoleMessageInfo]] = {
     try {
-      val uriOption = getConsoleMessageUri(executionId, OperatorIdentity(opId))
+      val uriOption = WebAppClient.getOperatorConsoleUri(jwt, executionId, opId)
 
       uriOption.flatMap { uri =>
         val document = DocumentFactory
@@ -795,21 +810,6 @@ class SyncExecutionResource extends LazyLogging {
     }
   }
 
-  private def getConsoleMessageUri(
-      eid: ExecutionIdentity,
-      opId: OperatorIdentity
-  ): Option[URI] = {
-    val context = SqlServer.getInstance().createDSLContext()
-    Option(
-      context
-        .select(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI)
-        .from(OPERATOR_EXECUTIONS)
-        .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
-        .and(OPERATOR_EXECUTIONS.OPERATOR_ID.eq(opId.id))
-        .fetchOneInto(classOf[String])
-    ).filter(uri => uri != null && uri.nonEmpty)
-      .map(s => URI.create(s))
-  }
 
   private def isTerminalState(state: WorkflowAggregatedState): Boolean = {
     state match {

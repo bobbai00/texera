@@ -57,7 +57,8 @@ import org.apache.texera.amber.engine.common.rpc.AsyncRPCClient
 import org.apache.texera.amber.engine.common.virtualidentity.util.CONTROLLER
 import org.apache.texera.web.SessionState
 import org.apache.texera.web.model.websocket.event.RegionStateEvent
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
+import org.apache.texera.web.client.WebAppClient
 
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -576,11 +577,17 @@ class RegionExecutionCoordinator(
           schemaOptional.getOrElse(throw new IllegalStateException("Schema is missing"))
         DocumentFactory.createDocument(storageUriToAdd, schema)
         if (!isRestart) {
-          WorkflowExecutionsResource.insertOperatorPortResultUri(
-            eid = eid,
-            globalPortId = outputPortId,
-            uri = storageUriToAdd
-          )
+          // If no JWT is registered for this execution, skip the persistence call.
+          // That happens in tests that drive the engine directly without a
+          // web-session; the runtime path is unaffected.
+          WebAppClient.jwtFor(eid).foreach { jwt =>
+            WebAppClient.insertOperatorPortResultUri(
+              jwt = jwt,
+              eid = eid,
+              globalPortId = outputPortId.serializeAsString,
+              uri = storageUriToAdd
+            )
+          }
         }
     }
   }
