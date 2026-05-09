@@ -26,43 +26,28 @@ import io.dropwizard.configuration.{EnvironmentVariableSubstitutor, Substituting
 import io.dropwizard.setup.{Bootstrap, Environment}
 import io.dropwizard.websockets.WebsocketBundle
 import org.apache.texera.amber.config.{ApplicationConfig, StorageConfig}
-import org.apache.texera.amber.core.storage.DocumentFactory
-import org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.controller.ControllerConfig
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
-  COMPLETED,
-  FAILED
-}
-import org.apache.texera.amber.engine.common.AmberRuntime.scheduleRecurringCallThroughActorSystem
-import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
 import org.apache.texera.amber.engine.common.client.AmberClient
-import org.apache.texera.amber.engine.common.storage.SequentialRecordStorage
 import org.apache.texera.amber.engine.common.{AmberRuntime, Utils}
-import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.amber.util.ObjectMapperUtils
 import org.apache.commons.jcs3.access.exception.InvalidArgumentException
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowExecutions
 import org.apache.texera.web.auth.JwtAuth.setupJwtAuth
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.resource.{
   SyncExecutionResource,
   WebsocketPayloadSizeTuner,
   WorkflowWebsocketResource
 }
-import org.apache.texera.web.service.ExecutionsMetadataPersistService
 import org.eclipse.jetty.server.session.SessionHandler
 import org.eclipse.jetty.servlet.FilterHolder
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeFilter
 import org.apache.texera.web.resource.pythonvirtualenvironment.PveResource
 import org.apache.texera.web.resource.pythonvirtualenvironment.PveWebsocketResource
 
-import java.net.URI
 import java.time.Duration
 import scala.annotation.tailrec
-import scala.concurrent.duration.DurationInt
 
 object ComputingUnitMaster {
 
@@ -177,31 +162,6 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
         new WebsocketPayloadSizeTuner(ApplicationConfig.maxWorkflowWebsocketRequestPayloadSizeKb)
       )
 
-    val timeToLive: Int = ApplicationConfig.sinkStorageTTLInSecs
-    if (ApplicationConfig.cleanupAllExecutionResults) {
-      // do one time cleanup of collections that were not closed gracefully before restart/crash
-      // retrieve all executions that were executing before the reboot.
-      val allExecutionsBeforeRestart: List[WorkflowExecutions] =
-        WorkflowExecutionsResource.getExpiredExecutionsWithResultOrLog(-1)
-      cleanExecutions(
-        allExecutionsBeforeRestart,
-        statusByte => {
-          if (statusByte != maptoStatusCode(COMPLETED)) {
-            maptoStatusCode(FAILED) // for incomplete executions, mark them as failed.
-          } else {
-            statusByte
-          }
-        }
-      )
-    }
-    scheduleRecurringCallThroughActorSystem(
-      2.seconds,
-      ApplicationConfig.sinkStorageCleanUpCheckIntervalInSecs.seconds
-    ) {
-      recurringCheckExpiredResults(timeToLive)
-    }
-
-    environment.jersey.register(classOf[WorkflowExecutionsResource])
     environment.jersey.register(classOf[SyncExecutionResource])
 
     // Route request logs through SLF4J, controlled by TEXERA_SERVICE_LOG_LEVEL.
@@ -231,77 +191,4 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
     )
   }
 
-  /**
-    * This function drops the collections.
-    * MongoDB doesn't have an API of drop collection where collection name in (from a subquery), so the implementation is to retrieve
-    * the entire list of those documents that have expired, then loop the list to drop them one by one
-    */
-  private def cleanExecutions(
-      executions: List[WorkflowExecutions],
-      statusChangeFunc: Short => Short
-  ): Unit = {
-    // drop the collection and update the status to ABORTED
-    executions.foreach(execEntry => {
-      dropCollections(execEntry.getResult)
-      deleteReplayLog(execEntry.getLogLocation)
-      // then delete the pointer from mySQL
-      val executionIdentity = ExecutionIdentity(execEntry.getEid.longValue())
-      ExecutionsMetadataPersistService.tryUpdateExistingExecution(executionIdentity) { execution =>
-        execution.setResult("")
-        execution.setLogLocation(null)
-        execution.setStatus(statusChangeFunc(execution.getStatus))
-      }
-    })
-  }
-
-  private def dropCollections(result: String): Unit = {
-    if (result == null || result.isEmpty) {
-      return
-    }
-    // TODO: merge this logic to the server-side in-mem cleanup
-    // parse the JSON
-    try {
-      val node = objectMapper.readTree(result)
-      val collectionEntries = node.get("results")
-      // loop every collection and drop it
-      collectionEntries.forEach(collection => {
-        val storageType = collection.get("storageType").asText()
-        val collectionName = collection.get("storageKey").asText()
-        storageType match {
-          case DocumentFactory.ICEBERG =>
-          // rely on the server-side result cleanup logic.
-        }
-      })
-    } catch {
-      case e: Throwable =>
-        logger.warn("result collection cleanup failed.", e)
-    }
-  }
-
-  private def deleteReplayLog(logLocation: String): Unit = {
-    if (logLocation == null || logLocation.isEmpty) {
-      return
-    }
-    val uri = new URI(logLocation)
-    try {
-      val storage = SequentialRecordStorage.getStorage(Some(uri))
-      storage.deleteStorage()
-    } catch {
-      case throwable: Throwable =>
-        logger.warn(s"failed to delete log at $logLocation", throwable)
-    }
-  }
-
-  /**
-    * This function is called periodically and checks all expired collections and deletes them
-    */
-  private def recurringCheckExpiredResults(
-      timeToLive: Int
-  ): Unit = {
-    // retrieve all executions that are completed and their last update time goes beyond the ttl
-    val expiredResults: List[WorkflowExecutions] =
-      WorkflowExecutionsResource.getExpiredExecutionsWithResultOrLog(timeToLive)
-    // drop the collections and clean the logs
-    cleanExecutions(expiredResults, statusByte => statusByte)
-  }
 }

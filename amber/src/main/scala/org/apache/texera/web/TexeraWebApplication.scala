@@ -34,6 +34,7 @@ import org.apache.texera.dao.SqlServer
 import org.apache.texera.web.auth.JwtAuth.setupJwtAuth
 import org.apache.texera.web.resource._
 import org.apache.texera.web.resource.auth.{AuthResource, GoogleAuthResource}
+import org.apache.texera.web.service.ExecutionCleanupService
 import org.apache.texera.web.resource.dashboard.DashboardResource
 import org.apache.texera.web.resource.dashboard.admin.execution.AdminExecutionResource
 import org.apache.texera.web.resource.dashboard.admin.settings.AdminSettingsResource
@@ -162,6 +163,9 @@ class TexeraWebApplication
     environment.jersey.register(classOf[AIAssistantResource])
 
     AuthResource.createAdminUser()
+
+    ExecutionCleanupService.runStartupCleanup()
+    ExecutionCleanupService.scheduleRecurringCleanup(environment)
 
     // Route request logs through SLF4J, controlled by TEXERA_SERVICE_LOG_LEVEL.
     // TODO: replace with RequestLoggingFilter.register() from common/auth once Dropwizard is upgraded to 4.x

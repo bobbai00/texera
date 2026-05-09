@@ -60,6 +60,19 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-lakefs-secret
                   key: secret_key
+            # Iceberg catalog access — required because result export now reads
+            # Iceberg directly from web-app (centralized off CU Master).
+            - name: STORAGE_ICEBERG_CATALOG_TYPE
+              value: postgres
+            - name: STORAGE_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME
+              value: {{ .Release.Name }}-postgresql:5432/texera_iceberg_catalog
+            - name: STORAGE_ICEBERG_CATALOG_POSTGRES_USERNAME
+              value: postgres
+            - name: STORAGE_ICEBERG_CATALOG_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-postgresql
+                  key: postgres-password
           {{- range .Values.texeraEnvVars }}
             - name: {{ .name }}
               value: "{{ .value }}"
