@@ -40,6 +40,13 @@ object EnvironmentalVariable {
     "FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT"
 
   /**
+    * texera-web-application (a.k.a. dashboard-service) base URL that CU Master
+    * delegates DB writes to when those writes can't run locally on CU Master.
+    * Value is the host:port without /api prefix; code paths append the API path.
+    */
+  val ENV_TEXERA_DASHBOARD_SERVICE_ENDPOINT = "TEXERA_DASHBOARD_SERVICE_ENDPOINT"
+
+  /**
     * Auth related vars
     */
   val ENV_USER_JWT_TOKEN = "USER_JWT_TOKEN"

@@ -60,6 +60,9 @@ spec:
               value: http://{{ .Values.fileService.name }}-svc:9092/api/dataset/presign-download
             - name: FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT
               value: http://{{ .Values.fileService.name }}-svc:9092/api/dataset/did/upload
+            # Dashboard service (web-app) endpoint that CU Master calls for DB writes.
+            - name: TEXERA_DASHBOARD_SERVICE_ENDPOINT
+              value: http://{{ .Values.webserver.name }}-svc:{{ .Values.webserver.service.port }}
             # S3 Access (for R UDF large binary support)
             - name: STORAGE_S3_ENDPOINT
               value: http://{{ .Release.Name }}-minio:9000

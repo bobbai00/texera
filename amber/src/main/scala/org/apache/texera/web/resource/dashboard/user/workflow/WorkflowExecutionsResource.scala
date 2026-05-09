@@ -549,6 +549,15 @@ case class ExecutionGroupDeleteRequest(wid: Integer, eIds: Array[Integer])
 
 case class ExecutionRenameRequest(wid: Integer, eId: Integer, executionName: String)
 
+case class CreateExecutionRequest(
+    workflowId: Long,
+    executionName: String,
+    engineVersion: String,
+    computingUnitId: Integer
+)
+
+case class CreateExecutionResponse(eid: Long)
+
 @Produces(Array(MediaType.APPLICATION_JSON, MediaType.APPLICATION_OCTET_STREAM, "application/zip"))
 @Path("/executions")
 class WorkflowExecutionsResource {
@@ -792,6 +801,31 @@ class WorkflowExecutionsResource {
     val execution = getExecutionById(request.eId)
     execution.setName(request.executionName)
     executionsDao.update(execution)
+  }
+
+  /**
+    * Allocates a new workflow_executions row and returns its eid. Called by
+    * CU Master at execution start so CU Master never has to issue the INSERT
+    * itself — credential removal step.
+    */
+  @POST
+  @Consumes(Array(MediaType.APPLICATION_JSON))
+  @Produces(Array(MediaType.APPLICATION_JSON))
+  @Path("/create")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def createExecution(
+      request: CreateExecutionRequest,
+      @Auth sessionUser: SessionUser
+  ): CreateExecutionResponse = {
+    val uid = sessionUser.getUser.getUid
+    val eid = ExecutionsMetadataPersistService.insertNewExecution(
+      WorkflowIdentity(request.workflowId),
+      Some(uid),
+      request.executionName,
+      request.engineVersion,
+      request.computingUnitId
+    )
+    CreateExecutionResponse(eid.id)
   }
 
   /**

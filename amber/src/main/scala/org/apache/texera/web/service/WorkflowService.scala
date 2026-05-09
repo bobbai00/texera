@@ -51,6 +51,7 @@ import org.apache.texera.amber.error.ErrorUtils.{
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.service.util.LargeBinaryManager
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
+import org.apache.texera.web.client.WebAppClient
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.WorkflowService.mkWorkflowStateId
@@ -190,7 +191,7 @@ class WorkflowService(
       executionService.getValue.unsubscribeAll()
     }
 
-    val (uidOpt, userEmailOpt) = userOpt.map(user => (user.getUid, user.getEmail)).unzip
+    val userEmailOpt = userOpt.map(_.getEmail)
 
     val workflowContext: WorkflowContext = createWorkflowContext()
     var controllerConf = ControllerConfig.default
@@ -202,12 +203,12 @@ class WorkflowService(
       clearExecutionResources(eid)
     }) // TODO: change this behavior after enabling cache.
 
-    workflowContext.executionId = ExecutionsMetadataPersistService.insertNewExecution(
-      workflowContext.workflowId,
-      uidOpt,
-      req.executionName,
-      convertToJson(req.engineVersion),
-      req.computingUnitId
+    workflowContext.executionId = WebAppClient.createExecution(
+      jwt = extractJwtFromUri(sessionUri),
+      workflowId = workflowContext.workflowId,
+      executionName = req.executionName,
+      engineVersion = convertToJson(req.engineVersion),
+      computingUnitId = req.computingUnitId
     )
 
     if (ApplicationConfig.faultToleranceLogRootFolder.isDefined) {
@@ -295,6 +296,24 @@ class WorkflowService(
       "engine_version" -> Json.toJson(frontendVersion)
     )
     Json.stringify(Json.toJson(environmentVersionMap))
+  }
+
+  private def extractJwtFromUri(uri: URI): String = {
+    val raw = Option(uri.getRawQuery).getOrElse("")
+    raw
+      .split("&")
+      .collectFirst {
+        case pair if pair.startsWith("access-token=") =>
+          java.net.URLDecoder.decode(
+            pair.stripPrefix("access-token="),
+            java.nio.charset.StandardCharsets.UTF_8
+          )
+      }
+      .getOrElse(
+        throw new IllegalStateException(
+          "WebSocket URI is missing access-token query parameter; cannot create execution"
+        )
+      )
   }
 
   override def unsubscribeAll(): Unit = {

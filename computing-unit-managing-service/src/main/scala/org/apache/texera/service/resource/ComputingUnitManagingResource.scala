@@ -107,6 +107,9 @@ object ComputingUnitManagingResource {
       EnvironmentalVariable.ENV_FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT -> EnvironmentalVariable
         .get(EnvironmentalVariable.ENV_FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT)
         .get,
+      EnvironmentalVariable.ENV_TEXERA_DASHBOARD_SERVICE_ENDPOINT -> EnvironmentalVariable
+        .get(EnvironmentalVariable.ENV_TEXERA_DASHBOARD_SERVICE_ENDPOINT)
+        .get,
       // Variables for amber setting
       // TODO: use AmberConfig for the following items. Currently AmberConfig is only accessible in workflow-executing-service
       EnvironmentalVariable.ENV_SCHEDULE_GENERATOR_ENABLE_COST_BASED_SCHEDULE_GENERATOR -> EnvironmentalVariable
