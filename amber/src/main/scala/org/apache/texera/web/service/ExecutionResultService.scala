@@ -20,6 +20,8 @@
 package org.apache.texera.web.service
 
 import org.apache.pekko.actor.Cancellable
+import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
+import org.apache.texera.web.client.WebAppClient
 import com.fasterxml.jackson.annotation.{JsonTypeInfo, JsonTypeName}
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
@@ -397,13 +399,14 @@ class ExecutionResultService(
                   val opStorage = DocumentFactory.openDocument(storageUri.get)._1
 
                   allTableStats(opId.id) = opStorage.getTableStatistics
-                  WorkflowExecutionsResource.updateResultSize(
-                    executionId,
-                    globalPortIdOption.get,
-                    opStorage.getTotalFileSize
+                  WebAppClient.updateOperatorPortResultSize(
+                    jwt = stateStore.jwt,
+                    eid = executionId,
+                    globalPortId = globalPortIdOption.get.serializeAsString,
+                    size = opStorage.getTotalFileSize
                   )
-                  WorkflowExecutionsResource.updateRuntimeStatsSize(executionId)
-                  WorkflowExecutionsResource.updateConsoleMessageSize(executionId, opId)
+                  WebAppClient.recomputeRuntimeStatsSize(stateStore.jwt, executionId)
+                  WebAppClient.recomputeConsoleMessageSize(stateStore.jwt, executionId, opId.id)
                 }
               }
           }
@@ -471,7 +474,10 @@ class ExecutionResultService(
     }
   }
 
-  private def onResultUpdate(executionId: ExecutionIdentity, physicalPlan: PhysicalPlan): Unit = {
+  private def onResultUpdate(
+      executionId: ExecutionIdentity,
+      physicalPlan: PhysicalPlan
+  ): Unit = {
     workflowStateStore.resultStore.updateState { _ =>
       val newInfo: Map[OperatorIdentity, OperatorResultMetadata] = {
         WorkflowExecutionsResource

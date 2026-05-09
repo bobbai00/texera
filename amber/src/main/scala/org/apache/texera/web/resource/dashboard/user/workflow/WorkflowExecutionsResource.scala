@@ -567,6 +567,18 @@ case class UpdateExecutionRequest(
     result: Option[String] = None
 )
 
+case class GetExecutionResponse(
+    eid: Long,
+    status: Option[Short] = None,
+    lastUpdateTime: Option[Long] = None,
+    logLocation: Option[String] = None,
+    runtimeStatsUri: Option[String] = None
+)
+
+case class UpdateOperatorPortResultSizeRequest(globalPortId: String, size: Long)
+
+case class RecomputeConsoleMessageSizeRequest(operatorId: String)
+
 @Produces(Array(MediaType.APPLICATION_JSON, MediaType.APPLICATION_OCTET_STREAM, "application/zip"))
 @Path("/executions")
 class WorkflowExecutionsResource {
@@ -838,6 +850,32 @@ class WorkflowExecutionsResource {
   }
 
   /**
+    * Returns the small subset of workflow_executions fields CU Master may need
+    * during runtime (status, log_location for replay, runtime_stats_uri).
+    */
+  @GET
+  @Produces(Array(MediaType.APPLICATION_JSON))
+  @Path("/by_eid/{eid}")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def getExecutionByEid(
+      @PathParam("eid") eid: Long,
+      @Auth sessionUser: SessionUser
+  ): GetExecutionResponse = {
+    ExecutionsMetadataPersistService.tryGetExistingExecution(ExecutionIdentity(eid)) match {
+      case Some(exec) =>
+        GetExecutionResponse(
+          eid = eid,
+          status = Option(exec.getStatus).map(_.shortValue()),
+          lastUpdateTime = Option(exec.getLastUpdateTime).map(_.getTime),
+          logLocation = Option(exec.getLogLocation),
+          runtimeStatsUri = Option(exec.getRuntimeStatsUri)
+        )
+      case None =>
+        throw new javax.ws.rs.NotFoundException(s"execution $eid not found")
+    }
+  }
+
+  /**
     * Applies a partial update to a workflow_executions row. Called by CU Master
     * during execution lifecycle (state transitions, artifact attachments).
     * Only fields present in the request body are applied.
@@ -862,6 +900,61 @@ class WorkflowExecutionsResource {
         )
         request.result.foreach(execution.setResult)
     }
+  }
+
+  /**
+    * Records the byte-size of an operator's output port result document.
+    * Caller computes the size locally and sends it; web-app just persists.
+    */
+  @POST
+  @Consumes(Array(MediaType.APPLICATION_JSON))
+  @Path("/{eid}/operator-port-result-size")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def updateOperatorPortResultSizeEndpoint(
+      @PathParam("eid") eid: Long,
+      request: UpdateOperatorPortResultSizeRequest,
+      @Auth sessionUser: SessionUser
+  ): Unit = {
+    context
+      .update(OPERATOR_PORT_EXECUTIONS)
+      .set(
+        OPERATOR_PORT_EXECUTIONS.RESULT_SIZE,
+        Integer.valueOf(request.size.toInt)
+      )
+      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.toInt))
+      .and(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID.eq(request.globalPortId))
+      .execute()
+  }
+
+  /**
+    * Triggers web-app to recompute (from Iceberg) and persist the runtime
+    * statistics document size for an execution. Web-app already has the
+    * Iceberg catalog; CU Master no longer needs to.
+    */
+  @POST
+  @Path("/{eid}/runtime-stats-size")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def recomputeRuntimeStatsSize(
+      @PathParam("eid") eid: Long,
+      @Auth sessionUser: SessionUser
+  ): Unit = {
+    updateRuntimeStatsSize(ExecutionIdentity(eid))
+  }
+
+  /**
+    * Triggers web-app to recompute (from Iceberg) and persist an operator's
+    * console-message document size.
+    */
+  @POST
+  @Consumes(Array(MediaType.APPLICATION_JSON))
+  @Path("/{eid}/operator-console-size")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def recomputeConsoleMessageSize(
+      @PathParam("eid") eid: Long,
+      request: RecomputeConsoleMessageSizeRequest,
+      @Auth sessionUser: SessionUser
+  ): Unit = {
+    updateConsoleMessageSize(ExecutionIdentity(eid), OperatorIdentity(request.operatorId))
   }
 
   /**

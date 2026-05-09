@@ -87,6 +87,122 @@ object WebAppClient extends LazyLogging {
   }
 
   /**
+    * Reads a workflow_executions row from web-app, returning None if not found.
+    */
+  def getExecution(
+      jwt: String,
+      eid: ExecutionIdentity
+  ): Option[GetExecutionResponseBody] = {
+    val request = HttpRequest
+      .newBuilder()
+      .uri(URI.create(s"$baseUrl/api/executions/by_eid/${eid.id}"))
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .header("Accept", "application/json")
+      .GET()
+      .build()
+    var lastError: Throwable = null
+    var attempt = 1
+    while (attempt <= MaxAttempts) {
+      try {
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        response.statusCode() match {
+          case 200 =>
+            return Some(
+              objectMapper.readValue(response.body(), classOf[GetExecutionResponseBody])
+            )
+          case 404 => return None
+          case status if status >= 400 && status < 500 =>
+            throw new RuntimeException(
+              s"Web-app rejected GET ${request.uri()} ($status): ${response.body()}"
+            )
+          case status =>
+            lastError = new RuntimeException(
+              s"Web-app returned $status from ${request.uri()}: ${response.body()}"
+            )
+        }
+      } catch {
+        case e: IOException => lastError = e
+        case e: InterruptedException =>
+          Thread.currentThread().interrupt()
+          throw e
+      }
+      if (attempt < MaxAttempts) {
+        Thread.sleep(InitialBackoffMillis * (1L << (attempt - 1)))
+      }
+      attempt += 1
+    }
+    throw new RuntimeException(
+      s"GET ${request.uri()} failed after $MaxAttempts attempts",
+      lastError
+    )
+  }
+
+  /**
+    * Records the byte size of an operator port's result document.
+    */
+  def updateOperatorPortResultSize(
+      jwt: String,
+      eid: ExecutionIdentity,
+      globalPortId: String,
+      size: Long
+  ): Unit = {
+    val body = UpdateOperatorPortResultSizeRequestBody(globalPortId, size)
+    val request = HttpRequest
+      .newBuilder()
+      .uri(URI.create(s"$baseUrl/api/executions/${eid.id}/operator-port-result-size"))
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .header("Content-Type", "application/json")
+      .POST(
+        HttpRequest.BodyPublishers
+          .ofString(objectMapper.writeValueAsString(body), StandardCharsets.UTF_8)
+      )
+      .build()
+    sendWithRetry(request)
+  }
+
+  /**
+    * Triggers web-app to recompute the runtime-stats document size for an
+    * execution. Web-app reads the URI, opens the Iceberg document, and writes
+    * the new size; no payload from the caller.
+    */
+  def recomputeRuntimeStatsSize(jwt: String, eid: ExecutionIdentity): Unit = {
+    val request = HttpRequest
+      .newBuilder()
+      .uri(URI.create(s"$baseUrl/api/executions/${eid.id}/runtime-stats-size"))
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .POST(HttpRequest.BodyPublishers.noBody())
+      .build()
+    sendWithRetry(request)
+  }
+
+  /**
+    * Triggers web-app to recompute the console-message document size for an
+    * operator within an execution.
+    */
+  def recomputeConsoleMessageSize(
+      jwt: String,
+      eid: ExecutionIdentity,
+      operatorId: String
+  ): Unit = {
+    val body = RecomputeConsoleMessageSizeRequestBody(operatorId)
+    val request = HttpRequest
+      .newBuilder()
+      .uri(URI.create(s"$baseUrl/api/executions/${eid.id}/operator-console-size"))
+      .timeout(Duration.ofSeconds(30))
+      .header("Authorization", s"Bearer $jwt")
+      .header("Content-Type", "application/json")
+      .POST(
+        HttpRequest.BodyPublishers
+          .ofString(objectMapper.writeValueAsString(body), StandardCharsets.UTF_8)
+      )
+      .build()
+    sendWithRetry(request)
+  }
+
+  /**
     * Applies a partial update to a workflow_executions row. Only non-None
     * fields are sent; the server applies them and ignores absent ones.
     */
@@ -163,6 +279,23 @@ object WebAppClient extends LazyLogging {
   )
 
   private case class CreateExecutionResponseBody(@JsonProperty("eid") eid: Long)
+
+  case class GetExecutionResponseBody(
+      @JsonProperty("eid") eid: Long,
+      @JsonProperty("status") status: Option[Short],
+      @JsonProperty("lastUpdateTime") lastUpdateTime: Option[Long],
+      @JsonProperty("logLocation") logLocation: Option[String],
+      @JsonProperty("runtimeStatsUri") runtimeStatsUri: Option[String]
+  )
+
+  private case class UpdateOperatorPortResultSizeRequestBody(
+      @JsonProperty("globalPortId") globalPortId: String,
+      @JsonProperty("size") size: Long
+  )
+
+  private case class RecomputeConsoleMessageSizeRequestBody(
+      @JsonProperty("operatorId") operatorId: String
+  )
 
   private case class UpdateExecutionRequestBody(
       @JsonProperty("status") status: Option[Short],

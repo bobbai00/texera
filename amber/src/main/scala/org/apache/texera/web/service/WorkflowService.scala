@@ -216,19 +216,22 @@ class WorkflowService(
       val writeLocation = ApplicationConfig.faultToleranceLogRootFolder.get.resolve(
         s"${workflowContext.workflowId}/${workflowContext.executionId}/"
       )
-      ExecutionsMetadataPersistService.tryUpdateExistingExecution(workflowContext.executionId) {
-        execution => execution.setLogLocation(writeLocation.toString)
-      }
+      WebAppClient.updateExecution(
+        jwt = jwt,
+        eid = workflowContext.executionId,
+        logLocation = Some(writeLocation.toString)
+      )
       controllerConf = controllerConf.copy(faultToleranceConfOpt =
         Some(FaultToleranceConfig(writeTo = writeLocation))
       )
     }
     if (req.replayFromExecution.isDefined) {
       val replayInfo = req.replayFromExecution.get
-      ExecutionsMetadataPersistService
-        .tryGetExistingExecution(ExecutionIdentity(replayInfo.eid))
-        .foreach { execution =>
-          val readLocation = new URI(execution.getLogLocation)
+      WebAppClient
+        .getExecution(jwt, ExecutionIdentity(replayInfo.eid))
+        .flatMap(_.logLocation)
+        .foreach { logLocation =>
+          val readLocation = new URI(logLocation)
           controllerConf = controllerConf.copy(stateRestoreConfOpt =
             Some(
               StateRestoreConfig(
