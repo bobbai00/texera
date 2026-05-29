@@ -98,6 +98,7 @@
             <span>Datasets</span>
           </li>
           <li
+            *ngIf="config.env.dashboardAgentEnabled"
             nz-menu-item
             nz-tooltip="Chat with the Texera Dashboard Agent"
             nzMatchRouter="true"

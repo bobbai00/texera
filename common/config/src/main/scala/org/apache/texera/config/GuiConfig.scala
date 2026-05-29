@@ -75,4 +75,6 @@ object GuiConfig {
     conf.getInt("gui.workflow-workspace.limit-columns")
   val guiAttributionEnabled: Boolean =
     conf.getBoolean("gui.attribution-enabled")
+  val guiDashboardAgentEnabled: Boolean =
+    conf.getBoolean("gui.dashboard-agent-enabled")
 }

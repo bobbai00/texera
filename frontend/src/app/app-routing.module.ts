@@ -42,6 +42,7 @@ import { DASHBOARD_ABOUT, DASHBOARD_USER_WORKFLOW } from "./app-routing.constant
 import { HubSearchResultComponent } from "./hub/component/hub-search-result/hub-search-result.component";
 import { AdminSettingsComponent } from "./dashboard/component/admin/settings/admin-settings.component";
 import { GuiConfigService } from "./common/service/gui-config.service";
+import { dashboardAgentEnabledGuard } from "./dashboard-agent/dashboard-agent-enabled.guard";
 
 const rootRedirectGuard: CanActivateFn = () => {
   const config = inject(GuiConfigService);
@@ -145,6 +146,7 @@ routes.push({
         },
         {
           path: "chat",
+          canActivate: [dashboardAgentEnabledGuard],
           loadComponent: () =>
             import("./dashboard-agent/component/dashboard-agent-page/dashboard-agent-page.component").then(
               m => m.DashboardAgentPageComponent

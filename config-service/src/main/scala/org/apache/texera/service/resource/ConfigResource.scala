@@ -59,6 +59,7 @@ class ConfigResource {
       "copilotEnabled" -> GuiConfig.guiWorkflowWorkspaceCopilotEnabled,
       "limitColumns" -> GuiConfig.guiWorkflowWorkspaceLimitColumns,
       "attributionEnabled" -> GuiConfig.guiAttributionEnabled,
+      "dashboardAgentEnabled" -> GuiConfig.guiDashboardAgentEnabled,
       // flags from the auth.conf if needed
       "expirationTimeInMinutes" -> AuthConfig.jwtExpirationMinutes
     )

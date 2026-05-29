@@ -44,6 +44,7 @@ export interface GuiConfig {
   copilotEnabled: boolean;
   limitColumns: number;
   attributionEnabled: boolean;
+  dashboardAgentEnabled: boolean;
 }
 
 export interface SidebarTabs {
