@@ -34,7 +34,14 @@ import { AuthService } from "../../../common/service/user/auth.service";
 export type DashboardAgentModelFactory = (modelId: string) => LanguageModel;
 
 export const DASHBOARD_AGENT_MODEL_FACTORY = new InjectionToken<DashboardAgentModelFactory>(
-  "DASHBOARD_AGENT_MODEL_FACTORY"
+  "DASHBOARD_AGENT_MODEL_FACTORY",
+  {
+    // Self-provided at the root injector so the runtime resolves the real
+    // gateway-backed factory without a manual provider registration. Tests
+    // override this token to inject a mock model.
+    providedIn: "root",
+    factory: () => createDashboardAgentModelFactory(),
+  }
 );
 
 /**
@@ -73,9 +80,3 @@ export function createDashboardAgentModelFactory(): DashboardAgentModelFactory {
   });
   return (modelId: string) => provider.chat(modelId);
 }
-
-/** Default DI binding for the model factory token. */
-export const DASHBOARD_AGENT_MODEL_FACTORY_PROVIDER = {
-  provide: DASHBOARD_AGENT_MODEL_FACTORY,
-  useFactory: createDashboardAgentModelFactory,
-};
