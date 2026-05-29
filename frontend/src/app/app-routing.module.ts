@@ -143,6 +143,13 @@ routes.push({
           path: "discussion",
           component: FlarumComponent,
         },
+        {
+          path: "chat",
+          loadComponent: () =>
+            import("./dashboard-agent/component/dashboard-agent-page/dashboard-agent-page.component").then(
+              m => m.DashboardAgentPageComponent
+            ),
+        },
       ],
     },
     {

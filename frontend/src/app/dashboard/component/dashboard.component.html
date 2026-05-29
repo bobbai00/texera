@@ -98,6 +98,17 @@
             <span>Datasets</span>
           </li>
           <li
+            nz-menu-item
+            nz-tooltip="Chat with the Texera Dashboard Agent"
+            nzMatchRouter="true"
+            nzTooltipPlacement="right"
+            [routerLink]="DASHBOARD_USER_CHAT">
+            <span
+              nz-icon
+              nzType="robot"></span>
+            <span>Agent</span>
+          </li>
+          <li
             *ngIf="sidebarTabs.compute_enabled"
             nz-menu-item
             nz-tooltip="Manage computing units"
