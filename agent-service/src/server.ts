@@ -40,6 +40,7 @@ import type {
   ReActStep,
 } from "./types/agent";
 import { OperatorResultSerializationMode } from "./types/agent";
+import type { WsMessage, WsOutgoingMessage, OperatorResultSummaryWs } from "./types/ws";
 
 const agentStore = new Map<string, TexeraAgent>();
 let agentCounter = 0;
@@ -409,37 +410,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
       }),
     }
   );
-
-interface WsMessage {
-  type: "message" | "stop";
-  content?: string;
-  messageSource?: "chat" | "feedback";
-}
-
-interface OperatorResultSummaryWs {
-  state: string;
-  inputTuples: number;
-  outputTuples: number;
-  inputPortShapes?: { portIndex: number; rows: number; columns: number }[];
-  outputColumns?: number;
-  error?: string;
-  warnings?: string[];
-  consoleLogCount?: number;
-  totalRowCount?: number;
-  sampleRecords?: Record<string, any>[];
-  resultStatistics?: Record<string, string>;
-}
-
-interface WsOutgoingMessage {
-  type: "step" | "state" | "error" | "complete" | "init" | "headChange";
-  step?: ReActStep;
-  state?: string;
-  error?: string;
-  steps?: ReActStep[];
-  headId?: string;
-  operatorResults?: Record<string, OperatorResultSummaryWs>;
-  workflowContent?: any;
-}
 
 function getOperatorResultSummaries(agent: TexeraAgent): Record<string, OperatorResultSummaryWs> {
   const resultState = agent.getWorkflowResultState();

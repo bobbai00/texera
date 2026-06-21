@@ -17,51 +17,10 @@
  * under the License.
  */
 
-// Wire DTOs: request/response bodies exchanged with backend services and the
-// WebSocket frames this service sends to its own clients. Distinct from domain
-// types (workflow.ts, execution.ts, agent.ts) which model in-memory state.
+// WebSocket frames for this service's own protocol (/agents/:id/react):
+// inbound client messages and the outbound streaming updates it pushes back.
 
-import type { WorkflowContent, OperatorPortSchemaMap } from "./workflow";
 import type { ReActStep } from "./agent";
-
-// --- Dashboard Service: workflow persistence ---
-
-export interface Workflow {
-  wid: number;
-  name: string;
-  description?: string;
-  content: WorkflowContent;
-  creationTime?: number;
-  lastModifiedTime?: number;
-  isPublished?: boolean;
-}
-
-export interface WorkflowPersistRequest {
-  wid?: number;
-  name: string;
-  description?: string;
-  content: string;
-  isPublic?: boolean;
-}
-
-// --- Workflow Compiling Service ---
-
-export interface WorkflowFatalError {
-  message: string;
-  details: string;
-  operatorId: string;
-  workerId: string;
-  type: { name: string };
-  timestamp: { nanos: number; seconds: number };
-}
-
-export interface WorkflowCompilationResponse {
-  physicalPlan?: any;
-  operatorOutputSchemas: Record<string, OperatorPortSchemaMap>;
-  operatorErrors: Record<string, WorkflowFatalError>;
-}
-
-// --- This service's WebSocket protocol (/agents/:id/react) ---
 
 export interface WsMessage {
   type: "message" | "stop";
