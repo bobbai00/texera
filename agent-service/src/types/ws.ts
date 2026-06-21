@@ -21,6 +21,7 @@
 // inbound client messages and the outbound streaming updates it pushes back.
 
 import type { ReActStep } from "./agent";
+import type { WorkflowContent } from "./workflow";
 
 export interface WsMessage {
   type: "message" | "stop";
@@ -38,7 +39,7 @@ export interface OperatorResultSummaryWs {
   warnings?: string[];
   consoleLogCount?: number;
   totalRowCount?: number;
-  sampleRecords?: Record<string, any>[];
+  sampleRecords?: Record<string, unknown>[];
   resultStatistics?: Record<string, string>;
 }
 
@@ -50,5 +51,5 @@ export interface WsOutgoingMessage {
   steps?: ReActStep[];
   headId?: string;
   operatorResults?: Record<string, OperatorResultSummaryWs>;
-  workflowContent?: any;
+  workflowContent?: WorkflowContent;
 }
