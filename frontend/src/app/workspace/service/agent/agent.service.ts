@@ -909,7 +909,7 @@ export class AgentService {
     }
 
     const wsMessage = {
-      type: "message",
+      type: "prompt",
       content: message,
       messageSource,
     };
@@ -967,7 +967,7 @@ export class AgentService {
     if (tracking?.websocket && tracking.websocket.readyState === WebSocket.OPEN) {
       // Send stop via WebSocket for immediate effect
       try {
-        tracking.websocket.send(JSON.stringify({ type: "stop" }));
+        tracking.websocket.send(JSON.stringify({ type: "command", commandType: "stop" }));
       } catch (error) {
         console.error("Failed to send stop command:", error);
       }

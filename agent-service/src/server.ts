@@ -40,7 +40,7 @@ import type {
   ReActStep,
 } from "./types/agent";
 import { OperatorResultSerializationMode } from "./types/agent";
-import type { WsMessage, WsOutgoingMessage, OperatorResultSummaryWs } from "./types/ws";
+import type { WsClientRequest, WsServerMessage, WsServerInitMessage, OperatorResultSummaryWs } from "./types/ws";
 
 const agentStore = new Map<string, TexeraAgent>();
 let agentCounter = 0;
@@ -434,7 +434,7 @@ function getOperatorResultSummaries(agent: TexeraAgent): Record<string, Operator
   return results;
 }
 
-function broadcastToAgent(agentId: string, message: WsOutgoingMessage): void {
+function broadcastToAgent(agentId: string, message: WsServerMessage): void {
   const agent = agentStore.get(agentId);
   if (!agent) return;
 
@@ -474,7 +474,7 @@ export function buildApp() {
 
         agent.addWebsocket(ws);
 
-        const initMessage: WsOutgoingMessage = {
+        const initMessage: WsServerInitMessage = {
           type: "init",
           state: agent.getState(),
           steps: agent.getAllSteps(),
@@ -493,21 +493,23 @@ export function buildApp() {
           return;
         }
 
-        let msg: WsMessage;
+        let msg: WsClientRequest;
         try {
-          msg = typeof messageData === "string" ? JSON.parse(messageData) : (messageData as WsMessage);
+          msg = typeof messageData === "string" ? JSON.parse(messageData) : (messageData as WsClientRequest);
         } catch {
           ws.send(JSON.stringify({ type: "error", error: "Invalid message format" }));
           return;
         }
 
-        if (msg.type === "stop") {
-          agent.stop();
-          broadcastToAgent(agentId, { type: "state", state: "STOPPING" });
+        if (msg.type === "command") {
+          if (msg.commandType === "stop") {
+            agent.stop();
+            broadcastToAgent(agentId, { type: "state", state: "STOPPING" });
+          }
           return;
         }
 
-        if (msg.type === "message") {
+        if (msg.type === "prompt") {
           if (!msg.content || typeof msg.content !== "string") {
             ws.send(JSON.stringify({ type: "error", error: "Message content is required" }));
             return;
@@ -600,9 +602,9 @@ function printStartupMessage(app: ReturnType<typeof buildApp>) {
     for (const route of wsRoutes) {
       console.log(`  WS     ${route.path}`);
     }
-    console.log("         Send: { type: 'message', content: '...' }");
-    console.log("         Send: { type: 'stop' }");
-    console.log("         Recv: { type: 'step' | 'state' | 'complete' | 'error' | 'init', ... }");
+    console.log("         Send: { type: 'prompt', content: '...' }");
+    console.log("         Send: { type: 'command', commandType: 'stop' }");
+    console.log("         Recv: { type: 'step' | 'state' | 'complete' | 'error' | 'init' | 'headChange', ... }");
   }
 
   console.log("");
