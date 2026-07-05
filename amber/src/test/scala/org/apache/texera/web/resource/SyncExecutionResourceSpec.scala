@@ -795,6 +795,24 @@ class SyncExecutionResourceSpec
     summary.errors.head.message shouldBe "Failed to initialize execution service"
   }
 
+  it should "kill the execution when no terminal signal arrives before timeout" in {
+    val stateStore = new ExecutionStateStore
+    val executionService = buildExecutionService(stateStore)
+
+    val summary = runWithStubWorkflow(
+      _.executionService.onNext(executionService),
+      syncRequest(timeoutSeconds = 1)
+    )
+
+    summary.success shouldBe false
+    summary.state shouldBe "Killed"
+    summary.operators shouldBe empty
+    summary.errors should have size 1
+    summary.errors.head.`type` shouldBe EXECUTION_FAILURE
+    summary.errors.head.message shouldBe "Timeout after 1 seconds"
+    stateStore.metadataStore.getState.state shouldBe WorkflowAggregatedState.KILLED
+  }
+
   it should "return an error when waiting for execution state fails" in {
     val stateStore = new ExecutionStateStore
     val executionService = buildExecutionService(stateStore)
