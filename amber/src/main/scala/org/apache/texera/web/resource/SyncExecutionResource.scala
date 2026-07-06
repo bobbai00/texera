@@ -265,7 +265,7 @@ class SyncExecutionResource extends LazyLogging {
               .timeout(timeoutSeconds.toLong, TimeUnit.SECONDS)
               .blockingGet()
           } catch {
-            case _: java.util.concurrent.TimeoutException =>
+            case e: Exception if isTimeoutException(e) =>
               killExecution(executionService)
               return WorkflowExecutionSummary(
                 success = false,
@@ -577,6 +577,13 @@ class SyncExecutionResource extends LazyLogging {
     }.toArray
     Tuple(schema, fields)
   }
+
+  // RxJava's Single.blockingGet wraps the checked TimeoutException from .timeout()
+  // in a RuntimeException, so a direct `case _: TimeoutException` never matches.
+  // Walk the cause chain to detect the wrapped timeout.
+  private def isTimeoutException(e: Throwable): Boolean =
+    e.isInstanceOf[java.util.concurrent.TimeoutException] ||
+      Option(e.getCause).exists(cause => (cause ne e) && isTimeoutException(cause))
 
   /**
     * Symmetric truncation: fill half the char budget from the front of the result, keep a
