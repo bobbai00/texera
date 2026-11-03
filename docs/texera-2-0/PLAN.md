@@ -1,6 +1,6 @@
 # Texera 2.0 implementation plan
 
-Branch `texera-2-0`, worktree `texera-worktrees/texera-2-0`. The design is the Claude Doc
+Branch `texera-2-0`, in its own worktree of the main checkout. The design is the Claude Doc
 "Texera as the Workspace for Agentic Collaborative Research" (rev 67). This file is the
 engineering blueprint for the first end-to-end slice and the running notes that survive
 context resets. Keep it current: `PROGRESS.md` beside it records what is done and verified.

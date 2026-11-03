@@ -22,6 +22,10 @@ without a tool call, the step budget is spent, or the run is aborted. Around eac
   with a correction, once by default. The Data Analyst template uses `after_result`.
 - A provider refusal is retried once; a reply cut off at the output limit is continued once;
   the step limit and a refusal end the turn as `RUN_ERROR`.
+- The prompt is laid out for Anthropic prompt caching: the instructions are a cacheable system
+  message (tools and instructions read from cache on every step and turn), the conversation's
+  newest message is a second breakpoint, and the turn's state is the newest user message, the
+  only part that changes between steps.
 
 A template sets its loop in `spec.loop` (`answer`, `resultTools`, `maxSteps`, `temperature`);
 the runtime's defaults fill in the rest.

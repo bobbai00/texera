@@ -42,11 +42,13 @@ Done and verified:
   4/4 on Chrome, the real-model Data Analyst test included. Docs: the handoff and design docs
   are copied under `docs/texera-2-0/claude-docs/`.
 
+- Prompt caching: the instructions are a cacheable system message in AI SDK 7's `instructions`
+  option, the conversation's newest message carries a second breakpoint, and the turn's state is
+  re-rendered as the newest user message (not in the system prompt, which broke the cached
+  prefix). The MCP `list_operators` without `q` or `group` is a compact list (types, names,
+  groups, descriptions); with them, the schemas and ports as before. Tests in both packages.
+
 Next:
-- Prompt caching: a 9-step turn sends about 100k input tokens with `cachedInputTokens: 0`; mark
-  the system prompt and the tool definitions cacheable for Anthropic.
-- `list_operators` without `q` returns the whole registry (165 operators, 910 KB of JSON
-  Schema); serve a compact listing by default and the schema only on `q`.
 - The frontend's template editor does not expose `loop` yet; the catalog accepts it.
 - CI installs the engine's Python with `uv pip install -r amber/*requirements.txt`; switch CI
   and the images to the lockfile (`uv sync`) so one definition serves all three.
