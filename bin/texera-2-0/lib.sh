@@ -94,6 +94,12 @@ stop() {
   if [ -n "$parent" ] && ps -o command= -p "$parent" | grep -qE 'sbt-launch\.jar|bun run '; then
     kill "$parent" 2>/dev/null || true
   fi
-  for _ in $(seq 1 20); do [ -z "$(listener "$port")" ] && { echo "$name: stopped"; return 0; }; sleep 1; done
-  echo "$name: still listening on :$port" >&2
+  # Wait for the process itself to exit, not only for its HTTP port to close: a JVM frees its
+  # other ports (the unit's actor port) last, and a restart that raced it found them taken.
+  for i in $(seq 1 40); do
+    if ! kill -0 "$pid" 2>/dev/null; then echo "$name: stopped"; return 0; fi
+    [ "$i" -eq 20 ] && kill -9 "$pid" 2>/dev/null
+    sleep 1
+  done
+  echo "$name: pid $pid did not exit" >&2
 }

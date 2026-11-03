@@ -53,12 +53,16 @@ manager and its execution-time binding, the file-lister operator and every datab
 
 ## Service topology of the dev stack
 
-Envoy :8080 (jwt_authn on Keycloak JWKS, ext_authz to the catalog) routes:
-`/` → frontend (vite :5173 on the host), `/catalog/v1`, `/access/v1`, `/mcp`, `/lineage/v1`
-→ catalog (:8090 host), `/agents` → agent-runtime (:3001 host), `/units/{rid}/wsapi` and
-`/units/{rid}/api` → the unit (cu-master container :8085), `/auth` → Keycloak.
-Infrastructure containers: postgres, keycloak, openfga, rustfs (S3), lakekeeper (Iceberg REST),
-cu-master (the Amber unit image built from this worktree, with the Python runtime).
+Everything that is Texera runs as a plain process on the host; only the standard components run
+in containers (compose project `texera2`); no Kubernetes is involved in development. Envoy
+(container, host port 8088; jwt_authn on Keycloak JWKS, ext_authz to the catalog) routes:
+`/` → frontend (vite :5174 on the host), `/catalog/v1`, `/access/v1`, `/mcp`, `/lineage/v1`
+→ catalog (:8090 host), `/agents` → agent-runtime (:23002 host), `/units/{rid}/wsapi` and
+`/units/{rid}/api` → the unit (ComputingUnitMaster under sbt, :28085 host), `/auth` → Keycloak.
+Infrastructure containers: postgres, keycloak, openfga, rustfs (S3), lakekeeper (Iceberg REST)
+with a socat sidecar that makes 127.0.0.1:19001 reach RustFS inside Lakekeeper's network
+namespace as it does on the host. The unit's Python workers run from the uv-managed `.venv`.
+Details and ports: `bin/texera-2-0/README.md`.
 
 ## Engine boundary (Amber as a pure engine)
 

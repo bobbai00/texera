@@ -2,6 +2,57 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-03 (session 5, on Linux)
+
+Done and verified:
+- The dev stack runs as local processes on any Docker host (Ubuntu 20.04 here); no OrbStack, no
+  Kubernetes. Lakekeeper's base URI is `localhost:18181` and the warehouse's S3 endpoint is
+  `127.0.0.1:19001` on both sides: the host's published RustFS port, and inside Lakekeeper's
+  network namespace a socat sidecar (`lakekeeper-s3`) forwarding to the rustfs container.
+  `k8s.sh` and `deploy/kubernetes` stay as a deployment check, out of the development path.
+- The engine's Python environment is managed by uv: a repo-root `pyproject.toml` (Python 3.12,
+  the pins of `amber/*requirements.txt`, torch CPU on Linux x86_64) with `uv.lock` committed;
+  `up.sh` runs `uv sync --all-extras` and `bin/python-proto-gen.sh` when `.venv` is missing, and
+  the unit and `test.sh` run workers from `.venv/bin/python`. `up.sh` checks the prerequisites,
+  finds Go/bun/uv under `~`, and reads `ANTHROPIC_API_KEY` from a gitignored repo-root `.env`
+  (`export` lines allowed). Playwright drives the installed Google Chrome where it ships no
+  Chromium for the host. `stop` in `lib.sh` waits for the process to exit, so a unit restart no
+  longer races the actor port.
+- The agent runtime runs the Dataflow Agent's ReAct loop on AI SDK 7
+  (`agent-runtime/src/run/react-loop.ts`): before every model call `prepareStep` renders the
+  turn's state into the system prompt (step budget, the resources the turn touched with the
+  ids to reuse, whether a result was shown); `onStepFinish` records each step; the answer policy
+  (`free` or `after_result`) sends a reply that computed nothing back with a correction, once by
+  default; a provider refusal is retried once and a cut-off reply continued once; the step limit
+  and a refusal end the turn as `RUN_ERROR`; corrections are `texera.correction` CUSTOM events.
+  The contract gained `AgentTemplateSpec.loop` (LoopSpec: answer, resultTools, maxSteps,
+  temperature); `make generate` regenerated the Go server, the TS client and the MCP table.
+- The Data Analyst template follows the Dataflow Agent: a prompt with the role, the resources,
+  the way of working and the answer rule; `loop.answer = after_result`; three skills the
+  platform ships as SKILL.md (`catalog/internal/server/skills/`, embedded, the license comment
+  stripped before storage): texera-workflows, python-udf, reading-results, loaded on demand with
+  `load_skill`. A changed shipped skill gets a new version authored by the platform.
+- Verified: `up.sh` from a clean checkout; `smoke-catalog.sh`; `smoke-run.sh` (a run through
+  Lakekeeper and RustFS, the result saved as a dataset version); the runtime's `bun test` 49/49
+  with typecheck and lint; the frontend's typecheck, lint and vitest; the catalog's
+  `go test ./...` on the stack's Postgres; `smoke-chat.py` with Claude Haiku 5.5 PASS (turn 1:
+  search, list files, read the header, load_skill, create, validate, run, read rows, answer in
+  9 steps and 10.6 s with the right averages; turn 2 edits to v2 and reruns in 5 steps; the save
+  turn makes a dataset version with lineage to the run; no correction was needed); Playwright
+  4/4 on Chrome, the real-model Data Analyst test included. Docs: the handoff and design docs
+  are copied under `docs/texera-2-0/claude-docs/`.
+
+Next:
+- Prompt caching: a 9-step turn sends about 100k input tokens with `cachedInputTokens: 0`; mark
+  the system prompt and the tool definitions cacheable for Anthropic.
+- `list_operators` without `q` returns the whole registry (165 operators, 910 KB of JSON
+  Schema); serve a compact listing by default and the schema only on `q`.
+- The frontend's template editor does not expose `loop` yet; the catalog accepts it.
+- CI installs the engine's Python with `uv pip install -r amber/*requirements.txt`; switch CI
+  and the images to the lockfile (`uv sync`) so one definition serves all three.
+- Tool approval (AI SDK `toolApproval` + AG-UI interrupts), A2A tasks and sub-agents remain
+  unwired, as before.
+
 ## 2026-11-03 (session 4)
 
 Done and verified:
