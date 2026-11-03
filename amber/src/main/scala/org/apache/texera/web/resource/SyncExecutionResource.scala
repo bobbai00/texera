@@ -45,15 +45,13 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
   ExecutionStatsStore
 }
 import io.reactivex.rxjava3.core.Observable
-import org.apache.texera.auth.SessionUser
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_EXECUTIONS
+import org.apache.texera.web.auth.UnitPrincipal
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.service.{WarehouseReadGuard, WarehouseUnavailableException}
 import org.apache.texera.common.compiler.model.LogicalLink
 import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.apache.texera.web.execution.ExecutionRegistry
 import org.apache.texera.web.service.{ExecutionResultService, WorkflowService}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
@@ -136,7 +134,7 @@ class SyncExecutionResource extends LazyLogging {
       @PathParam("wid") workflowId: Long,
       @PathParam("cuid") computingUnitId: Int,
       request: SyncExecutionRequest,
-      @Auth user: SessionUser
+      @Auth user: UnitPrincipal
   ): SyncExecutionResult = {
     val timeoutSeconds = request.timeoutSeconds
 
@@ -162,7 +160,7 @@ class SyncExecutionResource extends LazyLogging {
       // execution in flight down with it. Resolved again inside the init call —
       // one indexed single-row read, against a request that already writes
       // several rows.
-      WorkflowService.resolveLakekeeperWarehouseName(request.warehouseId, user.getUser.getUid)
+      WorkflowService.resolveLakekeeperWarehouseName(request.warehouseId)
 
       shutdownPreviousExecution(workflowService)
 
@@ -186,7 +184,7 @@ class SyncExecutionResource extends LazyLogging {
 
       workflowService.initExecutionService(
         executeRequest,
-        Some(user.getUser),
+        Some(user),
         new URI(s"sync-execution://$workflowId")
       )
 
@@ -541,7 +539,7 @@ class SyncExecutionResource extends LazyLogging {
     import com.fasterxml.jackson.databind.node.ObjectNode
 
     try {
-      val storageUriOption = WorkflowExecutionsResource.getResultUriByLogicalPortId(
+      val storageUriOption = ExecutionRegistry.getResultUriByLogicalPortId(
         executionId,
         OperatorIdentity(opId),
         PortIdentity()
@@ -824,18 +822,7 @@ class SyncExecutionResource extends LazyLogging {
   private def getConsoleMessageUri(
       eid: ExecutionIdentity,
       opId: OperatorIdentity
-  ): Option[URI] = {
-    val context = SqlServer.getInstance().createDSLContext()
-    Option(
-      context
-        .select(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI)
-        .from(OPERATOR_EXECUTIONS)
-        .where(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
-        .and(OPERATOR_EXECUTIONS.OPERATOR_ID.eq(opId.id))
-        .fetchOneInto(classOf[String])
-    ).filter(uri => uri != null && uri.nonEmpty)
-      .map(s => URI.create(s))
-  }
+  ): Option[URI] = ExecutionRegistry.getConsoleMessageUri(eid, opId)
 
   private def isTerminalState(state: WorkflowAggregatedState): Boolean = {
     state match {

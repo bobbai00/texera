@@ -20,31 +20,29 @@
 # `bin/`
 
 This directory holds the scripts, Dockerfiles, and configuration used to
-develop, build, and deploy Texera. Most scripts expect to be run **from the
+develop, build, and test Texera. Most scripts expect to be run **from the
 `texera` project root** (the parent of this directory).
 
 ## Local development
 
 | Entry point | Purpose |
 | --- | --- |
-| `local-dev.sh` | Single entry point for the local dev stack — brings infra up/down in Docker while backend, frontend, and agent-service run natively. Run `bin/local-dev.sh --help`. Implementation lives in [`local-dev/`](local-dev/README.md). |
+| `texera-2-0/up.sh` | Brings the Texera 2.0 dev stack up: infrastructure containers, then the catalog, the computing unit, the agent runtime and the frontend on the host. See [`texera-2-0/`](texera-2-0/README.md). |
+| `texera-2-0/test.sh` | Runs the unit and integration suites and the end-to-end checks. |
+| `texera-2-0/down.sh` | Stops the stack (`--wipe` also deletes its volumes). |
 
-## Deployment
-
-| Entry point | Purpose |
-| --- | --- |
-| `single-node.sh` | Single entry point for the single-node Docker Compose stack. Run `bin/single-node.sh --help`. Implementation and setup docs live in [`single-node/`](single-node/README.md). |
-| `k8s/` | Helm chart and values for the Kubernetes deployment. See [`k8s/README.md`](k8s/README.md). |
+The 1.x deployments (the single-node Docker Compose stack and the Helm chart)
+are not part of this branch; a 2.0 deployment will be built on the dev stack's
+services.
 
 ## Docker images
 
-`dockerfiles/` collects the per-service Dockerfiles, e.g.
-`texera-web-application.dockerfile`, `file-service.dockerfile`, and
-`computing-unit-master.dockerfile`. Each builds one Texera microservice and
-must be built with the project root as the Docker build context:
+`dockerfiles/` holds the computing unit images (`computing-unit-master.dockerfile`
+and `computing-unit-worker.dockerfile`). Build them with the project root as the
+Docker build context:
 
 ```bash
-docker build -f bin/dockerfiles/texera-web-application.dockerfile -t your-repo/texera-web-application:test .
+docker build -f bin/dockerfiles/computing-unit-master.dockerfile -t your-repo/computing-unit-master:test .
 ```
 
 ### Reproducible builds
@@ -68,12 +66,9 @@ docker buildx create --name texera-repro --driver docker-container \
 export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
 docker buildx build --platform linux/amd64 \
   --build-arg SOURCE_DATE_EPOCH --build-arg PACKAGE_SNAPSHOT=$(date -u -d @$SOURCE_DATE_EPOCH +%F) \
-  --output type=oci,dest=config-service.tar,rewrite-timestamp=true \
-  -f bin/dockerfiles/config-service.dockerfile .
+  --output type=oci,dest=computing-unit-master.tar,rewrite-timestamp=true \
+  -f bin/dockerfiles/computing-unit-master.dockerfile .
 ```
-
-`y-websocket-server/Dockerfile` rebuilds the same way, with
-`bin/y-websocket-server` as the build context instead of `.`.
 
 | Script | Purpose |
 | --- | --- |
@@ -87,7 +82,6 @@ Prebuilt images published by the Texera team are on the
 
 | Script | Purpose |
 | --- | --- |
-| `frontend-proto-gen.sh` | Generate the frontend (TypeScript) code from protobuf definitions. |
 | `python-proto-gen.sh` | Generate the Python code from protobuf definitions. |
 | `fix-format.sh` | Run the repository's code formatters. |
 | `protoc-version.txt` | Pins the `protoc` version used by the proto-gen scripts. |
@@ -110,8 +104,4 @@ binary `NOTICE`/`LICENSE` files (`audit_jar_licenses.py`,
 | Path | Purpose |
 | --- | --- |
 | `utils/` | Shared shell helpers (`resolve-texera-home.sh`, `texera-logging.sh`) sourced by other scripts. |
-| `pylsp/` | Dockerized Python language server used by the UDF editor. |
-| `y-websocket-server/` | Dockerized Yjs websocket server backing collaborative editing. |
-| `forum/` | Flarum-based community forum setup (install scripts and seed SQL). |
-| `config.php`, `extend.php`, `.htaccess` | Flarum runtime config, extenders, and Apache rewrite rules for the forum. |
-| `litellm-config.yaml` | LiteLLM proxy configuration for AI features. |
+| `observability/` | An OpenTelemetry collector with Grafana, Loki and Parca for local tracing, logs and profiles. |

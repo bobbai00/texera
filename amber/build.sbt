@@ -109,6 +109,7 @@ val dropwizardDependencies = Seq(
   "io.dropwizard" % "dropwizard-auth" % dropwizardVersion,
   // https://mvnrepository.com/artifact/com.github.toastshaman/dropwizard-auth-jwt
   "com.github.toastshaman" % "dropwizard-auth-jwt" % "1.1.2-0",
+  "org.bitbucket.b_c" % "jose4j" % "0.9.6", // RS256 verification against the identity provider's JWKS
   "com.github.dirkraft.dropwizard" % "dropwizard-file-assets" % "0.0.2",
   "io.dropwizard-bundles" % "dropwizard-redirect-bundle" % "1.3.5",
   "com.liveperson" % "dropwizard-websockets" % "1.3.14",
@@ -282,8 +283,6 @@ libraryDependencies += "com.konghq" % "unirest-java" % "3.14.5"
 // https://mvnrepository.com/artifact/com.github.marianobarrios/lbmq
 libraryDependencies += "com.github.marianobarrios" % "lbmq" % "0.7.0"
 
-// https://mvnrepository.com/artifact/org.jooq/jooq
-libraryDependencies += "org.jooq" % "jooq" % "3.19.36"
 
 // https://mvnrepository.com/artifact/org.jgrapht/jgrapht-core
 libraryDependencies += "org.jgrapht" % "jgrapht-core" % "1.4.0"

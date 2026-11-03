@@ -35,22 +35,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
-import org.apache.texera.dao.jooq.generated.tables.daos.{
-  UserDao,
-  WorkflowComputingUnitDao,
-  WorkflowDao,
-  WorkflowExecutionsDao,
-  WorkflowVersionDao
-}
-import org.apache.texera.dao.jooq.generated.tables.pojos.{
-  User,
-  Workflow,
-  WorkflowComputingUnit,
-  WorkflowExecutions,
-  WorkflowVersion
-}
+import org.apache.texera.web.execution.ExecutionRegistry
 import org.apache.texera.web.WebsocketInput
 import org.apache.texera.web.model.websocket.event.{
   TexeraWebSocketEvent,
@@ -66,7 +51,6 @@ import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
-import java.sql.{Timestamp => SqlTimestamp}
 import java.time.Instant
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -97,10 +81,10 @@ import scala.reflect.ClassTag
   *     the shared serial JVM.
   *
   *   - `unsubscribeAll`, the session-teardown contract. This is what makes the
-  *     suite carry a TestKit `ActorSystem` and `MockTexeraDB`: the method walks the
-  *     four runtime services, and `ExecutionStatsService`'s constructor creates its
-  *     iceberg runtime-statistics table and stamps the URI onto a `workflow_executions`
-  *     row, so a non-null value for that field cannot be had more cheaply. There is
+  *     suite carry a TestKit `ActorSystem` and a registered fixture execution: the method
+  *     walks the four runtime services, and `ExecutionStatsService`'s constructor creates
+  *     its iceberg runtime-statistics table and stamps the URI onto the execution's registry
+  *     record, so a non-null value for that field cannot be had more cheaply. There is
   *     no second home for the test -- one spec file per source class -- and stubbing
   *     the services out would leave the four teardown calls unobserved, which is the
   *     entire content of the method.
@@ -136,13 +120,11 @@ class WorkflowExecutionServiceSpec
     extends TestKit(ActorSystem("WorkflowExecutionServiceSpec"))
     with AnyFlatSpecLike
     with Matchers
-    with BeforeAndAfterAll
-    with MockTexeraDB {
+    with BeforeAndAfterAll {
 
   // Distinct from every other suite's ids: the statistics URI is derived from wid/eid and
   // `createDocument` truncates whatever table already sits at it (ExecutionStatsServiceSpec
   // owns 9107/9108).
-  private val testUid: Integer = 9207
   private val testWid: Integer = 9207
   private val testEid: Integer = 9208
 
@@ -159,68 +141,21 @@ class WorkflowExecutionServiceSpec
 
   override protected def beforeAll(): Unit = {
     super.beforeAll()
-    initializeDBAndReplaceDSLContext()
-
-    // Set explicitly rather than left to the SERIAL default: the computing-unit and execution
-    // rows below bind `testUid` into their `uid` foreign keys, so a generated value would leave
-    // them pointing at a user that does not exist.
-    val user = new User
-    user.setUid(testUid)
-    user.setName("workflow-execution-test-user")
-    user.setEmail(s"u$testUid@example.com")
-    new UserDao(getDSLContext.configuration()).insert(user)
-
-    val workflow = new Workflow
-    workflow.setWid(testWid)
-    workflow.setName(s"workflow-execution-test-$testWid")
-    workflow.setContent("{}")
-    workflow.setDescription("")
-    workflow.setCreationTime(new SqlTimestamp(System.currentTimeMillis()))
-    workflow.setLastModifiedTime(new SqlTimestamp(System.currentTimeMillis()))
-    new WorkflowDao(getDSLContext.configuration()).insert(workflow)
-
-    val version = new WorkflowVersion
-    version.setWid(testWid)
-    version.setContent("{}")
-    version.setCreationTime(new SqlTimestamp(System.currentTimeMillis()))
-    new WorkflowVersionDao(getDSLContext.configuration()).insert(version)
-
-    val computingUnitDao = new WorkflowComputingUnitDao(getDSLContext.configuration())
-    List(testCuid -> "workflow-execution-test-unit", otherCuid -> "workflow-execution-idle-unit")
-      .foreach {
-        case (cuid, name) =>
-          val unit = new WorkflowComputingUnit
-          unit.setCuid(cuid)
-          unit.setUid(testUid)
-          unit.setName(name)
-          unit.setCreationTime(new SqlTimestamp(System.currentTimeMillis()))
-          unit.setType(WorkflowComputingUnitTypeEnum.local)
-          unit.setUri("local://test")
-          unit.setResource("{}")
-          computingUnitDao.insert(unit)
-      }
-
-    // `ExecutionStatsService`'s constructor stamps the runtime-statistics URI onto this row,
-    // reaching it from the workflow through workflow_version. `cuid` is set because
-    // `getLatestExecutionID` matches on it and a NULL cuid matches no value at all.
-    val execution = new WorkflowExecutions
-    execution.setEid(testEid)
-    execution.setVid(version.getVid)
-    execution.setUid(testUid)
-    execution.setCuid(testCuid)
-    execution.setStatus(0.toByte)
-    execution.setStartingTime(new SqlTimestamp(System.currentTimeMillis()))
-    execution.setBookmarked(false)
-    execution.setName("workflow-execution-test-execution")
-    execution.setEnvironmentVersion("test-env")
-    new WorkflowExecutionsDao(getDSLContext.configuration()).insert(execution)
+    // `ExecutionStatsService`'s constructor stamps the runtime-statistics URI onto this record;
+    // `cuid` is set because `getLatestExecutionId` matches on it.
+    ExecutionRegistry.adopt(
+      ExecutionIdentity(testEid.longValue()),
+      workflowId = testWid.longValue(),
+      cuid = testCuid.intValue(),
+      name = "workflow-execution-test-execution"
+    )
   }
 
   override protected def afterAll(): Unit = {
     try {
       TestKit.shutdownActorSystem(system)
     } finally {
-      closeConnectionPool()
+      ExecutionRegistry.forget(ExecutionIdentity(testEid.longValue()))
       super.afterAll()
     }
   }
@@ -249,7 +184,6 @@ class WorkflowExecutionServiceSpec
       request,
       store,
       errorHandler,
-      None,
       new URI("vfs:///test")
     )
   }
@@ -480,8 +414,6 @@ class WorkflowExecutionServiceSpec
       reconfigurationService,
       logConf = None,
       workflowId = testWid.longValue(),
-      emailNotificationEnabled = false,
-      userEmailOpt = None,
       sessionUri = new URI("https://texera.example/session")
     )
     val consoleService = new ExecutionConsoleService(client, store, wsInput, new WorkflowContext())
@@ -548,16 +480,39 @@ class WorkflowExecutionServiceSpec
   }
 
   // The companion's one expression, exercised directly rather than only through the two result
-  // services that call it. Transposing its two arguments -- both bare `Integer`s bound into one
-  // predicate -- does reach those siblings, and hard (30 of their tests fail on it), so this is not
-  // a hole in the module's coverage. It is the class that owns the method stating its own contract,
-  // and failing first and by name when that contract breaks.
+  // services that call it. "Newest" means created last: engine ids are random (they are derived
+  // from the catalog's UUIDs), so the largest id says nothing about order.
   "WorkflowExecutionService.getLatestExecutionId" should
     "resolve the newest execution of a workflow on a given computing unit" in {
+    val first = ExecutionsMetadataPersistService.insertNewExecution(
+      WorkflowIdentity(testWid.longValue()),
+      "first",
+      "test-env",
+      testCuid
+    )
+    val second = ExecutionsMetadataPersistService.insertNewExecution(
+      WorkflowIdentity(testWid.longValue()),
+      "second",
+      "test-env",
+      testCuid
+    )
+    second should not be first
     WorkflowExecutionService.getLatestExecutionId(
       WorkflowIdentity(testWid.longValue()),
       testCuid.intValue()
-    ) shouldBe Some(ExecutionIdentity(testEid.longValue()))
+    ) shouldBe Some(second)
+  }
+
+  it should "match workflow ids beyond the 32-bit range in full" in {
+    // Engine workflow ids are 63-bit values derived from catalog rids; narrowing one to an Int
+    // would match no execution, or the wrong workflow's.
+    val wid = WorkflowIdentity(Long.MaxValue - 41)
+    val run = ExecutionsMetadataPersistService.insertNewExecution(wid, "wide", "test-env", testCuid)
+    WorkflowExecutionService.getLatestExecutionId(wid, testCuid.intValue()) shouldBe Some(run)
+    WorkflowExecutionService.getLatestExecutionId(
+      WorkflowIdentity((Long.MaxValue - 41).toInt.toLong),
+      testCuid.intValue()
+    ) shouldBe None
   }
 
   it should "find no execution for a computing unit the workflow has not run on" in {

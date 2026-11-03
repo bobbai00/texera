@@ -26,11 +26,7 @@ import io.reactivex.rxjava3.disposables.{CompositeDisposable, Disposable}
 import io.reactivex.rxjava3.subjects.BehaviorSubject
 import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
 import org.apache.texera.observability.{SpanAttrs, TexeraTracer}
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.Tables.USER_WAREHOUSE
 import org.apache.texera.amber.core.WorkflowRuntimeException
-import org.apache.texera.amber.core.storage.DocumentFactory
-import org.apache.texera.amber.core.storage.result.iceberg.OnIceberg
 import org.apache.texera.amber.core.virtualidentity.{
   EmbeddedControlMessageIdentity,
   ExecutionIdentity,
@@ -52,11 +48,10 @@ import org.apache.texera.amber.error.ErrorUtils.{
   getOperatorFromActorIdOpt,
   getStackTraceWithAllCauses
 }
-import org.apache.texera.dao.jooq.generated.tables.pojos.User
-import org.apache.texera.service.util.LargeBinaryManager
+import org.apache.texera.web.auth.UnitPrincipal
+import org.apache.texera.web.execution.ExecutionRegistry
 import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.WorkflowService.mkWorkflowStateId
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
@@ -86,34 +81,13 @@ object WorkflowService {
     */
   def resolveLakekeeperWarehouseName(
       warehouseId: Option[Int],
-      uid: Integer,
       enabled: Boolean = StorageConfig.warehouseEnabled
   ): Option[String] = {
-    if (!enabled) {
-      warehouseId.foreach(_ =>
-        throw new IllegalArgumentException(
-          "per-user warehouses are disabled in this deployment"
-        )
-      )
-      return None
+    // Per-user warehouses are a catalog concern now; the unit writes to the configured default.
+    if (!enabled && warehouseId.nonEmpty) {
+      throw new IllegalArgumentException("per-user warehouses are disabled in this deployment")
     }
-    if (warehouseId.isEmpty) {
-      throw new IllegalArgumentException(
-        "a warehouse must be selected for this execution"
-      )
-    }
-    warehouseId.map(id => {
-      val row = SqlServer
-        .getInstance()
-        .createDSLContext()
-        .selectFrom(USER_WAREHOUSE)
-        .where(USER_WAREHOUSE.WHID.eq(id).and(USER_WAREHOUSE.UID.eq(uid)))
-        .fetchOne()
-      if (row == null) {
-        throw new IllegalArgumentException(s"no warehouse with id $id owned by this user")
-      }
-      row.getLakekeeperWarehouseName
-    })
+    None
   }
   val cleanUpDeadlineInSeconds: Int = ApplicationConfig.executionStateCleanUpInSecs
 
@@ -154,24 +128,20 @@ class WorkflowService(
 
   val resultService: ExecutionResultService =
     new ExecutionResultService(workflowId, computingUnitId, stateStore)
-  val lifeCycleManager: WorkflowLifecycleManager = new WorkflowLifecycleManager(
-    s"workflowId=$workflowId",
-    cleanUpTimeout,
-    () => {
-      // clear the storage resources associated with the latest execution
-      WorkflowExecutionService
-        .getLatestExecutionId(workflowId, computingUnitId)
-        .foreach(eid => {
-          clearExecutionResources(eid)
-        })
-      WorkflowService.workflowServiceMapping.remove(mkWorkflowStateId(workflowId))
-      if (executionService.getValue != null) {
-        // shutdown client
-        executionService.getValue.client.shutdown()
-      }
-      unsubscribeAll()
-    }
-  )
+  val lifeCycleManager: WorkflowLifecycleManager =
+    new WorkflowLifecycleManager(s"workflowId=$workflowId", cleanUpTimeout, () => releaseEngine())
+
+  /**
+    * Lets go of the engine once nobody is watching and nothing runs: the Amber client, the
+    * subscriptions, and this service's slot in the registry. The executions' results stay; the
+    * catalog's lineage points at them, and only the retention sweep drops them
+    * (see [[org.apache.texera.web.execution.ExecutionStorage]]).
+    */
+  private[service] def releaseEngine(): Unit = {
+    WorkflowService.workflowServiceMapping.remove(mkWorkflowStateId(workflowId), this)
+    Option(executionService.getValue).flatMap(e => Option(e.client)).foreach(_.shutdown())
+    unsubscribeAll()
+  }
 
   var lastCompletedLogicalPlan: Option[LogicalPlan] = Option.empty
 
@@ -228,7 +198,7 @@ class WorkflowService(
 
   def initExecutionService(
       req: WorkflowExecuteRequest,
-      userOpt: Option[User],
+      userOpt: Option[UnitPrincipal],
       sessionUri: URI
   ): Unit = {
     val span = TexeraTracer.tracer
@@ -238,17 +208,14 @@ class WorkflowService(
     val scope = span.makeCurrent()
     try {
 
-      val (uidOpt, userEmailOpt) = userOpt.map(user => (user.getUid, user.getEmail)).unzip
-
       // Validate before touching the execution already in flight: a request that is
       // going to be refused must not take the running one's subscriptions with it.
-      // uid is NOT NULL in the DB; fail early here rather than letting the insert fail downstream.
-      val uid = uidOpt.getOrElse(
+      if (userOpt.isEmpty) {
         throw new IllegalArgumentException(
-          "Cannot start execution: a user id (uid) is required but none was provided."
+          "Cannot start execution: a signed-in user is required but none was provided."
         )
-      )
-      val warehouseName = WorkflowService.resolveLakekeeperWarehouseName(req.warehouseId, uid)
+      }
+      val warehouseName = WorkflowService.resolveLakekeeperWarehouseName(req.warehouseId)
 
       if (executionService.hasValue) {
         executionService.getValue.unsubscribeAll()
@@ -256,22 +223,19 @@ class WorkflowService(
 
       val workflowContext: WorkflowContext = createWorkflowContext()
       workflowContext.warehouse = warehouseName
+      workflowContext.pastRuntimeStatistics =
+        ExecutionRegistry.latestCompletedStatistics(workflowId.id)
       var coordinatorConf = CoordinatorConfig.default
 
-      // clean up results from previous run
-      val previousExecutionId =
-        WorkflowExecutionService.getLatestExecutionId(workflowId, req.computingUnitId)
-      previousExecutionId.foreach(eid => {
-        clearExecutionResources(eid)
-      }) // TODO: change this behavior after enabling cache.
-
+      // Earlier runs keep their results: each one is a recorded execution the catalog's lineage
+      // refers to, so a new run must not clear them.
       workflowContext.executionId = ExecutionsMetadataPersistService.insertNewExecution(
         workflowContext.workflowId,
-        uid,
         req.executionName,
         convertToJson(req.engineVersion),
         req.computingUnitId,
-        req.warehouseId
+        req.warehouseId,
+        req.externalExecutionId
       )
       span.setAttribute(SpanAttrs.ExecutionId, Long.box(workflowContext.executionId.id))
       // A run has started: record the start counter and stamp its start time.
@@ -357,7 +321,6 @@ class WorkflowService(
           req,
           executionStateStore,
           errorHandler,
-          userEmailOpt,
           sessionUri
         )
         lifeCycleManager.registerCleanUpOnStateChange(executionStateStore)
@@ -403,61 +366,5 @@ class WorkflowService(
     super.unsubscribeAll()
     Option(executionService.getValue).foreach(_.unsubscribeAll())
     resultService.unsubscribeAll()
-  }
-
-  /**
-    * Cleans up all resources associated with a workflow execution.
-    *
-    * This method performs resource cleanup in the following sequence:
-    *  1. Retrieves all document URIs associated with the execution
-    *  2. Clears URI references from the execution registry
-    *  3. Safely clears all result and console message documents
-    *  4. Expires Iceberg snapshots for runtime statistics
-    *  5. Deletes this execution's large binaries from the object store
-    *
-    * @param eid The execution identity to clean up resources for
-    */
-  private def clearExecutionResources(eid: ExecutionIdentity): Unit = {
-    // Retrieve URIs for all resources associated with this execution
-    val resultUris = WorkflowExecutionsResource.getResultUrisByExecutionId(eid)
-    val consoleMessagesUris = WorkflowExecutionsResource.getConsoleMessagesUriByExecutionId(eid)
-
-    // Remove references from registry first
-    WorkflowExecutionsResource.deleteConsoleMessageAndExecutionResultUris(eid)
-
-    // Clean up all result and console message documents. While per-user warehouses are
-    // disabled, cleanup must not reach into them (#6930) — those URIs are skipped.
-    (resultUris ++ consoleMessagesUris).foreach { uri =>
-      if (WarehouseReadGuard.skipWhileDisabled(uri)) {
-        logger.info(s"skipping cleanup of $uri: per-user warehouses are disabled")
-      } else
-        try DocumentFactory.openDocument(uri)._1.clear()
-        catch {
-          case error: Throwable =>
-            logger.debug(s"Error processing document at $uri: ${error.getMessage}")
-        }
-    }
-
-    // Expire any Iceberg snapshots for runtime statistics
-    WorkflowExecutionsResource.getRuntimeStatsUriByExecutionId(eid).foreach { uri =>
-      if (WarehouseReadGuard.skipWhileDisabled(uri)) {
-        logger.info(s"skipping snapshot expiry of $uri: per-user warehouses are disabled")
-      } else
-        try {
-          DocumentFactory.openDocument(uri)._1 match {
-            case iceberg: OnIceberg => iceberg.expireSnapshots()
-            case other =>
-              logger.error(
-                s"Cannot expire snapshots: document from URI [$uri] is of type ${other.getClass.getName}. " +
-                  s"Expected an instance of ${classOf[OnIceberg].getName}."
-              )
-          }
-        } catch {
-          case error: Throwable =>
-            logger.debug(s"Error processing document at $uri: ${error.getMessage}")
-        }
-    }
-    // Delete this execution's large binaries
-    LargeBinaryManager.deleteByExecution(eid.id)
   }
 }

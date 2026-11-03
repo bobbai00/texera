@@ -53,30 +53,8 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.Tables.{
-  OPERATOR_PORT_EXECUTIONS,
-  USER,
-  WORKFLOW,
-  WORKFLOW_COMPUTING_UNIT,
-  WORKFLOW_EXECUTIONS,
-  WORKFLOW_VERSION
-}
-import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
-import org.apache.texera.dao.jooq.generated.tables.daos.{
-  UserDao,
-  WorkflowComputingUnitDao,
-  WorkflowDao,
-  WorkflowExecutionsDao,
-  WorkflowVersionDao
-}
-import org.apache.texera.dao.jooq.generated.tables.pojos.{
-  User,
-  Workflow,
-  WorkflowComputingUnit,
-  WorkflowExecutions,
-  WorkflowVersion
-}
+import org.apache.texera.web.execution.ExecutionRegistry
+import org.apache.texera.web.service.ExecutionsMetadataPersistService
 import org.apache.texera.web.model.websocket.event.{
   PaginatedResultEvent,
   TexeraWebSocketEvent,
@@ -109,16 +87,15 @@ class ExecutionResultServiceSpec
     extends AnyFlatSpec
     with Matchers
     with BeforeAndAfterAll
-    with BeforeAndAfterEach
-    with MockTexeraDB {
+    with BeforeAndAfterEach {
 
-  // Fixed (not random) so a failure replays identically across runs. The
-  // spec owns its embedded DB so collision with other specs isn't a concern.
+  // Fixed (not random) so a failure replays identically across runs; distinct from every other
+  // suite's ids, since the execution registry is shared by the whole JVM.
   private val testWid: Integer = 9001
-  private val testUid: Integer = 9001
-  private var executionsDao: WorkflowExecutionsDao = _
-  private var testVid: Integer = _
-  private var testCuid: Integer = _
+  private val testCuid: Integer = 9003
+
+  /** Executions this spec registered, forgotten after each test. */
+  private val registered = mutable.ArrayBuffer.empty[ExecutionIdentity]
 
   // AmberClient needs an ActorSystem to host its ClientActor. A bare one is enough:
   // the client is constructed over an empty PhysicalPlan, so its InitializeRequest
@@ -126,7 +103,6 @@ class ExecutionResultServiceSpec
   private var system: ActorSystem = _
 
   override protected def beforeAll(): Unit = {
-    initializeDBAndReplaceDSLContext()
     // Suffixed so two ActorSystems can never contend for the same name if this spec is ever run
     // alongside another in one JVM.
     system = ActorSystem(s"ExecutionResultServiceSpec-${UUID.randomUUID()}")
@@ -136,47 +112,6 @@ class ExecutionResultServiceSpec
     // terminate() is asynchronous; without the await the JVM can move on to shutdownDB() while the
     // dispatcher threads are still running, which is how this kind of fixture starts hanging.
     Await.ready(system.terminate(), 30.seconds)
-    shutdownDB()
-  }
-
-  override protected def beforeEach(): Unit = {
-    val user = new User
-    user.setUid(testUid)
-    user.setName("execution-result-test-user")
-    user.setEmail(s"u$testUid@example.com")
-    new UserDao(getDSLContext.configuration()).insert(user)
-
-    // getLatestExecutionId matches on cuid, and a NULL cuid matches no value, so
-    // handleResultPagination can only find an execution that names a real unit.
-    val computingUnit = new WorkflowComputingUnit
-    computingUnit.setUid(testUid)
-    computingUnit.setName("execution-result-test-unit")
-    computingUnit.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    computingUnit.setType(WorkflowComputingUnitTypeEnum.local)
-    computingUnit.setUri("local://execution-result-test")
-    computingUnit.setResource("{}")
-    new WorkflowComputingUnitDao(getDSLContext.configuration()).insert(computingUnit)
-    testCuid = computingUnit.getCuid
-
-    val workflow = new Workflow
-    workflow.setWid(testWid)
-    workflow.setName(s"execution-result-test-$testWid")
-    workflow.setContent("{}")
-    workflow.setDescription("")
-    workflow.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    workflow.setLastModifiedTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowDao(getDSLContext.configuration()).insert(workflow)
-
-    val version = new WorkflowVersion
-    version.setWid(testWid)
-    version.setContent("{}")
-    version.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowVersionDao(getDSLContext.configuration()).insert(version)
-    // The vid sequence isn't reset between tests, so capture the
-    // generated key here instead of assuming it's `1` later.
-    testVid = version.getVid
-
-    executionsDao = new WorkflowExecutionsDao(getDSLContext.configuration())
   }
 
   /** Every ResultEvents subscription made during a test, disposed when that test ends. */
@@ -186,42 +121,13 @@ class ExecutionResultServiceSpec
     openObservers.foreach(_.dispose())
     openObservers.clear()
 
-    val ctx = getDSLContext
-    // Scope every delete to the test's own ids so this spec stays safe
-    // if it ever shares a DB with another spec.
-    ctx
-      .deleteFrom(OPERATOR_PORT_EXECUTIONS)
-      .where(
-        OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.in(
-          ctx
-            .select(WORKFLOW_EXECUTIONS.EID)
-            .from(WORKFLOW_EXECUTIONS)
-            .where(WORKFLOW_EXECUTIONS.UID.eq(testUid))
-        )
-      )
-      .execute()
-    ctx
-      .deleteFrom(WORKFLOW_EXECUTIONS)
-      .where(WORKFLOW_EXECUTIONS.UID.eq(testUid))
-      .execute()
-    ctx.deleteFrom(WORKFLOW_VERSION).where(WORKFLOW_VERSION.WID.eq(testWid)).execute()
-    ctx.deleteFrom(WORKFLOW).where(WORKFLOW.WID.eq(testWid)).execute()
-    ctx.deleteFrom(WORKFLOW_COMPUTING_UNIT).where(WORKFLOW_COMPUTING_UNIT.UID.eq(testUid)).execute()
-    ctx.deleteFrom(USER).where(USER.UID.eq(testUid)).execute()
+    registered.foreach(ExecutionRegistry.forget)
+    registered.clear()
   }
 
   "persistOperatorPortResultUri" should
-    "insert the URI carried by an OperatorPortResultUriAvailable event" in {
-    val execution = new WorkflowExecutions
-    execution.setVid(testVid)
-    execution.setUid(testUid)
-    execution.setStatus(0.toByte)
-    execution.setStartingTime(new Timestamp(System.currentTimeMillis()))
-    execution.setBookmarked(false)
-    execution.setName("execution-result-callback-test")
-    execution.setEnvironmentVersion("test-env")
-    executionsDao.insert(execution)
-    val eid = ExecutionIdentity(execution.getEid.longValue())
+    "record the URI carried by an OperatorPortResultUriAvailable event" in {
+    val eid = newExecution()
     val globalPortId = GlobalPortIdentity(
       PhysicalOpIdentity(OperatorIdentity("op-X"), "main"),
       PortIdentity(),
@@ -234,13 +140,7 @@ class ExecutionResultServiceSpec
       OperatorPortResultUriAvailable(globalPortId, uri)
     )
 
-    val rows = getDSLContext
-      .selectFrom(OPERATOR_PORT_EXECUTIONS)
-      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(execution.getEid))
-      .and(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID.eq(globalPortId.serializeAsString))
-      .fetch()
-    rows.size() shouldBe 1
-    rows.get(0).getResultUri shouldBe uri.toString
+    ExecutionRegistry.get(eid).get.portResults shouldBe Map(globalPortId.serializeAsString -> uri)
   }
 
   "convertTuplesToJson" should "convert tuples with various field types correctly" in {
@@ -1223,13 +1123,8 @@ class ExecutionResultServiceSpec
 
       fixture.client.fire(OperatorPortResultUriAvailable(globalPortId, uri))
 
-      val rows = getDSLContext
-        .selectFrom(OPERATOR_PORT_EXECUTIONS)
-        .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(executionId.id.toInt))
-        .fetch()
-      rows.size() shouldBe 1
-      rows.get(0).getGlobalPortId shouldBe globalPortId.serializeAsString
-      rows.get(0).getResultUri shouldBe uri.toString
+      ExecutionRegistry.get(executionId).get.portResults shouldBe
+        Map(globalPortId.serializeAsString -> uri)
     }
   }
 
@@ -1502,18 +1397,16 @@ class ExecutionResultServiceSpec
       case other                     => fail(s"expected a WebDataUpdate, got $other")
     }
 
+  /** Registers an execution of the test workflow on the test unit, as the unit API does. */
   private def newExecution(): ExecutionIdentity = {
-    val execution = new WorkflowExecutions
-    execution.setVid(testVid)
-    execution.setUid(testUid)
-    execution.setCuid(testCuid)
-    execution.setStatus(0.toByte)
-    execution.setStartingTime(new Timestamp(System.currentTimeMillis()))
-    execution.setBookmarked(false)
-    execution.setName("execution-result-instance-test")
-    execution.setEnvironmentVersion("test-env")
-    executionsDao.insert(execution)
-    ExecutionIdentity(execution.getEid.longValue())
+    val eid = ExecutionsMetadataPersistService.insertNewExecution(
+      WorkflowIdentity(testWid.longValue()),
+      "execution-result-instance-test",
+      "test-env",
+      testCuid
+    )
+    registered += eid
+    eid
   }
 
   private def globalPortIdOf(
@@ -1543,19 +1436,11 @@ class ExecutionResultServiceSpec
     )
 
   private def insertResultUri(executionId: ExecutionIdentity, uri: URI): Unit =
-    getDSLContext
-      .insertInto(OPERATOR_PORT_EXECUTIONS)
-      .columns(
-        OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID,
-        OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID,
-        OPERATOR_PORT_EXECUTIONS.RESULT_URI
-      )
-      .values(
-        Integer.valueOf(executionId.id.toInt),
-        VFSURIFactory.decodeURI(uri).globalPortId.get.serializeAsString,
-        uri.toString
-      )
-      .execute()
+    ExecutionRegistry.recordPortResultUri(
+      executionId,
+      VFSURIFactory.decodeURI(uri).globalPortId.get,
+      uri
+    )
 
   /** Creates a real Iceberg result table holding `tuples`, and records its URI for `executionId`. */
   private def storeResult(
@@ -1576,14 +1461,11 @@ class ExecutionResultServiceSpec
   }
 
   private def storedResultSize(executionId: ExecutionIdentity, operatorId: String): Long =
-    getDSLContext
-      .select(OPERATOR_PORT_EXECUTIONS.RESULT_SIZE)
-      .from(OPERATOR_PORT_EXECUTIONS)
-      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(executionId.id.toInt))
-      .and(
-        OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID.eq(globalPortIdOf(operatorId).serializeAsString)
-      )
-      .fetchOne(OPERATOR_PORT_EXECUTIONS.RESULT_SIZE)
+    ExecutionRegistry
+      .get(executionId)
+      .flatMap(_.resultSize(globalPortIdOf(operatorId).serializeAsString))
+      .map(Long.box)
+      .orNull
 
   /**
     * A single-layer physical op whose output ports are declared in the given order --

@@ -20,10 +20,6 @@
 package org.apache.texera.amber.core.storage
 
 import org.apache.texera.common.config.StorageConfig
-import org.apache.texera.amber.core.storage.FileResolver.{
-  DATASET_FILE_URI_SCHEME,
-  MODEL_FILE_URI_SCHEME
-}
 import org.apache.texera.amber.core.storage.VFSResourceType._
 import org.apache.texera.amber.core.storage.VFSURIFactory.{VFS_FILE_URI_SCHEME, decodeURI}
 import org.apache.texera.amber.core.storage.model._
@@ -60,9 +56,8 @@ object DocumentFactory {
     */
   def openReadonlyDocument(fileUri: URI): ReadonlyVirtualDocument[_] = {
     fileUri.getScheme match {
-      case DATASET_FILE_URI_SCHEME => new LakeFSFileDocument(fileUri, ResourceType.Dataset)
-      case MODEL_FILE_URI_SCHEME   => new LakeFSFileDocument(fileUri, ResourceType.Model)
-      case "file"                  => new ReadonlyLocalFileDocument(fileUri)
+      case "file"           => new ReadonlyLocalFileDocument(fileUri)
+      case "http" | "https" => new ReadonlyHttpFileDocument(fileUri)
       case unsupportedScheme =>
         throw new UnsupportedOperationException(
           s"Unsupported URI scheme: $unsupportedScheme for creating the ReadonlyDocument"
@@ -184,8 +179,6 @@ object DocumentFactory {
     */
   def openDocument(uri: URI): (VirtualDocument[_], Option[Schema]) = {
     uri.getScheme match {
-      case DATASET_FILE_URI_SCHEME => (new LakeFSFileDocument(uri, ResourceType.Dataset), None)
-      case MODEL_FILE_URI_SCHEME   => (new LakeFSFileDocument(uri, ResourceType.Model), None)
       case VFS_FILE_URI_SCHEME =>
         val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
 

@@ -21,7 +21,6 @@ package org.apache.texera.web.service
 
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.texera.amber.core.state.StateReferencing.literalReferences
-import org.apache.texera.amber.core.storage.RepositoryMountManager
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
 import org.apache.texera.amber.engine.architecture.coordinator.{UpdateExecutorCompleted, Workflow}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
@@ -118,10 +117,7 @@ class ExecutionReconfigurationService(
 
     val reconfigurationId = UUID.randomUUID().toString
     val updateExecutorRequests = reconfigurations.map {
-      case (op, _) =>
-        // An edited UDF may now name a repository, and its code already refers to the mount.
-        ensureMounted(op.mountLocators)
-        UpdateExecutorRequest(op.id, op.executableOpExecInitInfo)
+      case (op, _) => UpdateExecutorRequest(op.id, op.opExecInitInfo)
     }
     dispatch(
       WorkflowReconfigureRequest(
@@ -135,10 +131,6 @@ class ExecutionReconfigurationService(
       ExecutionReconfigurationStore(currentReconfigId = Some(reconfigurationId))
     )
   }
-
-  // Seam for unit testing without a computing unit to mount into.
-  protected def ensureMounted(locators: Set[String]): Unit =
-    RepositoryMountManager.ensureAllMounted(locators)
 
   // Seam for unit testing the dispatch path without spinning up an AmberClient.
   protected def dispatch(request: WorkflowReconfigureRequest): Unit = {

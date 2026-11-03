@@ -43,7 +43,7 @@ class EnvironmentalVariableSpec extends AnyFlatSpec with Matchers {
       .map(_.invoke(EnvironmentalVariable).asInstanceOf[String])
 
   // A well-formed env-var name: an uppercase letter followed by uppercase letters, digits, or
-  // underscores. Rejects empty, all-whitespace, and padded names (e.g. "STORAGE_JDBC_URL ") that
+  // underscores. Rejects empty, all-whitespace, and padded names (e.g. "STORAGE_S3_ENDPOINT ") that
   // would silently miss env lookups — a stricter check than `trim.nonEmpty`.
   private val nameShape = "[A-Z][A-Z0-9_]*".r
 
@@ -61,7 +61,6 @@ class EnvironmentalVariableSpec extends AnyFlatSpec with Matchers {
   it should "use the documented names for a representative sample" in {
     EnvironmentalVariable.ENV_JAVA_OPTS shouldBe "JAVA_OPTS"
     EnvironmentalVariable.ENV_AUTH_JWT_SECRET shouldBe "AUTH_JWT_SECRET"
-    EnvironmentalVariable.ENV_JDBC_URL shouldBe "STORAGE_JDBC_URL"
     EnvironmentalVariable.ENV_S3_ENDPOINT shouldBe "STORAGE_S3_ENDPOINT"
     EnvironmentalVariable.ENV_CACHE_ENABLED shouldBe "CACHE_ENABLED"
   }

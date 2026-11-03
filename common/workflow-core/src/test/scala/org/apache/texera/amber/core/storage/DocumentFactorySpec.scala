@@ -19,12 +19,7 @@
 
 package org.apache.texera.amber.core.storage
 
-import org.apache.texera.amber.core.storage.model.{
-  LakeFSFileDocument,
-  OnVersionedFileResource,
-  ReadonlyLocalFileDocument,
-  VirtualDocument
-}
+import org.apache.texera.amber.core.storage.model.{ReadonlyLocalFileDocument, VirtualDocument}
 import org.apache.texera.amber.core.storage.result.iceberg.IcebergDocument
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
@@ -39,7 +34,7 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
-import java.nio.file.{Files, Paths}
+import java.nio.file.Files
 import java.util.UUID
 
 /**
@@ -131,27 +126,14 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
   // openReadonlyDocument -- scheme dispatch
   // ---------------------------------------------------------------------------
 
-  private val versionHash = "97fd4c2a755b69b7c66d322eab40b7e5c2ad5d10"
-
-  "openReadonlyDocument" should "return a dataset-typed LakeFSFileDocument for the dataset scheme" in {
-    val datasetUri = new URI(s"dataset:///repo/$versionHash/file.txt")
-    val doc = DocumentFactory.openReadonlyDocument(datasetUri)
-    doc shouldBe a[LakeFSFileDocument]
-    doc.asInstanceOf[LakeFSFileDocument].resourceType shouldBe ResourceType.Dataset
-    doc.getURI shouldBe datasetUri
-  }
-
-  it should "return a model-typed LakeFSFileDocument for the model scheme and parse its URI components" in {
-    val modelUri = new URI(s"model:///model-1/$versionHash/weights/model.pt")
-    val doc = DocumentFactory.openReadonlyDocument(modelUri)
-    doc shouldBe a[LakeFSFileDocument]
-    doc.asInstanceOf[LakeFSFileDocument].resourceType shouldBe ResourceType.Model
-    doc.getURI shouldBe modelUri
-
-    val resource = doc.asInstanceOf[OnVersionedFileResource]
-    resource.getRepositoryName() shouldBe "model-1"
-    resource.getVersionHash() shouldBe versionHash
-    resource.getFileRelativePath() shouldBe Paths.get("weights", "model.pt").toString
+  "openReadonlyDocument" should "refuse the dataset and model schemes the engine no longer reads" in {
+    // Dataset files arrive as presigned URLs resolved by the catalog; the engine reads no
+    // versioned-file store of its own.
+    Seq("dataset:///repo/abc/file.txt", "model:///model-1/abc/weights/model.pt").foreach { uri =>
+      an[UnsupportedOperationException] should be thrownBy DocumentFactory.openReadonlyDocument(
+        new URI(uri)
+      )
+    }
   }
 
   it should "return a ReadonlyLocalFileDocument for the file scheme" in {
@@ -177,20 +159,10 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
   // openDocument / createDocument / documentExists -- unsupported schemes
   // ---------------------------------------------------------------------------
 
-  "openDocument" should "return a dataset-typed LakeFSFileDocument and no schema for the dataset scheme" in {
-    val datasetUri = new URI(s"dataset:///repo/$versionHash/file.txt")
-    val (doc, schemaOpt) = DocumentFactory.openDocument(datasetUri)
-    doc shouldBe a[LakeFSFileDocument]
-    doc.asInstanceOf[LakeFSFileDocument].resourceType shouldBe ResourceType.Dataset
-    schemaOpt shouldBe None
-  }
-
-  it should "return a model-typed LakeFSFileDocument and no schema for the model scheme" in {
-    val modelUri = new URI(s"model:///model-1/$versionHash/weights/model.pt")
-    val (doc, schemaOpt) = DocumentFactory.openDocument(modelUri)
-    doc shouldBe a[LakeFSFileDocument]
-    doc.asInstanceOf[LakeFSFileDocument].resourceType shouldBe ResourceType.Model
-    schemaOpt shouldBe None
+  "openDocument" should "refuse the dataset scheme" in {
+    an[UnsupportedOperationException] should be thrownBy DocumentFactory.openDocument(
+      new URI("dataset:///repo/abc/f.txt")
+    )
   }
 
   it should "reject an unsupported scheme" in {

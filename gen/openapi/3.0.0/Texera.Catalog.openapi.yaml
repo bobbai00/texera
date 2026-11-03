@@ -1,0 +1,4371 @@
+openapi: 3.0.0
+info:
+  title: Texera Catalog
+  version: 2.0.0-alpha
+tags: []
+paths:
+  /access/v1/evaluation:
+    post:
+      operationId: Evaluation_evaluate
+      description: AuthZEN access evaluation.
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthzResponse'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthzRequest'
+  /catalog/v1/agent-templates:
+    get:
+      operationId: AgentTemplates_list
+      parameters:
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentTemplatePage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: AgentTemplates_create
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentTemplate'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentTemplateRequest'
+  /catalog/v1/agent-templates/{rid}:
+    get:
+      operationId: AgentTemplates_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentTemplate'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: AgentTemplates_updateSpec
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentTemplate'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentTemplateSpec'
+  /catalog/v1/agents:
+    post:
+      operationId: Agents_spawn
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpawnAgent'
+    get:
+      operationId: Agents_list
+      parameters:
+        - name: conversation
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: execution
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Eid'
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Agent'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/agents/{pid}:
+    get:
+      operationId: Agents_read
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Pid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/agents/{pid}/retire:
+    post:
+      operationId: Agents_retire
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Pid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/computing-units:
+    get:
+      operationId: ComputingUnits_list
+      parameters:
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComputingUnitPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: ComputingUnits_create
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComputingUnit'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateComputingUnitRequest'
+  /catalog/v1/computing-units/available:
+    get:
+      operationId: ComputingUnits_available
+      description: Units the caller may run on, with live status.
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ComputingUnit'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: list_computing_units
+        description: List the computing units the caller can run workflows on, with status.
+        readOnlyHint: true
+  /catalog/v1/computing-units/{rid}:
+    get:
+      operationId: ComputingUnits_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComputingUnit'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: ComputingUnits_updateSpec
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComputingUnit'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComputingUnitSpec'
+  /catalog/v1/computing-units/{rid}/terminate:
+    post:
+      operationId: ComputingUnits_terminate
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComputingUnit'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/conversations:
+    get:
+      operationId: Conversations_list
+      parameters:
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: Conversations_create
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conversation'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConversationRequest'
+  /catalog/v1/conversations/{rid}:
+    get:
+      operationId: Conversations_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conversation'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: Conversations_updateSpec
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conversation'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationSpec'
+  /catalog/v1/conversations/{rid}/messages:
+    get:
+      operationId: Conversations_messages
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: Conversations_post
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostMessage'
+      x-mcp:
+        tool: post_message
+        description: Append a message to a conversation the caller may post to.
+        readOnlyHint: false
+        destructiveHint: false
+  /catalog/v1/conversations/{rid}/resources:
+    get:
+      operationId: Conversations_resources
+      description: Resources whose origin is this conversation.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Resource'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/datasets:
+    get:
+      operationId: Datasets_list
+      parameters:
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: Datasets_create
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dataset'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDatasetRequest'
+  /catalog/v1/datasets/{rid}:
+    get:
+      operationId: Datasets_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dataset'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: Datasets_updateSpec
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dataset'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DatasetSpec'
+  /catalog/v1/datasets/{rid}/commit:
+    post:
+      operationId: Datasets_commit
+      description: Commit the staged files as a new version.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceVersion'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitDataset'
+      x-mcp:
+        tool: commit_dataset_version
+        description: Commit a dataset's staged files as a new immutable version.
+        readOnlyHint: false
+        destructiveHint: false
+  /catalog/v1/datasets/{rid}/files/{path}:
+    put:
+      operationId: Datasets_upload
+      description: Upload a file into the dataset's staging area; commit makes a version.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetFile'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+    delete:
+      operationId: Datasets_unstage
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/datasets/{rid}/staged:
+    get:
+      operationId: Datasets_staged
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetManifest'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/datasets/{rid}/versions/{vno}/files:
+    get:
+      operationId: Datasets_files
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: vno
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Vno'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetManifest'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: list_dataset_files
+        description: List the files of a dataset version with sizes.
+        readOnlyHint: true
+  /catalog/v1/datasets/{rid}/versions/{vno}/files/{path}:
+    get:
+      operationId: Datasets_download
+      description: Read a file of a version, bounded by `maxBytes`.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: vno
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Vno'
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: maxBytes
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: read_dataset_file
+        description: Read the beginning of a dataset file (bounded bytes), e.g. to inspect a CSV header.
+        readOnlyHint: true
+  /catalog/v1/datasets/{rid}/versions/{vno}/files/{path}/link:
+    get:
+      operationId: Datasets_link
+      description: A presigned URL for a file of a version, for engines and browsers.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: vno
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Vno'
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileLink'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/environments:
+    get:
+      operationId: Environments_list
+      parameters:
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: Environments_create
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Environment'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEnvironmentRequest'
+  /catalog/v1/environments/{rid}:
+    get:
+      operationId: Environments_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Environment'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: Environments_updateSpec
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Environment'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentSpec'
+  /catalog/v1/executions:
+    get:
+      operationId: Executions_list
+      parameters:
+        - name: workflow
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: conversation
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/executions/{eid}:
+    get:
+      operationId: Executions_read
+      parameters:
+        - name: eid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Eid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Execution'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: get_execution
+        description: 'Get an execution: status, per-operator states, errors and port results.'
+        readOnlyHint: true
+  /catalog/v1/executions/{eid}/cancel:
+    post:
+      operationId: Executions_cancel
+      parameters:
+        - name: eid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Eid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Execution'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/executions/{eid}/results/{opid}/{port}:
+    get:
+      operationId: Executions_result
+      description: A page of a port result's rows, bounded.
+      parameters:
+        - name: eid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Eid'
+        - name: opid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: port
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RowPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: get_port_result
+        description: Read a bounded page of rows from an operator's output port in an execution (schema and rows).
+        readOnlyHint: true
+  /catalog/v1/executions/{eid}/results/{opid}/{port}/save:
+    post:
+      operationId: Executions_saveResult
+      description: Save a port result as a new dataset version (CSV). Lineage records it as produced by the execution's workflow version.
+      parameters:
+        - name: eid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Eid'
+        - name: opid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: port
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceVersion'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveResult'
+      x-mcp:
+        tool: save_result_as_dataset
+        description: Save an operator's output in a completed execution as a new dataset version (a CSV file), so later workflows can read it. Creates a dataset unless one is given; lineage records the execution that produced it.
+        readOnlyHint: false
+        destructiveHint: false
+        idempotentHint: false
+  /catalog/v1/mcp-servers:
+    get:
+      operationId: McpServers_list
+      parameters:
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServerPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: McpServers_create
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServer'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMcpServerRequest'
+  /catalog/v1/mcp-servers/{rid}:
+    get:
+      operationId: McpServers_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServer'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: McpServers_updateSpec
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServer'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpServerSpec'
+  /catalog/v1/me:
+    get:
+      operationId: Me_get
+      description: The calling principal and its home project; creates both on first login.
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Whoami'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: whoami
+        description: 'Who am I: the calling principal and home project.'
+        readOnlyHint: true
+  /catalog/v1/operators:
+    get:
+      operationId: Operators_list
+      parameters:
+        - name: group
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperatorTypeList'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: list_operators
+        description: List the operator types available on the engine with their property JSON Schema, ports and descriptions. Use the exact operatorType values when building a workflow.
+        readOnlyHint: true
+  /catalog/v1/principals:
+    get:
+      operationId: Principals_list
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: kind
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/PrincipalKind'
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrincipalPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/principals/{pid}:
+    get:
+      operationId: Principals_read
+      parameters:
+        - name: pid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Pid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Principal'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/projects:
+    get:
+      operationId: Projects_list
+      parameters:
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: Projects_create
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+  /catalog/v1/projects/{rid}:
+    get:
+      operationId: Projects_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: Projects_updateSpec
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectSpec'
+  /catalog/v1/resources:
+    get:
+      operationId: Resources_search
+      description: Search resources the caller may read.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: kind
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ResourceKind'
+          explode: false
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: origin
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourcePage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: search_resources
+        description: 'Search the catalog for resources the caller can read: workflows, datasets, templates, units, environments, conversations. Filter by kind, project or text.'
+        readOnlyHint: true
+  /catalog/v1/resources/{rid}:
+    get:
+      operationId: Resources_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Resource'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: get_resource
+        description: Get one resource by rid, with its metadata, head version number and spec.
+        readOnlyHint: true
+    patch:
+      operationId: Resources_updateMetadata
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Resource'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMetadata'
+    delete:
+      operationId: Resources_delete
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/resources/{rid}/grants:
+    get:
+      operationId: Resources_listGrants
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Grant'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/resources/{rid}/grants/{pid}:
+    put:
+      operationId: Resources_grant
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: pid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Pid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Grant'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantRequest'
+    delete:
+      operationId: Resources_revoke
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: pid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Pid'
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/resources/{rid}/lineage:
+    get:
+      operationId: Resources_lineage
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: vno
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Vno'
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lineage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: get_lineage
+        description: 'Get the lineage of a resource version: what it was derived from, what read it, what it produced.'
+        readOnlyHint: true
+  /catalog/v1/resources/{rid}/versions:
+    get:
+      operationId: Resources_listVersions
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: list_versions
+        description: List the versions of a resource, newest first.
+        readOnlyHint: true
+    post:
+      operationId: Resources_createVersion
+      description: Create a new version from full content or a JSON Patch to the head.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceVersion'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVersion'
+  /catalog/v1/resources/{rid}/versions/{vno}:
+    get:
+      operationId: Resources_readVersion
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: vno
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Vno'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceVersion'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: get_version
+        description: Get one version of a resource with its content.
+        readOnlyHint: true
+  /catalog/v1/skills:
+    get:
+      operationId: Skills_list
+      parameters:
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: Skills_create
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSkillRequest'
+  /catalog/v1/skills/{rid}:
+    get:
+      operationId: Skills_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: Skills_updateSpec
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillSpec'
+  /catalog/v1/workflows:
+    get:
+      operationId: Workflows_list
+      parameters:
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: Workflows_create
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkflowRequest'
+  /catalog/v1/workflows/with-content:
+    post:
+      operationId: Workflows_createWithContent
+      description: Create a workflow with its first version's content (the logical plan JSON).
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowWithVersion'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkflowWithContent'
+      x-mcp:
+        tool: create_workflow
+        description: Create a new workflow from a logical plan JSON ({operators, links}); returns the workflow and its version 1.
+        readOnlyHint: false
+        destructiveHint: false
+  /catalog/v1/workflows/{rid}:
+    get:
+      operationId: Workflows_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: Workflows_updateSpec
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowSpec'
+  /catalog/v1/workflows/{rid}/content:
+    get:
+      operationId: Workflows_content
+      description: The head version's content, or a given version.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: vno
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Vno'
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceVersion'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        tool: get_workflow
+        description: Get a workflow's logical plan JSON (operators, links) at the head or a given version.
+        readOnlyHint: true
+  /catalog/v1/workflows/{rid}/edit:
+    post:
+      operationId: Workflows_edit
+      description: 'Edit a workflow: a JSON Patch to the head content yields a new version.'
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceVersion'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditWorkflow'
+      x-mcp:
+        tool: edit_workflow
+        description: Edit a workflow by applying an RFC 6902 JSON Patch to its head content (paths like /operators/- or /links/-); creates a new version and returns it. Validate afterwards with validate_workflow.
+        readOnlyHint: false
+        destructiveHint: false
+  /catalog/v1/workflows/{rid}/executions:
+    post:
+      operationId: Workflows_run
+      description: Run a workflow version on a computing unit; returns the execution.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Execution'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunRequest'
+      x-mcp:
+        tool: run_workflow
+        description: Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states and port results.
+        readOnlyHint: false
+        destructiveHint: false
+        idempotentHint: false
+    get:
+      operationId: Workflows_listExecutions
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /catalog/v1/workflows/{rid}/validate:
+    post:
+      operationId: Workflows_validate
+      description: 'Compile a version or draft content: output schemas per port and errors per operator.'
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: computingUnit
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompileResult'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompileRequest'
+      x-mcp:
+        tool: validate_workflow
+        description: "Compile a workflow version (or draft content) on a computing unit: returns each operator's output schema per port and any errors per operator."
+        readOnlyHint: true
+  /lineage/v1/events:
+    post:
+      operationId: Events_ingest
+      description: OpenLineage run events posted by engines; service authentication.
+      parameters: []
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LineageEvent'
+security:
+  - BearerAuth: []
+components:
+  schemas:
+    Agent:
+      type: object
+      required:
+        - pid
+        - template
+        - lifetime
+        - status
+        - createdAt
+      properties:
+        pid:
+          $ref: '#/components/schemas/Pid'
+        template:
+          $ref: '#/components/schemas/VersionRef'
+        spawnedBy:
+          $ref: '#/components/schemas/Pid'
+        conversation:
+          $ref: '#/components/schemas/Rid'
+        execution:
+          $ref: '#/components/schemas/Eid'
+        opid:
+          type: string
+        lifetime:
+          type: string
+          enum:
+            - execution
+            - conversation
+            - pinned
+        status:
+          type: string
+          enum:
+            - active
+            - retired
+        createdAt:
+          type: string
+          format: date-time
+    AgentCard:
+      type: object
+      required:
+        - name
+        - description
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        skills:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentSkillRef'
+    AgentSkillRef:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+    AgentTemplate:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          $ref: '#/components/schemas/AgentTemplateSpec'
+        status:
+          $ref: '#/components/schemas/AgentTemplateStatus'
+      description: The typed envelope, served by the kind routes.
+    AgentTemplatePage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentTemplate'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    AgentTemplateSpec:
+      type: object
+      required:
+        - card
+      properties:
+        card:
+          $ref: '#/components/schemas/AgentCard'
+        model:
+          $ref: '#/components/schemas/ModelSpec'
+        prompts:
+          type: object
+          additionalProperties:
+            type: string
+          description: System prompt and objective, Markdown.
+        skills:
+          type: array
+          items:
+            type: string
+          description: Skill resources, as rid or rid@vno.
+        tools:
+          type: object
+          properties:
+            mcp:
+              type: array
+              items:
+                $ref: '#/components/schemas/McpBinding'
+            operators:
+              type: array
+              items:
+                type: string
+              description: Operator types the agent may use; absent means every operator.
+        requires:
+          $ref: '#/components/schemas/RuntimeSpec'
+        subagents:
+          $ref: '#/components/schemas/SubagentPolicy'
+        body:
+          allOf:
+            - $ref: '#/components/schemas/VersionRef'
+          description: 'Composite only: the workflow whose agent operator instances form the team.'
+      description: 'An agent template: card, model, prompts, skills, tools, requirements, sub-agent policy and, for a composite, the body workflow.'
+    AgentTemplateStatus:
+      type: object
+    Attribute:
+      type: object
+      required:
+        - attributeName
+        - attributeType
+      properties:
+        attributeName:
+          type: string
+        attributeType:
+          type: string
+    AuthzAction:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+    AuthzRequest:
+      type: object
+      required:
+        - subject
+        - action
+        - resource
+      properties:
+        subject:
+          $ref: '#/components/schemas/AuthzSubject'
+        action:
+          $ref: '#/components/schemas/AuthzAction'
+        resource:
+          $ref: '#/components/schemas/AuthzResource'
+        context:
+          type: object
+          additionalProperties: {}
+    AuthzResource:
+      type: object
+      required:
+        - type
+        - id
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+        properties:
+          type: object
+          additionalProperties: {}
+    AuthzResponse:
+      type: object
+      required:
+        - decision
+      properties:
+        decision:
+          type: boolean
+        context:
+          type: object
+          additionalProperties: {}
+    AuthzSubject:
+      type: object
+      required:
+        - type
+        - id
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+        properties:
+          type: object
+          additionalProperties: {}
+    CommitDataset:
+      type: object
+      properties:
+        message:
+          type: string
+        origin:
+          $ref: '#/components/schemas/Origin'
+    CompileRequest:
+      type: object
+      properties:
+        vno:
+          allOf:
+            - $ref: '#/components/schemas/Vno'
+          description: Compile this version; defaults to the head version.
+        content:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowContent'
+          description: Compile this content instead of a stored version (unsaved drafts).
+    CompileResult:
+      type: object
+      required:
+        - ok
+        - operatorOutputSchemas
+        - operatorErrors
+      properties:
+        ok:
+          type: boolean
+        operatorOutputSchemas:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: array
+              items:
+                $ref: '#/components/schemas/Attribute'
+              nullable: true
+          description: Output schemas per operator id and output port id.
+        operatorErrors:
+          type: object
+          additionalProperties: {}
+          description: Errors per operator id.
+        physicalPlan: {}
+    ComputingUnit:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          $ref: '#/components/schemas/ComputingUnitSpec'
+        status:
+          $ref: '#/components/schemas/ComputingUnitStatus'
+      description: The typed envelope, served by the kind routes.
+    ComputingUnitKind:
+      type: string
+      enum:
+        - static
+        - local
+        - kubernetes
+    ComputingUnitPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComputingUnit'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    ComputingUnitSpec:
+      type: object
+      required:
+        - unitKind
+      properties:
+        unitKind:
+          $ref: '#/components/schemas/ComputingUnitKind'
+        endpoint:
+          type: string
+          description: "For `static`: the unit's base URL inside the cluster, e.g. http://cu-master:8085."
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeSpec'
+        image:
+          type: string
+    ComputingUnitStatus:
+      type: object
+      required:
+        - phase
+      properties:
+        phase:
+          type: string
+          enum:
+            - pending
+            - ready
+            - failed
+            - terminated
+        gatewayPath:
+          type: string
+          description: The URL the gateway proxies the unit's WebSocket and HTTP API at.
+        message:
+          type: string
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeStatus'
+    ContentKind:
+      type: string
+      enum:
+        - json
+        - manifest
+        - oci_digest
+        - checkpoint
+    Conversation:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          $ref: '#/components/schemas/ConversationSpec'
+        status:
+          $ref: '#/components/schemas/ConversationStatus'
+      description: The typed envelope, served by the kind routes.
+    ConversationPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Conversation'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    ConversationSpec:
+      type: object
+      required:
+        - template
+      properties:
+        template:
+          allOf:
+            - $ref: '#/components/schemas/VersionRef'
+          description: The template the principal agent is spawned from; the chat's mode.
+        computingUnit:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The computing unit runs in this chat use.
+        environment:
+          $ref: '#/components/schemas/Rid'
+    ConversationStatus:
+      type: object
+      required:
+        - messages
+      properties:
+        agent:
+          allOf:
+            - $ref: '#/components/schemas/Pid'
+          description: The principal agent of this conversation.
+        messages:
+          type: integer
+          format: int64
+        lastMessageAt:
+          type: string
+          format: date-time
+    CreateAgentTemplateRequest:
+      type: object
+      required:
+        - name
+        - spec
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The containing project; defaults to the caller's home project.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/AgentTemplateSpec'
+        origin:
+          allOf:
+            - $ref: '#/components/schemas/Origin'
+          description: Set when an agent creates the resource inside a chat turn.
+    CreateComputingUnitRequest:
+      type: object
+      required:
+        - name
+        - spec
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The containing project; defaults to the caller's home project.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/ComputingUnitSpec'
+        origin:
+          allOf:
+            - $ref: '#/components/schemas/Origin'
+          description: Set when an agent creates the resource inside a chat turn.
+    CreateConversationRequest:
+      type: object
+      required:
+        - name
+        - spec
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The containing project; defaults to the caller's home project.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/ConversationSpec'
+        origin:
+          allOf:
+            - $ref: '#/components/schemas/Origin'
+          description: Set when an agent creates the resource inside a chat turn.
+    CreateDatasetRequest:
+      type: object
+      required:
+        - name
+        - spec
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The containing project; defaults to the caller's home project.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/DatasetSpec'
+        origin:
+          allOf:
+            - $ref: '#/components/schemas/Origin'
+          description: Set when an agent creates the resource inside a chat turn.
+    CreateEnvironmentRequest:
+      type: object
+      required:
+        - name
+        - spec
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The containing project; defaults to the caller's home project.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/EnvironmentSpec'
+        origin:
+          allOf:
+            - $ref: '#/components/schemas/Origin'
+          description: Set when an agent creates the resource inside a chat turn.
+    CreateMcpServerRequest:
+      type: object
+      required:
+        - name
+        - spec
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The containing project; defaults to the caller's home project.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/McpServerSpec'
+        origin:
+          allOf:
+            - $ref: '#/components/schemas/Origin'
+          description: Set when an agent creates the resource inside a chat turn.
+    CreateProjectRequest:
+      type: object
+      required:
+        - name
+        - spec
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The containing project; defaults to the caller's home project.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/ProjectSpec'
+        origin:
+          allOf:
+            - $ref: '#/components/schemas/Origin'
+          description: Set when an agent creates the resource inside a chat turn.
+    CreateSkillRequest:
+      type: object
+      required:
+        - name
+        - spec
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The containing project; defaults to the caller's home project.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/SkillSpec'
+        origin:
+          allOf:
+            - $ref: '#/components/schemas/Origin'
+          description: Set when an agent creates the resource inside a chat turn.
+    CreateVersion:
+      type: object
+      properties:
+        content:
+          description: The full content of the new version. Required unless `patch` is given.
+        patch:
+          type: array
+          items: {}
+          description: An RFC 6902 JSON Patch applied to the head version's content.
+        expectedHead:
+          allOf:
+            - $ref: '#/components/schemas/Vno'
+          description: The head version the caller saw; refused with 409 when it moved.
+        message:
+          type: string
+        origin:
+          $ref: '#/components/schemas/Origin'
+    CreateWorkflowRequest:
+      type: object
+      required:
+        - name
+        - spec
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The containing project; defaults to the caller's home project.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/WorkflowSpec'
+        origin:
+          allOf:
+            - $ref: '#/components/schemas/Origin'
+          description: Set when an agent creates the resource inside a chat turn.
+    CreateWorkflowWithContent:
+      type: object
+      required:
+        - name
+        - content
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          $ref: '#/components/schemas/Rid'
+        content:
+          $ref: '#/components/schemas/WorkflowContent'
+        origin:
+          $ref: '#/components/schemas/Origin'
+    Dataset:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          $ref: '#/components/schemas/DatasetSpec'
+        status:
+          $ref: '#/components/schemas/DatasetStatus'
+      description: The typed envelope, served by the kind routes.
+    DatasetFile:
+      type: object
+      required:
+        - path
+        - size
+      properties:
+        path:
+          type: string
+        size:
+          type: integer
+          format: int64
+        sha256:
+          type: string
+          description: SHA-256 of the content.
+        contentType:
+          type: string
+    DatasetManifest:
+      type: object
+      required:
+        - files
+      properties:
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/DatasetFile'
+    DatasetPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Dataset'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    DatasetSpec:
+      type: object
+      properties:
+        format:
+          type: string
+          description: Content type hints for the files, free-form.
+    DatasetStatus:
+      type: object
+      required:
+        - stagedFiles
+        - bytes
+      properties:
+        stagedFiles:
+          type: integer
+          format: int32
+          description: Files staged for the next version, not yet committed.
+        bytes:
+          type: integer
+          format: int64
+    EditWorkflow:
+      type: object
+      properties:
+        patch:
+          type: array
+          items:
+            $ref: '#/components/schemas/JsonPatchOperation'
+        content:
+          $ref: '#/components/schemas/WorkflowContent'
+        expectedHead:
+          allOf:
+            - $ref: '#/components/schemas/Vno'
+          description: The head version the caller saw; refused with 409 when it moved.
+        message:
+          type: string
+          description: What changed, recorded on the new version.
+      description: 'An edit of a workflow: a JSON Patch over the head content, or full new content.'
+    Eid:
+      type: string
+      description: Execution id, a UUID.
+    Environment:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          $ref: '#/components/schemas/EnvironmentSpec'
+        status:
+          $ref: '#/components/schemas/EnvironmentStatus'
+      description: The typed envelope, served by the kind routes.
+    EnvironmentPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Environment'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    EnvironmentSpec:
+      type: object
+      properties:
+        python:
+          $ref: '#/components/schemas/PythonEnvironment'
+        baseImage:
+          type: string
+          description: Base image for sandboxes and units; absent means the deployment default.
+    EnvironmentStatus:
+      type: object
+      properties:
+        builtOn:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Vno'
+          description: Units that have built this environment version, keyed by unit rid.
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: {}
+    Execution:
+      type: object
+      required:
+        - eid
+        - workflow
+        - computingUnit
+        - actor
+        - status
+        - inputs
+        - operators
+        - results
+        - createdAt
+      properties:
+        eid:
+          $ref: '#/components/schemas/Eid'
+        name:
+          type: string
+        workflow:
+          $ref: '#/components/schemas/VersionRef'
+        environment:
+          $ref: '#/components/schemas/VersionRef'
+        computingUnit:
+          $ref: '#/components/schemas/Rid'
+        actor:
+          $ref: '#/components/schemas/Pid'
+        onBehalfOf:
+          $ref: '#/components/schemas/Pid'
+        origin:
+          $ref: '#/components/schemas/Origin'
+        parameters:
+          type: object
+          additionalProperties: {}
+        status:
+          $ref: '#/components/schemas/ExecutionStatus'
+        error: {}
+        inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/VersionRef'
+          description: Dataset and model versions read, pinned at start.
+        operators:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/OperatorRun'
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortResult'
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+    ExecutionPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Execution'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    ExecutionStatus:
+      type: string
+      enum:
+        - pending
+        - running
+        - completed
+        - failed
+        - cancelled
+    FileLink:
+      type: object
+      required:
+        - url
+        - expiresInSeconds
+      properties:
+        url:
+          type: string
+          description: A presigned URL valid for `expiresInSeconds`.
+        expiresInSeconds:
+          type: integer
+          format: int32
+    Grant:
+      type: object
+      required:
+        - rid
+        - principal
+        - relation
+        - createdAt
+      properties:
+        rid:
+          $ref: '#/components/schemas/Rid'
+        principal:
+          $ref: '#/components/schemas/Pid'
+        relation:
+          $ref: '#/components/schemas/Relation'
+        createdAt:
+          type: string
+          format: date-time
+    GrantRequest:
+      type: object
+      required:
+        - relation
+      properties:
+        relation:
+          $ref: '#/components/schemas/Relation'
+    JsonPatchOperation:
+      type: object
+      required:
+        - op
+        - path
+      properties:
+        op:
+          type: string
+          enum:
+            - add
+            - remove
+            - replace
+            - move
+            - copy
+            - test
+        path:
+          type: string
+          description: A JSON Pointer, e.g. /operators/- to append an operator or /operators/1/operatorProperties/limit.
+        from:
+          type: string
+        value: {}
+      description: One RFC 6902 JSON Patch operation.
+    Lineage:
+      type: object
+      required:
+        - upstream
+        - downstream
+      properties:
+        upstream:
+          type: array
+          items:
+            $ref: '#/components/schemas/VersionEdge'
+          description: Versions this version was derived from, read, or produced by.
+        downstream:
+          type: array
+          items:
+            $ref: '#/components/schemas/VersionEdge'
+    LineageDatasetRef:
+      type: object
+      required:
+        - namespace
+        - name
+      properties:
+        namespace:
+          type: string
+        name:
+          type: string
+        facets:
+          type: object
+          additionalProperties: {}
+    LineageEvent:
+      type: object
+      required:
+        - eventType
+        - eventTime
+        - run
+        - job
+        - producer
+        - schemaURL
+      properties:
+        eventType:
+          type: string
+          enum:
+            - START
+            - RUNNING
+            - COMPLETE
+            - FAIL
+            - ABORT
+        eventTime:
+          type: string
+          format: date-time
+        run:
+          $ref: '#/components/schemas/LineageRun'
+        job:
+          $ref: '#/components/schemas/LineageJob'
+        inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineageDatasetRef'
+        outputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineageDatasetRef'
+        producer:
+          type: string
+        schemaURL:
+          type: string
+    LineageJob:
+      type: object
+      required:
+        - namespace
+        - name
+      properties:
+        namespace:
+          type: string
+        name:
+          type: string
+        facets:
+          type: object
+          additionalProperties: {}
+    LineageRun:
+      type: object
+      required:
+        - runId
+      properties:
+        runId:
+          type: string
+        facets:
+          type: object
+          additionalProperties: {}
+    McpBinding:
+      type: object
+      required:
+        - server
+      properties:
+        server:
+          type: string
+          description: An MCP Server resource, as rid or rid@vno.
+        allow:
+          type: array
+          items:
+            type: string
+          description: Tool names the agent may call; absent means every tool the server exposes.
+    McpServer:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          $ref: '#/components/schemas/McpServerSpec'
+        status:
+          $ref: '#/components/schemas/McpServerStatus'
+      description: The typed envelope, served by the kind routes.
+    McpServerPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/McpServer'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    McpServerSpec:
+      type: object
+      required:
+        - transport
+      properties:
+        transport:
+          $ref: '#/components/schemas/McpTransport'
+        url:
+          type: string
+          description: 'For streamable_http: the server URL.'
+        command:
+          type: array
+          items:
+            type: string
+          description: "For stdio: the command and arguments, run inside the agent's sandbox."
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Static headers, e.g. a bearer token reference `secret:...` resolved by the runtime.
+        builtin:
+          type: boolean
+          description: Set for the built-in Texera MCP server; the runtime mounts it at the gateway's /mcp.
+    McpServerStatus:
+      type: object
+      properties:
+        tools:
+          type: array
+          items:
+            type: string
+          description: Tool names discovered at the last health check.
+        lastChecked:
+          type: string
+          format: date-time
+        reachable:
+          type: boolean
+    McpTransport:
+      type: string
+      enum:
+        - streamable_http
+        - stdio
+    Message:
+      type: object
+      required:
+        - conversation
+        - seq
+        - role
+        - author
+        - parts
+        - createdAt
+      properties:
+        conversation:
+          $ref: '#/components/schemas/Rid'
+        seq:
+          type: integer
+          format: int64
+        role:
+          type: string
+          enum:
+            - user
+            - assistant
+            - system
+            - tool
+        author:
+          $ref: '#/components/schemas/Pid'
+        onBehalfOf:
+          $ref: '#/components/schemas/Pid'
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessagePart'
+        createdAt:
+          type: string
+          format: date-time
+    MessagePart:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - text
+            - reasoning
+            - tool_call
+            - tool_result
+            - resource
+            - file
+            - error
+        text:
+          type: string
+        toolCallId:
+          type: string
+        toolName:
+          type: string
+        args: {}
+        result: {}
+        resource:
+          $ref: '#/components/schemas/ResourceRef'
+        file:
+          type: object
+          additionalProperties: {}
+      description: 'One message part: text, a tool call, a tool result, a resource reference, or a file.'
+    ModelSpec:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: Model name as the LLM gateway knows it, e.g. claude-haiku-5-5.
+        maxOutputTokens:
+          type: integer
+          format: int32
+        budgetUsd:
+          type: number
+          format: double
+    NodeSpec:
+      type: object
+      required:
+        - name
+        - role
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+          enum:
+            - master
+            - worker
+            - sandbox
+        cpu:
+          type: string
+        memory:
+          type: string
+        gpu:
+          type: integer
+          format: int32
+    NodeStatus:
+      type: object
+      required:
+        - name
+        - role
+        - ready
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+          enum:
+            - master
+            - worker
+            - sandbox
+        ready:
+          type: boolean
+    OperatorRun:
+      type: object
+      required:
+        - state
+      properties:
+        state:
+          type: string
+        tuples:
+          type: integer
+          format: int64
+        error: {}
+    OperatorType:
+      type: object
+      required:
+        - operatorType
+        - userFriendlyName
+        - operatorGroupName
+        - jsonSchema
+        - inputPorts
+        - outputPorts
+      properties:
+        operatorType:
+          type: string
+        userFriendlyName:
+          type: string
+        operatorGroupName:
+          type: string
+        operatorDescription:
+          type: string
+        jsonSchema:
+          description: JSON Schema of the operator's properties.
+        inputPorts:
+          type: array
+          items: {}
+        outputPorts:
+          type: array
+          items: {}
+        requires:
+          allOf:
+            - $ref: '#/components/schemas/RuntimeSpec'
+          description: 'Runtime Spec: language, resources, isolation.'
+        version:
+          type: string
+          description: The engine image digest that defines this operator version.
+      description: An operator type from the registry, with its JSON Schema for properties.
+    OperatorTypeList:
+      type: object
+      required:
+        - operators
+        - groups
+      properties:
+        operators:
+          type: array
+          items:
+            $ref: '#/components/schemas/OperatorType'
+        groups:
+          type: array
+          items: {}
+    Origin:
+      type: object
+      required:
+        - conversation
+        - seq
+      properties:
+        conversation:
+          $ref: '#/components/schemas/Rid'
+        seq:
+          type: integer
+          format: int64
+      description: 'Where a resource or version came from: the chat turn that produced it.'
+    Pid:
+      type: string
+      description: Principal id, a UUID.
+    PortResult:
+      type: object
+      required:
+        - opid
+        - port
+      properties:
+        opid:
+          type: string
+        port:
+          type: string
+        table:
+          type: string
+        snapshot:
+          type: string
+        tupleCount:
+          type: integer
+          format: int64
+        bytes:
+          type: integer
+          format: int64
+        hash:
+          type: string
+    PostMessage:
+      type: object
+      required:
+        - role
+        - parts
+      properties:
+        role:
+          type: string
+          enum:
+            - user
+            - assistant
+            - system
+            - tool
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessagePart'
+    Principal:
+      type: object
+      required:
+        - pid
+        - kind
+        - displayName
+        - createdAt
+      properties:
+        pid:
+          $ref: '#/components/schemas/Pid'
+        kind:
+          $ref: '#/components/schemas/PrincipalKind'
+        displayName:
+          type: string
+        subject:
+          type: string
+          description: OIDC subject for users; absent for agents and groups.
+        email:
+          type: string
+        sponsor:
+          allOf:
+            - $ref: '#/components/schemas/Pid'
+          description: The user that manages an agent or a group.
+        createdAt:
+          type: string
+          format: date-time
+    PrincipalKind:
+      type: string
+      enum:
+        - user
+        - agent
+        - group
+    PrincipalPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Principal'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    Project:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          $ref: '#/components/schemas/ProjectSpec'
+        status:
+          $ref: '#/components/schemas/ProjectStatus'
+      description: The typed envelope, served by the kind routes.
+    ProjectPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    ProjectSpec:
+      type: object
+      properties:
+        defaultEnvironment:
+          $ref: '#/components/schemas/Rid'
+        defaultComputingUnit:
+          $ref: '#/components/schemas/Rid'
+    ProjectStatus:
+      type: object
+    PythonEnvironment:
+      type: object
+      required:
+        - packages
+      properties:
+        version:
+          type: string
+          description: Python version range, PEP 440, e.g. `>=3.12,<3.13`.
+        packages:
+          type: array
+          items:
+            type: string
+          description: Package requirements, PEP 508 lines.
+    Relation:
+      type: string
+      enum:
+        - owner
+        - editor
+        - viewer
+    Resource:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          type: object
+          additionalProperties: {}
+        status:
+          type: object
+          additionalProperties: {}
+      description: The untyped envelope, served by the generic routes.
+    ResourceKind:
+      type: string
+      enum:
+        - project
+        - workflow
+        - dataset
+        - environment
+        - computing_unit
+        - agent_template
+        - mcp_server
+        - skill
+        - conversation
+    ResourceMetadata:
+      type: object
+      required:
+        - rid
+        - name
+        - owner
+        - visibility
+        - headVersion
+        - createdBy
+        - createdAt
+        - updatedAt
+      properties:
+        rid:
+          $ref: '#/components/schemas/Rid'
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The containing project; absent only for a top-level project.
+        owner:
+          $ref: '#/components/schemas/Pid'
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        headVersion:
+          allOf:
+            - $ref: '#/components/schemas/Vno'
+          description: The newest version number.
+        createdBy:
+          $ref: '#/components/schemas/Pid'
+        onBehalfOf:
+          $ref: '#/components/schemas/Pid'
+        origin:
+          $ref: '#/components/schemas/Origin'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ResourcePage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Resource'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    ResourceRef:
+      type: object
+      required:
+        - kind
+        - rid
+      properties:
+        kind:
+          type: string
+          description: A resource kind, or execution.
+        rid:
+          type: string
+        vno:
+          $ref: '#/components/schemas/Vno'
+      description: A reference to a resource (or an execution) as messages and events carry it.
+    ResourceVersion:
+      type: object
+      required:
+        - rid
+        - kind
+        - vno
+        - contentKind
+        - createdBy
+        - createdAt
+      properties:
+        rid:
+          $ref: '#/components/schemas/Rid'
+        kind:
+          allOf:
+            - $ref: '#/components/schemas/ResourceKind'
+          description: The kind of the resource this is a version of.
+        vno:
+          $ref: '#/components/schemas/Vno'
+        contentKind:
+          $ref: '#/components/schemas/ContentKind'
+        contentRef:
+          type: string
+          description: 'Reference for non-inline content: an S3 prefix, an OCI digest, a message seq.'
+        content:
+          description: Inline content for `json` and `manifest` kinds.
+        message:
+          type: string
+        createdBy:
+          $ref: '#/components/schemas/Pid'
+        onBehalfOf:
+          $ref: '#/components/schemas/Pid'
+        origin:
+          $ref: '#/components/schemas/Origin'
+        createdAt:
+          type: string
+          format: date-time
+    Rid:
+      type: string
+      description: Resource id, a UUID.
+    RowPage:
+      type: object
+      required:
+        - schema
+        - rows
+        - offset
+      properties:
+        schema:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attribute'
+          description: Column names and types of the result.
+        rows:
+          type: array
+          items:
+            type: array
+            items: {}
+          description: Rows as positional arrays in schema order.
+        offset:
+          type: integer
+          format: int64
+        total:
+          type: integer
+          format: int64
+    RunRequest:
+      type: object
+      properties:
+        vno:
+          allOf:
+            - $ref: '#/components/schemas/Vno'
+          description: The workflow version to run; defaults to the head version.
+        computingUnit:
+          $ref: '#/components/schemas/Rid'
+        environment:
+          $ref: '#/components/schemas/Rid'
+        parameters:
+          type: object
+          additionalProperties: {}
+          description: Per-run inputs, e.g. {conversation, turn}; the version itself stays as authored.
+        origin:
+          $ref: '#/components/schemas/Origin'
+        waitSeconds:
+          type: integer
+          format: int32
+          description: Wait up to this many seconds for the run to finish before returning.
+        name:
+          type: string
+    RuntimeSpec:
+      type: object
+      properties:
+        environment:
+          $ref: '#/components/schemas/Rid'
+        isolation:
+          type: object
+          additionalProperties: {}
+        resources:
+          type: object
+          additionalProperties: {}
+    SaveResult:
+      type: object
+      properties:
+        dataset:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The dataset that gets the new version; a new dataset is created when absent.
+        name:
+          type: string
+          description: The new dataset's name, when `dataset` is absent.
+        path:
+          type: string
+          description: The file inside the dataset version; defaults to `<opid>.csv`.
+        message:
+          type: string
+          description: What the version holds, recorded on it.
+      description: Save an execution's port result as a dataset version.
+    Skill:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          $ref: '#/components/schemas/SkillSpec'
+        status:
+          $ref: '#/components/schemas/SkillStatus'
+      description: The typed envelope, served by the kind routes.
+    SkillPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Skill'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    SkillSpec:
+      type: object
+      required:
+        - name
+        - description
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+      description: A skill's content (SKILL.md) lives in its versions; the spec is the frontmatter.
+    SkillStatus:
+      type: object
+    SpawnAgent:
+      type: object
+      required:
+        - template
+      properties:
+        template:
+          $ref: '#/components/schemas/VersionRef'
+        conversation:
+          $ref: '#/components/schemas/Rid'
+        execution:
+          $ref: '#/components/schemas/Eid'
+        opid:
+          type: string
+        lifetime:
+          type: string
+          enum:
+            - execution
+            - conversation
+            - pinned
+        displayName:
+          type: string
+    SubagentPolicy:
+      type: object
+      properties:
+        templates:
+          type: array
+          items:
+            type: string
+          description: Templates this agent may spawn, as rid or rid@vno.
+        maxConcurrent:
+          type: integer
+          format: int32
+        maxDepth:
+          type: integer
+          format: int32
+        lifetime:
+          type: string
+          enum:
+            - execution
+            - conversation
+            - pinned
+    UpdateMetadata:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        project:
+          $ref: '#/components/schemas/Rid'
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+    VersionEdge:
+      type: object
+      required:
+        - from
+        - to
+        - kind
+      properties:
+        from:
+          $ref: '#/components/schemas/VersionRef'
+        to:
+          $ref: '#/components/schemas/VersionRef'
+        kind:
+          type: string
+          enum:
+            - derived
+            - read
+            - produced
+        execution:
+          $ref: '#/components/schemas/Eid'
+    VersionPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResourceVersion'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    VersionRef:
+      type: object
+      required:
+        - rid
+        - vno
+      properties:
+        rid:
+          $ref: '#/components/schemas/Rid'
+        vno:
+          $ref: '#/components/schemas/Vno'
+    Visibility:
+      type: string
+      enum:
+        - private
+        - public
+    Vno:
+      type: integer
+      format: int32
+      description: Version number within a resource, starting at 1.
+    Whoami:
+      type: object
+      required:
+        - principal
+        - homeProject
+      properties:
+        principal:
+          $ref: '#/components/schemas/Principal'
+        homeProject:
+          $ref: '#/components/schemas/Rid'
+    Workflow:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          $ref: '#/components/schemas/WorkflowSpec'
+        status:
+          $ref: '#/components/schemas/WorkflowStatus'
+      description: The typed envelope, served by the kind routes.
+    WorkflowContent:
+      type: object
+      required:
+        - operators
+        - links
+      properties:
+        operators:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowOperator'
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowLink'
+      description: "A workflow version's content: a dataflow graph."
+    WorkflowLink:
+      type: object
+      required:
+        - linkID
+        - source
+        - target
+      properties:
+        linkID:
+          type: string
+        source:
+          $ref: '#/components/schemas/WorkflowLinkEnd'
+        target:
+          $ref: '#/components/schemas/WorkflowLinkEnd'
+      description: A link from one operator's output port to another's input port.
+    WorkflowLinkEnd:
+      type: object
+      required:
+        - operatorID
+        - portID
+      properties:
+        operatorID:
+          type: string
+        portID:
+          type: string
+    WorkflowOperator:
+      type: object
+      required:
+        - operatorID
+        - operatorType
+        - operatorProperties
+      properties:
+        operatorID:
+          type: string
+          description: Unique within the workflow, e.g. scan or avg.
+        operatorType:
+          type: string
+          description: An operatorType from the operator registry (list_operators), e.g. CSVFileScan.
+        operatorVersion:
+          type: string
+        operatorProperties:
+          type: object
+          additionalProperties: {}
+          description: Property values following the operator type's JSON Schema. A file property takes a dataset URI dataset://<rid>@<vno>/<path>.
+        inputPorts:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowPort'
+          description: Defaults to one input port input-0 (none for sources).
+        outputPorts:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowPort'
+          description: Defaults to one output port output-0.
+        viewResult:
+          type: boolean
+          description: Store this operator's output so it can be read with get_port_result.
+        markedForReuse:
+          type: boolean
+        isDisabled:
+          type: boolean
+        customDisplayName:
+          type: string
+      description: An operator instance in a workflow.
+    WorkflowPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Workflow'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    WorkflowPort:
+      type: object
+      required:
+        - portID
+      properties:
+        portID:
+          type: string
+          description: input-<n> or output-<n>.
+        displayName:
+          type: string
+        allowMultiInputs:
+          type: boolean
+        isDynamicPort:
+          type: boolean
+      description: A port of an operator in a workflow.
+    WorkflowSpec:
+      type: object
+      properties:
+        defaultEnvironment:
+          $ref: '#/components/schemas/Rid'
+        defaultComputingUnit:
+          $ref: '#/components/schemas/Rid'
+      description: A workflow's content lives in its versions (the logical plan JSON); the spec holds only pinned defaults.
+    WorkflowStatus:
+      type: object
+      properties:
+        lastExecution:
+          $ref: '#/components/schemas/Eid'
+    WorkflowWithVersion:
+      type: object
+      required:
+        - workflow
+        - version
+      properties:
+        workflow:
+          $ref: '#/components/schemas/Workflow'
+        version:
+          $ref: '#/components/schemas/ResourceVersion'
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: Bearer
+servers:
+  - url: http://localhost:8080
+    description: the gateway
+    variables: {}

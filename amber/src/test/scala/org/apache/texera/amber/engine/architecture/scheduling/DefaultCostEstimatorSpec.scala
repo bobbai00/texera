@@ -35,10 +35,6 @@ import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.operator.aggregate.{AggregateOpDesc, AggregationFunction}
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
-import org.apache.texera.dao.jooq.generated.tables.daos._
-import org.apache.texera.dao.jooq.generated.tables.pojos._
 import org.apache.texera.common.compiler.model.LogicalLink
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
@@ -47,11 +43,7 @@ import java.net.URI
 import java.sql.Timestamp
 import scala.jdk.CollectionConverters.CollectionHasAsScala
 
-class DefaultCostEstimatorSpec
-    extends AnyFlatSpec
-    with BeforeAndAfterAll
-    with BeforeAndAfterEach
-    with MockTexeraDB {
+class DefaultCostEstimatorSpec extends AnyFlatSpec with BeforeAndAfterAll with BeforeAndAfterEach {
 
   private val headerlessCsvOpDesc: CSVScanSourceOpDesc =
     TestOperators.headerlessSmallCsvScanOpDesc()
@@ -60,62 +52,25 @@ class DefaultCostEstimatorSpec
   private val groupByOpDesc: AggregateOpDesc =
     TestOperators.aggregateAndGroupByDesc("column-1", AggregationFunction.COUNT, List[String]())
 
-  private val testUser: User = {
-    val user = new User
-    user.setUid(Integer.valueOf(1))
-    user.setName("test_user")
-    user.setRole(UserRoleEnum.ADMIN)
-    user.setEmail("test_user@test.com")
-    user
-  }
-
-  private val testWorkflowEntry: Workflow = {
-    val workflow = new Workflow
-    workflow.setName("test workflow")
-    workflow.setWid(Integer.valueOf(1))
-    workflow.setContent("test workflow content")
-    workflow.setDescription("test description")
-    workflow
-  }
-
-  private val testWorkflowVersionEntry: WorkflowVersion = {
-    val workflowVersion = new WorkflowVersion
-    workflowVersion.setWid(Integer.valueOf(1))
-    workflowVersion.setVid(Integer.valueOf(1))
-    workflowVersion.setContent("test version content")
-    workflowVersion
-  }
-
-  private val testWorkflowExecutionEntry: WorkflowExecutions = {
-    val workflowExecution = new WorkflowExecutions
-    workflowExecution.setEid(Integer.valueOf(1))
-    workflowExecution.setVid(Integer.valueOf(1))
-    workflowExecution.setUid(Integer.valueOf(1))
-    workflowExecution.setStatus(3.toByte)
-    workflowExecution.setEnvironmentVersion("test engine")
-    workflowExecution
-  }
+  // The past run whose runtime statistics the history cases hand to the estimator.
+  private val pastWorkflowId = WorkflowIdentity(1L)
+  private val pastExecutionId = ExecutionIdentity(1L)
 
   private var uri: URI = _
   private var writer: BufferedItemWriter[Tuple] = _
   private var document: VirtualDocument[_] = _
 
   override protected def beforeEach(): Unit = {
-    initializeDBAndReplaceDSLContext()
-    uri = VFSURIFactory.createRuntimeStatisticsURI(
-      WorkflowIdentity(testWorkflowEntry.getWid.longValue()),
-      ExecutionIdentity(testWorkflowExecutionEntry.getEid.longValue())
-    )
+    uri = VFSURIFactory.createRuntimeStatisticsURI(pastWorkflowId, pastExecutionId)
     document = DocumentFactory.createDocument(uri, ResultSchema.runtimeStatisticsSchema)
     writer = document
-      .writer(s"runtime_statistics_${testWorkflowExecutionEntry.getEid.longValue()}")
+      .writer(s"runtime_statistics_${pastExecutionId.id}")
       .asInstanceOf[BufferedItemWriter[Tuple]]
     writer.open()
   }
 
   override protected def afterEach(): Unit = {
     document.clear()
-    closeConnectionPool()
   }
 
   "DefaultCostEstimator" should "use fallback method when no past statistics are available" in {
@@ -177,16 +132,7 @@ class DefaultCostEstimatorSpec
       new WorkflowContext()
     )
 
-    val userDao = new UserDao(getDSLContext.configuration())
-    val workflowDao = new WorkflowDao(getDSLContext.configuration())
-    val workflowExecutionsDao = new WorkflowExecutionsDao(getDSLContext.configuration())
-    val workflowVersionDao = new WorkflowVersionDao(getDSLContext.configuration())
-
-    userDao.insert(testUser)
-    workflowDao.insert(testWorkflowEntry)
-    workflowVersionDao.insert(testWorkflowVersionEntry)
-    testWorkflowExecutionEntry.setRuntimeStatsUri(uri.toString)
-    workflowExecutionsDao.insert(testWorkflowExecutionEntry)
+    workflow.context.pastRuntimeStatistics = Some(uri)
 
     val headerlessCsvOpRuntimeStatistics = new Tuple(
       ResultSchema.runtimeStatisticsSchema,
@@ -278,16 +224,7 @@ class DefaultCostEstimatorSpec
       new WorkflowContext()
     )
 
-    val userDao = new UserDao(getDSLContext.configuration())
-    val workflowDao = new WorkflowDao(getDSLContext.configuration())
-    val workflowExecutionsDao = new WorkflowExecutionsDao(getDSLContext.configuration())
-    val workflowVersionDao = new WorkflowVersionDao(getDSLContext.configuration())
-
-    userDao.insert(testUser)
-    workflowDao.insert(testWorkflowEntry)
-    workflowVersionDao.insert(testWorkflowVersionEntry)
-    testWorkflowExecutionEntry.setRuntimeStatsUri(uri.toString)
-    workflowExecutionsDao.insert(testWorkflowExecutionEntry)
+    workflow.context.pastRuntimeStatistics = Some(uri)
 
     val headerlessCsvOpRuntimeStatistics = new Tuple(
       ResultSchema.runtimeStatisticsSchema,

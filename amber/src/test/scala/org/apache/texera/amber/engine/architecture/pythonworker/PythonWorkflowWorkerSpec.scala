@@ -20,7 +20,6 @@
 package org.apache.texera.amber.engine.architecture.pythonworker
 
 import com.twitter.util.Promise
-import org.apache.commons.lang3.SystemUtils
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.{ImplicitSender, TestActorRef, TestKit}
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, ChannelIdentity}
@@ -40,7 +39,7 @@ import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
 
-import java.nio.file.{Files, Path, Paths}
+import java.nio.file.{Files, Path}
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.duration._
@@ -73,12 +72,12 @@ class PythonWorkflowWorkerSpec
     with Matchers
     with BeforeAndAfterAll {
 
-  /** A cuid no other suite writes under, so the venv fixtures cannot collide. */
+  /** The computing unit the worker configs name; environments themselves are per unit process. */
   private val FixtureCuid = 987654
-  private val VenvRoot: Path = Paths.get("/tmp/texera-pve/venvs")
 
   override def afterAll(): Unit = {
-    deleteRecursively(VenvRoot.resolve(FixtureCuid.toString))
+    // <root>/<name>/venv/bin/python: drop the whole environment directory the fixture created.
+    deleteRecursively(venvPython(FixtureCuid, "present-env").getParent.getParent.getParent)
     TestKit.shutdownActorSystem(system)
   }
 
@@ -125,12 +124,9 @@ class PythonWorkflowWorkerSpec
     setter.invoke(actor, process)
   }
 
-  /** The interpreter PveManager resolves for (cuid, name); POSIX and Windows differ. */
-  private def venvPython(cuid: Int, pveName: String): Path = {
-    val venv = VenvRoot.resolve(cuid.toString).resolve(pveName).resolve("pve")
-    if (SystemUtils.IS_OS_WINDOWS) venv.resolve("Scripts").resolve("python.exe")
-    else venv.resolve("bin").resolve("python")
-  }
+  /** Where the unit's EnvironmentManager keeps an environment's interpreter. */
+  private def venvPython(cuid: Int, pveName: String): Path =
+    org.apache.texera.web.execution.EnvironmentManager.pythonBinOf(pveName)
 
   private def deleteRecursively(path: Path): Unit = {
     if (Files.exists(path)) {

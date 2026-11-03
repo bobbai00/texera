@@ -1,0 +1,34 @@
+{
+  "name": "@texera/agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Texera 2.0 agent runtime: AI SDK 7 agents behind AG-UI and A2A, with MCP tools from the catalog",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/main.ts",
+    "start": "bun src/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "1.3.0",
+    "@ag-ui/core": "1.0.3",
+    "@ag-ui/encoder": "1.0.3",
+    "@ai-sdk/anthropic": "4.0.96",
+    "@ai-sdk/mcp": "2.0.90",
+    "@ai-sdk/openai-compatible": "3.0.84",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@texera/catalog-client": "workspace:*",
+    "ai": "7.0.162",
+    "hono": "4.13.16",
+    "jose": "6.2.15",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3",
+    "@types/node": "24.10.1",
+    "bun-types": "1.3.14",
+    "typescript": "5.9.3"
+  }
+}

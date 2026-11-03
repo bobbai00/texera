@@ -44,6 +44,7 @@ object ApplicationConfig {
   val loggingQueueSizeInterval: Int = getConfSource.getInt("constants.logging-queue-size-interval")
   val MAX_RESOLUTION_ROWS: Int = getConfSource.getInt("constants.max-resolution-rows")
   val MAX_RESOLUTION_COLUMNS: Int = getConfSource.getInt("constants.max-resolution-columns")
+  val csvMaxColumns: Int = getConfSource.getInt("constants.csv-max-columns")
   val numWorkerPerOperatorByDefault: Int = getConfSource.getInt("constants.num-worker-per-operator")
   val getStatusUpdateIntervalInMs: Long = getConfSource.getLong("constants.status-update-interval")
   val getRuntimeStatisticsPersistenceIntervalInMs: Long =

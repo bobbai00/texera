@@ -19,102 +19,17 @@
 
 package org.apache.texera.amber.operator.udf.python
 
-import org.apache.commons.vfs2.FileNotFoundException
 import org.apache.texera.amber.core.executor.OpExecWithCode
-import org.apache.texera.amber.core.storage.RepositoryMountManager
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.common.config.EnvironmentalVariable
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
-import org.apache.texera.dao.jooq.generated.tables.daos.{
-  DatasetDao,
-  DatasetVersionDao,
-  ModelDao,
-  ModelVersionDao,
-  UserDao
-}
-import org.apache.texera.dao.jooq.generated.tables.pojos.{
-  Dataset,
-  DatasetVersion,
-  Model,
-  ModelVersion,
-  User
-}
-import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
-/** Forces a Python UDF's execution-time binding against real dataset and model rows. */
-class PythonUdfUiParameterSupportSpec
-    extends AnyFlatSpec
-    with Matchers
-    with BeforeAndAfterAll
-    with MockTexeraDB {
-
-  private val owner: User = {
-    val user = new User
-    user.setUid(1)
-    user.setName("owner")
-    user.setEmail("owner@test.com")
-    user.setRole(UserRoleEnum.ADMIN)
-    user
-  }
-
-  private val dataset: Dataset = {
-    val dataset = new Dataset
-    dataset.setDid(1)
-    dataset.setName("sales")
-    dataset.setRepositoryName("dataset-1")
-    dataset.setDescription("")
-    dataset.setIsPublic(false)
-    dataset.setOwnerUid(owner.getUid)
-    dataset
-  }
-
-  private val datasetVersion: DatasetVersion = {
-    val version = new DatasetVersion
-    version.setDvid(1)
-    version.setDid(dataset.getDid)
-    version.setName("v1")
-    version.setCreatorUid(owner.getUid)
-    version.setVersionHash("d4t4")
-    version
-  }
-
-  private val model: Model = {
-    val model = new Model
-    model.setMid(1)
-    model.setName("iris")
-    model.setRepositoryName("model-1")
-    model.setDescription("")
-    model.setIsPublic(false)
-    model.setIsDownloadable(true)
-    model.setOwnerUid(owner.getUid)
-    model
-  }
-
-  private val modelVersion: ModelVersion = {
-    val version = new ModelVersion
-    version.setMvid(1)
-    version.setMid(model.getMid)
-    version.setName("v2")
-    version.setCreatorUid(owner.getUid)
-    version.setVersionHash("m0d3l")
-    version
-  }
-
-  override protected def beforeAll(): Unit = {
-    initializeDBAndReplaceDSLContext()
-    val config = getDSLContext.configuration()
-    new UserDao(config).insert(owner)
-    new DatasetDao(config).insert(dataset)
-    new DatasetVersionDao(config).insert(datasetVersion)
-    new ModelDao(config).insert(model)
-    new ModelVersionDao(config).insert(modelVersion)
-  }
-
-  override protected def afterAll(): Unit = closeConnectionPool()
+/**
+  * Dataset and model parameters carry what the catalog resolved for the run (presigned URLs in
+  * place of `dataset://<rid>@<version>/<path>`); the operator injects them like any other value.
+  */
+class PythonUdfUiParameterSupportSpec extends AnyFlatSpec with Matchers {
 
   private val code =
     """from pytexera import *
@@ -137,52 +52,40 @@ class PythonUdfUiParameterSupportSpec
     parameter
   }
 
-  // The in-pod mount manager, given the root the chart passes to each computing-unit pod.
-  private val podMounts = new RepositoryMountManager(
-    Map(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT -> "/mnt/texera-mounts").get,
-    (_, _, _) => (),
-    _ => false,
-    0
-  )
-
   private def udfWith(parameters: UiUDFParameter*): PythonUDFOpDescV2 = {
-    val udf = new PythonUDFOpDescV2 {
-      override protected def mounts: RepositoryMountManager = podMounts
-    }
+    val udf = new PythonUDFOpDescV2
     udf.code = code
     udf.uiParameters = parameters.toList
     udf
   }
 
-  "A Python UDF's execution-time binding" should
-    "hand workers the mount directory of every resource it names" in {
-    val count = parameter("count", AttributeType.INTEGER, "", "7")
-    val op = udfWith(
-      parameter("DATA", AttributeType.STRING, "dataset", "/dataset/owner@test.com/sales/v1"),
-      parameter("MODEL", AttributeType.STRING, "model", "/model/owner@test.com/iris/v2"),
-      count
-    ).getPhysicalOp(WorkflowIdentity(1L), ExecutionIdentity(1L))
-
-    op.mountLocators shouldBe Set("dataset-1:d4t4", "model-1:m0d3l")
-    val bound = PythonUdfUiParameterInjector.inject(
-      code,
-      List(
-        parameter("DATA", AttributeType.STRING, "dataset", "/mnt/texera-mounts/dataset-1/d4t4"),
-        parameter("MODEL", AttributeType.STRING, "model", "/mnt/texera-mounts/model-1/m0d3l"),
-        count
-      )
+  "A Python UDF" should "hand workers resource parameters exactly as the catalog resolved them" in {
+    val parameters = List(
+      parameter(
+        "DATA",
+        AttributeType.STRING,
+        "dataset",
+        "https://s3.example.org/datasets/versions/d/v1/sales.csv?X-Amz-Signature=a"
+      ),
+      parameter(
+        "MODEL",
+        AttributeType.STRING,
+        "model",
+        "https://s3.example.org/models/versions/m/v2/model.pt?X-Amz-Signature=b"
+      ),
+      parameter("count", AttributeType.INTEGER, "", "7")
     )
-    op.executableOpExecInitInfo shouldBe OpExecWithCode(bound, "python")
-    // The compile-time view still names the versions; only the run sees the mounts.
-    op.opExecInitInfo should not be op.executableOpExecInitInfo
+    val op = udfWith(parameters: _*).getPhysicalOp(WorkflowIdentity(1L), ExecutionIdentity(1L))
+    op.opExecInitInfo shouldBe OpExecWithCode(
+      PythonUdfUiParameterInjector.inject(code, parameters),
+      "python"
+    )
   }
 
-  it should "report a version that no longer exists when the run starts, not while editing" in {
-    val op = udfWith(
-      parameter("DATA", AttributeType.STRING, "dataset", "/dataset/owner@test.com/sales/v9")
-    ).getPhysicalOp(WorkflowIdentity(1L), ExecutionIdentity(1L))
-
-    val failure = the[FileNotFoundException] thrownBy op.mountLocators
-    failure.getMessage should include("/dataset/owner@test.com/sales/v9")
+  it should "refuse a resource parameter nobody chose, while editing rather than at run time" in {
+    val error = the[RuntimeException] thrownBy
+      udfWith(parameter("DATA", AttributeType.STRING, "dataset", "  "))
+        .getPhysicalOp(WorkflowIdentity(1L), ExecutionIdentity(1L))
+    error.getMessage should include("No dataset selected for the parameter 'DATA'")
   }
 }

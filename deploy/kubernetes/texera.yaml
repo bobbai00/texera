@@ -1,0 +1,242 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# The Texera services. Browsers and tokens use the public URL (the gateway's LoadBalancer port on
+# localhost, a secure context for the app's PKCE sign-in); the services reach each other, Keycloak
+# included, by their cluster names. Change both together: texera2-public and the gateway Service.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: texera2-public
+data:
+  public-url: http://localhost:28088
+  issuer: http://localhost:28088/auth/realms/texera
+  keycloak-hostname: http://localhost:28088/auth
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog
+spec:
+  selector: { app: catalog }
+  ports:
+    - { name: http, port: 8090 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: catalog }
+  template:
+    metadata:
+      labels: { app: catalog }
+    spec:
+      initContainers:
+        - name: wait-for-keycloak
+          image: alpine:3.19
+          command: ["sh", "-c", "until wget -q -O /dev/null http://keycloak:8080/auth/realms/texera; do sleep 3; done"]
+      containers:
+        - name: catalog
+          image: texera/catalog:2.0-dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: TEXERA_DATABASE_URL, value: "postgres://texera:texera@postgres:5432/catalog?sslmode=disable" }
+            - name: TEXERA_PUBLIC_URL
+              valueFrom: { configMapKeyRef: { name: texera2-public, key: public-url } }
+            - name: TEXERA_OIDC_ISSUER
+              valueFrom: { configMapKeyRef: { name: texera2-public, key: issuer } }
+            - { name: TEXERA_OIDC_DISCOVERY_URL, value: "http://keycloak:8080/auth/realms/texera" }
+            - { name: TEXERA_OIDC_JWKS_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/certs" }
+            - { name: TEXERA_OIDC_TOKEN_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/token" }
+            - { name: TEXERA_OPENFGA_URL, value: "http://openfga:8080" }
+            - { name: TEXERA_S3_ENDPOINT, value: "http://rustfs:9000" }
+            # Presigned dataset URLs are read by the unit, inside the cluster.
+            - { name: TEXERA_S3_PUBLIC_ENDPOINT, value: "http://rustfs:9000" }
+            - { name: TEXERA_ICEBERG_CATALOG_URI, value: "http://lakekeeper:8181/catalog" }
+            - { name: TEXERA_STATIC_UNIT_ENDPOINT, value: "http://unit:8085" }
+            - { name: TEXERA_LINEAGE_CALLBACK_URL, value: "http://catalog:8090/lineage/v1/events" }
+          ports:
+            - containerPort: 8090
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8090 }
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: unit
+spec:
+  selector: { app: unit }
+  ports:
+    - { name: http, port: 8085 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unit
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: unit }
+  template:
+    metadata:
+      labels: { app: unit }
+    spec:
+      containers:
+        - name: unit
+          image: texera/computing-unit-master:2.0-dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TEXERA_OIDC_ISSUER
+              valueFrom: { configMapKeyRef: { name: texera2-public, key: issuer } }
+            - { name: TEXERA_OIDC_JWKS_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/certs" }
+            - { name: TEXERA_UNIT_PORT, value: "8085" }
+            - { name: TEXERA_ENV_ROOT, value: /tmp/texera-environments }
+            - { name: UDF_PYTHON_PATH, value: /usr/bin/python3 }
+            - { name: STORAGE_ICEBERG_CATALOG_TYPE, value: rest }
+            - { name: STORAGE_ICEBERG_CATALOG_REST_URI, value: "http://lakekeeper:8181/catalog" }
+            - { name: STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME, value: texera }
+            - { name: STORAGE_S3_ENDPOINT, value: "http://rustfs:9000" }
+            - { name: STORAGE_S3_REGION, value: us-east-1 }
+            - { name: STORAGE_S3_AUTH_USERNAME, value: texera }
+            - { name: STORAGE_S3_AUTH_PASSWORD, value: texera-secret }
+          ports:
+            - containerPort: 8085
+          readinessProbe:
+            httpGet: { path: /api/health, port: 8085 }
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            requests: { memory: 2Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-runtime
+spec:
+  selector: { app: agent-runtime }
+  ports:
+    - { name: http, port: 23002 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-runtime
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: agent-runtime }
+  template:
+    metadata:
+      labels: { app: agent-runtime }
+    spec:
+      initContainers:
+        - name: wait-for-keycloak
+          image: alpine:3.19
+          command: ["sh", "-c", "until wget -q -O /dev/null http://keycloak:8080/auth/realms/texera; do sleep 3; done"]
+      containers:
+        - name: agent-runtime
+          image: texera/agent-runtime:2.0-dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: TEXERA_AGENT_PORT, value: "23002" }
+            # The runtime calls the catalog and the built-in MCP server through the gateway.
+            - { name: TEXERA_PUBLIC_URL, value: "http://gateway:28088" }
+            - { name: TEXERA_CATALOG_URL, value: "http://gateway:28088" }
+            - name: TEXERA_OIDC_ISSUER
+              valueFrom: { configMapKeyRef: { name: texera2-public, key: issuer } }
+            - { name: TEXERA_OIDC_JWKS_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/certs" }
+            - { name: TEXERA_OIDC_TOKEN_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/token" }
+            - name: ANTHROPIC_API_KEY
+              valueFrom: { secretKeyRef: { name: texera2-llm, key: ANTHROPIC_API_KEY, optional: true } }
+          ports:
+            - containerPort: 23002
+          readinessProbe:
+            tcpSocket: { port: 23002 }
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  selector: { app: frontend }
+  ports:
+    - { name: http, port: 8080 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: frontend }
+  template:
+    metadata:
+      labels: { app: frontend }
+    spec:
+      containers:
+        - name: frontend
+          image: texera/frontend:2.0-dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            periodSeconds: 5
+---
+# The only way in: Envoy checks Keycloak tokens and asks the catalog's PDP, as in the dev stack.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  type: LoadBalancer
+  selector: { app: gateway }
+  ports:
+    - { name: http, port: 28088, targetPort: 8080 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: gateway }
+  template:
+    metadata:
+      labels: { app: gateway }
+    spec:
+      containers:
+        - name: envoy
+          image: envoyproxy/envoy:v1.36-latest
+          args: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            tcpSocket: { port: 8080 }
+            periodSeconds: 5
+          volumeMounts:
+            - { name: config, mountPath: /etc/envoy }
+      volumes:
+        - name: config
+          configMap: { name: gateway-config }

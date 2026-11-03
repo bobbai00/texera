@@ -56,23 +56,10 @@ import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
-import org.apache.texera.auth.SessionUser
+import org.apache.texera.web.auth.UnitPrincipal
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.Tables.{OPERATOR_EXECUTIONS, OPERATOR_PORT_EXECUTIONS}
-import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
-import org.apache.texera.dao.jooq.generated.tables.daos.{
-  UserDao,
-  WorkflowComputingUnitDao,
-  WorkflowDao,
-  WorkflowVersionDao
-}
-import org.apache.texera.dao.jooq.generated.tables.pojos.{
-  User,
-  Workflow,
-  WorkflowComputingUnit,
-  WorkflowVersion
-}
+import org.apache.texera.web.execution.ExecutionRegistry
+import org.apache.texera.web.service.ExecutionsMetadataPersistService
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.service.{WarehouseUnavailableException, WorkflowExecutionService}
 import org.apache.texera.web.storage.ExecutionStateStore
@@ -81,7 +68,6 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.{BeforeAndAfterAll, PrivateMethodTester}
 
 import java.net.URI
-import java.sql.Timestamp
 import scala.jdk.CollectionConverters._
 
 /**
@@ -129,7 +115,6 @@ class SyncExecutionResourceSpec
     extends AnyFlatSpec
     with Matchers
     with BeforeAndAfterAll
-    with MockTexeraDB
     with PrivateMethodTester {
 
   /**
@@ -139,7 +124,6 @@ class SyncExecutionResourceSpec
     * amber's suites in. 9317 appears nowhere else in the repository.
     */
   private val testWid = 9317
-  private val testUid = 9317
   private val testCuid = 9317
 
   /**
@@ -174,86 +158,38 @@ class SyncExecutionResourceSpec
     PrivateMethod[CollectedResult](Symbol("collectOperatorResult"))
 
   /** eid of the row `getConsoleMessageUri`'s cases hang their operator_executions rows off. */
-  private var consoleEid: Int = 0
+  private var consoleEid: Long = 0
 
   /** A second eid, so the query's execution-id predicate is not vacuous. */
-  private var otherEid: Int = 0
+  private var otherEid: Long = 0
 
   /** eid the `collectOperatorResult` fixtures register their result URIs under. */
-  private var resultEid: Int = 0
+  private var resultEid: Long = 0
 
   override protected def beforeAll(): Unit = {
-    initializeDBAndReplaceDSLContext()
-    val cfg = getDSLContext.configuration()
-
-    val user = new User
-    user.setUid(testUid)
-    user.setName("sync_exec_user")
-    user.setEmail("sync-exec@example.com")
-    new UserDao(cfg).insert(user)
-
-    val workflow = new Workflow
-    workflow.setWid(testWid)
-    workflow.setName("sync_exec_workflow")
-    workflow.setContent("{}")
-    workflow.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    workflow.setLastModifiedTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowDao(cfg).insert(workflow)
-
-    val version = new WorkflowVersion
-    version.setWid(testWid)
-    version.setContent("{}")
-    version.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowVersionDao(cfg).insert(version)
-
-    // workflow_executions.cuid is a foreign key; without these rows initExecutionService cannot
-    // insert its execution and never reaches the engine at all.
-    val unitDao = new WorkflowComputingUnitDao(cfg)
-    List(testCuid -> "sync_exec_unit", fixtureCuid -> "sync_exec_fixture_unit").foreach {
-      case (cuid, name) =>
-        val unit = new WorkflowComputingUnit
-        unit.setCuid(cuid)
-        unit.setUid(testUid)
-        unit.setName(name)
-        unit.setType(WorkflowComputingUnitTypeEnum.local)
-        unit.setCreationTime(new Timestamp(System.currentTimeMillis()))
-        unitDao.insert(unit)
-    }
-
     consoleEid = insertExecution("console-fixture")
     otherEid = insertExecution("console-fixture-other")
     resultEid = insertExecution("result-fixture")
   }
 
-  override protected def afterAll(): Unit = closeConnectionPool()
+  override protected def afterAll(): Unit =
+    Seq(consoleEid, otherEid, resultEid).foreach(eid =>
+      ExecutionRegistry.forget(ExecutionIdentity(eid))
+    )
 
-  private def insertExecution(name: String): Int = {
-    import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_VERSION}
-    val vid = getDSLContext
-      .select(WORKFLOW_VERSION.VID)
-      .from(WORKFLOW_VERSION)
-      .where(WORKFLOW_VERSION.WID.eq(testWid))
-      .fetchOneInto(classOf[Integer])
-    getDSLContext
-      .insertInto(WORKFLOW_EXECUTIONS)
-      .set(WORKFLOW_EXECUTIONS.VID, vid)
-      .set(WORKFLOW_EXECUTIONS.UID, Integer.valueOf(testUid))
-      .set(WORKFLOW_EXECUTIONS.CUID, Integer.valueOf(fixtureCuid))
-      .set(WORKFLOW_EXECUTIONS.NAME, name)
-      .set(WORKFLOW_EXECUTIONS.ENVIRONMENT_VERSION, "test")
-      .returning(WORKFLOW_EXECUTIONS.EID)
-      .fetchOne()
-      .getEid
-  }
+  /** Registers an execution on the unit's in-memory registry, as the unit API does. */
+  private def insertExecution(name: String): Long =
+    ExecutionsMetadataPersistService
+      .insertNewExecution(
+        WorkflowIdentity(testWid.toLong),
+        name,
+        "test",
+        Integer.valueOf(fixtureCuid)
+      )
+      .id
 
-  private def insertConsoleUri(eid: Int, opId: String, uri: String): Unit = {
-    getDSLContext
-      .insertInto(OPERATOR_EXECUTIONS)
-      .set(OPERATOR_EXECUTIONS.WORKFLOW_EXECUTION_ID, Integer.valueOf(eid))
-      .set(OPERATOR_EXECUTIONS.OPERATOR_ID, opId)
-      .set(OPERATOR_EXECUTIONS.CONSOLE_MESSAGES_URI, uri)
-      .execute()
-  }
+  private def insertConsoleUri(eid: Long, opId: String, uri: String): Unit =
+    ExecutionRegistry.insertOperatorExecutions(eid, opId, URI.create(uri))
 
   private def globalPortIdOf(opId: String): GlobalPortIdentity =
     GlobalPortIdentity(
@@ -267,21 +203,17 @@ class SyncExecutionResourceSpec
     VFSURIFactory.resultURI(
       VFSURIFactory.createPortBaseURI(
         WorkflowIdentity(testWid.toLong),
-        ExecutionIdentity(resultEid.toLong),
+        ExecutionIdentity(resultEid),
         globalPortIdOf(opId)
       )
     )
 
   private def registerResultUri(uri: URI): Unit =
-    getDSLContext
-      .insertInto(OPERATOR_PORT_EXECUTIONS)
-      .set(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID, Integer.valueOf(resultEid))
-      .set(
-        OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID,
-        VFSURIFactory.decodeURI(uri).globalPortId.get.serializeAsString
-      )
-      .set(OPERATOR_PORT_EXECUTIONS.RESULT_URI, uri.toString)
-      .execute()
+    ExecutionRegistry.recordPortResultUri(
+      ExecutionIdentity(resultEid),
+      VFSURIFactory.decodeURI(uri).globalPortId.get,
+      uri
+    )
 
   private val rowSchema = new Schema(List(new Attribute("v", AttributeType.STRING)))
 
@@ -315,7 +247,7 @@ class SyncExecutionResourceSpec
 
   private def collect(opId: String, charLimit: Int, cellCharLimit: Int): CollectedResult =
     resource invokePrivate collectOperatorResult(
-      ExecutionIdentity(resultEid.toLong),
+      ExecutionIdentity(resultEid),
       opId,
       charLimit,
       cellCharLimit
@@ -357,7 +289,6 @@ class SyncExecutionResourceSpec
       ),
       stateStore,
       (_: Throwable) => (),
-      None,
       new URI("vfs:///sync-execution-spec")
     )
 
@@ -725,7 +656,7 @@ class SyncExecutionResourceSpec
     val execution = newExecution(stateStore)
 
     val infos = resource invokePrivate collectOperatorInfos(
-      ExecutionIdentity(consoleEid.toLong),
+      ExecutionIdentity(consoleEid),
       execution,
       List("op-with-stats", "op-no-ports", "op-never-ran"),
       100000,
@@ -782,7 +713,7 @@ class SyncExecutionResourceSpec
     )
 
     val infos = resource invokePrivate collectOperatorInfos(
-      ExecutionIdentity(consoleEid.toLong),
+      ExecutionIdentity(consoleEid),
       newExecution(stateStore),
       List.empty,
       100000,
@@ -822,7 +753,7 @@ class SyncExecutionResourceSpec
     )
 
     val infos = resource invokePrivate collectOperatorInfos(
-      ExecutionIdentity(consoleEid.toLong),
+      ExecutionIdentity(consoleEid),
       newExecution(stateStore),
       List("target"),
       100000,
@@ -880,7 +811,7 @@ class SyncExecutionResourceSpec
 
     a[WarehouseUnavailableException] should be thrownBy {
       resource invokePrivate collectOperatorInfos(
-        ExecutionIdentity(otherEid.toLong),
+        ExecutionIdentity(otherEid),
         newExecution(stateStore),
         List("guarded"),
         100000,
@@ -1078,7 +1009,7 @@ class SyncExecutionResourceSpec
   }
 
   "getConsoleMessageUri" should "find the console URI for one operator of one execution" in {
-    def consoleUri(eid: Int, opId: String) =
+    def consoleUri(eid: Long, opId: String) =
       s"vfs:///wid/$testWid/eid/$eid/opid/$opId/consolemessages"
 
     insertConsoleUri(consoleEid, "op-a", consoleUri(consoleEid, "op-a"))
@@ -1090,27 +1021,27 @@ class SyncExecutionResourceSpec
     insertConsoleUri(consoleEid, "op-empty", "")
 
     resource invokePrivate getConsoleMessageUri(
-      ExecutionIdentity(consoleEid.toLong),
+      ExecutionIdentity(consoleEid),
       OperatorIdentity("op-a")
     ) shouldBe Some(URI.create(consoleUri(consoleEid, "op-a")))
     // A second operator of the SAME execution: without the operator predicate the query matches
     // two rows and cannot answer at all.
     resource invokePrivate getConsoleMessageUri(
-      ExecutionIdentity(consoleEid.toLong),
+      ExecutionIdentity(consoleEid),
       OperatorIdentity("op-b")
     ) shouldBe Some(URI.create(consoleUri(consoleEid, "op-b")))
     resource invokePrivate getConsoleMessageUri(
-      ExecutionIdentity(otherEid.toLong),
+      ExecutionIdentity(otherEid),
       OperatorIdentity("op-a")
     ) shouldBe Some(URI.create(consoleUri(otherEid, "op-a")))
 
     // An empty stored URI is "nothing to read", not a URI that resolves to the storage root.
     resource invokePrivate getConsoleMessageUri(
-      ExecutionIdentity(consoleEid.toLong),
+      ExecutionIdentity(consoleEid),
       OperatorIdentity("op-empty")
     ) shouldBe None
     resource invokePrivate getConsoleMessageUri(
-      ExecutionIdentity(consoleEid.toLong),
+      ExecutionIdentity(consoleEid),
       OperatorIdentity("op-absent")
     ) shouldBe None
   }
@@ -1146,9 +1077,12 @@ class SyncExecutionResourceSpec
     // absorbs the failure and stamps FAILED. Recorded rather than papered over.
     val scan = new CSVScanSourceOpDesc()
     scan.setOperatorId("scan-op")
-    val user = new User
-    user.setUid(testUid)
-    user.setEmail("sync-exec@example.com")
+    val user = UnitPrincipal(
+      "subject-9317",
+      "sync-exec",
+      Some("sync-exec@example.com"),
+      UnitPrincipal.Regular
+    )
 
     val result = resource.executeWorkflowSync(
       testWid.toLong,
@@ -1162,7 +1096,7 @@ class SyncExecutionResourceSpec
         maxOperatorResultCharLimit = 100000,
         maxOperatorResultCellCharLimit = 20000
       ),
-      new SessionUser(user)
+      user
     )
 
     result.success shouldBe false

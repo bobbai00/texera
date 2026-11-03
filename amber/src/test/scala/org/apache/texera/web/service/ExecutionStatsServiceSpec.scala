@@ -53,20 +53,7 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
   OperatorMetrics,
   OperatorStatistics
 }
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_EXECUTIONS
-import org.apache.texera.dao.jooq.generated.tables.daos.{
-  UserDao,
-  WorkflowDao,
-  WorkflowExecutionsDao,
-  WorkflowVersionDao
-}
-import org.apache.texera.dao.jooq.generated.tables.pojos.{
-  User,
-  Workflow,
-  WorkflowExecutions,
-  WorkflowVersion
-}
+import org.apache.texera.web.execution.ExecutionRegistry
 import org.apache.texera.web.model.websocket.event.{
   ExecutionDurationUpdateEvent,
   OperatorAggregatedMetrics,
@@ -80,7 +67,6 @@ import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
-import java.sql.Timestamp
 import java.util.concurrent.ExecutorService
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -108,10 +94,8 @@ class ExecutionStatsServiceSpec
     extends TestKit(ActorSystem("ExecutionStatsServiceSpec"))
     with AnyFlatSpecLike
     with Matchers
-    with BeforeAndAfterAll
-    with MockTexeraDB {
+    with BeforeAndAfterAll {
 
-  private val testUid: Integer = 9107
   private val testWid: Integer = 9107
   private val testEid: Integer = 9108
 
@@ -121,48 +105,21 @@ class ExecutionStatsServiceSpec
   )
 
   override protected def beforeAll(): Unit = {
-    initializeDBAndReplaceDSLContext()
-
-    val user = new User
-    user.setUid(testUid)
-    user.setName("execution-stats-test-user")
-    user.setEmail(s"u$testUid@example.com")
-    new UserDao(getDSLContext.configuration()).insert(user)
-
-    val workflow = new Workflow
-    workflow.setWid(testWid)
-    workflow.setName(s"execution-stats-test-$testWid")
-    workflow.setContent("{}")
-    workflow.setDescription("")
-    workflow.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    workflow.setLastModifiedTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowDao(getDSLContext.configuration()).insert(workflow)
-
-    val version = new WorkflowVersion
-    version.setWid(testWid)
-    version.setContent("{}")
-    version.setCreationTime(new Timestamp(System.currentTimeMillis()))
-    new WorkflowVersionDao(getDSLContext.configuration()).insert(version)
-
-    // The execution row is what the constructor stamps the statistics URI onto; it has to be
-    // reachable from testWid through workflow_version, which is how the update is scoped.
-    val execution = new WorkflowExecutions
-    execution.setEid(testEid)
-    execution.setVid(version.getVid)
-    execution.setUid(testUid)
-    execution.setStatus(0.toByte)
-    execution.setStartingTime(new Timestamp(System.currentTimeMillis()))
-    execution.setBookmarked(false)
-    execution.setName("execution-stats-test-execution")
-    execution.setEnvironmentVersion("test-env")
-    new WorkflowExecutionsDao(getDSLContext.configuration()).insert(execution)
+    // The execution record is what the constructor stamps the statistics URI onto.
+    ExecutionRegistry.adopt(
+      ExecutionIdentity(testEid.longValue()),
+      workflowId = testWid.longValue(),
+      cuid = 0,
+      name = "execution-stats-test-execution"
+    )
   }
 
   override protected def afterAll(): Unit = {
-    try {
-      TestKit.shutdownActorSystem(system)
-      closeConnectionPool()
-    } finally super.afterAll()
+    try TestKit.shutdownActorSystem(system)
+    finally {
+      ExecutionRegistry.forget(ExecutionIdentity(testEid.longValue()))
+      super.afterAll()
+    }
   }
 
   /** Empty-plan client that captures every callback the service registers, keyed by event type. */
@@ -205,7 +162,10 @@ class ExecutionStatsServiceSpec
     }
   }
 
-  private def withService(body: Fixture => Unit): Unit = {
+  private def withService(body: Fixture => Unit): Unit =
+    withServiceFor(ExecutionIdentity(testEid.longValue()))(body)
+
+  private def withServiceFor(executionId: ExecutionIdentity)(body: Fixture => Unit): Unit = {
     val client = new TestAmberClient
     val stateStore = new ExecutionStateStore
     val service = new ExecutionStatsService(
@@ -213,7 +173,7 @@ class ExecutionStatsServiceSpec
       stateStore,
       new WorkflowContext(
         workflowId = WorkflowIdentity(testWid.longValue()),
-        executionId = ExecutionIdentity(testEid.longValue())
+        executionId = executionId
       )
     )
     val fixture = new Fixture(client, stateStore, service)
@@ -494,22 +454,18 @@ class ExecutionStatsServiceSpec
     }
   }
 
-  "the service constructor" should "stamp the runtime statistics URI onto the execution row" in {
-    // Spelled out rather than rebuilt from VFSURIFactory: the URI is what the dashboard later
-    // opens, so a wid/eid mix-up has to show up as a different string here.
-    getDSLContext
-      .update(WORKFLOW_EXECUTIONS)
-      .setNull(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI)
-      .where(WORKFLOW_EXECUTIONS.EID.eq(testEid))
-      .execute()
-
-    withService { _ =>
-      getDSLContext
-        .select(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI)
-        .from(WORKFLOW_EXECUTIONS)
-        .where(WORKFLOW_EXECUTIONS.EID.eq(testEid))
-        .fetchOne(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI) shouldBe
-        s"vfs:///wid/$testWid/eid/$testEid/runtimestatistics"
+  "the service constructor" should "stamp the runtime statistics URI onto the execution record" in {
+    // Spelled out rather than rebuilt from VFSURIFactory, so a wid/eid mix-up shows up as a
+    // different string here.
+    val eid = org.apache.texera.web.service.ExecutionsMetadataPersistService
+      .insertNewExecution(WorkflowIdentity(testWid.longValue()), "stats", "test-env", 0)
+    org.apache.texera.web.execution.ExecutionRegistry
+      .getRuntimeStatsUriByExecutionId(eid) shouldBe None
+    withServiceFor(eid) { _ =>
+      org.apache.texera.web.execution.ExecutionRegistry
+        .getRuntimeStatsUriByExecutionId(eid)
+        .map(_.toString) shouldBe
+        Some(s"vfs:///wid/$testWid/eid/${eid.id}/runtimestatistics")
     }
   }
 

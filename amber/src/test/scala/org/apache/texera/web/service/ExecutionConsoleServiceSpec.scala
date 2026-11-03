@@ -409,11 +409,11 @@ class ExecutionConsoleServiceSpec
 
       f.wsInput.onNext(
         DebugCommandRequest("udf1", "Worker:WF1-udf1-main-0", "break 12"),
-        Some(7)
+        Some("subject-7")
       )
 
       val stored = f.stateStore.consoleStore.getState.operatorConsole("udf1").consoleMessages
-      stored.map(_.source) shouldBe Seq("USER-7")
+      stored.map(_.source) shouldBe Seq("USER-subject-7")
       stored.map(_.title) shouldBe Seq("break 12")
     }
   }
@@ -438,7 +438,10 @@ class ExecutionConsoleServiceSpec
     withFixture { f =>
       (f.coordinator.debugCommand _).expects(*, *).returning(TwitterFuture.value(EmptyReturn()))
 
-      f.wsInput.onNext(DebugCommandRequest("udf1", "Worker:WF1-udf1-main-0", "cont"), Some(1))
+      f.wsInput.onNext(
+        DebugCommandRequest("udf1", "Worker:WF1-udf1-main-0", "cont"),
+        Some("subject-1")
+      )
 
       val keys = f.stateStore.consoleStore.getState.operatorConsole.keys
       keys should contain("udf1")

@@ -38,5 +38,8 @@ class WorkflowContext(
     var cuid: Option[Int] = None,
     // The Lakekeeper catalog name this execution writes into; becomes the `/wh/<name>`
     // URI segment. None routes to the shared default warehouse.
-    var warehouse: Option[String] = None
+    var warehouse: Option[String] = None,
+    // Runtime statistics of the workflow's last completed run, if the unit has one; the
+    // scheduler estimates region costs from it. The engine keeps no history of its own.
+    var pastRuntimeStatistics: Option[java.net.URI] = None
 )

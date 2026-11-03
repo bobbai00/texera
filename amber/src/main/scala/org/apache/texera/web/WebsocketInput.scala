@@ -26,12 +26,12 @@ import org.apache.texera.web.model.websocket.request.TexeraWebSocketRequest
 import scala.reflect.{ClassTag, classTag}
 
 class WebsocketInput(errorHandler: Throwable => Unit) {
-  private val wsInput = PublishSubject.create[(TexeraWebSocketRequest, Option[Integer])]()
+  private val wsInput = PublishSubject.create[(TexeraWebSocketRequest, Option[String])]()
 
   def subscribe[T <: TexeraWebSocketRequest: ClassTag](
-      callback: (T, Option[Integer]) => Unit
+      callback: (T, Option[String]) => Unit
   ): Disposable = {
-    wsInput.subscribe((evt: (TexeraWebSocketRequest, Option[Integer])) => {
+    wsInput.subscribe((evt: (TexeraWebSocketRequest, Option[String])) => {
       evt._1 match {
         case req: T if classTag[T].runtimeClass.isInstance(req) =>
           try {
@@ -46,8 +46,9 @@ class WebsocketInput(errorHandler: Throwable => Unit) {
     })
   }
 
-  def onNext(req: TexeraWebSocketRequest, uidOpt: Option[Integer]): Unit = {
-    wsInput.onNext((req, uidOpt))
+  /** @param subjectOpt the token subject of the caller who sent the request */
+  def onNext(req: TexeraWebSocketRequest, subjectOpt: Option[String]): Unit = {
+    wsInput.onNext((req, subjectOpt))
   }
 
 }

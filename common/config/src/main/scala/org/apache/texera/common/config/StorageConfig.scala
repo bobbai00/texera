@@ -28,11 +28,6 @@ object StorageConfig {
   // Load configuration
   private val conf: Config = ConfigFactory.parseResources("storage.conf").resolve()
 
-  // JDBC specifics
-  val jdbcUrl: String = conf.getString("storage.jdbc.url")
-  val jdbcUsername: String = conf.getString("storage.jdbc.username")
-  val jdbcPassword: String = conf.getString("storage.jdbc.password")
-
   // Iceberg specifics
   val icebergCatalogType: String = conf.getString("storage.iceberg.catalog.type")
   val icebergRESTCatalogUri: String = conf.getString("storage.iceberg.catalog.rest.uri")
@@ -66,15 +61,6 @@ object StorageConfig {
   val icebergTableCommitMaxRetryWaitMs: Int =
     conf.getInt("storage.iceberg.table.commit.retry.max-wait-ms")
 
-  // LakeFS specifics
-  // lakefsEndpoint is a var because in test we need to override it to point to the test container
-  var lakefsEndpoint: String = conf.getString("storage.lakefs.endpoint")
-  val lakefsApiSecret: String = conf.getString("storage.lakefs.auth.api-secret")
-  val lakefsUsername: String = conf.getString("storage.lakefs.auth.username")
-  val lakefsPassword: String = conf.getString("storage.lakefs.auth.password")
-  val lakefsBlockStorageType: String = conf.getString("storage.lakefs.block-storage.type")
-  val lakefsBucketName: String = conf.getString("storage.lakefs.block-storage.bucket-name")
-
   // S3 specifics
   // s3Endpoint is a var because in test we need to override it to point to the test container
   var s3Endpoint: String = conf.getString("storage.s3.endpoint")
@@ -105,11 +91,6 @@ object StorageConfig {
       .resolve("user-resources")
       .resolve("workflow-results")
 
-  // JDBC
-  val ENV_JDBC_URL = "STORAGE_JDBC_URL"
-  val ENV_JDBC_USERNAME = "STORAGE_JDBC_USERNAME"
-  val ENV_JDBC_PASSWORD = "STORAGE_JDBC_PASSWORD"
-
   // Iceberg Catalog
   val ENV_ICEBERG_CATALOG_TYPE = "STORAGE_ICEBERG_CATALOG_TYPE"
   val ENV_ICEBERG_CATALOG_REST_URI = "STORAGE_ICEBERG_CATALOG_REST_URI"
@@ -131,14 +112,6 @@ object StorageConfig {
   val ENV_ICEBERG_TABLE_COMMIT_NUM_RETRIES = "STORAGE_ICEBERG_TABLE_COMMIT_NUM_RETRIES"
   val ENV_ICEBERG_TABLE_COMMIT_MIN_WAIT_MS = "STORAGE_ICEBERG_TABLE_COMMIT_MIN_WAIT_MS"
   val ENV_ICEBERG_TABLE_COMMIT_MAX_WAIT_MS = "STORAGE_ICEBERG_TABLE_COMMIT_MAX_WAIT_MS"
-
-  // LakeFS
-  val ENV_LAKEFS_ENDPOINT = "STORAGE_LAKEFS_ENDPOINT"
-  val ENV_LAKEFS_AUTH_API_SECRET = "STORAGE_LAKEFS_AUTH_API_SECRET"
-  val ENV_LAKEFS_AUTH_USERNAME = "STORAGE_LAKEFS_AUTH_USERNAME"
-  val ENV_LAKEFS_AUTH_PASSWORD = "STORAGE_LAKEFS_AUTH_PASSWORD"
-  val ENV_LAKEFS_BLOCK_STORAGE_TYPE = "STORAGE_LAKEFS_BLOCK_STORAGE_TYPE"
-  val ENV_LAKEFS_BLOCK_STORAGE_BUCKET_NAME = "STORAGE_LAKEFS_BLOCK_STORAGE_BUCKET_NAME"
 
   // Staged file cleanup
   val ENV_CLEANUP_ENABLED = "STORAGE_CLEANUP_ENABLED"

@@ -35,7 +35,6 @@ import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.texera.amber.engine.e2e.TestUtils.{
   buildWorkflow,
   cleanupWorkflowExecutionData,
-  initiateTexeraDBForTestCases,
   runWorkflowAndReadResults,
   setUpWorkflowExecutionData,
   workflowContext
@@ -122,8 +121,6 @@ class LoopIntegrationSpec
 
   override def beforeAll(): Unit = {
     system.actorOf(Props[SingleNodeListener](), "cluster-info")
-    Class.forName("org.postgresql.Driver")
-    initiateTexeraDBForTestCases()
   }
 
   override def afterAll(): Unit = {

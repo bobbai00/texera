@@ -30,7 +30,6 @@ import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.texera.amber.engine.e2e.TestUtils.{
   buildWorkflow,
   cleanupWorkflowExecutionData,
-  initiateTexeraDBForTestCases,
   runWorkflowAndReadTerminalResults,
   setUpWorkflowExecutionData
 }
@@ -140,10 +139,6 @@ class MultiRegionWorkflowIntegrationSpec
 
   override def beforeAll(): Unit = {
     system.actorOf(Props[SingleNodeListener](), "cluster-info")
-    // These test cases access postgres in CI, but occasionally the jdbc driver cannot be found during CI run.
-    // Explicitly load the JDBC driver to avoid flaky CI failures.
-    Class.forName("org.postgresql.Driver")
-    initiateTexeraDBForTestCases()
     warmupOnce()
   }
 

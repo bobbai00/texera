@@ -1,0 +1,165 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Object storage (RustFS, S3 API) for datasets and result tables, and the Iceberg REST catalog
+# (Lakekeeper) the computing unit writes results through. Two jobs bootstrap them: the buckets,
+# and Lakekeeper's project and `texera` warehouse.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs
+spec:
+  selector: { app: rustfs }
+  ports:
+    - { name: s3, port: 9000 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustfs
+spec:
+  serviceName: rustfs
+  replicas: 1
+  selector:
+    matchLabels: { app: rustfs }
+  template:
+    metadata:
+      labels: { app: rustfs }
+    spec:
+      containers:
+        - name: rustfs
+          image: rustfs/rustfs:1.0.0
+          env:
+            - { name: RUSTFS_ACCESS_KEY, value: texera }
+            - { name: RUSTFS_SECRET_KEY, value: texera-secret }
+            - { name: RUSTFS_VOLUMES, value: /data }
+            - { name: RUSTFS_ADDRESS, value: "0.0.0.0:9000" }
+          ports:
+            - containerPort: 9000
+          readinessProbe:
+            httpGet: { path: /health, port: 9000 }
+            periodSeconds: 5
+          volumeMounts:
+            - { name: data, mountPath: /data }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 5Gi }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rustfs-buckets
+spec:
+  backoffLimit: 30
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: buckets
+          image: rustfs/rc:v0.1.35
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              rc alias set local http://rustfs:9000 texera texera-secret --region us-east-1 --bucket-lookup path
+              rc bucket create --ignore-existing local/texera
+              rc bucket create --ignore-existing local/datasets
+              echo "buckets ready"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lakekeeper
+spec:
+  selector: { app: lakekeeper }
+  ports:
+    - { name: http, port: 8181 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lakekeeper
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: lakekeeper }
+  template:
+    metadata:
+      labels: { app: lakekeeper }
+    spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command: ["sh", "-c", "until pg_isready -h postgres -U texera; do sleep 2; done"]
+        - name: migrate
+          image: vakamo/lakekeeper:v0.11.0
+          command: ["/home/nonroot/lakekeeper"]
+          args: ["migrate"]
+          env:
+            - { name: LAKEKEEPER__PG_ENCRYPTION_KEY, value: texera2-dev-only-encryption-key }
+            - { name: LAKEKEEPER__PG_DATABASE_URL_READ, value: "postgres://texera:texera@postgres:5432/lakekeeper" }
+            - { name: LAKEKEEPER__PG_DATABASE_URL_WRITE, value: "postgres://texera:texera@postgres:5432/lakekeeper" }
+            # Returned to Iceberg clients, all of which run in the cluster.
+            - { name: LAKEKEEPER__BASE_URI, value: "http://lakekeeper:8181" }
+            - { name: LAKEKEEPER__ENABLE_DEFAULT_PROJECT, value: "true" }
+            - { name: LAKEKEEPER__LISTEN_PORT, value: "8181" }
+            - { name: RUST_LOG, value: info }
+      containers:
+        - name: lakekeeper
+          image: vakamo/lakekeeper:v0.11.0
+          command: ["/home/nonroot/lakekeeper"]
+          args: ["serve"]
+          env:
+            - { name: LAKEKEEPER__PG_ENCRYPTION_KEY, value: texera2-dev-only-encryption-key }
+            - { name: LAKEKEEPER__PG_DATABASE_URL_READ, value: "postgres://texera:texera@postgres:5432/lakekeeper" }
+            - { name: LAKEKEEPER__PG_DATABASE_URL_WRITE, value: "postgres://texera:texera@postgres:5432/lakekeeper" }
+            # Returned to Iceberg clients, all of which run in the cluster.
+            - { name: LAKEKEEPER__BASE_URI, value: "http://lakekeeper:8181" }
+            - { name: LAKEKEEPER__ENABLE_DEFAULT_PROJECT, value: "true" }
+            - { name: LAKEKEEPER__LISTEN_PORT, value: "8181" }
+            - { name: RUST_LOG, value: info }
+          ports:
+            - containerPort: 8181
+          readinessProbe:
+            exec: { command: ["/home/nonroot/lakekeeper", "healthcheck"] }
+            periodSeconds: 5
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lakekeeper-warehouse
+spec:
+  backoffLimit: 30
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: warehouse
+          image: alpine:3.19
+          command: ["/bin/sh", "/init/init.sh"]
+          env:
+            # The endpoint Lakekeeper hands to the unit for result tables: the in-cluster RustFS.
+            - { name: S3_ENDPOINT, value: "http://rustfs:9000" }
+          volumeMounts:
+            - { name: init, mountPath: /init }
+      volumes:
+        - name: init
+          configMap: { name: lakekeeper-init }

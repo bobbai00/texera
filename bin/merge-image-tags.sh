@@ -64,9 +64,6 @@ for file in "${dockerfiles[@]}"; do
   services+=("$svc")
 done
 
-# Add additional services that don't have a *.dockerfile in the deployment root
-services+=("pylsp" "y-websocket-server")
-
 echo "🔗 Merging multi-arch manifests for tag :$BASE_TAG"
 
 for svc in "${services[@]}"; do

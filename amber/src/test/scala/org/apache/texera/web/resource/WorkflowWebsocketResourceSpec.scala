@@ -32,10 +32,8 @@ import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.{
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.auth.util.HeaderField
-import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
-import org.apache.texera.dao.jooq.generated.tables.pojos.User
-import org.apache.texera.web.SessionState
+import org.apache.texera.web.auth.UnitPrincipal
+import org.apache.texera.web.{ServletAwareConfigurator, SessionState}
 import org.apache.texera.web.model.websocket.event.{PaginatedResultEvent, TexeraWebSocketEvent}
 import org.apache.texera.web.model.websocket.request.{
   HeartBeatRequest,
@@ -73,11 +71,9 @@ import scala.jdk.CollectionConverters.{IteratorHasAsScala, MapHasAsJava, SeqHasA
   *
   * The endpoint itself is thin, but two pieces of it are real logic that nothing else guards:
   *
-  *   - the write-access gate on `WorkflowExecuteRequest`. It is the only consumer of the privilege
-  *     `myOnOpen` parsed off the handshake, and denying it must both surface an error to the client
-  *     and rethrow. Note this branch is unreachable in single-node mode, where
-  *     `ServletAwareConfigurator` hard-codes WRITE, but live under Kubernetes where the privilege
-  *     comes from the `x-user-computing-unit-access` header.
+  *   - the signed-in gate on `WorkflowExecuteRequest`: a run needs the caller the handshake
+  *     verified (see `ServletAwareConfigurator`), and refusing must both surface an error to the
+  *     client and rethrow.
   *   - the catch-all error mapper, which turns any exception into a `WorkflowFatalError`, routes it
   *     either to the execution's metadata store or (with no execution) straight to the socket, and
   *     then rethrows so the container sees it too. Both halves are asserted: dropping either the
@@ -166,14 +162,16 @@ class WorkflowWebsocketResourceSpec
     service
   }
 
+  private val caller42 =
+    UnitPrincipal("subject-42", "caller-42", Some("caller42@example.org"), UnitPrincipal.Regular)
+
   /**
     * A mocked session. `sent` collects everything the endpoint writes back, which is the only
     * observable for most of these handlers.
     */
   private def mockSession(
       id: String = UUID.randomUUID().toString,
-      uid: Option[Int] = None,
-      cuAccess: String = PrivilegeEnum.WRITE.name(),
+      caller: Option[UnitPrincipal] = None,
       wid: Long = 1L,
       cuid: Int = 1
   ): (Session, ArrayBuffer[String]) = {
@@ -190,12 +188,7 @@ class WorkflowWebsocketResourceSpec
       .anyNumberOfTimes()
 
     val properties = new java.util.HashMap[String, Object]()
-    properties.put(HeaderField.UserComputingUnitAccess, cuAccess)
-    uid.foreach { u =>
-      val user = new User()
-      user.setUid(Integer.valueOf(u))
-      properties.put(classOf[User].getName, user)
-    }
+    caller.foreach(properties.put(ServletAwareConfigurator.PrincipalKey, _))
 
     // What `myOnOpen` parses the workflow and computing-unit ids out of.
     val parameters: java.util.Map[String, java.util.List[String]] =
@@ -215,9 +208,8 @@ class WorkflowWebsocketResourceSpec
   }
 
   /** Registers a SessionState for `session` and remembers it for cleanup. */
-  private def registerState(session: Session, access: PrivilegeEnum): SessionState = {
+  private def registerState(session: Session): SessionState = {
     val state = new SessionState(session)
-    state.setUserComputingUnitAccess(access)
     SessionState.setState(session.getId, state)
     registeredSessions += session.getId
     state
@@ -229,7 +221,7 @@ class WorkflowWebsocketResourceSpec
     * `AmberRuntime.scheduleCallThroughActorSystem`, whose actor system is null in a unit JVM.
     */
   private class TestWorkflowService(id: Long) extends WorkflowService(WorkflowIdentity(id), 1, 10) {
-    var initCalls: List[(WorkflowExecuteRequest, Option[User], URI)] = Nil
+    var initCalls: List[(WorkflowExecuteRequest, Option[UnitPrincipal], URI)] = Nil
 
     /**
       * When set, `initExecutionService` publishes this execution and then fails — the shape a real
@@ -248,7 +240,7 @@ class WorkflowWebsocketResourceSpec
 
     override def initExecutionService(
         req: WorkflowExecuteRequest,
-        userOpt: Option[User],
+        userOpt: Option[UnitPrincipal],
         sessionUri: URI
     ): Unit = {
       initCalls = initCalls :+ ((req, userOpt, sessionUri))
@@ -328,18 +320,16 @@ class WorkflowWebsocketResourceSpec
       executeRequest,
       new ExecutionStateStore(),
       (_: Throwable) => (),
-      None,
       new URI("vfs:///test")
     )
 
   /** A session state holding `workflow`, with `execution` published into it when given. */
   private def attach(
       session: Session,
-      access: PrivilegeEnum,
       workflow: TestWorkflowService,
       execution: Option[WorkflowExecutionService] = None
   ): SessionState = {
-    val state = registerState(session, access)
+    val state = registerState(session)
     state.subscribe(workflow)
     execution.foreach(workflow.executionService.onNext)
     state
@@ -381,26 +371,26 @@ class WorkflowWebsocketResourceSpec
 
   "myOnMsg" should "answer a heartbeat without needing a workflow" in {
     val (session, sent) = mockSession()
-    registerState(session, PrivilegeEnum.WRITE)
+    registerState(session)
 
     resource.myOnMsg(session, frameOf(HeartBeatRequest()))
 
     sentTypes(sent) shouldBe Seq("HeartBeatResponse")
   }
 
-  // -- the write-access gate ----------------------------------------------------
+  // -- the signed-in gate -------------------------------------------------------
 
-  it should "refuse a WorkflowExecuteRequest when the session has no write access" in {
-    // READ, not WRITE: the gate must fire before any workflow lookup. The handler both reports the
-    // failure to the client AND rethrows, so the container sees it too — assert both halves,
-    // because dropping the rethrow (or the send) would leave one of them silently missing.
-    val (session, sent) = mockSession(uid = Some(42))
-    registerState(session, PrivilegeEnum.READ)
+  it should "refuse a WorkflowExecuteRequest from a session no token verified" in {
+    // The gate must fire before any workflow lookup. The handler both reports the failure to the
+    // client AND rethrows, so the container sees it too — assert both halves, because dropping
+    // the rethrow (or the send) would leave one of them silently missing.
+    val (session, sent) = mockSession(caller = None)
+    registerState(session)
 
     val ex = intercept[IllegalStateException] {
       resource.myOnMsg(session, frameOf(executeRequest))
     }
-    ex.getMessage should include("write access")
+    ex.getMessage should include("Sign in")
 
     sentTypes(sent) shouldBe Seq("WorkflowErrorEvent")
     val errors = objectMapper.readTree(sent.head).get("fatalErrors")
@@ -412,15 +402,15 @@ class WorkflowWebsocketResourceSpec
     // frontend's error panel silently.
     errors.get(0).get("type").get("name").asText() shouldBe "COMPILATION_ERROR"
     errors.get(0).get("operatorId").asText() shouldBe "unknown operator"
-    errors.get(0).get("message").asText() should include("write access")
+    errors.get(0).get("message").asText() should include("Sign in")
     errors.get(0).get("details").asText() should not be empty
   }
 
-  it should "refuse a WorkflowExecuteRequest with write access but no workflow attached" in {
-    // WRITE, so the gate passes; the request then has nowhere to go. A distinct message is what
+  it should "refuse a WorkflowExecuteRequest from a verified caller with no workflow attached" in {
+    // Signed in, so the gate passes; the request then has nowhere to go. A distinct message is what
     // proves the gate is its own branch rather than the same failure reported twice.
-    val (session, sent) = mockSession(uid = Some(42))
-    registerState(session, PrivilegeEnum.WRITE)
+    val (session, sent) = mockSession(caller = Some(caller42))
+    registerState(session)
 
     val ex = intercept[IllegalStateException] {
       resource.myOnMsg(session, frameOf(executeRequest))
@@ -432,8 +422,8 @@ class WorkflowWebsocketResourceSpec
   }
 
   it should "announce Initializing before handing the request to the workflow" in {
-    val (session, sent) = mockSession(uid = Some(42))
-    val state = registerState(session, PrivilegeEnum.WRITE)
+    val (session, sent) = mockSession(caller = Some(caller42))
+    val state = registerState(session)
     val workflow = new TestWorkflowService(9101L)
     state.subscribe(workflow)
 
@@ -448,9 +438,9 @@ class WorkflowWebsocketResourceSpec
     workflow.initCalls should have size 1
     val (forwardedReq, forwardedUser, forwardedUri) = workflow.initCalls.head
     forwardedReq.executionName shouldBe request.executionName
-    // The uid is read out of the session's user-properties map; a wrong key would silently
-    // degrade every execution to anonymous.
-    forwardedUser.map(_.getUid.intValue()) shouldBe Some(42)
+    // The caller is read out of the session's user-properties map; a wrong key would silently
+    // refuse every execution.
+    forwardedUser shouldBe Some(caller42)
     forwardedUri.toString should endWith("/wsapi/workflow-websocket")
   }
 
@@ -460,8 +450,8 @@ class WorkflowWebsocketResourceSpec
     // Anything that is not one of the four named requests falls through to `wsInput`, which only
     // exists once an execution has been created. This is the no-workflow state; the workflow-but-no-
     // execution state is the next case, and both have to report the same thing.
-    val (session, sent) = mockSession(uid = Some(42))
-    registerState(session, PrivilegeEnum.WRITE)
+    val (session, sent) = mockSession(caller = Some(caller42))
+    registerState(session)
 
     val ex = intercept[IllegalStateException] {
       resource.myOnMsg(session, """{"type":"WorkflowPauseRequest"}""")
@@ -474,14 +464,16 @@ class WorkflowWebsocketResourceSpec
 
   it should "hand an unrecognised runtime command to the execution's websocket input" in {
     // The other half of the same arm: with an execution attached the command is forwarded rather
-    // than rejected, and the sender's uid rides along with it.
-    val (session, sent) = mockSession(uid = Some(42))
+    // than rejected, and the sender's subject rides along with it.
+    val (session, sent) = mockSession(caller = Some(caller42))
     val workflow = new TestWorkflowService(9102L)
     val execution = newExecution()
-    attach(session, PrivilegeEnum.WRITE, workflow, Some(execution))
+    attach(session, workflow, Some(execution))
 
-    val received = ArrayBuffer.empty[(TexeraWebSocketRequest, Option[Integer])]
-    execution.wsInput.subscribe[TexeraWebSocketRequest]((req, uid) => received += ((req, uid)))
+    val received = ArrayBuffer.empty[(TexeraWebSocketRequest, Option[String])]
+    execution.wsInput.subscribe[TexeraWebSocketRequest]((req, subject) =>
+      received += ((req, subject))
+    )
 
     // A payload-carrying request, deliberately. `WorkflowPauseRequest` is a field-less case class,
     // so its generated equals matches ANY instance: asserting on one would stay green with the
@@ -490,9 +482,9 @@ class WorkflowWebsocketResourceSpec
 
     received should have size 1
     received.head._1 shouldBe RetryRequest(Seq("worker-a", "worker-b"))
-    // Some(42), not None: None is what a missing user-properties entry yields anyway, so asserting
-    // it would be green with the whole uid lookup deleted.
-    received.head._2 shouldBe Some(Integer.valueOf(42))
+    // Some(subject), not None: None is what a missing user-properties entry yields anyway, so
+    // asserting it would be green with the whole caller lookup deleted.
+    received.head._2 shouldBe Some(caller42.subject)
     // Forwarding is the whole handling — nothing goes back to the socket, and no exception escapes.
     sent shouldBe empty
   }
@@ -505,9 +497,9 @@ class WorkflowWebsocketResourceSpec
     // walk straight past the `case None` guard that exists to report this very situation, NPEing on
     // `value.wsInput` instead. The message has to be the same one the no-workflow case above
     // produces: the client cannot act on the difference, and an NPE tells it nothing at all.
-    val (session, sent) = mockSession(uid = Some(42))
+    val (session, sent) = mockSession(caller = Some(caller42))
     val workflow = new TestWorkflowService(9107L)
-    attach(session, PrivilegeEnum.WRITE, workflow)
+    attach(session, workflow)
 
     val ex = intercept[IllegalStateException] {
       resource.myOnMsg(session, """{"type":"WorkflowPauseRequest"}""")
@@ -521,12 +513,12 @@ class WorkflowWebsocketResourceSpec
   // -- reconfiguration ----------------------------------------------------------
 
   it should "forward a ModifyLogicRequest to the execution's reconfiguration service" in {
-    val (session, sent) = mockSession(uid = Some(42))
+    val (session, sent) = mockSession(caller = Some(caller42))
     val workflow = new TestWorkflowService(9103L)
     val execution = newExecution()
     val reconfiguration = new CapturingReconfigurationService(execution.executionStateStore)
     execution.executionReconfigurationService = reconfiguration
-    attach(session, PrivilegeEnum.WRITE, workflow, Some(execution))
+    attach(session, workflow, Some(execution))
 
     resource.myOnMsg(session, modifyLogicFrame)
 
@@ -553,8 +545,8 @@ class WorkflowWebsocketResourceSpec
     // Silence is the assertion, and it is what separates this from the next case: with no workflow
     // there is nothing to reconfigure and nothing to say, whereas a workflow whose execution has not
     // started yet is a state the client can act on and is reported.
-    val (session, sent) = mockSession(uid = Some(42))
-    registerState(session, PrivilegeEnum.WRITE)
+    val (session, sent) = mockSession(caller = Some(caller42))
+    registerState(session)
 
     noException should be thrownBy resource.myOnMsg(session, modifyLogicFrame)
 
@@ -567,9 +559,9 @@ class WorkflowWebsocketResourceSpec
     // execution, not the workflow, so the guard has to be about the execution — reading
     // `executionService.getValue` behind a workflow-shaped guard yields null and NPEs one dereference
     // later. Same message as the `case other` arm, for the same reason.
-    val (session, sent) = mockSession(uid = Some(42))
+    val (session, sent) = mockSession(caller = Some(caller42))
     val workflow = new TestWorkflowService(9108L)
-    attach(session, PrivilegeEnum.WRITE, workflow)
+    attach(session, workflow)
 
     val ex = intercept[IllegalStateException] {
       resource.myOnMsg(session, modifyLogicFrame)
@@ -585,7 +577,7 @@ class WorkflowWebsocketResourceSpec
   it should "answer a pagination request with what the result service returns" in {
     val (session, sent) = mockSession()
     val workflow = new TestWorkflowService(9104L)
-    attach(session, PrivilegeEnum.WRITE, workflow)
+    attach(session, workflow)
 
     resource.myOnMsg(session, paginationFrame)
 
@@ -616,7 +608,7 @@ class WorkflowWebsocketResourceSpec
     // `workflowStateOpt.get.resultService...` throws NoSuchElementException here, which the
     // catch-all turns into a WorkflowErrorEvent and then rethrows — so both assertions bite.
     val (session, sent) = mockSession()
-    registerState(session, PrivilegeEnum.WRITE)
+    registerState(session)
 
     noException should be thrownBy resource.myOnMsg(session, paginationFrame)
 
@@ -629,10 +621,10 @@ class WorkflowWebsocketResourceSpec
     // A stale or typo'd client sends an id nothing binds to. The mapper's own rejection is already
     // pinned by `TexeraWebSocketRequestSpec`; what this asserts is that the failure travels through
     // the endpoint's error mapper on its way out, exactly like a failure raised by a handler. The
-    // rethrow AND the send are both asserted, for the same reason as the write-access gate: losing
+    // rethrow AND the send are both asserted, for the same reason as the signed-in gate: losing
     // either one leaves the other silently missing.
-    val (session, sent) = mockSession(uid = Some(42))
-    registerState(session, PrivilegeEnum.WRITE)
+    val (session, sent) = mockSession(caller = Some(caller42))
+    registerState(session)
 
     val ex = intercept[InvalidTypeIdException] {
       resource.myOnMsg(session, """{"type":"NoSuchWebSocketRequest"}""")
@@ -651,10 +643,10 @@ class WorkflowWebsocketResourceSpec
     // execution attached the error is written to its metadata store and nothing goes to the socket.
     // Without this case, a fix that reported parse failures by sending directly from the parse site
     // instead of routing them through the mapper would look correct.
-    val (session, sent) = mockSession(uid = Some(42))
+    val (session, sent) = mockSession(caller = Some(caller42))
     val workflow = new TestWorkflowService(9109L)
     val execution = newExecution()
-    attach(session, PrivilegeEnum.WRITE, workflow, Some(execution))
+    attach(session, workflow, Some(execution))
 
     intercept[InvalidTypeIdException] {
       resource.myOnMsg(session, """{"type":"NoSuchWebSocketRequest"}""")
@@ -671,10 +663,10 @@ class WorkflowWebsocketResourceSpec
   it should "record a failure in the execution's metadata store, replacing the stale compilation error" in {
     // With an execution attached the mapper writes into its metadata store instead of the socket,
     // and drops any earlier COMPILATION_ERROR so the panel shows one compilation failure at a time.
-    val (session, sent) = mockSession(uid = Some(42))
+    val (session, sent) = mockSession(caller = None)
     val workflow = new TestWorkflowService(9105L)
     val execution = newExecution()
-    attach(session, PrivilegeEnum.READ, workflow, Some(execution))
+    attach(session, workflow, Some(execution))
 
     val store = execution.executionStateStore.metadataStore
     // Two seeded errors of two different types. With only the new error in play the filter would
@@ -692,7 +684,7 @@ class WorkflowWebsocketResourceSpec
       )
     )
 
-    // READ access, so the write-access gate throws inside the try.
+    // No verified caller, so the signed-in gate throws inside the try.
     intercept[IllegalStateException] {
       resource.myOnMsg(session, frameOf(executeRequest))
     }
@@ -703,7 +695,7 @@ class WorkflowWebsocketResourceSpec
     errors.map(_.message) should not contain "stale compilation"
     val compilationErrors = errors.filter(_.`type` == COMPILATION_ERROR)
     compilationErrors should have size 1
-    compilationErrors.head.message should include("write access")
+    compilationErrors.head.message should include("Sign in")
     // `details` is what the frontend's error panel shows a developer, and it has to be the stack
     // trace, not the message again: naming the throwing frame is what separates
     // `getStackTraceWithAllCauses(err)` from `err.toString` / `err.getMessage`, both of which would
@@ -722,12 +714,12 @@ class WorkflowWebsocketResourceSpec
     // error — it goes to the socket instead. Recomputing that capture inside the catch (it is used
     // nowhere else) would reverse the routing, and no other case in this suite can see the
     // difference, because every other one either has an execution throughout or never gains one.
-    val (session, sent) = mockSession(uid = Some(42))
+    val (session, sent) = mockSession(caller = Some(caller42))
     val workflow = new TestWorkflowService(9106L)
     val execution = newExecution()
     workflow.publishThenFail = Some(execution)
     // Attached with NO execution: the capture is None.
-    attach(session, PrivilegeEnum.WRITE, workflow)
+    attach(session, workflow)
 
     intercept[IllegalStateException] {
       resource.myOnMsg(session, frameOf(executeRequest))
@@ -743,13 +735,13 @@ class WorkflowWebsocketResourceSpec
 
   // -- session lifecycle --------------------------------------------------------
 
-  "myOnOpen" should "bind the session to the requested workflow, computing unit and privilege" in {
+  "myOnOpen" should "bind the session to the requested workflow and computing unit" in {
     // Two rows, because one cannot tell a real parse from a constant: the ids differ from each
-    // other and from 1, and the privilege differs between rows.
-    Seq((970101L, 7, PrivilegeEnum.READ), (970102L, 13, PrivilegeEnum.WRITE)).foreach {
-      case (wid, cuid, access) =>
-        withClue(s"wid=$wid cuid=$cuid access=$access: ") {
-          val (session, sent) = mockSession(cuAccess = access.name(), wid = wid, cuid = cuid)
+    // other and from 1, and only one row has a verified caller.
+    Seq((970101L, 7, None), (970102L, 13, Some(caller42))).foreach {
+      case (wid, cuid, caller) =>
+        withClue(s"wid=$wid cuid=$cuid caller=$caller: ") {
+          val (session, sent) = mockSession(caller = caller, wid = wid, cuid = cuid)
           // The service this call has to JOIN. Created up front so the assertion below can be about
           // instance identity rather than field values.
           val shared = holdWorkflowService(wid, cuid)
@@ -775,9 +767,6 @@ class WorkflowWebsocketResourceSpec
           ) should be theSameInstanceAs shared
           state.getCurrentWorkflowState.map(s => (s.workflowId.id, s.computingUnitId)) shouldBe
             Some((wid, cuid))
-          // READ/WRITE, never NONE: NONE is SessionState's own field default, so feeding it would
-          // pass with the privilege never being set at all.
-          state.getUserComputingUnitAccess shouldBe access
 
           // Ordered, not merely present. The state event is the "hack to refresh frontend run
           // button state" and has to go out before the workflow subscription is established.
@@ -798,7 +787,7 @@ class WorkflowWebsocketResourceSpec
     // because it is the behaviour the endpoint actually has, and because the test above cannot see
     // it — both of its rows construct.
     val existing = holdWorkflowService(wid = 970103L, cuid = 5)
-    val (session, _) = mockSession(cuAccess = PrivilegeEnum.WRITE.name(), wid = 970103L, cuid = 99)
+    val (session, _) = mockSession(caller = Some(caller42), wid = 970103L, cuid = 99)
     registeredSessions += session.getId
 
     resource.myOnOpen(session, null)
@@ -816,7 +805,7 @@ class WorkflowWebsocketResourceSpec
 
   "myOnClose" should "drop the state registered under that session id" in {
     val (session, _) = mockSession()
-    val state = registerState(session, PrivilegeEnum.WRITE)
+    val state = registerState(session)
     SessionState.getState(session.getId) shouldBe state
 
     resource.myOnClose(session, null)

@@ -41,12 +41,12 @@ class WebsocketInputSpec extends AnyFlatSpec with Matchers {
 
   "subscribe" should "deliver requests whose runtime class matches T" in {
     val (input, errors) = newInputWithErrorSink()
-    val received = mutable.ListBuffer.empty[(HeartBeatRequest, Option[Integer])]
+    val received = mutable.ListBuffer.empty[(HeartBeatRequest, Option[String])]
     val sub = input.subscribe[HeartBeatRequest]((req, uid) => received += ((req, uid)))
     try {
       val req = HeartBeatRequest()
-      input.onNext(req, Some(7))
-      received.toList shouldBe List((req, Some(7)))
+      input.onNext(req, Some("subject-7"))
+      received.toList shouldBe List((req, Some("subject-7")))
       errors shouldBe empty
     } finally sub.dispose()
   }
@@ -57,22 +57,20 @@ class WebsocketInputSpec extends AnyFlatSpec with Matchers {
     val sub = input.subscribe[HeartBeatRequest]((req, _) => received += req)
     try {
       input.onNext(WorkflowKillRequest(), None)
-      input.onNext(WorkflowKillRequest(), Some(1))
+      input.onNext(WorkflowKillRequest(), Some("subject-1"))
       received shouldBe empty
       errors shouldBe empty
     } finally sub.dispose()
   }
 
-  it should "pass through uidOpt verbatim, including None" in {
+  it should "pass the caller's subject through verbatim, including None" in {
     val (input, _) = newInputWithErrorSink()
-    val seenUids = mutable.ListBuffer.empty[Option[Integer]]
+    val seenUids = mutable.ListBuffer.empty[Option[String]]
     val sub = input.subscribe[HeartBeatRequest]((_, uid) => seenUids += uid)
     try {
       input.onNext(HeartBeatRequest(), None)
-      input.onNext(HeartBeatRequest(), Some(42))
-      // Integer is a Java boxed type; compare via .map(_.intValue) to
-      // avoid hinging on Integer identity.
-      seenUids.map(_.map(_.intValue)).toList shouldBe List(None, Some(42))
+      input.onNext(HeartBeatRequest(), Some("subject-42"))
+      seenUids.toList shouldBe List(None, Some("subject-42"))
     } finally sub.dispose()
   }
 

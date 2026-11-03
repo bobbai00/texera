@@ -1,0 +1,135 @@
+// Texera 2.0 engine (computing unit) contract: what the catalog calls on a unit.
+// The unit is a pure engine: it receives self-contained execution requests and reports
+// back through OpenLineage events; it holds no catalog state of its own.
+import "@typespec/http";
+import "@typespec/rest";
+import "@typespec/openapi";
+import "@typespec/openapi3";
+import "./common.tsp";
+
+using Http;
+using Rest;
+using OpenAPI;
+
+@service(#{ title: "Texera Computing Unit" })
+@info(#{ version: "2.0.0-alpha" })
+@server("http://localhost:8085", "the unit")
+@useAuth(BearerAuth)
+namespace Texera.Engine;
+
+@doc("A dataset file the catalog resolved for this run: the operator property value and the URL the engine reads.")
+model ResolvedInput {
+  @doc("The dataset version this file belongs to.")
+  dataset: string;
+  vno: int32;
+  path: string;
+  @doc("A URL the unit can read, presigned by the catalog.")
+  url: string;
+  sizeBytes?: int64;
+}
+
+model EnvironmentRequest {
+  rid: string;
+  vno: int32;
+  python?: {
+    version?: string;
+    packages: string[];
+  };
+}
+
+model ResultStore {
+  @doc("Iceberg REST catalog URI the unit writes results to.")
+  catalogUri: string;
+  warehouse: string;
+  @doc("Namespace prefix for this execution's tables.")
+  `namespace`: string;
+}
+
+model Reporting {
+  @doc("Where the unit posts OpenLineage events and status: the catalog's /lineage/v1/events.")
+  lineageUrl: string;
+  @doc("Bearer token the unit presents when reporting.")
+  token: string;
+}
+
+model ExecutionStartRequest {
+  eid: string;
+  workflow: {
+    rid: string;
+    vno: int32;
+  };
+  name?: string;
+  @doc("The logical plan JSON; dataset file properties are already rewritten to resolved URLs.")
+  logicalPlan: unknown;
+  inputs?: ResolvedInput[];
+  environment?: EnvironmentRequest;
+  resultStore?: ResultStore;
+  reporting: Reporting;
+  actor: string;
+  onBehalfOf?: string;
+  parameters?: Record<unknown>;
+}
+
+model ExecutionAck {
+  eid: string;
+  accepted: boolean;
+}
+
+model ExecutionState {
+  eid: string;
+  status: ExecutionStatus;
+  operators: Record<OperatorRun>;
+  results: PortResult[];
+  error?: unknown;
+}
+
+model EngineCompileRequest {
+  logicalPlan: unknown;
+}
+
+model UnitHealth {
+  status: string;
+  version?: string;
+}
+
+model EnvironmentBuild {
+  rid: string;
+  vno: int32;
+  status: "building" | "ready" | "failed";
+  message?: string;
+}
+
+@route("/api")
+namespace Routes {
+  @route("/health")
+  interface Health {
+    @get check(): UnitHealth;
+  }
+
+  @route("/operators")
+  interface Operators {
+    @get list(): OperatorTypeList | Error;
+  }
+
+  @route("/compile")
+  interface Compile {
+    @post compile(@body body: EngineCompileRequest): CompileResult | Error;
+  }
+
+  @route("/executions")
+  interface Executions {
+    @doc("Start an execution; the unit reports progress through OpenLineage events.")
+    @post start(@body body: ExecutionStartRequest): ExecutionAck | Error;
+    @get @route("/{eid}") status(@path eid: string): ExecutionState | Error;
+    @post @route("/{eid}/cancel") cancel(@path eid: string): ExecutionState | Error;
+    @doc("A page of a port result. `table` is where the catalog recorded the result; a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.")
+    @get @route("/{eid}/results/{opid}/{port}") result(@path eid: string, @path opid: string, @path port: string, @query offset?: int64, @query limit?: int32, @query table?: string): RowPage | Error;
+  }
+
+  @route("/environments")
+  interface Environments {
+    @doc("Build (or confirm) the Python environment for an environment version on this unit.")
+    @post build(@body body: EnvironmentRequest): EnvironmentBuild | Error;
+    @get @route("/{rid}/{vno}") status(@path rid: string, @path vno: int32): EnvironmentBuild | Error;
+  }
+}

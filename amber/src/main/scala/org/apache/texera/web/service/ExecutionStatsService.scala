@@ -61,7 +61,7 @@ import org.apache.texera.web.model.websocket.event.{
   OperatorStatisticsUpdateEvent,
   WorkerAssignmentUpdateEvent
 }
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.apache.texera.web.execution.ExecutionRegistry
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
@@ -85,7 +85,7 @@ class ExecutionStatsService(
       .createDocument(uri, ResultSchema.runtimeStatisticsSchema)
       .writer("runtime_statistics")
       .asInstanceOf[BufferedItemWriter[Tuple]]
-    WorkflowExecutionsResource.updateRuntimeStatsUri(
+    ExecutionRegistry.updateRuntimeStatsUri(
       workflowContext.workflowId.id,
       workflowContext.executionId.id,
       uri

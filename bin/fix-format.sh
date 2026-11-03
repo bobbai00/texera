@@ -22,10 +22,11 @@
 # Runs code formatters for the Texera repository.
 #
 # Usage:
-#   bin/fix-format.sh               # Format all (Scala, Frontend, Python)
+#   bin/fix-format.sh               # Format all (Scala, Frontend, Python, Go)
 #   bin/fix-format.sh --scala       # Format Scala only
-#   bin/fix-format.sh --frontend    # Format Frontend only
+#   bin/fix-format.sh --frontend    # Format the TypeScript app and packages only (Biome)
 #   bin/fix-format.sh --python      # Format Python only
+#   bin/fix-format.sh --go          # Format the Go catalog only
 # -------------------------------------------------------------
 
 set -euo pipefail
@@ -41,7 +42,8 @@ if [[ -z "${TEXERA_HOME:-}" ]]; then
 fi
 
 # --- Key directories ---
-FRONTEND_DIR="$TEXERA_HOME/frontend"
+FRONTEND_DIR="$TEXERA_HOME/frontend-next"
+CATALOG_DIR="$TEXERA_HOME/catalog"
 AMBER_DIR="$TEXERA_HOME/amber"
 
 [[ -d "$FRONTEND_DIR" ]] || { tx_error "Frontend directory not found: $FRONTEND_DIR"; exit 1; }
@@ -53,15 +55,17 @@ TARGET="${1:-all}"
 run_scala=false
 run_frontend=false
 run_python=false
+run_go=false
 
 case "$TARGET" in
   --scala)    run_scala=true ;;
   --frontend) run_frontend=true ;;
   --python)   run_python=true ;;
-  ""|--all|all) run_scala=true; run_frontend=true; run_python=true ;;
+  --go)       run_go=true ;;
+  ""|--all|all) run_scala=true; run_frontend=true; run_python=true; run_go=true ;;
   *)
     tx_error "Unknown option: $TARGET"
-    echo "Usage: bin/fix-format.sh [--scala | --frontend | --python | --all]"
+    echo "Usage: bin/fix-format.sh [--scala | --frontend | --python | --go | --all]"
     exit 1
     ;;
 esac
@@ -82,14 +86,14 @@ fi
 
 # --- 2) Frontend formatting ---
 if $run_frontend; then
-  tx_info "Running yarn format:fix in frontend..."
-  if ! command -v yarn >/dev/null 2>&1; then
-    tx_error "yarn not found. Please install Yarn."
+  tx_info "Running Biome over frontend-next and packages/..."
+  if ! command -v bun >/dev/null 2>&1; then
+    tx_error "bun not found. Please install Bun."
     exit 1
   fi
   (
     cd "$FRONTEND_DIR"
-    yarn format:fix
+    bun run format
   )
   tx_success "Frontend formatting completed."
 fi
@@ -106,6 +110,17 @@ if $run_python; then
     ruff format src/main/python src/test/python
   )
   tx_success "Python formatting completed."
+fi
+
+# --- 4) Go formatting ---
+if $run_go; then
+  tx_info "Running gofmt over catalog/..."
+  if ! command -v gofmt >/dev/null 2>&1; then
+    tx_error "gofmt not found. Please install Go."
+    exit 1
+  fi
+  gofmt -w "$CATALOG_DIR"
+  tx_success "Go formatting completed."
 fi
 
 tx_success "✅ Formatting tasks completed successfully!"

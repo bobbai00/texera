@@ -24,60 +24,42 @@ import io.dropwizard.Configuration
 import io.dropwizard.configuration.{EnvironmentVariableSubstitutor, SubstitutingSourceProvider}
 import io.dropwizard.setup.{Bootstrap, Environment}
 import io.dropwizard.websockets.WebsocketBundle
-import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
-import org.apache.texera.amber.core.storage.DocumentFactory
-import org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
+import org.apache.commons.jcs3.access.exception.InvalidArgumentException
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.coordinator.CoordinatorConfig
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
-  COMPLETED,
-  FAILED
-}
 import org.apache.texera.amber.engine.common.AmberRuntime.scheduleRecurringCallThroughActorSystem
-import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
 import org.apache.texera.amber.engine.common.client.AmberClient
-import org.apache.texera.amber.engine.common.storage.SequentialRecordStorage
 import org.apache.texera.amber.engine.common.{AmberRuntime, Utils}
-import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.amber.util.{JSONUtils, ObjectMapperUtils}
-import org.apache.commons.jcs3.access.exception.InvalidArgumentException
-import org.apache.texera.auth.SessionUser
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowExecutions
-import org.apache.texera.web.auth.JwtAuth.setupJwtAuth
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.apache.texera.common.config.ApplicationConfig
+import org.apache.texera.web.auth.{UnitJwtAuth, UnitPrincipal}
+import org.apache.texera.web.execution.{ExecutionRegistry, ExecutionStorage, UnitApiResource}
 import org.apache.texera.web.resource.{
   SyncExecutionResource,
   WebsocketPayloadSizeTuner,
   WorkflowWebsocketResource
 }
-import org.apache.texera.web.service.ExecutionsMetadataPersistService
 import org.eclipse.jetty.server.session.SessionHandler
 import org.eclipse.jetty.servlet.FilterHolder
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeFilter
-import org.apache.texera.web.resource.pythonvirtualenvironment.PveResource
-import org.apache.texera.web.resource.pythonvirtualenvironment.PveWebsocketResource
 
-import java.net.URI
 import java.time.Duration
 import scala.annotation.tailrec
 import scala.concurrent.duration.DurationInt
 
+/**
+  * The computing unit: a pure engine. It serves the unit API (api/engine.tsp) and the
+  * WebSocket for live runs, verifies tokens against the identity provider, and reports to
+  * the catalog. It opens no database.
+  */
 object ComputingUnitMaster {
-
   def createAmberRuntime(
       workflowContext: WorkflowContext,
       physicalPlan: PhysicalPlan,
       conf: CoordinatorConfig,
       errorHandler: Throwable => Unit
   ): AmberClient = {
-    new AmberClient(
-      AmberRuntime.actorSystem,
-      workflowContext,
-      physicalPlan,
-      conf,
-      errorHandler
-    )
+    new AmberClient(AmberRuntime.actorSystem, workflowContext, physicalPlan, conf, errorHandler)
   }
 
   type OptionMap = Map[Symbol, Any]
@@ -89,21 +71,17 @@ object ComputingUnitMaster {
         case Nil => map
         case "--cluster" :: value :: tail =>
           nextOption(map ++ Map(Symbol("cluster") -> value.toBoolean), tail)
-        case option :: tail =>
+        case _ :: _ =>
           throw new InvalidArgumentException("unknown command-line arg")
       }
     }
-
     nextOption(Map(), args.toList)
   }
 
   def main(args: Array[String]): Unit = {
     val argMap = parseArgs(args)
-
     val clusterMode = argMap.get(Symbol("cluster")).asInstanceOf[Option[Boolean]].getOrElse(false)
-    // start actor system master node
     AmberRuntime.startActorMaster(clusterMode)
-    // start web server
     new ComputingUnitMaster().run(
       "server",
       Utils.amberHomePath
@@ -119,21 +97,13 @@ object ComputingUnitMaster {
 class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with LazyLogging {
 
   override def initialize(bootstrap: Bootstrap[Configuration]): Unit = {
-    // enable environment variable substitution in YAML config
     bootstrap.setConfigurationSourceProvider(
       new SubstitutingSourceProvider(
         bootstrap.getConfigurationSourceProvider,
         new EnvironmentVariableSubstitutor(false)
       )
     )
-    // add websocket bundle
-    bootstrap.addBundle(
-      new WebsocketBundle(
-        classOf[WorkflowWebsocketResource],
-        classOf[PveWebsocketResource]
-      )
-    )
-    // register the modules that parse workflows (SyncExecutionResource) to dropwizard's mapper
+    bootstrap.addBundle(new WebsocketBundle(classOf[WorkflowWebsocketResource]))
     JSONUtils.registerWorkflowModules(bootstrap.getObjectMapper)
   }
 
@@ -142,14 +112,7 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
     org.apache.texera.web.observability.WorkflowMetricsRecorder.init()
     ObjectMapperUtils.warmupObjectMapperForOperatorsSerde()
 
-    SqlServer.initConnection(
-      StorageConfig.jdbcUrl,
-      StorageConfig.jdbcUsername,
-      StorageConfig.jdbcPassword
-    )
-
     environment.jersey.setUrlPattern("/api/*")
-
     val webSocketUpgradeFilter =
       WebSocketUpgradeFilter.configureContext(environment.getApplicationContext)
     webSocketUpgradeFilter.getFactory.getPolicy.setIdleTimeout(Duration.ofHours(1).toMillis)
@@ -157,17 +120,12 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
       classOf[WebSocketUpgradeFilter].getName,
       webSocketUpgradeFilter
     )
-
-    // register SessionHandler
     environment.jersey.register(classOf[SessionHandler])
     environment.servlets.setSessionHandler(new SessionHandler)
 
-    environment.jersey.register(classOf[PveResource])
-
-    setupJwtAuth(environment)
-
+    UnitJwtAuth.setup(environment)
     environment.jersey.register(
-      new io.dropwizard.auth.AuthValueFactoryProvider.Binder[SessionUser](classOf[SessionUser])
+      new io.dropwizard.auth.AuthValueFactoryProvider.Binder[UnitPrincipal](classOf[UnitPrincipal])
     )
     environment.jersey.register(
       classOf[org.glassfish.jersey.server.filter.RolesAllowedDynamicFeature]
@@ -179,22 +137,6 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
       )
 
     val timeToLive: Int = ApplicationConfig.sinkStorageTTLInSecs
-    if (ApplicationConfig.cleanupAllExecutionResults) {
-      // do one time cleanup of collections that were not closed gracefully before restart/crash
-      // retrieve all executions that were executing before the reboot.
-      val allExecutionsBeforeRestart: List[WorkflowExecutions] =
-        WorkflowExecutionsResource.getExpiredExecutionsWithResultOrLog(-1)
-      cleanExecutions(
-        allExecutionsBeforeRestart,
-        statusByte => {
-          if (statusByte != maptoStatusCode(COMPLETED)) {
-            maptoStatusCode(FAILED) // for incomplete executions, mark them as failed.
-          } else {
-            statusByte
-          }
-        }
-      )
-    }
     scheduleRecurringCallThroughActorSystem(
       2.seconds,
       ApplicationConfig.sinkStorageCleanUpCheckIntervalInSecs.seconds
@@ -202,11 +144,9 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
       recurringCheckExpiredResults(timeToLive)
     }
 
-    environment.jersey.register(classOf[WorkflowExecutionsResource])
+    environment.jersey.register(classOf[UnitApiResource])
     environment.jersey.register(classOf[SyncExecutionResource])
 
-    // Route request logs through SLF4J, controlled by TEXERA_SERVICE_LOG_LEVEL.
-    // TODO: replace with RequestLoggingFilter.register() from common/auth once Dropwizard is upgraded to 4.x
     val requestLogger = org.slf4j.LoggerFactory.getLogger("org.eclipse.jetty.server.RequestLog")
     environment.getApplicationContext.addFilter(
       new FilterHolder(new javax.servlet.Filter {
@@ -230,79 +170,13 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
       "/*",
       java.util.EnumSet.allOf(classOf[javax.servlet.DispatcherType])
     )
+    logger.info(s"computing unit ready; identity provider ${UnitJwtAuth.issuer}")
   }
 
-  /**
-    * This function drops the collections.
-    * MongoDB doesn't have an API of drop collection where collection name in (from a subquery), so the implementation is to retrieve
-    * the entire list of those documents that have expired, then loop the list to drop them one by one
-    */
-  private def cleanExecutions(
-      executions: List[WorkflowExecutions],
-      statusChangeFunc: Short => Short
-  ): Unit = {
-    // drop the collection and update the status to ABORTED
-    executions.foreach(execEntry => {
-      dropCollections(execEntry.getResult)
-      deleteReplayLog(execEntry.getLogLocation)
-      // then delete the pointer from mySQL
-      val executionIdentity = ExecutionIdentity(execEntry.getEid.longValue())
-      ExecutionsMetadataPersistService.tryUpdateExistingExecution(executionIdentity) { execution =>
-        execution.setResult("")
-        execution.setLogLocation(null)
-        execution.setStatus(statusChangeFunc(execution.getStatus))
-      }
-    })
-  }
-
-  private def dropCollections(result: String): Unit = {
-    if (result == null || result.isEmpty) {
-      return
+  /** Drops the stored results of executions idle longer than the time to live. */
+  private def recurringCheckExpiredResults(timeToLive: Int): Unit =
+    ExecutionRegistry.getExpiredExecutionsWithResultOrLog(timeToLive).foreach { record =>
+      ExecutionStorage.drop(record.eid)
+      record.setLogLocation(null)
     }
-    // TODO: merge this logic to the server-side in-mem cleanup
-    // parse the JSON
-    try {
-      val node = objectMapper.readTree(result)
-      val collectionEntries = node.get("results")
-      // loop every collection and drop it
-      collectionEntries.forEach(collection => {
-        val storageType = collection.get("storageType").asText()
-        val collectionName = collection.get("storageKey").asText()
-        storageType match {
-          case DocumentFactory.ICEBERG =>
-          // rely on the server-side result cleanup logic.
-        }
-      })
-    } catch {
-      case e: Throwable =>
-        logger.warn("result collection cleanup failed.", e)
-    }
-  }
-
-  private def deleteReplayLog(logLocation: String): Unit = {
-    if (logLocation == null || logLocation.isEmpty) {
-      return
-    }
-    val uri = new URI(logLocation)
-    try {
-      val storage = SequentialRecordStorage.getStorage(Some(uri))
-      storage.deleteStorage()
-    } catch {
-      case throwable: Throwable =>
-        logger.warn(s"failed to delete log at $logLocation", throwable)
-    }
-  }
-
-  /**
-    * This function is called periodically and checks all expired collections and deletes them
-    */
-  private def recurringCheckExpiredResults(
-      timeToLive: Int
-  ): Unit = {
-    // retrieve all executions that are completed and their last update time goes beyond the ttl
-    val expiredResults: List[WorkflowExecutions] =
-      WorkflowExecutionsResource.getExpiredExecutionsWithResultOrLog(timeToLive)
-    // drop the collections and clean the logs
-    cleanExecutions(expiredResults, statusByte => statusByte)
-  }
 }

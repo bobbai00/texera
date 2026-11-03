@@ -39,7 +39,6 @@ import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.e2e.TestUtils.{
   cleanupWorkflowExecutionData,
-  initiateTexeraDBForTestCases,
   setUpWorkflowExecutionData,
   stateReached
 }
@@ -82,10 +81,6 @@ class PauseSpec
 
   override def beforeAll(): Unit = {
     system.actorOf(Props[SingleNodeListener](), "cluster-info")
-    // These test cases access postgres in CI, but occasionally the jdbc driver cannot be found during CI run.
-    // Explicitly load the JDBC driver to avoid flaky CI failures.
-    Class.forName("org.postgresql.Driver")
-    initiateTexeraDBForTestCases()
   }
 
   override def afterAll(): Unit = {

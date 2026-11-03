@@ -1,0 +1,55 @@
+<!doctype html>
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+-->
+<!--
+  Host page for HTML that workflows produce (charts, maps, reports). The app
+  loads it in an iframe with sandbox="allow-scripts" and posts the HTML in.
+  The server sends this file with its own CSP that starts with
+  `sandbox allow-scripts`, so even opened directly it runs in an opaque origin:
+  its scripts cannot read the app's storage or call the API as the user.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Visualization</title>
+    <script>
+      (function () {
+        var shown = false;
+        window.addEventListener("message", function (e) {
+          if (shown || e.source !== window.parent || !e.data || typeof e.data.html !== "string") return;
+          shown = true;
+          document.open();
+          document.write(e.data.html);
+          document.close();
+          // Charts size themselves to their container; give them the whole frame, as the current UI does.
+          document.documentElement.style.height = "100%";
+          if (document.body) {
+            document.body.style.height = "100%";
+            document.body.style.margin = "0";
+            var first = document.body.querySelector("div");
+            if (first) first.style.height = "100%";
+          }
+        });
+        window.parent.postMessage({ type: "texera-viz-frame-ready" }, "*");
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>

@@ -92,11 +92,13 @@ object AmberRuntime extends LazyLogging {
       localIpAddress = getNodeIpAddress
     }
 
+    // The actor port is configurable so several units can share a host.
+    val actorPort = sys.env.get("TEXERA_ACTOR_PORT").flatMap(_.toIntOption).getOrElse(2552)
     val masterConfig = ConfigFactory
       .parseString(s"""
-        pekko.remote.artery.canonical.port = 2552
+        pekko.remote.artery.canonical.port = $actorPort
         pekko.remote.artery.canonical.hostname = $localIpAddress
-        pekko.cluster.seed-nodes = [ "pekko://Amber@$localIpAddress:2552" ]
+        pekko.cluster.seed-nodes = [ "pekko://Amber@$localIpAddress:$actorPort" ]
         """)
       .withFallback(pekkoConfig)
       .resolve()

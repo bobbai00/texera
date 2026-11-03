@@ -1,0 +1,13 @@
+# oapi-codegen configuration for the catalog server. Run `make generate` at the repo root.
+package: api
+output: internal/api/catalog.gen.go
+generate:
+  models: true
+  strict-server: true
+  std-http-server: true
+  embedded-spec: true
+output-options:
+  skip-prune: false
+  nullable-type: true
+compatibility:
+  always-prefix-enum-values: false

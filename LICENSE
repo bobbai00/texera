@@ -215,23 +215,6 @@ This product bundles code derived from mbknor-jackson-jsonschema:
   Source: https://github.com/mbknor/mbknor-jackson-jsonschema
   License: MIT License (licenses-3rd-party-code/mbknor-jackson-jsonschema.txt)
 
-This product bundles code derived from Google Angular formly examples:
-  - frontend/src/app/common/formly/array.type.ts
-  - frontend/src/app/common/formly/object.type.ts
-  - frontend/src/app/common/formly/multischema.type.ts
-  - frontend/src/app/common/formly/null.type.ts
-  Copyright (c) 2018 Google Inc. All Rights Reserved.
-  Source: https://angular.io
-  License: MIT License (licenses-3rd-party-code/angular.md)
-
-This product bundles code derived from TypeFox monaco-languageclient:
-  - pyright-language-service/src/main.ts
-  - pyright-language-service/src/language-server-runner.ts
-  - pyright-language-service/src/server-commons.ts
-  Copyright (c) 2024 TypeFox and others.
-  Source: https://github.com/TypeFox/monaco-languageclient
-  License: MIT License (licenses-3rd-party-code/monaco-languageclient.txt)
-
 This product bundles code derived from inner-class:
   - amber/src/main/python/core/util/customized_queue/inner.py
   Copyright (c) 2019 sebkeim
@@ -243,156 +226,131 @@ This product bundles the ScalaPB options definition:
   Source: https://github.com/scalapb/ScalaPB
   License: Apache License 2.0 (this LICENSE file)
 
-This product includes icons from Google's Material Symbols:
-  - frontend/src/app/common/icon/model-icon.ts ("hub")
-  - the "psychology", "smart_toy" and "snippet_folder" icons drawn into
-    frontend/src/assets/notebook_migration_tool/tool_popup_diagram.png,
-    python_file_diagram.png and python_folder_diagram.png
-  Copyright (c) Google LLC
-  Source: https://github.com/google/material-design-icons
-  License: Apache License 2.0 (this LICENSE file)
-
 This product includes icons from Google's Material Symbols, used as operator icons:
-  - frontend/src/assets/operator_images/FigureFactoryTable.png (table_chart)
-  - frontend/src/assets/operator_images/FilledAreaPlot.png (area_chart)
-  - frontend/src/assets/operator_images/IntervalJoin.png (join_inner)
-  - frontend/src/assets/operator_images/SklearnExtraTrees.png (forest)
-  - frontend/src/assets/operator_images/SklearnLogisticRegressionCV.png (autorenew cycle arrows, drawn around Carbon 'chart--logistic-regression')
-  - frontend/src/assets/operator_images/SklearnPrediction.png (batch_prediction)
-  - frontend/src/assets/operator_images/SklearnProbabilityCalibration.png (tune)
-  - frontend/src/assets/operator_images/SklearnRandomForest.png (forest)
-  - frontend/src/assets/operator_images/SklearnRidgeCV.png (autorenew cycle arrows, drawn around Lucide 'mountain-snow')
-  - frontend/src/assets/operator_images/SklearnTrainingExtraTrees.png (forest)
-  - frontend/src/assets/operator_images/SklearnTrainingLogisticRegressionCV.png (autorenew cycle arrows, drawn around Carbon 'chart--logistic-regression')
-  - frontend/src/assets/operator_images/SklearnTrainingProbabilityCalibration.png (tune)
-  - frontend/src/assets/operator_images/SklearnTrainingRandomForest.png (forest)
-  - frontend/src/assets/operator_images/SklearnTrainingRidgeCV.png (autorenew cycle arrows, drawn around Lucide 'mountain-snow')
-  - frontend/src/assets/operator_images/Union.png (merge)
+  - frontend-next/public/operator-images/FigureFactoryTable.png (table_chart)
+  - frontend-next/public/operator-images/FilledAreaPlot.png (area_chart)
+  - frontend-next/public/operator-images/IntervalJoin.png (join_inner)
+  - frontend-next/public/operator-images/SklearnExtraTrees.png (forest)
+  - frontend-next/public/operator-images/SklearnLogisticRegressionCV.png (autorenew cycle arrows, drawn around Carbon 'chart--logistic-regression')
+  - frontend-next/public/operator-images/SklearnPrediction.png (batch_prediction)
+  - frontend-next/public/operator-images/SklearnProbabilityCalibration.png (tune)
+  - frontend-next/public/operator-images/SklearnRandomForest.png (forest)
+  - frontend-next/public/operator-images/SklearnRidgeCV.png (autorenew cycle arrows, drawn around Lucide 'mountain-snow')
+  - frontend-next/public/operator-images/SklearnTrainingExtraTrees.png (forest)
+  - frontend-next/public/operator-images/SklearnTrainingLogisticRegressionCV.png (autorenew cycle arrows, drawn around Carbon 'chart--logistic-regression')
+  - frontend-next/public/operator-images/SklearnTrainingProbabilityCalibration.png (tune)
+  - frontend-next/public/operator-images/SklearnTrainingRandomForest.png (forest)
+  - frontend-next/public/operator-images/SklearnTrainingRidgeCV.png (autorenew cycle arrows, drawn around Lucide 'mountain-snow')
+  - frontend-next/public/operator-images/Union.png (merge)
   Copyright (c) Google LLC
   Source: https://github.com/google/material-design-icons (@material-symbols/svg-400 0.48.2)
   License: Apache License 2.0 (this LICENSE file)
 
 This product includes icons from IBM Carbon Design System:
-  - frontend/src/assets/operator_images/Aggregate.png (sigma)
-  - frontend/src/assets/operator_images/BoxViolinPlot.png (chart--violin-plot)
-  - frontend/src/assets/operator_images/BubbleChart.png (chart--bubble)
-  - frontend/src/assets/operator_images/BulletChart.png (chart--bullet)
-  - frontend/src/assets/operator_images/CandlestickChart.png (chart--candlestick)
-  - frontend/src/assets/operator_images/Dendrogram.png (tree-view)
-  - frontend/src/assets/operator_images/ECDFPlot.png (chart--stepper)
-  - frontend/src/assets/operator_images/HashJoin.png (join--inner)
-  - frontend/src/assets/operator_images/HeatMap.png (heat-map)
-  - frontend/src/assets/operator_images/Histogram.png (chart--histogram)
-  - frontend/src/assets/operator_images/IcicleChart.png (chart--treemap)
-  - frontend/src/assets/operator_images/KNNClassifierTrainer.png (edge-cluster)
-  - frontend/src/assets/operator_images/KNNRegressorTrainer.png (edge-cluster)
-  - frontend/src/assets/operator_images/LineChart.png (chart--line)
-  - frontend/src/assets/operator_images/NestedTable.png (data-table--reference)
-  - frontend/src/assets/operator_images/NetworkGraph.png (chart--network)
-  - frontend/src/assets/operator_images/ParallelCoordinatesPlot.png (chart--parallel)
-  - frontend/src/assets/operator_images/PieChart.png (chart--pie)
-  - frontend/src/assets/operator_images/PolarChart.png (chart--radial)
-  - frontend/src/assets/operator_images/RadarPlot.png (chart--radar)
-  - frontend/src/assets/operator_images/SVCTrainer.png (chart--scatter)
-  - frontend/src/assets/operator_images/SVRTrainer.png (chart--scatter)
-  - frontend/src/assets/operator_images/ScatterMatrixChart.png (scatter-matrix)
-  - frontend/src/assets/operator_images/SklearnComplementNaiveBayes.png (chart--venn-diagram)
-  - frontend/src/assets/operator_images/SklearnDecisionTree.png (decision-tree)
-  - frontend/src/assets/operator_images/SklearnGradientBoosting.png (chart--scatter, with a fitted line and a slope triangle added)
-  - frontend/src/assets/operator_images/SklearnKNN.png (share)
-  - frontend/src/assets/operator_images/SklearnLinearRegression.png (chart--scatter, with a fitted line added)
-  - frontend/src/assets/operator_images/SklearnLogisticRegression.png (chart--logistic-regression)
-  - frontend/src/assets/operator_images/SklearnLogisticRegressionCV.png (chart--logistic-regression, placed inside Material Symbols 'autorenew' cycle arrows)
-  - frontend/src/assets/operator_images/SklearnPerceptron.png (flow--merge)
-  - frontend/src/assets/operator_images/SklearnSDG.png (math-curve)
-  - frontend/src/assets/operator_images/SklearnTrainingComplementNaiveBayes.png (chart--venn-diagram)
-  - frontend/src/assets/operator_images/SklearnTrainingDecisionTree.png (decision-tree)
-  - frontend/src/assets/operator_images/SklearnTrainingGradientBoosting.png (chart--scatter, with a fitted line and a slope triangle added)
-  - frontend/src/assets/operator_images/SklearnTrainingKNN.png (share)
-  - frontend/src/assets/operator_images/SklearnTrainingLinearRegression.png (chart--scatter, with a fitted line added)
-  - frontend/src/assets/operator_images/SklearnTrainingLogisticRegression.png (chart--logistic-regression)
-  - frontend/src/assets/operator_images/SklearnTrainingLogisticRegressionCV.png (chart--logistic-regression, placed inside Material Symbols 'autorenew' cycle arrows)
-  - frontend/src/assets/operator_images/SklearnTrainingPerceptron.png (flow--merge)
-  - frontend/src/assets/operator_images/SklearnTrainingSDG.png (math-curve)
-  - frontend/src/assets/operator_images/SortPartitions.png (sort--descending)
-  - frontend/src/assets/operator_images/TimeSeriesPlot.png (chart--multi-line)
-  - frontend/src/assets/operator_images/WaterfallChart.png (chart--waterfall)
-  - frontend/src/assets/operator_images/WordCloud.png (word-cloud)
+  - frontend-next/public/operator-images/Aggregate.png (sigma)
+  - frontend-next/public/operator-images/BoxViolinPlot.png (chart--violin-plot)
+  - frontend-next/public/operator-images/BubbleChart.png (chart--bubble)
+  - frontend-next/public/operator-images/BulletChart.png (chart--bullet)
+  - frontend-next/public/operator-images/CandlestickChart.png (chart--candlestick)
+  - frontend-next/public/operator-images/Dendrogram.png (tree-view)
+  - frontend-next/public/operator-images/ECDFPlot.png (chart--stepper)
+  - frontend-next/public/operator-images/HashJoin.png (join--inner)
+  - frontend-next/public/operator-images/HeatMap.png (heat-map)
+  - frontend-next/public/operator-images/Histogram.png (chart--histogram)
+  - frontend-next/public/operator-images/IcicleChart.png (chart--treemap)
+  - frontend-next/public/operator-images/KNNClassifierTrainer.png (edge-cluster)
+  - frontend-next/public/operator-images/KNNRegressorTrainer.png (edge-cluster)
+  - frontend-next/public/operator-images/LineChart.png (chart--line)
+  - frontend-next/public/operator-images/NestedTable.png (data-table--reference)
+  - frontend-next/public/operator-images/NetworkGraph.png (chart--network)
+  - frontend-next/public/operator-images/ParallelCoordinatesPlot.png (chart--parallel)
+  - frontend-next/public/operator-images/PieChart.png (chart--pie)
+  - frontend-next/public/operator-images/PolarChart.png (chart--radial)
+  - frontend-next/public/operator-images/RadarPlot.png (chart--radar)
+  - frontend-next/public/operator-images/SVCTrainer.png (chart--scatter)
+  - frontend-next/public/operator-images/SVRTrainer.png (chart--scatter)
+  - frontend-next/public/operator-images/ScatterMatrixChart.png (scatter-matrix)
+  - frontend-next/public/operator-images/SklearnComplementNaiveBayes.png (chart--venn-diagram)
+  - frontend-next/public/operator-images/SklearnDecisionTree.png (decision-tree)
+  - frontend-next/public/operator-images/SklearnGradientBoosting.png (chart--scatter, with a fitted line and a slope triangle added)
+  - frontend-next/public/operator-images/SklearnKNN.png (share)
+  - frontend-next/public/operator-images/SklearnLinearRegression.png (chart--scatter, with a fitted line added)
+  - frontend-next/public/operator-images/SklearnLogisticRegression.png (chart--logistic-regression)
+  - frontend-next/public/operator-images/SklearnLogisticRegressionCV.png (chart--logistic-regression, placed inside Material Symbols 'autorenew' cycle arrows)
+  - frontend-next/public/operator-images/SklearnPerceptron.png (flow--merge)
+  - frontend-next/public/operator-images/SklearnSDG.png (math-curve)
+  - frontend-next/public/operator-images/SklearnTrainingComplementNaiveBayes.png (chart--venn-diagram)
+  - frontend-next/public/operator-images/SklearnTrainingDecisionTree.png (decision-tree)
+  - frontend-next/public/operator-images/SklearnTrainingGradientBoosting.png (chart--scatter, with a fitted line and a slope triangle added)
+  - frontend-next/public/operator-images/SklearnTrainingKNN.png (share)
+  - frontend-next/public/operator-images/SklearnTrainingLinearRegression.png (chart--scatter, with a fitted line added)
+  - frontend-next/public/operator-images/SklearnTrainingLogisticRegression.png (chart--logistic-regression)
+  - frontend-next/public/operator-images/SklearnTrainingLogisticRegressionCV.png (chart--logistic-regression, placed inside Material Symbols 'autorenew' cycle arrows)
+  - frontend-next/public/operator-images/SklearnTrainingPerceptron.png (flow--merge)
+  - frontend-next/public/operator-images/SklearnTrainingSDG.png (math-curve)
+  - frontend-next/public/operator-images/SortPartitions.png (sort--descending)
+  - frontend-next/public/operator-images/TimeSeriesPlot.png (chart--multi-line)
+  - frontend-next/public/operator-images/WaterfallChart.png (chart--waterfall)
+  - frontend-next/public/operator-images/WordCloud.png (word-cloud)
   Copyright 2015 IBM Corp.
   Source: https://github.com/carbon-design-system/carbon (@carbon/icons 11.91.0)
   License: Apache License 2.0 (this LICENSE file)
 
-This product includes the ORCID iD icon from ORCID, Inc.:
-  - frontend/src/assets/logos/ORCID-iD_icon_24x24.png
-  Source: https://info.orcid.org/brand-guidelines/
-          https://doi.org/10.23640/07243.5008697 (ORCID iD Icons, ORCID Brand Library)
-  License: CC0 1.0 Universal (licenses/LICENSE-CC0-1.0.txt)
-  Note: ORCID(TM), the ORCID logo and the iD logo are trademarks of ORCID, Inc. The icon is
-        bundled unmodified and displayed only to label ORCID sign-in, per ORCID's brand
-        guidelines; CC0 covers the graphic, not the mark.
-
-This product includes SVG icons from SVGRepo:
-  - frontend/src/assets/svg/operator-view-result.svg
-  - frontend/src/assets/svg/operator-reuse-cache-valid.svg
-  - frontend/src/assets/svg/operator-reuse-cache-invalid.svg
-  Source: https://www.svgrepo.com
-  License: MIT License (licenses/LICENSE-MIT.txt)
-
 This product includes icons from Phosphor Icons, used as operator icons:
-  - frontend/src/assets/operator_images/BarChart.png (chart-bar)
-  - frontend/src/assets/operator_images/CSVFileScan.png (file-csv)
-  - frontend/src/assets/operator_images/CSVOldFileScan.png (file-csv)
-  - frontend/src/assets/operator_images/Difference.png (subtract)
-  - frontend/src/assets/operator_images/FileLister.png (file-csv)
-  - frontend/src/assets/operator_images/FileScan.png (file-csv)
-  - frontend/src/assets/operator_images/FileScanOp.png (file-csv)
-  - frontend/src/assets/operator_images/FunnelPlot.png (funnel-simple)
-  - frontend/src/assets/operator_images/GaugeChart.png (gauge)
-  - frontend/src/assets/operator_images/HTMLVisualizer.png (file-html)
-  - frontend/src/assets/operator_images/Intersect.png (intersect)
-  - frontend/src/assets/operator_images/JSONLFileScan.png (file-csv)
-  - frontend/src/assets/operator_images/Split.png (arrows-split)
-  - frontend/src/assets/operator_images/SymmetricDifference.png (exclude)
-  - frontend/src/assets/operator_images/WindRoseChart.png (compass-rose)
+  - frontend-next/public/operator-images/BarChart.png (chart-bar)
+  - frontend-next/public/operator-images/CSVFileScan.png (file-csv)
+  - frontend-next/public/operator-images/CSVOldFileScan.png (file-csv)
+  - frontend-next/public/operator-images/Difference.png (subtract)
+  - frontend-next/public/operator-images/FileLister.png (file-csv)
+  - frontend-next/public/operator-images/FileScan.png (file-csv)
+  - frontend-next/public/operator-images/FileScanOp.png (file-csv)
+  - frontend-next/public/operator-images/FunnelPlot.png (funnel-simple)
+  - frontend-next/public/operator-images/GaugeChart.png (gauge)
+  - frontend-next/public/operator-images/HTMLVisualizer.png (file-html)
+  - frontend-next/public/operator-images/Intersect.png (intersect)
+  - frontend-next/public/operator-images/JSONLFileScan.png (file-csv)
+  - frontend-next/public/operator-images/Split.png (arrows-split)
+  - frontend-next/public/operator-images/SymmetricDifference.png (exclude)
+  - frontend-next/public/operator-images/WindRoseChart.png (compass-rose)
   Copyright (c) 2023 Phosphor Icons
   Source: https://github.com/phosphor-icons/core (@phosphor-icons/core 2.1.1)
   License: MIT License (licenses/LICENSE-MIT.txt)
 
 This product includes icons from Bootstrap Icons, used as operator icons:
-  - frontend/src/assets/operator_images/CartesianProduct.png (x)
-  - frontend/src/assets/operator_images/ChoroplethMap.png (map)
-  - frontend/src/assets/operator_images/ImageVisualizer.png (image)
-  - frontend/src/assets/operator_images/LoopEnd.png (stop-circle)
-  - frontend/src/assets/operator_images/RandomKSampling.png (dice-3)
-  - frontend/src/assets/operator_images/Regex.png (regex)
-  - frontend/src/assets/operator_images/ReservoirSampling.png (dice-3)
-  - frontend/src/assets/operator_images/Sleep.png (moon)
-  - frontend/src/assets/operator_images/Sort.png (sort-down)
-  - frontend/src/assets/operator_images/StableMergeSort.png (sort-down)
-  - frontend/src/assets/operator_images/TablesPlot.png (table)
-  - frontend/src/assets/operator_images/TextInput.png (input-cursor)
-  - frontend/src/assets/operator_images/URLFetcher.png (cloud-download)
-  - frontend/src/assets/operator_images/URLVisualizer.png (link)
+  - frontend-next/public/operator-images/CartesianProduct.png (x)
+  - frontend-next/public/operator-images/ChoroplethMap.png (map)
+  - frontend-next/public/operator-images/ImageVisualizer.png (image)
+  - frontend-next/public/operator-images/LoopEnd.png (stop-circle)
+  - frontend-next/public/operator-images/RandomKSampling.png (dice-3)
+  - frontend-next/public/operator-images/Regex.png (regex)
+  - frontend-next/public/operator-images/ReservoirSampling.png (dice-3)
+  - frontend-next/public/operator-images/Sleep.png (moon)
+  - frontend-next/public/operator-images/Sort.png (sort-down)
+  - frontend-next/public/operator-images/StableMergeSort.png (sort-down)
+  - frontend-next/public/operator-images/TablesPlot.png (table)
+  - frontend-next/public/operator-images/TextInput.png (input-cursor)
+  - frontend-next/public/operator-images/URLFetcher.png (cloud-download)
+  - frontend-next/public/operator-images/URLVisualizer.png (link)
   Copyright (c) 2019-2024 The Bootstrap Authors
   Source: https://github.com/twbs/icons (bootstrap-icons 1.13.2)
   License: MIT License (licenses/LICENSE-MIT.txt)
 
 This product includes icons from Tabler Icons:
-  - frontend/src/assets/operator_images/CarpetPlot.png (mesh)
-  - frontend/src/assets/operator_images/Distinct.png (copy-minus)
-  - frontend/src/assets/operator_images/DotPlot.png (chart-dots)
-  - frontend/src/assets/operator_images/HierarchyChart.png (hierarchy-3)
-  - frontend/src/assets/operator_images/Scatter3DChart.png (chart-scatter-3d)
-  - frontend/src/assets/operator_images/SklearnAdaptiveBoosting.png (arrows-join-2)
-  - frontend/src/assets/operator_images/SklearnBernoulliNaiveBayes.png (chart-grid-dots)
-  - frontend/src/assets/operator_images/SklearnExtraTree.png (binary-tree)
-  - frontend/src/assets/operator_images/SklearnMultiLayerPerceptron.png (topology-full)
-  - frontend/src/assets/operator_images/SklearnTrainingAdaptiveBoosting.png (arrows-join-2)
-  - frontend/src/assets/operator_images/SklearnTrainingBernoulliNaiveBayes.png (chart-grid-dots)
-  - frontend/src/assets/operator_images/SklearnTrainingExtraTree.png (binary-tree)
-  - frontend/src/assets/operator_images/SklearnTrainingMultiLayerPerceptron.png (topology-full)
-  - frontend/src/assets/operator_images/TreePlot.png (tree)
-  - frontend/src/assets/operator_images/VolcanoPlot.png (volcano)
+  - frontend-next/public/operator-images/CarpetPlot.png (mesh)
+  - frontend-next/public/operator-images/Distinct.png (copy-minus)
+  - frontend-next/public/operator-images/DotPlot.png (chart-dots)
+  - frontend-next/public/operator-images/HierarchyChart.png (hierarchy-3)
+  - frontend-next/public/operator-images/Scatter3DChart.png (chart-scatter-3d)
+  - frontend-next/public/operator-images/SklearnAdaptiveBoosting.png (arrows-join-2)
+  - frontend-next/public/operator-images/SklearnBernoulliNaiveBayes.png (chart-grid-dots)
+  - frontend-next/public/operator-images/SklearnExtraTree.png (binary-tree)
+  - frontend-next/public/operator-images/SklearnMultiLayerPerceptron.png (topology-full)
+  - frontend-next/public/operator-images/SklearnTrainingAdaptiveBoosting.png (arrows-join-2)
+  - frontend-next/public/operator-images/SklearnTrainingBernoulliNaiveBayes.png (chart-grid-dots)
+  - frontend-next/public/operator-images/SklearnTrainingExtraTree.png (binary-tree)
+  - frontend-next/public/operator-images/SklearnTrainingMultiLayerPerceptron.png (topology-full)
+  - frontend-next/public/operator-images/TreePlot.png (tree)
+  - frontend-next/public/operator-images/VolcanoPlot.png (volcano)
   Copyright (c) 2020-2026 Paweł Kuna
   Source: https://github.com/tabler/tabler-icons (@tabler/icons 3.50.0)
   License: MIT License (licenses/LICENSE-MIT.txt)
@@ -401,67 +359,35 @@ ISC License
 --------------------------------------
 
 This product includes icons from Lucide:
-  - frontend/src/assets/operator_images/DictionaryMatcher.png (book-search)
-  - frontend/src/assets/operator_images/Filter.png (filter)
-  - frontend/src/assets/operator_images/GanttChart.png (chart-gantt)
-  - frontend/src/assets/operator_images/HuggingFaceSpamSMSDetection.png (message-square-warning)
-  - frontend/src/assets/operator_images/If.png (git-branch)
-  - frontend/src/assets/operator_images/Limit.png (list-end)
-  - frontend/src/assets/operator_images/LoopStart.png (repeat)
-  - frontend/src/assets/operator_images/RadarChart.png (chart-radar)
-  - frontend/src/assets/operator_images/Scatterplot.png (chart-scatter)
-  - frontend/src/assets/operator_images/Scorer.png (gauge)
-  - frontend/src/assets/operator_images/SklearnBagging.png (layers)
-  - frontend/src/assets/operator_images/SklearnNearestCentroid.png (circle-dot-dashed)
-  - frontend/src/assets/operator_images/SklearnRidge.png (mountain-snow)
-  - frontend/src/assets/operator_images/SklearnRidgeCV.png (mountain-snow, placed inside Material Symbols 'autorenew' cycle arrows)
-  - frontend/src/assets/operator_images/SklearnTesting.png (test-tubes)
-  - frontend/src/assets/operator_images/SklearnTrainingBagging.png (layers)
-  - frontend/src/assets/operator_images/SklearnTrainingNearestCentroid.png (circle-dot-dashed)
-  - frontend/src/assets/operator_images/SklearnTrainingRidge.png (mountain-snow)
-  - frontend/src/assets/operator_images/SklearnTrainingRidgeCV.png (mountain-snow, placed inside Material Symbols 'autorenew' cycle arrows)
+  - frontend-next/public/operator-images/DictionaryMatcher.png (book-search)
+  - frontend-next/public/operator-images/Filter.png (filter)
+  - frontend-next/public/operator-images/GanttChart.png (chart-gantt)
+  - frontend-next/public/operator-images/HuggingFaceSpamSMSDetection.png (message-square-warning)
+  - frontend-next/public/operator-images/If.png (git-branch)
+  - frontend-next/public/operator-images/Limit.png (list-end)
+  - frontend-next/public/operator-images/LoopStart.png (repeat)
+  - frontend-next/public/operator-images/RadarChart.png (chart-radar)
+  - frontend-next/public/operator-images/Scatterplot.png (chart-scatter)
+  - frontend-next/public/operator-images/Scorer.png (gauge)
+  - frontend-next/public/operator-images/SklearnBagging.png (layers)
+  - frontend-next/public/operator-images/SklearnNearestCentroid.png (circle-dot-dashed)
+  - frontend-next/public/operator-images/SklearnRidge.png (mountain-snow)
+  - frontend-next/public/operator-images/SklearnRidgeCV.png (mountain-snow, placed inside Material Symbols 'autorenew' cycle arrows)
+  - frontend-next/public/operator-images/SklearnTesting.png (test-tubes)
+  - frontend-next/public/operator-images/SklearnTrainingBagging.png (layers)
+  - frontend-next/public/operator-images/SklearnTrainingNearestCentroid.png (circle-dot-dashed)
+  - frontend-next/public/operator-images/SklearnTrainingRidge.png (mountain-snow)
+  - frontend-next/public/operator-images/SklearnTrainingRidgeCV.png (mountain-snow, placed inside Material Symbols 'autorenew' cycle arrows)
   Copyright (c) 2026 Lucide Icons and Contributors
   Source: https://github.com/lucide-icons/lucide (lucide-static 1.64.0)
   License: ISC License (licenses/LICENSE-ISC.txt)
 
-BSD 2-Clause License
---------------------------------------
-
-This product bundles the Yarn package manager release used by the frontend
-build:
-  - frontend/.yarn/releases/yarn-4.14.1.cjs
-  Copyright (c) 2016-present, Yarn Contributors
-  Source: https://github.com/yarnpkg/berry
-  License: BSD 2-Clause License (licenses-3rd-party-code/yarn.txt)
-
 BSD 3-Clause License
 --------------------------------------
 
-This product includes the Project Jupyter logo, drawn into a diagram:
-  - frontend/src/assets/notebook_migration_tool/tool_popup_diagram.png
-  Copyright (c) 2014, Project Jupyter
-  Source: https://github.com/jupyter/design
-  License: BSD 3-Clause License (licenses/LICENSE-BSD-3-Clause.txt)
-  Note: "Jupyter" and the Jupyter logo are trademarks of LF Charities. The logo is
-        used unmodified to show that the tool imports Jupyter notebooks, as the
-        Jupyter trademark policy permits.
-
 This product bundles the Iris example dataset, as distributed with scikit-learn:
-  - bin/single-node/examples/datasets/iris-species/Iris.csv
+  - bin/texera-2-0/examples/iris.csv
   Creator: R. A. Fisher (1936)
   Copyright (c) 2007-2024 The scikit-learn developers
   Source: https://github.com/scikit-learn/scikit-learn/blob/1.7.2/sklearn/datasets/data/iris.csv
   License: BSD 3-Clause License (licenses/LICENSE-BSD-3-Clause.txt)
-
-Trademarks
---------------------------------------
-
-This product includes the Apple logo, a trademark of Apple Inc.:
-  - frontend/src/assets/logos/apple-logo-white.svg
-  Apple and the Apple logo are trademarks of Apple Inc., registered in the U.S.
-  and other countries. The mark is included solely to render the "Continue with
-  Apple" button, which Apple's guidelines require to carry their own artwork.
-  Source: https://developer.apple.com/design/human-interface-guidelines/sign-in-with-apple
-  Use governed by Apple's Sign in with Apple usage guidelines, not by an
-  open-source license:
-  https://developer.apple.com/sign-in-with-apple/usage-guidelines-for-websites-and-other-platforms/

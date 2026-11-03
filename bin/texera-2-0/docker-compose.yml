@@ -1,0 +1,208 @@
+# Texera 2.0 development stack: infrastructure in containers, the Go catalog, the agent
+# runtime, the frontend and the computing unit on the host during development.
+#
+#   cd bin/texera-2-0 && docker compose up -d
+#
+# Envoy :8088 (host) is the only entrypoint. It verifies Keycloak tokens (JWKS) on every
+# protected route and asks the catalog's PDP (ext_authz) before forwarding.
+name: texera2
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: texera2-postgres
+    environment:
+      POSTGRES_USER: texera
+      POSTGRES_PASSWORD: texera
+      POSTGRES_DB: catalog
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U texera -d catalog"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5
+    container_name: texera2-keycloak
+    command: ["start-dev", "--import-realm", "--http-relative-path=/auth"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: texera
+      KC_DB_PASSWORD: texera
+      # The browser reaches Keycloak through Envoy, so tokens carry this issuer.
+      KC_HOSTNAME: http://localhost:8088/auth
+      # One URL set for browsers and services; dynamic backchannel URLs lose the gateway port.
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./keycloak/texera-realm.json:/opt/keycloak/data/import/texera-realm.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18081:8080"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -c 200 <&3 | grep -q '200 OK'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  openfga-migrate:
+    image: openfga/openfga:v1.11.2
+    container_name: texera2-openfga-migrate
+    command: ["migrate"]
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: postgres://texera:texera@postgres:5432/openfga?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  openfga:
+    image: openfga/openfga:v1.11.2
+    container_name: texera2-openfga
+    command: ["run"]
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: postgres://texera:texera@postgres:5432/openfga?sslmode=disable
+      OPENFGA_LOG_FORMAT: json
+      OPENFGA_PLAYGROUND_ENABLED: "false"
+    depends_on:
+      openfga-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:18082:8080"
+    healthcheck:
+      test: ["CMD", "/openfga", "version"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rustfs:
+    image: rustfs/rustfs:1.0.0
+    container_name: texera2-rustfs
+    # One S3 hostname for containers and the host: OrbStack resolves texera2-rustfs.orb.local on
+    # the host, and this alias resolves it inside the stack network. Lakekeeper hands this endpoint
+    # to the engine, which runs on the host during development.
+    networks:
+      default:
+        aliases: [texera2-rustfs.orb.local]
+    environment:
+      RUSTFS_ACCESS_KEY: texera
+      RUSTFS_SECRET_KEY: texera-secret
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+    volumes:
+      - rustfs-data:/data
+    ports:
+      - "127.0.0.1:19001:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rustfs-init:
+    image: rustfs/rc:v0.1.35
+    container_name: texera2-rustfs-init
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        rc alias set local http://rustfs:9000 texera texera-secret --region us-east-1 --bucket-lookup path
+        rc bucket create --ignore-existing local/texera
+        rc bucket create --ignore-existing local/datasets
+        echo "buckets ready"
+
+  lakekeeper-migrate:
+    image: vakamo/lakekeeper:v0.11.0
+    container_name: texera2-lakekeeper-migrate
+    environment:
+      LAKEKEEPER__PG_ENCRYPTION_KEY: texera2-dev-only-encryption-key
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgres://texera:texera@postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgres://texera:texera@postgres:5432/lakekeeper
+      RUST_LOG: info
+    entrypoint: ["/home/nonroot/lakekeeper"]
+    command: ["migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  lakekeeper:
+    image: vakamo/lakekeeper:v0.11.0
+    container_name: texera2-lakekeeper
+    # Lakekeeper returns its base URI to Iceberg clients; this name resolves on the host (OrbStack)
+    # and, through the alias, inside the stack network.
+    networks:
+      default:
+        aliases: [texera2-lakekeeper.orb.local]
+    environment:
+      LAKEKEEPER__PG_ENCRYPTION_KEY: texera2-dev-only-encryption-key
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgres://texera:texera@postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgres://texera:texera@postgres:5432/lakekeeper
+      LAKEKEEPER__BASE_URI: ${TEXERA2_LAKEKEEPER_URI:-http://texera2-lakekeeper.orb.local:8181}
+      LAKEKEEPER__ENABLE_DEFAULT_PROJECT: "true"
+      LAKEKEEPER__LISTEN_PORT: "8181"
+      RUST_LOG: info
+    entrypoint: ["/home/nonroot/lakekeeper"]
+    command: ["serve"]
+    depends_on:
+      lakekeeper-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:18181:8181"
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  lakekeeper-init:
+    image: alpine:3.19
+    container_name: texera2-lakekeeper-init
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    restart: "no"
+    environment:
+      S3_ENDPOINT: ${TEXERA2_S3_ENDPOINT:-http://texera2-rustfs.orb.local:9000}
+    volumes:
+      - ./lakekeeper/init.sh:/init.sh:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
+
+  envoy:
+    image: envoyproxy/envoy:v1.36-latest
+    container_name: texera2-envoy
+    command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
+    volumes:
+      - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "127.0.0.1:8088:8080"
+      - "127.0.0.1:9901:9901"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      keycloak:
+        condition: service_started
+
+volumes:
+  postgres-data:
+  rustfs-data:

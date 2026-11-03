@@ -135,7 +135,7 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
   }
 
   private val realCsvPath =
-    "workflow-compiling-service/src/test/resources/country_sales_small.csv"
+    TestOperators.CountrySalesSmallCsvPath
 
   // -------------------- happy path --------------------
 
@@ -276,11 +276,8 @@ class WorkflowCompilerSpec extends AnyFlatSpec {
 
     assert(result.physicalPlan.isEmpty)
     assert(result.operatorIdToError.contains(broken.operatorIdentifier))
-    // FileResolver.resolve falls through both resolvers and rethrows
-    // org.apache.commons.vfs2.FileNotFoundException(fileName); its message bundle
-    // renders as `Could not read from "<path>" because it is not a file.`, so the
-    // only stable substring across that wording and any java.io.FileNotFoundException
-    // fallback is the bad path itself.
+    // FileResolver.resolve throws java.io.FileNotFoundException naming the path; the path
+    // itself is the stable part of the message.
     assert(
       result.operatorIdToError(broken.operatorIdentifier).message.contains("missing.csv"),
       s"unexpected message: ${result.operatorIdToError(broken.operatorIdentifier).message}"

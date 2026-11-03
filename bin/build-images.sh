@@ -117,9 +117,7 @@ if SOURCE_DATE_EPOCH="$(git log -1 --format=%ct 2>/dev/null)" && [[ -n "$SOURCE_
 fi
 
 # Auto-detect Dockerfiles in bin/dockerfiles/. We stay cd'd in bin/ so the
-# pylsp + y-websocket-server build stages below keep working (they use
-# relative paths like ./pylsp and ./y-websocket-server from here), and so
-# the build context `..` still resolves to the repo root.
+# build context `..` resolves to the repo root.
 # `[[ ! -e ... ]]` guards the bash-default-glob case where a no-match glob
 # stays as the literal pattern instead of becoming an empty array.
 dockerfiles=( dockerfiles/*.dockerfile )
@@ -150,30 +148,5 @@ for dockerfile in "${dockerfiles[@]}"; do
     --output type=registry,rewrite-timestamp=true \
     ..
 done
-
-# Build pylsp service (directory: pylsp)
-if should_build "pylsp"; then
-  image="texera/pylsp:$FULL_TAG"
-  echo "👉 Building $image from pylsp/Dockerfile"
-  docker buildx build \
-    --platform "$PLATFORM" \
-    -f "pylsp/Dockerfile" \
-    -t "$image" \
-    --push \
-    ./pylsp
-fi
-
-# Build y-websocket-server service (directory: y-websocket-server, image: y-websocket-server)
-if should_build "y-websocket-server"; then
-  image="texera/y-websocket-server:$FULL_TAG"
-  echo "👉 Building $image from y-websocket-server/Dockerfile"
-  docker buildx build \
-    --platform "$PLATFORM" \
-    "${epoch_args[@]}" \
-    -f "y-websocket-server/Dockerfile" \
-    -t "$image" \
-    --output type=registry,rewrite-timestamp=true \
-    ./y-websocket-server
-fi
 
 echo "✅ All images built and pushed with tag :$FULL_TAG"

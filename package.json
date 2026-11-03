@@ -1,0 +1,13 @@
+{
+  "name": "texera",
+  "private": true,
+  "version": "2.0.0-alpha",
+  "description": "Texera 2.0 workspaces: the API contract, the generated clients, the agent runtime and the frontend",
+  "workspaces": [
+    "api",
+    "packages/*",
+    "agent-runtime",
+    "frontend-next"
+  ],
+  "packageManager": "bun@1.3.14"
+}

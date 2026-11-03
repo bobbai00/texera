@@ -19,7 +19,7 @@
 
 package org.apache.texera.common.compiler
 
-import org.apache.commons.vfs2.FileNotFoundException
+import java.io.FileNotFoundException
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.operator.aggregate.AggregateOpDesc
@@ -544,8 +544,8 @@ class LogicalPlanSpec extends AnyFlatSpec {
   }
 
   it should "rethrow FileNotFoundException when no errorList is provided" in {
-    // `FileResolver.resolve` raises `org.apache.commons.vfs2.FileNotFoundException`
-    // when all resolvers fail. Pin the specific type so an unrelated failure
+    // `FileResolver.resolve` raises `java.io.FileNotFoundException` for a name that is
+    // neither a URI nor a file on this unit. Pin the specific type so an unrelated failure
     // mode (e.g. NPE) doesn't silently satisfy this test.
     val brokenOp = csvWithMissingFile()
     val plan = LogicalPlan(List(brokenOp), List.empty)

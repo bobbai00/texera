@@ -290,7 +290,6 @@ Scala/Java jars:
   - com.typesafe.scala-logging.scala-logging_2.13-3.9.6.jar
   - com.typesafe.ssl-config-core_2.13-0.7.1.jar
   - com.univocity.univocity-parsers-2.9.1.jar
-  - com.zaxxer.HikariCP-5.1.0.jar
   - commons-cli.commons-cli-1.9.0.jar
   - commons-codec.commons-codec-1.21.0.jar
   - commons-io.commons-io-2.16.1.jar
@@ -376,7 +375,6 @@ Scala/Java jars:
   - io.opentelemetry.opentelemetry-sdk-metrics-1.50.0.jar
   - io.opentelemetry.opentelemetry-sdk-trace-1.50.0.jar
   - io.perfmark.perfmark-api-0.27.0.jar
-  - io.r2dbc.r2dbc-spi-1.0.0.RELEASE.jar
   - io.reactivex.rxjava3.rxjava-3.1.12.jar
   - javax.inject.javax.inject-1.jar
   - javax.validation.validation-api-2.0.1.Final.jar
@@ -501,7 +499,6 @@ Scala/Java jars:
   - org.jetbrains.kotlin.kotlin-stdlib-jdk8-1.9.10.jar
   - org.jheaps.jheaps-0.11.jar
   - org.joda.joda-convert-2.2.3.jar
-  - org.jooq.jooq-3.19.36.jar
   - org.json4s.json4s-ast_2.13-4.0.6.jar
   - org.json4s.json4s-jackson-core_2.13-4.0.6.jar
   - at.yawk.lz4.lz4-java-1.10.2.jar
@@ -642,9 +639,8 @@ licensed with GPL-2.0 with Classpath Exception)
 --------------------------------------------------------------------------------
 
 Scala/Java jars:
-  - jakarta.annotation.jakarta.annotation-api-2.1.1.jar
   - jakarta.servlet.jakarta.servlet-api-4.0.4.jar
-  - jakarta.ws.rs.jakarta.ws.rs-api-3.0.0.jar
+  - jakarta.ws.rs.jakarta.ws.rs-api-2.1.6.jar
   - javax.ws.rs.javax.ws.rs-api-2.1.1.jar
   - org.jgrapht.jgrapht-core-1.4.0.jar
 

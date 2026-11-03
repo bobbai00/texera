@@ -34,7 +34,7 @@ import org.apache.texera.web.model.websocket.event.{
   WorkflowStateEvent
 }
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.apache.texera.web.execution.ExecutionRegistry
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.{ComputingUnitMaster, SubscriptionManager, WebsocketInput}
@@ -48,9 +48,7 @@ object WorkflowExecutionService {
       workflowId: WorkflowIdentity,
       computingUnitId: Int
   ): Option[ExecutionIdentity] = {
-    WorkflowExecutionsResource
-      .getLatestExecutionID(workflowId.id.toInt, computingUnitId)
-      .map(eid => new ExecutionIdentity(eid.longValue()))
+    ExecutionRegistry.latestExecution(workflowId.id, computingUnitId)
   }
 }
 
@@ -61,7 +59,6 @@ class WorkflowExecutionService(
     request: WorkflowExecuteRequest,
     val executionStateStore: ExecutionStateStore,
     errorHandler: Throwable => Unit,
-    userEmailOpt: Option[String],
     sessionUri: URI
 ) extends SubscriptionManager
     with LazyLogging {
@@ -142,8 +139,6 @@ class WorkflowExecutionService(
       executionReconfigurationService,
       coordinatorConfig.faultToleranceConfOpt,
       workflowContext.workflowId.id,
-      request.emailNotificationEnabled,
-      userEmailOpt,
       sessionUri
     )
     executionConsoleService =

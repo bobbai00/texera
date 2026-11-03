@@ -44,22 +44,9 @@ class ExecutionRuntimeService(
     reconfigurationService: ExecutionReconfigurationService,
     logConf: Option[FaultToleranceConfig],
     workflowId: Long,
-    emailNotificationEnabled: Boolean,
-    userEmailOpt: Option[String],
     sessionUri: URI
 ) extends SubscriptionManager
     with LazyLogging {
-
-  private val emailNotificationService = for {
-    email <- userEmailOpt
-    if emailNotificationEnabled
-  } yield new EmailNotificationService(
-    new WorkflowEmailNotifier(
-      workflowId,
-      email,
-      sessionUri
-    )
-  )
 
   //Receive skip tuple
   addSubscription(wsInput.subscribe((req: SkipTupleRequest, uidOpt) => {
@@ -71,8 +58,6 @@ class ExecutionRuntimeService(
     stateStore.metadataStore.updateState(metadataStore =>
       updateWorkflowState(evt.state, metadataStore)
     )
-
-    emailNotificationService.foreach(_.processEmailNotificationIfNeeded(evt.state))
 
     if (evt.state == COMPLETED) {
       client.shutdown()
@@ -128,7 +113,6 @@ class ExecutionRuntimeService(
 
   override def unsubscribeAll(): Unit = {
     super.unsubscribeAll()
-    emailNotificationService.foreach(_.shutdown())
   }
 
 }

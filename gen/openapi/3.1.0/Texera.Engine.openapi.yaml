@@ -1,0 +1,596 @@
+openapi: 3.1.0
+info:
+  title: Texera Computing Unit
+  version: 2.0.0-alpha
+tags: []
+paths:
+  /api/compile:
+    post:
+      operationId: Compile_compile
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompileResult'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EngineCompileRequest'
+  /api/environments:
+    post:
+      operationId: Environments_build
+      description: Build (or confirm) the Python environment for an environment version on this unit.
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentBuild'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentRequest'
+  /api/environments/{rid}/{vno}:
+    get:
+      operationId: Environments_status
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: vno
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int32
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentBuild'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/executions:
+    post:
+      operationId: Executions_start
+      description: Start an execution; the unit reports progress through OpenLineage events.
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionAck'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecutionStartRequest'
+  /api/executions/{eid}:
+    get:
+      operationId: Executions_status
+      parameters:
+        - name: eid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionState'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/executions/{eid}/cancel:
+    post:
+      operationId: Executions_cancel
+      parameters:
+        - name: eid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionState'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/executions/{eid}/results/{opid}/{port}:
+    get:
+      operationId: Executions_result
+      description: A page of a port result. `table` is where the catalog recorded the result; a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+      parameters:
+        - name: eid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: opid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: port
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: table
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RowPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/health:
+    get:
+      operationId: Health_check
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitHealth'
+  /api/operators:
+    get:
+      operationId: Operators_list
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperatorTypeList'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+security:
+  - BearerAuth: []
+components:
+  schemas:
+    Attribute:
+      type: object
+      required:
+        - attributeName
+        - attributeType
+      properties:
+        attributeName:
+          type: string
+        attributeType:
+          type: string
+    CompileResult:
+      type: object
+      required:
+        - ok
+        - operatorOutputSchemas
+        - operatorErrors
+      properties:
+        ok:
+          type: boolean
+        operatorOutputSchemas:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              anyOf:
+                - type: array
+                  items:
+                    $ref: '#/components/schemas/Attribute'
+                - type: 'null'
+          description: Output schemas per operator id and output port id.
+        operatorErrors:
+          type: object
+          additionalProperties: {}
+          description: Errors per operator id.
+        physicalPlan: {}
+    EngineCompileRequest:
+      type: object
+      required:
+        - logicalPlan
+      properties:
+        logicalPlan: {}
+    EnvironmentBuild:
+      type: object
+      required:
+        - rid
+        - vno
+        - status
+      properties:
+        rid:
+          type: string
+        vno:
+          type: integer
+          format: int32
+        status:
+          type: string
+          enum:
+            - building
+            - ready
+            - failed
+        message:
+          type: string
+    EnvironmentRequest:
+      type: object
+      required:
+        - rid
+        - vno
+      properties:
+        rid:
+          type: string
+        vno:
+          type: integer
+          format: int32
+        python:
+          type: object
+          properties:
+            version:
+              type: string
+            packages:
+              type: array
+              items:
+                type: string
+          required:
+            - packages
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: {}
+    ExecutionAck:
+      type: object
+      required:
+        - eid
+        - accepted
+      properties:
+        eid:
+          type: string
+        accepted:
+          type: boolean
+    ExecutionStartRequest:
+      type: object
+      required:
+        - eid
+        - workflow
+        - logicalPlan
+        - reporting
+        - actor
+      properties:
+        eid:
+          type: string
+        workflow:
+          type: object
+          properties:
+            rid:
+              type: string
+            vno:
+              type: integer
+              format: int32
+          required:
+            - rid
+            - vno
+        name:
+          type: string
+        logicalPlan:
+          description: The logical plan JSON; dataset file properties are already rewritten to resolved URLs.
+        inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResolvedInput'
+        environment:
+          $ref: '#/components/schemas/EnvironmentRequest'
+        resultStore:
+          $ref: '#/components/schemas/ResultStore'
+        reporting:
+          $ref: '#/components/schemas/Reporting'
+        actor:
+          type: string
+        onBehalfOf:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: {}
+    ExecutionState:
+      type: object
+      required:
+        - eid
+        - status
+        - operators
+        - results
+      properties:
+        eid:
+          type: string
+        status:
+          $ref: '#/components/schemas/ExecutionStatus'
+        operators:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/OperatorRun'
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortResult'
+        error: {}
+    ExecutionStatus:
+      type: string
+      enum:
+        - pending
+        - running
+        - completed
+        - failed
+        - cancelled
+    OperatorRun:
+      type: object
+      required:
+        - state
+      properties:
+        state:
+          type: string
+        tuples:
+          type: integer
+          format: int64
+        error: {}
+    OperatorType:
+      type: object
+      required:
+        - operatorType
+        - userFriendlyName
+        - operatorGroupName
+        - jsonSchema
+        - inputPorts
+        - outputPorts
+      properties:
+        operatorType:
+          type: string
+        userFriendlyName:
+          type: string
+        operatorGroupName:
+          type: string
+        operatorDescription:
+          type: string
+        jsonSchema:
+          description: JSON Schema of the operator's properties.
+        inputPorts:
+          type: array
+          items: {}
+        outputPorts:
+          type: array
+          items: {}
+        requires:
+          $ref: '#/components/schemas/RuntimeSpec'
+          description: 'Runtime Spec: language, resources, isolation.'
+        version:
+          type: string
+          description: The engine image digest that defines this operator version.
+      description: An operator type from the registry, with its JSON Schema for properties.
+    OperatorTypeList:
+      type: object
+      required:
+        - operators
+        - groups
+      properties:
+        operators:
+          type: array
+          items:
+            $ref: '#/components/schemas/OperatorType'
+        groups:
+          type: array
+          items: {}
+    PortResult:
+      type: object
+      required:
+        - opid
+        - port
+      properties:
+        opid:
+          type: string
+        port:
+          type: string
+        table:
+          type: string
+        snapshot:
+          type: string
+        tupleCount:
+          type: integer
+          format: int64
+        bytes:
+          type: integer
+          format: int64
+        hash:
+          type: string
+    Reporting:
+      type: object
+      required:
+        - lineageUrl
+        - token
+      properties:
+        lineageUrl:
+          type: string
+          description: "Where the unit posts OpenLineage events and status: the catalog's /lineage/v1/events."
+        token:
+          type: string
+          description: Bearer token the unit presents when reporting.
+    ResolvedInput:
+      type: object
+      required:
+        - dataset
+        - vno
+        - path
+        - url
+      properties:
+        dataset:
+          type: string
+          description: The dataset version this file belongs to.
+        vno:
+          type: integer
+          format: int32
+        path:
+          type: string
+        url:
+          type: string
+          description: A URL the unit can read, presigned by the catalog.
+        sizeBytes:
+          type: integer
+          format: int64
+      description: 'A dataset file the catalog resolved for this run: the operator property value and the URL the engine reads.'
+    ResultStore:
+      type: object
+      required:
+        - catalogUri
+        - warehouse
+        - namespace
+      properties:
+        catalogUri:
+          type: string
+          description: Iceberg REST catalog URI the unit writes results to.
+        warehouse:
+          type: string
+        namespace:
+          type: string
+          description: Namespace prefix for this execution's tables.
+    Rid:
+      type: string
+      description: Resource id, a UUID.
+    RowPage:
+      type: object
+      required:
+        - schema
+        - rows
+        - offset
+      properties:
+        schema:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attribute'
+          description: Column names and types of the result.
+        rows:
+          type: array
+          items:
+            type: array
+            items: {}
+          description: Rows as positional arrays in schema order.
+        offset:
+          type: integer
+          format: int64
+        total:
+          type: integer
+          format: int64
+    RuntimeSpec:
+      type: object
+      properties:
+        environment:
+          $ref: '#/components/schemas/Rid'
+        isolation:
+          type: object
+          additionalProperties: {}
+        resources:
+          type: object
+          additionalProperties: {}
+    UnitHealth:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+        version:
+          type: string
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: Bearer
+servers:
+  - url: http://localhost:8085
+    description: the unit
+    variables: {}

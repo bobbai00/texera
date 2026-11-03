@@ -24,7 +24,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle;
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName;
-import org.jooq.tools.StringUtils;
 
 import java.util.Objects;
 
@@ -56,7 +55,7 @@ public class AttributeUnit{
 
 
     String getAlias(){
-        if(StringUtils.isBlank(alias)){
+        if (alias == null || alias.isBlank()) {
             return originalAttribute;
         }
         return alias;

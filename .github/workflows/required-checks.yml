@@ -52,19 +52,11 @@ jobs:
   precheck:
     uses: ./.github/workflows/precheck.yml
 
+  # Texera 2.0 runs every build job on every event: the stacks are small enough, and the
+  # contract ties them together (a contract change reaches the Go, TypeScript and engine code).
   build:
     needs: precheck
     uses: ./.github/workflows/build.yml
-    with:
-      run_frontend: ${{ needs.precheck.outputs.run_frontend == 'true' }}
-      run_amber: ${{ needs.precheck.outputs.run_amber == 'true' }}
-      run_amber_integration: ${{ needs.precheck.outputs.run_amber_integration == 'true' }}
-      run_platform: ${{ needs.precheck.outputs.run_platform == 'true' }}
-      run_platform_integration: ${{ needs.precheck.outputs.run_platform_integration == 'true' }}
-      run_pyamber: ${{ needs.precheck.outputs.run_pyamber == 'true' }}
-      run_agent_service: ${{ needs.precheck.outputs.run_agent_service == 'true' }}
-      run_infra: ${{ needs.precheck.outputs.run_infra == 'true' }}
-      run_pyright_language_service: ${{ needs.precheck.outputs.run_pyright_language_service == 'true' }}
     secrets: inherit
 
   required-checks:

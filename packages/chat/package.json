@@ -1,0 +1,24 @@
+{
+  "name": "@texera/chat",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "The chat: an AG-UI client, the conversation reducer, message parts that render resources as cards, the composer and the mode picker.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@ag-ui/core": "1.0.3",
+    "@tanstack/react-query": "5.104.5",
+    "@tanstack/react-router": "1.170.46",
+    "@texera/catalog-client": "workspace:*",
+    "@texera/kinds": "workspace:*",
+    "@texera/ui": "workspace:*",
+    "lucide-react": "1.61.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "streamdown": "2.7.1"
+  },
+  "devDependencies": { "@types/react": "19.3.0", "@types/react-dom": "19.3.0", "typescript": "7.0.2" }
+}

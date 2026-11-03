@@ -21,95 +21,42 @@ package org.apache.texera.web.service
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.dao.SqlServer
-import org.jooq.exception.DataAccessException
-import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
-import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowExecutions
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowVersionResource._
-
-import java.sql.Timestamp
+import org.apache.texera.web.execution.{ExecutionRecord, ExecutionRegistry}
 
 /**
-  * This global object handles inserting a new entry to the DB to store metadata information about every workflow execution
-  * It also updates the entry if an execution status is updated
+  * Execution metadata on the unit lives in the in-memory [[ExecutionRegistry]]; the catalog is
+  * told through the lineage reporter. This object keeps the API the engine services call.
   */
 object ExecutionsMetadataPersistService extends LazyLogging {
-  private def context =
-    SqlServer
-      .getInstance()
-      .createDSLContext()
-  private def workflowExecutionsDao =
-    new WorkflowExecutionsDao(
-      context.configuration
-    )
 
   /**
-    * This method inserts a new entry of a workflow execution in the database and returns the generated eId
-    *
-    * @param workflowId the given workflow
-    * @param uid        user id that initiated the execution
-    * @return generated execution ID
+    * Registers a new execution and returns its identity on this unit. `externalId` is the
+    * catalog's execution id when the run was started through the unit API.
     */
-
   def insertNewExecution(
       workflowId: WorkflowIdentity,
-      uid: Integer,
       executionName: String,
       environmentVersion: String,
       computingUnitId: Integer,
-      warehouseId: Option[Int] = None
+      warehouseId: Option[Int] = None,
+      externalId: Option[String] = None
   ): ExecutionIdentity = {
-    // first retrieve the latest version of this workflow
-    val vid = getLatestVersion(workflowId.id.toInt)
-    val newExecution = new WorkflowExecutions()
-    if (executionName != "") {
-      newExecution.setName(executionName)
-    }
-    newExecution.setVid(vid)
-    newExecution.setUid(uid)
-    newExecution.setStartingTime(new Timestamp(System.currentTimeMillis()))
-    newExecution.setEnvironmentVersion(environmentVersion)
-
-    // Set computing unit ID if provided
-    newExecution.setCuid(computingUnitId)
-    // The warehouse this run writes into (#6870); null = the shared default warehouse.
-    warehouseId.foreach(id => newExecution.setWhid(id))
-
-    try {
-      workflowExecutionsDao.insert(newExecution)
-    } catch {
-      // A NOT NULL column (e.g. uid, vid, cuid) was null. Postgres reports this
-      // as SQLState 23502; surface a readable message instead of the raw
-      // jOOQ/JDBC stack trace, while preserving the original as the cause.
-      case e: DataAccessException if e.sqlState() == "23502" =>
-        throw new IllegalArgumentException(
-          "Cannot persist workflow execution: a required field (uid, vid, or cuid) was null.",
-          e
-        )
-    }
-    ExecutionIdentity(newExecution.getEid.longValue())
+    val record = ExecutionRegistry.create(workflowId.id, computingUnitId, executionName, externalId)
+    logger.info(
+      s"registered execution ${record.eid} for workflow $workflowId (external ${externalId.getOrElse("-")})"
+    )
+    record.eid
   }
 
-  def tryGetExistingExecution(executionId: ExecutionIdentity): Option[WorkflowExecutions] = {
-    try {
-      Option(workflowExecutionsDao.fetchOneByEid(executionId.id.toInt))
-    } catch {
-      case t: Throwable =>
-        logger.info("Unable to get execution. Error = " + t.getMessage)
-        None
-    }
-  }
+  def tryGetExistingExecution(executionId: ExecutionIdentity): Option[ExecutionRecord] =
+    ExecutionRegistry.get(executionId)
 
   def tryUpdateExistingExecution(
       executionId: ExecutionIdentity
-  )(updateFunc: WorkflowExecutions => Unit): Unit = {
-    try {
-      val execution = workflowExecutionsDao.fetchOneByEid(executionId.id.toInt)
-      updateFunc(execution)
-      workflowExecutionsDao.update(execution)
-    } catch {
-      case t: Throwable =>
-        logger.info("Unable to update execution. Error = " + t.getMessage)
+  )(updateFunc: ExecutionRecord => Unit): Unit = {
+    ExecutionRegistry.get(executionId) match {
+      case Some(record) => updateFunc(record)
+      case None         => logger.info(s"Unable to update execution $executionId: unknown")
     }
   }
 }

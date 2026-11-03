@@ -60,9 +60,9 @@ import java.time.Instant
   * `TexeraWebSocketEvent` carries
   * `@JsonTypeInfo(use = Id.NAME, include = As.PROPERTY, property = "type")` and none of
   * its `@JsonSubTypes.Type` entries supply `name =`, so the wire id is Jackson's
-  * `TypeNameIdResolver` default: the BARE SIMPLE CLASS NAME. The Angular client
-  * switches on those literals; `frontend/src/app/workspace/types/workflow-websocket.interface.ts`
-  * spells the rule out:
+  * `TypeNameIdResolver` default: the BARE SIMPLE CLASS NAME. The frontend's engine client
+  * (`packages/kinds/src/engine/engine.ts`) switches on those literals; the 1.x client spelled
+  * the rule out:
   *
   *   "Each type definition MUST follow the following rules:
   *    in either TexeraWebsocketRequestTypeMap or TexeraWebsocketEventTypeMap

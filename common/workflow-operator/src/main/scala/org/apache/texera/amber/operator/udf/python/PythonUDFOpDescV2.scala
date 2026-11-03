@@ -170,7 +170,6 @@ class PythonUDFOpDescV2 extends LogicalOp with PythonUdfUiParameterSupport {
       .withIsOneToManyOp(true)
       .withPropagateSchema(SchemaPropagationFunc(propagateSchema))
       .withPveName(pveName)
-      .withExecutionTimeBinding(executionBinding(code))
   }
 
   override def operatorInfo: OperatorInfo = {

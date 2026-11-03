@@ -20,11 +20,8 @@
 package org.apache.texera.web.auth
 
 import io.dropwizard.auth.Authorizer
-import org.apache.texera.auth.SessionUser
-import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
 
-object UserRoleAuthorizer extends Authorizer[SessionUser] {
-  override def authorize(user: SessionUser, role: String): Boolean = {
-    user.isRoleOf(UserRoleEnum.valueOf(role))
-  }
+/** Grants a role-guarded resource to a caller holding exactly that role. */
+object UserRoleAuthorizer extends Authorizer[UnitPrincipal] {
+  override def authorize(user: UnitPrincipal, role: String): Boolean = user.isRoleOf(role)
 }

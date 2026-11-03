@@ -96,7 +96,7 @@ class PythonUDFSourceOpDescV2Spec extends AnyFlatSpec with Matchers {
     }
   }
 
-  it should "leave a resource parameter to the execution" in {
+  it should "inject a resource parameter's catalog-resolved URL into the code" in {
     val d = new PythonUDFSourceOpDescV2
     d.code = """from pytexera import *
         |
@@ -107,10 +107,21 @@ class PythonUDFSourceOpDescV2Spec extends AnyFlatSpec with Matchers {
     val resource = new UiUDFParameter
     resource.attribute = new Attribute("DS", AttributeType.STRING)
     resource.inputType = "dataset"
-    resource.value = "/dataset/owner@x.com/ds/v1"
+    resource.value = "https://storage.example.org/datasets/versions/ds/v1/f.csv?X-Amz-Signature=s"
     d.uiParameters = List(resource)
 
-    d.getPhysicalOp(workflowId, executionId).executionTimeBinding should not be empty
+    d.getPhysicalOp(workflowId, executionId).opExecInitInfo match {
+      // Values reach the code base64-encoded (PythonTemplateBuilder), never interpolated raw.
+      case OpExecWithCode(code, "python") =>
+        code should include(
+          java.util.Base64.getEncoder.encodeToString(
+            "https://storage.example.org/datasets/versions/ds/v1/f.csv?X-Amz-Signature=s".getBytes(
+              "UTF-8"
+            )
+          )
+        )
+      case other => fail(s"expected Python OpExecWithCode, got $other")
+    }
   }
 
   it should "reject a blank virtual-environment name when the default env is disabled" in {

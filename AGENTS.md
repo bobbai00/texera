@@ -21,20 +21,21 @@
 
 ## Architecture Map
 
-Apache Texera: Scala/sbt backend services + the Amber workflow execution
-engine, an Angular UI, and the agent service. JVM modules wired in
-[`build.sbt`](build.sbt).
+Apache Texera 2.0 (this branch): a TypeSpec contract, a Go catalog (the control plane), a
+TypeScript agent runtime and React frontend, and the Amber engine as the computing unit. The plan
+and progress log are in [docs/texera-2-0](docs/texera-2-0/PLAN.md).
 
 | Area | Path | Detail |
 | --- | --- | --- |
-| Workflow execution engine (Amber) | `amber/` | [amber/README.md](amber/README.md) |
-| Backend services | `config-service/`, `access-control-service/`, `file-service/`, `computing-unit-managing-service/`, `workflow-compiling-service/`, `notebook-migration-service/` | `build.sbt` |
-| Shared Scala libs | `common/` (`auth`, `config`, `dao`, `util`, `workflow-core`, `workflow-operator`, `pybuilder`) | `build.sbt` |
-| Frontend (Angular) | `frontend/` | [frontend/README.md](frontend/README.md) |
-| Agent service (Bun/TS, LLM agents) | `agent-service/` | `agent-service/package.json` |
-| Pyright language service | `pyright-language-service/` | [pyright-language-service/README.md](pyright-language-service/README.md) |
-| Deploy scripts / Dockerfiles | `bin/` | [README](bin/README.md) / [k8s](bin/k8s/README.md) / [single-node](bin/single-node/README.md) |
-| DDL, sbt plugins | `sql/`, `project/` | files therein |
+| API contract and generated code | `api/`, `gen/` | `make generate` ([Makefile](Makefile)) |
+| Catalog (Go): resources, versions, grants, executions, lineage, MCP server | `catalog/` | `catalog/go.mod` |
+| Agent runtime (Bun/TS, AI SDK 7) | `agent-runtime/` | `agent-runtime/package.json` |
+| Frontend (React) and shared packages | `frontend-next/`, `packages/` | [frontend-next/README.md](frontend-next/README.md) |
+| Computing unit: workflow execution engine (Amber) | `amber/` | [amber/README.md](amber/README.md) |
+| Engine libraries | `common/` (`config`, `observability`, `util`, `workflow-core`, `workflow-operator`, `workflow-compiler`, `pybuilder`) | [`build.sbt`](build.sbt) |
+| Dev stack, test runner, Kubernetes | `bin/texera-2-0/`, `deploy/kubernetes/` | [README](bin/texera-2-0/README.md) |
+| Dockerfiles, licensing tools | `bin/` | [README](bin/README.md) |
+| sbt plugins | `project/` | files therein |
 
 ### Amber breakdown
 
@@ -53,8 +54,7 @@ engine, an Angular UI, and the agent service. JVM modules wired in
 | PR template | [.github/PULL_REQUEST_TEMPLATE](.github/PULL_REQUEST_TEMPLATE) |
 | Issue templates | [bug](.github/ISSUE_TEMPLATE/bug-template.yaml) / [task](.github/ISSUE_TEMPLATE/task-template.yaml) / [feature](.github/ISSUE_TEMPLATE/feature-template.yaml) |
 | License-header coverage; vendored `workflow-operator` | [.licenserc.yaml](.licenserc.yaml); [project/AddMetaInfLicenseFiles.scala](project/AddMetaInfLicenseFiles.scala) |
-| Run the local dev stack (infra in Docker; backend/frontend/agent-service native) | [bin/local-dev.sh](bin/local-dev/README.md) |
-| Single-node / k8s deploy | [single-node](bin/single-node/README.md), [k8s](bin/k8s/README.md) |
+| Run, test and deploy Texera 2.0 (`up.sh`, `test.sh`, `down.sh`, `k8s.sh`) | [bin/texera-2-0](bin/texera-2-0/README.md) |
 
 If a topic is above, **read that file** instead of asking here.
 
@@ -82,12 +82,9 @@ Reset to `upstream/main` at start; `git log upstream/main..HEAD` should
 contain only this PR's commits before pushing; remove the worktree after
 merge.
 
-Prefer [`bin/local-dev.sh`](bin/local-dev/README.md) to run the stack while
-developing. Its native services bind fixed ports and share one PID/state dir,
-so only one worktree's stack runs at a time: `bin/local-dev.sh down` in the
-old worktree before switching, then `up` in the new one. Use the
-non-interactive CLI subcommands (`up` / `down` / `status` / `logs`); the
-interactive TUI (`-i`) is for humans, not agents.
+Run the stack with [`bin/texera-2-0/up.sh`](bin/texera-2-0/README.md) and test it with
+`bin/texera-2-0/test.sh`. Its host services bind fixed ports and `up.sh` refuses ports another
+worktree holds, so run `bin/texera-2-0/down.sh` in the old worktree before switching.
 
 ### Environment
 

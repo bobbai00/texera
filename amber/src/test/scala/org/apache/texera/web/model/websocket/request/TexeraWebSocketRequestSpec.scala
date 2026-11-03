@@ -43,8 +43,8 @@ import org.scalatest.matchers.should.Matchers
   * carries `@JsonTypeInfo(use = Id.NAME, include = As.PROPERTY, property = "type")`
   * and every `@JsonSubTypes.Type` entry omits `name =`, so Jackson's
   * `TypeNameIdResolver` falls back to the BARE SIMPLE CLASS NAME as the wire id.
-  * The Angular client hard-codes those same strings; from
-  * `frontend/src/app/workspace/types/workflow-websocket.interface.ts`:
+  * The frontend's engine client (`packages/kinds/src/engine/engine.ts`) sends those same
+  * strings; the 1.x client's interface file put the rule as:
   *
   *   "Each type definition MUST follow the following rules:
   *    in either TexeraWebsocketRequestTypeMap or TexeraWebsocketEventTypeMap

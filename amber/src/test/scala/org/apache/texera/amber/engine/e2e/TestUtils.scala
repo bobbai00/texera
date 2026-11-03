@@ -50,22 +50,9 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.operator.LogicalOp
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
-import org.apache.texera.dao.jooq.generated.tables.daos.{
-  UserDao,
-  WorkflowDao,
-  WorkflowExecutionsDao,
-  WorkflowVersionDao
-}
-import org.apache.texera.dao.jooq.generated.tables.pojos.{
-  User,
-  WorkflowExecutions,
-  WorkflowVersion,
-  Workflow => WorkflowPojo
-}
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource.getResultUriByLogicalPortId
+import org.apache.texera.web.execution.ExecutionRegistry
+import org.apache.texera.web.execution.ExecutionRegistry.getResultUriByLogicalPortId
 import org.apache.texera.web.service.ExecutionResultService
 import org.apache.texera.common.compiler.model.LogicalLink
 import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
@@ -75,7 +62,7 @@ object TestUtils {
   /**
     * A WorkflowContext whose workflow- and execution-id are both `id`. Each e2e
     * suite passes a distinct id so its results land in a disjoint storage
-    * keyspace (`vfs:///wid/{id}/eid/{id}/...`) and disjoint DB rows, letting the
+    * keyspace (`vfs:///wid/{id}/eid/{id}/...`) and disjoint registry records, letting the
     * suites run concurrently without colliding on the shared Iceberg catalog.
     */
   def workflowContext(
@@ -220,78 +207,16 @@ object TestUtils {
     )
 
   /**
-    * If a test case accesses the user system through singleton resources that cache the DSLContext (e.g., executes a
-    * workflow, which accesses WorkflowExecutionsResource), we use a separate texera_db specifically for such test cases.
-    * Note such test cases need to clean up the database at the end of running each test case.
-    *
-    * This backs the e2e specs with MockTexeraDB's embedded Postgres instead of an external test Postgres
-    * (depends on #4179).
+    * Registers the fixture execution `id` on the unit's in-memory registry, as a run the unit
+    * started would be: result and console URIs the engine reports are recorded against it.
     */
-  def initiateTexeraDBForTestCases(): Unit = {
-    org.apache.texera.dao.MockTexeraDB.ensureInitialized()
-    val embedded = org.apache.texera.dao.MockTexeraDB.getDBInstance
-
-    val dbName =
-      "texera_db_for_test_cases_" + java.util.UUID.randomUUID().toString.replace("-", "")
-
-    org.apache.texera.dao.MockTexeraDB.createTestDatabase(dbName)
-
-    SqlServer.initConnection(
-      embedded.getJdbcUrl("postgres", dbName),
-      "postgres",
-      ""
+  def setUpWorkflowExecutionData(id: Int): Unit =
+    ExecutionRegistry.adopt(
+      ExecutionIdentity(id.toLong),
+      workflowId = id.toLong,
+      cuid = 0,
+      name = s"e2e-$id"
     )
-  }
-
-  // All fixture rows for one suite share `id` as uid/wid/vid/eid; the email is
-  // derived from it so concurrent suites don't collide on the unique email key.
-  def testUser(id: Int): User = {
-    val user = new User
-    user.setUid(Integer.valueOf(id))
-    user.setName(s"test_user_$id")
-    user.setRole(UserRoleEnum.ADMIN)
-    user.setEmail(s"test_user_$id@test.com")
-    user
-  }
-
-  def testWorkflowEntry(id: Int): WorkflowPojo = {
-    val workflow = new WorkflowPojo
-    workflow.setName("test workflow")
-    workflow.setWid(Integer.valueOf(id))
-    workflow.setContent("test workflow content")
-    workflow.setDescription("test description")
-    workflow
-  }
-
-  def testWorkflowVersionEntry(id: Int): WorkflowVersion = {
-    val workflowVersion = new WorkflowVersion
-    workflowVersion.setWid(Integer.valueOf(id))
-    workflowVersion.setVid(Integer.valueOf(id))
-    workflowVersion.setContent("test version content")
-    workflowVersion
-  }
-
-  def testWorkflowExecutionEntry(id: Int): WorkflowExecutions = {
-    val workflowExecution = new WorkflowExecutions
-    workflowExecution.setEid(Integer.valueOf(id))
-    workflowExecution.setVid(Integer.valueOf(id))
-    workflowExecution.setUid(Integer.valueOf(id))
-    workflowExecution.setStatus(3.toByte)
-    workflowExecution.setEnvironmentVersion("test engine")
-    workflowExecution
-  }
-
-  def setUpWorkflowExecutionData(id: Int): Unit = {
-    val dslConfig = SqlServer.getInstance().context.configuration()
-    val userDao = new UserDao(dslConfig)
-    val workflowDao = new WorkflowDao(dslConfig)
-    val workflowExecutionsDao = new WorkflowExecutionsDao(dslConfig)
-    val workflowVersionDao = new WorkflowVersionDao(dslConfig)
-    userDao.insert(testUser(id))
-    workflowDao.insert(testWorkflowEntry(id))
-    workflowVersionDao.insert(testWorkflowVersionEntry(id))
-    workflowExecutionsDao.insert(testWorkflowExecutionEntry(id))
-  }
 
   /**
     * Returns a Promise that completes the next time the client emits an
@@ -385,16 +310,7 @@ object TestUtils {
     result
   }
 
-  def cleanupWorkflowExecutionData(id: Int): Unit = {
-    val dslConfig = SqlServer.getInstance().context.configuration()
-    val userDao = new UserDao(dslConfig)
-    val workflowDao = new WorkflowDao(dslConfig)
-    val workflowExecutionsDao = new WorkflowExecutionsDao(dslConfig)
-    val workflowVersionDao = new WorkflowVersionDao(dslConfig)
-    workflowExecutionsDao.deleteById(id)
-    workflowVersionDao.deleteById(id)
-    workflowDao.deleteById(id)
-    userDao.deleteById(id)
-  }
+  def cleanupWorkflowExecutionData(id: Int): Unit =
+    ExecutionRegistry.forget(ExecutionIdentity(id.toLong))
 
 }

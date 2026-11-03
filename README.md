@@ -20,7 +20,7 @@
 <h1 align="center">Apache Texera - Human-AI Collaborative Data Science Using Visual Workflows</h1>
 
 <p align="center">
-  <a href="https://texera.io"> <img src="frontend/src/assets/logos/full_logo_small.png" alt="texera-logo" height="150px"/> </a>
+  <a href="https://texera.io"> <img src="frontend-next/public/texera-logo.png" alt="texera-logo" height="150px"/> </a>
   <br>
   <i>Apache Texera (Incubating) is an open-source platform for human-AI collaborative data science using visual workflows.</i>
   <br>
@@ -63,6 +63,23 @@ The platform has the following key features:
 
 
 ![texera-screenshot](docs/system-screenshot.png)
+
+# Texera 2.0 (this branch)
+
+This branch reorganizes Texera around chat-first data analysis: people ask an agent, the agent
+builds and runs workflows through the Texera MCP server, and every resource it creates or changes
+is versioned, attributed to the agent on the person's behalf, and linked by lineage.
+
+| Path | What it is |
+|---|---|
+| `api/` | The TypeSpec contract; `make generate` emits OpenAPI, the Go server, the TypeScript client and the MCP tool table |
+| `catalog/` | The Go control plane: resources and versions, grants and the policy decision point, executions and lineage, datasets, computing units, environments, the MCP server |
+| `agent-runtime/` | The agent runtime (Vercel AI SDK 7): AG-UI chat streams, agent templates, pluggable MCP servers |
+| `amber/` | The computing unit: Amber as a pure workflow engine that reports runs back as OpenLineage events |
+| `frontend-next/`, `packages/` | The React app and its shared packages |
+| `common/` | Engine libraries: workflow core, operators, compiler, config, auth |
+| `bin/texera-2-0/` | The dev stack: `up.sh`, `test.sh`, `down.sh` (see its README) |
+| `docs/texera-2-0/` | The plan and the progress log |
 
 
 # Citation

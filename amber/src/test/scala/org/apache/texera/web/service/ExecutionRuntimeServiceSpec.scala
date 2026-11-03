@@ -143,8 +143,6 @@ class ExecutionRuntimeServiceSpec
       reconfigurationService,
       logConf,
       workflowId = 7L,
-      emailNotificationEnabled = false,
-      userEmailOpt = None,
       sessionUri = new URI("https://texera.example/session")
     )
     new Fixture(

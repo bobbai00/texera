@@ -124,18 +124,8 @@ jobs:
       matrix:
         target: ${{ fromJson(needs.apply-check.outputs.buildable) }}
     uses: ./.github/workflows/build.yml
+    # The 2.0 build checks out the PR head; it does not prepare a backport workspace for a
+    # 1.x release branch, whose own build.yml does that.
     with:
       checkout_ref: refs/pull/${{ github.event.pull_request.number }}/head
-      backport_target_branch: ${{ matrix.target }}
-      backport_commit_range: ${{ format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) }}
-      job_name_suffix: ""
-      run_frontend: ${{ needs.precheck.outputs.run_frontend == 'true' }}
-      run_amber: ${{ needs.precheck.outputs.run_amber == 'true' }}
-      run_amber_integration: ${{ needs.precheck.outputs.run_amber_integration == 'true' }}
-      run_platform: ${{ needs.precheck.outputs.run_platform == 'true' }}
-      run_platform_integration: ${{ needs.precheck.outputs.run_platform_integration == 'true' }}
-      run_pyamber: ${{ needs.precheck.outputs.run_pyamber == 'true' }}
-      run_agent_service: ${{ needs.precheck.outputs.run_agent_service == 'true' }}
-      run_infra: ${{ needs.precheck.outputs.run_infra == 'true' }}
-      run_pyright_language_service: ${{ needs.precheck.outputs.run_pyright_language_service == 'true' }}
     secrets: inherit

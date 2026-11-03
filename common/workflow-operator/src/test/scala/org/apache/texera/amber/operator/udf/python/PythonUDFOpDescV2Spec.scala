@@ -115,19 +115,28 @@ class PythonUDFOpDescV2Spec extends AnyFlatSpec with Matchers {
     }
   }
 
-  it should "defer nothing when no parameter names a resource" in {
+  it should "inject a resource parameter's catalog-resolved URL into the code as is" in {
     val d = new PythonUDFOpDescV2
     d.code = tupleUdfCode
-    d.uiParameters = List(uiParameter("count", "7"))
-    d.getPhysicalOp(workflowId, executionId).executionTimeBinding shouldBe None
-  }
-
-  it should "leave a resource parameter to the execution, compiling without resolving it" in {
-    val d = new PythonUDFOpDescV2
-    d.code = tupleUdfCode
-    d.uiParameters = List(resourceParameter("DS", "dataset", "/dataset/owner@x.com/ds/v1"))
-    // Resolving needs a database, which this suite has none of, so compiling must not try.
-    d.getPhysicalOp(workflowId, executionId).executionTimeBinding should not be empty
+    d.uiParameters = List(
+      resourceParameter(
+        "DS",
+        "dataset",
+        "https://storage.example.org/datasets/versions/ds/v1/f.csv?X-Amz-Signature=s"
+      )
+    )
+    d.getPhysicalOp(workflowId, executionId).opExecInitInfo match {
+      // Values reach the code base64-encoded (PythonTemplateBuilder), never interpolated raw.
+      case OpExecWithCode(code, "python") =>
+        code should include(
+          java.util.Base64.getEncoder.encodeToString(
+            "https://storage.example.org/datasets/versions/ds/v1/f.csv?X-Amz-Signature=s".getBytes(
+              "UTF-8"
+            )
+          )
+        )
+      case other => fail(s"expected Python OpExecWithCode, got $other")
+    }
   }
 
   it should "refuse a resource parameter whose version was never chosen" in {

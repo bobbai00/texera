@@ -43,7 +43,7 @@ import org.apache.texera.amber.util.JSONUtils.objectMapper
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
-import org.apache.texera.web.resource.pythonvirtualenvironment.PveManager
+import org.apache.texera.web.execution.EnvironmentManager
 import java.util.Base64
 import java.util.concurrent.{ExecutorService, Executors}
 import scala.sys.process.{BasicIO, Process}
@@ -238,9 +238,9 @@ class PythonWorkflowWorker(
     val fallback = PythonUtils.getPythonExecutable
     val pveName = workerConfig.pveName.trim
 
-    workerConfig.cuid
-      .filter(_ => pveName.nonEmpty)
-      .flatMap(cuid => PveManager.getPythonBin(cuid, pveName))
+    Option(pveName)
+      .filter(_.nonEmpty)
+      .flatMap(EnvironmentManager.getPythonBin)
       .map(_.toString)
       .getOrElse(fallback)
   }

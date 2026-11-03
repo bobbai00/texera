@@ -105,7 +105,6 @@ class PythonUDFSourceOpDescV2 extends SourceOperatorDescriptor with PythonUdfUiP
       )
       .withLocationPreference(Option.empty)
       .withPveName(pveName)
-      .withExecutionTimeBinding(executionBinding(code))
 
     if (workers > 1) {
       physicalOp

@@ -41,7 +41,7 @@ import java.time.Duration
   */
 object RustFSContainer {
 
-  /** Image pinned in lockstep with `bin/single-node/docker-compose.yml` and `bin/k8s/values.yaml`. */
+  /** Image pinned in lockstep with the dev stack, `bin/texera-2-0/docker-compose.yml`. */
   val ImageName: String = "rustfs/rustfs:1.0.0"
 
   /** S3 API port inside the container. */

@@ -1,0 +1,157 @@
+@import "tailwindcss";
+@source "../../../../node_modules/streamdown/dist/*.js";
+@source "../../../../packages/*/src/**/*.{ts,tsx}";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Design tokens. Components only ever use these names, so a theme is a block of
+   variables. The palette comes from Texera's logo: the peacock runs from teal
+   (crest, #028b95) to blue (tail, #0d65a5); primary is its body colour (#0b7895),
+   and the neutrals are a blue-grey of the same hue. */
+:root {
+  --background: oklch(0.99 0.002 220);
+  --foreground: oklch(0.22 0.014 232);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.014 232);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.014 232);
+  --muted: oklch(0.966 0.005 220);
+  --muted-foreground: oklch(0.51 0.02 228);
+  --accent: oklch(0.953 0.011 214);
+  --accent-foreground: oklch(0.22 0.014 232);
+  --primary: oklch(0.532 0.097 223);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.966 0.005 220);
+  --secondary-foreground: oklch(0.22 0.014 232);
+  --destructive: oklch(0.58 0.22 27);
+  --success: oklch(0.62 0.14 155);
+  --warning: oklch(0.72 0.15 70);
+  --border: oklch(0.915 0.008 220);
+  --input: oklch(0.915 0.008 220);
+  --ring: oklch(0.581 0.099 204);
+  --sidebar: oklch(0.972 0.006 214);
+  --canvas: oklch(0.972 0.006 214);
+  --radius: 0.75rem;
+
+  /* The logo's two ends, for the few places that use its gradient. */
+  --brand-teal: oklch(0.581 0.099 204);
+  --brand-blue: oklch(0.494 0.127 248);
+
+  /* One accent per resource kind, used for its icon chip everywhere it appears. */
+  --kind-conversation: oklch(0.55 0.13 248);
+  --kind-workflow: oklch(0.6 0.1 202);
+  --kind-dataset: oklch(0.62 0.14 155);
+  --kind-execution: oklch(0.72 0.15 70);
+  --kind-agent_template: oklch(0.62 0.18 25);
+  --kind-mcp_server: oklch(0.58 0.16 300);
+  --kind-computing_unit: oklch(0.55 0.08 260);
+  --kind-environment: oklch(0.65 0.13 120);
+  --kind-project: oklch(0.6 0.12 40);
+  --kind-skill: oklch(0.6 0.15 330);
+}
+
+.dark {
+  --background: oklch(0.17 0.008 232);
+  --foreground: oklch(0.96 0.003 220);
+  --card: oklch(0.205 0.01 232);
+  --card-foreground: oklch(0.96 0.003 220);
+  --popover: oklch(0.22 0.01 232);
+  --popover-foreground: oklch(0.96 0.003 220);
+  --muted: oklch(0.26 0.01 232);
+  --muted-foreground: oklch(0.71 0.016 225);
+  --accent: oklch(0.27 0.014 222);
+  --accent-foreground: oklch(0.96 0.003 220);
+  --primary: oklch(0.74 0.11 205);
+  --primary-foreground: oklch(0.17 0.02 228);
+  --secondary: oklch(0.27 0.01 232);
+  --secondary-foreground: oklch(0.96 0.003 220);
+  --destructive: oklch(0.65 0.2 25);
+  --success: oklch(0.7 0.14 155);
+  --warning: oklch(0.78 0.15 75);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.74 0.11 205);
+  --sidebar: oklch(0.19 0.009 232);
+  --canvas: oklch(0.19 0.009 232);
+  --brand-teal: oklch(0.72 0.11 200);
+  --brand-blue: oklch(0.64 0.13 245);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-canvas: var(--canvas);
+  --color-brand-teal: var(--brand-teal);
+  --color-brand-blue: var(--brand-blue);
+  --color-kind-conversation: var(--kind-conversation);
+  --color-kind-workflow: var(--kind-workflow);
+  --color-kind-dataset: var(--kind-dataset);
+  --color-kind-execution: var(--kind-execution);
+  --color-kind-agent_template: var(--kind-agent_template);
+  --color-kind-mcp_server: var(--kind-mcp_server);
+  --color-kind-computing_unit: var(--kind-computing_unit);
+  --color-kind-environment: var(--kind-environment);
+  --color-kind-project: var(--kind-project);
+  --color-kind-skill: var(--kind-skill);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  ::selection {
+    @apply bg-primary/20;
+  }
+}
+
+/* Thin, theme-aware scrollbars. */
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* The one focus ring every control uses. */
+@utility focus-ring {
+  @apply outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40;
+}
+
+/* A form control's frame: inputs, selects and textareas share it. */
+@utility control {
+  @apply min-w-0 rounded-lg border border-input bg-transparent text-sm shadow-xs transition-[color,box-shadow] placeholder:text-muted-foreground disabled:opacity-50;
+}

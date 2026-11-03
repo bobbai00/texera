@@ -26,7 +26,7 @@ import org.apache.texera.amber.core.storage.DocumentFactory
 import org.apache.texera.amber.core.tuple.{AttributeTypeUtils, Schema, TupleLike}
 import org.apache.texera.amber.operator.source.scan.{ScanRowParseError, SkippedRowReporter}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.dao.SiteSettings
+import org.apache.texera.common.config.ApplicationConfig
 
 import java.io.InputStreamReader
 import java.net.URI
@@ -127,8 +127,8 @@ class CSVScanSourceOpExec private[csv] (descString: String) extends SourceOperat
 object CSVScanSourceOpExec {
   val DEFAULT_MAX_COLUMNS = 512
 
-  def getMaxColumns: Int =
-    SiteSettings.getInt("csv_parser_max_columns", DEFAULT_MAX_COLUMNS)
+  /** The widest CSV a scan accepts: `constants.csv-max-columns` (env CONSTANTS_CSV_MAX_COLUMNS). */
+  def getMaxColumns: Int = ApplicationConfig.csvMaxColumns
 
   /**
     * Wraps `parser.parseNext()` so a column-count overflow is reported to the user

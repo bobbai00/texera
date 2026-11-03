@@ -27,9 +27,6 @@ import org.apache.texera.amber.engine.architecture.scheduling.DefaultCostEstimat
 import org.apache.texera.amber.engine.architecture.scheduling.config.ResourceConfig
 import org.apache.texera.amber.engine.architecture.scheduling.resourcePolicies.ResourceAllocator
 import org.apache.texera.amber.engine.common.AmberLogging
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.SqlServer.withTransaction
-import org.apache.texera.dao.jooq.generated.Tables.{WORKFLOW_EXECUTIONS, WORKFLOW_VERSION}
 
 import java.net.URI
 import scala.util.{Failure, Success, Try}
@@ -65,11 +62,10 @@ class DefaultCostEstimator(
 ) extends CostEstimator
     with AmberLogging {
 
-  // Requires mysql database to retrieve execution statistics, otherwise use number of materialized ports as a default.
+  // Past statistics come with the workflow context; without them the cost is the number of
+  // materialized ports.
   private val operatorEstimatedTimeOption = Try(
-    this.getOperatorExecutionTimeInSeconds(
-      this.workflowContext.workflowId.id
-    )
+    this.workflowContext.pastRuntimeStatistics.flatMap(getOperatorExecutionTimeInSeconds)
   ) match {
     case Failure(_)      => None
     case Success(result) => result
@@ -113,53 +109,22 @@ class DefaultCostEstimator(
   }
 
   /**
-    * Retrieve the latest successful execution to get statistics to calculate costs in DefaultCostEstimator.
-    * Using the total control processing time plus data processing time of an operator as its cost.
-    * If no past statistics are available (e.g., first execution), return None.
+    * Each operator's cost from a past run's runtime statistics: the most control plus data
+    * processing time any of its workers reported, in seconds. None when the document is empty.
     */
-  private def getOperatorExecutionTimeInSeconds(
-      wid: Long
-  ): Option[Map[String, Double]] = {
-
-    val uriString: String = withTransaction(
-      SqlServer
-        .getInstance()
-        .createDSLContext()
-    ) { context =>
-      context
-        .select(WORKFLOW_EXECUTIONS.RUNTIME_STATS_URI)
-        .from(WORKFLOW_EXECUTIONS)
-        .join(WORKFLOW_VERSION)
-        .on(WORKFLOW_VERSION.VID.eq(WORKFLOW_EXECUTIONS.VID))
-        .where(
-          WORKFLOW_VERSION.WID
-            .eq(wid.toInt)
-            .and(WORKFLOW_EXECUTIONS.STATUS.eq(3.toByte))
-        )
-        .orderBy(WORKFLOW_EXECUTIONS.STARTING_TIME.desc())
-        .limit(1)
-        .fetchOneInto(classOf[String])
-    }
-
-    if (uriString == null || uriString.isEmpty) {
-      None
-    } else {
-      val uri: URI = new URI(uriString)
-      val document = DocumentFactory.openDocument(uri)
-
-      val maxStats = document._1
-        .get()
-        .foldLeft(Map.empty[String, Double]) { (acc, tuple) =>
-          val record = tuple.asInstanceOf[Tuple]
-          val operatorId = record.getField(0).asInstanceOf[String]
-          val dataProcessingTime = record.getField(6).asInstanceOf[Long]
-          val controlProcessingTime = record.getField(7).asInstanceOf[Long]
-          val currentMaxTime = acc.getOrElse(operatorId, 0.0)
-          val newTime = (dataProcessingTime + controlProcessingTime) / 1e9
-          acc + (operatorId -> Math.max(currentMaxTime, newTime))
-        }
-
-      if (maxStats.isEmpty) None else Some(maxStats)
-    }
+  private def getOperatorExecutionTimeInSeconds(statistics: URI): Option[Map[String, Double]] = {
+    val maxStats = DocumentFactory
+      .openDocument(statistics)
+      ._1
+      .get()
+      .foldLeft(Map.empty[String, Double]) { (acc, tuple) =>
+        val record = tuple.asInstanceOf[Tuple]
+        val operatorId = record.getField(0).asInstanceOf[String]
+        val dataProcessingTime = record.getField(6).asInstanceOf[Long]
+        val controlProcessingTime = record.getField(7).asInstanceOf[Long]
+        val newTime = (dataProcessingTime + controlProcessingTime) / 1e9
+        acc + (operatorId -> Math.max(acc.getOrElse(operatorId, 0.0), newTime))
+      }
+    if (maxStats.isEmpty) None else Some(maxStats)
   }
 }

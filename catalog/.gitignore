@@ -1,0 +1,2 @@
+# The catalog binary built by `go build -o bin/catalog ./cmd/catalog` (bin/texera-2-0/up.sh)
+/bin/

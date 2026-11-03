@@ -58,7 +58,7 @@ import org.apache.texera.web.model.websocket.request.python.{
   PythonExpressionEvaluateRequest
 }
 import org.apache.texera.web.model.websocket.response.python.PythonExpressionEvaluateResponse
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.apache.texera.web.execution.ExecutionRegistry
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.{SubscriptionManager, WebsocketInput}
 
@@ -154,7 +154,7 @@ class ExecutionConsoleService(
           .createDocument(uri, ResultSchema.consoleMessagesSchema)
           .writer("console_messages")
           .asInstanceOf[BufferedItemWriter[Tuple]]
-        WorkflowExecutionsResource.insertOperatorExecutions(
+        ExecutionRegistry.insertOperatorExecutions(
           workflowContext.executionId.id,
           opId.id,
           uri

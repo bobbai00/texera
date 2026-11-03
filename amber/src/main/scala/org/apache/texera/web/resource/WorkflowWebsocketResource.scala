@@ -27,19 +27,16 @@ import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.COMPILAT
 import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
 import org.apache.texera.amber.error.ErrorUtils.getStackTraceWithAllCauses
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.auth.util.HeaderField
-import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
-import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.websocket.event.{WorkflowErrorEvent, WorkflowStateEvent}
 import org.apache.texera.web.model.websocket.request._
 import org.apache.texera.web.model.websocket.response._
+import org.apache.texera.web.auth.UnitPrincipal
 import org.apache.texera.web.service.WorkflowService
 import org.apache.texera.web.{ServletAwareConfigurator, SessionState}
 
 import java.time.Instant
 import javax.websocket._
 import javax.websocket.server.ServerEndpoint
-import scala.jdk.CollectionConverters.MapHasAsScala
 
 @ServerEndpoint(
   value = "/wsapi/workflow-websocket",
@@ -53,15 +50,10 @@ class WorkflowWebsocketResource extends LazyLogging {
     SessionState.setState(session.getId, sessionState)
     val wid = session.getRequestParameterMap.get("wid").get(0).toLong
     val cuid = session.getRequestParameterMap.get("cuid").get(0).toInt
-    val cuAccessEnum: PrivilegeEnum = PrivilegeEnum.valueOf(
-      session.getUserProperties
-        .get(HeaderField.UserComputingUnitAccess)
-        .asInstanceOf[String]
-    )
-
-    sessionState.setUserComputingUnitAccess(cuAccessEnum)
+    val caller =
+      WorkflowWebsocketResource.principalOf(session).map(_.name).getOrElse("an unverified caller")
     logger.info(
-      s"Websocket connection opened for workflow $wid with computing unit $cuid and access $cuAccessEnum"
+      s"Websocket connection opened for workflow $wid with computing unit $cuid by $caller"
     )
     // hack to refresh frontend run button state
     sessionState.send(WorkflowStateEvent("Uninitialized"))
@@ -78,10 +70,7 @@ class WorkflowWebsocketResource extends LazyLogging {
 
   @OnMessage
   def myOnMsg(session: Session, message: String): Unit = {
-    val userOpt = session.getUserProperties.asScala
-      .get(classOf[User].getName)
-      .map(_.asInstanceOf[User])
-    val uidOpt = userOpt.map(_.getUid)
+    val principalOpt = WorkflowWebsocketResource.principalOf(session)
 
     val sessionState = SessionState.getState(session.getId)
     val workflowStateOpt = sessionState.getCurrentWorkflowState
@@ -112,8 +101,8 @@ class WorkflowWebsocketResource extends LazyLogging {
             sessionState.send(modifyLogicResponse)
           }
         case workflowExecuteRequest: WorkflowExecuteRequest =>
-          if (sessionState.getUserComputingUnitAccess != PrivilegeEnum.WRITE) {
-            throw new IllegalStateException("User does not have write access to the computing unit")
+          if (principalOpt.isEmpty) {
+            throw new IllegalStateException("Sign in to run workflows on this computing unit")
           }
           workflowStateOpt match {
             case Some(workflow) =>
@@ -121,7 +110,7 @@ class WorkflowWebsocketResource extends LazyLogging {
               synchronized {
                 workflow.initExecutionService(
                   workflowExecuteRequest,
-                  userOpt,
+                  principalOpt,
                   session.getRequestURI
                 )
               }
@@ -131,7 +120,7 @@ class WorkflowWebsocketResource extends LazyLogging {
           // `executionStateOpt`, not `workflowStateOpt.map(_.executionService.getValue)`: the latter
           // wraps a null execution into Some(null), which walks past the None arm below and NPEs.
           executionStateOpt match {
-            case Some(value) => value.wsInput.onNext(other, uidOpt)
+            case Some(value) => value.wsInput.onNext(other, principalOpt.map(_.subject))
             case None        => throw new IllegalStateException("workflow execution is not initialized")
           }
       }
@@ -162,4 +151,13 @@ class WorkflowWebsocketResource extends LazyLogging {
     }
 
   }
+}
+
+object WorkflowWebsocketResource {
+
+  /** The caller the handshake verified, if any (see [[ServletAwareConfigurator]]). */
+  def principalOf(session: Session): Option[UnitPrincipal] =
+    Option(session.getUserProperties.get(ServletAwareConfigurator.PrincipalKey)).collect {
+      case p: UnitPrincipal => p
+    }
 }

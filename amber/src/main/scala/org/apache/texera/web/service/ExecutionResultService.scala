@@ -28,10 +28,6 @@ import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.result._
 import org.apache.texera.amber.core.storage.{DocumentFactory, VFSURIFactory}
 import org.apache.texera.amber.core.tuple.{AttributeType, Tuple, TupleUtils}
-import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.tables.daos.OperatorPortExecutionsDao
-import org.apache.texera.dao.jooq.generated.tables.pojos.OperatorPortExecutions
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
   OperatorIdentity,
@@ -61,7 +57,7 @@ import org.apache.texera.web.model.websocket.event.{
   WebResultUpdateEvent
 }
 import org.apache.texera.web.model.websocket.request.ResultPaginationRequest
-import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
+import org.apache.texera.web.execution.ExecutionRegistry
 import org.apache.texera.web.service.ExecutionResultService.convertTuplesToJson
 import org.apache.texera.web.service.WorkflowExecutionService.getLatestExecutionId
 import org.apache.texera.web.storage.{ExecutionStateStore, WorkflowStateStore}
@@ -88,13 +84,7 @@ object ExecutionResultService {
       executionId: ExecutionIdentity,
       evt: OperatorPortResultUriAvailable
   ): Unit = {
-    val pojo = new OperatorPortExecutions()
-    pojo.setWorkflowExecutionId(executionId.id.toInt)
-    pojo.setGlobalPortId(evt.globalPortId.serializeAsString)
-    pojo.setResultUri(evt.uri.toString)
-    new OperatorPortExecutionsDao(
-      SqlServer.getInstance().createDSLContext().configuration()
-    ).insert(pojo)
+    ExecutionRegistry.recordPortResultUri(executionId, evt.globalPortId, evt.uri)
   }
 
   private val defaultPageSize: Int = 5
@@ -233,7 +223,7 @@ object ExecutionResultService {
 
     // Cannot assume the storage is available at this point. The storage object is only available
     // after a region is scheduled to execute.
-    val storageUriOption = WorkflowExecutionsResource.getResultUriByLogicalPortId(
+    val storageUriOption = ExecutionRegistry.getResultUriByLogicalPortId(
       executionId,
       physicalOps.head.id.logicalOpId,
       PortIdentity()
@@ -430,7 +420,7 @@ class ExecutionResultService(
               }
 
               if (!hasSingleSnapshot) {
-                val storageUri = WorkflowExecutionsResource
+                val storageUri = ExecutionRegistry
                   .getResultUriByLogicalPortId(
                     executionId,
                     opId,
@@ -442,13 +432,13 @@ class ExecutionResultService(
                   val opStorage = DocumentFactory.openDocument(storageUri.get)._1
 
                   allTableStats(opId.id) = opStorage.getTableStatistics
-                  WorkflowExecutionsResource.updateResultSize(
+                  ExecutionRegistry.updateResultSize(
                     executionId,
                     globalPortIdOption.get,
                     opStorage.getTotalFileSize
                   )
-                  WorkflowExecutionsResource.updateRuntimeStatsSize(executionId)
-                  WorkflowExecutionsResource.updateConsoleMessageSize(executionId, opId)
+                  ExecutionRegistry.updateRuntimeStatsSize(executionId)
+                  ExecutionRegistry.updateConsoleMessageSize(executionId, opId)
                 }
               }
           }
@@ -475,7 +465,7 @@ class ExecutionResultService(
       throw new IllegalStateException("No execution is recorded")
     )
 
-    val storageUriOption = WorkflowExecutionsResource.getResultUriByLogicalPortId(
+    val storageUriOption = ExecutionRegistry.getResultUriByLogicalPortId(
       latestExecutionId,
       OperatorIdentity(request.operatorID),
       PortIdentity(request.portIndex)
@@ -529,7 +519,7 @@ class ExecutionResultService(
   private def onResultUpdate(executionId: ExecutionIdentity, physicalPlan: PhysicalPlan): Unit = {
     workflowStateStore.resultStore.updateState { _ =>
       val newInfo: Map[OperatorIdentity, OperatorResultMetadata] = {
-        WorkflowExecutionsResource
+        ExecutionRegistry
           .getResultUrisByExecutionId(executionId)
           // One entry per operator, so it follows the first output port, as the result updates do.
           // Keyed by operator, a second port's count would otherwise replace the first's.

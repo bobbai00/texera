@@ -1,0 +1,23 @@
+model
+  schema 1.1
+
+type user
+
+type agent
+  relations
+    define sponsor: [user]
+
+type group
+  relations
+    define member: [user, agent, group#member]
+
+type resource
+  relations
+    define parent: [resource]
+    define owner: [user, agent] or owner from parent
+    define editor: [user, agent, group#member] or owner or editor from parent
+    define viewer: [user, agent, group#member, user:*] or editor or viewer from parent
+    define can_read: viewer
+    define can_write: editor
+    define can_share: owner
+    define can_delete: owner

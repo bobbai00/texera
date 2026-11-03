@@ -34,7 +34,6 @@ src_managed/
 
 # Ignoring index folder and data folder
 index/
-catalog/
 plan/
 plan_files/
 query-results/

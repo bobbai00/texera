@@ -45,17 +45,11 @@ from pathlib import Path
 
 # Per-module LICENSE-binary files that the combined LICENSE-binary unions.
 # Resolved relative to the repo root (parent of bin/licensing/).
+# Texera 2.0 ships one JVM distribution, the computing unit (amber); the 1.x services and the
+# Angular frontend, whose files were listed here, are retired.
 PER_MODULE_LICENSE_BINARIES: list[str] = [
-    "access-control-service/LICENSE-binary",
-    "config-service/LICENSE-binary",
-    "file-service/LICENSE-binary",
-    "workflow-compiling-service/LICENSE-binary",
-    "computing-unit-managing-service/LICENSE-binary",
-    "notebook-migration-service/LICENSE-binary",
     "amber/LICENSE-binary-java",
     "amber/LICENSE-binary-python",
-    "frontend/LICENSE-binary",
-    "agent-service/LICENSE-binary",
 ]
 
 # Primary requirement files used to mark deps as "direct" (vs. transitive).

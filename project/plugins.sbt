@@ -31,15 +31,3 @@ addSbtPlugin("com.github.sbt" % "sbt-native-packager" % "1.11.7")
 // for scalapb code gen
 addSbtPlugin("org.typelevel" % "sbt-fs2-grpc" % "2.11.0")
 
-// JOOQ dependencies for code generation
-libraryDependencies ++= Seq(
-  "org.jooq" % "jooq-codegen" % "3.19.36",
-  "com.typesafe" % "config" % "1.4.9",
-  // Build-time codegen driver only, not bundled. pgjdbc >= 42.7.5 returns JDBC-spec
-  // uppercase metadata column labels (KEY_SEQ) where earlier drivers returned lowercase
-  // (key_seq), which used to break PostgresDatabase.loadForeignKeys and therefore JOOQ
-  // code generation. jooq-codegen 3.19.36 carries the jOOQ/jOOQ#17873 fix: it probes for
-  // the lowercase label and upper-cases every lookup when it is absent, so both casings
-  // work. Re-pin to 42.7.4 only if jooq-codegen is ever moved below 3.19.36.
-  "org.postgresql" % "postgresql" % "42.7.13"
-)
