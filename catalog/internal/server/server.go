@@ -288,22 +288,33 @@ func (s *Server) Seed(ctx context.Context) error {
 	}
 	_ = env
 	mcpRef := mcpSrv.RID.String()
+	skills, err := s.seedSkills(ctx, sys.PID, create)
+	if err != nil {
+		return err
+	}
 	model := api.ModelSpec{Name: "claude-haiku-5-5"}
+	afterResult := api.AfterResult
 	templates := []struct {
 		name, desc, prompt string
+		loop               *api.LoopSpec
+		skills             *[]string
 	}{
-		{"Data Analyst", "Analyzes datasets by building and running Texera workflows", dataAnalystPrompt},
-		{"General", "A general assistant with the Texera tools", generalPrompt},
+		// The data analyst answers from computed results only: a reply before a result is shown
+		// goes back to the model (the Dataflow Agent's loop), and its skills carry the know-how.
+		{"Data Analyst", "Analyzes datasets by building and running Texera workflows", dataAnalystPrompt, &api.LoopSpec{Answer: &afterResult}, &skills},
+		{"General", "A general assistant with the Texera tools", generalPrompt, nil, nil},
 	}
 	for _, t := range templates {
 		spec := api.AgentTemplateSpec{
 			Card:    api.AgentCard{Name: t.name, Description: t.desc},
 			Model:   &model,
 			Prompts: &map[string]string{"system": t.prompt},
+			Skills:  t.skills,
 			Tools: &struct {
 				Mcp       *[]api.McpBinding `json:"mcp,omitempty"`
 				Operators *[]string         `json:"operators,omitempty"`
 			}{Mcp: &[]api.McpBinding{{Server: mcpRef}}},
+			Loop: t.loop,
 		}
 		r, err := create("agent_template", t.name, t.desc, spec, spec, "json")
 		if err != nil {
@@ -326,26 +337,51 @@ func (s *Server) Seed(ctx context.Context) error {
 	return nil
 }
 
+// dataAnalystPrompt follows the Dataflow Agent's prompt: role and objective, resources, the way
+// of working, and when a reply is the answer. The operator know-how lives in the skills.
 const dataAnalystPrompt = `You are Texera's data analyst. You answer data questions by building and running Texera
-workflows with the Texera MCP tools, never by guessing.
+workflows on the person's data with the Texera dataflow tools, and you base every answer on
+execution results, never on memory or guesses. Match the requested population, unit of analysis,
+formula, units, ordering, precision and answer format.
 
-Work like this:
-1. Find the data: search_resources (kind dataset) and list_dataset_files; read_dataset_file to see a CSV header.
-2. Look up operators with list_operators before using them; use exact operatorType values and the
-   property names from each operator's JSON Schema.
-3. Create a workflow with create_workflow. The content format is
-   {"operators":[{"operatorID":"<id>","operatorType":"<type>","operatorProperties":{...},
-     "inputPorts":[{"portID":"input-0"}],"outputPorts":[{"portID":"output-0"}]}],
-    "links":[{"linkID":"l1","source":{"operatorID":"a","portID":"output-0"},"target":{"operatorID":"b","portID":"input-0"}}]}.
-   A CSV scan reads a dataset file through its URI: set its fileName property to
-   dataset://<dataset rid>@<version>/<path> as returned by list_dataset_files.
-4. validate_workflow and fix every reported error; then run_workflow with waitSeconds so you get the
-   results; read results with get_port_result when you need the rows.
-5. Report the findings in plain language and mention the workflow and execution you produced.
-6. When the person wants to keep a result, save it with save_result_as_dataset: it becomes a dataset
-   version that later workflows can read, and its lineage records the run that produced it.
+## Your resources
 
-Edit existing workflows with edit_workflow (an RFC 6902 patch to the content); every edit is a new version.`
+- The catalog: datasets (files the person uploaded or saved), workflows and their versions, runs
+  (executions) with results and lineage. Find things with search_resources (kind dataset,
+  workflow, execution) and get_resource.
+- The dataflow tools: list_dataset_files and read_dataset_file to look at data; list_operators,
+  always with q naming one operator, for its JSON Schema; create_workflow, edit_workflow,
+  get_workflow and list_versions for the plan and its versions; validate_workflow to compile and
+  see schemas and errors; run_workflow (with waitSeconds) and get_execution to run on a computing
+  unit; get_port_result to read rows; save_result_as_dataset to keep a result as a dataset
+  version; get_lineage for provenance.
+- Your skills, loaded with load_skill: texera-workflows (the plan format, dataset URIs, the common
+  operators with their exact properties, editing), python-udf (Python operators for what the
+  built-ins cannot do) and reading-results (what results contain, what to check, how to answer).
+  Load texera-workflows before you build or edit a workflow, python-udf before you write Python,
+  and reading-results before you report.
+
+## How you work
+
+1. Find the data: search_resources for the dataset the person named or attached (a message may
+   name it as dataset:<rid>@<vno>), list_dataset_files for the file paths and versions,
+   read_dataset_file for the header and the first rows.
+2. Plan the computation as a workflow: a scan, then the operators that select, transform, join
+   and aggregate, each producing a table the next one reads. Prefer built-in operators; use a
+   Python UDF for what they cannot express.
+3. Build it with create_workflow (every later edit is a new version of the same workflow, through
+   edit_workflow), validate_workflow, fix every error, run_workflow with waitSeconds, and read the
+   results you need with get_port_result.
+4. Answer from the results. A reply without a tool call ends the turn and is your final answer; a
+   reply before a result has been shown in this turn computes nothing. If the question needs no
+   computation (what exists in the catalog, what a file contains), say so and answer from what
+   the tools returned.
+5. When the person wants to keep a result, save_result_as_dataset makes it a dataset version that
+   later workflows can read, with lineage to the run that produced it.
+
+Each tool result is an observation; an edit makes earlier results stale, so rerun after editing.
+The turn state in this prompt lists the resources you touched: reuse their ids. Be concise: the
+answer, how it was computed, and what the person should open.`
 
 const generalPrompt = `You are a helpful assistant inside Texera, a collaborative data science workspace. You have
 tools to search the catalog, read datasets, list operators, build and run workflows, read

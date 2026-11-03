@@ -1,10 +1,30 @@
 # Texera 2.0 agent runtime
 
-Runs the agents that people chat with. Each agent is an AI SDK 7 `ToolLoopAgent` built
-from a catalog agent template: model, system prompt, skills (SKILL.md, loaded on demand)
-and the MCP servers the template binds, the built-in Texera "dataflow" server among them.
-The runtime speaks AG-UI 1.0 to the app and A2A 1.0 to other agents; the catalog is the
-source of truth for conversations, templates, skills and MCP servers.
+Runs the agents that people chat with. Each agent is built from a catalog agent template:
+model, system prompt, skills (SKILL.md, loaded on demand) and the MCP servers the template
+binds, the built-in Texera "dataflow" server among them, and runs the Dataflow Agent's ReAct
+loop on AI SDK 7 (`src/run/react-loop.ts`). The runtime speaks AG-UI 1.0 to the app and
+A2A 1.0 to other agents; the catalog is the source of truth for conversations, templates,
+skills and MCP servers.
+
+## The loop
+
+One model call per step; the step's tool calls run; the loop goes on until the model replies
+without a tool call, the step budget is spent, or the run is aborted. Around each call:
+
+- `prepareStep` renders the turn's state into the system prompt: the step budget, the
+  resources the turn has touched (with the ids the model must reuse) and whether a computed
+  result has been shown.
+- `onStepFinish` records the step: text, reasoning, tool calls, results, usage.
+- The answer policy decides whether a reply without a tool call is the answer. `free`: always.
+  `after_result`: only once a result-showing tool succeeded in the turn (`run_workflow`
+  completed, `get_port_result`, `save_result_as_dataset`); before that the reply is sent back
+  with a correction, once by default. The Data Analyst template uses `after_result`.
+- A provider refusal is retried once; a reply cut off at the output limit is continued once;
+  the step limit and a refusal end the turn as `RUN_ERROR`.
+
+A template sets its loop in `spec.loop` (`answer`, `resultTools`, `maxSteps`, `temperature`);
+the runtime's defaults fill in the rest.
 
 ## Run
 
@@ -34,7 +54,8 @@ gateway has verified the person's Keycloak token.
 | `TEXERA_LLM_BASE_URL` | – | required for `openai-compatible` |
 | `TEXERA_LLM_API_KEY` | `ANTHROPIC_API_KEY` | provider key |
 | `TEXERA_LLM_DEFAULT_MODEL` | `claude-haiku-5-5` | model when a template names none |
-| `TEXERA_AGENT_MAX_STEPS` | `40` | model steps per turn |
+| `TEXERA_AGENT_MAX_STEPS` | `40` | model steps per turn, unless the template's `loop.maxSteps` says otherwise |
+| `TEXERA_AGENT_ANSWER_POLICY` | `free` | `free` or `after_result`, for templates whose `loop` names none |
 | `TEXERA_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 ## Protocol surface
@@ -42,7 +63,7 @@ gateway has verified the person's Keycloak token.
 | Route | Protocol | Notes |
 |---|---|---|
 | `GET /healthz` | – | live agent count |
-| `POST /agents/{pid}/ag-ui` | AG-UI 1.0 | `RunAgentInput` in, SSE events out: `RUN_STARTED`, `STEP_*`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`, `CUSTOM` (`texera.resource` with `{kind, rid, vno}`), `RUN_FINISHED` / `RUN_ERROR`. Only the newest user message of the input is used; history comes from the catalog. |
+| `POST /agents/{pid}/ag-ui` | AG-UI 1.0 | `RunAgentInput` in, SSE events out: `RUN_STARTED`, `STEP_*`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`, `CUSTOM` (`texera.resource` with `{kind, rid, vno}`; `texera.correction` with `{reason}` when a reply was sent back), `RUN_FINISHED` / `RUN_ERROR`. Only the newest user message of the input is used; history comes from the catalog. |
 | `GET /agents/{pid}/.well-known/agent-card.json` | A2A 1.0 | the card built from the template |
 | `POST /agents/{pid}/a2a` | A2A 1.0 JSON-RPC | `SendMessage` and `SendStreamingMessage` run the same turn and answer with one agent message |
 
@@ -65,7 +86,7 @@ src/auth/              user token verification (jose), service token (client cre
 src/catalog/           typed catalog client (types from @texera/catalog-client)
 src/agent/             model resolution, system prompt, skills, MCP mounting, agent builder
 src/host/              AgentHost + Spawner (in-process), Sandbox (local)
-src/run/               the turn: history → stream → AG-UI events → persisted messages
+src/run/               the ReAct loop (react-loop.ts) and the turn: history → loop → AG-UI events → persisted messages
 src/protocol/          AG-UI and A2A HTTP handlers
 src/server.ts          Hono app;  src/main.ts  Bun server
 test/                  bun tests with a fake catalog, a scripted model and in-memory MCP
@@ -77,7 +98,7 @@ test/                  bun tests with a fake catalog, a scripted model and in-me
   starts one process per agent on a sandbox node implements the same interface.
 - **Sandbox**: `LocalSandbox` runs commands as child processes; nothing uses it yet. It is
   the seam for code-execution tools and for stdio MCP servers, which are refused today.
-- **Tool approval**: `toolApproval` on the `ToolLoopAgent` and AG-UI's
+- **Tool approval**: AI SDK's `toolApproval` on the loop's `streamText` and AG-UI's
   `RUN_FINISHED` interrupt outcome are the seam for human-in-the-loop; not wired yet.
 - **A2A tasks**: the executor answers with one message per request; long-running tasks,
   artifacts and push notifications are not implemented.

@@ -375,3 +375,52 @@ func TestBuiltInTemplatesFollowThePlatform(t *testing.T) {
 	require.NoError(t, s.server.Seed(ctx))
 	require.EqualValues(t, 2, analyst()["metadata"].(map[string]any)["headVersion"])
 }
+
+func TestDataAnalystBindsTheShippedSkillsAndAnswersAfterResults(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	alice := s.issuer.user("alice")
+	var analyst map[string]any
+	for _, it := range s.ok("GET", "/catalog/v1/agent-templates?q=Data%20Analyst", alice, nil)["items"].([]any) {
+		if m := it.(map[string]any); m["metadata"].(map[string]any)["name"] == "Data Analyst" {
+			analyst = m
+		}
+	}
+	require.NotNil(t, analyst)
+	spec := analyst["spec"].(map[string]any)
+	require.Equal(t, "after_result", spec["loop"].(map[string]any)["answer"])
+	refs := spec["skills"].([]any)
+	require.Len(t, refs, 3)
+
+	// Each skill is a public resource whose head version is the SKILL.md: frontmatter and body,
+	// without the repository's license comment.
+	names := map[string]bool{}
+	for _, ref := range refs {
+		skill := s.ok("GET", "/catalog/v1/skills/"+ref.(string), alice, nil)
+		name := skill["spec"].(map[string]any)["name"].(string)
+		names[name] = true
+		require.EqualValues(t, 1, skill["metadata"].(map[string]any)["headVersion"])
+		version := s.ok("GET", "/catalog/v1/resources/"+ref.(string)+"/versions/1", alice, nil)
+		content := version["content"].(string)
+		require.Contains(t, content, "---\nname: "+name+"\n")
+		require.NotContains(t, content, "<!--")
+		require.NotContains(t, content, "Licensed to the Apache")
+	}
+	require.Equal(t, map[string]bool{"texera-workflows": true, "python-udf": true, "reading-results": true}, names)
+
+	// A skill an older release shipped differently gets a new version from the platform; the next
+	// start changes nothing.
+	first := refs[0].(string)
+	platform, _, err := s.store.EnsureUser(ctx, "system:texera", "Texera", nil)
+	require.NoError(t, err)
+	msg := "what an older release shipped"
+	_, err = s.store.CreateVersion(ctx, store.NewVersion{RID: mustUUID(t, first), ContentKind: "json",
+		Content: json.RawMessage(`"---\nname: old\ndescription: old\n---\n\nold"`), Message: &msg, CreatedByPID: platform.PID})
+	require.NoError(t, err)
+	require.NoError(t, s.server.Seed(ctx))
+	versions := s.ok("GET", "/catalog/v1/resources/"+first+"/versions", alice, nil)["items"].([]any)
+	require.Len(t, versions, 3)
+	require.Equal(t, "updated by the platform", versions[0].(map[string]any)["message"])
+	require.NoError(t, s.server.Seed(ctx))
+	require.Len(t, s.ok("GET", "/catalog/v1/resources/"+first+"/versions", alice, nil)["items"].([]any), 3)
+}
