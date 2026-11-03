@@ -21,9 +21,9 @@
 # this worktree is kept; a port held by anything else stops the script.
 #
 #   bin/texera-2-0/up.sh
-#   TEXERA_ENV_FILE=../texera/.env bin/texera-2-0/up.sh    # where ANTHROPIC_API_KEY is read from
 #
-# Without ANTHROPIC_API_KEY (or TEXERA_ENV_FILE) everything but the agent runtime starts.
+# The model key is ANTHROPIC_API_KEY from the environment, from the file TEXERA_ENV_FILE names, or
+# from a gitignored .env at the repo root; without one everything but the agent runtime starts.
 # Logs: logs/texera-2-0/<service>.log. Stop with bin/texera-2-0/down.sh.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -32,6 +32,12 @@ LOGS=${TEXERA2_LOG_DIR:-$ROOT/logs/texera-2-0}
 mkdir -p "$LOGS"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
+
+echo "== prerequisites"
+for t in docker go bun sbt java uv lsof; do
+  command -v "$t" >/dev/null || { echo "$t is not installed (see bin/texera-2-0/README.md)" >&2; exit 1; }
+done
+ensure_python_env
 
 echo "== infrastructure (compose project texera2)"
 docker compose -f "$HERE/docker-compose.yml" up -d
@@ -54,11 +60,11 @@ wait_for catalog 120 http_ok "http://localhost:8090/healthz"
 start unit 28085 "$ROOT" "exec '$HERE/run-unit.sh'"
 wait_for unit 900 http_ok "http://localhost:28085/api/health"
 
-if [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${TEXERA_ENV_FILE:-}" ]; then
+if [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "$(env_file_value ANTHROPIC_API_KEY)" ]; then
   start agent-runtime 23002 "$ROOT" "exec '$HERE/run-agent-runtime.sh'"
   wait_for agent-runtime 60 lsof -nP -iTCP:23002 -sTCP:LISTEN
 else
-  echo "agent-runtime: skipped; set ANTHROPIC_API_KEY or TEXERA_ENV_FILE to chat"
+  echo "agent-runtime: skipped; put ANTHROPIC_API_KEY in the environment or in $ROOT/.env to chat"
 fi
 
 start frontend 5174 "$ROOT/frontend-next" "exec bun run dev"

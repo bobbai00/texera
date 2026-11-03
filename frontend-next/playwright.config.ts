@@ -2,6 +2,10 @@ import { defineConfig } from "@playwright/test";
 
 // Runs against the dev stack: the gateway at http://localhost:8088 with the catalog, the agent
 // runtime and `bun run dev` (vite on 5174) up. Override with TEXERA_BASE_URL.
+//
+// The browser is Playwright's bundled Chromium (`bunx playwright install chromium`). Where that
+// build is unavailable (Playwright no longer ships one for Ubuntu 20.04, say), set
+// TEXERA_E2E_BROWSER_CHANNEL=chrome to drive the installed Google Chrome instead.
 export default defineConfig({
   testDir: "./e2e",
   timeout: 120_000,
@@ -13,5 +17,10 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium", use: { browserName: "chromium" } }],
+  projects: [
+    {
+      name: "chromium",
+      use: { browserName: "chromium", channel: process.env.TEXERA_E2E_BROWSER_CHANNEL || undefined },
+    },
+  ],
 });

@@ -19,13 +19,14 @@
 
 # Texera 2.0 dev stack
 
-Infrastructure runs in containers (compose project `texera2`). The catalog, the computing unit,
-the agent runtime and the frontend run on the host, so they can be rebuilt and restarted quickly.
-Everything is reached through the gateway at `http://localhost:8088`.
+Everything that is Texera runs as a plain process on the host: the catalog (Go), the computing
+unit (the Amber engine, sbt), the agent runtime (Bun) and the frontend (vite). Only the standard
+components run in containers (compose project `texera2`): the Envoy gateway, Keycloak, OpenFGA,
+Postgres, RustFS (S3) and Lakekeeper (Iceberg REST). Everything is reached through the gateway at
+`http://localhost:8088`. No Kubernetes is involved in development.
 
 ```
 bin/texera-2-0/up.sh                      # bring everything up (idempotent)
-TEXERA_ENV_FILE=../texera/.env bin/texera-2-0/up.sh   # also start the agent runtime with ANTHROPIC_API_KEY from that file
 bin/texera-2-0/test.sh                    # all suites, then the end-to-end checks
 bin/texera-2-0/test.sh suites             # only the unit and integration suites
 bin/texera-2-0/test.sh e2e                # only the end-to-end checks against the running stack
@@ -34,9 +35,42 @@ bin/texera-2-0/down.sh --wipe             # stop it all and delete the volumes
 ```
 
 `up.sh` reuses a service that already runs from this worktree and refuses to start when another
-process holds one of its ports. The API key is read when the agent runtime starts and is never
-written into this repository. Logs go to `logs/texera-2-0/<service>.log`, test logs to
+process holds one of its ports. Logs go to `logs/texera-2-0/<service>.log`, test logs to
 `logs/texera-2-0/tests/`.
+
+## Prerequisites
+
+| Tool | Version | Why |
+|---|---|---|
+| Docker with Compose v2 | any recent | the infrastructure containers |
+| Go | the `go` line of `catalog/go.mod` (a [go.dev tarball](https://go.dev/dl/) under `~/.local/go` is found) | the catalog |
+| JDK 17 and sbt | | the computing unit |
+| Bun | 1.3 | the agent runtime, the frontend, the generated clients |
+| uv | 0.9 | the Python environment of the engine's workers |
+| `lsof`, `curl` | | the scripts |
+
+The Python environment is managed by [uv](https://docs.astral.sh/uv/) from the repo-root
+`pyproject.toml`: `up.sh` runs `uv sync --all-extras` (Python 3.12 into `.venv`, downloaded by
+uv when missing) and `bin/python-proto-gen.sh` once, and the unit runs its workers from
+`.venv/bin/python`. `bun install` at the repo root installs every workspace.
+
+The model key for the agent runtime is `ANTHROPIC_API_KEY`, read from the environment, from the
+file `TEXERA_ENV_FILE` names, or from a `.env` at the repo root (gitignored; `KEY=VALUE` or
+`export KEY=VALUE` lines). Without it everything but the agent runtime starts.
+
+The Playwright checks use Playwright's bundled Chromium (`cd frontend-next && bunx playwright
+install chromium`); where Playwright ships no build for the host (Ubuntu 20.04, say), `test.sh`
+drives the installed Google Chrome instead (`TEXERA_E2E_BROWSER_CHANNEL=chrome`).
+
+## How the containers and the host meet
+
+The gateway reaches the host services as `host.docker.internal` (mapped to the host gateway on
+Linux). Lakekeeper hands the warehouse's S3 endpoint to the engine on the host, so that endpoint
+is `http://127.0.0.1:19001` on both sides: the host's published RustFS port, and inside
+Lakekeeper's network namespace a `socat` sidecar (`lakekeeper-s3`) that forwards the same address
+to the `rustfs` container. Lakekeeper's own base URI is `http://localhost:18181`, which only the
+host uses. No OrbStack-specific hostnames are needed; `TEXERA2_S3_ENDPOINT` and
+`TEXERA2_LAKEKEEPER_URI` override both.
 
 ## Ports
 
@@ -67,21 +101,11 @@ written into this repository. Logs go to `logs/texera-2-0/<service>.log`, test l
 | `smoke-templates.py` | A template binds an external MCP server beside the built-in one; the agent uses both |
 | `frontend-next/e2e` (Playwright) | Sign-in, chat with attachments, the library, a real-model chat that tracks what it built, saving a result from its run page |
 
-## Kubernetes
+## Kubernetes (deployment only, not for development)
 
-The same services run as workloads on a local cluster (OrbStack's by default):
-
-```
-TEXERA_ENV_FILE=../texera/.env bin/texera-2-0/k8s.sh up   # build the images, apply deploy/kubernetes, wait
-GW=http://localhost:28088 bin/texera-2-0/smoke-run.sh      # any check, against the cluster's gateway
-bin/texera-2-0/k8s.sh status
-bin/texera-2-0/k8s.sh down                                 # delete the namespace, data included
-```
-
-The manifests live in `deploy/kubernetes` (namespace `texera2`). The gateway's LoadBalancer
-port 28088 on localhost is the public URL and the token issuer; the services reach each other,
-Keycloak included, by their cluster names, which is why the catalog, the unit and the agent
-runtime take explicit key-set and token URLs (`TEXERA_OIDC_JWKS_URL`, `TEXERA_OIDC_TOKEN_URL`).
-The realm, the gateway config and the warehouse bootstrap are rendered from the files above.
-`k8s.sh` only touches the context in `TEXERA2_KUBE_CONTEXT` (default `orbstack`) and refuses
-remote cloud contexts.
+The same services can be deployed as workloads on a local cluster with `bin/texera-2-0/k8s.sh`
+and the manifests in `deploy/kubernetes` (namespace `texera2`, gateway on localhost:28088, the
+services reach each other by cluster names, so the catalog, the unit and the agent runtime take
+explicit `TEXERA_OIDC_JWKS_URL` / `TEXERA_OIDC_TOKEN_URL`). It is a deployment check, needs a
+cluster context (`TEXERA2_KUBE_CONTEXT`, default `orbstack`), and is never required for
+development: the stack above is the development environment.

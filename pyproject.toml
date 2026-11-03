@@ -1,0 +1,93 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# The Python environment of the engine's UDF workers, managed by uv:
+#
+#   uv sync --all-extras          # creates .venv (Python 3.12) with every pin below
+#   bin/python-proto-gen.sh       # regenerates amber/src/main/python/proto into it
+#
+# The dev stack (bin/texera-2-0/) runs Python workers from .venv/bin/python. The pins mirror
+# amber/requirements.txt, amber/operator-requirements.txt and amber/dev-requirements.txt, which
+# the container images still install from; keep the four in step.
+[project]
+name = "texera"
+version = "2.0.0a0"
+description = "Apache Texera 2.0: the Python environment of the engine's workers"
+readme = "README.md"
+requires-python = "==3.12.*"
+
+dependencies = [
+    # amber/requirements.txt: the Python worker (pyamber) and the operator SDK (pytexera)
+    "numpy==2.1.0",
+    "pandas==2.2.3",
+    "loguru==0.7.3",
+    "pyarrow==23.0.1",
+    "betterproto==2.0.0b7",
+    "pampy==0.3.0",
+    "overrides==7.7.0",
+    "typing_extensions==4.14.1",
+    "bidict==0.22.0",
+    "cached_property==2.0.1",
+    "psutil==7.2.2",
+    "tzlocal==2.1",
+    "s3fs==2026.6.0",
+    "botocore==1.42.90",
+    "pyiceberg==0.11.1",
+    "readerwriterlock==1.0.9",
+    "tenacity==9.1.4",
+    "SQLAlchemy==2.0.51",
+    "pg8000==1.31.5",
+    "pympler==1.1",
+    "boto3==1.42.90",
+    "requests==2.34.2",
+    "urllib3==2.7.0",
+    # amber/operator-requirements.txt: what the operator library imports
+    "wordcloud==1.9.6",
+    "plotly==5.24.1",
+    "praw==7.6.1",
+    "pillow==12.3.0",
+    "torch==2.13.0+cpu ; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "torch==2.13.0 ; platform_system != 'Linux' or platform_machine != 'x86_64'",
+    "scikit-learn==1.7.2",
+    "transformers==5.10.1",
+    "scikit-image==0.25.2",
+]
+
+[project.optional-dependencies]
+# amber/dev-requirements.txt: tests, lint and the protoc plugin
+dev = [
+    "pytest==9.0.3",
+    "pytest-reraise==2.1.2",
+    "pytest-timeout==2.4.0",
+    "pytest-cov==7.1.0",
+    "ruff==0.14.7",
+    "betterproto[compiler]==2.0.0b7",
+]
+
+[tool.uv]
+package = false
+
+# Torch CPU wheels on Linux x86_64, so no CUDA packages are pulled.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", marker = "platform_system == 'Linux' and platform_machine == 'x86_64'" },
+]

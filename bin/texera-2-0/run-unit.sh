@@ -4,10 +4,11 @@
 # reports to the catalog through OpenLineage events.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-: "${UDF_PYTHON_PATH:=$(pwd)/amber/venv/bin/python}"
+# The uv-managed environment at the repo root (`uv sync --all-extras`, see pyproject.toml).
+: "${UDF_PYTHON_PATH:=$(pwd)/.venv/bin/python}"
 export UDF_PYTHON_PATH
 export STORAGE_ICEBERG_CATALOG_TYPE=rest
-export STORAGE_ICEBERG_CATALOG_REST_URI=${STORAGE_ICEBERG_CATALOG_REST_URI:-http://texera2-lakekeeper.orb.local:8181/catalog}
+export STORAGE_ICEBERG_CATALOG_REST_URI=${STORAGE_ICEBERG_CATALOG_REST_URI:-http://localhost:18181/catalog}
 export STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME=texera
 export STORAGE_S3_ENDPOINT=${STORAGE_S3_ENDPOINT:-http://localhost:19001}
 export STORAGE_S3_REGION=us-east-1

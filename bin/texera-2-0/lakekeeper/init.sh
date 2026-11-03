@@ -1,11 +1,11 @@
 #!/bin/sh
 # Creates Lakekeeper's default project and the `texera` warehouse on RustFS, or refreshes the
 # warehouse's S3 endpoint when it exists. S3_ENDPOINT must be reachable from Lakekeeper and from
-# the engine (see the rustfs alias in docker-compose.yml).
+# the engine (see the lakekeeper-s3 sidecar in docker-compose.yml).
 set -e
 apk add --no-cache curl jq >/dev/null
 BASE=http://lakekeeper:8181
-ENDPOINT=${S3_ENDPOINT:-http://texera2-rustfs.orb.local:9000}
+ENDPOINT=${S3_ENDPOINT:-http://127.0.0.1:19001}
 CREDENTIAL='{"type":"s3","credential-type":"access-key","aws-access-key-id":"texera","aws-secret-access-key":"texera-secret"}'
 
 code=$(curl -s -o /tmp/p.txt -w "%{http_code}" "$BASE/management/v1/project" || echo 000)

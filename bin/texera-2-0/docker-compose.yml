@@ -92,12 +92,8 @@ services:
   rustfs:
     image: rustfs/rustfs:1.0.0
     container_name: texera2-rustfs
-    # One S3 hostname for containers and the host: OrbStack resolves texera2-rustfs.orb.local on
-    # the host, and this alias resolves it inside the stack network. Lakekeeper hands this endpoint
-    # to the engine, which runs on the host during development.
-    networks:
-      default:
-        aliases: [texera2-rustfs.orb.local]
+    # Published on the host as 127.0.0.1:19001; see lakekeeper-s3 for how Lakekeeper reaches the
+    # same address, so one S3 endpoint works for the engine on the host and for Lakekeeper.
     environment:
       RUSTFS_ACCESS_KEY: texera
       RUSTFS_SECRET_KEY: texera-secret
@@ -147,16 +143,12 @@ services:
   lakekeeper:
     image: vakamo/lakekeeper:v0.11.0
     container_name: texera2-lakekeeper
-    # Lakekeeper returns its base URI to Iceberg clients; this name resolves on the host (OrbStack)
-    # and, through the alias, inside the stack network.
-    networks:
-      default:
-        aliases: [texera2-lakekeeper.orb.local]
+    # Lakekeeper returns its base URI to Iceberg clients; only the engine on the host uses it.
     environment:
       LAKEKEEPER__PG_ENCRYPTION_KEY: texera2-dev-only-encryption-key
       LAKEKEEPER__PG_DATABASE_URL_READ: postgres://texera:texera@postgres:5432/lakekeeper
       LAKEKEEPER__PG_DATABASE_URL_WRITE: postgres://texera:texera@postgres:5432/lakekeeper
-      LAKEKEEPER__BASE_URI: ${TEXERA2_LAKEKEEPER_URI:-http://texera2-lakekeeper.orb.local:8181}
+      LAKEKEEPER__BASE_URI: ${TEXERA2_LAKEKEEPER_URI:-http://localhost:18181}
       LAKEKEEPER__ENABLE_DEFAULT_PROJECT: "true"
       LAKEKEEPER__LISTEN_PORT: "8181"
       RUST_LOG: info
@@ -173,17 +165,36 @@ services:
       timeout: 3s
       retries: 20
 
+  # Lakekeeper hands the warehouse's S3 endpoint to the engine, which runs on the host, so the
+  # endpoint must resolve both there and inside Lakekeeper. The host reaches RustFS at
+  # 127.0.0.1:19001 (the published port); this sidecar shares Lakekeeper's network namespace and
+  # forwards its 127.0.0.1:19001 to the rustfs container, so the same address works in both places
+  # on Linux, Docker Desktop and OrbStack alike.
+  lakekeeper-s3:
+    image: alpine/socat:1.8.0.0
+    container_name: texera2-lakekeeper-s3
+    network_mode: "service:lakekeeper"
+    command: ["TCP4-LISTEN:19001,fork,reuseaddr,bind=127.0.0.1", "TCP:rustfs:9000"]
+    depends_on:
+      lakekeeper:
+        condition: service_started
+      rustfs:
+        condition: service_healthy
+    restart: unless-stopped
+
   lakekeeper-init:
     image: alpine:3.19
     container_name: texera2-lakekeeper-init
     depends_on:
       lakekeeper:
         condition: service_healthy
+      lakekeeper-s3:
+        condition: service_started
       rustfs-init:
         condition: service_completed_successfully
     restart: "no"
     environment:
-      S3_ENDPOINT: ${TEXERA2_S3_ENDPOINT:-http://texera2-rustfs.orb.local:9000}
+      S3_ENDPOINT: ${TEXERA2_S3_ENDPOINT:-http://127.0.0.1:19001}
     volumes:
       - ./lakekeeper/init.sh:/init.sh:ro
     entrypoint: ["/bin/sh", "/init.sh"]

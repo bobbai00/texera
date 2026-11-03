@@ -95,26 +95,23 @@ worktree holds, so run `bin/texera-2-0/down.sh` in the old worktree before switc
 | Python | 3.12 |
 | Node | 24 |
 
-One Python venv shared across worktrees, sibling of the texera checkout:
-
-```
-<workspace>/
-├── texera/                   # main checkout
-├── texera-worktrees/<br>/    # per-PR worktrees
-└── venv312/                  # shared Python 3.12 venv
-```
+The Python environment is managed by [uv](https://docs.astral.sh/uv/) from the
+repo-root [`pyproject.toml`](pyproject.toml) (`uv.lock` is committed), one per
+worktree:
 
 ```bash
-python3.12 -m venv ../venv312 && source ../venv312/bin/activate
-pip install -r amber/requirements.txt -r amber/operator-requirements.txt
-# For pytest or running bin/python-proto-gen.sh, also install dev deps:
-pip install -r amber/dev-requirements.txt
+uv sync --all-extras          # Python 3.12 into .venv, every pin, the dev extras
+bin/python-proto-gen.sh       # the engine's protobuf bindings (uses .venv's protoc plugin)
 ```
+
+`bin/texera-2-0/up.sh` does both when `.venv` is missing. Keep the pins in
+`pyproject.toml` and in `amber/*requirements.txt` (what the images install) in step.
 
 Tests that spawn Python workers need an interpreter path. Edit `python.path`
 in [`udf.conf`](common/config/src/main/resources/udf.conf) or
-`export UDF_PYTHON_PATH="$(pwd)/../venv312/bin/python"` (env var overrides).
-Without it, `sbt` Python-integration tests fail to launch a worker.
+`export UDF_PYTHON_PATH="$(pwd)/.venv/bin/python"` (env var overrides; the dev
+stack's scripts set it). Without it, `sbt` Python-integration tests fail to
+launch a worker.
 
 [`.jvmopts`](.jvmopts) holds every `--add-opens` flag Texera needs for
 JDK 17+, with each group annotated by its upstream source (Kryo,

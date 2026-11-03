@@ -19,6 +19,36 @@
 # Other stacks on this host run the same kinds of processes, so a process is only ever reused
 # or stopped when it runs from this worktree.
 
+# Toolchains installed under the home directory (the go.dev tarball, bun, uv) are found without
+# a shell profile, so the scripts work from cron, CI and non-login shells alike.
+export PATH="$HOME/.local/go/bin:$HOME/go/bin:$HOME/.bun/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
+# The model key: ANTHROPIC_API_KEY from the environment, else from TEXERA_ENV_FILE, else from the
+# repo-root .env (gitignored). Lines may read KEY=VALUE or `export KEY=VALUE`.
+if [ -z "${TEXERA_ENV_FILE:-}" ] && [ -f "$ROOT/.env" ]; then TEXERA_ENV_FILE=$ROOT/.env; fi
+export TEXERA_ENV_FILE
+env_file_value() { [ -f "${TEXERA_ENV_FILE:-}" ] && sed -n "s/^\(export \)\{0,1\}$1=//p" "$TEXERA_ENV_FILE" | head -1 || true; }
+
+# Playwright drives its bundled Chromium, or the installed Google Chrome where Playwright ships no
+# build for this host (frontend-next/playwright.config.ts reads the channel).
+if [ -z "${TEXERA_E2E_BROWSER_CHANNEL:-}" ] && ! ls "$HOME/.cache/ms-playwright" 2>/dev/null | grep -q '^chromium' \
+   && command -v google-chrome >/dev/null 2>&1; then
+  export TEXERA_E2E_BROWSER_CHANNEL=chrome
+fi
+
+# The Python environment of the engine's workers: .venv at the repo root, managed by uv.
+ensure_python_env() {
+  if [ ! -x "$ROOT/.venv/bin/python" ]; then
+    command -v uv >/dev/null || { echo "uv is required (https://docs.astral.sh/uv/): curl -LsSf https://astral.sh/uv/install.sh | sh" >&2; exit 1; }
+    echo "python: creating .venv with uv sync --all-extras"
+    (cd "$ROOT" && uv sync --all-extras)
+  fi
+  if [ ! -d "$ROOT/amber/src/main/python/proto" ]; then
+    echo "python: generating the engine's protobuf bindings"
+    (cd "$ROOT" && PATH="$ROOT/.venv/bin:$PATH" bin/python-proto-gen.sh)
+  fi
+}
+
 # lsof exits non-zero when nothing matches; these must not trip `set -e -o pipefail` callers.
 listener() { lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1 || true; }
 cwd_of() { lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || true; }

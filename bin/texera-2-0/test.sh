@@ -58,9 +58,9 @@ suites() {
   step "agent runtime (types, lint, bun test)" bash -c "cd '$ROOT/agent-runtime' && bun run typecheck && bun run lint && bun test"
   step "frontend (types, lint, vitest)" bash -c "cd '$ROOT/frontend-next' && bun run typecheck && bun run lint && bun run test"
   # Every sbt module, as CI runs them: results on the stack's Postgres-backed Iceberg catalog,
-  # Python workers on amber/venv, integration-tagged suites left to the e2e phase.
+  # Python workers on the uv environment (.venv), integration-tagged suites left to the e2e phase.
   step "engine and libraries (sbt test)" bash -c "cd '$ROOT' && \
-    UDF_PYTHON_PATH='$ROOT/amber/venv/bin/python' AMBER_TEST_FILTER=skip-integration \
+    UDF_PYTHON_PATH='$ROOT/.venv/bin/python' AMBER_TEST_FILTER=skip-integration \
     STORAGE_ICEBERG_CATALOG_TYPE=postgres \
     STORAGE_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME=localhost:15432/texera_iceberg_catalog \
     STORAGE_ICEBERG_CATALOG_POSTGRES_USERNAME=texera STORAGE_ICEBERG_CATALOG_POSTGRES_PASSWORD=texera \
@@ -70,9 +70,9 @@ suites() {
 # The engine's integration-tagged suites, on the dev stack's Lakekeeper and RustFS like the unit.
 engine_integration() {
   step "engine integration suites (REST catalog)" bash -c "cd '$ROOT' && \
-    UDF_PYTHON_PATH='$ROOT/amber/venv/bin/python' AMBER_TEST_FILTER=integration-only \
+    UDF_PYTHON_PATH='$ROOT/.venv/bin/python' AMBER_TEST_FILTER=integration-only \
     STORAGE_ICEBERG_CATALOG_TYPE=rest \
-    STORAGE_ICEBERG_CATALOG_REST_URI=http://texera2-lakekeeper.orb.local:8181/catalog \
+    STORAGE_ICEBERG_CATALOG_REST_URI=http://localhost:18181/catalog \
     STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME=texera STORAGE_S3_ENDPOINT=http://localhost:19001 \
     STORAGE_S3_REGION=us-east-1 STORAGE_S3_AUTH_USERNAME=texera STORAGE_S3_AUTH_PASSWORD=texera-secret \
     sbt -batch WorkflowOperator/test WorkflowExecutionService/test"
