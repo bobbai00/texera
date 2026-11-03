@@ -13,6 +13,7 @@ import type { CatalogClient } from "../catalog/client.ts";
 import type { Agent, CatalogAuth, McpServerRecord, TemplateRecord } from "../catalog/types.ts";
 import type { LlmConfig } from "../config.ts";
 import type { Logger } from "../log.ts";
+import type { LoopPolicy } from "../run/react-loop.ts";
 
 export interface AgentInstance {
   pid: string;
@@ -42,6 +43,8 @@ export interface InProcessSpawnerDeps {
   llm: LlmConfig;
   publicUrl: string;
   maxSteps: number;
+  /** Loop policy defaults every template inherits. */
+  policy?: Partial<LoopPolicy>;
   log: Logger;
   transportFactory?: (
     server: McpServerRecord,
@@ -73,6 +76,7 @@ export class InProcessSpawner implements Spawner {
       mcp,
       model: resolveModel(this.deps.llm, template.spec.model?.name),
       maxSteps: this.deps.maxSteps,
+      policy: this.deps.policy,
     });
     this.deps.log.info("agent spawned", {
       pid: ctx.pid,

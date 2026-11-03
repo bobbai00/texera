@@ -33,6 +33,7 @@ const config: RuntimeConfig = {
   serviceClientSecret: "s",
   llm: { provider: "anthropic", apiKey: "unused", defaultModel: "scripted" },
   maxSteps: 5,
+  answerPolicy: "free",
 };
 
 /** A spawner whose agent runs a scripted model with one local tool. */

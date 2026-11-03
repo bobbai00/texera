@@ -10,7 +10,14 @@ const config = loadConfig();
 const log = createLogger();
 const catalog = new CatalogClient({ baseUrl: config.catalogUrl });
 const host = new AgentHost(
-  new InProcessSpawner({ catalog, llm: config.llm, publicUrl: config.publicUrl, maxSteps: config.maxSteps, log }),
+  new InProcessSpawner({
+    catalog,
+    llm: config.llm,
+    publicUrl: config.publicUrl,
+    maxSteps: config.maxSteps,
+    policy: { answer: config.answerPolicy },
+    log,
+  }),
 );
 const app = createApp({
   config,

@@ -32,6 +32,9 @@ export type AGUIEvent = BaseEvent;
 /** Name of the custom event that announces a catalog resource the agent touched. */
 export const RESOURCE_EVENT = "texera.resource";
 
+/** Name of the custom event that says the loop sent the model's reply back with a correction. */
+export const CORRECTION_EVENT = "texera.correction";
+
 const stamp = () => Date.now();
 
 export const events = {
@@ -112,6 +115,12 @@ export const events = {
     timestamp: stamp(),
     name: RESOURCE_EVENT,
     value: ref,
+  }),
+  correction: (reason: string): CustomEvent => ({
+    type: EventType.CUSTOM,
+    timestamp: stamp(),
+    name: CORRECTION_EVENT,
+    value: { reason },
   }),
 };
 

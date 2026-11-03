@@ -164,6 +164,16 @@ export const zLineageEvent = z.object({
     schemaURL: z.string()
 });
 
+/**
+ * How the runtime's ReAct loop runs the template's agent; the runtime's defaults apply to what is absent.
+ */
+export const zLoopSpec = z.object({
+    answer: z.enum(['free', 'after_result']).optional(),
+    resultTools: z.array(z.string()).optional(),
+    maxSteps: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
+    temperature: z.number().optional()
+});
+
 export const zMcpBinding = z.object({
     server: z.string(),
     allow: z.array(z.string()).optional()
@@ -741,6 +751,7 @@ export const zAgentTemplateSpec = z.object({
         mcp: z.array(zMcpBinding).optional(),
         operators: z.array(z.string()).optional()
     }).optional(),
+    loop: zLoopSpec.optional(),
     requires: zRuntimeSpec.optional(),
     subagents: zSubagentPolicy.optional(),
     body: zVersionRef.optional()

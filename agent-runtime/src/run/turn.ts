@@ -73,11 +73,46 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
     instance.turn?.begin(auth.serviceToken, { conversation: conversationRid, seq: posted.seq });
     const history = await deps.catalog.listMessages(conversationRid, auth);
     const messages = toModelMessages(history);
-    const result = await instance.built.agent.stream({ messages, abortSignal: req.signal });
-    for await (const part of result.fullStream) {
-      for (const event of mapper.map(part)) {
-        if (event.type === "RUN_ERROR") errored = true;
-        yield event;
+    const loop = instance.built.run({ messages, abortSignal: req.signal });
+    let next = await loop.next();
+    while (!next.done) {
+      const ev = next.value;
+      if (ev.type === "part") {
+        for (const event of mapper.map(ev.part)) {
+          if (event.type === "RUN_ERROR") errored = true;
+          yield event;
+        }
+      } else if (ev.type === "step") {
+        log.info("step", {
+          step: ev.step.index,
+          tools: ev.step.toolCalls.map((c) => c.toolName),
+          errors: ev.step.toolResults.filter((r) => r.isError).length,
+          finish: ev.step.finishReason,
+          usage: ev.step.usage,
+        });
+      } else {
+        log.info("reply sent back", { reason: ev.reason });
+        yield events.correction(ev.reason);
+      }
+      next = await loop.next();
+    }
+    const outcome = next.value;
+    log.info("turn finished", {
+      reason: outcome.reason,
+      steps: outcome.state.steps.length,
+      corrections: outcome.state.corrections,
+      resultShown: outcome.state.resultShown,
+      usage: outcome.usage,
+    });
+    if (outcome.reason === "step_limit" || outcome.reason === "refused") {
+      const message =
+        outcome.reason === "step_limit"
+          ? `the turn ended at its step limit (${outcome.state.maxSteps} model steps) without an answer`
+          : "the model provider refused the request";
+      mapper.collected.error = mapper.collected.error ?? message;
+      if (!errored) {
+        errored = true;
+        yield events.runError(message, outcome.reason);
       }
     }
   } catch (err) {

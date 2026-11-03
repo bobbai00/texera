@@ -4,6 +4,8 @@
  * Every value has a development default that matches `bin/texera-2-0/` so
  * `bun run dev` works against the dev stack with only `ANTHROPIC_API_KEY` set.
  */
+import type { AnswerPolicy } from "./run/react-loop.ts";
+
 export type LlmProvider = "anthropic" | "openai-compatible";
 
 export interface LlmConfig {
@@ -34,8 +36,10 @@ export interface RuntimeConfig {
   serviceClientId: string;
   serviceClientSecret: string;
   llm: LlmConfig;
-  /** Upper bound on model steps per turn. */
+  /** Upper bound on model steps per turn; a template's `loop.maxSteps` overrides it. */
   maxSteps: number;
+  /** The answer policy templates inherit when their `loop` names none. */
+  answerPolicy: AnswerPolicy;
 }
 
 function env(name: string, fallback: string): string {
@@ -60,6 +64,10 @@ export function loadConfig(): RuntimeConfig {
   }
   const apiKey =
     process.env.TEXERA_LLM_API_KEY ?? (provider === "anthropic" ? process.env.ANTHROPIC_API_KEY : undefined);
+  const answerPolicy = env("TEXERA_AGENT_ANSWER_POLICY", "free");
+  if (answerPolicy !== "free" && answerPolicy !== "after_result") {
+    throw new Error(`TEXERA_AGENT_ANSWER_POLICY must be free or after_result, got ${answerPolicy}`);
+  }
   return {
     port: envInt("TEXERA_AGENT_PORT", 3002),
     publicUrl: env("TEXERA_PUBLIC_URL", "http://localhost:8088"),
@@ -77,5 +85,6 @@ export function loadConfig(): RuntimeConfig {
       defaultModel: env("TEXERA_LLM_DEFAULT_MODEL", "claude-haiku-5-5"),
     },
     maxSteps: envInt("TEXERA_AGENT_MAX_STEPS", 40),
+    answerPolicy,
   };
 }

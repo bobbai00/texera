@@ -70,6 +70,7 @@ export type AgentTemplateSpec = {
          */
         operators?: Array<string>;
     };
+    loop?: LoopSpec;
     requires?: RuntimeSpec;
     subagents?: SubagentPolicy;
     /**
@@ -650,6 +651,28 @@ export type LineageRun = {
     facets?: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * How the runtime's ReAct loop runs the template's agent; the runtime's defaults apply to what is absent.
+ */
+export type LoopSpec = {
+    /**
+     * When a reply without a tool call is the answer: `free`, always; `after_result`, only once a result-showing tool succeeded in the turn, else the reply is sent back with a correction.
+     */
+    answer?: 'free' | 'after_result';
+    /**
+     * Tools whose successful result counts as a shown result; default run_workflow, get_port_result and save_result_as_dataset.
+     */
+    resultTools?: Array<string>;
+    /**
+     * Model steps per turn.
+     */
+    maxSteps?: number;
+    /**
+     * Sampling temperature; default 0.2.
+     */
+    temperature?: number;
 };
 
 export type McpBinding = {

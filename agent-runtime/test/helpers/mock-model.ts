@@ -21,6 +21,8 @@ export interface ScriptedToolCall {
 export interface ScriptedResponse {
   text?: string;
   toolCalls?: ScriptedToolCall[];
+  /** How the response ends; default `tool-calls` with tool calls, `stop` otherwise. */
+  finishReason?: "stop" | "tool-calls" | "length" | "content-filter";
 }
 
 function chunksFor(response: ScriptedResponse): Part[] {
@@ -41,7 +43,10 @@ function chunksFor(response: ScriptedResponse): Part[] {
   }
   chunks.push({
     type: "finish",
-    finishReason: { unified: response.toolCalls?.length ? "tool-calls" : "stop", raw: "scripted" },
+    finishReason: {
+      unified: response.finishReason ?? (response.toolCalls?.length ? "tool-calls" : "stop"),
+      raw: "scripted",
+    },
     usage,
   });
   return chunks;

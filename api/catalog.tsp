@@ -328,6 +328,18 @@ model SubagentPolicy {
 }
 
 
+@doc("How the runtime's ReAct loop runs the template's agent; the runtime's defaults apply to what is absent.")
+model LoopSpec {
+  @doc("When a reply without a tool call is the answer: `free`, always; `after_result`, only once a result-showing tool succeeded in the turn, else the reply is sent back with a correction.")
+  answer?: "free" | "after_result";
+  @doc("Tools whose successful result counts as a shown result; default run_workflow, get_port_result and save_result_as_dataset.")
+  resultTools?: string[];
+  @doc("Model steps per turn.")
+  maxSteps?: int32;
+  @doc("Sampling temperature; default 0.2.")
+  temperature?: float64;
+}
+
 @doc("An agent template: card, model, prompts, skills, tools, requirements, sub-agent policy and, for a composite, the body workflow.")
 model AgentTemplateSpec {
   card: AgentCard;
@@ -341,6 +353,7 @@ model AgentTemplateSpec {
     @doc("Operator types the agent may use; absent means every operator.")
     operators?: string[];
   };
+  loop?: LoopSpec;
   requires?: RuntimeSpec;
   subagents?: SubagentPolicy;
   @doc("Composite only: the workflow whose agent operator instances form the team.")
