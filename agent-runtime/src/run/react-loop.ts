@@ -59,7 +59,10 @@ export interface LoopUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  /** Input tokens read from the prompt cache. */
   cachedInputTokens: number;
+  /** Input tokens written to the prompt cache. */
+  cacheWriteInputTokens: number;
   reasoningTokens: number;
 }
 
@@ -130,6 +133,7 @@ const ZERO_USAGE: LoopUsage = {
   outputTokens: 0,
   totalTokens: 0,
   cachedInputTokens: 0,
+  cacheWriteInputTokens: 0,
   reasoningTokens: 0,
 };
 
@@ -137,17 +141,23 @@ function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-/** Reads AI SDK usage defensively: providers and SDK versions differ in which fields they fill. */
+/**
+ * Reads AI SDK usage defensively: AI SDK 7 details input tokens in `inputTokenDetails` (cache
+ * reads and writes) and output tokens in `outputTokenDetails`; older shapes carried flat fields.
+ */
 export function toLoopUsage(usage: unknown): LoopUsage {
   const u = (usage ?? {}) as Record<string, unknown>;
+  const inputDetails = (u.inputTokenDetails ?? {}) as Record<string, unknown>;
+  const outputDetails = (u.outputTokenDetails ?? {}) as Record<string, unknown>;
   const input = num(u.inputTokens);
   const output = num(u.outputTokens);
   return {
     inputTokens: input,
     outputTokens: output,
     totalTokens: num(u.totalTokens) || input + output,
-    cachedInputTokens: num(u.cachedInputTokens),
-    reasoningTokens: num(u.reasoningTokens),
+    cachedInputTokens: num(inputDetails.cacheReadTokens) || num(u.cachedInputTokens),
+    cacheWriteInputTokens: num(inputDetails.cacheWriteTokens),
+    reasoningTokens: num(outputDetails.reasoningTokens) || num(u.reasoningTokens),
   };
 }
 
@@ -157,6 +167,7 @@ export function addUsage(a: LoopUsage, b: LoopUsage): LoopUsage {
     outputTokens: a.outputTokens + b.outputTokens,
     totalTokens: a.totalTokens + b.totalTokens,
     cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    cacheWriteInputTokens: a.cacheWriteInputTokens + b.cacheWriteInputTokens,
     reasoningTokens: a.reasoningTokens + b.reasoningTokens,
   };
 }

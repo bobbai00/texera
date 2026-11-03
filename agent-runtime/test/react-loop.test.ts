@@ -13,6 +13,7 @@ import {
   renderTurnState,
   runReactLoop,
   showsResult,
+  toLoopUsage,
 } from "../src/run/react-loop.ts";
 import { type ScriptedResponse, scriptedModel } from "./helpers/mock-model.ts";
 
@@ -223,6 +224,34 @@ describe("runReactLoop", () => {
       runReactLoop({ model: twiceRefused, system: "s", tools: {}, messages: user("x"), maxSteps: 4 }),
     );
     expect(t.outcome.reason).toBe("refused");
+  });
+
+  test("toLoopUsage reads AI SDK 7's token details and older flat fields", () => {
+    const v7 = toLoopUsage({
+      inputTokens: 1200,
+      inputTokenDetails: { noCacheTokens: 200, cacheReadTokens: 900, cacheWriteTokens: 100 },
+      outputTokens: 50,
+      outputTokenDetails: { textTokens: 40, reasoningTokens: 10 },
+      totalTokens: 1250,
+    });
+    expect(v7).toEqual({
+      inputTokens: 1200,
+      outputTokens: 50,
+      totalTokens: 1250,
+      cachedInputTokens: 900,
+      cacheWriteInputTokens: 100,
+      reasoningTokens: 10,
+    });
+    const flat = toLoopUsage({ inputTokens: 10, outputTokens: 5, cachedInputTokens: 4, reasoningTokens: 1 });
+    expect(flat).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      cachedInputTokens: 4,
+      cacheWriteInputTokens: 0,
+      reasoningTokens: 1,
+    });
+    expect(toLoopUsage(undefined).totalTokens).toBe(0);
   });
 
   test("renderTurnState names the budget, the touched resources and whether a result was shown", () => {

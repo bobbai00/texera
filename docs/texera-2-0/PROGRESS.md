@@ -47,6 +47,11 @@ Done and verified:
   re-rendered as the newest user message (not in the system prompt, which broke the cached
   prefix). The MCP `list_operators` without `q` or `group` is a compact list (types, names,
   groups, descriptions); with them, the schemas and ports as before. Tests in both packages.
+  Measured on a real Data Analyst turn: 99,330 of 116,579 input tokens read from cache (Haiku
+  writes cache increments only above its 2k-token minimum, so small steps are not re-cached);
+  a bare `list_operators` is 43 KB instead of 910 KB.
+- `bin/texera-2-0/test.sh` end to end on this machine: 13 of 13 checks pass in 8 m 35 s,
+  including the engine integration suites and the unit-restart check that failed in the handoff.
 
 Next:
 - The frontend's template editor does not expose `loop` yet; the catalog accepts it.
