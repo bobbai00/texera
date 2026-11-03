@@ -942,7 +942,7 @@ namespace Routes {
   @route("/operators")
   interface Operators {
     @get
-    @extension("x-mcp", #{ tool: "list_operators", description: "List the operator types available on the engine with their property JSON Schema, ports and descriptions. Use the exact operatorType values when building a workflow.", readOnlyHint: true })
+    @extension("x-mcp", #{ tool: "list_operators", description: "List the operator types available on the engine. Without q or group: a compact list of types, names, groups and descriptions. With q (an operator name or part of it) or group: the matching operators with their property JSON Schema and ports. Use the exact operatorType values when building a workflow.", readOnlyHint: true })
     list(@query group?: string, @query q?: string): OperatorTypeList | Error;
   }
 }

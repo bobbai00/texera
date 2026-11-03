@@ -31,7 +31,7 @@ type Resolver interface {
 func Handler(impl api.StrictServerInterface, resolver Resolver, publicURL string, log *slog.Logger) http.Handler {
 	server := sdk.NewServer(&sdk.Implementation{Name: "texera", Title: "Texera dataflow MCP server", Version: "2.0.0-alpha"},
 		&sdk.ServerOptions{Instructions: instructions})
-	registerTools(server, impl, wrapContext, finish)
+	registerTools(server, compactOperators{impl}, wrapContext, finish)
 	h := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, &sdk.StreamableHTTPOptions{Stateless: true, Logger: log})
 	verify := func(ctx context.Context, token string, r *http.Request) (*auth.TokenInfo, error) {
 		caller, err := resolver.Resolve(ctx, r)
@@ -133,3 +133,29 @@ func isEmptyStruct(v any) bool {
 	t := reflect.TypeOf(v)
 	return t != nil && t.Kind() == reflect.Struct && t.NumField() == 0
 }
+
+// compactOperators answers a bare list_operators call (no q, no group) with the operators'
+// types, names, groups and descriptions only: the registry's JSON Schemas (165 operators,
+// close to a megabyte) are more than a model's context holds. A q or group narrows the list to
+// the operators whose schemas and ports the model needs.
+type compactOperators struct{ api.StrictServerInterface }
+
+func (c compactOperators) OperatorsList(ctx context.Context, req api.OperatorsListRequestObject) (api.OperatorsListResponseObject, error) {
+	resp, err := c.StrictServerInterface.OperatorsList(ctx, req)
+	if err != nil || nonEmpty(req.Params.Q) || nonEmpty(req.Params.Group) {
+		return resp, err
+	}
+	list, ok := resp.(api.OperatorsList200JSONResponse)
+	if !ok {
+		return resp, nil
+	}
+	compact := make([]api.OperatorType, len(list.Operators))
+	for i, op := range list.Operators {
+		op.JsonSchema, op.InputPorts, op.OutputPorts = nil, nil, nil
+		compact[i] = op
+	}
+	list.Operators = compact
+	return list, nil
+}
+
+func nonEmpty(s *string) bool { return s != nil && strings.TrimSpace(*s) != "" }

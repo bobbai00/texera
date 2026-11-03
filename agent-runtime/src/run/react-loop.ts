@@ -14,6 +14,7 @@ import {
   type LanguageModel,
   type ModelMessage,
   type StepResult,
+  type SystemModelMessage,
   stepCountIs,
   streamText,
   type TextStreamPart,
@@ -269,6 +270,32 @@ function newState(maxSteps: number): LoopState {
   return { steps: [], resources: [], resultShown: false, corrections: 0, maxSteps };
 }
 
+/** Anthropic prompt caching: the prefix up to a marked block is reused by later calls. */
+const CACHED = { anthropic: { cacheControl: { type: "ephemeral" } } } as const;
+
+/**
+ * The instructions as a cacheable system message: the tools and the instructions precede it,
+ * so every step and every turn reads them from cache.
+ */
+export function cachedInstructions(system: string): SystemModelMessage[] {
+  return [{ role: "system", content: system, providerOptions: CACHED }];
+}
+
+/**
+ * The messages of one model call: the conversation with a cache breakpoint on its newest message
+ * (so each step reads the previous steps from cache), then the turn's state as the newest user
+ * message, the only part that changes between steps.
+ */
+export function stepMessages(conversation: ModelMessage[], state: string): ModelMessage[] {
+  const out: ModelMessage[] = conversation.map((m, i) =>
+    i === conversation.length - 1 && m.role !== "system"
+      ? ({ ...m, providerOptions: { ...m.providerOptions, ...CACHED } } as ModelMessage)
+      : m,
+  );
+  out.push({ role: "user", content: state });
+  return out;
+}
+
 /**
  * Runs the loop, yielding stream parts (as AI SDK emits them), one `step` event per finished
  * step and a `correction` event whenever a reply is sent back; returns how the turn ended.
@@ -290,7 +317,7 @@ export async function* runReactLoop(options: ReactLoopOptions): AsyncGenerator<L
     const stepsBefore = state.steps.length;
     const result = streamText({
       model: options.model,
-      system: options.system,
+      instructions: cachedInstructions(options.system),
       messages,
       tools: options.tools,
       temperature: options.temperature,
@@ -299,8 +326,10 @@ export async function* runReactLoop(options: ReactLoopOptions): AsyncGenerator<L
       stopWhen: stepCountIs(remaining),
       toolChoice: "auto",
       providerOptions: { anthropic: { disableParallelToolUse: !(options.parallelToolCalls ?? false) } },
-      prepareStep: ({ stepNumber }) => ({
-        system: `${options.system}\n\n${render(state, stepsBefore + stepNumber + 1)}`,
+      // Every step re-renders the turn's state at the end of the prompt (the Dataflow Agent's
+      // prepareStep), so the instructions and the conversation stay a cacheable prefix.
+      prepareStep: ({ stepNumber, messages: current }) => ({
+        messages: stepMessages(current, render(state, stepsBefore + stepNumber + 1)),
       }),
       onStepFinish: (step) => {
         const record = stepFromResult(state.steps.length + 1, step, policy.resultTools);

@@ -227,7 +227,7 @@ func registerTools(s *sdk.Server, impl api.StrictServerInterface, wrap func(cont
 		resp, err := impl.DatasetsFiles(ctx, api.DatasetsFilesRequestObject{Rid: in.Rid, Vno: in.Vno})
 		return finish(resp, err)
 	})
-	sdk.AddTool(s, &sdk.Tool{Name: "list_operators", Description: "List the operator types available on the engine with their property JSON Schema, ports and descriptions. Use the exact operatorType values when building a workflow.", Annotations: &sdk.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: false}}, func(ctx context.Context, req *sdk.CallToolRequest, in operatorsListInput) (*sdk.CallToolResult, map[string]any, error) {
+	sdk.AddTool(s, &sdk.Tool{Name: "list_operators", Description: "List the operator types available on the engine. Without q or group: a compact list of types, names, groups and descriptions. With q (an operator name or part of it) or group: the matching operators with their property JSON Schema and ports. Use the exact operatorType values when building a workflow.", Annotations: &sdk.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: false}}, func(ctx context.Context, req *sdk.CallToolRequest, in operatorsListInput) (*sdk.CallToolResult, map[string]any, error) {
 		ctx, err := wrap(ctx, req)
 		if err != nil {
 			return finish(nil, err)

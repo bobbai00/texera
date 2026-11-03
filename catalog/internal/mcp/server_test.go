@@ -103,3 +103,34 @@ func TestHandlerErrorsBecomeToolErrors(t *testing.T) {
 	require.True(t, res.IsError)
 	require.Contains(t, res.Content[0].(*sdk.TextContent).Text, "forbidden")
 }
+
+func (f *fakeImpl) OperatorsList(_ context.Context, _ api.OperatorsListRequestObject) (api.OperatorsListResponseObject, error) {
+	schema := map[string]any{"properties": map[string]any{"fileName": map[string]any{"type": "string"}}}
+	return api.OperatorsList200JSONResponse(api.OperatorTypeList{Operators: []api.OperatorType{
+		{OperatorType: "CSVFileScan", UserFriendlyName: "CSV File Scan", OperatorGroupName: "Data Input", JsonSchema: schema, OutputPorts: []interface{}{map[string]any{"id": 0}}},
+		{OperatorType: "Aggregate", UserFriendlyName: "Aggregate", OperatorGroupName: "Data Cleaning", JsonSchema: schema, InputPorts: []interface{}{map[string]any{"id": 0}}},
+	}}), nil
+}
+
+func TestBareListOperatorsIsCompact(t *testing.T) {
+	cs := connect(t, compactOperators{&fakeImpl{}})
+	operators := func(args map[string]any) []map[string]any {
+		res, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "list_operators", Arguments: args})
+		require.NoError(t, err)
+		require.False(t, res.IsError)
+		var body struct {
+			Operators []map[string]any `json:"operators"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(res.Content[0].(*sdk.TextContent).Text), &body))
+		return body.Operators
+	}
+	bare := operators(map[string]any{})
+	require.Len(t, bare, 2)
+	require.Equal(t, "CSVFileScan", bare[0]["operatorType"])
+	require.Equal(t, "Data Input", bare[0]["operatorGroupName"])
+	require.Nil(t, bare[0]["jsonSchema"])
+	require.Nil(t, bare[0]["outputPorts"])
+	narrowed := operators(map[string]any{"q": "csv"})
+	require.NotNil(t, narrowed[0]["jsonSchema"])
+	require.NotNil(t, narrowed[0]["outputPorts"])
+}

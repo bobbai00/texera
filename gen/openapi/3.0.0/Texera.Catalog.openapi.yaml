@@ -1405,7 +1405,7 @@ paths:
                 $ref: '#/components/schemas/Error'
       x-mcp:
         tool: list_operators
-        description: List the operator types available on the engine with their property JSON Schema, ports and descriptions. Use the exact operatorType values when building a workflow.
+        description: 'List the operator types available on the engine. Without q or group: a compact list of types, names, groups and descriptions. With q (an operator name or part of it) or group: the matching operators with their property JSON Schema and ports. Use the exact operatorType values when building a workflow.'
         readOnlyHint: true
   /catalog/v1/principals:
     get:

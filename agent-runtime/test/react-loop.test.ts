@@ -55,13 +55,23 @@ async function collect(gen: AsyncGenerator<LoopEvent, LoopOutcome>) {
 
 const user = (text: string): ModelMessage[] => [{ role: "user", content: text }];
 
-function systemOfCall(model: ReturnType<typeof scriptedModel>, call: number): string {
-  const prompt = model.doStreamCalls[call]?.prompt ?? [];
-  return prompt
-    .filter((m) => m.role === "system")
-    .map((m) => (m as { content: string }).content)
-    .join("\n");
+type PromptMessage = { role: string; content: unknown; providerOptions?: Record<string, unknown> };
+
+function promptOfCall(model: ReturnType<typeof scriptedModel>, call: number): PromptMessage[] {
+  return (model.doStreamCalls[call]?.prompt ?? []) as PromptMessage[];
 }
+
+/** The texts of a call's user messages (the turn's state is the newest one). */
+function userTextsOfCall(model: ReturnType<typeof scriptedModel>, call: number): string[] {
+  return promptOfCall(model, call)
+    .filter((m) => m.role === "user")
+    .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+    .map((p) => (p as { text?: string }).text ?? "");
+}
+
+const cached = (m: PromptMessage | undefined) =>
+  (m?.providerOptions?.anthropic as { cacheControl?: { type: string } } | undefined)?.cacheControl?.type ===
+  "ephemeral";
 
 describe("runReactLoop", () => {
   test("a tool step then a reply: two recorded steps, the answer, and the state re-rendered per call", async () => {
@@ -79,10 +89,20 @@ describe("runReactLoop", () => {
     expect(outcome.state.resources).toEqual([{ kind: "workflow", rid: WORKFLOW_RID, vno: 1 }]);
     expect(events.filter((e) => e.type === "step")).toHaveLength(2);
     expect(events.some((e) => e.type === "part" && e.part.type === "text-delta")).toBe(true);
-    // The second model call saw the turn's state with the workflow's id in its system prompt.
-    expect(systemOfCall(model, 0)).toContain("Step 1 of 5");
-    expect(systemOfCall(model, 1)).toContain(WORKFLOW_RID);
-    expect(systemOfCall(model, 1)).toContain("Step 2 of 5");
+    // Each call ends with the turn's state as the newest user message; the second one carries
+    // the workflow's id. The instructions and the newest conversation message are cache
+    // breakpoints, and the state is not.
+    const first = promptOfCall(model, 0);
+    expect(first[0]?.role).toBe("system");
+    expect(cached(first[0])).toBe(true);
+    expect(userTextsOfCall(model, 0).at(-1)).toContain("Step 1 of 5");
+    expect(cached(first.at(-1))).toBe(false);
+    const second = promptOfCall(model, 1);
+    expect(userTextsOfCall(model, 1).at(-1)).toContain(WORKFLOW_RID);
+    expect(userTextsOfCall(model, 1).at(-1)).toContain("Step 2 of 5");
+    expect(second.at(-2)?.role).toBe("tool");
+    expect(cached(second.at(-2))).toBe(true);
+    expect(cached(second.at(-1))).toBe(false);
     expect(outcome.usage.totalTokens).toBeGreaterThan(0);
   });
 
@@ -111,10 +131,7 @@ describe("runReactLoop", () => {
       { type: "correction", reason: "premature_answer", text: PREMATURE_ANSWER_CORRECTION },
     ]);
     // The correction travels as a user message after the model's own reply.
-    const second = model.doStreamCalls[1]?.prompt ?? [];
-    const last = second[second.length - 1] as { role: string; content: Array<{ text?: string }> };
-    expect(last.role).toBe("user");
-    expect(last.content[0]?.text).toBe(PREMATURE_ANSWER_CORRECTION);
+    expect(userTextsOfCall(model, 1)).toContain(PREMATURE_ANSWER_CORRECTION);
     expect(outcome.state.steps).toHaveLength(3);
   });
 
@@ -196,9 +213,7 @@ describe("runReactLoop", () => {
     expect(c.events.filter((e) => e.type === "correction").map((e) => (e as { reason: string }).reason)).toEqual([
       "cut_off",
     ]);
-    const second = cut.doStreamCalls[1]?.prompt ?? [];
-    const last = second[second.length - 1] as { role: string; content: Array<{ text?: string }> };
-    expect(last.content[0]?.text).toBe(CUT_OFF_CORRECTION);
+    expect(userTextsOfCall(cut, 1)).toContain(CUT_OFF_CORRECTION);
 
     const twiceRefused = scriptedModel([
       { text: "", finishReason: "content-filter" },
