@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -154,7 +155,11 @@ func run(log *slog.Logger) error {
 	go svc.RunOperatorSync(ctx, 30*time.Second)
 	go svc.RunRetention(ctx, time.Hour)
 
-	resolver := auth.NewResolver(identity, st)
+	// The clients computing units run as: the ones the catalog mints, and the static unit's.
+	isUnit := func(clientID string) bool {
+		return strings.HasPrefix(clientID, "unit-") || (cfg.StaticUnitClientID != "" && clientID == cfg.StaticUnitClientID)
+	}
+	resolver := auth.NewResolver(identity, st, isUnit)
 	srv := server.New(svc, resolver, pdp, cfg.PublicURL, log)
 	api := srv.API()
 	srv.Mount("/mcp/catalog", mcp.Handler("catalog", api, resolver, cfg.PublicURL, log))

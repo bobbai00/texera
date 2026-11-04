@@ -59,6 +59,24 @@ class DocumentFactory:
                 raise ValueError(f"Resource type {resource_type} is not supported")
 
     @staticmethod
+    def _storage_key(components, parsed_uri) -> str:
+        """The table a URI's document lives in: the name the catalog chose for an
+        external output port's result, else the key derived from the URI (matches
+        DocumentFactory.scala)."""
+        port = components.global_port_id
+        if (
+            components.resource_type == VFSResourceType.RESULT
+            and port is not None
+            and not port.port_id.internal
+        ):
+            named = StorageConfig.ICEBERG_RESULT_TABLES.get(
+                f"{port.op_id.logical_op_id.id}:{port.port_id.id}"
+            )
+            if named:
+                return named
+        return DocumentFactory.sanitize_uri_path(parsed_uri)
+
+    @staticmethod
     def sanitize_uri_path(uri):
         """
         Matches the same implementation in our Scala codebase.
@@ -81,7 +99,7 @@ class DocumentFactory:
         if parsed_uri.scheme == VFSURIFactory.VFS_FILE_URI_SCHEME:
             components = VFSURIFactory.decode_uri(uri)
             namespace = DocumentFactory._resolve_namespace(components.resource_type)
-            storage_key = DocumentFactory.sanitize_uri_path(parsed_uri)
+            storage_key = DocumentFactory._storage_key(components, parsed_uri)
             warehouse = components.warehouse
             # Convert Amber Schema to Iceberg Schema with LARGE_BINARY
             # field name encoding
@@ -126,7 +144,7 @@ class DocumentFactory:
         if parsed_uri.scheme == VFSURIFactory.VFS_FILE_URI_SCHEME:
             components = VFSURIFactory.decode_uri(uri)
             namespace = DocumentFactory._resolve_namespace(components.resource_type)
-            storage_key = DocumentFactory.sanitize_uri_path(parsed_uri)
+            storage_key = DocumentFactory._storage_key(components, parsed_uri)
             warehouse = components.warehouse
             return IcebergCatalogInstance.get_instance(warehouse).table_exists(
                 f"{namespace}.{storage_key}"
@@ -142,7 +160,7 @@ class DocumentFactory:
         if parsed_uri.scheme == VFSURIFactory.VFS_FILE_URI_SCHEME:
             components = VFSURIFactory.decode_uri(uri)
             namespace = DocumentFactory._resolve_namespace(components.resource_type)
-            storage_key = DocumentFactory.sanitize_uri_path(parsed_uri)
+            storage_key = DocumentFactory._storage_key(components, parsed_uri)
             warehouse = components.warehouse
 
             table = load_table_metadata(

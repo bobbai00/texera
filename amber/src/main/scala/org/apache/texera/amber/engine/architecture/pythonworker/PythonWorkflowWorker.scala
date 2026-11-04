@@ -85,7 +85,8 @@ object PythonWorkflowWorker {
       outputPort: String,
       rPath: String,
       largeBinaryBaseUri: String,
-      tableNamespace: String = ""
+      tableNamespace: String = "",
+      resultTables: String = ""
   ): Seq[(String, String)] = {
     val isPostgres = StorageConfig.icebergCatalogType == "postgres"
     val isRest = StorageConfig.icebergCatalogType == "rest"
@@ -117,6 +118,7 @@ object PythonWorkflowWorker {
       "icebergRestCatalogScope" -> (if (isRest) StorageConfig.icebergRESTCatalogScope else ""),
       "icebergTableNamespace" -> resultNamespace,
       "icebergTableStateNamespace" -> stateNamespace,
+      "icebergResultTables" -> resultTables,
       "icebergFileStorageDirectoryPath" -> StorageConfig.fileStorageDirectoryPath.toString,
       "icebergTableCommitBatchSize" -> StorageConfig.icebergTableCommitBatchSize.toString,
       "s3Endpoint" -> StorageConfig.s3Endpoint,
@@ -272,7 +274,8 @@ class PythonWorkflowWorker(
       Integer.toString(pythonProxyServer.getPortNumber.get()),
       RENVPath,
       workerConfig.largeBinaryBaseUri,
-      workerConfig.tableNamespace
+      workerConfig.tableNamespace,
+      workerConfig.resultTables
     )
 
     pythonServerProcess = Process(

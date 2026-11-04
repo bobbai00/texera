@@ -27,8 +27,9 @@ import java.security.Principal
   * request reaches the unit.
   *
   * @param subject the token's `sub`, the catalog's principal id for people and agents
-  * @param role    what `@RolesAllowed` checks: [[UnitPrincipal.Admin]] for administrators and
-  *                platform services, [[UnitPrincipal.Regular]] otherwise
+  * @param role    what `@RolesAllowed` checks: [[UnitPrincipal.Service]] for the catalog's own
+  *                client, the only caller the unit's API answers; [[UnitPrincipal.Regular]] for
+  *                anyone else
   */
 final case class UnitPrincipal(subject: String, name: String, email: Option[String], role: String)
     extends Principal {
@@ -38,5 +39,5 @@ final case class UnitPrincipal(subject: String, name: String, email: Option[Stri
 
 object UnitPrincipal {
   val Regular = "REGULAR"
-  val Admin = "ADMIN"
+  val Service = "SERVICE"
 }

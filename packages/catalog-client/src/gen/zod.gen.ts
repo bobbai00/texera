@@ -59,13 +59,6 @@ export const zCommitFiles = z.object({
     message: z.string().optional()
 });
 
-export const zCompileResult = z.object({
-    ok: z.boolean(),
-    operatorOutputSchemas: z.record(z.string(), z.record(z.string(), z.array(zAttribute).nullable())),
-    operatorErrors: z.record(z.string(), z.unknown()),
-    physicalPlan: z.unknown().optional()
-});
-
 export const zComputingNodeSpec = z.object({
     name: z.string(),
     role: z.enum([
@@ -330,6 +323,15 @@ export const zExecutionStatus = z.object({
     resultsExpiredAt: z.iso.datetime().optional()
 });
 
+/**
+ * One output port's table in the lake, named by the catalog before the run starts.
+ */
+export const zPortTable = z.object({
+    operatorID: z.string(),
+    portID: z.string(),
+    table: z.string()
+});
+
 export const zPrincipalKind = z.enum(['user', 'group']);
 
 export const zPrincipal = z.object({
@@ -473,16 +475,6 @@ export const zOperatorTypeList = z.object({
 });
 
 /**
- * Save an output port's result as a dataset version.
- */
-export const zSavePort = z.object({
-    dataset: zRid.optional(),
-    name: z.string().optional(),
-    path: z.string().optional(),
-    message: z.string().optional()
-});
-
-/**
  * The secret's fields, e.g. {value} for an API key, {username, password} for basic.
  */
 export const zSetSecret = z.object({
@@ -534,7 +526,6 @@ export const zComputingUnitStatus = z.object({
         'terminated'
     ]),
     identity: zUnitIdentity.optional(),
-    gatewayPath: z.string().optional(),
     message: z.string().optional(),
     engine: zEngineStatus.optional(),
     computingNodes: z.array(zComputingNodeStatus).optional(),
@@ -572,6 +563,17 @@ export const zEdge = z.object({
 });
 
 /**
+ * What the catalog compiled for a run, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the run starts and never stored.
+ */
+export const zExecutionPlan = z.object({
+    namespace: z.string().optional(),
+    outputs: z.array(zPortTable),
+    operators: z.array(zUri).optional(),
+    credentials: z.array(zUri).optional(),
+    logicalPlan: z.unknown()
+});
+
+/**
  * A port of an execution: an output port with its result, or an input port with its binding.
  */
 export const zExecutionPort = z.object({
@@ -588,7 +590,8 @@ export const zExecutionSpec = z.object({
     environment: zUri.optional(),
     computingUnit: zUri,
     inputs: z.array(zUri).optional(),
-    parameters: z.record(z.string(), z.unknown()).optional()
+    parameters: z.record(z.string(), z.unknown()).optional(),
+    plan: zExecutionPlan.optional()
 });
 
 export const zLeaseRequest = z.object({
@@ -1545,6 +1548,17 @@ export const zWorkflow = z.object({
 export const zWorkflowPage = z.object({
     items: z.array(zWorkflow),
     nextCursor: z.string().optional()
+});
+
+/**
+ * A dry run: the engine's compile result and the plan the catalog would start a run with.
+ */
+export const zWorkflowValidation = z.object({
+    ok: z.boolean(),
+    operatorOutputSchemas: z.record(z.string(), z.record(z.string(), z.array(zAttribute).nullable())),
+    operatorErrors: z.record(z.string(), z.unknown()),
+    physicalPlan: z.unknown().optional(),
+    plan: zExecutionPlan.optional()
 });
 
 /**
@@ -3043,20 +3057,6 @@ export const zWorkflowsReadRowsQuery = z.object({
  */
 export const zWorkflowsReadRowsResponse = zRowPage;
 
-export const zWorkflowsSavePortBody = zSavePort;
-
-export const zWorkflowsSavePortPath = z.object({
-    rid: zRid,
-    eid: zRid,
-    operatorID: z.string(),
-    portID: z.string()
-});
-
-/**
- * The request has succeeded and a new resource has been created as a result.
- */
-export const zWorkflowsSavePortResponse = zDatasetVersion;
-
 export const zWorkflowsRunBody = zRunWorkflow;
 
 export const zWorkflowsRunPath = z.object({
@@ -3077,7 +3077,7 @@ export const zWorkflowsValidatePath = z.object({
 /**
  * The request has succeeded.
  */
-export const zWorkflowsValidateResponse = zCompileResult;
+export const zWorkflowsValidateResponse = zWorkflowValidation;
 
 export const zWorkflowsListVersionsPath = z.object({
     rid: zRid

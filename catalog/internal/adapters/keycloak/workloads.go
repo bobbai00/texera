@@ -30,6 +30,11 @@ func (id *Identity) CreateWorkload(ctx context.Context, clientID, displayName st
 		"standardFlowEnabled": false, "implicitFlowEnabled": false, "directAccessGrantsEnabled": false,
 		// The Iceberg Java client refreshes an expiring token by token exchange.
 		"attributes": map[string]string{"standard.token.exchange.enabled": "true"},
+		// The catalog verifies the audience; a unit's tokens carry it like everyone's.
+		"protocolMappers": []map[string]any{{
+			"name": "texera audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "consentRequired": false,
+			"config": map[string]string{"included.custom.audience": "texera", "access.token.claim": "true", "id.token.claim": "false", "introspection.token.claim": "true"},
+		}},
 	}
 	resp, err := id.admin(ctx, http.MethodPost, "clients", nil, body)
 	if err != nil {

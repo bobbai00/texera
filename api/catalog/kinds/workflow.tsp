@@ -95,6 +95,12 @@ model EditWorkflow {
   message?: string;
 }
 
+@doc("A dry run: the engine's compile result and the plan the catalog would start a run with.")
+model WorkflowValidation {
+  ...CompileResult;
+  plan?: ExecutionPlan;
+}
+
 model ValidateWorkflow {
   @doc("Compile this version; defaults to the head version.")
   vno?: Vno;
@@ -167,7 +173,7 @@ namespace Routes {
       description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator.",
       readOnlyHint: true,
     })
-    validate(@path rid: Rid, @body body: ValidateWorkflow): CompileResult | Error;
+    validate(@path rid: Rid, @body body: ValidateWorkflow): WorkflowValidation | Error;
 
     @doc("Run a workflow version; the execution is created under the workflow.")
     @post
@@ -239,25 +245,5 @@ namespace Routes {
       @query offset?: int64,
       @query limit?: int32,
     ): RowPage | Error;
-
-    @doc("Save an output port's result as a dataset version; lineage records it as derived from the port.")
-    @post
-    @route("/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}/save")
-    @extension("x-texera-permission", "read")
-    @extension("x-mcp", #{
-      server: "dataflow",
-      tool: "save_result_as_dataset",
-      description: "Save an operator's output in a completed execution as a new dataset version (a CSV file), so later workflows can read it. Creates a dataset unless one is given; lineage records the port that produced it.",
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-    })
-    savePort(
-      @path rid: Rid,
-      @path eid: Rid,
-      @path operatorID: string,
-      @path portID: string,
-      @body body: SavePort,
-    ): Created<DatasetVersion> | Error;
   }
 }

@@ -102,7 +102,6 @@ configure() {
     -e 's#address: host.docker.internal, port_value: 8090#address: catalog, port_value: 8090#' \
     -e 's#address: host.docker.internal, port_value: 23002#address: agent-runtime, port_value: 23002#' \
     -e 's#address: host.docker.internal, port_value: 23010#address: bio-mcp, port_value: 23010#' \
-    -e 's#address: host.docker.internal, port_value: 28085#address: unit, port_value: 8085#' \
     -e 's#address: host.docker.internal, port_value: 5174#address: frontend, port_value: 8080#' \
     "$HERE/envoy/envoy.yaml" >"$tmp/envoy.yaml"
   if grep -q "host.docker.internal\|localhost:8088" "$tmp/envoy.yaml"; then

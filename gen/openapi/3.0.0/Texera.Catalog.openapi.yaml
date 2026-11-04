@@ -4272,58 +4272,6 @@ paths:
         description: Read a bounded page of rows from an operator's output port in an execution (schema and rows).
         readOnlyHint: true
       x-texera-permission: read
-  /catalog/v1/workflows/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}/save:
-    post:
-      operationId: Workflows_savePort
-      description: Save an output port's result as a dataset version; lineage records it as derived from the port.
-      parameters:
-        - name: rid
-          in: path
-          required: true
-          schema:
-            $ref: '#/components/schemas/Rid'
-        - name: eid
-          in: path
-          required: true
-          schema:
-            $ref: '#/components/schemas/Rid'
-        - name: operatorID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: portID
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '201':
-          description: The request has succeeded and a new resource has been created as a result.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DatasetVersion'
-        default:
-          description: An unexpected error response.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SavePort'
-      x-mcp:
-        server: dataflow
-        tool: save_result_as_dataset
-        description: Save an operator's output in a completed execution as a new dataset version (a CSV file), so later workflows can read it. Creates a dataset unless one is given; lineage records the port that produced it.
-        readOnlyHint: false
-        destructiveHint: false
-        idempotentHint: false
-      x-texera-permission: read
   /catalog/v1/workflows/{rid}/run:
     post:
       operationId: Workflows_run
@@ -4377,7 +4325,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CompileResult'
+                $ref: '#/components/schemas/WorkflowValidation'
         default:
           description: An unexpected error response.
           content:
@@ -4747,30 +4695,6 @@ components:
       properties:
         message:
           type: string
-    CompileResult:
-      type: object
-      required:
-        - ok
-        - operatorOutputSchemas
-        - operatorErrors
-      properties:
-        ok:
-          type: boolean
-        operatorOutputSchemas:
-          type: object
-          additionalProperties:
-            type: object
-            additionalProperties:
-              type: array
-              items:
-                $ref: '#/components/schemas/Attribute'
-              nullable: true
-          description: Output schemas per operator id and output port id.
-        operatorErrors:
-          type: object
-          additionalProperties: {}
-          description: Errors per operator id.
-        physicalPlan: {}
     ComputingNodeSpec:
       type: object
       required:
@@ -4883,9 +4807,6 @@ components:
             - terminated
         identity:
           $ref: '#/components/schemas/UnitIdentity'
-        gatewayPath:
-          type: string
-          description: The path the gateway proxies the unit's WebSocket and HTTP API at.
         message:
           type: string
         engine:
@@ -5775,6 +5696,33 @@ components:
         - completed
         - failed
         - cancelled
+    ExecutionPlan:
+      type: object
+      required:
+        - outputs
+        - logicalPlan
+      properties:
+        namespace:
+          type: string
+          description: The namespace in the lake the run writes to; absent for a dry run.
+        outputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortTable'
+          description: 'One table per output port the engine writes, inside the namespace: the ports of operators marked viewResult and of operators nothing reads.'
+        operators:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uri'
+          description: The custom operator versions compiled in, with `@vno`.
+        credentials:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uri'
+          description: The credentials the operators name; leased for the run at start, their values never stored.
+        logicalPlan:
+          description: The engine's logical plan, with dataset files and credentials still named by URI.
+      description: 'What the catalog compiled for a run, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the run starts and never stored.'
     ExecutionPort:
       type: object
       required:
@@ -5827,6 +5775,10 @@ components:
         parameters:
           type: object
           additionalProperties: {}
+        plan:
+          allOf:
+            - $ref: '#/components/schemas/ExecutionPlan'
+          description: The compiled plan the run was started with.
     ExecutionStatus:
       type: object
       required:
@@ -6746,6 +6698,21 @@ components:
           items:
             $ref: '#/components/schemas/Attribute'
       description: An output port's result, as the unit reported it at completion.
+    PortTable:
+      type: object
+      required:
+        - operatorID
+        - portID
+        - table
+      properties:
+        operatorID:
+          type: string
+        portID:
+          type: string
+        table:
+          type: string
+          description: The table's name inside the run's namespace.
+      description: One output port's table in the lake, named by the catalog before the run starts.
     Principal:
       type: object
       required:
@@ -7118,23 +7085,6 @@ components:
         resources:
           type: object
           additionalProperties: {}
-    SavePort:
-      type: object
-      properties:
-        dataset:
-          allOf:
-            - $ref: '#/components/schemas/Rid'
-          description: The dataset that gets the new version; a new dataset is created when absent.
-        name:
-          type: string
-          description: The new dataset's name, when `dataset` is absent.
-        path:
-          type: string
-          description: The file inside the dataset version; defaults to `<operatorID>.csv`.
-        message:
-          type: string
-          description: What the version holds, recorded on it.
-      description: Save an output port's result as a dataset version.
     SetSecret:
       type: object
       required:
@@ -7812,6 +7762,33 @@ components:
         executions:
           type: integer
           format: int64
+    WorkflowValidation:
+      type: object
+      required:
+        - ok
+        - operatorOutputSchemas
+        - operatorErrors
+      properties:
+        ok:
+          type: boolean
+        operatorOutputSchemas:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: array
+              items:
+                $ref: '#/components/schemas/Attribute'
+              nullable: true
+          description: Output schemas per operator id and output port id.
+        operatorErrors:
+          type: object
+          additionalProperties: {}
+          description: Errors per operator id.
+        physicalPlan: {}
+        plan:
+          $ref: '#/components/schemas/ExecutionPlan'
+      description: "A dry run: the engine's compile result and the plan the catalog would start a run with."
     WorkflowVersion:
       type: object
       required:

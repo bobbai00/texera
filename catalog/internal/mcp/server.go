@@ -55,8 +55,8 @@ versioned files; every edit is a version and every run is an execution with line
 flow: list_dataset_files and read_dataset_file to see the data, list_operators with q to learn an
 operator's property schema, create_workflow with a spec {operators, links} where a scan's
 fileName is texera://datasets/<rid>@<vno>/files/<path>, validate_workflow until it reports ok,
-run_workflow with waitSeconds, then get_port_result for rows and save_result_as_dataset to keep
-a result. edit_workflow applies an RFC 6902 patch and makes a new version.`,
+run_workflow with waitSeconds, then get_port_result for rows; results live with the run.
+edit_workflow applies an RFC 6902 patch and makes a new version.`,
 }
 
 // maxToolTextBytes bounds what a tool returns to a model.

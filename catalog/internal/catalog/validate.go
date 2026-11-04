@@ -9,12 +9,11 @@ import (
 
 	"github.com/apache/texera/catalog/internal/api"
 	"github.com/apache/texera/catalog/internal/auth"
-	"github.com/apache/texera/catalog/internal/authz"
 )
 
 // Validate compiles a workflow version or a draft spec on a unit: output schemas per port
 // and errors per operator.
-func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID uuid.UUID, vno int, draft *api.WorkflowSpec, unitName string) (*api.CompileResult, error) {
+func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID uuid.UUID, vno int, draft *api.WorkflowSpec, unitName string) (*api.WorkflowValidation, error) {
 	wf, err := s.Get(ctx, caller, &workflowKind, workflowRID)
 	if err != nil {
 		return nil, err
@@ -41,7 +40,13 @@ func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID
 	if err != nil {
 		return nil, err
 	}
-	if err := s.require(ctx, caller, authz.RunOn, unit.RID); err != nil {
+	// The same compile and the same authorization as a run; the engine then compiles the
+	// bound copy, with the credentials left as URIs.
+	c, err := s.compile(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizePlan(ctx, caller, c, unit, nil); err != nil {
 		return nil, err
 	}
 	client, status, err := s.unitClient(ctx, unit)
@@ -51,17 +56,19 @@ func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID
 	if client == nil {
 		return nil, Conflict("unit_not_ready", "the unit is "+string(status.Phase), nil)
 	}
-	plan, err := s.buildPlan(ctx, caller, spec)
+	bound, _, err := s.bindInputs(ctx, caller, c)
 	if err != nil {
 		return nil, err
 	}
-	result, err := client.Compile(ctx, plan.Plan)
+	result, err := client.Compile(ctx, bound)
 	if err != nil {
 		return nil, Unavailable("unit", err)
 	}
-	var out api.CompileResult
+	var out api.WorkflowValidation
 	if err := json.Unmarshal(mustJSON(result), &out); err != nil {
 		return nil, err
 	}
+	plan := c.apiPlan("")
+	out.Plan = &plan
 	return &out, nil
 }

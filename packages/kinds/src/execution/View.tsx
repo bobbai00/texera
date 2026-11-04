@@ -1,8 +1,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { workflowsCancelExecution, workflowsDeleteExecution, workflowsSavePort } from "@texera/catalog-client";
+import { resourcesUpdateMetadata, workflowsCancelExecution, workflowsDeleteExecution } from "@texera/catalog-client";
 import type { Execution, ExecutionStatus, PortSummary } from "@texera/catalog-client/types";
 import { Badge, Button, DataTable, EmptyState, ErrorNote, Skeleton, Tab, TabPanel, Tabs, TabsList, cn, formatDuration, formatNumber, timeAgo } from "@texera/ui";
-import { AlertTriangle, Braces, ChevronLeft, ChevronRight, Database, GitBranch, Loader2, Square, Table2, Trash2, Workflow } from "lucide-react";
+import { AlertTriangle, Bookmark, BookmarkCheck, Braces, ChevronLeft, ChevronRight, Database, GitBranch, Loader2, Square, Table2, Trash2, Workflow } from "lucide-react";
 import { useState } from "react";
 import { unwrap } from "../api";
 import { UriChip } from "../shell/Chips";
@@ -40,10 +40,21 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
       expand({ kind: "workflow", rid: workflow });
     },
   });
+  // A kept run's results stay under the retention policy: the label the hourly sweep honours.
+  const keep = useMutation({
+    mutationFn: (kept: boolean) => {
+      const labels = { ...(x?.metadata.labels ?? {}) };
+      if (kept) labels["texera.keep"] = "true";
+      else delete labels["texera.keep"];
+      return unwrap(resourcesUpdateMetadata({ path: { rid: ref.rid }, body: { labels } }));
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["resource", ref.rid] }),
+  });
   const [tab, setTab] = useState("results");
   if (error) return <ErrorNote error={error} prefix="Could not open this run" className="m-4" />;
   if (!x) return <Skeleton className="m-4 h-64" />;
   const status = x.status ?? { phase: "pending" as const };
+  const kept = x.metadata.labels?.["texera.keep"] === "true";
   const live = isLive(x as never);
   const operators = Object.entries(status.operators ?? {});
   const errors = operators.filter(([, o]) => o.error);
@@ -77,6 +88,11 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
               </Button>
             )}
             {!live && (
+              <Button variant="ghost" size="sm" onClick={() => keep.mutate(!kept)} disabled={keep.isPending} data-keep-run={kept ? "kept" : "free"} title={kept ? "Let the retention policy expire these results" : "Keep these results past the retention policy"}>
+                {kept ? <BookmarkCheck /> : <Bookmark />} {kept ? "Kept" : "Keep"}
+              </Button>
+            )}
+            {!live && (
               <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending} data-delete-run title="Delete this run and its result tables">
                 <Trash2 /> Delete
               </Button>
@@ -87,6 +103,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
       {status.error !== undefined && status.error !== null && <ErrorNote error={status.error} prefix="The run failed" className="m-3" />}
       {cancel.error && <ErrorNote error={cancel.error} prefix="Could not stop the run" className="m-3" />}
       {remove.error && <ErrorNote error={remove.error} prefix="Could not delete the run" className="m-3" />}
+      {keep.error && <ErrorNote error={keep.error} prefix="Could not change the run's keep mark" className="m-3" />}
       {status.resultsExpiredAt && (
         <p className="mx-3 mt-3 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground" data-results-expired>
           The result tables expired {timeAgo(status.resultsExpiredAt)} under the retention policy; the summaries below stay.
@@ -116,7 +133,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
           </Tab>
         </TabsList>
         <TabPanel value="results" className="flex min-h-0 flex-1 flex-col">
-          <Results execution={x} workflow={workflow} ports={ports} completed={status.phase === "completed" && !status.resultsExpiredAt} expired={Boolean(status.resultsExpiredAt)} />
+          <Results execution={x} workflow={workflow} ports={ports} expired={Boolean(status.resultsExpiredAt)} />
         </TabPanel>
         <TabPanel value="operators" className="scrollbar-thin overflow-y-auto">
           {operators.length === 0 ? (
@@ -148,7 +165,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
   );
 }
 
-function Results({ execution, workflow, ports, completed, expired }: { execution: Execution; workflow: string; ports: PortSummary[]; completed: boolean; expired: boolean }) {
+function Results({ execution, workflow, ports, expired }: { execution: Execution; workflow: string; ports: PortSummary[]; expired: boolean }) {
   const [picked, setPicked] = useState<string>();
   const key = (p: PortSummary) => `${p.operatorID}:${p.portID}`;
   const active = ports.find(p => key(p) === picked) ?? ports[0];
@@ -184,12 +201,12 @@ function Results({ execution, workflow, ports, completed, expired }: { execution
           </button>
         ))}
       </div>
-      <PortRows key={key(active)} eid={execution.metadata.rid} workflow={workflow} port={active} completed={completed} />
+      <PortRows key={key(active)} eid={execution.metadata.rid} workflow={workflow} port={active} />
     </>
   );
 }
 
-function PortRows({ eid, workflow, port, completed }: { eid: string; workflow: string; port: PortSummary; completed: boolean }) {
+function PortRows({ eid, workflow, port }: { eid: string; workflow: string; port: PortSummary }) {
   const [page, setPage] = useState(1);
   const { data, error, isPending } = useQuery({ ...rowsQuery(workflow, eid, port.operatorID, port.portID, page), placeholderData: keepPreviousData });
   if (error) return <ErrorNote error={error} prefix="Could not load the result" className="m-3" />;
@@ -204,7 +221,6 @@ function PortRows({ eid, workflow, port, completed }: { eid: string; workflow: s
           {formatNumber(total)} row{total === 1 ? "" : "s"}
           {port.table && <span className="ml-2 font-mono text-2xs">{port.table}</span>}
         </span>
-        {completed && <SaveAsDataset eid={eid} workflow={workflow} port={port} />}
         <Button variant="ghost" size="icon-xs" disabled={page <= 1} onClick={() => setPage(page - 1)} aria-label="Previous page">
           <ChevronLeft />
         </Button>
@@ -216,27 +232,5 @@ function PortRows({ eid, workflow, port, completed }: { eid: string; workflow: s
         </Button>
       </div>
     </div>
-  );
-}
-
-/** Keeps a result as a new dataset version; its lineage names this port. Opens it beside. */
-function SaveAsDataset({ eid, workflow, port }: { eid: string; workflow: string; port: PortSummary }) {
-  const { beside } = useOpenResource();
-  const queryClient = useQueryClient();
-  const save = useMutation({
-    mutationFn: () => unwrap(workflowsSavePort({ path: { rid: workflow, eid, operatorID: port.operatorID, portID: port.portID }, body: {} })),
-    onSuccess: v => {
-      void queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
-      beside({ kind: "dataset", rid: v.rid, vno: v.vno });
-    },
-  });
-  return (
-    <>
-      {save.error && <span className="text-destructive">{save.error.message}</span>}
-      <Button variant="ghost" size="xs" disabled={save.isPending} onClick={() => save.mutate()} data-save-result title="Keep this result as a new dataset version">
-        {save.isPending ? <Loader2 className="animate-spin" /> : <Database />}
-        Save as dataset
-      </Button>
-    </>
   );
 }

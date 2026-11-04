@@ -10,9 +10,13 @@ worktree `~/Desktop/texera-2-0` on this Linux box. For development every piece r
 process over a Compose stack; the same stack also deploys to a local Kubernetes cluster in one
 command, where computing units are created as resources. The lake (Lakekeeper) authenticates
 every caller and authorizes with OpenFGA: each unit runs as a client of its own and reaches only
-the namespaces of the runs it executed, which the catalog opens for it. All eleven acceptance
-items of the plan are demonstrated by automated checks, and the close gate (`down.sh --wipe &&
-up.sh && test.sh`) is green.
+the namespaces of the runs it executed, which the catalog opens for it. A run goes through the
+catalog in three phases: authorize (everything the plan names, before anything is written),
+compile (one plan, as data, the same a dry run returns), materialize (the execution with its
+plan, its namespace, a bound copy with presigned inputs and leased secrets to the engine, which
+writes the tables the catalog named). A unit answers the catalog alone and reports as itself.
+All eleven acceptance items of the plan are demonstrated by automated checks, and the close
+gate (`down.sh --wipe && up.sh && test.sh`) is green.
 
 | Piece | Where | How to reach it |
 | --- | --- | --- |
@@ -34,6 +38,8 @@ up.sh && test.sh`) is green.
 - The catalog: an eleven-table store, six ports (Identity, Authorizer, SecretStore, BlobStore,
   UnitProvider, LineageSink) with one adapter each and contract suites, a generic service and
   server, the generated MCP bridge. OpenFGA decides every call; viewing never implies using.
+  A run is authorized, compiled and materialized in the catalog; the execution stores its
+  plan (`spec.plan`, URIs only) and the engine gets one bound copy.
 - The agent runtime as a stateless turn runner: a template version runs one turn of a
   conversation as the person; handoffs between templates; `/mode`; the platform key leased
   from OpenBao per turn. Two seeded templates, Data Analyst and Bio Researcher.
@@ -68,7 +74,10 @@ Done since the close: viewing never implies using, sharing with people who have 
 in, typed operator output columns, kept canvas positions, credentials in operator properties,
 images and the one-command Kubernetes deployment, the Kubernetes unit provider, Lakekeeper on
 OpenFGA with one identity per unit, retention (an execution delete route, a results expiry
-policy with an hourly sweep, unreferenced blobs). Nearest gaps: quotas and metering, groups
+policy with an hourly sweep, unreferenced blobs), the run in three phases with the unit's
+doors closed and the output tables named by the catalog (steps 1 to 3 of the note "Texera
+2.0: Authorize, Compile, Materialize"; results live with the run, `texera.keep` keeps them).
+Nearest gaps: steps 4 and 5 of that note, quotas and metering, groups
 beyond admins, a purge of soft-deleted resources. Known limit: the
 units still hold the store's static S3 key for large binaries (`STORAGE_S3_AUTH_*`), which also
 reaches the warehouse's files; a key scoped to the objects prefix closes that.
@@ -82,6 +91,13 @@ reaches the warehouse's files; a key scoped to the objects prefix closes that.
   `down.sh --wipe` (`k8s.sh down` on the cluster). After a re-import, restart Envoy (it caches
   the key set) and the agent runtime (its service token). A person exists in the catalog once
   they have logged in.
+- **Units talk to the catalog only, and only about their own runs.** A unit's API answers the
+  catalog's client alone; the gateway has no route to units; a unit reports lineage as itself
+  and the catalog refuses events from anyone but the execution's unit. A unit with no client
+  configured reports nothing the catalog accepts.
+- **Results live with the run.** Save-as-dataset left the MVP (acceptance item 4 now reads as
+  the run's own lineage); a run's `texera.keep` label keeps its results past the retention
+  policy. Every run stores the plan it was started with in `spec.plan`.
 - **The lake takes a token.** `curl` against Lakekeeper answers 401 without one; the catalog's
   client `texera-services` is the operator and sees everything, a unit's client only its runs.
   Keycloak's discovery document names the public issuer, which Lakekeeper reaches through a

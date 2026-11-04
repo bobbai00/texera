@@ -61,15 +61,6 @@ static_resources:
                           route: { cluster: catalog, timeout: 600s }
                         - match: { prefix: "/agents/" }
                           route: { cluster: agent, timeout: 0s }
-                        # /units/{rid}/wsapi -> the unit's /wsapi (one static unit in the dev stack)
-                        - match:
-                            safe_regex: { regex: "^/units/[^/]+/(wsapi|api)(/.*)?$" }
-                          route:
-                            cluster: unit
-                            timeout: 0s
-                            regex_rewrite:
-                              pattern: { regex: "^/units/[^/]+/(wsapi|api)(/.*)?$" }
-                              substitution: "/\\1\\2"
                         - match: { prefix: "/" }
                           route: { cluster: frontend, timeout: 0s }
                           typed_per_filter_config:
@@ -115,8 +106,6 @@ static_resources:
                         - match: { prefix: "/lineage/" }
                           requires: { provider_name: keycloak }
                         - match: { prefix: "/agents/" }
-                          requires: { provider_name: keycloak }
-                        - match: { prefix: "/units/" }
                           requires: { provider_name: keycloak }
                         - match: { prefix: "/" }
                   - name: envoy.filters.http.ext_authz
@@ -186,16 +175,6 @@ static_resources:
               - endpoint:
                   address:
                     socket_address: { address: host.docker.internal, port_value: 23010 }
-    - name: unit
-      type: STRICT_DNS
-      connect_timeout: 5s
-      load_assignment:
-        cluster_name: unit
-        endpoints:
-          - lb_endpoints:
-              - endpoint:
-                  address:
-                    socket_address: { address: host.docker.internal, port_value: 28085 }
     - name: frontend
       type: STRICT_DNS
       connect_timeout: 5s

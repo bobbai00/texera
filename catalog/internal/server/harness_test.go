@@ -30,8 +30,9 @@ import (
 	"github.com/apache/texera/catalog/internal/store"
 )
 
-// fakeIdentity accepts tokens that name a user: "alice", "bob", "admin" (an administrator)
-// and "service" (the platform's service client).
+// fakeIdentity accepts tokens that name a user: "alice", "bob", "admin" (an administrator),
+// "service" (the platform's service client), "unit" (the seeded unit's client, texera-unit)
+// and "unit:<clientId>" (any unit client; the subject is what memory.Workloads gives it).
 type fakeIdentity struct{}
 
 func (fakeIdentity) Verify(_ context.Context, token string) (ports.Claims, error) {
@@ -42,11 +43,21 @@ func (fakeIdentity) Verify(_ context.Context, token string) (ports.Claims, error
 		return ports.Claims{Subject: "service:texera-services", Name: "texera-services", ClientID: "texera-services", Service: true}, nil
 	case "admin":
 		return ports.Claims{Subject: "sub:admin", Name: "admin", ClientID: "texera-app", Roles: []string{"admin"}}, nil
+	case "unit":
+		return ports.Claims{Subject: "sa:texera-unit", ClientID: "texera-unit"}, nil
+	}
+	if client, ok := strings.CutPrefix(token, "unit:"); ok {
+		return ports.Claims{Subject: "sa:" + client, ClientID: client}, nil
 	}
 	if strings.HasPrefix(token, "bad") {
 		return ports.Claims{}, ports.ErrUnauthenticated
 	}
 	return ports.Claims{Subject: "sub:" + token, Name: token, Email: token + "@example.org", ClientID: "texera-app"}, nil
+}
+
+// isUnitClient tells the clients units run as, as main.go does.
+func isUnitClient(clientID string) bool {
+	return clientID == "texera-unit" || strings.HasPrefix(clientID, "unit-")
 }
 
 func (fakeIdentity) ServiceToken(context.Context) (string, error) { return "service", nil }
@@ -220,7 +231,7 @@ func newHarness(t *testing.T) *harness {
 	if err := relay.Once(ctx); err != nil {
 		t.Fatal(err)
 	}
-	resolver := auth.NewResolver(fakeIdentity{}, st)
+	resolver := auth.NewResolver(fakeIdentity{}, st, isUnitClient)
 	srv := server.New(svc, resolver, pdp, "http://test", log)
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)
@@ -374,4 +385,10 @@ func field(e envelope, key string) any {
 		return nil
 	}
 	return (*e.Status)[key]
+}
+
+// mustJSONBytes renders a value as JSON for comparisons.
+func mustJSONBytes(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }

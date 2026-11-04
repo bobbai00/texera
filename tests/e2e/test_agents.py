@@ -1,17 +1,23 @@
-"""Real agents through the real model. The Data Analyst builds, edits, reruns and saves over
+"""Real agents through the real model. The Data Analyst builds, runs, edits and reruns over
 the iris file; the Bio Researcher answers with cited ideas, hands the chat to the analyst for
 the analysis, and the active agent shares the data with Bob through the catalog MCP server.
-Acceptance items 3, 4, 9, 10 and 11. Outcomes are asserted in the catalog, never the wording."""
+Acceptance items 3, 9, 10 and 11. Outcomes are asserted in the catalog, never the wording."""
+import itertools
+
 import pytest
 
 from conftest import make_iris
 from texera_e2e import chat
 
 
+_iris_numbers = itertools.count(1)
+
+
 @pytest.fixture
 def my_iris(alice, project, run_id):
-    """An iris dataset with a name of its own, so the prompts leave the model no doubt."""
-    return make_iris(alice, project, f"iris-{run_id}")
+    """An iris dataset with a name of its own, unique across this run's tests, so the prompts
+    leave the model no doubt: a same-named leftover of an earlier test once got shared instead."""
+    return make_iris(alice, project, f"iris-{run_id}-{next(_iris_numbers)}")
 
 
 def _kinds(resources: list) -> dict[str, list]:
@@ -25,7 +31,7 @@ def _completed_runs(api, resources: list) -> int:
     n = 0
     for kind, _, rid in resources:
         if kind == "execution":
-            wf = api.get(f"/executions?limit=200")  # executions across workflows
+            wf = api.get("/executions?limit=200")  # executions across workflows
             for e in wf["items"]:
                 if e["metadata"]["rid"] == rid and e["status"]["phase"] == "completed":
                     n += 1
@@ -34,7 +40,7 @@ def _completed_runs(api, resources: list) -> int:
 
 @pytest.mark.model
 @pytest.mark.slow
-def test_the_data_analyst_builds_runs_edits_and_saves(alice, project, my_iris, unit):
+def test_the_data_analyst_builds_runs_edits_and_reruns(alice, project, my_iris, unit):
     name = my_iris["metadata"]["name"]
     crid = chat.conversation(alice, "analyst chat", chat.template_uri(alice, "Data Analyst"), unit, project)
     first = chat.say(alice, crid, f"Using the dataset named {name} in my catalog, what is the average petal length for each species? Build and run a Texera workflow to compute it, then report the numbers.")
@@ -50,10 +56,6 @@ def test_the_data_analyst_builds_runs_edits_and_saves(alice, project, my_iris, u
     wf_rid = made["workflow"][0][1]
     assert alice.get(f"/workflows/{wf_rid}")["metadata"]["head"] >= 2, "the edit is a new version"
 
-    third = chat.say(alice, crid, "Save the per-species averages from your last run as a dataset named 'iris averages by species'.")
-    assert third.outcome == "success"
-    made = _kinds(chat.created_in(alice, crid))
-    assert made.get("dataset"), "the saved result is a dataset of this chat"
     messages = alice.get(f"/conversations/{crid}/messages")["items"]
     assert all(m.get("template") for m in messages if m["role"] == "assistant"), "every answer names the template that wrote it"
 

@@ -30,10 +30,19 @@ import scala.jdk.CollectionConverters._
 /**
   * The handshake is where a WebSocket connection gets its caller, and the unit trusts only a
   * token it verified itself: from the `access-token` query parameter or a bearer Authorization
-  * header. Identity headers are ignored, whoever set them. Verification (RS256 against the
-  * identity provider's JWKS) is stubbed so only the tokens named here are valid.
+  * header. Identity headers are ignored, whoever set them. Like the unit's API, the socket
+  * answers the catalog's own client alone: a person's token, verified or not, records no
+  * caller. Verification (RS256 against the identity provider's JWKS) is stubbed so only the
+  * tokens named here are valid.
   */
 class ServletAwareConfiguratorSpec extends AnyFlatSpec with Matchers with MockFactory {
+
+  private val catalog = UnitPrincipal(
+    "service:texera-services",
+    "texera-services",
+    None,
+    UnitPrincipal.Service
+  )
 
   private val alice = UnitPrincipal(
     "3f1c2a64-0000-4000-8000-00000000a11c",
@@ -71,23 +80,32 @@ class ServletAwareConfiguratorSpec extends AnyFlatSpec with Matchers with MockFa
 
   "modifyHandshake" should "take the caller from a verified access-token query parameter" in {
     // Other parameters around the token, so "the query string is the token" would not pass.
-    withTokens(Map("the-token" -> alice)) {
-      callerIn(handshake(queryString = "wid=1&access-token=the-token&cuid=2")) shouldBe Some(alice)
+    withTokens(Map("the-token" -> catalog)) {
+      callerIn(handshake(queryString = "wid=1&access-token=the-token&cuid=2")) shouldBe Some(
+        catalog
+      )
     }
   }
 
   it should "take the caller from a bearer Authorization header" in {
-    withTokens(Map("the-token" -> alice)) {
+    withTokens(Map("the-token" -> catalog)) {
       callerIn(handshake(headers = Map("Authorization" -> Seq("Bearer the-token")))) shouldBe Some(
-        alice
+        catalog
       )
     }
   }
 
   it should "record no caller for a token that does not verify" in {
-    withTokens(Map("the-token" -> alice)) {
+    withTokens(Map("the-token" -> catalog)) {
       callerIn(handshake(queryString = "access-token=forged")) shouldBe None
       callerIn(handshake()) shouldBe None
+    }
+  }
+
+  it should "record no caller for a person's token, verified or not" in {
+    withTokens(Map("the-token" -> alice)) {
+      callerIn(handshake(queryString = "access-token=the-token")) shouldBe None
+      callerIn(handshake(headers = Map("Authorization" -> Seq("Bearer the-token")))) shouldBe None
     }
   }
 
@@ -104,7 +122,7 @@ class ServletAwareConfiguratorSpec extends AnyFlatSpec with Matchers with MockFa
   }
 
   it should "drop a caller left in shared properties by an earlier handshake when this one fails" in {
-    withTokens(Map("the-token" -> alice)) {
+    withTokens(Map("the-token" -> catalog)) {
       val shared = handshake(queryString = "access-token=the-token")
       callerIn(handshake(queryString = "access-token=forged", properties = shared)) shouldBe None
     }

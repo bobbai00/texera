@@ -3,7 +3,6 @@ sharing, dataset files and references, a conversation with a turn and an origin,
 MCP servers. Acceptance items 1 and 2, and the surface every other scenario stands on."""
 import time
 
-import pytest
 
 from texera_e2e.client import uri_rid
 

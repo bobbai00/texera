@@ -159,7 +159,7 @@ test("creates a custom operator from its page and finds it in a workflow's palet
   await page.screenshot({ path: "test-results/custom-operator.png", fullPage: true });
 });
 
-test("a result saved from its run shows the run and the source file in its lineage", async ({ page, request }) => {
+test("a run shows the file it read in its lineage, and can be kept past the retention policy", async ({ page, request }) => {
   const call = await api(request);
   const ds = await call("POST", "/datasets", { name: `lineage e2e ${Date.now()}`, spec: { format: "csv" } });
   const dsRid = ds.metadata.rid as string;
@@ -185,14 +185,12 @@ test("a result saved from its run shows the run and the source file in its linea
   await expect(execution).toBeVisible();
   await expect(execution.locator("[data-phase]")).toHaveText("completed");
   await expect(execution.locator("[data-port-rows]")).toBeVisible();
-  await execution.locator("[data-save-result]").click();
-  const saved = page.locator('[data-side-panel] [data-resource-view="dataset"]');
-  await expect(saved).toBeVisible();
-  await saved.getByRole("tab", { name: "Lineage" }).click();
-  const lineage = saved.locator("[data-lineage]");
-  await expect(lineage.locator('[data-edge="derivedFrom"]')).toBeVisible();
-  await expect(lineage).toContainText(`flower means run ${stamp}`);
+  await execution.getByRole("tab", { name: "Lineage" }).click();
+  const lineage = execution.locator("[data-lineage]");
+  await expect(lineage.locator('[data-edge="used"]')).toBeVisible();
   await expect(lineage).toContainText("flowers.csv");
+  await execution.locator('[data-keep-run="free"]').click();
+  await expect(execution.locator('[data-keep-run="kept"]')).toBeVisible();
   await page.screenshot({ path: "test-results/lineage.png", fullPage: true });
 
   // The workflow page lists the run and walks its own lineage to the file it read.

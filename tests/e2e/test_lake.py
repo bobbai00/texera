@@ -29,7 +29,7 @@ def test_a_unit_reaches_only_its_own_runs(alice, project, iris, unit):
     assert status == 200 and namespace in names
     assert not [n for n in names if not n.startswith("e_")], "the unit sees no namespace but runs"
     status, table_names = lake.tables(unit_tok, pfx, namespace)
-    assert status == 200 and table_names
+    assert status == 200 and "avg_output_0" in table_names, table_names
     assert lake.load_table(unit_tok, pfx, namespace, table_names[0]) == 200, "vended credentials"
 
     other = alice.create("computing-units", "other unit", {"provider": "kubernetes", "computingNodes": [{"name": "master", "role": "master", "memory": "1Gi"}]}, project=project)

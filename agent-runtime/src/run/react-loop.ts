@@ -39,8 +39,8 @@ export interface LoopPolicy {
   maxCorrections: number;
 }
 
-/** The dataflow tools that show computed results: a completed run, a page of rows, a saved result. */
-export const DEFAULT_RESULT_TOOLS = ["run_workflow", "get_port_result", "save_result_as_dataset"];
+/** The dataflow tools that show computed results: a completed run, a page of rows. */
+export const DEFAULT_RESULT_TOOLS = ["run_workflow", "get_port_result"];
 
 export const DEFAULT_POLICY: LoopPolicy = { answer: "free", resultTools: DEFAULT_RESULT_TOOLS, maxCorrections: 1 };
 

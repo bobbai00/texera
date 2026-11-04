@@ -22,6 +22,28 @@ enum ExecutionPhase {
   cancelled,
 }
 
+@doc("One output port's table in the lake, named by the catalog before the run starts.")
+model PortTable {
+  operatorID: string;
+  portID: string;
+  @doc("The table's name inside the run's namespace.")
+  table: string;
+}
+
+@doc("What the catalog compiled for a run, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the run starts and never stored.")
+model ExecutionPlan {
+  @doc("The namespace in the lake the run writes to; absent for a dry run.")
+  `namespace`?: string;
+  @doc("One table per output port the engine writes, inside the namespace: the ports of operators marked viewResult and of operators nothing reads.")
+  outputs: PortTable[];
+  @doc("The custom operator versions compiled in, with `@vno`.")
+  operators?: Uri[];
+  @doc("The credentials the operators name; leased for the run at start, their values never stored.")
+  credentials?: Uri[];
+  @doc("The engine's logical plan, with dataset files and credentials still named by URI.")
+  logicalPlan: unknown;
+}
+
 model ExecutionSpec {
   @doc("The workflow version, with `@vno`.")
   workflow: Uri;
@@ -31,6 +53,8 @@ model ExecutionSpec {
   @doc("The dataset file versions the run reads, resolved at start.")
   inputs?: Uri[];
   parameters?: Record<unknown>;
+  @doc("The compiled plan the run was started with.")
+  plan?: ExecutionPlan;
 }
 
 model OperatorRunStatus {
@@ -76,18 +100,6 @@ model ExecutionPort {
   result?: PortSummary;
   @doc("For an input port: the dataset file URI or the upstream port URI it read.")
   boundTo?: Uri;
-}
-
-@doc("Save an output port's result as a dataset version.")
-model SavePort {
-  @doc("The dataset that gets the new version; a new dataset is created when absent.")
-  dataset?: Rid;
-  @doc("The new dataset's name, when `dataset` is absent.")
-  name?: string;
-  @doc("The file inside the dataset version; defaults to `<operatorID>.csv`.")
-  path?: string;
-  @doc("What the version holds, recorded on it.")
-  message?: string;
 }
 
 @extension("x-texera-kind", #{

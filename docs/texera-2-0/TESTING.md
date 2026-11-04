@@ -27,17 +27,18 @@ Bob) goes through a guard fixture that puts it back.
 | Use case | Module | Markers | About |
 | --- | --- | --- | --- |
 | Who I am, the seeds, workflow versions and edits, sharing, dataset files and references, a conversation's turn and origin, the two MCP servers (acceptance 1, 2) | `test_catalog.py` | | 5 s |
-| Validate, run, ports and rows, the lineage, a result saved as a dataset version (acceptance 3, 4 at the API) | `test_run.py` | | 15 s |
+| A run in three phases: the dry run's plan is the run's, stored without secrets; the tables the catalog named, ports, rows, lineage; the keep mark (acceptance 3, 4 at the API) | `test_run.py` | | 15 s |
 | Results kept per execution across runs and the unit's idle release; a run deleted with its tables | `test_results.py` | slow | 1 min |
-| Old results expire under the retention policy; the record stays | `test_results.py` | destructive | 10 s |
+| Old results expire under the retention policy; the record stays; a kept run does not expire | `test_results.py` | destructive | 20 s |
 | A Python UDF fails without its environment and completes with it | `test_environment.py` | slow | 2 min |
 | A custom operator as a resource, used by URI, pinned environment, deletion refused while referenced (acceptance 5) | `test_operator.py` | slow | 2 min |
 | A project shared with a viewer: reads, runs, nothing more; revoked (acceptance 6) | `test_sharing.py` | | 20 s |
-| A credential in an operator property, leased for the run, refused to a viewer until granted use (acceptance 7) | `test_credentials.py` | | 30 s |
+| A credential in an operator property, leased for the run; a viewer refused before any run exists, until granted use (acceptance 7) | `test_credentials.py` | | 30 s |
 | The lake enforces the catalog's decision: namespaces per run, identities per unit, nothing for anyone else | `test_lake.py` | local | 20 s |
+| The unit's doors: its API answers the catalog alone, the gateway has no route to it, only the running unit reports on a run | `test_doors.py` | local | 20 s |
 | Results survive a restart of the unit | `test_unit_restart.py` | local, destructive | 2 min |
 | A computing unit as a resource on Kubernetes: ready, run, spec change rolls it, use granted, terminate, delete | `test_cluster_unit.py` | cluster, slow | 2 min |
-| The Data Analyst builds, edits, reruns and saves through a chat (acceptance 3, 4, 9) | `test_agents.py` | model, slow | 3 min, about 40 model calls |
+| The Data Analyst builds, runs, edits and reruns through a chat (acceptance 3, 9) | `test_agents.py` | model, slow | 2 min, about 30 model calls |
 | The Bio Researcher answers with cited ideas, hands off to the analyst, which runs and shares with Bob (acceptance 10, 11) | `test_agents.py` | model, slow | 3 min, about 40 model calls |
 
 Markers gate what runs: `model`, `cluster`, `local` and `destructive` tests are skipped unless
@@ -47,16 +48,19 @@ Keycloak, OpenBao, the unit process); `destructive` means other tests may see th
 (the unit restarts, every finished run on the stack expires), so those run last.
 
 Playwright covers the pages: sign-in, a chat with an upload that becomes a dataset, the
-agent switcher and `/mode`, the template page, the operator page, a saved result's lineage,
-and with the model the two chat scenarios (`frontend-next/e2e/texera2.spec.ts`).
+agent switcher and `/mode`, the template page, the operator page, a run's lineage and its
+keep mark, and with the model the two chat scenarios (`frontend-next/e2e/texera2.spec.ts`).
 
 ## Rules
 
 - **A test owns its data.** Everything it makes goes into its own project (`project` fixture)
-  and is deleted at the end in reference order. Resources the agents make in a chat land in
-  alice's home project; the model names them, so they are left alone.
+  and is deleted at the end in reference order. What the project's chats made is deleted
+  too, wherever it landed (an agent's workflow goes to alice's home project unless the tool
+  names a parent). A leftover is reported as a warning, never hidden: one once got shared
+  in place of the next test's same-named dataset.
 - **Names are plain.** With a project per test there is no need for timestamps; the run id in
-  the project's name tells one run's leftovers from another's.
+  the project's name tells one run's leftovers from another's. A name a prompt gives the
+  model is unique across the run's tests as well (`my_iris`), so search finds one.
 - **Platform-wide changes are guarded.** `settings_guard` restores the settings,
   `grants_guard` revokes what the test granted.
 - **Model tests assert outcomes**, never wording: resources made in the chat, runs completed,

@@ -72,6 +72,7 @@ EXPECTED_CONFIG_KEYS = frozenset(
         "icebergRestCatalogScope",
         "icebergTableNamespace",
         "icebergTableStateNamespace",
+        "icebergResultTables",
         "icebergFileStorageDirectoryPath",
         "icebergTableCommitBatchSize",
         "s3Endpoint",
@@ -144,6 +145,7 @@ def main(raw_config: str) -> None:
         rest_catalog_client_secret=config["icebergRestCatalogClientSecret"],
         rest_catalog_token_url=config["icebergRestCatalogTokenUrl"],
         rest_catalog_scope=config["icebergRestCatalogScope"],
+        result_tables=config["icebergResultTables"],
     )
 
     # Setting R_HOME environment variable for R-UDF usage

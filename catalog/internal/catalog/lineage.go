@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -20,12 +21,18 @@ import (
 // {table?, snapshot?, tupleCount?, bytes?, hash?}, and inputs[] named
 // "<fromEid>/<fromOperatorID>/<fromPortID>".
 func (s *Service) Ingest(ctx context.Context, caller *auth.Caller, ev api.LineageEvent) error {
-	if !caller.Service && !caller.Admin() {
-		return Forbidden()
-	}
 	eid, err := uuid.Parse(ev.Run.RunId)
 	if err != nil {
 		return Invalid("run.runId must be the execution id", nil)
+	}
+	exec, err := s.Store.GetResource(ctx, eid)
+	if err != nil {
+		return NotFound("execution " + eid.String())
+	}
+	// Only the unit that runs the execution reports on it: the sender's subject must be that
+	// unit's identity. Nobody else, the platform's own client included.
+	if caller.Service || !s.reportsFor(ctx, caller, exec) {
+		return Forbidden()
 	}
 	raw := mustJSON(ev)
 	if _, err := s.Store.AddLineageEvent(ctx, &eid, raw); err != nil {
@@ -33,10 +40,6 @@ func (s *Service) Ingest(ctx context.Context, caller *auth.Caller, ev api.Lineag
 	}
 	if err := s.LineageSink.Emit(ctx, raw); err != nil {
 		s.Log.Warn("lineage sink", "err", err)
-	}
-	exec, err := s.Store.GetResource(ctx, eid)
-	if err != nil {
-		return NotFound("execution " + eid.String())
 	}
 	facets := map[string]any{}
 	if ev.Run.Facets != nil {
@@ -46,6 +49,20 @@ func (s *Service) Ingest(ctx context.Context, caller *auth.Caller, ev api.Lineag
 		return s.applyRunEvent(ctx, exec, ev, facets)
 	}
 	return s.applyOperatorEvent(ctx, exec, ev, facets)
+}
+
+// reportsFor tells whether the caller is the identity of the unit an execution runs on.
+func (s *Service) reportsFor(ctx context.Context, caller *auth.Caller, exec *store.Resource) bool {
+	var spec api.ExecutionSpec
+	if err := json.Unmarshal(exec.Spec, &spec); err != nil {
+		return false
+	}
+	unit, err := s.unitByURI(ctx, string(spec.ComputingUnit))
+	if err != nil {
+		return false
+	}
+	identity := unitIdentity(unit)
+	return identity != nil && caller.Claims.Subject != "" && caller.Claims.Subject == identity.Subject
 }
 
 func (s *Service) applyRunEvent(ctx context.Context, exec *store.Resource, ev api.LineageEvent, facets map[string]any) error {
@@ -115,6 +132,12 @@ func (s *Service) applyOperatorEvent(ctx context.Context, exec *store.Resource, 
 					p.Rows = intPtr(tp["tupleCount"])
 					p.Bytes = intPtr(tp["bytes"])
 					p.Hash = strPtr(tp["hash"])
+				}
+			}
+			// The unit writes where the plan says: a table the plan does not name is refused.
+			if p.Table != nil {
+				if planned := plannedTable(exec, operatorID, portID); planned != "" && *p.Table != executionNamespace(exec.RID)+"."+planned {
+					return Invalid(fmt.Sprintf("port %s/%s reported table %s, the plan names %s.%s", operatorID, portID, *p.Table, executionNamespace(exec.RID), planned), nil)
 				}
 			}
 			ports = append(ports, p)

@@ -21,6 +21,9 @@ import (
 // enough for an upload to be committed.
 const defaultBlobAge = 24 * time.Hour
 
+// KeepLabel marks a run whose results the policy leaves alone.
+const KeepLabel = "texera.keep"
+
 // Sweep runs one retention pass as the janitor does; administrators may ask for one.
 func (s *Service) Sweep(ctx context.Context, caller *auth.Caller) (*api.RetentionSweep, error) {
 	if !caller.Admin() && !caller.Service {
@@ -64,7 +67,7 @@ func (s *Service) expireResults(ctx context.Context, before time.Time) int {
 	for _, phase := range []api.ExecutionPhase{api.ExecutionPhaseCompleted, api.ExecutionPhaseFailed, api.ExecutionPhaseCancelled} {
 		runs, err := s.Store.ListResources(ctx, store.ResourceFilter{
 			Kind: "execution", Fields: map[string]string{"/status/phase": string(phase)},
-			Absent: []string{"/status/resultsExpiredAt"}, UpdatedBefore: &before, Limit: 500,
+			Absent: []string{"/status/resultsExpiredAt"}, WithoutLabel: KeepLabel, UpdatedBefore: &before, Limit: 500,
 		})
 		if err != nil {
 			s.Log.Warn("retention: list executions", "err", err)

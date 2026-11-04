@@ -21,7 +21,7 @@ function Nodes({ resource }: { resource: Resource }) {
       <section className="space-y-2">
         <SectionTitle>Endpoint</SectionTitle>
         <p className="text-sm">
-          {status?.gatewayPath ? <code>{status.gatewayPath}</code> : spec.endpoint ? <code>{spec.endpoint}</code> : "Assigned by the unit provider."}
+          {spec.endpoint ? <code>{spec.endpoint}</code> : "Assigned by the unit provider."}
           {status?.engine?.version && <span className="ml-2 text-xs text-muted-foreground">engine {status.engine.version}</span>}
         </p>
       </section>

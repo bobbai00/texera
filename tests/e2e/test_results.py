@@ -45,6 +45,10 @@ def test_results_expire_under_the_policy(alice, admin, project, iris, unit, sett
     run = w.run(alice, rid, "to expire", computingUnit=unit)
     assert run["status"]["phase"] == "completed", w.error_text(run)
     eid = run["metadata"]["rid"]
+    kept = w.run(alice, rid, "to keep", computingUnit=unit)
+    assert kept["status"]["phase"] == "completed", w.error_text(kept)
+    keid = kept["metadata"]["rid"]
+    alice.call("PATCH", f"/resources/{keid}", {"labels": {"texera.keep": "true"}})
     assert alice.status("POST", "/settings/retention/sweep") == 403, "a sweep is the administrator's"
     admin.put("/settings", {"spec": {**settings_guard, "retention": {"results": "PT0S"}}})
     time.sleep(1)
@@ -53,3 +57,5 @@ def test_results_expire_under_the_policy(alice, admin, project, iris, unit, sett
     status = alice.get(f"/workflows/{rid}/executions/{eid}")["status"]
     assert status["phase"] == "completed" and status.get("resultsExpiredAt"), "the record stays, marked"
     assert alice.status("GET", f"/workflows/{rid}/executions/{eid}/operators/avg/ports/output-0/rows") == 410
+    assert not alice.get(f"/workflows/{rid}/executions/{keid}")["status"].get("resultsExpiredAt"), "a kept run stays"
+    assert len(w.rows(alice, rid, keid)["rows"]) == 3

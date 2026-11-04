@@ -173,14 +173,6 @@ var Tools = []Tool{
 		Input: "{\"$defs\":{\"Uri\":{\"description\":\"A resource URI: `texera://` followed by the resource's REST path, optionally `@vno` and a subresource path, e.g. `texera://datasets/{rid}@2/files/iris.csv`.\",\"type\":\"string\"},\"Vno\":{\"description\":\"Version number within a resource, starting at 1.\",\"format\":\"int32\",\"type\":\"integer\"}},\"properties\":{\"computingUnit\":{\"$ref\":\"#/$defs/Uri\",\"description\":\"Overrides the workflow's and the project's default unit.\"},\"environment\":{\"$ref\":\"#/$defs/Uri\",\"description\":\"Overrides the workflow's and the project's default environment; `@vno` pins a version, else the head.\"},\"name\":{\"type\":\"string\"},\"parameters\":{\"additionalProperties\":{},\"description\":\"Per-run inputs; the version itself stays as authored.\",\"type\":\"object\"},\"rid\":{\"type\":\"string\"},\"vno\":{\"$ref\":\"#/$defs/Vno\",\"description\":\"The workflow version to run; defaults to the head version.\"},\"waitSeconds\":{\"description\":\"Wait up to this many seconds for the run to finish before returning.\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"rid\"],\"type\":\"object\"}",
 	},
 	{
-		Server: "dataflow", Name: "save_result_as_dataset",
-		Description: "Save an operator's output in a completed execution as a new dataset version (a CSV file), so later workflows can read it. Creates a dataset unless one is given; lineage records the port that produced it.",
-		ReadOnly:    false, Idempotent: false, Destructive: boolPtr(false),
-		Method: "POST", Path: "/catalog/v1/workflows/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}/save",
-		PathParams: []Param{{Name: "rid", Type: "string", Required: true}, {Name: "eid", Type: "string", Required: true}, {Name: "operatorID", Type: "string", Required: true}, {Name: "portID", Type: "string", Required: true}}, QueryParams: nil, Body: true,
-		Input: "{\"$defs\":{\"Rid\":{\"description\":\"Resource id, a UUID.\",\"type\":\"string\"}},\"properties\":{\"dataset\":{\"$ref\":\"#/$defs/Rid\",\"description\":\"The dataset that gets the new version; a new dataset is created when absent.\"},\"eid\":{\"type\":\"string\"},\"message\":{\"description\":\"What the version holds, recorded on it.\",\"type\":\"string\"},\"name\":{\"description\":\"The new dataset's name, when `dataset` is absent.\",\"type\":\"string\"},\"operatorID\":{\"type\":\"string\"},\"path\":{\"description\":\"The file inside the dataset version; defaults to `\\u003coperatorID\\u003e.csv`.\",\"type\":\"string\"},\"portID\":{\"type\":\"string\"},\"rid\":{\"type\":\"string\"}},\"required\":[\"eid\",\"operatorID\",\"portID\",\"rid\"],\"type\":\"object\"}",
-	},
-	{
 		Server: "dataflow", Name: "validate_workflow",
 		Description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator.",
 		ReadOnly:    true, Idempotent: false, Destructive: nil,

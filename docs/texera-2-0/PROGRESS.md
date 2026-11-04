@@ -268,9 +268,81 @@ Decisions taken in S8 and S9:
   accepted the cluster image's bare `ModuleNotFoundError` (its Python 3.10 lacks the error
   notes the engine uses to name the module).
 
-Next: quotas and metering, groups beyond admins, a purge of soft-deleted resources; the
-units' static S3 key for large binaries scoped to the objects prefix; Python 3.11 in the unit
-image; contract suites for the Lakekeeper and Keycloak-workloads adapters; CI for the gate.
+- The run in three phases, steps 1 to 3 of the note "Texera 2.0: Authorize, Compile,
+  Materialize" (the user's ask: a clean execution path, authorization first at the catalog,
+  compilation at the catalog, one resolved plan to the engine, which reads presigned inputs
+  and writes Iceberg tables through Lakekeeper).
+  1. The unit's doors. A unit's API answers the catalog's own client alone (`SERVICE`, the
+     token whose `azp` is `texera-services`; a person's token is 403 at the unit, nobody's
+     401, the health probe stays open); the gateway has no route to units any more
+     (`gatewayPath` left the unit's status). On the way back the unit reports as itself: the
+     client it was given for the lake (`UnitIdentity`, a token cached and renewed), not a
+     service token passed in the start request. The catalog's resolver makes no person out of
+     a unit's token (`Caller.Unit`), and `POST /lineage/v1/events` takes an execution's events
+     from the unit that runs it alone (the sender's subject must be the unit's identity): a
+     person, an admin, the platform's client and another unit get 403. A unit's tokens carry
+     `aud: texera` through an audience mapper (realm and minted clients) so the catalog
+     verifies them like everyone's.
+  2. Authorize, compile, materialize. `compile(spec)` is pure: the engine's logical plan with
+     files and credentials still named by URI, the custom operators compiled in with their
+     pinned environments, and the tables the run will write. `authorizePlan` then requires,
+     before anything is written: execute on the workflow, run on the unit, read on the
+     environment, every dataset and every custom operator the plan names, use on every
+     credential; a refusal leaves no execution behind (it used to leave a failed one).
+     Materialize stores the execution with `spec.plan` (namespace, outputs, operators,
+     credentials, logicalPlan: no secret, no URL that expires), opens its namespace, and
+     sends the engine a bound copy with presigned inputs and leased secrets. `validate`
+     returns the same plan (`WorkflowValidation.plan`), so a dry run shows what a run would
+     do. The run's environment is one: the request's, else the one the custom operators pin
+     (a pin that disagrees with the request or with another pin is 409), else the defaults.
+     Save-as-dataset left the MVP (route, tool, prompt text, frontend button, tests): results
+     live with the run; the label `texera.keep` on an execution keeps its results past the
+     retention policy (a Keep toggle on the run page, `PATCH /resources/{rid}`).
+  3. Catalog-named tables. The plan holds one table per output port the engine writes (the
+     ports of `viewResult` operators and of operators nothing reads, the engine's own rule;
+     the first cut named every port and the run page opened on a table that never existed),
+     `<operator>_<port>` in lower case inside `e_<rid>`. The start request carries them
+     (`resultStore.tables`); the engine keeps an `ExecutionLayout` per run (namespace and
+     named ports, Scala and Python workers alike), writes each named port there and reports
+     `namespace.table`; `status.ports[]` lists the tables from the start and the catalog
+     refuses a reported table the plan does not name (400). Rows are read by namespace and
+     table, so a unit that did not run the execution, or restarted since, serves them from
+     the lake without the engine's URI.
+
+  What the checks found on the way: the first cut of step 3 named a table for every output
+  port, and the run page opened on a table the engine never writes (Playwright caught it);
+  the websocket handshake spec still expected a person's token to be a caller; and the
+  real-agent sharing scenario once granted Bob a same-named leftover of the previous test
+  (an agent's workflow lands in the person's home project unless the tool names a parent, so
+  the per-test cleanup could not delete the dataset it referenced, and the fixture hid the
+  failure): the fixtures now name each test's dataset uniquely, delete what a project's chats
+  made wherever it landed, and report leftovers as warnings. Where a chat's resources should
+  land by default is an open product question, recorded under Next.
+
+  Verified on this machine with the test framework, every layer against the restarted
+  stack: `test.sh scenario` 12 scenarios plus the 5 local ones (`test_doors` new: a person's
+  token 403 at the unit, nobody 401, the catalog's client 200, health open, no gateway route;
+  only the running unit's token reports, a person, the platform's client and another unit
+  403); `test.sh ui` 7 Playwright tests (the lineage test now walks the run's `used` edge and
+  flips the keep mark); `test.sh evals` both real-agent scenarios and the 7 Playwright tests
+  with the model; `test.sh unit` (Go, runtime, frontend, engine 1379 specs); `test.sh
+  contract` (adapters, engine integration suites); and the cluster redeployed from scratch
+  (`k8s.sh down && k8s.sh up`, the realm with the audience mapper) with `test.sh cluster`: 13
+  scenarios and Playwright green. One flake seen and not fixed: a model call stalled for four
+  minutes in a Playwright run (no error, the next turn fine); the runtime has no per-step
+  timeout.
+
+Next: a resource a chat makes lands in the person's home project unless the tool names a
+parent; the conversation's project is the likelier default (the turn's origin names it).
+Steps 4 and 5 of the same note (the agent turn resolved by a catalog endpoint that
+authorizes every reference and leases before the runtime executes, the MCP server enforcing
+the template's allowlist; then the small alignments: `defaultPorts` and `validateGraph` at
+write time, `read` to build an environment, one reconcile loop for the built-ins, the pure
+event mapping out of ingest); quotas and metering, groups beyond admins, a purge of
+soft-deleted resources; the units' static S3 key for large binaries scoped to the objects
+prefix; Python 3.11 in the unit image; contract suites for the Lakekeeper and
+Keycloak-workloads adapters; CI for the gate; a per-step timeout in the agent runtime (one
+model call stalled for four minutes during a Playwright run, with no error logged).
 
 ## 2026-11-03 (session 5, on Linux)
 

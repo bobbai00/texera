@@ -205,36 +205,6 @@ func (s *Server) routeWorkflows() {
 		return nil
 	})
 
-	s.handle("POST "+port+"/save", func(w http.ResponseWriter, r *http.Request) error {
-		rid, eid, err := workflowAndExecution(r)
-		if err != nil {
-			return err
-		}
-		var body api.SavePort
-		if err := decode(r, &body); err != nil {
-			return err
-		}
-		in := catalog.SavePortInput{Message: body.Message}
-		if body.Name != nil {
-			in.Name = *body.Name
-		}
-		if body.Path != nil {
-			in.Path = *body.Path
-		}
-		if body.Dataset != nil {
-			ds, err := uuid.Parse(string(*body.Dataset))
-			if err != nil {
-				return catalog.Invalid("dataset is not a resource id", nil)
-			}
-			in.Dataset = &ds
-		}
-		ds, v, err := s.svc.SavePort(ctxOf(r), callerOf(r), rid, eid, r.PathValue("operatorID"), r.PathValue("portID"), in)
-		if err != nil {
-			return err
-		}
-		writeJSON(w, http.StatusCreated, catalog.VersionOf(ds, v))
-		return nil
-	})
 }
 
 func workflowAndExecution(r *http.Request) (uuid.UUID, uuid.UUID, error) {

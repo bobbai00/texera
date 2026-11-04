@@ -20,11 +20,14 @@
 package org.apache.texera.amber.engine.architecture.scheduling.config
 
 import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.amber.core.storage.ExecutionNamespaces
+import org.apache.texera.amber.core.storage.ExecutionLayouts
+import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
 import org.apache.texera.amber.core.workflow.PhysicalOp
 import org.apache.texera.amber.util.VirtualIdentityUtils
 import org.apache.texera.service.util.LargeBinaryManager
+
+import scala.jdk.CollectionConverters._
 
 case object WorkerConfig {
   def generateWorkerConfigs(
@@ -43,13 +46,21 @@ case object WorkerConfig {
       1
     }
 
+    val layout = ExecutionLayouts.lookup(physicalOp.executionId)
     (0 until workerCount).toList.map(idx =>
       WorkerConfig(
         VirtualIdentityUtils.createWorkerIdentity(physicalOp.workflowId, physicalOp.id, idx),
         pveName = physicalOp.pveName,
         cuid = cuid,
         largeBinaryBaseUri = LargeBinaryManager.baseUriForExecution(physicalOp.executionId.id),
-        tableNamespace = ExecutionNamespaces.lookup(physicalOp.executionId).getOrElse("")
+        tableNamespace = layout.map(_.namespace).getOrElse(""),
+        resultTables = layout
+          .map(l =>
+            objectMapper.writeValueAsString(l.tables.map {
+              case ((op, port), t) => s"$op:$port" -> t
+            }.asJava)
+          )
+          .getOrElse("")
       )
     )
   }
@@ -63,6 +74,8 @@ case class WorkerConfig(
     // live; create() appends a unique suffix. Empty when large binaries are unconfigured.
     largeBinaryBaseUri: String = "",
     // The namespace the catalog made for this execution's tables; empty keeps the configured
-    // per-type namespaces (see ExecutionNamespaces).
-    tableNamespace: String = ""
+    // per-type namespaces (see ExecutionLayouts).
+    tableNamespace: String = "",
+    // The tables the catalog named for the external output ports, as JSON {"op:port": table}.
+    resultTables: String = ""
 )

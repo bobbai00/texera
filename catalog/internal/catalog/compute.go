@@ -51,8 +51,6 @@ func (s *Service) unitStatus(ctx context.Context, unit *store.Resource, spec api
 		return &current
 	}
 	next := api.ComputingUnitStatus{Phase: api.ComputingUnitStatusPhasePending, Identity: current.Identity}
-	path := "/units/" + unit.RID.String()
-	next.GatewayPath = &path
 	endpoint, err := s.Units.Endpoint(ctx, unit.RID.String(), spec, s.workloadSource(unit))
 	switch {
 	case err != nil:

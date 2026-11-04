@@ -15,6 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import json
+
 
 class StorageConfig:
     """
@@ -38,6 +40,9 @@ class StorageConfig:
     ICEBERG_REST_CATALOG_SCOPE = ""
     ICEBERG_TABLE_RESULT_NAMESPACE = None
     ICEBERG_TABLE_STATE_NAMESPACE = None
+    # The tables the catalog named for this execution's external output ports, by
+    # "<logical operator id>:<port index>"; empty when the engine names them itself.
+    ICEBERG_RESULT_TABLES = {}
     ICEBERG_FILE_STORAGE_DIRECTORY_PATH = None
     ICEBERG_TABLE_COMMIT_BATCH_SIZE = None
 
@@ -72,6 +77,7 @@ class StorageConfig:
         rest_catalog_client_secret="",
         rest_catalog_token_url="",
         rest_catalog_scope="",
+        result_tables="",
     ):
         if cls._initialized:
             raise RuntimeError(
@@ -91,6 +97,7 @@ class StorageConfig:
 
         cls.ICEBERG_TABLE_RESULT_NAMESPACE = table_result_namespace
         cls.ICEBERG_TABLE_STATE_NAMESPACE = table_state_namespace
+        cls.ICEBERG_RESULT_TABLES = json.loads(result_tables) if result_tables else {}
         cls.ICEBERG_FILE_STORAGE_DIRECTORY_PATH = directory_path
         cls.ICEBERG_TABLE_COMMIT_BATCH_SIZE = int(commit_batch_size)
 

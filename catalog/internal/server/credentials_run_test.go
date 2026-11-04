@@ -35,7 +35,7 @@ func TestCredentialsInOperatorProperties(t *testing.T) {
 	wf := h.create("alice", "workflows", "secret run", spec)
 
 	// Validation compiles with the URI in place: no lease for a compile.
-	var compiled api.CompileResult
+	var compiled api.WorkflowValidation
 	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/validate", map[string]any{}, &compiled)
 	if !compiled.Ok {
 		t.Fatalf("compile: %+v", compiled)

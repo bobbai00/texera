@@ -94,36 +94,18 @@ func (s *Server) protectedResourceMetadata(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// extAuthz answers the gateway's checks: every protected route needs a valid token, unit
-// routes need read access to the unit, lineage needs the service identity.
+// extAuthz answers the gateway's checks: every protected route needs a valid token. Units
+// are not reachable through the gateway; what a caller may do is decided by the route itself.
 func (s *Server) extAuthz(w http.ResponseWriter, r *http.Request) {
-	original := strings.TrimPrefix(r.URL.Path, "/access/v1/ext-authz")
-	if original == "" {
-		original = "/"
-	}
 	caller, err := s.resolver.Resolve(r.Context(), r)
 	if err != nil {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="texera"`)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	if strings.HasPrefix(original, "/units/") {
-		parts := strings.SplitN(strings.TrimPrefix(original, "/units/"), "/", 2)
-		rid, err := uuid.Parse(parts[0])
-		if err != nil {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		if err := s.pdp.Require(r.Context(), caller, authz.Read, rid); err != nil {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
+	if caller.Principal != nil {
+		w.Header().Set("X-Texera-Principal", caller.PID().String())
 	}
-	if strings.HasPrefix(original, "/lineage/") && !caller.Service && !caller.Admin() {
-		w.WriteHeader(http.StatusForbidden)
-		return
-	}
-	w.Header().Set("X-Texera-Principal", caller.PID().String())
 	w.WriteHeader(http.StatusOK)
 }
 

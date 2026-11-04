@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"encoding/json"
+	"github.com/google/uuid"
 	"net/http"
 	"strings"
 	"testing"
@@ -263,7 +264,7 @@ func TestRunResultsAndLineage(t *testing.T) {
 	wf := h.create("alice", "workflows", "analysis", spec)
 
 	// Validation compiles on the seeded unit.
-	var compiled api.CompileResult
+	var compiled api.WorkflowValidation
 	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/validate", map[string]any{}, &compiled)
 	if !compiled.Ok {
 		t.Fatalf("compile: %+v", compiled)
@@ -321,15 +322,41 @@ func TestRunResultsAndLineage(t *testing.T) {
 		if outs != nil {
 			ev["outputs"] = outs
 		}
-		if status, data := h.do("service", "POST", "/lineage/v1/events", ev); status != http.StatusNoContent {
+		if status, data := h.do("unit", "POST", "/lineage/v1/events", ev); status != http.StatusNoContent {
 			t.Fatalf("event: %d %s", status, data)
 		}
 	}
-	if status, _ := h.do("alice", "POST", "/lineage/v1/events", map[string]any{"eventType": "START", "eventTime": time.Now().UTC().Format(time.RFC3339), "producer": "x", "schemaURL": "x", "run": map[string]any{"runId": rid(exec)}, "job": map[string]any{"namespace": "t", "name": rid(exec)}}); status != http.StatusForbidden {
-		t.Fatalf("a person may not post lineage: %d", status)
+	// Only the unit that runs the execution reports on it: not a person, not the platform's own
+	// client, not another unit.
+	start := map[string]any{"eventType": "START", "eventTime": time.Now().UTC().Format(time.RFC3339), "producer": "x", "schemaURL": "x", "run": map[string]any{"runId": rid(exec)}, "job": map[string]any{"namespace": "t", "name": rid(exec)}}
+	for _, who := range []string{"alice", "admin", "service", "unit:unit-" + uuid.NewString()} {
+		if status, _ := h.do(who, "POST", "/lineage/v1/events", start); status != http.StatusForbidden {
+			t.Fatalf("%s may not report on the run: %d", who, status)
+		}
+	}
+	// The ports and their tables are known from the start; a report of another table is refused.
+	namespace := "e_" + strings.ReplaceAll(rid(exec), "-", "")
+	var started envelope
+	h.mustJSON("alice", "GET", execPath, nil, &started)
+	var startedStatus api.ExecutionStatus
+	mustDecode(t, started.Status, &startedStatus)
+	// scan feeds agg and has no table of its own; agg's is known from the start.
+	if startedStatus.Ports == nil || len(*startedStatus.Ports) != 1 {
+		t.Fatalf("the ports are known from the start: %+v", startedStatus.Ports)
+	}
+	for _, port := range *startedStatus.Ports {
+		if port.OperatorID == "agg" && (port.Table == nil || *port.Table != namespace+".agg_output_0") {
+			t.Fatalf("the catalog named the table: %+v", port)
+		}
+	}
+	foreign := map[string]any{"eventType": "COMPLETE", "eventTime": time.Now().UTC().Format(time.RFC3339), "producer": "test", "schemaURL": "x",
+		"run": map[string]any{"runId": rid(exec), "facets": map[string]any{"texera_operator": map[string]any{"opid": "agg", "state": "Completed"}}}, "job": map[string]any{"namespace": "texera", "name": rid(exec) + "/agg"},
+		"outputs": []any{map[string]any{"namespace": "texera", "name": rid(exec) + "/agg/output-0", "facets": map[string]any{"texera_port": map[string]any{"table": "e_other.agg_output_0"}}}}}
+	if status, body := h.do("unit", "POST", "/lineage/v1/events", foreign); status != http.StatusBadRequest {
+		t.Fatalf("a table outside the plan is refused: %d %s", status, body)
 	}
 	event(rid(exec)+"/agg", "COMPLETE", map[string]any{"texera_operator": map[string]any{"opid": "agg", "state": "Completed", "tuples": 3}},
-		map[string]any{"texera_port": map[string]any{"table": "e_x.agg_output_0", "snapshot": "5566", "tupleCount": 3, "bytes": 120, "hash": "ab12"}}, []string{rid(exec) + "/agg/output-0"})
+		map[string]any{"texera_port": map[string]any{"table": namespace + ".agg_output_0", "snapshot": "5566", "tupleCount": 3, "bytes": 120, "hash": "ab12"}}, []string{rid(exec) + "/agg/output-0"})
 	event(rid(exec), "COMPLETE", map[string]any{"texera_execution": map[string]any{"status": "completed"}}, nil, nil)
 	var done envelope
 	h.mustJSON("alice", "GET", execPath, nil, &done)
@@ -350,28 +377,14 @@ func TestRunResultsAndLineage(t *testing.T) {
 	if len(rows.Rows) != 3 || len(rows.Schema) != 2 {
 		t.Fatalf("rows: %+v", rows)
 	}
-	// Saving the port makes a dataset version derived from it.
-	var saved api.Version
-	h.mustJSON("alice", "POST", execPath+"/operators/agg/ports/output-0/save", map[string]any{"name": "averages"}, &saved)
-	if saved.Vno != 1 || saved.ContentKind != "manifest" {
-		t.Fatalf("saved: %+v", saved)
-	}
-	var files api.Manifest
-	h.mustJSON("alice", "GET", p+"/datasets/"+string(saved.Rid)+"/versions/1/files", nil, &files)
-	if len(files.Files) != 1 || files.Files[0].Path != "agg.csv" {
-		t.Fatalf("saved files: %+v", files)
-	}
-	_, data := h.do("alice", "GET", p+"/datasets/"+string(saved.Rid)+"/versions/1/files/agg.csv", nil)
-	if !strings.HasPrefix(string(data), "Species,avg\nsetosa,1.46\n") {
-		t.Fatalf("saved csv: %q", data)
-	}
-	h.mustJSON("alice", "GET", p+"/resources/"+string(saved.Rid)+"/lineage?direction=upstream&vno=1", nil, &up)
-	if !hasEdge(up.Edges, "derivedFrom", string(saved.Uri), "") || !hasEdge(up.Edges, "produced", "", "iceberg://e_x.agg_output_0@5566") || !hasEdge(up.Edges, "used", "", fileURI) {
-		t.Fatalf("upstream of the saved dataset: %+v", names(up.Edges))
-	}
+	// The run's own lineage: it produced its table and used the file; the file leads to the run.
 	var down api.LineageGraph
+	h.mustJSON("alice", "GET", p+"/resources/"+rid(exec)+"/lineage?direction=downstream", nil, &down)
+	if !hasEdge(down.Edges, "produced", "", "iceberg://"+namespace+".agg_output_0@5566") {
+		t.Fatalf("downstream of the run: %+v", names(down.Edges))
+	}
 	h.mustJSON("alice", "GET", p+"/resources/"+rid(ds)+"/lineage?direction=downstream", nil, &down)
-	if !hasEdge(down.Edges, "derivedFrom", string(saved.Uri), "") {
+	if !hasEdge(down.Edges, "used", "", fileURI) {
 		t.Fatalf("downstream of iris: %+v", names(down.Edges))
 	}
 	// Executions list across workflows, and the flat filter by phase.

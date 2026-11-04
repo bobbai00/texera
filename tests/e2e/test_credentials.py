@@ -32,8 +32,10 @@ def test_a_credential_reaches_the_run_through_a_lease(alice, bob, project, iris,
 
     bob_pid = bob.pid()
     grants_guard(project, bob_pid, "viewer")
+    before = len(alice.get(f"/workflows/{rid}/executions")["items"])
     status, body = bob.call("POST", f"/workflows/{rid}/run", {"waitSeconds": 60, "name": "bob tries", "computingUnit": unit})
     assert status == 403, (status, body)
+    assert len(alice.get(f"/workflows/{rid}/executions")["items"]) == before, "a refused run leaves no execution behind"
     grants_guard(cred["metadata"]["rid"], bob_pid, "user")
     status, bobs = bob.call("POST", f"/workflows/{rid}/run", {"waitSeconds": 240, "name": "bob with use", "computingUnit": unit})
     assert status == 201 and bobs["status"]["phase"] == "completed", (status, bobs)

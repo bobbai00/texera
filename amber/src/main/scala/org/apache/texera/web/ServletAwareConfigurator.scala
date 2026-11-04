@@ -44,7 +44,10 @@ class ServletAwareConfigurator extends ServerEndpointConfig.Configurator with La
       response: HandshakeResponse
   ): Unit = {
     val principal =
-      try ServletAwareConfigurator.tokenOf(request).flatMap(UnitJwtAuth.verify)
+      try ServletAwareConfigurator
+        .tokenOf(request)
+        .flatMap(UnitJwtAuth.verify)
+        .filter(_.isRoleOf(UnitPrincipal.Service))
       catch {
         case e: Exception =>
           logger.warn(s"could not read the caller of a websocket handshake: ${e.getMessage}")

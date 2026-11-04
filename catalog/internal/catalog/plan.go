@@ -108,39 +108,6 @@ func portIndex(ports *[]api.WorkflowPort, id string) int {
 	return -1
 }
 
-// resolvedPlan is a workflow spec made runnable: custom operators compiled, dataset files
-// replaced by URLs the unit can read.
-type resolvedPlan struct {
-	Plan   logicalPlan
-	Inputs []engine.ResolvedInput
-	// InputURIs are the dataset file URIs read, for the execution's spec and the used edges.
-	InputURIs []string
-	// Used maps each input URI to the operator and port that reads it.
-	Used map[string]string
-	// Secrets are the credentials properties name; they are leased and substituted once the
-	// execution exists, so the lease names the run and the version never holds a value.
-	Secrets []secretRef
-	// Custom holds, per operator index, a custom operator's code and the instance properties
-	// it receives as PROPS, so a substituted property can regenerate the code.
-	Custom map[int]customOp
-}
-
-// secretRef is a credential a property names: `texera://credentials/{rid}[#field]`.
-type secretRef struct {
-	Operator int
-	Pointer  string
-	RID      uuid.UUID
-	Field    string
-	URI      string
-}
-
-type customOp struct {
-	Code  string
-	Props map[string]any
-}
-
-const credentialPrefix = uri.Scheme + "credentials/"
-
 // credentialRefs finds every credential URI among an operator's properties, by JSON pointer.
 func credentialRefs(props map[string]any) []secretRef {
 	var out []secretRef
@@ -185,168 +152,6 @@ func customHeader(props map[string]any) string {
 		b = []byte("{}")
 	}
 	return "PROPS = __import__(\"json\").loads(" + strconv.Quote(string(b)) + ")\n"
-}
-
-// leaseSecrets leases every credential the plan names, for the execution given as the purpose,
-// and puts the secret where the URI was: into the operator's properties, or into a custom
-// operator's PROPS. The caller must be allowed to use each credential.
-func (s *Service) leaseSecrets(ctx context.Context, caller *auth.Caller, plan *resolvedPlan, purpose string) error {
-	for _, ref := range plan.Secrets {
-		lease, err := s.Lease(ctx, caller, ref.RID, purpose)
-		if err != nil {
-			return err
-		}
-		value, ok := lease.Fields[ref.Field]
-		if !ok {
-			if len(lease.Fields) == 1 && ref.Field == "value" {
-				for _, v := range lease.Fields {
-					value = v
-				}
-			} else {
-				return Invalid(fmt.Sprintf("credential %s has no field %q", ref.URI, ref.Field), nil)
-			}
-		}
-		op := plan.Plan.Operators[ref.Operator]
-		if custom, ok := plan.Custom[ref.Operator]; ok {
-			setPointer(custom.Props, ref.Pointer, value)
-			op["code"] = customHeader(custom.Props) + custom.Code
-		} else {
-			setPointer(op, ref.Pointer, value)
-		}
-	}
-	return nil
-}
-
-// buildPlan turns a workflow spec into the engine's plan.
-func (s *Service) buildPlan(ctx context.Context, caller *auth.Caller, spec api.WorkflowSpec) (*resolvedPlan, error) {
-	defaultPorts(&spec)
-	if err := validateGraph(&spec); err != nil {
-		return nil, err
-	}
-	out := &resolvedPlan{Used: map[string]string{}, Custom: map[int]customOp{}}
-	enabled := map[string]*api.WorkflowOperator{}
-	plan := logicalPlan{Operators: []map[string]any{}, Links: []logicalLink{}, OpsToViewResult: []string{}, OpsToReuseResult: []string{}}
-	for i := range spec.Operators {
-		op := &spec.Operators[i]
-		if op.IsDisabled != nil && *op.IsDisabled {
-			continue
-		}
-		enabled[op.OperatorID] = op
-		props := map[string]any{}
-		for k, v := range op.OperatorProperties {
-			props[k] = v
-		}
-		index := len(plan.Operators)
-		for _, ref := range credentialRefs(props) {
-			ref.Operator = index
-			out.Secrets = append(out.Secrets, ref)
-		}
-		var logical map[string]any
-		operatorType := op.OperatorType
-		if uri.Is(operatorType) {
-			// A custom operator's own properties go to its code as PROPS, not to the engine.
-			compiled, code, err := s.compileCustomOperator(ctx, caller, operatorType, props)
-			if err != nil {
-				return nil, err
-			}
-			operatorType = "PythonUDFV2"
-			logical = compiled
-			out.Custom[index] = customOp{Code: code, Props: props}
-		} else {
-			logical = props
-		}
-		// Dataset files become URLs the unit reads.
-		for pointer, ref := range uri.Extract(logical) {
-			if ref.Kind.Name != "dataset" || ref.Vno == 0 || !strings.HasPrefix(ref.Subresource, "files/") {
-				continue
-			}
-			input, err := s.resolveInput(ctx, caller, ref)
-			if err != nil {
-				return nil, Invalid(fmt.Sprintf("operator %s: %v", op.OperatorID, err), map[string]any{"field": pointer})
-			}
-			setPointer(logical, pointer, input.Url)
-			out.Inputs = append(out.Inputs, *input)
-			out.InputURIs = append(out.InputURIs, ref.String())
-			out.Used[ref.String()] = op.OperatorID
-		}
-		logical["operatorID"] = op.OperatorID
-		logical["operatorType"] = operatorType
-		logical["inputPorts"] = portsJSON(op.InputPorts)
-		logical["outputPorts"] = portsJSON(op.OutputPorts)
-		plan.Operators = append(plan.Operators, logical)
-		if op.ViewResult != nil && *op.ViewResult {
-			plan.OpsToViewResult = append(plan.OpsToViewResult, op.OperatorID)
-		}
-		if op.MarkedForReuse != nil && *op.MarkedForReuse {
-			plan.OpsToReuseResult = append(plan.OpsToReuseResult, op.OperatorID)
-		}
-	}
-	for _, l := range spec.Links {
-		src, ok1 := enabled[l.Source.OperatorID]
-		dst, ok2 := enabled[l.Target.OperatorID]
-		if !ok1 || !ok2 {
-			continue
-		}
-		plan.Links = append(plan.Links, logicalLink{
-			FromOpID: l.Source.OperatorID, FromPortID: portIdentity{ID: portIndex(src.OutputPorts, l.Source.PortID)},
-			ToOpID: l.Target.OperatorID, ToPortID: portIdentity{ID: portIndex(dst.InputPorts, l.Target.PortID)},
-		})
-	}
-	out.Plan = plan
-	return out, nil
-}
-
-// compileCustomOperator turns a custom operator version into the properties of the engine's
-// Python UDF operator.
-func (s *Service) compileCustomOperator(ctx context.Context, caller *auth.Caller, name string, instance map[string]any) (map[string]any, string, error) {
-	ref, err := uri.Parse(name)
-	if err != nil || ref.Kind.Name != "operator" {
-		return nil, "", Invalid("operatorType "+name+" is not an operator URI", nil)
-	}
-	rid, err := uuid.Parse(ref.Rid)
-	if err != nil {
-		return nil, "", Invalid("operatorType "+name+": bad id", nil)
-	}
-	k, _ := kinds.ByName("operator")
-	_, v, err := s.Version(ctx, caller, &k, rid, ref.Vno)
-	if err != nil {
-		return nil, "", err
-	}
-	var spec api.OperatorSpec
-	if err := json.Unmarshal(v.Content, &spec); err != nil {
-		return nil, "", err
-	}
-	if spec.Implementation == nil || spec.Implementation.Python == nil || strings.TrimSpace(spec.Implementation.Python.Code) == "" {
-		return nil, "", Invalid(name+" has no Python implementation", nil)
-	}
-	// The engine's Python operator keeps the input columns and needs the added ones declared.
-	columns := []api.Attribute{}
-	if spec.Implementation.Python.OutputColumns != nil {
-		columns = *spec.Implementation.Python.OutputColumns
-	}
-	code := spec.Implementation.Python.Code
-	props := map[string]any{"code": customHeader(instance) + code, "workers": 1, "retainInputColumns": true, "defaultEnv": true, "outputColumns": columns}
-	return props, code, nil
-}
-
-// resolveInput checks a dataset file and presigns it for the unit.
-func (s *Service) resolveInput(ctx context.Context, caller *auth.Caller, ref uri.Ref) (*engine.ResolvedInput, error) {
-	rid, err := uuid.Parse(ref.Rid)
-	if err != nil {
-		return nil, err
-	}
-	k, _ := kinds.ByName("dataset")
-	path := strings.TrimPrefix(ref.Subresource, "files/")
-	f, err := s.File(ctx, caller, k, rid, ref.Vno, path)
-	if err != nil {
-		return nil, err
-	}
-	link, err := s.Link(ctx, caller, k, rid, ref.Vno, path)
-	if err != nil {
-		return nil, err
-	}
-	size := f.Size
-	return &engine.ResolvedInput{Dataset: rid.String(), Vno: int32(ref.Vno), Path: f.Path, Url: link.Url, SizeBytes: &size}, nil
 }
 
 func portsJSON(ports *[]api.WorkflowPort) []map[string]any {
@@ -399,21 +204,477 @@ func deref(s *string) string {
 
 func derefBool(b *bool) bool { return b != nil && *b }
 
-// usedEdges are the arrows from an execution to the dataset files it read.
-func usedEdges(exec *store.Resource, execURI string, plan *resolvedPlan) []store.Edge {
-	var edges []store.Edge
-	for _, name := range plan.InputURIs {
-		ref, err := uri.Parse(name)
-		if err != nil {
+// compiled is a workflow version turned into what a run needs, as data: the engine's logical
+// plan with dataset files and credentials still named by URI, the custom operators compiled in,
+// and what the run reads, writes and needs. Nothing in it is a secret or a URL that expires;
+// those are bound when the run materializes, into a copy, and never stored.
+type compiled struct {
+	Plan logicalPlan
+	// Inputs are the dataset files the plan reads, each at a JSON pointer of its operator.
+	Inputs []inputRef
+	// Secrets are the credentials the properties name, each at a JSON pointer of its operator.
+	Secrets []secretRef
+	// Custom holds, per operator index, a custom operator's code and the instance properties
+	// it receives as PROPS, so a bound property can regenerate the code.
+	Custom map[int]customOp
+	// Operators are the custom operator versions compiled in, as URIs with @vno.
+	Operators []string
+	// Pins are the environments the custom operators pin, as URIs with @vno.
+	Pins []string
+	// Outputs are the run's tables, one per output port, named by the catalog.
+	Outputs []api.PortTable
+}
+
+// inputRef is a dataset file an operator property names.
+type inputRef struct {
+	URI        string
+	Ref        uri.Ref
+	Operator   int
+	OperatorID string
+	Pointer    string
+}
+
+// secretRef is a credential a property names: `texera://credentials/{rid}[#field]`.
+type secretRef struct {
+	Operator int
+	Pointer  string
+	RID      uuid.UUID
+	Field    string
+	URI      string
+}
+
+type customOp struct {
+	Code  string
+	Props map[string]any
+}
+
+const credentialPrefix = uri.Scheme + "credentials/"
+
+// compile turns a workflow spec into a plan, reading only what the store holds: no permission
+// is checked here (authorizePlan does that, on what compile found) and nothing is written.
+func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled, error) {
+	defaultPorts(&spec)
+	if err := validateGraph(&spec); err != nil {
+		return nil, err
+	}
+	out := &compiled{Custom: map[int]customOp{}, Outputs: []api.PortTable{}}
+	enabled := map[string]*api.WorkflowOperator{}
+	plan := logicalPlan{Operators: []map[string]any{}, Links: []logicalLink{}, OpsToViewResult: []string{}, OpsToReuseResult: []string{}}
+	for i := range spec.Operators {
+		op := &spec.Operators[i]
+		if op.IsDisabled != nil && *op.IsDisabled {
 			continue
 		}
-		to, _ := uuid.Parse(ref.Rid)
+		enabled[op.OperatorID] = op
+		props := map[string]any{}
+		for k, v := range op.OperatorProperties {
+			props[k] = v
+		}
+		index := len(plan.Operators)
+		for _, ref := range credentialRefs(props) {
+			ref.Operator = index
+			out.Secrets = append(out.Secrets, ref)
+		}
+		var logical map[string]any
+		operatorType := op.OperatorType
+		if uri.Is(operatorType) {
+			// A custom operator's own properties go to its code as PROPS, not to the engine.
+			compiledOp, code, pin, version, err := s.compileCustomOperator(ctx, operatorType, props)
+			if err != nil {
+				return nil, err
+			}
+			operatorType = "PythonUDFV2"
+			logical = compiledOp
+			out.Custom[index] = customOp{Code: code, Props: props}
+			out.Operators = appendUnique(out.Operators, version)
+			if pin != "" {
+				out.Pins = appendUnique(out.Pins, pin)
+			}
+		} else {
+			logical = props
+		}
+		for pointer, ref := range uri.Extract(logical) {
+			if ref.Kind.Name != "dataset" || ref.Vno == 0 || !strings.HasPrefix(ref.Subresource, "files/") {
+				continue
+			}
+			if err := s.fileExists(ctx, ref); err != nil {
+				return nil, Invalid(fmt.Sprintf("operator %s: %v", op.OperatorID, err), map[string]any{"field": pointer})
+			}
+			out.Inputs = append(out.Inputs, inputRef{URI: ref.String(), Ref: ref, Operator: index, OperatorID: op.OperatorID, Pointer: pointer})
+		}
+		logical["operatorID"] = op.OperatorID
+		logical["operatorType"] = operatorType
+		logical["inputPorts"] = portsJSON(op.InputPorts)
+		logical["outputPorts"] = portsJSON(op.OutputPorts)
+		plan.Operators = append(plan.Operators, logical)
+		if op.ViewResult != nil && *op.ViewResult {
+			plan.OpsToViewResult = append(plan.OpsToViewResult, op.OperatorID)
+		}
+		if op.MarkedForReuse != nil && *op.MarkedForReuse {
+			plan.OpsToReuseResult = append(plan.OpsToReuseResult, op.OperatorID)
+		}
+	}
+	downstream := map[string]bool{}
+	for _, l := range spec.Links {
+		src, ok1 := enabled[l.Source.OperatorID]
+		dst, ok2 := enabled[l.Target.OperatorID]
+		if !ok1 || !ok2 {
+			continue
+		}
+		downstream[l.Source.OperatorID] = true
+		plan.Links = append(plan.Links, logicalLink{
+			FromOpID: l.Source.OperatorID, FromPortID: portIdentity{ID: portIndex(src.OutputPorts, l.Source.PortID)},
+			ToOpID: l.Target.OperatorID, ToPortID: portIdentity{ID: portIndex(dst.InputPorts, l.Target.PortID)},
+		})
+	}
+	// The tables: one per output port the engine materializes, which are the ports of the
+	// operators marked to view their result and of the operators nothing reads (the engine's
+	// own rule); the other ports flow through and have no table.
+	for _, logical := range plan.Operators {
+		op := enabled[logical["operatorID"].(string)]
+		if !(op.ViewResult != nil && *op.ViewResult) && downstream[op.OperatorID] {
+			continue
+		}
+		if op.OutputPorts != nil {
+			for _, port := range *op.OutputPorts {
+				out.Outputs = append(out.Outputs, api.PortTable{OperatorID: op.OperatorID, PortID: port.PortID, Table: tableName(op.OperatorID, port.PortID)})
+			}
+		}
+	}
+	out.Plan = plan
+	return out, nil
+}
+
+// tableName is the table an output port writes, inside the run's namespace: the operator and
+// the port, in the characters a table name may carry.
+func tableName(operatorID, portID string) string {
+	clean := func(s string) string {
+		var b strings.Builder
+		for _, r := range strings.ToLower(s) {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				b.WriteRune(r)
+			} else {
+				b.WriteRune('_')
+			}
+		}
+		return b.String()
+	}
+	return clean(operatorID) + "_" + clean(portID)
+}
+
+func appendUnique(list []string, item string) []string {
+	for _, x := range list {
+		if x == item {
+			return list
+		}
+	}
+	return append(list, item)
+}
+
+// fileExists checks that a dataset version holds the file a URI names.
+func (s *Service) fileExists(ctx context.Context, ref uri.Ref) error {
+	rid, err := uuid.Parse(ref.Rid)
+	if err != nil {
+		return fmt.Errorf("%s: bad dataset id", ref.String())
+	}
+	v, err := s.Store.GetVersion(ctx, rid, ref.Vno)
+	if err != nil {
+		return fmt.Errorf("%s: no such dataset version", ref.String())
+	}
+	var m api.Manifest
+	if err := json.Unmarshal(v.Content, &m); err != nil {
+		return fmt.Errorf("%s: not a dataset version", ref.String())
+	}
+	path := strings.TrimPrefix(ref.Subresource, "files/")
+	for _, f := range m.Files {
+		if f.Path == path {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: no such file", ref.String())
+}
+
+// compileCustomOperator turns a custom operator version into the properties of the engine's
+// Python UDF operator; it also returns the code, the environment the operator pins (as a
+// URI with @vno, "" for none) and the version URI compiled.
+func (s *Service) compileCustomOperator(ctx context.Context, name string, instance map[string]any) (map[string]any, string, string, string, error) {
+	ref, err := uri.Parse(name)
+	if err != nil || ref.Kind.Name != "operator" {
+		return nil, "", "", "", Invalid("operatorType "+name+" is not an operator URI", nil)
+	}
+	rid, err := uuid.Parse(ref.Rid)
+	if err != nil {
+		return nil, "", "", "", Invalid("operatorType "+name+": bad id", nil)
+	}
+	r, err := s.Store.GetResource(ctx, rid)
+	if err != nil || r.Kind != "operator" {
+		return nil, "", "", "", NotFound("operator " + ref.Rid)
+	}
+	vno := ref.Vno
+	if vno == 0 {
+		vno = r.HeadVno
+	}
+	v, err := s.Store.GetVersion(ctx, rid, vno)
+	if err != nil {
+		return nil, "", "", "", NotFound(fmt.Sprintf("version %d of operator %s", vno, r.Name))
+	}
+	var spec api.OperatorSpec
+	if err := json.Unmarshal(v.Content, &spec); err != nil {
+		return nil, "", "", "", err
+	}
+	if spec.Implementation == nil || spec.Implementation.Python == nil || strings.TrimSpace(spec.Implementation.Python.Code) == "" {
+		return nil, "", "", "", Invalid(name+" has no Python implementation", nil)
+	}
+	pin := ""
+	if spec.Implementation.Python.Environment != nil && *spec.Implementation.Python.Environment != "" {
+		pin, err = s.versionURI(ctx, string(*spec.Implementation.Python.Environment), "environment")
+		if err != nil {
+			return nil, "", "", "", Invalid(fmt.Sprintf("%s pins %s: %v", name, *spec.Implementation.Python.Environment, err), nil)
+		}
+	}
+	// The engine's Python operator keeps the input columns and needs the added ones declared.
+	columns := []api.Attribute{}
+	if spec.Implementation.Python.OutputColumns != nil {
+		columns = *spec.Implementation.Python.OutputColumns
+	}
+	code := spec.Implementation.Python.Code
+	props := map[string]any{"code": customHeader(instance) + code, "workers": 1, "retainInputColumns": true, "defaultEnv": true, "outputColumns": columns}
+	return props, code, pin, URI(r).WithVersion(vno).String(), nil
+}
+
+// versionURI pins a resource URI to a version: the one it names, else the head.
+func (s *Service) versionURI(ctx context.Context, name, kind string) (string, error) {
+	ref, err := uri.Parse(name)
+	if err != nil {
+		return "", err
+	}
+	if ref.Kind.Name != kind {
+		return "", fmt.Errorf("%s is not a %s", name, kind)
+	}
+	rid, err := uuid.Parse(ref.Rid)
+	if err != nil {
+		return "", err
+	}
+	r, err := s.Store.GetResource(ctx, rid)
+	if err != nil {
+		return "", fmt.Errorf("%s not found", name)
+	}
+	vno := ref.Vno
+	if vno == 0 {
+		vno = r.HeadVno
+	}
+	return URI(r).WithVersion(vno).String(), nil
+}
+
+// authorizePlan is the one authorization pass of a run or a dry run, before anything is
+// written: running on the unit, reading the environment, every dataset and every custom
+// operator the plan names, using every credential.
+func (s *Service) authorizePlan(ctx context.Context, caller *auth.Caller, c *compiled, unit *store.Resource, env *store.Resource) error {
+	if err := s.require(ctx, caller, authz.RunOn, unit.RID); err != nil {
+		return err
+	}
+	if env != nil {
+		if err := s.require(ctx, caller, authz.Read, env.RID); err != nil {
+			return err
+		}
+	}
+	seen := map[string]bool{}
+	check := func(permission, id string) error {
+		key := permission + ":" + id
+		if seen[key] {
+			return nil
+		}
+		seen[key] = true
+		rid, err := uuid.Parse(id)
+		if err != nil {
+			return Invalid("bad resource id "+id, nil)
+		}
+		return s.require(ctx, caller, permission, rid)
+	}
+	for _, in := range c.Inputs {
+		if err := check(authz.Read, in.Ref.Rid); err != nil {
+			return err
+		}
+	}
+	for _, name := range c.Operators {
+		ref, _ := uri.Parse(name)
+		if err := check(authz.Read, ref.Rid); err != nil {
+			return err
+		}
+	}
+	for _, ref := range c.Secrets {
+		if err := check(authz.Use, ref.RID.String()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resolveEnvironment settles the run's environment, which is one: the one the request names;
+// else the one the custom operators pin, when they agree; else the defaults of the workflow,
+// the project and the settings. A pin that disagrees with the request or with another pin
+// is refused.
+func (s *Service) resolveEnvironment(ctx context.Context, requested, fallback string, pins []string) (*store.Resource, int, error) {
+	name := requested
+	if name == "" && len(pins) > 0 {
+		name = pins[0]
+	}
+	if name == "" {
+		name = fallback
+	}
+	if name == "" {
+		return nil, 0, nil
+	}
+	pinned, err := s.versionURI(ctx, name, "environment")
+	if err != nil {
+		return nil, 0, NotFound("environment " + name)
+	}
+	for _, pin := range pins {
+		if pin != pinned {
+			return nil, 0, Conflict("environment", fmt.Sprintf("the run's environment %s differs from %s, which a custom operator pins", pinned, pin), nil)
+		}
+	}
+	ref, _ := uri.Parse(pinned)
+	rid, _ := uuid.Parse(ref.Rid)
+	env, err := s.Store.GetResource(ctx, rid)
+	if err != nil {
+		return nil, 0, NotFound("environment " + name)
+	}
+	return env, ref.Vno, nil
+}
+
+// bindInputs presigns every input into a copy of the plan the engine can read.
+func (s *Service) bindInputs(ctx context.Context, caller *auth.Caller, c *compiled) (logicalPlan, []engine.ResolvedInput, error) {
+	plan := c.Plan.clone()
+	var inputs []engine.ResolvedInput
+	for _, in := range c.Inputs {
+		input, err := s.resolveInput(ctx, caller, in.Ref)
+		if err != nil {
+			return plan, nil, Invalid(fmt.Sprintf("operator %s: %v", in.OperatorID, err), map[string]any{"field": in.Pointer})
+		}
+		setPointer(plan.Operators[in.Operator], in.Pointer, input.Url)
+		inputs = append(inputs, *input)
+	}
+	return plan, inputs, nil
+}
+
+// bindSecrets leases every credential the plan names, for the execution given as the purpose,
+// and puts the secret where the URI was in the copy: into the operator's properties, or into
+// a custom operator's PROPS.
+func (s *Service) bindSecrets(ctx context.Context, caller *auth.Caller, plan *logicalPlan, c *compiled, purpose string) error {
+	props := map[int]map[string]any{}
+	for _, ref := range c.Secrets {
+		lease, err := s.Lease(ctx, caller, ref.RID, purpose)
+		if err != nil {
+			return err
+		}
+		value, ok := lease.Fields[ref.Field]
+		if !ok {
+			if len(lease.Fields) == 1 && ref.Field == "value" {
+				for _, v := range lease.Fields {
+					value = v
+				}
+			} else {
+				return Invalid(fmt.Sprintf("credential %s has no field %q", ref.URI, ref.Field), nil)
+			}
+		}
+		op := plan.Operators[ref.Operator]
+		if custom, ok := c.Custom[ref.Operator]; ok {
+			if props[ref.Operator] == nil {
+				props[ref.Operator] = cloneMap(custom.Props)
+			}
+			setPointer(props[ref.Operator], ref.Pointer, value)
+			op["code"] = customHeader(props[ref.Operator]) + custom.Code
+		} else {
+			setPointer(op, ref.Pointer, value)
+		}
+	}
+	return nil
+}
+
+// clone copies a plan through JSON, so a bound copy never touches the compiled one.
+func (p logicalPlan) clone() logicalPlan {
+	var out logicalPlan
+	_ = json.Unmarshal(mustJSON(p), &out)
+	return out
+}
+
+func cloneMap(m map[string]any) map[string]any {
+	var out map[string]any
+	_ = json.Unmarshal(mustJSON(m), &out)
+	return out
+}
+
+// resolveInput checks a dataset file and presigns it for the unit.
+func (s *Service) resolveInput(ctx context.Context, caller *auth.Caller, ref uri.Ref) (*engine.ResolvedInput, error) {
+	rid, err := uuid.Parse(ref.Rid)
+	if err != nil {
+		return nil, err
+	}
+	k, _ := kinds.ByName("dataset")
+	path := strings.TrimPrefix(ref.Subresource, "files/")
+	f, err := s.File(ctx, caller, k, rid, ref.Vno, path)
+	if err != nil {
+		return nil, err
+	}
+	link, err := s.Link(ctx, caller, k, rid, ref.Vno, path)
+	if err != nil {
+		return nil, err
+	}
+	size := f.Size
+	return &engine.ResolvedInput{Dataset: rid.String(), Vno: int32(ref.Vno), Path: f.Path, Url: link.Url, SizeBytes: &size}, nil
+}
+
+// apiPlan renders the compiled plan as the contract shows it on an execution.
+func (c *compiled) apiPlan(namespace string) api.ExecutionPlan {
+	out := api.ExecutionPlan{Outputs: c.Outputs, LogicalPlan: c.Plan}
+	if namespace != "" {
+		out.Namespace = &namespace
+	}
+	if len(c.Operators) > 0 {
+		ops := make([]api.Uri, len(c.Operators))
+		for i, o := range c.Operators {
+			ops[i] = api.Uri(o)
+		}
+		out.Operators = &ops
+	}
+	if len(c.Secrets) > 0 {
+		var creds []api.Uri
+		seen := map[string]bool{}
+		for _, ref := range c.Secrets {
+			if !seen[ref.URI] {
+				seen[ref.URI] = true
+				creds = append(creds, api.Uri(ref.URI))
+			}
+		}
+		out.Credentials = &creds
+	}
+	return out
+}
+
+// inputURIs are the dataset file URIs a plan reads, each once.
+func (c *compiled) inputURIs() []string {
+	var out []string
+	for _, in := range c.Inputs {
+		out = appendUnique(out, in.URI)
+	}
+	return out
+}
+
+// usedEdges are the arrows from an execution to the dataset files it read.
+func usedEdges(exec *store.Resource, execURI string, c *compiled) []store.Edge {
+	var edges []store.Edge
+	seen := map[string]bool{}
+	for _, in := range c.Inputs {
+		if seen[in.URI] {
+			continue
+		}
+		seen[in.URI] = true
+		to, _ := uuid.Parse(in.Ref.Rid)
 		toRID := to
 		execRID := exec.RID
-		attrs := mustJSON(map[string]any{"operatorID": plan.Used[name]})
-		edges = append(edges, store.Edge{From: execURI, Relation: "used", To: name, FromRID: exec.RID, ToRID: &toRID, ExecutionRID: &execRID, Attrs: attrs})
+		attrs := mustJSON(map[string]any{"operatorID": in.OperatorID})
+		edges = append(edges, store.Edge{From: execURI, Relation: "used", To: in.URI, FromRID: exec.RID, ToRID: &toRID, ExecutionRID: &execRID, Attrs: attrs})
 	}
 	return edges
 }
-
-var _ = authz.Read

@@ -37,19 +37,26 @@ model EnvironmentRequest {
   };
 }
 
+@doc("The table the catalog named for an output port, inside the run's namespace.")
+model OutputTable {
+  opid: string;
+  port: string;
+  table: string;
+}
+
 model ResultStore {
   @doc("Iceberg REST catalog URI the unit writes results to.")
   catalogUri: string;
   warehouse: string;
   @doc("The namespace the catalog made for this execution: every table of the run goes there, and the unit's identity was granted write access to it.")
   `namespace`: string;
+  @doc("One table per output port, named by the catalog; the engine writes each port's result under its name and reports it as `namespace.table`.")
+  tables?: OutputTable[];
 }
 
 model Reporting {
-  @doc("Where the unit posts OpenLineage events and status: the catalog's /lineage/v1/events.")
+  @doc("Where the unit posts OpenLineage events and status: the catalog's /lineage/v1/events. The unit reports as itself, with the client it was given; the catalog accepts an execution's events from the unit that runs it alone.")
   lineageUrl: string;
-  @doc("Bearer token the unit presents when reporting.")
-  token: string;
 }
 
 model ExecutionStartRequest {

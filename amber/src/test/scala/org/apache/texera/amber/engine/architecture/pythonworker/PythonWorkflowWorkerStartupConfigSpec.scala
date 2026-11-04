@@ -74,6 +74,7 @@ class PythonWorkflowWorkerStartupConfigSpec extends AnyFlatSpec {
     "icebergRestCatalogScope",
     "icebergTableNamespace",
     "icebergTableStateNamespace",
+    "icebergResultTables",
     "icebergFileStorageDirectoryPath",
     "icebergTableCommitBatchSize",
     "s3Endpoint",

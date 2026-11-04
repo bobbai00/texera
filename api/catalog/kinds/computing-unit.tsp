@@ -65,8 +65,6 @@ model UnitIdentity {
 model ComputingUnitStatus {
   phase: "pending" | "ready" | "failed" | "terminated";
   identity?: UnitIdentity;
-  @doc("The path the gateway proxies the unit's WebSocket and HTTP API at.")
-  gatewayPath?: string;
   message?: string;
   engine?: EngineStatus;
   computingNodes?: ComputingNodeStatus[];

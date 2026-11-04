@@ -33,8 +33,8 @@ import scala.jdk.CollectionConverters._
 
 /**
   * Token verification for the unit: RS256 against the identity provider's JWKS, issuer and
-  * audience checked. No shared secret. The user is built from the claims; authorization is the
-  * catalog's job (the gateway asks it before a request reaches the unit).
+  * audience checked. No shared secret. The unit's API answers the catalog's own client alone:
+  * people and agents reach a unit through the catalog, which authorizes and compiles first.
   */
 object UnitJwtAuth extends LazyLogging {
   val issuer: String =
@@ -64,20 +64,12 @@ object UnitJwtAuth extends LazyLogging {
     val username =
       Option(claims.getClaimValue("preferred_username", classOf[String])).getOrElse(subject)
     val email = Option(claims.getClaimValue("email", classOf[String]))
-    val roles: Set[String] = Option(claims.getClaimValue("realm_access")) match {
-      case Some(m: java.util.Map[_, _]) =>
-        Option(m.asInstanceOf[java.util.Map[String, Any]].get("roles")) match {
-          case Some(l: java.util.List[_]) => l.asScala.map(_.toString).toSet
-          case _                          => Set.empty
-        }
-      case _ => Set.empty
-    }
     val isService = Option(claims.getClaimValue("azp", classOf[String])).contains(serviceClientId)
     UnitPrincipal(
       subject,
       username,
       email,
-      if (roles.contains("admin") || isService) UnitPrincipal.Admin else UnitPrincipal.Regular
+      if (isService) UnitPrincipal.Service else UnitPrincipal.Regular
     )
   }
 

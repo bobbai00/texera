@@ -185,6 +185,13 @@ type OperatorTypeList struct {
 	Operators []OperatorType `json:"operators"`
 }
 
+// OutputTable The table the catalog named for an output port, inside the run's namespace.
+type OutputTable struct {
+	Opid  string `json:"opid"`
+	Port  string `json:"port"`
+	Table string `json:"table"`
+}
+
 // PortResult defines model for PortResult.
 type PortResult struct {
 	Bytes      *int64  `json:"bytes,omitempty"`
@@ -198,11 +205,8 @@ type PortResult struct {
 
 // Reporting defines model for Reporting.
 type Reporting struct {
-	// LineageUrl Where the unit posts OpenLineage events and status: the catalog's /lineage/v1/events.
+	// LineageUrl Where the unit posts OpenLineage events and status: the catalog's /lineage/v1/events. The unit reports as itself, with the client it was given; the catalog accepts an execution's events from the unit that runs it alone.
 	LineageUrl string `json:"lineageUrl"`
-
-	// Token Bearer token the unit presents when reporting.
-	Token string `json:"token"`
 }
 
 // ResolvedInput A dataset file the catalog resolved for this run: the operator property value and the URL the engine reads.
@@ -224,7 +228,10 @@ type ResultStore struct {
 
 	// Namespace The namespace the catalog made for this execution: every table of the run goes there, and the unit's identity was granted write access to it.
 	Namespace string `json:"namespace"`
-	Warehouse string `json:"warehouse"`
+
+	// Tables One table per output port, named by the catalog; the engine writes each port's result under its name and reports it as `namespace.table`.
+	Tables    *[]OutputTable `json:"tables,omitempty"`
+	Warehouse string         `json:"warehouse"`
 }
 
 // Rid Resource id, a UUID.

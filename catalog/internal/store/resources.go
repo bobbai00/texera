@@ -128,6 +128,8 @@ type ResourceFilter struct {
 	Fields map[string]string
 	// Absent lists spec or status fields, by JSON pointer, that must not be set.
 	Absent []string
+	// WithoutLabel keeps resources that do not carry the label.
+	WithoutLabel string
 	// UpdatedBefore keeps resources last changed before the instant.
 	UpdatedBefore *time.Time
 	// ReadableBy restricts to what the principal may read: public, owned, or granted directly
@@ -187,6 +189,9 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 	}
 	if f.UpdatedBefore != nil {
 		add("r.updated_at < $%d", *f.UpdatedBefore)
+	}
+	if f.WithoutLabel != "" {
+		add("NOT (r.labels ? $%d)", f.WithoutLabel)
 	}
 	if f.ReadableBy != nil {
 		add(`(r.visibility = 'public' OR r.owner_pid = $%d OR EXISTS (

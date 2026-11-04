@@ -1,7 +1,7 @@
 // Reading a compilation (POST /catalog/v1/workflows/{rid}/validate): each operator's
 // input and output columns per port, and readable errors.
 
-import type { Attribute, CompileResult } from "@texera/catalog-client/types";
+import type { Attribute, WorkflowValidation as CompileResult } from "@texera/catalog-client/types";
 import type { LogicalPlan } from "./plan";
 
 export interface Compilation {

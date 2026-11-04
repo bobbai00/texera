@@ -2,10 +2,8 @@ package catalog
 
 import (
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -39,10 +37,13 @@ var (
 	environmentKind, _ = kinds.ByName("environment")
 )
 
-// Run starts an execution of a workflow version: the unit and the environment are resolved
-// (request, then the workflow's defaults, then the project's, then the deployment's), the
-// plan is compiled, the execution is created under the workflow, and a goroutine builds the
-// environment and starts the run. With WaitSeconds the call waits for the run to end.
+// Run starts an execution of a workflow version in three phases. Authorize: the caller may
+// execute the workflow and, once the plan is compiled, run on the unit, read every dataset,
+// operator and environment it names and use every credential; nothing is written before that
+// passes. Compile: the version becomes a plan that is data, the same one a dry run returns.
+// Materialize: the execution is stored with its plan, its namespace is opened in the lake,
+// the inputs are presigned and the credentials leased into a copy of the plan that goes to the
+// engine, and never into the store. With WaitSeconds the call waits for the run to end.
 func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid.UUID, in RunInput) (*store.Resource, error) {
 	wf, err := s.Get(ctx, caller, &workflowKind, workflowRID)
 	if err != nil {
@@ -64,7 +65,6 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 	project := s.projectSpec(ctx, wf.ProjectRID)
 	settings := s.settingsSpec(ctx)
-
 	unitName := firstNonEmpty(in.ComputingUnit, uriString(spec.DefaultComputingUnit), uriString(project.DefaultComputingUnit), uriString(settings.Defaults.ComputingUnit))
 	if unitName == "" {
 		return nil, Conflict("no_unit", "no computing unit: name one in the request, the workflow, the project or the settings", nil)
@@ -73,7 +73,18 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	if err != nil {
 		return nil, err
 	}
-	if err := s.require(ctx, caller, authz.RunOn, unit.RID); err != nil {
+
+	// Compile, then authorize everything the plan names.
+	c, err := s.compile(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	fallback := firstNonEmpty(uriString(spec.DefaultEnvironment), uriString(project.DefaultEnvironment), uriString(settings.Defaults.Environment))
+	env, envVno, err := s.resolveEnvironment(ctx, in.Environment, fallback, c.Pins)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizePlan(ctx, caller, c, unit, env); err != nil {
 		return nil, err
 	}
 	client, status, err := s.unitClient(ctx, unit)
@@ -83,29 +94,6 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	if status.Phase != api.ComputingUnitStatusPhaseReady {
 		return nil, Conflict("unit_not_ready", fmt.Sprintf("the unit %s is %s", unit.Name, status.Phase), nil)
 	}
-
-	var env *store.Resource
-	envVno := 0
-	envName := firstNonEmpty(in.Environment, uriString(spec.DefaultEnvironment), uriString(project.DefaultEnvironment), uriString(settings.Defaults.Environment))
-	if envName != "" {
-		env, err = s.resourceByURI(ctx, caller, envName, &environmentKind)
-		if err != nil {
-			return nil, err
-		}
-		// An environment is a package list, not a secret: whoever may read it may run with it.
-		if err := s.require(ctx, caller, authz.Read, env.RID); err != nil {
-			return nil, err
-		}
-		ref, _ := uri.Parse(envName)
-		envVno = ref.Vno
-		if envVno == 0 {
-			envVno = env.HeadVno
-		}
-		if _, err := s.Store.GetVersion(ctx, env.RID, envVno); err != nil {
-			return nil, NotFound(fmt.Sprintf("version %d of environment %s", envVno, env.Name))
-		}
-	}
-
 	unitURI := URI(unit).String()
 	running, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "execution", ParentRID: &wf.RID, Fields: map[string]string{"/spec/computingUnit": unitURI, "/status/phase": "running"}, Limit: 1})
 	if err != nil {
@@ -115,42 +103,52 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 		return nil, Conflict("running", fmt.Sprintf("execution %s of this workflow is still running on %s; cancel it or wait", running[0].RID, unit.Name), map[string]any{"execution": running[0].RID.String()})
 	}
 
-	plan, err := s.buildPlan(ctx, caller, spec)
-	if err != nil {
-		return nil, err
-	}
-
+	// Materialize: the execution with its plan, its namespace, the bound copy, the start.
 	name := in.Name
 	if name == "" {
 		name = fmt.Sprintf("run %s", time.Now().UTC().Format("2006-01-02 15:04:05"))
 	}
-	execSpec := api.ExecutionSpec{Workflow: api.Uri(URI(wf).WithVersion(version.Vno).String()), ComputingUnit: api.Uri(unitURI)}
+	rid := uuid.New()
+	namespace := executionNamespace(rid)
+	plan := c.apiPlan(namespace)
+	execSpec := api.ExecutionSpec{Workflow: api.Uri(URI(wf).WithVersion(version.Vno).String()), ComputingUnit: api.Uri(unitURI), Plan: &plan}
 	if env != nil {
 		e := api.Uri(URI(env).WithVersion(envVno).String())
 		execSpec.Environment = &e
 	}
-	if len(plan.InputURIs) > 0 {
-		inputs := make([]api.Uri, len(plan.InputURIs))
-		for i, u := range plan.InputURIs {
-			inputs[i] = api.Uri(u)
+	if inputs := c.inputURIs(); len(inputs) > 0 {
+		uris := make([]api.Uri, len(inputs))
+		for i, u := range inputs {
+			uris[i] = api.Uri(u)
 		}
-		execSpec.Inputs = &inputs
+		execSpec.Inputs = &uris
 	}
 	if len(in.Parameters) > 0 {
 		execSpec.Parameters = &in.Parameters
 	}
+	// The ports are known from the plan: their tables exist in the status before the run writes
+	// a row, and the unit may only ever report those.
+	ports := make([]api.PortSummary, 0, len(c.Outputs))
+	tables := make([]engine.OutputTable, 0, len(c.Outputs))
+	for _, o := range c.Outputs {
+		identifier := namespace + "." + o.Table
+		ports = append(ports, api.PortSummary{OperatorID: o.OperatorID, PortID: o.PortID, Table: &identifier})
+		tables = append(tables, engine.OutputTable{Opid: o.OperatorID, Port: o.PortID, Table: o.Table})
+	}
 	exec, _, err := s.Store.CreateResource(ctx, store.NewResource{
-		Kind: "execution", Name: name, ParentRID: &wf.RID, ProjectRID: wf.ProjectRID, OwnerPID: caller.PID(), CreatedByPID: caller.PID(),
-		Spec: mustJSON(execSpec), Status: mustJSON(api.ExecutionStatus{Phase: api.ExecutionPhasePending}), Origin: caller.Origin,
+		RID: &rid, Kind: "execution", Name: name, ParentRID: &wf.RID, ProjectRID: wf.ProjectRID, OwnerPID: caller.PID(), CreatedByPID: caller.PID(),
+		Spec: mustJSON(execSpec), Status: mustJSON(api.ExecutionStatus{Phase: api.ExecutionPhasePending, Ports: &ports}), Origin: caller.Origin,
 	})
 	if err != nil {
 		return nil, wrap(err, "execution")
 	}
 	s.Relay.Flush(ctx)
 	execURI := URI(exec).String()
-	// The run's tables go into a namespace of their own, which the unit's identity may write;
-	// the lake enforces that whoever else reaches it directly gets nothing of this run.
-	namespace := executionNamespace(exec.RID)
+	fail := func(what string, err error) (*store.Resource, error) {
+		s.setPhase(ctx, exec.RID, api.ExecutionPhaseFailed, map[string]any{"message": what + ": " + err.Error()})
+		return nil, err
+	}
+	// The run's tables go into a namespace of their own, which the unit's identity may write.
 	subject := ""
 	if identity := unitIdentity(unit); identity != nil {
 		subject = identity.Subject
@@ -158,26 +156,22 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 		s.Log.Warn("the unit has no identity; the lake will take its writes only if it is open", "unit", unit.RID)
 	}
 	if err := s.Lake.OpenNamespace(ctx, namespace, subject, unit.Name); err != nil {
-		s.setPhase(ctx, exec.RID, api.ExecutionPhaseFailed, map[string]any{"message": "the lake refused the run's namespace: " + err.Error()})
-		return nil, Unavailable("lake", err)
+		return fail("the lake refused the run's namespace", Unavailable("lake", err))
 	}
-	// Credentials the properties name are leased for this run and put into the plan now; the
-	// stored spec keeps the URIs. A refusal fails the run before the engine sees it.
-	if err := s.leaseSecrets(ctx, caller, plan, execURI); err != nil {
-		s.setPhase(ctx, exec.RID, api.ExecutionPhaseFailed, map[string]any{"message": err.Error()})
-		return nil, err
+	bound, resolved, err := s.bindInputs(ctx, caller, c)
+	if err != nil {
+		return fail("binding the inputs", err)
 	}
-	if edges := usedEdges(exec, execURI, plan); len(edges) > 0 {
+	if err := s.bindSecrets(ctx, caller, &bound, c, execURI); err != nil {
+		return fail("leasing the credentials", err)
+	}
+	if edges := usedEdges(exec, execURI, c); len(edges) > 0 {
 		if err := s.Store.AddEdges(ctx, edges); err != nil {
 			s.Log.Warn("used edges", "execution", exec.RID, "err", err)
 		}
 	}
 	_, _ = s.Store.MergeStatus(ctx, wf.RID, mustJSON(map[string]any{"lastExecution": exec.RID.String()}))
 
-	token, err := s.Identity.ServiceToken(ctx)
-	if err != nil {
-		return nil, Unavailable("identity provider", err)
-	}
 	req := engine.ExecutionStartRequest{
 		Eid: exec.RID.String(),
 		Workflow: struct {
@@ -185,14 +179,13 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 			Vno int32  `json:"vno"`
 		}{Rid: wf.RID.String(), Vno: int32(version.Vno)},
 		Name:        &name,
-		LogicalPlan: plan.Plan,
-		ResultStore: &engine.ResultStore{CatalogUri: s.Config.IcebergCatalogURI, Warehouse: s.Config.IcebergWarehouse, Namespace: namespace},
-		Reporting:   engine.Reporting{LineageUrl: s.Config.LineageCallbackURL, Token: token},
+		LogicalPlan: bound,
+		ResultStore: &engine.ResultStore{CatalogUri: s.Config.IcebergCatalogURI, Warehouse: s.Config.IcebergWarehouse, Namespace: namespace, Tables: &tables},
+		Reporting:   engine.Reporting{LineageUrl: s.Config.LineageCallbackURL},
 		Actor:       caller.PID().String(),
 	}
-	if len(plan.Inputs) > 0 {
-		inputs := plan.Inputs
-		req.Inputs = &inputs
+	if len(resolved) > 0 {
+		req.Inputs = &resolved
 	}
 	if len(in.Parameters) > 0 {
 		params := in.Parameters
@@ -447,6 +440,20 @@ func (s *Service) DeleteExecution(ctx context.Context, caller *auth.Caller, work
 	return nil
 }
 
+// plannedTable is the table the catalog named for a port, bare, "" when the plan has none.
+func plannedTable(exec *store.Resource, operatorID, portID string) string {
+	var spec api.ExecutionSpec
+	if err := json.Unmarshal(exec.Spec, &spec); err != nil || spec.Plan == nil {
+		return ""
+	}
+	for _, o := range spec.Plan.Outputs {
+		if o.OperatorID == operatorID && o.PortID == portID {
+			return o.Table
+		}
+	}
+	return ""
+}
+
 // executionNamespace is the namespace an execution's tables live in: the catalog makes it in
 // the lake before the run and drops it with the execution.
 func executionNamespace(rid uuid.UUID) string {
@@ -531,168 +538,17 @@ func (s *Service) Rows(ctx context.Context, caller *auth.Caller, workflowRID, ei
 	if at := resultsExpired(r); at != nil {
 		return nil, Gone("the run's results", *at)
 	}
-	table := ""
-	var st api.ExecutionStatus
-	_ = json.Unmarshal(r.Status, &st)
-	if st.Ports != nil {
-		for _, p := range *st.Ports {
-			if p.OperatorID == operatorID && p.PortID == portID && p.Table != nil {
-				table = *p.Table
-			}
-		}
-	}
 	client, err := s.executionUnit(ctx, caller, r)
 	if err != nil {
 		return nil, err
 	}
-	page, err := client.Result(ctx, eid.String(), operatorID, portID, table, executionNamespace(eid), offset, limit)
+	page, err := client.Result(ctx, eid.String(), operatorID, portID, plannedTable(r, operatorID, portID), executionNamespace(eid), offset, limit)
 	if err != nil {
 		return nil, Unavailable("unit", err)
 	}
 	return page, nil
 }
 
-// SavePortInput is what SavePort needs.
-type SavePortInput struct {
-	Dataset *uuid.UUID
-	Name    string
-	Path    string
-	Message *string
-}
-
-// SavePort writes an output port's rows as a CSV file into a dataset version and records
-// that the version was derived from the port.
-func (s *Service) SavePort(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID, operatorID, portID string, in SavePortInput) (*store.Resource, *store.Version, error) {
-	exec, err := s.Execution(ctx, caller, workflowRID, eid)
-	if err != nil {
-		return nil, nil, err
-	}
-	if at := resultsExpired(exec); at != nil {
-		return nil, nil, Gone("the run's results", *at)
-	}
-	var st api.ExecutionStatus
-	_ = json.Unmarshal(exec.Status, &st)
-	if st.Phase != api.ExecutionPhaseCompleted {
-		return nil, nil, Conflict("not_completed", "the execution has not completed", nil)
-	}
-	client, err := s.executionUnit(ctx, caller, exec)
-	if err != nil {
-		return nil, nil, err
-	}
-	table := ""
-	if st.Ports != nil {
-		for _, p := range *st.Ports {
-			if p.OperatorID == operatorID && p.PortID == portID && p.Table != nil {
-				table = *p.Table
-			}
-		}
-	}
-	tmp, err := os.CreateTemp("", "texera-save-*.csv")
-	if err != nil {
-		return nil, nil, err
-	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
-	w := csv.NewWriter(tmp)
-	var offset int64
-	wroteHeader := false
-	for {
-		page, err := client.Result(ctx, eid.String(), operatorID, portID, table, executionNamespace(eid), offset, 1000)
-		if err != nil {
-			return nil, nil, Unavailable("unit", err)
-		}
-		if !wroteHeader {
-			header := make([]string, len(page.Schema))
-			for i, a := range page.Schema {
-				header[i] = a.AttributeName
-			}
-			if err := w.Write(header); err != nil {
-				return nil, nil, err
-			}
-			wroteHeader = true
-		}
-		for _, row := range page.Rows {
-			cells := make([]string, len(row))
-			for i, c := range row {
-				cells[i] = cellString(c)
-			}
-			if err := w.Write(cells); err != nil {
-				return nil, nil, err
-			}
-		}
-		offset += int64(len(page.Rows))
-		if len(page.Rows) == 0 || (page.Total != nil && offset >= *page.Total) {
-			break
-		}
-	}
-	w.Flush()
-	if err := w.Error(); err != nil {
-		return nil, nil, err
-	}
-	if _, err := tmp.Seek(0, 0); err != nil {
-		return nil, nil, err
-	}
-	path := in.Path
-	if path == "" {
-		path = operatorID + ".csv"
-	}
-	var dataset *store.Resource
-	if in.Dataset != nil {
-		dataset, err = s.Get(ctx, caller, &datasetKind, *in.Dataset)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := s.require(ctx, caller, authz.Write, dataset.RID); err != nil {
-			return nil, nil, err
-		}
-	} else {
-		name := in.Name
-		if name == "" {
-			name = fmt.Sprintf("%s %s", operatorID, time.Now().UTC().Format("2006-01-02 15:04:05"))
-		}
-		dataset, _, err = s.Create(ctx, caller, CreateInput{Kind: datasetKind, Name: name, Parent: exec.ProjectRID, Spec: json.RawMessage(`{"format":"csv"}`)})
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	if _, err := s.Upload(ctx, caller, datasetKind, dataset.RID, path, tmp, "text/csv"); err != nil {
-		return nil, nil, err
-	}
-	message := in.Message
-	if message == nil {
-		m := "saved from " + operatorID + "/" + portID + " of execution " + eid.String()
-		message = &m
-	}
-	dataset, version, err := s.Commit(ctx, caller, datasetKind, dataset.RID, message)
-	if err != nil {
-		return nil, nil, err
-	}
-	portURI := URI(exec).With("operators", operatorID, "ports", portID).String()
-	toRID := exec.RID
-	execRID := exec.RID
-	if err := s.Store.AddEdges(ctx, []store.Edge{{From: URI(dataset).WithVersion(version.Vno).String(), Relation: "derivedFrom", To: portURI, FromRID: dataset.RID, ToRID: &toRID, ExecutionRID: &execRID}}); err != nil {
-		s.Log.Warn("derivedFrom edge", "dataset", dataset.RID, "err", err)
-	}
-	return dataset, version, nil
-}
-
-func cellString(c any) string {
-	switch v := c.(type) {
-	case nil:
-		return ""
-	case string:
-		return v
-	case json.Number:
-		return v.String()
-	case fmt.Stringer:
-		return v.String()
-	default:
-		b, _ := json.Marshal(v)
-		return string(b)
-	}
-}
-
-// resourceByURI resolves a resource URI of an expected kind the caller may read.
 // unitByURI loads a computing unit without the read check: running on a unit, compiling or
 // building on it needs can_run_on, which a `user` grant gives without reading the unit's spec.
 // Every caller requires that permission itself.

@@ -18,19 +18,28 @@ import (
 
 // Caller is the authenticated identity of a request.
 type Caller struct {
+	// Principal is the person (or the platform) acting; nil for a unit.
 	Principal *store.Principal
-	// Service is true for the platform's own service client: units reporting, the runtime's
-	// bookkeeping. A service caller passes every permission check.
+	// Service is true for the platform's own service client: the catalog itself when it
+	// reaches a unit, the runtime's bookkeeping. A service caller passes every permission check.
 	Service bool
-	Token   string
-	Claims  ports.Claims
+	// Unit is true for a computing unit calling as itself: it has no principal and no
+	// permission; the one thing it may do is report on the executions it runs.
+	Unit   bool
+	Token  string
+	Claims ports.Claims
 	// Origin is the chat turn the call acts in (X-Texera-Origin), honored only when a valid
 	// service token accompanies it. Resources and versions the call creates carry it.
 	Origin *store.Origin
 }
 
-// PID returns the caller's principal id.
-func (c *Caller) PID() uuid.UUID { return c.Principal.PID }
+// PID returns the caller's principal id; uuid.Nil for a unit.
+func (c *Caller) PID() uuid.UUID {
+	if c.Principal == nil {
+		return uuid.Nil
+	}
+	return c.Principal.PID
+}
 
 // Admin reports whether the caller is a platform administrator.
 func (c *Caller) Admin() bool { return c.Principal != nil && c.Principal.Admin }
@@ -39,11 +48,16 @@ func (c *Caller) Admin() bool { return c.Principal != nil && c.Principal.Admin }
 type Resolver struct {
 	identity ports.Identity
 	store    *store.Store
+	isUnit   func(clientID string) bool
 }
 
-// NewResolver builds a resolver.
-func NewResolver(identity ports.Identity, st *store.Store) *Resolver {
-	return &Resolver{identity: identity, store: st}
+// NewResolver builds a resolver; isUnit tells the clients computing units run as, whose
+// tokens make no person.
+func NewResolver(identity ports.Identity, st *store.Store, isUnit func(clientID string) bool) *Resolver {
+	if isUnit == nil {
+		isUnit = func(string) bool { return false }
+	}
+	return &Resolver{identity: identity, store: st, isUnit: isUnit}
 }
 
 // Resolve verifies the request's token and resolves the caller.
@@ -83,6 +97,9 @@ func (r *Resolver) FromToken(ctx context.Context, raw string) (*Caller, error) {
 	claims, err := r.identity.Verify(ctx, raw)
 	if err != nil {
 		return nil, err
+	}
+	if !claims.Service && r.isUnit(claims.ClientID) {
+		return &Caller{Unit: true, Token: raw, Claims: claims}, nil
 	}
 	display := claims.Name
 	if display == "" {

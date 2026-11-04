@@ -78,13 +78,23 @@ object DocumentFactory {
 
   private def resolveIcebergLocation(uri: URI): IcebergLocation = {
     val components = decodeURI(uri)
-    IcebergLocation(
-      components.warehouse,
-      ExecutionNamespaces
-        .lookup(components.executionId)
-        .getOrElse(resolveNamespace(components.resourceType)),
-      sanitizeURIPath(uri)
-    )
+    ExecutionLayouts.lookup(components.executionId) match {
+      case Some(layout) =>
+        val named =
+          if (components.resourceType == RESULT) components.globalPortId.flatMap(layout.tableOf)
+          else None
+        IcebergLocation(
+          components.warehouse,
+          layout.namespace,
+          named.getOrElse(sanitizeURIPath(uri))
+        )
+      case None =>
+        IcebergLocation(
+          components.warehouse,
+          resolveNamespace(components.resourceType),
+          sanitizeURIPath(uri)
+        )
+    }
   }
 
   private val tupleSerde: (IcebergSchema, Tuple) => Record = IcebergUtil.toGenericRecord
@@ -179,37 +189,36 @@ object DocumentFactory {
     * @param uri the uri of the document
     * @return the VirtualDocument, which is the handler of the data; the Schema, which is the schema of the data stored in the document
     */
+  /** Opens a table by where it is, as the catalog recorded it: a namespace and a table name. */
+  def openTable(namespace: String, table: String): (VirtualDocument[_], Option[Schema]) =
+    openLocation(IcebergLocation(None, namespace, table))
+
   def openDocument(uri: URI): (VirtualDocument[_], Option[Schema]) = {
     uri.getScheme match {
-      case VFS_FILE_URI_SCHEME =>
-        val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
-
-        val table = IcebergUtil
-          .loadTableMetadata(
-            IcebergCatalogInstance.getInstance(warehouse),
-            namespace,
-            storageKey
-          )
-          .getOrElse(
-            throw new IllegalArgumentException("No storage is found for the given URI")
-          )
-
-        val amberSchema = IcebergUtil.fromIcebergSchema(table.schema())
-        (
-          new IcebergDocument[Tuple](
-            namespace,
-            storageKey,
-            table.schema(),
-            tupleSerde,
-            tupleDeserde,
-            warehouse
-          ),
-          Some(amberSchema)
-        )
+      case VFS_FILE_URI_SCHEME => openLocation(resolveIcebergLocation(uri))
       case unsupportedScheme =>
         throw new UnsupportedOperationException(
           s"Unsupported URI scheme: $unsupportedScheme for opening the document"
         )
     }
+  }
+
+  private def openLocation(location: IcebergLocation): (VirtualDocument[_], Option[Schema]) = {
+    val IcebergLocation(warehouse, namespace, storageKey) = location
+    val table = IcebergUtil
+      .loadTableMetadata(IcebergCatalogInstance.getInstance(warehouse), namespace, storageKey)
+      .getOrElse(throw new IllegalArgumentException("No storage is found for the given URI"))
+    val amberSchema = IcebergUtil.fromIcebergSchema(table.schema())
+    (
+      new IcebergDocument[Tuple](
+        namespace,
+        storageKey,
+        table.schema(),
+        tupleSerde,
+        tupleDeserde,
+        warehouse
+      ),
+      Some(amberSchema)
+    )
   }
 }

@@ -38,7 +38,8 @@ import java.util.concurrent.Executors
   *    tuples?, error?}, outputs[] named "eid/opid/port" with facets.texera_port, inputs[] named
   *    "fromEid/fromOpid/fromPort".
   */
-final class LineageReporter(lineageUrl: String, token: String, eid: String) extends LazyLogging {
+final class LineageReporter(lineageUrl: String, token: () => String, eid: String)
+    extends LazyLogging {
   private val client = HttpClient.newBuilder().build()
   private val executor = Executors.newSingleThreadExecutor(r => {
     val t = new Thread(r, s"lineage-reporter-$eid")
@@ -155,7 +156,7 @@ final class LineageReporter(lineageUrl: String, token: String, eid: String) exte
           val request = HttpRequest
             .newBuilder(URI.create(lineageUrl))
             .header("Content-Type", "application/json")
-            .header("Authorization", s"Bearer $token")
+            .header("Authorization", s"Bearer ${token()}")
             .POST(HttpRequest.BodyPublishers.ofString(payload))
             .build()
           val response = client.send(request, HttpResponse.BodyHandlers.ofString())

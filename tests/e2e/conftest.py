@@ -7,6 +7,7 @@ import pathlib
 import random
 import string
 import time
+import warnings
 
 import pytest
 
@@ -82,31 +83,50 @@ def service(gw) -> str:
 KINDS = ["conversations", "workflows", "operators", "credentials", "environments", "datasets", "mcp-servers", "model-endpoints", "agent-templates", "computing-units"]
 
 
+def _delete_run(api: Api, workflow: str, eid: str, phase: str) -> None:
+    path = f"/workflows/{workflow}/executions/{eid}"
+    if phase in ("pending", "provisioning", "running"):
+        api.call("POST", f"{path}/cancel", {})
+    api.call("DELETE", path)
+
+
 def _clear(api: Api, project: str) -> None:
-    """Best effort: cancels and deletes the runs, then the resources in reference order, twice."""
-    for wf in api.get(f"/workflows?project={project}&limit=500")["items"]:
+    """Best effort: what the project's chats made, wherever it landed (an agent's workflow goes
+    to the person's home project unless the tool names a parent), then the project's runs,
+    then the resources in reference order, twice."""
+    made: list = []
+    for c in api.get(f"/conversations?project={project}&limit=500")["items"]:
+        made += api.get(f"/conversations/{c['metadata']['rid']}/resources")
+    for r in made:
+        if r["kind"] == "execution":
+            _delete_run(api, r["metadata"]["parent"], r["metadata"]["rid"], r["status"]["phase"])
+    workflows = [r for r in made if r["kind"] == "workflow"] + api.get(f"/workflows?project={project}&limit=500")["items"]
+    for wf in workflows:
         for ex in api.get(f"/workflows/{wf['metadata']['rid']}/executions?limit=500")["items"]:
-            path = f"/workflows/{wf['metadata']['rid']}/executions/{ex['metadata']['rid']}"
-            if ex["status"]["phase"] in ("pending", "provisioning", "running"):
-                api.call("POST", f"{path}/cancel", {})
-            api.call("DELETE", path)
+            _delete_run(api, wf["metadata"]["rid"], ex["metadata"]["rid"], ex["status"]["phase"])
     for _ in range(2):
         for plural in KINDS:
-            for r in api.get(f"/{plural}?project={project}&limit=500")["items"]:
-                api.call("DELETE", f"/resources/{r['metadata']['rid']}")
+            kind = plural[:-1]
+            rids = [r["metadata"]["rid"] for r in made if r["kind"] == kind]
+            rids += [r["metadata"]["rid"] for r in api.get(f"/{plural}?project={project}&limit=500")["items"]]
+            for rid in rids:
+                api.call("DELETE", f"/resources/{rid}")
 
 
 @pytest.fixture
 def project(alice, run_id, request) -> str:
-    """A project of alice's for this test alone; everything in it goes at the end."""
+    """A project of alice's for this test alone; everything in it goes at the end. What stays
+    behind is reported as a warning, never hidden: a leftover misleads the next test."""
     name = f"e2e {request.node.name[:40]} {run_id}"
     rid = alice.create("projects", name, {})["metadata"]["rid"]
     yield rid
     try:
         _clear(alice, rid)
-        alice.call("DELETE", f"/projects/{rid}")
-    except ApiError:
-        pass
+    except ApiError as e:
+        warnings.warn(f"clearing {name}: {e}", stacklevel=1)
+    status, body = alice.call("DELETE", f"/projects/{rid}")
+    if status != 204:
+        warnings.warn(f"{name} stays ({status}): {body}", stacklevel=1)
 
 
 class Iris(dict):

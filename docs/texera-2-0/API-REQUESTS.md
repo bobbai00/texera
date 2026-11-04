@@ -81,6 +81,33 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    status probes say pending until the new pod answers. The provider cannot change, and a
    unit with a run on it (pending, provisioning or running) answers 409 until the run is over.
    A static unit's identity follows its `clientId`.
+8. **The unit's doors.** A unit's API answers the catalog's own client alone (start, cancel,
+   compile, build, results, environments); people and agents reach a unit through the
+   catalog, which authorizes and compiles first, and the gateway has no route to units. On the
+   way back a unit reports as itself, with the client it was given for the lake, and
+   `POST /lineage/v1/events` takes an execution's events from the unit that runs it alone: a
+   unit's token is neither a person nor the service, and it may do nothing else.
+9. **A run in three phases.** `POST /workflows/{rid}/run` authorizes first (execute on the
+   workflow, then, on the compiled plan, run on the unit, read on every dataset, operator and
+   environment it names, use on every credential; a refusal leaves nothing behind), compiles
+   once (`validate` returns the same plan as `plan`), and materializes: the execution is
+   stored with `spec.plan` (URIs only, one table per output port named by the catalog, no
+   secret, no URL), its namespace is opened, and a bound copy with presigned inputs and
+   leased secrets goes to the engine. A custom operator's pinned environment is the run's
+   when the run names none, and a different one is refused with 409. Results live with the
+   run: there is no save-as-dataset; the label `texera.keep` on an execution keeps its
+   results past the retention policy.
+10. **The catalog names the output tables.** The plan holds one table per output port the
+   engine writes (the ports of operators marked `viewResult` and of operators nothing reads,
+   the engine's own rule), `<operator>_<port>` in lower case inside the run's namespace; a
+   port that only feeds another operator has no table. The start request carries
+   them (`resultStore.tables`), the engine writes each external output port's result under
+   its name and reports it as `namespace.table`, and `status.ports[]` lists the tables from
+   the start, rows and snapshots filled in as the unit reports. A reported table the plan
+   does not name is refused with 400. The engine owns the schemas and creates the tables;
+   internal ports, state, console and statistics tables keep the engine's own keys inside
+   the namespace. Rows are read by namespace and table, so a unit that did not run the
+   execution, or restarted since, serves them from the lake.
 
 ## agent runtime
 

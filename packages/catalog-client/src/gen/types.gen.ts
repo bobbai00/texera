@@ -162,25 +162,6 @@ export type CommitFiles = {
     message?: string;
 };
 
-export type CompileResult = {
-    ok: boolean;
-    /**
-     * Output schemas per operator id and output port id.
-     */
-    operatorOutputSchemas: {
-        [key: string]: {
-            [key: string]: Array<Attribute> | null;
-        };
-    };
-    /**
-     * Errors per operator id.
-     */
-    operatorErrors: {
-        [key: string]: unknown;
-    };
-    physicalPlan?: unknown;
-};
-
 export type ComputingNodeSpec = {
     name: string;
     role: 'master' | 'worker' | 'sandbox';
@@ -232,10 +213,6 @@ export type ComputingUnitSpec = {
 export type ComputingUnitStatus = {
     phase: 'pending' | 'ready' | 'failed' | 'terminated';
     identity?: UnitIdentity;
-    /**
-     * The path the gateway proxies the unit's WebSocket and HTTP API at.
-     */
-    gatewayPath?: string;
     message?: string;
     engine?: EngineStatus;
     computingNodes?: Array<ComputingNodeStatus>;
@@ -805,6 +782,32 @@ export type ExecutionPage = {
 export type ExecutionPhase = 'pending' | 'provisioning' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 /**
+ * What the catalog compiled for a run, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the run starts and never stored.
+ */
+export type ExecutionPlan = {
+    /**
+     * The namespace in the lake the run writes to; absent for a dry run.
+     */
+    namespace?: string;
+    /**
+     * One table per output port the engine writes, inside the namespace: the ports of operators marked viewResult and of operators nothing reads.
+     */
+    outputs: Array<PortTable>;
+    /**
+     * The custom operator versions compiled in, with `@vno`.
+     */
+    operators?: Array<Uri>;
+    /**
+     * The credentials the operators name; leased for the run at start, their values never stored.
+     */
+    credentials?: Array<Uri>;
+    /**
+     * The engine's logical plan, with dataset files and credentials still named by URI.
+     */
+    logicalPlan: unknown;
+};
+
+/**
  * A port of an execution: an output port with its result, or an input port with its binding.
  */
 export type ExecutionPort = {
@@ -839,6 +842,10 @@ export type ExecutionSpec = {
     parameters?: {
         [key: string]: unknown;
     };
+    /**
+     * The compiled plan the run was started with.
+     */
+    plan?: ExecutionPlan;
 };
 
 export type ExecutionStatus = {
@@ -1405,6 +1412,18 @@ export type PortSummary = {
     schema?: Array<Attribute>;
 };
 
+/**
+ * One output port's table in the lake, named by the catalog before the run starts.
+ */
+export type PortTable = {
+    operatorID: string;
+    portID: string;
+    /**
+     * The table's name inside the run's namespace.
+     */
+    table: string;
+};
+
 export type Principal = {
     pid: Pid;
     kind: PrincipalKind;
@@ -1661,28 +1680,6 @@ export type RuntimeSpec = {
     resources?: {
         [key: string]: unknown;
     };
-};
-
-/**
- * Save an output port's result as a dataset version.
- */
-export type SavePort = {
-    /**
-     * The dataset that gets the new version; a new dataset is created when absent.
-     */
-    dataset?: Rid;
-    /**
-     * The new dataset's name, when `dataset` is absent.
-     */
-    name?: string;
-    /**
-     * The file inside the dataset version; defaults to `<operatorID>.csv`.
-     */
-    path?: string;
-    /**
-     * What the version holds, recorded on it.
-     */
-    message?: string;
 };
 
 /**
@@ -2169,6 +2166,29 @@ export type WorkflowSpec = {
 export type WorkflowStatus = {
     lastExecution?: Rid;
     executions?: number;
+};
+
+/**
+ * A dry run: the engine's compile result and the plan the catalog would start a run with.
+ */
+export type WorkflowValidation = {
+    ok: boolean;
+    /**
+     * Output schemas per operator id and output port id.
+     */
+    operatorOutputSchemas: {
+        [key: string]: {
+            [key: string]: Array<Attribute> | null;
+        };
+    };
+    /**
+     * Errors per operator id.
+     */
+    operatorErrors: {
+        [key: string]: unknown;
+    };
+    physicalPlan?: unknown;
+    plan?: ExecutionPlan;
 };
 
 /**
@@ -6039,36 +6059,6 @@ export type WorkflowsReadRowsResponses = {
 
 export type WorkflowsReadRowsResponse = WorkflowsReadRowsResponses[keyof WorkflowsReadRowsResponses];
 
-export type WorkflowsSavePortData = {
-    body: SavePort;
-    path: {
-        rid: Rid;
-        eid: Rid;
-        operatorID: string;
-        portID: string;
-    };
-    query?: never;
-    url: '/catalog/v1/workflows/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}/save';
-};
-
-export type WorkflowsSavePortErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type WorkflowsSavePortError = WorkflowsSavePortErrors[keyof WorkflowsSavePortErrors];
-
-export type WorkflowsSavePortResponses = {
-    /**
-     * The request has succeeded and a new resource has been created as a result.
-     */
-    201: DatasetVersion;
-};
-
-export type WorkflowsSavePortResponse = WorkflowsSavePortResponses[keyof WorkflowsSavePortResponses];
-
 export type WorkflowsRunData = {
     body: RunWorkflow;
     path: {
@@ -6118,7 +6108,7 @@ export type WorkflowsValidateResponses = {
     /**
      * The request has succeeded.
      */
-    200: CompileResult;
+    200: WorkflowValidation;
 };
 
 export type WorkflowsValidateResponse = WorkflowsValidateResponses[keyof WorkflowsValidateResponses];

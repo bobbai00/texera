@@ -374,45 +374,6 @@
       },
       "type": "object"
     },
-    "CompileResult": {
-      "properties": {
-        "ok": {
-          "type": "boolean"
-        },
-        "operatorErrors": {
-          "additionalProperties": {},
-          "description": "Errors per operator id.",
-          "type": "object"
-        },
-        "operatorOutputSchemas": {
-          "additionalProperties": {
-            "additionalProperties": {
-              "anyOf": [
-                {
-                  "items": {
-                    "$ref": "#/$defs/Attribute"
-                  },
-                  "type": "array"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "type": "object"
-          },
-          "description": "Output schemas per operator id and output port id.",
-          "type": "object"
-        },
-        "physicalPlan": {}
-      },
-      "required": [
-        "ok",
-        "operatorOutputSchemas",
-        "operatorErrors"
-      ],
-      "type": "object"
-    },
     "ComputingNodeSpec": {
       "properties": {
         "cpu": {
@@ -570,10 +531,6 @@
             "$ref": "#/$defs/Uri"
           },
           "type": "array"
-        },
-        "gatewayPath": {
-          "description": "The path the gateway proxies the unit's WebSocket and HTTP API at.",
-          "type": "string"
         },
         "identity": {
           "$ref": "#/$defs/UnitIdentity"
@@ -1820,6 +1777,44 @@
       ],
       "type": "string"
     },
+    "ExecutionPlan": {
+      "description": "What the catalog compiled for a run, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the run starts and never stored.",
+      "properties": {
+        "credentials": {
+          "description": "The credentials the operators name; leased for the run at start, their values never stored.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        },
+        "logicalPlan": {
+          "description": "The engine's logical plan, with dataset files and credentials still named by URI."
+        },
+        "namespace": {
+          "description": "The namespace in the lake the run writes to; absent for a dry run.",
+          "type": "string"
+        },
+        "operators": {
+          "description": "The custom operator versions compiled in, with `@vno`.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        },
+        "outputs": {
+          "description": "One table per output port the engine writes, inside the namespace: the ports of operators marked viewResult and of operators nothing reads.",
+          "items": {
+            "$ref": "#/$defs/PortTable"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "outputs",
+        "logicalPlan"
+      ],
+      "type": "object"
+    },
     "ExecutionPort": {
       "description": "A port of an execution: an output port with its result, or an input port with its binding.",
       "properties": {
@@ -1875,6 +1870,10 @@
         "parameters": {
           "additionalProperties": {},
           "type": "object"
+        },
+        "plan": {
+          "$ref": "#/$defs/ExecutionPlan",
+          "description": "The compiled plan the run was started with."
         },
         "workflow": {
           "$ref": "#/$defs/Uri",
@@ -3166,6 +3165,27 @@
       ],
       "type": "object"
     },
+    "PortTable": {
+      "description": "One output port's table in the lake, named by the catalog before the run starts.",
+      "properties": {
+        "operatorID": {
+          "type": "string"
+        },
+        "portID": {
+          "type": "string"
+        },
+        "table": {
+          "description": "The table's name inside the run's namespace.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operatorID",
+        "portID",
+        "table"
+      ],
+      "type": "object"
+    },
     "Principal": {
       "properties": {
         "createdAt": {
@@ -3664,28 +3684,6 @@
         "resources": {
           "additionalProperties": {},
           "type": "object"
-        }
-      },
-      "type": "object"
-    },
-    "SavePort": {
-      "description": "Save an output port's result as a dataset version.",
-      "properties": {
-        "dataset": {
-          "$ref": "#/$defs/Rid",
-          "description": "The dataset that gets the new version; a new dataset is created when absent."
-        },
-        "message": {
-          "description": "What the version holds, recorded on it.",
-          "type": "string"
-        },
-        "name": {
-          "description": "The new dataset's name, when `dataset` is absent.",
-          "type": "string"
-        },
-        "path": {
-          "description": "The file inside the dataset version; defaults to `\u003coperatorID\u003e.csv`.",
-          "type": "string"
         }
       },
       "type": "object"
@@ -4619,6 +4617,49 @@
           "$ref": "#/$defs/Rid"
         }
       },
+      "type": "object"
+    },
+    "WorkflowValidation": {
+      "description": "A dry run: the engine's compile result and the plan the catalog would start a run with.",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "operatorErrors": {
+          "additionalProperties": {},
+          "description": "Errors per operator id.",
+          "type": "object"
+        },
+        "operatorOutputSchemas": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Attribute"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object"
+          },
+          "description": "Output schemas per operator id and output port id.",
+          "type": "object"
+        },
+        "physicalPlan": {},
+        "plan": {
+          "$ref": "#/$defs/ExecutionPlan"
+        }
+      },
+      "required": [
+        "ok",
+        "operatorOutputSchemas",
+        "operatorErrors"
+      ],
       "type": "object"
     },
     "WorkflowVersion": {

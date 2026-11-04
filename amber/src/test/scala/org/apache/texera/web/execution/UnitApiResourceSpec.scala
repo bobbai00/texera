@@ -104,8 +104,8 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
     UnitApiResource.claim(UUID.randomUUID().toString) shouldBe true
   }
 
-  "recordedResult" should "accept only this execution's result table for the named port" in {
-    import org.apache.texera.amber.core.storage.VFSURIFactory
+  "tableIdentifier" should "name a port's table as the catalog laid it out, else by its URI" in {
+    import org.apache.texera.amber.core.storage.{ExecutionLayout, ExecutionLayouts, VFSURIFactory}
     import org.apache.texera.amber.core.virtualidentity.{
       ExecutionIdentity,
       OperatorIdentity,
@@ -113,41 +113,37 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
       WorkflowIdentity
     }
     import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
-    val eid = UUID.randomUUID().toString
-    def table(
-        execution: Long,
-        op: String,
-        port: Int = 0,
-        internal: Boolean = false,
-        state: Boolean = false
-    ) = {
+    def result(execution: Long, op: String, port: Int = 0, internal: Boolean = false) = {
       val gp = GlobalPortIdentity(
         PhysicalOpIdentity(OperatorIdentity(op), "main"),
         PortIdentity(port, internal)
       )
-      val base =
+      VFSURIFactory.resultURI(
         VFSURIFactory.createPortBaseURI(WorkflowIdentity(5), ExecutionIdentity(execution), gp)
-      (if (state) VFSURIFactory.stateURI(base) else VFSURIFactory.resultURI(base)).toString
+      )
     }
-    val own = table(EngineIds.of(eid), "avg")
-    UnitApiResource.recordedResult(eid, "avg", 0, own).toString shouldBe own
-
-    val refused = Seq(
-      table(EngineIds.of(UUID.randomUUID().toString), "avg"), // another execution's table
-      table(EngineIds.of(eid), "scan"), // another operator
-      table(EngineIds.of(eid), "avg", port = 1), // another port
-      table(EngineIds.of(eid), "avg", internal = true), // an internal port
-      table(EngineIds.of(eid), "avg", state = true), // not a result
-      "https://example.org/x",
-      "not a uri %%"
+    val eid = ExecutionIdentity(EngineIds.of(UUID.randomUUID().toString))
+    val store = ResultStore(
+      "http://lake/catalog",
+      "texera",
+      "e_abc",
+      Some(List(OutputTable("avg", "output-0", "avg_output_0")))
     )
-    refused.foreach { location =>
-      withClue(location) {
-        val error = the[javax.ws.rs.WebApplicationException] thrownBy UnitApiResource
-          .recordedResult(eid, "avg", 0, location)
-        error.getResponse.getStatus shouldBe 403
-      }
-    }
+    ExecutionLayouts.register(eid, store.layout)
+    UnitApiResource.tableIdentifier(eid, result(eid.id, "avg")) shouldBe "e_abc.avg_output_0"
+    // Another port, an internal port and another execution keep their own URIs.
+    UnitApiResource.tableIdentifier(eid, result(eid.id, "avg", port = 1)) should startWith("vfs:")
+    UnitApiResource.tableIdentifier(eid, result(eid.id, "avg", internal = true)) should startWith(
+      "vfs:"
+    )
+    val other = ExecutionIdentity(EngineIds.fresh())
+    UnitApiResource.tableIdentifier(other, result(other.id, "avg")) should startWith("vfs:")
+    ExecutionLayout("e_x", Map.empty).tableOf(
+      GlobalPortIdentity(
+        PhysicalOpIdentity(OperatorIdentity("avg"), "main"),
+        PortIdentity(0, false)
+      )
+    ) shouldBe None
   }
 
   "EnvironmentManager.nameOf" should "make a filesystem-safe, version-specific name" in {

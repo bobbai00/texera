@@ -24,7 +24,12 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.auth.Auth
-import org.apache.texera.amber.core.storage.{DocumentFactory, ExecutionNamespaces}
+import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
+  ExecutionLayout,
+  ExecutionLayouts,
+  VFSURIFactory
+}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.{
@@ -44,7 +49,7 @@ import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
 import org.apache.texera.amber.operator.metadata.{AllOperatorMetadata, OperatorMetadataGenerator}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.web.auth.UnitPrincipal
+import org.apache.texera.web.auth.{UnitIdentity, UnitPrincipal}
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
 import org.apache.texera.common.config.ApplicationConfig
@@ -80,10 +85,31 @@ case class PythonEnvironmentRequest(version: Option[String], packages: List[Stri
 case class EnvironmentRequest(rid: String, vno: Int, python: Option[PythonEnvironmentRequest])
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-case class ResultStore(catalogUri: String, warehouse: String, namespace: String)
+case class OutputTable(opid: String, port: String, table: String)
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-case class Reporting(lineageUrl: String, token: String)
+case class ResultStore(
+    catalogUri: String,
+    warehouse: String,
+    namespace: String,
+    tables: Option[List[OutputTable]]
+) {
+
+  /** The layout the catalog asks for: the namespace and the named external output ports. */
+  def layout: ExecutionLayout =
+    ExecutionLayout(
+      namespace,
+      tables
+        .getOrElse(Nil)
+        .flatMap { t =>
+          t.port.stripPrefix("output-").toIntOption.map(port => (t.opid, port) -> t.table)
+        }
+        .toMap
+    )
+}
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+case class Reporting(lineageUrl: String)
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 case class ExecutionStartRequest(
@@ -174,27 +200,17 @@ object UnitApiResource {
   val UNIT_ID = 0
 
   /**
-    * A result location the catalog recorded for (eid, opid, port), accepted only when it is that
-    * port result: a result table of this execution's engine id, for that operator's external port.
-    * Anything else is refused, so the parameter cannot be used to read another run's tables.
+    * Where a port's result is, as the catalog knows it: `namespace.table` when the catalog
+    * named the table, else the engine's own URI (a run started without a layout).
     */
-  def recordedResult(eid: String, opid: String, port: Int, table: String): URI = {
-    val refused = new WebApplicationException(
-      s"the recorded location is not $opid/output-$port of execution $eid",
-      Response.Status.FORBIDDEN
-    )
-    val uri = scala.util.Try(new URI(table)).getOrElse(throw refused)
-    val components = scala.util
-      .Try(org.apache.texera.amber.core.storage.VFSURIFactory.decodeURI(uri))
-      .getOrElse(throw refused)
-    val matches =
-      components.resourceType == org.apache.texera.amber.core.storage.VFSResourceType.RESULT &&
-        components.executionId.id == EngineIds.of(eid) &&
-        components.globalPortId.exists(g =>
-          !g.portId.internal && g.opId.logicalOpId.id == opid && g.portId.id == port
-        )
-    if (!matches) throw refused
-    uri
+  def tableIdentifier(eid: ExecutionIdentity, uri: URI): String = {
+    val components = VFSURIFactory.decodeURI(uri)
+    ExecutionLayouts
+      .lookup(eid)
+      .flatMap(layout =>
+        components.globalPortId.flatMap(layout.tableOf).map(t => s"${layout.namespace}.$t")
+      )
+      .getOrElse(uri.toString)
   }
 
   /** A stable engine workflow id for a catalog rid. */
@@ -253,12 +269,12 @@ class UnitApiResource extends LazyLogging {
 
   @GET
   @Path("/operators")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  @RolesAllowed(Array("SERVICE"))
   def operators(): OperatorTypeList = UnitApiResource.operatorRegistry
 
   @POST
   @Path("/compile")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  @RolesAllowed(Array("SERVICE"))
   def compile(request: EngineCompileRequest): CompileResult = {
     val plan = objectMapper.treeToValue(request.logicalPlan, classOf[LogicalPlanPojo])
     val context = new WorkflowContext(workflowId = WorkflowIdentity(0))
@@ -282,7 +298,7 @@ class UnitApiResource extends LazyLogging {
 
   @POST
   @Path("/environments")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  @RolesAllowed(Array("SERVICE"))
   def buildEnvironment(request: EnvironmentRequest): EnvironmentBuild = {
     val name = EnvironmentManager.nameOf(request.rid, request.vno)
     val status = EnvironmentManager.ensure(name, request.python.map(_.packages).getOrElse(Nil))
@@ -291,7 +307,7 @@ class UnitApiResource extends LazyLogging {
 
   @GET
   @Path("/environments/{rid}/{vno}")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  @RolesAllowed(Array("SERVICE"))
   def environmentStatus(
       @PathParam("rid") rid: String,
       @PathParam("vno") vno: Int
@@ -317,7 +333,7 @@ class UnitApiResource extends LazyLogging {
 
   @POST
   @Path("/executions")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  @RolesAllowed(Array("SERVICE"))
   def start(request: ExecutionStartRequest, @Auth user: UnitPrincipal): ExecutionAck = {
     // A repeated start (a retry after a timeout, say) must not touch the run already going.
     if (!UnitApiResource.claim(request.eid)) {
@@ -327,7 +343,7 @@ class UnitApiResource extends LazyLogging {
       )
     }
     val reporter =
-      new LineageReporter(request.reporting.lineageUrl, request.reporting.token, request.eid)
+      new LineageReporter(request.reporting.lineageUrl, () => UnitIdentity.token(), request.eid)
     // Environment: build (or confirm) the venv and point every Python UDF at it.
     val planNode = request.logicalPlan.deepCopy[JsonNode]()
     request.environment.foreach { env =>
@@ -345,10 +361,10 @@ class UnitApiResource extends LazyLogging {
       }
     }
     val plan = objectMapper.treeToValue(planNode, classOf[LogicalPlanPojo])
-    // Every table of the run goes into the namespace the catalog made for it, registered before
-    // the first worker can write.
+    // Every table of the run goes into the namespace the catalog made for it, the output ports
+    // under the names it chose, registered before the first worker can write.
     request.resultStore.foreach(store =>
-      ExecutionNamespaces.register(ExecutionIdentity(EngineIds.of(request.eid)), store.namespace)
+      ExecutionLayouts.register(ExecutionIdentity(EngineIds.of(request.eid)), store.layout)
     )
     val workflowService =
       WorkflowService.getOrCreate(WorkflowIdentity(workflowIdOf(request.workflow.rid)), UNIT_ID)
@@ -422,7 +438,7 @@ class UnitApiResource extends LazyLogging {
                   )
                   reporter.OutputPort(
                     port,
-                    Some(uri.toString),
+                    Some(UnitApiResource.tableIdentifier(handle.internalEid, uri)),
                     count,
                     record.flatMap(_.resultSize(globalPortId))
                   )
@@ -472,7 +488,7 @@ class UnitApiResource extends LazyLogging {
 
   @GET
   @Path("/executions/{eid}")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  @RolesAllowed(Array("SERVICE"))
   def status(@PathParam("eid") eid: String): ExecutionState = {
     val handle = handleOf(eid)
     val executionService = handle.workflowService.executionService.getValue
@@ -501,7 +517,7 @@ class UnitApiResource extends LazyLogging {
             PortResult(
               g.opId.logicalOpId.id,
               s"output-${g.portId.id}",
-              Some(uri.toString),
+              Some(UnitApiResource.tableIdentifier(handle.internalEid, uri)),
               count,
               None
             )
@@ -513,7 +529,7 @@ class UnitApiResource extends LazyLogging {
 
   @POST
   @Path("/executions/{eid}/cancel")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  @RolesAllowed(Array("SERVICE"))
   def cancel(@PathParam("eid") eid: String): ExecutionState = {
     val handle = handleOf(eid)
     val executionService = handle.workflowService.executionService.getValue
@@ -533,7 +549,7 @@ class UnitApiResource extends LazyLogging {
 
   @GET
   @Path("/executions/{eid}/results/{opid}/{port}")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  @RolesAllowed(Array("SERVICE"))
   def result(
       @PathParam("eid") eid: String,
       @PathParam("opid") opid: String,
@@ -544,12 +560,9 @@ class UnitApiResource extends LazyLogging {
       @QueryParam("namespace") namespace: String
   ): RowPage = {
     val portIndex = port.stripPrefix("output-").toIntOption.getOrElse(0)
-    // The namespace the run wrote to, for a unit that did not run it (or restarted since).
-    Option(namespace)
-      .filter(_.nonEmpty)
-      .foreach(ExecutionNamespaces.register(ExecutionIdentity(EngineIds.of(eid)), _))
-    // The run's own record while this unit holds it; otherwise where the catalog recorded it.
-    val uri = runs
+    // The run's own record while this unit holds it; otherwise the table where the catalog
+    // put it, by namespace and name.
+    val own = runs
       .get(eid)
       .flatMap(h =>
         ExecutionRegistry.getResultUriByLogicalPortId(
@@ -558,15 +571,21 @@ class UnitApiResource extends LazyLogging {
           PortIdentity(portIndex)
         )
       )
-      .orElse(
-        Option(table)
-          .filter(_.nonEmpty)
-          .map(UnitApiResource.recordedResult(eid, opid, portIndex, _))
-      )
-      .getOrElse(
+    val recorded = for {
+      ns <- Option(namespace).filter(_.nonEmpty)
+      t <- Option(table).filter(n => n.nonEmpty && !n.contains("."))
+    } yield (ns, t)
+    val (document, schemaOpt) = (own, recorded) match {
+      case (Some(uri), _) => DocumentFactory.openDocument(uri)
+      case (None, Some((ns, t))) =>
+        try DocumentFactory.openTable(ns, t)
+        catch {
+          case _: IllegalArgumentException =>
+            throw new WebApplicationException(s"no table $ns.$t", Response.Status.NOT_FOUND)
+        }
+      case _ =>
         throw new WebApplicationException(s"no result for $opid/$port", Response.Status.NOT_FOUND)
-      )
-    val (document, schemaOpt) = DocumentFactory.openDocument(uri)
+    }
     val doc = document.asInstanceOf[VirtualDocument[Tuple]]
     val safeLimit = Math.max(1, Math.min(limit, 1000))
     val tuples = doc.getRange(offset.toInt, offset.toInt + safeLimit).toList
