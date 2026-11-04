@@ -124,7 +124,12 @@ template_rid, template_vno, parts, created_at): the author is the person whose t
 the template version names the agent that wrote an assistant message, and the turn id groups
 the messages of one loop. There is no agent or turn table: concurrency is
 `status.activeTurn` on the conversation, and the AG-UI thread and run ids and the A2A context
-and task ids map to the conversation rid and the turn id. `catalog/internal/store` becomes generic: one resource store
+and task ids map to the conversation rid and the turn id. The stream never touches the
+database: the runtime inserts the person's message, upserts the one in-progress assistant
+message after every step, and clears `activeTurn` at the end, about ten writes a turn. `seq`
+is assigned under the conversation row's lock; reads are keyset-paged by `seq`. Resumable
+streams, blob-backed large tool results and OpenTelemetry step traces are extensions keyed by
+the turn id. `catalog/internal/store` becomes generic: one resource store
 for every kind (create, get, list with filters and the readable index, update with etag, delete,
 versions with digest and expectedHead), plus edges, blobs, staging, messages, agents and leases.
 `catalog/internal/ports` defines Identity, Authorizer, SecretStore, BlobStore, TableCatalog,
