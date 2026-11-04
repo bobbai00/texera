@@ -48,18 +48,25 @@ addition and not a change.
    time is the first extension.
 10. The ToolLoopAgent refactor of the runtime loop is not in M1, so the current demo stays the
     regression signal for the contract reset.
-11. Three seeded templates in the system project: the Platform Agent, the Data Analyst and the
-    Bio Researcher. The Platform Agent is the default template for a new chat, named by
-    `settings.defaults.agentTemplate`; it mounts the generated catalog MCP server and manages
-    resources, templates among them.
-12. Routing is a handoff, not a relay (pending confirmation). A template may list `handoffs`,
-    template URIs it can hand the conversation to; the `handoff` tool is injected when the list
-    is non-empty, its candidates described by the templates' A2A cards. A handoff spawns the
-    target agent on the same conversation, records it as the conversation's active agent, emits
+11. The chat is the host, not an agent. Routing, native commands (`/mode`, `/new`, @mention of
+    a template), mode switching, resource cards, history and permissions belong to the runtime
+    and the app as code with tests; prompts, skills, tools and the model belong to templates.
+    There is no platform agent. The generated catalog MCP server is seeded as
+    `mcp-servers/catalog` and mounted on every template unless the template opts out, so any
+    active agent can list, create and share resources with the person's permissions. Three
+    seeded templates: Assistant (no specialty; the fallback named by
+    `settings.defaults.agentTemplate`), Data Analyst, Bio Researcher.
+12. Routing is a host mechanism plus agent handoff, never a relay. When a conversation has no
+    active agent, the host classifies the first message against the cards of the templates the
+    person can read, one stateless structured model call with no memory, tools or persona, and
+    spawns the chosen template, or the fallback on "none". The AG-UI entry point is the
+    conversation, `/agents/conversations/{rid}/ag-ui`; the host resolves the active agent, and
+    agent principals remain for A2A. A template may list `handoffs`; the `handoff` tool is
+    injected when the list is non-empty, its candidates described by the targets' cards. A
+    handoff spawns the target on the same conversation, records it as the active agent, emits
     the AG-UI event `texera.handoff`, and the target finishes the same turn on the same stream
-    and stays active for the next turns. At most two handoffs per turn. The person can always
-    switch the mode explicitly. Delegation that returns a result (agents as tools over A2A) is
-    the extension.
+    and stays active. At most two handoffs per turn; `/mode` and @mention switch explicitly.
+    Delegation that returns a result (agents as tools over A2A) is the extension.
 13. The Bio Researcher's MCP server is built into the agent runtime at `/agents/mcp/scholar`
     and seeded as `mcp-servers/scholar` in the system project: literature search over Europe
     PMC (PubMed content) and OpenAlex, both keyless, plus fetching an abstract by id. Tests run
@@ -137,9 +144,10 @@ OpenLineage events against the new catalog and fix only what the smoke run finds
 **S7 Agent runtime.** The catalog client follows the new paths and envelopes; templates
 reference skills, MCP servers and a model endpoint by URI; the model key and `secret:` headers
 come from `:lease`; AG-UI and A2A are unchanged. New: the `scholar` MCP server at
-`/agents/mcp/scholar` with its fixture mode; the `handoff` tool, the conversation's active
-agent, the `texera.handoff` event, and other agents' messages rendered with their names in the
-history. Gate: `bun test`, typecheck, `smoke-chat.py` with Claude Haiku 5.5.
+`/agents/mcp/scholar` with its fixture mode; the conversation-level AG-UI entry point with the
+router and the native commands; the `handoff` tool, the conversation's active agent, the
+`texera.handoff` event, and other agents' messages rendered with their names in the history.
+Gate: `bun test`, typecheck, `smoke-chat.py` with Claude Haiku 5.5.
 
 **S8 Frontend.** The regenerated client and kinds; the generic kind page renders any kind from
 its JSON Schema (metadata, spec editor, versions, grants with principal search, dependents and
@@ -147,17 +155,19 @@ lineage from edges); executions under workflows with the port view; dataset file
 credential page's write-only secret form. The agent templates page: list, view a template's
 card, prompt, model endpoint, skills, MCP servers, handoffs and loop; create and edit with a
 form over those fields; versions and grants. The chat shows the active agent, labels each
-message with its author and has the mode switcher. Gate: vitest; Playwright on Chrome.
+message with its author, and switches modes through the switcher, `/mode` and @mention.
+Gate: vitest; Playwright on Chrome.
 
-**S9 Agents demo.** Seed the three templates (Platform Agent with the catalog MCP server and
-every readable template as handoffs; Data Analyst as today; Bio Researcher with the scholar
-server, a literature-review skill and handoffs to the Data Analyst and the Platform Agent) and
-`mcp-servers/scholar`; set `settings.defaults.agentTemplate`. The scenario as a Playwright test
-on the scholar fixture and as a Haiku smoke run: a new chat starts with the Platform Agent,
-"research ideas on CRISPR off-target effects" hands off to the Bio Researcher, which answers
-with cited ideas; "now analyze iris.csv" hands off to the Data Analyst, which runs a workflow
-and shows results; the templates page lists all three and creating a fourth from the page makes
-it routable. Gate: the Playwright scenario; `smoke-chat.py` extended with the handoff turn.
+**S9 Agents demo.** Seed `mcp-servers/catalog`, `mcp-servers/scholar` and the three templates
+(Assistant; Data Analyst as today; Bio Researcher with the scholar server, a literature-review
+skill and a handoff to the Data Analyst); set `settings.defaults.agentTemplate` to the
+Assistant. The scenario as a Playwright test on the scholar fixture and as a Haiku smoke run: a
+new chat with no mode chosen; "research ideas on CRISPR off-target effects" is routed by the
+host to the Bio Researcher, which answers with cited ideas; "now analyze iris.csv" is handed
+off to the Data Analyst, which runs a workflow and shows results; "hi" alone in a fresh chat
+routes to the Assistant; the templates page lists all three and creating a fourth from the
+page makes it routable. Gate: the Playwright scenario; `smoke-chat.py` extended with the
+routed and handed-off turns.
 
 **S10 Close.** Seeding of the rest (the system project, built-in operators, skills, the model
 endpoint and its credential, the admins group), README and PROGRESS, the doc's "What changes
@@ -185,17 +195,19 @@ clean `up.sh`.
    the server through a lease and the lease is logged.
 8. `make generate && make check-drift` is clean. The permission table test, the URI round-trip
    tests and every port's contract suite pass. `test.sh` is green.
-9. The agent templates page lists the Platform Agent, the Data Analyst and the Bio Researcher
-   with their cards, prompts, model endpoint, skills, MCP servers and handoffs. Alice creates a
+9. The agent templates page lists the Assistant, the Data Analyst and the Bio Researcher with
+   their cards, prompts, model endpoint, skills, MCP servers and handoffs. Alice creates a
    fourth template from the page with her own prompt and the scholar server; it is versioned,
    shareable and routable.
-10. A new chat starts with the Platform Agent. Alice asks for research ideas on a biology
-    topic; the conversation hands off to the Bio Researcher, which answers with ideas grounded
-    in cited literature from the scholar server. She then asks for an analysis of iris.csv; the
-    conversation hands off to the Data Analyst, which builds and runs a workflow and shows the
-    result. The chat shows which agent spoke each message, and she can switch the mode herself.
-11. Alice asks the Platform Agent to list her templates and to share one with Bob; both happen
-    through the catalog MCP server and show as resource cards.
+10. A new chat with no mode chosen. Alice asks for research ideas on a biology topic; the host
+    routes the message to the Bio Researcher, which answers with ideas grounded in cited
+    literature from the scholar server. She then asks for an analysis of iris.csv; the Bio
+    Researcher hands off to the Data Analyst, which builds and runs a workflow and shows the
+    result. The chat shows which agent spoke each message, and `/mode` or @mention switches
+    the agent herself.
+11. Alice asks the Bio Researcher to share the chat's dataset with Bob and to list her
+    templates; both happen through the catalog MCP server mounted on every template, with her
+    permissions, and show as resource cards.
 
 ### Out of M1, with the interface that stays
 
