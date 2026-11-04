@@ -72,6 +72,13 @@ addition and not a change.
     stream; at most two per turn. A2A exposes each template as an agent, with the
     conversation as the A2A context. Delegation that returns a result (agents as tools) and
     agent identities of their own are extensions.
+    The shape is Claude Code's. The harness always receives the message and does the
+    deterministic work: native commands, context assembly (template prompt, history, skills,
+    MCP servers, the catalog server, the handoff tool), tool execution behind the PDP,
+    streaming, persistence. The judgment calls are the model's inside the loop: what to do,
+    which tools, whether to load a skill, whether to hand off among the template's listed
+    candidates. A template sees only the handoffs its author listed, never every template. A
+    harness step that reads the first message and picks a template is the router extension.
 13. The Bio Researcher's MCP server is built into the agent runtime at `/agents/mcp/scholar`
     and seeded as `mcp-servers/scholar` in the system project: literature search over Europe
     PMC (PubMed content) and OpenAlex, both keyless, plus fetching an abstract by id. Tests run
