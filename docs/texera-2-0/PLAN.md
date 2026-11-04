@@ -48,11 +48,27 @@ addition and not a change.
    time is the first extension.
 10. The ToolLoopAgent refactor of the runtime loop is not in M1, so the current demo stays the
     regression signal for the contract reset.
+11. Three seeded templates in the system project: the Platform Agent, the Data Analyst and the
+    Bio Researcher. The Platform Agent is the default template for a new chat, named by
+    `settings.defaults.agentTemplate`; it mounts the generated catalog MCP server and manages
+    resources, templates among them.
+12. Routing is a handoff, not a relay (pending confirmation). A template may list `handoffs`,
+    template URIs it can hand the conversation to; the `handoff` tool is injected when the list
+    is non-empty, its candidates described by the templates' A2A cards. A handoff spawns the
+    target agent on the same conversation, records it as the conversation's active agent, emits
+    the AG-UI event `texera.handoff`, and the target finishes the same turn on the same stream
+    and stays active for the next turns. At most two handoffs per turn. The person can always
+    switch the mode explicitly. Delegation that returns a result (agents as tools over A2A) is
+    the extension.
+13. The Bio Researcher's MCP server is built into the agent runtime at `/agents/mcp/scholar`
+    and seeded as `mcp-servers/scholar` in the system project: literature search over Europe
+    PMC (PubMed content) and OpenAlex, both keyless, plus fetching an abstract by id. Tests run
+    it in a fixture mode with canned results.
 
 ### Steps
 
 Each step is a series of small commits pushed as they land; the gate closes the step. Unit
-tests stay green at every commit. End to end is red between S5 and S8 and green again at S9.
+tests stay green at every commit. End to end is red between S5 and S8 and green again at S10.
 
 **S1 Contract.** `api/catalog/` replaces `api/catalog.tsp`: `envelope.tsp` (apiVersion, kind,
 metadata with uri, spec, status, versions, grants, search, errors), one file per kind under
@@ -61,7 +77,9 @@ evaluation endpoint) and `lineage.tsp` (OpenLineage inbound; upstream and downst
 Extensions on every kind and operation: `x-texera-kind` {plural, versioned, parent, references,
 index}, `x-texera-permission`, `x-mcp` {server: catalog | dataflow}. `api/openfga/model.fga`
 v2: relations owner, editor, viewer, user; parent; `user:*`; computed can_read, can_write,
-can_share, can_delete, can_execute, can_use, can_run_on, can_rotate. `engine.tsp` is unchanged.
+can_share, can_delete, can_execute, can_use, can_run_on, can_rotate. The agent template spec
+references its model endpoint, skills and MCP servers by URI and gains `handoffs`; the
+conversation status gains `activeAgent` and `participants`. `engine.tsp` is unchanged.
 Gate: `tsp compile` clean; the OpenAPI diff reviewed against the doc's kind table.
 
 **S2 Codegen.** `catalog/cmd/catalogen` (it absorbs `mcpgen`) reads the OpenAPI and emits
@@ -118,18 +136,33 @@ OpenLineage events against the new catalog and fix only what the smoke run finds
 
 **S7 Agent runtime.** The catalog client follows the new paths and envelopes; templates
 reference skills, MCP servers and a model endpoint by URI; the model key and `secret:` headers
-come from `:lease`; AG-UI and A2A are unchanged. Gate: `bun test`, typecheck, `smoke-chat.py`
-with Claude Haiku 5.5.
+come from `:lease`; AG-UI and A2A are unchanged. New: the `scholar` MCP server at
+`/agents/mcp/scholar` with its fixture mode; the `handoff` tool, the conversation's active
+agent, the `texera.handoff` event, and other agents' messages rendered with their names in the
+history. Gate: `bun test`, typecheck, `smoke-chat.py` with Claude Haiku 5.5.
 
 **S8 Frontend.** The regenerated client and kinds; the generic kind page renders any kind from
 its JSON Schema (metadata, spec editor, versions, grants with principal search, dependents and
 lineage from edges); executions under workflows with the port view; dataset files; the
-credential page's write-only secret form. Gate: vitest; Playwright 4/4 on Chrome.
+credential page's write-only secret form. The agent templates page: list, view a template's
+card, prompt, model endpoint, skills, MCP servers, handoffs and loop; create and edit with a
+form over those fields; versions and grants. The chat shows the active agent, labels each
+message with its author and has the mode switcher. Gate: vitest; Playwright on Chrome.
 
-**S9 Close.** Seeding (the system project, built-in operators, templates, skills, MCP servers,
-the model endpoint and its credential, the admins group), README and PROGRESS, the doc's "What
-changes from the current code" and roadmap sections, memory notes. Gate: `test.sh` all green
-from a clean `up.sh`.
+**S9 Agents demo.** Seed the three templates (Platform Agent with the catalog MCP server and
+every readable template as handoffs; Data Analyst as today; Bio Researcher with the scholar
+server, a literature-review skill and handoffs to the Data Analyst and the Platform Agent) and
+`mcp-servers/scholar`; set `settings.defaults.agentTemplate`. The scenario as a Playwright test
+on the scholar fixture and as a Haiku smoke run: a new chat starts with the Platform Agent,
+"research ideas on CRISPR off-target effects" hands off to the Bio Researcher, which answers
+with cited ideas; "now analyze iris.csv" hands off to the Data Analyst, which runs a workflow
+and shows results; the templates page lists all three and creating a fourth from the page makes
+it routable. Gate: the Playwright scenario; `smoke-chat.py` extended with the handoff turn.
+
+**S10 Close.** Seeding of the rest (the system project, built-in operators, skills, the model
+endpoint and its credential, the admins group), README and PROGRESS, the doc's "What changes
+from the current code" and roadmap sections, memory notes. Gate: `test.sh` all green from a
+clean `up.sh`.
 
 ### Acceptance (the M1 demo)
 
@@ -152,6 +185,17 @@ from a clean `up.sh`.
    the server through a lease and the lease is logged.
 8. `make generate && make check-drift` is clean. The permission table test, the URI round-trip
    tests and every port's contract suite pass. `test.sh` is green.
+9. The agent templates page lists the Platform Agent, the Data Analyst and the Bio Researcher
+   with their cards, prompts, model endpoint, skills, MCP servers and handoffs. Alice creates a
+   fourth template from the page with her own prompt and the scholar server; it is versioned,
+   shareable and routable.
+10. A new chat starts with the Platform Agent. Alice asks for research ideas on a biology
+    topic; the conversation hands off to the Bio Researcher, which answers with ideas grounded
+    in cited literature from the scholar server. She then asks for an analysis of iris.csv; the
+    conversation hands off to the Data Analyst, which builds and runs a workflow and shows the
+    result. The chat shows which agent spoke each message, and she can switch the mode herself.
+11. Alice asks the Platform Agent to list her templates and to share one with Bob; both happen
+    through the catalog MCP server and show as resource cards.
 
 ### Out of M1, with the interface that stays
 
@@ -166,6 +210,8 @@ from a clean `up.sh`.
 | environment images, an image registry, multi-node units | `engine.image`, `status.builds[]`, the nodes facet |
 | groups beyond admins, SCIM | the group principal and the `groups` claim mapping |
 | the ToolLoopAgent loop, tool approval, A2A tasks | the runtime's loop module boundary |
+| delegation that returns a result (agents as tools), sub-agent policies | A2A `SendMessage` in the runtime and `subagents` in the template spec |
+| BioMCP or other third-party scholarly servers, ClinicalTrials.gov | the `mcp-server` kind; any HTTP server is one row away |
 | Java and Python generated clients | the OpenAPI the generators read |
 
 ## Repository layout (target, this worktree)
