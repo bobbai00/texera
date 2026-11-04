@@ -130,8 +130,15 @@ Decisions taken in S8 and S9:
   takes the principal over (server test, live check against a never-logged-in admin, the
   share form in Playwright). The demo smoke no longer logs Bob in first.
 
-Next: the out-of-M1 table of PLAN.md in the order the user picks; nearest: a typed
-output-columns field on custom operators, canvas positions kept in the person's preferences.
+- A custom operator declares the columns its code adds in `implementation.python.outputColumns`
+  (typed `Attribute[]`), replacing the `x-texera-output-columns` key. The workflow editor keeps
+  a person's canvas positions in their preferences (`canvas[rid]`), loaded when the editor
+  opens and saved debounced after a move; the spec stays the engine's plan. A README for the
+  catalog. `test.sh e2e` on the reused (not wiped) stack: the shell smokes now name what they
+  make with a timestamp, since names are unique per project and kind, and the Playwright
+  assertions accept the averages as the model rounds them.
+
+Next: the out-of-M1 table of PLAN.md in the order the user picks.
 
 ## 2026-11-03 (session 5, on Linux)
 

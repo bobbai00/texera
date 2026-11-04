@@ -20,6 +20,7 @@
 # aggregates, validation, an execution with its ports and rows, the lineage, and the saved
 # result as a dataset version derived from the port. Needs the stack (bin/texera-2-0/up.sh).
 set -euo pipefail
+STAMP=$(date +%H%M%S)
 HERE=$(cd "$(dirname "$0")" && pwd)
 GW=${GW:-http://localhost:8088}
 API=$GW/catalog/v1
@@ -67,7 +68,7 @@ echo "$VAL" | j '[(op, port, [a["attributeName"] for a in (attrs or [])]) for op
 [ "$(echo "$VAL" | j 'd["ok"]')" = "True" ] || fail "validation"
 
 echo "== run with wait"
-EX=$(curl -sf "${H[@]}" -X POST "$API/workflows/$RID/run" -d '{"waitSeconds": 180, "name": "smoke run"}')
+EX=$(curl -sf "${H[@]}" -X POST "$API/workflows/$RID/run" -d '{"waitSeconds": 180, "name": "smoke run '"$STAMP"'"}')
 EID=$(echo "$EX" | j 'd["metadata"]["rid"]')
 echo "$EX" | j '"execution", d["metadata"]["uri"], d["status"]["phase"], "spec", d["spec"]'
 echo "$EX" | j '"operators", d["status"].get("operators")'
@@ -87,7 +88,7 @@ curl -sf "${H[@]}" "$API/workflows/$RID/executions" | j '[(e["metadata"]["rid"][
 curl -sf "${H[@]}" "$API/executions?phase=completed&limit=3" | j 'len(d["items"])'
 
 echo "== save the result as a dataset version derived from the port"
-SAVED=$(curl -sf "${H[@]}" -X POST "$EXP/operators/avg/ports/output-0/save" -d '{"name": "petal length by species"}')
+SAVED=$(curl -sf "${H[@]}" -X POST "$EXP/operators/avg/ports/output-0/save" -d '{"name": "petal length by species '"$STAMP"'"}')
 SRID=$(echo "$SAVED" | j 'd["rid"]')
 echo "$SAVED" | j '"dataset", d["uri"], d.get("message")'
 curl -sf -H "Authorization: Bearer $TOK" "$API/datasets/$SRID/versions/1/files/avg.csv"

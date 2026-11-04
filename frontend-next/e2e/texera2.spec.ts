@@ -199,8 +199,9 @@ test("a Data Analyst chat answers from a workflow it built and the chat tracks i
   await say(page, IRIS_QUESTION);
 
   const answer = page.locator('[data-message-role="assistant"]').last();
-  await expect(answer).toContainText("1.462", { timeout: 240_000 });
-  await expect(answer).toContainText("5.552");
+  // The averages, as the model may round them: 1.462, 4.260 and 5.552.
+  await expect(answer).toContainText(/1\.46/, { timeout: 240_000 });
+  await expect(answer).toContainText(/5\.55/);
   await expect(page.locator('[data-message-template="Data Analyst"]').first()).toBeVisible();
 
   const built = page.locator('[data-rail-item="workflow"]').first();
@@ -232,7 +233,7 @@ test("the Bio Researcher hands the chat to the Data Analyst for the analysis, wh
   await say(page, "Now analyze the iris dataset in my catalog: what is the average petal length per species? Build and run a workflow and report the numbers.");
   await expect(page.locator('[data-part="handoff"][data-handoff-to="Data Analyst"]')).toBeVisible({ timeout: 240_000 });
   const answer = page.locator('[data-message-role="assistant"]').last();
-  await expect(answer).toContainText("1.462", { timeout: 240_000 });
+  await expect(answer).toContainText(/1\.46/, { timeout: 240_000 });
   await expect(page.locator("[data-current-template]")).toHaveText("Data Analyst");
   await expect(page.locator('[data-message-template="Data Analyst"]').first()).toBeVisible();
   await page.screenshot({ path: "test-results/handoff.png", fullPage: true });

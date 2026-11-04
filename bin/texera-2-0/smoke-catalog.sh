@@ -20,6 +20,7 @@
 # sharing, dataset files and references, a conversation with a turn and an origin, and the
 # two MCP servers. Needs the stack (bin/texera-2-0/up.sh).
 set -euo pipefail
+STAMP=$(date +%H%M%S)
 GW=${GW:-http://localhost:8088}
 
 token() {
@@ -58,7 +59,7 @@ echo "operators listed: $OPS (compact)"
 curl -sf "${auth[@]}" "$API/operators?q=CSVFileScan" | j '[(i["spec"]["operatorType"], "propertiesSchema" in i["spec"], i["status"].get("builtin")) for i in d["items"]]'
 
 echo "== workflow: create, edit by patch, versions, resolve"
-WF=$(curl -sf "${auth[@]}" -X POST "$API/workflows" -d '{"name": "smoke", "spec": {"operators": [{"operatorID": "a", "operatorType": "CSVFileScan", "operatorProperties": {"fileName": "x.csv"}}], "links": []}}')
+WF=$(curl -sf "${auth[@]}" -X POST "$API/workflows" -d '{"name": "smoke '"$STAMP"'", "spec": {"operators": [{"operatorID": "a", "operatorType": "CSVFileScan", "operatorProperties": {"fileName": "x.csv"}}], "links": []}}')
 RID=$(echo "$WF" | j 'd["metadata"]["rid"]')
 URI=$(echo "$WF" | j 'd["metadata"]["uri"]')
 echo "rid=$RID uri=$URI head=$(echo "$WF" | j 'd["metadata"]["head"]')"
@@ -82,7 +83,7 @@ curl -sf -o /dev/null "${auth[@]}" -X DELETE "$API/resources/$RID/grants/$BOBPID
 expect "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $BOB" "$API/workflows/$RID")" 403 "bob after the revoke"
 
 echo "== dataset: upload, commit, files, download, references"
-DS=$(curl -sf "${auth[@]}" -X POST "$API/datasets" -d '{"name": "iris-smoke", "spec": {"format": "csv"}}')
+DS=$(curl -sf "${auth[@]}" -X POST "$API/datasets" -d '{"name": "iris-smoke '"$STAMP"'", "spec": {"format": "csv"}}')
 DSRID=$(echo "$DS" | j 'd["metadata"]["rid"]')
 DSURI=$(echo "$DS" | j 'd["metadata"]["uri"]')
 printf 'sepal_length,species\n5.1,setosa\n4.9,setosa\n' | curl -sf -H "Authorization: Bearer $TOK" -H "Content-Type: text/csv" -X PUT --data-binary @- "$API/datasets/$DSRID/files/iris.csv" | j 'd["path"], d["size"], d["sha256"][:16]'
@@ -96,7 +97,7 @@ curl -sf "${auth[@]}" "$API/resources/$DSRID/dependents" | j '[(e["relation"], e
 expect "$(curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" -X DELETE "$API/datasets/$DSRID")" 409 "a referenced dataset cannot be deleted"
 
 echo "== conversation: default template, a turn, a message, an origin"
-CONV=$(curl -sf "${auth[@]}" -X POST "$API/conversations" -d '{"name": "smoke chat", "spec": {}}')
+CONV=$(curl -sf "${auth[@]}" -X POST "$API/conversations" -d '{"name": "smoke chat '"$STAMP"'", "spec": {}}')
 CRID=$(echo "$CONV" | j 'd["metadata"]["rid"]')
 echo "conversation $CRID template $(echo "$CONV" | j 'd["spec"]["template"][-10:]')"
 TURN=$(curl -sf "${auth[@]}" -X POST "$API/conversations/$CRID/turns" -d '{}')
@@ -105,7 +106,7 @@ TPL=$(echo "$TURN" | j 'd["template"]')
 expect "$(curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" -X POST "$API/conversations/$CRID/turns" -d '{}')" 409 "a second turn"
 curl -sf "${auth[@]}" -X POST "$API/conversations/$CRID/messages" -d "{\"turn\": \"$TID\", \"role\": \"user\", \"parts\": [{\"type\": \"text\", \"text\": \"hello\"}]}" | j 'd["seq"]'
 SVC=$(service_token)
-curl -sf "${auth[@]}" -H "X-Texera-Service-Token: $SVC" -H "X-Texera-Origin: conversation=$CRID;turn=$TID;template=$TPL" -X POST "$API/workflows" -d '{"name": "from chat", "spec": {"operators": [], "links": []}}' | j 'd["metadata"]["origin"]["turn"] == "'"$TID"'"'
+curl -sf "${auth[@]}" -H "X-Texera-Service-Token: $SVC" -H "X-Texera-Origin: conversation=$CRID;turn=$TID;template=$TPL" -X POST "$API/workflows" -d '{"name": "from chat '"$STAMP"'", "spec": {"operators": [], "links": []}}' | j 'd["metadata"]["origin"]["turn"] == "'"$TID"'"'
 curl -sf -o /dev/null "${auth[@]}" -X DELETE "$API/conversations/$CRID/turns/$TID"
 curl -sf "${auth[@]}" "$API/conversations/$CRID/resources" | j '[(r["kind"], r["metadata"]["name"]) for r in d]'
 curl -sf "${auth[@]}" "$API/conversations/$CRID" | j 'd["status"].get("activeTurn"), d["status"]["messages"]'
