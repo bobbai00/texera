@@ -326,7 +326,8 @@ export const zExecutionStatus = z.object({
     operators: z.record(z.string(), zOperatorRunStatus).optional(),
     ports: z.array(zPortSummary).optional(),
     startedAt: z.iso.datetime().optional(),
-    finishedAt: z.iso.datetime().optional()
+    finishedAt: z.iso.datetime().optional(),
+    resultsExpiredAt: z.iso.datetime().optional()
 });
 
 export const zPrincipalKind = z.enum(['user', 'group']);
@@ -401,6 +402,22 @@ export const zResourceKind = z.enum([
     'model-endpoint',
     'settings'
 ]);
+
+/**
+ * How long the catalog keeps what runs and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).
+ */
+export const zRetention = z.object({
+    results: z.string().optional(),
+    blobs: z.string().optional()
+});
+
+/**
+ * What one retention sweep did.
+ */
+export const zRetentionSweep = z.object({
+    executionsExpired: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
+    blobsDeleted: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' })
+});
 
 /**
  * Resource id, a UUID.
@@ -716,7 +733,8 @@ export const zReplaceMessage = z.object({
 export const zSettingsSpec = z.object({
     branding: zBranding,
     defaults: zDefaults,
-    features: z.record(z.string(), z.boolean()).optional()
+    features: z.record(z.string(), z.boolean()).optional(),
+    retention: zRetention.optional()
 });
 
 export const zStartTurn = z.object({
@@ -2805,6 +2823,11 @@ export const zSettingsRoutesUpdateResponse = zSettings;
  */
 export const zSettingsRoutesPublicResponse = zPublicSettings;
 
+/**
+ * The request has succeeded.
+ */
+export const zSettingsRoutesSweepResponse = zRetentionSweep;
+
 export const zSkillsListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
@@ -2960,6 +2983,16 @@ export const zWorkflowsListExecutionsQuery = z.object({
  * A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
  */
 export const zWorkflowsListExecutionsResponse = zExecutionPage;
+
+export const zWorkflowsDeleteExecutionPath = z.object({
+    rid: zRid,
+    eid: zRid
+});
+
+/**
+ * There is no content to send for this request, but the headers may be useful.
+ */
+export const zWorkflowsDeleteExecutionResponse = z.void();
 
 export const zWorkflowsReadExecutionPath = z.object({
     rid: zRid,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -125,6 +126,10 @@ type ResourceFilter struct {
 	Labels map[string]string
 	// Fields restricts spec or status fields, by JSON pointer, to a value.
 	Fields map[string]string
+	// Absent lists spec or status fields, by JSON pointer, that must not be set.
+	Absent []string
+	// UpdatedBefore keeps resources last changed before the instant.
+	UpdatedBefore *time.Time
 	// ReadableBy restricts to what the principal may read: public, owned, or granted directly
 	// or through the parent or the project. Nil means no restriction (an administrator or a
 	// service).
@@ -174,6 +179,14 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 		}
 		args = append(args, value)
 		where = append(where, fmt.Sprintf("(r.%s #>> '{%s}') = $%d", column, path, len(args)))
+	}
+	for _, pointer := range f.Absent {
+		if column, path, ok := pointerPath(pointer); ok {
+			where = append(where, fmt.Sprintf("(r.%s #> '{%s}') IS NULL", column, path))
+		}
+	}
+	if f.UpdatedBefore != nil {
+		add("r.updated_at < $%d", *f.UpdatedBefore)
 	}
 	if f.ReadableBy != nil {
 		add(`(r.visibility = 'public' OR r.owner_pid = $%d OR EXISTS (

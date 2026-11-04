@@ -210,6 +210,12 @@ namespace Routes {
     cancelExecution(@path rid: Rid, @path eid: Rid): Execution | Error;
 
     @doc("What a port of an execution holds: for an output port its result, for an input port its binding.")
+    @doc("Delete a finished run with its result tables; refused with 409 while it runs or while a dataset version derives from it.")
+    @delete
+    @route("/{rid}/executions/{eid}")
+    @extension("x-texera-permission", "delete")
+    deleteExecution(@path rid: Rid, @path eid: Rid): void | Error;
+
     @get
     @route("/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}")
     @extension("x-texera-permission", "read")

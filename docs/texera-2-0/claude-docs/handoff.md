@@ -64,8 +64,9 @@ The out-of-M1 table in `PLAN.md` lists what comes next with the interface each i
 Done since the close: viewing never implies using, sharing with people who have not logged
 in, typed operator output columns, kept canvas positions, credentials in operator properties,
 images and the one-command Kubernetes deployment, the Kubernetes unit provider, Lakekeeper on
-OpenFGA with one identity per unit. Nearest gaps: retention (an execution delete route, expiry
-of results, unreferenced blobs), quotas and metering, groups beyond admins. Known limit: the
+OpenFGA with one identity per unit, retention (an execution delete route, a results expiry
+policy with an hourly sweep, unreferenced blobs). Nearest gaps: quotas and metering, groups
+beyond admins, a purge of soft-deleted resources. Known limit: the
 units still hold the store's static S3 key for large binaries (`STORAGE_S3_AUTH_*`), which also
 reaches the warehouse's files; a key scoped to the objects prefix closes that.
 

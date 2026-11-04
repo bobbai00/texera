@@ -1909,6 +1909,11 @@
           },
           "type": "array"
         },
+        "resultsExpiredAt": {
+          "description": "When the retention policy dropped the run's result tables: the summaries stay, the rows are gone.",
+          "format": "date-time",
+          "type": "string"
+        },
         "startedAt": {
           "format": "date-time",
           "type": "string"
@@ -3546,6 +3551,40 @@
       ],
       "type": "object"
     },
+    "Retention": {
+      "description": "How long the catalog keeps what runs and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).",
+      "properties": {
+        "blobs": {
+          "description": "An uploaded file that no version and no staging names is removed this long after its upload; absent: one day.",
+          "format": "duration",
+          "type": "string"
+        },
+        "results": {
+          "description": "Finished runs keep their result tables this long; absent: forever. The run's record and its summaries stay.",
+          "format": "duration",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RetentionSweep": {
+      "description": "What one retention sweep did.",
+      "properties": {
+        "blobsDeleted": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "executionsExpired": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "executionsExpired",
+        "blobsDeleted"
+      ],
+      "type": "object"
+    },
     "Rid": {
       "description": "Resource id, a UUID.",
       "type": "string"
@@ -3716,6 +3755,9 @@
             "type": "boolean"
           },
           "type": "object"
+        },
+        "retention": {
+          "$ref": "#/$defs/Retention"
         }
       },
       "required": [

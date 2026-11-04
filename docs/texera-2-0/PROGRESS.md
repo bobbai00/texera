@@ -215,8 +215,25 @@ Decisions taken in S8 and S9:
   hold the store's static key for large binaries, which also reaches the warehouse's files; a
   key scoped to the objects prefix closes that.
 
-Next: retention (an execution delete route, expiry of results, unreferenced blobs), as
-agreed; then quotas and groups.
+- Retention. A finished run can be deleted (`DELETE /workflows/{rid}/executions/{eid}`,
+  `can_delete`; 409 while it runs or while a dataset version derives from it) and goes with
+  its namespace. The settings gained `retention` (ISO 8601 durations): `results` expires the
+  tables of finished runs older than the policy, keeping the record and its summaries with
+  `status.resultsExpiredAt` set, so rows, ports and saves answer 410 `expired`; `blobs`
+  (default a day) removes uploaded files that no version manifest and no staging names, from
+  the blob store and the table. The catalog sweeps hourly; `POST /settings/retention/sweep`
+  runs one now for administrators and says what it did. The store's filter learned "field
+  absent" and "updated before"; the BlobStore port learned Delete. The run page has a Delete
+  button for finished runs and says when the results expired. Checks: a server test (refused
+  while running, bob refused, deleted with its namespace; a sweep without a policy does
+  nothing, `PT0S` expires the cancelled run once and its rows answer 410; a fresh unstaged
+  upload survives the day's grace and goes under `PT0S` while the committed file's blob
+  stays), `smoke-retention.py` extended on the stack (delete 204 then 404; the sweep expired
+  the finished runs, the v2 run says when and answers 410; the policy is cleared afterwards).
+  The cluster was not redeployed for this: retention is catalog-internal.
+
+Next: quotas and metering, groups beyond admins, a purge of soft-deleted resources; the
+units' static S3 key for large binaries scoped to the objects prefix.
 
 ## 2026-11-03 (session 5, on Linux)
 

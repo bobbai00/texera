@@ -88,6 +88,13 @@ client of its own, minted in Keycloak, whose secret goes to OpenBao and to the u
 Changing the realm (`keycloak/texera-realm.json`) needs `down.sh --wipe` (`k8s.sh down` on the
 cluster): Keycloak imports a realm only once.
 
+Retention is a setting (`spec.retention`, ISO 8601 durations): `results` is how long a finished
+run keeps its result tables (absent: forever; the run's record and summaries stay, its rows
+answer 410), `blobs` how long an uploaded file nobody committed is kept (absent: a day). The
+catalog sweeps hourly; `POST /settings/retention/sweep` runs one now, for administrators. A run
+can also be deleted outright (`DELETE /workflows/{rid}/executions/{eid}`, the Delete button of
+its page), which takes its tables with it; a run a dataset version derives from is refused.
+
 ## Ports
 
 | Port (host) | Service |
@@ -111,7 +118,7 @@ cluster): Keycloak imports a realm only once.
 |---|---|
 | `smoke-catalog.sh` | Auth, workflow versions by content and JSON patch, validation, sharing through the PDP, datasets, MCP |
 | `smoke-run.sh` | Compile and run on the unit, results, port-level lineage reported back to the catalog, a result saved as a dataset version produced by the run |
-| `smoke-retention.py` | Every execution keeps its results after later runs and after the unit's idle release |
+| `smoke-retention.py` | Every execution keeps its results after later runs and after the unit's idle release; a run can be deleted with its tables; an administrator's sweep under a retention policy expires old results (the record stays, the rows answer 410) |
 | `smoke-env.py` | A Python UDF fails without its package and completes in an Environment that lists it |
 | `smoke-operator.py` | A custom Python operator, created as a resource and used by its URI, runs in a pinned environment; deleting it is refused while a workflow references it |
 | `smoke-share.py` | A viewer of a project finds its workflow, run and dataset in search, reads them and runs the workflow, but cannot edit, delete or lease the owner's credential |

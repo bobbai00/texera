@@ -82,6 +82,8 @@ type BlobStore interface {
 	Get(ctx context.Context, digest string, offset, length int64) (io.ReadCloser, error)
 	// Presign returns a URL that reads the blob, served under filename, for ttl.
 	Presign(ctx context.Context, digest, filename string, ttl time.Duration) (string, error)
+	// Delete removes the bytes; a digest that is not stored is not an error.
+	Delete(ctx context.Context, digest string) error
 }
 
 // ErrBlobNotFound is returned when a digest is not stored.

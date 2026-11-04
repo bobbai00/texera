@@ -110,6 +110,13 @@ func (b *Blobs) Get(_ context.Context, digest string, offset, length int64) (io.
 	return io.NopCloser(bytes.NewReader(data[offset:end])), nil
 }
 
+func (b *Blobs) Delete(_ context.Context, digest string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.data, digest)
+	return nil
+}
+
 func (b *Blobs) Presign(_ context.Context, digest, filename string, ttl time.Duration) (string, error) {
 	return b.PublicURL + "/" + digest + "?filename=" + filename + "&ttl=" + ttl.String(), nil
 }

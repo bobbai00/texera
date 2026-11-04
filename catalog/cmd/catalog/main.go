@@ -152,6 +152,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	go svc.RunOperatorSync(ctx, 30*time.Second)
+	go svc.RunRetention(ctx, time.Hour)
 
 	resolver := auth.NewResolver(identity, st)
 	srv := server.New(svc, resolver, pdp, cfg.PublicURL, log)

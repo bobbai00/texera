@@ -62,6 +62,8 @@ model ExecutionStatus {
   ports?: PortSummary[];
   startedAt?: utcDateTime;
   finishedAt?: utcDateTime;
+  @doc("When the retention policy dropped the run's result tables: the summaries stay, the rows are gone.")
+  resultsExpiredAt?: utcDateTime;
 }
 
 @doc("A port of an execution: an output port with its result, or an input port with its binding.")

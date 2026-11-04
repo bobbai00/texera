@@ -153,6 +153,18 @@ func (s *Server) routeWorkflows() {
 		return nil
 	})
 
+	s.handle("DELETE "+base+"/executions/{eid}", func(w http.ResponseWriter, r *http.Request) error {
+		rid, eid, err := workflowAndExecution(r)
+		if err != nil {
+			return err
+		}
+		if err := s.svc.DeleteExecution(ctxOf(r), callerOf(r), rid, eid); err != nil {
+			return err
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return nil
+	})
+
 	s.handle("POST "+base+"/executions/{eid}/cancel", func(w http.ResponseWriter, r *http.Request) error {
 		rid, eid, err := workflowAndExecution(r)
 		if err != nil {

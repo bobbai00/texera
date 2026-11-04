@@ -17,11 +17,16 @@
 # under the License.
 
 """Results are kept per execution: a second run of an edited workflow does not disturb the
-first run's rows, and both stay readable after the unit's idle release."""
+first run's rows, and both stay readable after the unit's idle release. Then retention: a run
+can be deleted with its tables, and the policy expires old results (the record stays, the rows
+are gone) when an administrator sweeps; the policy is put back afterwards. The sweep under
+`PT0S` expires every finished run on the stack, so this runs on a dev stack only."""
 import argparse
 import importlib.util
 import sys
 import time
+import urllib.error
+import urllib.request
 
 spec = importlib.util.spec_from_file_location("smoke_chat", __file__.rsplit("/", 1)[0] + "/smoke-chat.py")
 c = importlib.util.module_from_spec(spec)
@@ -30,6 +35,25 @@ spec.loader.exec_module(c)
 
 def rows(tok: str, rid: str, eid: str) -> list:
     return c.api(tok, "GET", f"/workflows/{rid}/executions/{eid}/operators/avg/ports/output-0/rows?limit=10")["rows"]
+
+
+def status_of(tok: str, method: str, path: str) -> int:
+    req = urllib.request.Request(f"{c.API}{path}", method=method, headers={"Authorization": f"Bearer {tok}"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def retention(admin: str, policy: dict | None) -> None:
+    """Sets (or clears) the platform's retention policy."""
+    spec = c.api(admin, "GET", "/settings")["spec"]
+    if policy:
+        spec["retention"] = policy
+    else:
+        spec.pop("retention", None)
+    c.api(admin, "PUT", "/settings", {"spec": spec})
 
 
 def main() -> int:
@@ -78,6 +102,23 @@ def main() -> int:
     late_first, late_second = rows(tok, rid, first_eid), rows(tok, rid, second_eid)
     print(f"after the idle release: v1 {'same' if late_first == first_rows else late_first}, v2 {'same' if late_second == second_rows else late_second}")
     ok &= late_first == first_rows and late_second == second_rows
+
+    # Retention. Deleting a run takes its tables with it; the policy expires the rest.
+    status = status_of(tok, "DELETE", f"/workflows/{rid}/executions/{first_eid}")
+    print(f"delete v1 run: {status}; its rows afterwards: {status_of(tok, 'GET', f'/workflows/{rid}/executions/{first_eid}/operators/avg/ports/output-0/rows')}")
+    ok &= status == 204 and status_of(tok, "GET", f"/workflows/{rid}/executions/{first_eid}") == 404
+    admin = c.token("texera-admin", "admin")
+    try:
+        retention(admin, {"results": "PT0S"})
+        time.sleep(1)
+        sweep = c.api(admin, "POST", "/settings/retention/sweep")
+        expired = c.api(tok, "GET", f"/workflows/{rid}/executions/{second_eid}")["status"]
+        gone = status_of(tok, "GET", f"/workflows/{rid}/executions/{second_eid}/operators/avg/ports/output-0/rows")
+        print(f"sweep with results=PT0S: {sweep}; v2 run {expired['phase']}, expired at {expired.get('resultsExpiredAt')}, rows {gone}")
+        ok &= sweep["executionsExpired"] >= 1 and bool(expired.get("resultsExpiredAt")) and gone == 410
+    finally:
+        retention(admin, None)
+        print("retention policy cleared")
 
     print("\nRESULT:", "PASS" if ok else "CHECK")
     return 0 if ok else 1

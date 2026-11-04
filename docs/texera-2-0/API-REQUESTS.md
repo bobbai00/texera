@@ -68,6 +68,14 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    authenticates every caller and authorizes with the catalog's grants, so a person reads
    results through the catalog only. Deleting an execution drops its namespace; deleting a
    provisioned unit deletes its client and credential.
+6. **Retention.** `DELETE /workflows/{rid}/executions/{eid}` removes a finished run with its
+   tables (409 while it runs or while a dataset version derives from it; `can_delete`, so the
+   runner and the owners above). The settings' `retention.results` (ISO 8601 duration) expires
+   the result tables of older finished runs: the record keeps its summaries, gets
+   `status.resultsExpiredAt`, and its rows, ports and saves answer 410 `expired`.
+   `retention.blobs` (default a day) removes uploaded files that no version and no staging
+   names. The catalog sweeps hourly; administrators run one with
+   `POST /settings/retention/sweep`.
 
 ## agent runtime
 

@@ -3615,6 +3615,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-texera-permission: public
+  /catalog/v1/settings/retention/sweep:
+    post:
+      operationId: SettingsRoutes_sweep
+      description: 'Run one retention sweep now, as the hourly one does: expire the results past the policy and remove unreferenced blobs.'
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionSweep'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: admin
   /catalog/v1/skills:
     get:
       operationId: Skills_list
@@ -4099,6 +4118,30 @@ paths:
         description: 'Get an execution of a workflow: phase, per-operator states, errors and port results.'
         readOnlyHint: true
       x-texera-permission: read
+    delete:
+      operationId: Workflows_deleteExecution
+      description: 'What a port of an execution holds: for an output port its result, for an input port its binding.'
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: eid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: delete
   /catalog/v1/workflows/{rid}/executions/{eid}/cancel:
     post:
       operationId: Workflows_cancelExecution
@@ -4130,7 +4173,6 @@ paths:
   /catalog/v1/workflows/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}:
     get:
       operationId: Workflows_readPort
-      description: 'What a port of an execution holds: for an output port its result, for an input port its binding.'
       parameters:
         - name: rid
           in: path
@@ -5777,6 +5819,10 @@ components:
         finishedAt:
           type: string
           format: date-time
+        resultsExpiredAt:
+          type: string
+          format: date-time
+          description: "When the retention policy dropped the run's result tables: the summaries stay, the rows are gone."
     FileLink:
       type: object
       required:
@@ -6933,6 +6979,31 @@ components:
         nextCursor:
           type: string
           description: Opaque cursor for the next page; absent on the last page.
+    Retention:
+      type: object
+      properties:
+        results:
+          type: string
+          format: duration
+          description: "Finished runs keep their result tables this long; absent: forever. The run's record and its summaries stay."
+        blobs:
+          type: string
+          format: duration
+          description: 'An uploaded file that no version and no staging names is removed this long after its upload; absent: one day.'
+      description: How long the catalog keeps what runs and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).
+    RetentionSweep:
+      type: object
+      required:
+        - executionsExpired
+        - blobsDeleted
+      properties:
+        executionsExpired:
+          type: integer
+          format: int32
+        blobsDeleted:
+          type: integer
+          format: int32
+      description: What one retention sweep did.
     Rid:
       type: string
       description: Resource id, a UUID.
@@ -7060,6 +7131,8 @@ components:
           type: object
           additionalProperties:
             type: boolean
+        retention:
+          $ref: '#/components/schemas/Retention'
     SettingsStatus:
       type: object
     Skill:

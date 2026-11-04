@@ -76,6 +76,14 @@ func (s *Server) routeIAM() {
 		writeJSON(w, http.StatusOK, catalog.Envelope(res))
 		return nil
 	})
+	s.handle("POST "+Prefix+"/settings/retention/sweep", func(w http.ResponseWriter, r *http.Request) error {
+		out, err := s.svc.Sweep(ctxOf(r), callerOf(r))
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, out)
+		return nil
+	})
 	s.handle("GET "+Prefix+"/settings/public", func(w http.ResponseWriter, r *http.Request) error {
 		out, err := s.svc.PublicSettings(ctxOf(r))
 		if err != nil {

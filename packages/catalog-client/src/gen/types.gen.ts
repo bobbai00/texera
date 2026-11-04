@@ -850,6 +850,10 @@ export type ExecutionStatus = {
     ports?: Array<PortSummary>;
     startedAt?: string;
     finishedAt?: string;
+    /**
+     * When the retention policy dropped the run's result tables: the summaries stay, the rows are gone.
+     */
+    resultsExpiredAt?: string;
 };
 
 export type FileLink = {
@@ -1584,6 +1588,28 @@ export type ResourcePage = {
 };
 
 /**
+ * How long the catalog keeps what runs and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).
+ */
+export type Retention = {
+    /**
+     * Finished runs keep their result tables this long; absent: forever. The run's record and its summaries stay.
+     */
+    results?: string;
+    /**
+     * An uploaded file that no version and no staging names is removed this long after its upload; absent: one day.
+     */
+    blobs?: string;
+};
+
+/**
+ * What one retention sweep did.
+ */
+export type RetentionSweep = {
+    executionsExpired: number;
+    blobsDeleted: number;
+};
+
+/**
  * Resource id, a UUID.
  */
 export type Rid = string;
@@ -1685,6 +1711,7 @@ export type SettingsSpec = {
     features?: {
         [key: string]: boolean;
     };
+    retention?: Retention;
 };
 
 export type SettingsStatus = {
@@ -5444,6 +5471,31 @@ export type SettingsRoutesPublicResponses = {
 
 export type SettingsRoutesPublicResponse = SettingsRoutesPublicResponses[keyof SettingsRoutesPublicResponses];
 
+export type SettingsRoutesSweepData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/catalog/v1/settings/retention/sweep';
+};
+
+export type SettingsRoutesSweepErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type SettingsRoutesSweepError = SettingsRoutesSweepErrors[keyof SettingsRoutesSweepErrors];
+
+export type SettingsRoutesSweepResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: RetentionSweep;
+};
+
+export type SettingsRoutesSweepResponse = SettingsRoutesSweepResponses[keyof SettingsRoutesSweepResponses];
+
 export type SkillsListData = {
     body?: never;
     path?: never;
@@ -5839,6 +5891,34 @@ export type WorkflowsListExecutionsResponses = {
 };
 
 export type WorkflowsListExecutionsResponse = WorkflowsListExecutionsResponses[keyof WorkflowsListExecutionsResponses];
+
+export type WorkflowsDeleteExecutionData = {
+    body?: never;
+    path: {
+        rid: Rid;
+        eid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/workflows/{rid}/executions/{eid}';
+};
+
+export type WorkflowsDeleteExecutionErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type WorkflowsDeleteExecutionError = WorkflowsDeleteExecutionErrors[keyof WorkflowsDeleteExecutionErrors];
+
+export type WorkflowsDeleteExecutionResponses = {
+    /**
+     * There is no content to send for this request, but the headers may be useful.
+     */
+    204: void;
+};
+
+export type WorkflowsDeleteExecutionResponse = WorkflowsDeleteExecutionResponses[keyof WorkflowsDeleteExecutionResponses];
 
 export type WorkflowsReadExecutionData = {
     body?: never;

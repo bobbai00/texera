@@ -411,6 +411,42 @@ func (s *Service) Cancel(ctx context.Context, caller *auth.Caller, workflowRID, 
 	return r, wrap(err, "execution")
 }
 
+// DeleteExecution removes a finished run with its tables. A run still going must be cancelled
+// first; a run a dataset version derives from stays, as its lineage says.
+func (s *Service) DeleteExecution(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID) error {
+	r, err := s.Execution(ctx, caller, workflowRID, eid)
+	if err != nil {
+		return err
+	}
+	if err := s.require(ctx, caller, authz.Delete, r.RID); err != nil {
+		return err
+	}
+	var st api.ExecutionStatus
+	_ = json.Unmarshal(r.Status, &st)
+	if !isTerminal(st.Phase) {
+		return Conflict("running", "the run is still going; cancel it first", nil)
+	}
+	deps, err := s.Store.Dependents(ctx, r.RID, 0)
+	if err != nil {
+		return err
+	}
+	if len(deps) > 0 {
+		var from []string
+		for _, d := range deps {
+			from = append(from, d.From)
+		}
+		return Conflict("referenced", fmt.Sprintf("%s is referenced by %d resources", r.Name, len(from)), map[string]any{"dependents": from})
+	}
+	if err := s.beforeDelete(ctx, r); err != nil {
+		return err
+	}
+	if err := s.Store.DeleteResource(ctx, r.RID); err != nil {
+		return wrap(err, "execution")
+	}
+	s.Relay.Flush(ctx)
+	return nil
+}
+
 // executionNamespace is the namespace an execution's tables live in: the catalog makes it in
 // the lake before the run and drops it with the execution.
 func executionNamespace(rid uuid.UUID) string {
@@ -492,6 +528,9 @@ func (s *Service) Rows(ctx context.Context, caller *auth.Caller, workflowRID, ei
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
+	if at := resultsExpired(r); at != nil {
+		return nil, Gone("the run's results", *at)
+	}
 	table := ""
 	var st api.ExecutionStatus
 	_ = json.Unmarshal(r.Status, &st)
@@ -527,6 +566,9 @@ func (s *Service) SavePort(ctx context.Context, caller *auth.Caller, workflowRID
 	exec, err := s.Execution(ctx, caller, workflowRID, eid)
 	if err != nil {
 		return nil, nil, err
+	}
+	if at := resultsExpired(exec); at != nil {
+		return nil, nil, Gone("the run's results", *at)
 	}
 	var st api.ExecutionStatus
 	_ = json.Unmarshal(exec.Status, &st)

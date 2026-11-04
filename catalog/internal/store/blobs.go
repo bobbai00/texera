@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -59,4 +60,33 @@ func (s *Store) ListStaged(ctx context.Context, rid uuid.UUID) ([]StagedFile, er
 		err := row.Scan(&f.RID, &f.Path, &f.SHA256, &f.Size, &f.ContentType, &f.UploadedAt)
 		return f, err
 	})
+}
+
+// UnreferencedBlobs lists blobs older than the instant that no staged file and no version
+// manifest names, oldest first.
+func (s *Store) UnreferencedBlobs(ctx context.Context, olderThan time.Time, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `SELECT b.sha256 FROM blob b
+		WHERE b.created_at < $1
+		  AND NOT EXISTS (SELECT 1 FROM dataset_staging st WHERE st.sha256 = b.sha256)
+		  AND NOT EXISTS (SELECT 1 FROM resource_version v WHERE v.content_kind = 'manifest'
+		      AND v.content -> 'files' @> jsonb_build_array(jsonb_build_object('sha256', b.sha256)))
+		ORDER BY b.created_at LIMIT $2`, olderThan, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (string, error) {
+		var sha string
+		err := row.Scan(&sha)
+		return sha, err
+	})
+}
+
+// DeleteBlob forgets a blob; one that is not there is not an error.
+func (s *Store) DeleteBlob(ctx context.Context, sha256 string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM blob WHERE sha256 = $1`, sha256)
+	return err
 }

@@ -102,6 +102,11 @@ func Conflict(code, msg string, details map[string]any) *Error {
 	return &Error{Status: http.StatusConflict, Code: code, Message: msg, Details: details}
 }
 
+// Gone names what the retention policy removed.
+func Gone(what string, at time.Time) *Error {
+	return &Error{Status: http.StatusGone, Code: "expired", Message: what + " expired on " + at.UTC().Format(time.RFC3339), Details: map[string]any{"expiredAt": at.UTC()}}
+}
+
 // Precondition is a failed If-Match.
 func Precondition() *Error {
 	return &Error{Status: http.StatusPreconditionFailed, Code: "precondition_failed", Message: "the resource changed; reload it and send its etag"}

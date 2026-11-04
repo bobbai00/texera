@@ -142,6 +142,18 @@ func (b *Blobs) Get(ctx context.Context, digest string, offset, length int64) (i
 	return out.Body, nil
 }
 
+// Delete removes the object; a missing one is not an error.
+func (b *Blobs) Delete(ctx context.Context, digest string) error {
+	if _, err := b.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(b.opts.Bucket), Key: aws.String(Key(digest))}); err != nil {
+		var noKey *types.NoSuchKey
+		if errors.As(err, &noKey) || strings.Contains(err.Error(), "NoSuchKey") {
+			return nil
+		}
+		return fmt.Errorf("delete %s: %w", digest, err)
+	}
+	return nil
+}
+
 // Presign returns a GET URL served under filename.
 func (b *Blobs) Presign(ctx context.Context, digest, filename string, ttl time.Duration) (string, error) {
 	in := &s3.GetObjectInput{Bucket: aws.String(b.opts.Bucket), Key: aws.String(Key(digest))}

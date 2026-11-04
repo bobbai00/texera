@@ -1,8 +1,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { workflowsCancelExecution, workflowsSavePort } from "@texera/catalog-client";
+import { workflowsCancelExecution, workflowsDeleteExecution, workflowsSavePort } from "@texera/catalog-client";
 import type { Execution, ExecutionStatus, PortSummary } from "@texera/catalog-client/types";
 import { Badge, Button, DataTable, EmptyState, ErrorNote, Skeleton, Tab, TabPanel, Tabs, TabsList, cn, formatDuration, formatNumber, timeAgo } from "@texera/ui";
-import { AlertTriangle, Braces, ChevronLeft, ChevronRight, Database, GitBranch, Loader2, Square, Table2, Workflow } from "lucide-react";
+import { AlertTriangle, Braces, ChevronLeft, ChevronRight, Database, GitBranch, Loader2, Square, Table2, Trash2, Workflow } from "lucide-react";
 import { useState } from "react";
 import { unwrap } from "../api";
 import { UriChip } from "../shell/Chips";
@@ -30,6 +30,15 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
   const cancel = useMutation({
     mutationFn: () => unwrap(workflowsCancelExecution({ path: { rid: workflow, eid: ref.rid } })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["resource", ref.rid] }),
+  });
+  const { expand } = useOpenResource();
+  // A finished run can be deleted with its result tables; the workflow stays open.
+  const remove = useMutation({
+    mutationFn: () => unwrap(workflowsDeleteExecution({ path: { rid: workflow, eid: ref.rid } })),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
+      expand({ kind: "workflow", rid: workflow });
+    },
   });
   const [tab, setTab] = useState("results");
   if (error) return <ErrorNote error={error} prefix="Could not open this run" className="m-4" />;
@@ -67,11 +76,22 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
                 <Square className="fill-current" /> Stop
               </Button>
             )}
+            {!live && (
+              <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending} data-delete-run title="Delete this run and its result tables">
+                <Trash2 /> Delete
+              </Button>
+            )}
           </>
         }
       />
       {status.error !== undefined && status.error !== null && <ErrorNote error={status.error} prefix="The run failed" className="m-3" />}
       {cancel.error && <ErrorNote error={cancel.error} prefix="Could not stop the run" className="m-3" />}
+      {remove.error && <ErrorNote error={remove.error} prefix="Could not delete the run" className="m-3" />}
+      {status.resultsExpiredAt && (
+        <p className="mx-3 mt-3 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground" data-results-expired>
+          The result tables expired {timeAgo(status.resultsExpiredAt)} under the retention policy; the summaries below stay.
+        </p>
+      )}
       <Tabs value={tab} onValueChange={v => setTab(String(v))} className="flex min-h-0 flex-1 flex-col">
         <TabsList>
           <Tab value="results">
@@ -96,7 +116,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
           </Tab>
         </TabsList>
         <TabPanel value="results" className="flex min-h-0 flex-1 flex-col">
-          <Results execution={x} workflow={workflow} ports={ports} completed={status.phase === "completed"} />
+          <Results execution={x} workflow={workflow} ports={ports} completed={status.phase === "completed" && !status.resultsExpiredAt} expired={Boolean(status.resultsExpiredAt)} />
         </TabPanel>
         <TabPanel value="operators" className="scrollbar-thin overflow-y-auto">
           {operators.length === 0 ? (
@@ -128,11 +148,20 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
   );
 }
 
-function Results({ execution, workflow, ports, completed }: { execution: Execution; workflow: string; ports: PortSummary[]; completed: boolean }) {
+function Results({ execution, workflow, ports, completed, expired }: { execution: Execution; workflow: string; ports: PortSummary[]; completed: boolean; expired: boolean }) {
   const [picked, setPicked] = useState<string>();
   const key = (p: PortSummary) => `${p.operatorID}:${p.portID}`;
   const active = ports.find(p => key(p) === picked) ?? ports[0];
   if (!active) return <EmptyState>No port results yet.</EmptyState>;
+  if (expired) {
+    return (
+      <DataTable
+        columns={[{ name: "operator" }, { name: "port" }, { name: "rows", type: "long" }]}
+        rows={ports.map(p => [p.operatorID, p.portID, p.rows !== undefined ? formatNumber(p.rows) : ""])}
+        className="min-h-0"
+      />
+    );
+  }
   return (
     <>
       <div className="scrollbar-thin flex gap-1 overflow-x-auto border-b px-2 py-1.5" role="tablist">
