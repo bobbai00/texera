@@ -30,6 +30,8 @@ model CredentialSpec {
 model CredentialStatus {
   hasSecret: boolean;
   rotatedAt?: utcDateTime;
+  @doc("Where the value lives in the secret store; set by the platform, never a value.")
+  secretPath?: string;
 }
 
 @doc("The secret's fields, e.g. {value} for an API key, {username, password} for basic.")

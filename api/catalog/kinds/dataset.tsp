@@ -41,6 +41,21 @@ model CommitFiles {
   message?: string;
 }
 
+@doc("A whole file.")
+model FileBytes {
+  @statusCode statusCode: 200;
+  @header contentType: "application/octet-stream";
+  @body data: bytes;
+}
+
+@doc("A range of a file.")
+model FilePartial {
+  @statusCode statusCode: 206;
+  @header contentType: "application/octet-stream";
+  @header("Content-Range") contentRange: string;
+  @body data: bytes;
+}
+
 model FileLink {
   @doc("A presigned URL valid for `expiresInSeconds`.")
   url: string;
@@ -99,10 +114,7 @@ interface FileRoutes<TVersion> {
     @path path: string,
     @query maxBytes?: int32,
     @header("Range") range?: string,
-  ): {
-    @header contentType: "application/octet-stream";
-    @body data: bytes;
-  } | Error;
+  ): FileBytes | FilePartial | Error;
 
   @doc("A presigned URL for a file of a version, for engines and browsers.")
   @get
@@ -156,9 +168,6 @@ namespace Routes {
       @path path: string,
       @query maxBytes?: int32,
       @header("Range") range?: string,
-    ): {
-      @header contentType: "application/octet-stream";
-      @body data: bytes;
-    } | Error;
+    ): FileBytes | FilePartial | Error;
   }
 }

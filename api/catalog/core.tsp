@@ -48,7 +48,7 @@ enum Relation {
   user,
 }
 
-@doc("What a list returns per item: the metadata and status only, or the full envelope.")
+@doc("How much of a heavy spec a list carries: `summary` leaves out the large fields, `full` keeps them.")
 enum View {
   summary,
   full,
@@ -235,7 +235,6 @@ interface KindRoutes<T, TPage, TCreate, TUpdate> {
     @query parent?: Rid,
     @query project?: Rid,
     @query q?: string,
-    @query view?: View,
     @query limit?: int32,
     @query cursor?: string,
   ): Ok<TPage> | Error;

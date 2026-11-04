@@ -43,7 +43,6 @@ namespace Routes {
       @query parent?: Rid,
       @query project?: Rid,
       @query origin?: Rid,
-      @query view?: View,
       @query limit?: int32,
       @query cursor?: string,
     ): Ok<ResourcePage> | Error;

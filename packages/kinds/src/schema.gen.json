@@ -1243,6 +1243,10 @@
         "rotatedAt": {
           "format": "date-time",
           "type": "string"
+        },
+        "secretPath": {
+          "description": "Where the value lives in the secret store; set by the platform, never a value.",
+          "type": "string"
         }
       },
       "required": [
@@ -4320,7 +4324,7 @@
       "type": "object"
     },
     "View": {
-      "description": "What a list returns per item: the metadata and status only, or the full envelope.",
+      "description": "How much of a heavy spec a list carries: `summary` leaves out the large fields, `full` keeps them.",
       "enum": [
         "summary",
         "full"

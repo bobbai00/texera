@@ -114,7 +114,8 @@ export const zCredentialSpec = z.object({
 
 export const zCredentialStatus = z.object({
     hasSecret: z.boolean(),
-    rotatedAt: z.iso.datetime().optional()
+    rotatedAt: z.iso.datetime().optional(),
+    secretPath: z.string().optional()
 });
 
 export const zDatasetSpec = z.object({
@@ -718,7 +719,7 @@ export const zTurn = z.object({
 });
 
 /**
- * What a list returns per item: the metadata and status only, or the full envelope.
+ * How much of a heavy spec a list carries: `summary` leaves out the large fields, `full` keeps them.
  */
 export const zView = z.enum(['summary', 'full']);
 
@@ -1550,7 +1551,6 @@ export const zAgentTemplatesListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -1628,7 +1628,6 @@ export const zComputingUnitsListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -1729,7 +1728,6 @@ export const zConversationsListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -1850,7 +1848,6 @@ export const zCredentialsListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -1926,7 +1923,6 @@ export const zDatasetsListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -2067,7 +2063,7 @@ export const zDatasetsDownloadQuery = z.object({
 });
 
 /**
- * The request has succeeded.
+ * A whole file.
  */
 export const zDatasetsDownloadResponse = z.string();
 
@@ -2086,7 +2082,6 @@ export const zEnvironmentsListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -2176,7 +2171,6 @@ export const zExecutionsListQuery = z.object({
     conversation: zRid.optional(),
     computingUnit: zRid.optional(),
     phase: zExecutionPhase.optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -2190,7 +2184,6 @@ export const zMcpServersListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -2280,7 +2273,6 @@ export const zModelEndpointsListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -2334,7 +2326,6 @@ export const zModelsListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -2475,7 +2466,7 @@ export const zModelsDownloadQuery = z.object({
 });
 
 /**
- * The request has succeeded.
+ * A whole file.
  */
 export const zModelsDownloadResponse = z.string();
 
@@ -2593,7 +2584,6 @@ export const zProjectsListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -2649,7 +2639,6 @@ export const zResourcesSearchQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     origin: zRid.optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -2809,7 +2798,6 @@ export const zSkillsListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -2887,7 +2875,6 @@ export const zWorkflowsListQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -2954,7 +2941,6 @@ export const zWorkflowsListExecutionsPath = z.object({
 
 export const zWorkflowsListExecutionsQuery = z.object({
     phase: zExecutionPhase.optional(),
-    view: zView.optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });

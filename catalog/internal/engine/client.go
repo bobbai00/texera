@@ -167,6 +167,18 @@ func (u *Unit) BuildEnvironment(ctx context.Context, req EnvironmentRequest) (*E
 	return resp.JSON200, nil
 }
 
+// EnvironmentStatus reads the state of an environment build on the unit.
+func (u *Unit) EnvironmentStatus(ctx context.Context, rid string, vno int32) (*EnvironmentBuild, error) {
+	resp, err := u.client.EnvironmentsStatusWithResponse(ctx, rid, vno)
+	if err != nil {
+		return nil, err
+	}
+	if err := check(resp.StatusCode(), resp.Body); err != nil {
+		return nil, err
+	}
+	return resp.JSON200, nil
+}
+
 // MustJSON renders a value as JSON for logs; never fails.
 func MustJSON(v any) string {
 	b, err := json.Marshal(v)

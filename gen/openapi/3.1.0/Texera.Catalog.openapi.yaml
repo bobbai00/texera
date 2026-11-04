@@ -52,12 +52,6 @@ paths:
           schema:
             type: string
           explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
-          explode: false
         - name: limit
           in: query
           required: false
@@ -276,12 +270,6 @@ paths:
           required: false
           schema:
             type: string
-          explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
           explode: false
         - name: limit
           in: query
@@ -569,12 +557,6 @@ paths:
           required: false
           schema:
             type: string
-          explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
           explode: false
         - name: limit
           in: query
@@ -908,12 +890,6 @@ paths:
           schema:
             type: string
           explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
-          explode: false
         - name: limit
           in: query
           required: false
@@ -1118,12 +1094,6 @@ paths:
           required: false
           schema:
             type: string
-          explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
           explode: false
         - name: limit
           in: query
@@ -1499,7 +1469,18 @@ paths:
             type: string
       responses:
         '200':
-          description: The request has succeeded.
+          description: A whole file.
+          content:
+            application/octet-stream:
+              schema:
+                contentMediaType: application/octet-stream
+        '206':
+          description: A range of a file.
+          headers:
+            Content-Range:
+              required: true
+              schema:
+                type: string
           content:
             application/octet-stream:
               schema:
@@ -1572,12 +1553,6 @@ paths:
           required: false
           schema:
             type: string
-          explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
           explode: false
         - name: limit
           in: query
@@ -1828,12 +1803,6 @@ paths:
           schema:
             $ref: '#/components/schemas/ExecutionPhase'
           explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
-          explode: false
         - name: limit
           in: query
           required: false
@@ -1883,12 +1852,6 @@ paths:
           required: false
           schema:
             type: string
-          explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
           explode: false
         - name: limit
           in: query
@@ -2154,12 +2117,6 @@ paths:
           schema:
             type: string
           explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
-          explode: false
         - name: limit
           in: query
           required: false
@@ -2308,12 +2265,6 @@ paths:
           required: false
           schema:
             type: string
-          explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
           explode: false
         - name: limit
           in: query
@@ -2678,7 +2629,18 @@ paths:
             type: string
       responses:
         '200':
-          description: The request has succeeded.
+          description: A whole file.
+          content:
+            application/octet-stream:
+              schema:
+                contentMediaType: application/octet-stream
+        '206':
+          description: A range of a file.
+          headers:
+            Content-Range:
+              required: true
+              schema:
+                type: string
           content:
             application/octet-stream:
               schema:
@@ -3043,12 +3005,6 @@ paths:
           schema:
             type: string
           explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
-          explode: false
         - name: limit
           in: query
           required: false
@@ -3209,12 +3165,6 @@ paths:
           required: false
           schema:
             $ref: '#/components/schemas/Rid'
-          explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
           explode: false
         - name: limit
           in: query
@@ -3688,12 +3638,6 @@ paths:
           schema:
             type: string
           explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
-          explode: false
         - name: limit
           in: query
           required: false
@@ -3907,12 +3851,6 @@ paths:
           schema:
             type: string
           explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
-          explode: false
         - name: limit
           in: query
           required: false
@@ -4100,12 +4038,6 @@ paths:
           required: false
           schema:
             $ref: '#/components/schemas/ExecutionPhase'
-          explode: false
-        - name: view
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/View'
           explode: false
         - name: limit
           in: query
@@ -5370,6 +5302,9 @@ components:
         rotatedAt:
           type: string
           format: date-time
+        secretPath:
+          type: string
+          description: Where the value lives in the secret store; set by the platform, never a value.
     Dataset:
       type: object
       required:
@@ -7549,7 +7484,7 @@ components:
       enum:
         - summary
         - full
-      description: 'What a list returns per item: the metadata and status only, or the full envelope.'
+      description: 'How much of a heavy spec a list carries: `summary` leaves out the large fields, `full` keeps them.'
     Visibility:
       type: string
       enum:

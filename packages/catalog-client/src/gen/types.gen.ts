@@ -555,6 +555,10 @@ export type CredentialSpec = {
 export type CredentialStatus = {
     hasSecret: boolean;
     rotatedAt?: string;
+    /**
+     * Where the value lives in the secret store; set by the platform, never a value.
+     */
+    secretPath?: string;
 };
 
 /**
@@ -2007,7 +2011,7 @@ export type VersionSummaryPage = {
 };
 
 /**
- * What a list returns per item: the metadata and status only, or the full envelope.
+ * How much of a heavy spec a list carries: `summary` leaves out the large fields, `full` keeps them.
  */
 export type View = 'summary' | 'full';
 
@@ -2174,7 +2178,6 @@ export type AgentTemplatesListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -2373,7 +2376,6 @@ export type ComputingUnitsListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -2651,7 +2653,6 @@ export type ConversationsListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -2959,7 +2960,6 @@ export type CredentialsListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -3154,7 +3154,6 @@ export type DatasetsListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -3511,9 +3510,13 @@ export type DatasetsDownloadError = DatasetsDownloadErrors[keyof DatasetsDownloa
 
 export type DatasetsDownloadResponses = {
     /**
-     * The request has succeeded.
+     * A whole file.
      */
     200: Blob | File;
+    /**
+     * A range of a file.
+     */
+    206: Blob | File;
 };
 
 export type DatasetsDownloadResponse = DatasetsDownloadResponses[keyof DatasetsDownloadResponses];
@@ -3554,7 +3557,6 @@ export type EnvironmentsListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -3781,7 +3783,6 @@ export type ExecutionsListData = {
         conversation?: Rid;
         computingUnit?: Rid;
         phase?: ExecutionPhase;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -3813,7 +3814,6 @@ export type McpServersListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -4066,7 +4066,6 @@ export type ModelEndpointsListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -4207,7 +4206,6 @@ export type ModelsListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -4564,9 +4562,13 @@ export type ModelsDownloadError = ModelsDownloadErrors[keyof ModelsDownloadError
 
 export type ModelsDownloadResponses = {
     /**
-     * The request has succeeded.
+     * A whole file.
      */
     200: Blob | File;
+    /**
+     * A range of a file.
+     */
+    206: Blob | File;
 };
 
 export type ModelsDownloadResponse = ModelsDownloadResponses[keyof ModelsDownloadResponses];
@@ -4863,7 +4865,6 @@ export type ProjectsListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -5006,7 +5007,6 @@ export type ResourcesSearchData = {
         parent?: Rid;
         project?: Rid;
         origin?: Rid;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -5428,7 +5428,6 @@ export type SkillsListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -5627,7 +5626,6 @@ export type WorkflowsListData = {
         parent?: Rid;
         project?: Rid;
         q?: string;
-        view?: View;
         limit?: number;
         cursor?: string;
     };
@@ -5795,7 +5793,6 @@ export type WorkflowsListExecutionsData = {
     };
     query?: {
         phase?: ExecutionPhase;
-        view?: View;
         limit?: number;
         cursor?: string;
     };

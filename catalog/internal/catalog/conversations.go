@@ -1,0 +1,169 @@
+package catalog
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/apache/texera/catalog/internal/api"
+	"github.com/apache/texera/catalog/internal/auth"
+	"github.com/apache/texera/catalog/internal/authz"
+	"github.com/apache/texera/catalog/internal/kinds"
+	"github.com/apache/texera/catalog/internal/store"
+	"github.com/apache/texera/catalog/internal/uri"
+)
+
+var (
+	conversationKind, _ = kinds.ByName("conversation")
+	templateKind, _     = kinds.ByName("agent-template")
+)
+
+// Messages lists a conversation's messages after a seq.
+func (s *Service) Messages(ctx context.Context, caller *auth.Caller, rid uuid.UUID, after int64, limit int) ([]store.Message, string, error) {
+	if _, err := s.Get(ctx, caller, &conversationKind, rid); err != nil {
+		return nil, "", err
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	msgs, err := s.Store.ListMessages(ctx, rid, after, limit+1)
+	if err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(msgs) > limit {
+		msgs = msgs[:limit]
+		next = encodeCursor(int(msgs[len(msgs)-1].Seq))
+	}
+	return msgs, next, nil
+}
+
+// Append adds a message to a conversation.
+func (s *Service) Append(ctx context.Context, caller *auth.Caller, rid uuid.UUID, in api.AppendMessage) (*store.Message, error) {
+	if _, err := s.Get(ctx, caller, &conversationKind, rid); err != nil {
+		return nil, err
+	}
+	if err := s.require(ctx, caller, authz.Write, rid); err != nil {
+		return nil, err
+	}
+	var template *string
+	if in.Template != nil && *in.Template != "" {
+		t := string(*in.Template)
+		if ref, err := uri.Parse(t); err != nil || ref.Kind.Name != "agent-template" {
+			return nil, Invalid("template must be an agent template URI", nil)
+		}
+		template = &t
+	}
+	m, err := s.Store.AppendMessage(ctx, store.NewMessage{ConversationRID: rid, Turn: in.Turn, Role: string(in.Role), AuthorPID: caller.PID(), Template: template, Parts: mustJSON(in.Parts)})
+	if err != nil {
+		return nil, wrap(err, "conversation")
+	}
+	if template != nil {
+		s.recordTemplate(ctx, rid, *template)
+	}
+	return m, nil
+}
+
+// recordTemplate adds a template version to the conversation's participants.
+func (s *Service) recordTemplate(ctx context.Context, rid uuid.UUID, template string) {
+	r, err := s.Store.GetResource(ctx, rid)
+	if err != nil {
+		return
+	}
+	var status api.ConversationStatus
+	_ = json.Unmarshal(r.Status, &status)
+	if status.Templates != nil {
+		for _, t := range *status.Templates {
+			if string(t) == template {
+				return
+			}
+		}
+	}
+	templates := []api.Uri{}
+	if status.Templates != nil {
+		templates = *status.Templates
+	}
+	templates = append(templates, api.Uri(template))
+	_, _ = s.Store.MergeStatus(ctx, rid, mustJSON(map[string]any{"templates": templates}))
+}
+
+// Replace rewrites the parts of a message a turn is still writing.
+func (s *Service) Replace(ctx context.Context, caller *auth.Caller, rid uuid.UUID, seq int64, in api.ReplaceMessage) (*store.Message, error) {
+	if _, err := s.Get(ctx, caller, &conversationKind, rid); err != nil {
+		return nil, err
+	}
+	if err := s.require(ctx, caller, authz.Write, rid); err != nil {
+		return nil, err
+	}
+	var template *string
+	if in.Template != nil && *in.Template != "" {
+		t := string(*in.Template)
+		template = &t
+	}
+	m, err := s.Store.ReplaceMessage(ctx, rid, seq, mustJSON(in.Parts), template)
+	if err != nil {
+		return nil, wrap(err, "message")
+	}
+	return m, nil
+}
+
+// StartTurn takes the conversation's turn lock and pins the template version the turn runs.
+func (s *Service) StartTurn(ctx context.Context, caller *auth.Caller, rid uuid.UUID, template string) (*api.Turn, error) {
+	conv, err := s.Get(ctx, caller, &conversationKind, rid)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.require(ctx, caller, authz.Write, rid); err != nil {
+		return nil, err
+	}
+	var spec api.ConversationSpec
+	_ = json.Unmarshal(conv.Spec, &spec)
+	if template != "" && template != string(spec.Template) {
+		spec.Template = api.Uri(template)
+		if _, _, err := s.UpdateSpec(ctx, caller, conversationKind, UpdateSpecInput{RID: rid, Spec: mustJSON(spec)}); err != nil {
+			return nil, err
+		}
+	}
+	tpl, err := s.resourceByURI(ctx, caller, string(spec.Template), &templateKind)
+	if err != nil {
+		return nil, err
+	}
+	ref, _ := uri.Parse(string(spec.Template))
+	vno := ref.Vno
+	if vno == 0 {
+		vno = tpl.HeadVno
+	}
+	turn := uuid.NewString()
+	if err := s.Store.StartTurn(ctx, rid, turn); err != nil {
+		if store.IsConflict(err) {
+			return nil, Conflict("turn_active", "a turn is already running in this conversation", nil)
+		}
+		return nil, wrap(err, "conversation")
+	}
+	return &api.Turn{Turn: turn, Template: api.Uri(URI(tpl).WithVersion(vno).String()), StartedAt: time.Now().UTC()}, nil
+}
+
+// EndTurn releases the turn lock.
+func (s *Service) EndTurn(ctx context.Context, caller *auth.Caller, rid uuid.UUID, turn string) error {
+	if _, err := s.Get(ctx, caller, &conversationKind, rid); err != nil {
+		return err
+	}
+	if err := s.require(ctx, caller, authz.Write, rid); err != nil {
+		return err
+	}
+	return s.Store.EndTurn(ctx, rid, turn)
+}
+
+// ConversationResources lists what a conversation produced.
+func (s *Service) ConversationResources(ctx context.Context, caller *auth.Caller, rid uuid.UUID) ([]store.Resource, error) {
+	if _, err := s.Get(ctx, caller, &conversationKind, rid); err != nil {
+		return nil, err
+	}
+	page, err := s.List(ctx, caller, nil, ListFilter{Origin: &rid, Limit: 200})
+	if err != nil {
+		return nil, err
+	}
+	return page.Items, nil
+}

@@ -111,7 +111,6 @@ namespace Routes {
       @query conversation?: Rid,
       @query computingUnit?: Rid,
       @query phase?: ExecutionPhase,
-      @query view?: View,
       @query limit?: int32,
       @query cursor?: string,
     ): Ok<ExecutionPage> | Error;

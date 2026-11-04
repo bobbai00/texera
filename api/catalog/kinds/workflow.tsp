@@ -189,7 +189,6 @@ namespace Routes {
     listExecutions(
       @path rid: Rid,
       @query phase?: ExecutionPhase,
-      @query view?: View,
       @query limit?: int32,
       @query cursor?: string,
     ): Ok<ExecutionPage> | Error;
