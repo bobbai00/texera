@@ -142,8 +142,8 @@ var relationsFor = map[string][]string{
 	"can_share":   {"owner"},
 	"can_delete":  {"owner"},
 	"can_execute": {"viewer", "editor", "owner"},
-	"can_use":     {"user", "viewer", "editor", "owner"},
-	"can_run_on":  {"user", "viewer", "editor", "owner"},
+	"can_use":     {"user", "editor", "owner"},
+	"can_run_on":  {"user", "editor", "owner"},
 	"can_rotate":  {"editor", "owner"},
 }
 

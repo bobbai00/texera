@@ -1709,7 +1709,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/BuildEnvironment'
-      x-texera-permission: use
+      x-texera-permission: read
   /catalog/v1/environments/{rid}/versions:
     get:
       operationId: Environments_listVersions

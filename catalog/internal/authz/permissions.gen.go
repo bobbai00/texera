@@ -110,7 +110,7 @@ var Permissions = map[string]string{
 	"POST /catalog/v1/datasets":                                                                    "create",
 	"POST /catalog/v1/datasets/{rid}/commit":                                                       "write",
 	"POST /catalog/v1/environments":                                                                "create",
-	"POST /catalog/v1/environments/{rid}/build":                                                    "use",
+	"POST /catalog/v1/environments/{rid}/build":                                                    "read",
 	"POST /catalog/v1/mcp-servers":                                                                 "create",
 	"POST /catalog/v1/model-endpoints":                                                             "create",
 	"POST /catalog/v1/models":                                                                      "create",

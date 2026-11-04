@@ -88,6 +88,11 @@ func (s *Service) Seed(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Everything under the system project is usable by everyone: the unit, the platform's
+	// credentials and model endpoint. Written on every start; the authorizer ignores duplicates.
+	if err := s.Store.SetEveryone(ctx, project.RID, "user", true); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	s.system, s.systemProject = sys, project
 	s.mu.Unlock()

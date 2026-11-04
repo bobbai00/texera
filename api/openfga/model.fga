@@ -5,7 +5,10 @@ model
 #
 # Every catalog resource is a `resource` object whose id is its rid. Grants are the four
 # relations owner, editor, viewer and user; `parent` carries them down the tree (project to
-# workflow to execution). A public resource has `viewer` granted to `user:*`. Permissions are
+# workflow to execution). A public resource has `viewer` granted to `user:*`; the system
+# project has `user` granted to `user:*`, so the platform's unit, credentials and model
+# endpoint are usable by everyone through `parent`. Viewing never implies using: a viewer of
+# a project reads and runs what is in it but cannot lease its credentials. Permissions are
 # the computed relations the catalog checks (`can_*`); the REST operations map to them through
 # x-texera-permission. `type agent` is reserved for agents with identities of their own; in the
 # current design agents act as the person.
@@ -27,8 +30,9 @@ type resource
     define owner: [user, agent, group#member] or owner from parent
     define editor: [user, agent, group#member] or owner or editor from parent
     define viewer: [user, agent, group#member, user:*] or editor or viewer from parent
-    # user: may run on a computing unit or use a credential or a model endpoint without reading its spec.
-    define user: [user, agent, group#member, user:*] or viewer or user from parent
+    # user: may run on a computing unit or lease a credential without reading its spec; granted
+    # explicitly, held by editors, or inherited from the parent. Never implied by viewer.
+    define user: [user, agent, group#member, user:*] or editor or user from parent
 
     define can_read: viewer
     define can_write: editor
@@ -36,7 +40,7 @@ type resource
     define can_delete: owner
     # execute: run a workflow; viewers may run what they can read.
     define can_execute: viewer
-    # use: lease a credential, call a model endpoint, build an environment.
+    # use: lease a credential (the key behind a model endpoint or an MCP server header).
     define can_use: user
     # run_on: start an execution on a computing unit.
     define can_run_on: user

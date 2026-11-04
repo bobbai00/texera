@@ -92,7 +92,8 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 		if err != nil {
 			return nil, err
 		}
-		if err := s.require(ctx, caller, authz.Use, env.RID); err != nil {
+		// An environment is a package list, not a secret: whoever may read it may run with it.
+		if err := s.require(ctx, caller, authz.Read, env.RID); err != nil {
 			return nil, err
 		}
 		ref, _ := uri.Parse(envName)

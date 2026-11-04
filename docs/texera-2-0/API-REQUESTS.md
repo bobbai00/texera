@@ -41,6 +41,18 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    Bob in first. The extension is a user search on the Identity port backed by the OIDC
    provider's directory, so `search_principals` can offer people who have not logged in yet.
 
+## catalog
+
+1. **Usable by everyone.** `visibility: public` grants `viewer` to `user:*`; viewing never
+   implies using. The system project additionally grants `user` to `user:*`, so the
+   platform's unit, credentials and model endpoint are usable by everyone through `parent`.
+   A person's own credential is usable by its owner and editors, or by whoever is granted
+   `user` on it or on its project.
+2. **A custom operator's output columns.** The engine's Python operator needs the columns the
+   code adds declared up front; a custom operator declares them in its `propertiesSchema`
+   under `x-texera-output-columns` (a list of `{attributeName, attributeType}`), which the
+   catalog copies into the compiled plan. A typed field on `OperatorSpec` is the extension.
+
 ## agent runtime
 
 1. **Turn headers.** Every catalog call made during a turn carries the person's token and the

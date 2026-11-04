@@ -24,6 +24,19 @@ func enqueue(ctx context.Context, tx pgx.Tx, op, object, relation, subject strin
 	return err
 }
 
+// SetEveryone grants or revokes a relation to everyone (`user:*`) on a resource, outside the
+// grant index: the way the system project makes the platform's unit, credentials and model
+// endpoint usable by all. The write is idempotent; the rebuild derives it from the label.
+func (s *Store) SetEveryone(ctx context.Context, rid uuid.UUID, relation string, on bool) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		op := "write"
+		if !on {
+			op = "delete"
+		}
+		return enqueue(ctx, tx, op, object(rid), relation, "user:*")
+	})
+}
+
 // writeGrant records a direct relation: one per principal and resource, so a change of
 // relation deletes the old tuple.
 func writeGrant(ctx context.Context, tx pgx.Tx, rid, pid uuid.UUID, relation string) error {
@@ -131,7 +144,7 @@ func (s *Store) MarkOutboxProcessed(ctx context.Context, ids []int64) error {
 }
 
 // AllTuples lists every tuple the index implies, for a rebuild of the authorization store:
-// direct grants, parent links and public viewers.
+// direct grants, parent links, public viewers and the system project's users.
 func (s *Store) AllTuples(ctx context.Context) ([]OutboxEntry, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT 'resource:' || a.rid, a.relation, CASE p.kind WHEN 'group' THEN 'group:' || a.pid || '#member' ELSE 'user:' || a.pid END
@@ -139,7 +152,9 @@ func (s *Store) AllTuples(ctx context.Context) ([]OutboxEntry, error) {
 		UNION ALL
 		SELECT 'resource:' || r.rid, 'parent', 'resource:' || r.parent_rid FROM resource r WHERE r.parent_rid IS NOT NULL AND r.deleted_at IS NULL
 		UNION ALL
-		SELECT 'resource:' || r.rid, 'viewer', 'user:*' FROM resource r WHERE r.visibility = 'public' AND r.deleted_at IS NULL`)
+		SELECT 'resource:' || r.rid, 'viewer', 'user:*' FROM resource r WHERE r.visibility = 'public' AND r.deleted_at IS NULL
+		UNION ALL
+		SELECT 'resource:' || r.rid, 'user', 'user:*' FROM resource r WHERE r.kind = 'project' AND r.labels->>'texera.system' = 'true' AND r.deleted_at IS NULL`)
 	if err != nil {
 		return nil, err
 	}

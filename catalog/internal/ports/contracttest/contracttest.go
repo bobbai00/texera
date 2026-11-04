@@ -135,6 +135,9 @@ func Authorizer(t *testing.T, a ports.Authorizer) {
 	if check(bob, "can_write", workflow) || check(bob, "can_read", project) || check(bob, "can_share", workflow) {
 		t.Fatal("a viewer neither writes nor shares, and sees nothing above")
 	}
+	if check(bob, "can_use", workflow) || check(bob, "can_run_on", run) {
+		t.Fatal("viewing never implies using")
+	}
 	if check(carol, "can_read", workflow) {
 		t.Fatal("carol has nothing yet")
 	}
@@ -145,10 +148,15 @@ func Authorizer(t *testing.T, a ports.Authorizer) {
 	}
 	must(a.Write(ctx, []ports.Tuple{{Object: workflow, Relation: "viewer", Subject: "user:*"}}, nil))
 	time.Sleep(50 * time.Millisecond)
-	if !check("user:stranger-"+suffix, "can_read", workflow) || !check("user:stranger-"+suffix, "can_use", workflow) {
-		t.Fatal("public means everyone reads and uses")
+	if !check("user:stranger-"+suffix, "can_read", workflow) || check("user:stranger-"+suffix, "can_use", workflow) {
+		t.Fatal("public means everyone reads, nobody uses")
 	}
-	must(a.Write(ctx, nil, []ports.Tuple{{Object: workflow, Relation: "viewer", Subject: "user:*"}, {Object: workflow, Relation: "viewer", Subject: bob}}))
+	must(a.Write(ctx, []ports.Tuple{{Object: project, Relation: "user", Subject: "user:*"}}, nil))
+	time.Sleep(50 * time.Millisecond)
+	if !check("user:stranger-"+suffix, "can_use", run) || !check(bob, "can_run_on", workflow) || !check(alice, "can_use", project) {
+		t.Fatal("usable by everyone through the parent; owners use what they own")
+	}
+	must(a.Write(ctx, nil, []ports.Tuple{{Object: workflow, Relation: "viewer", Subject: "user:*"}, {Object: workflow, Relation: "viewer", Subject: bob}, {Object: project, Relation: "user", Subject: "user:*"}}))
 	time.Sleep(50 * time.Millisecond)
 	if check(bob, "can_read", workflow) || check("user:stranger-"+suffix, "can_read", workflow) {
 		t.Fatal("revoked")

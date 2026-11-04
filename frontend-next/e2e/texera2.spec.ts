@@ -114,6 +114,31 @@ test("lists the library, creates an agent template from its page, edits it into 
   await expect(page.locator(`[data-template="${name}"]`)).toBeVisible();
 });
 
+test("creates a custom operator from its page and finds it in a workflow's palette", async ({ page }) => {
+  await signIn(page);
+  await page.locator('[data-library-link="operator"]').click();
+  await expect(page.locator('[data-library="operator"]')).toBeVisible();
+  await page.locator('[data-new="operator"]').click();
+  const name = `E2E rank ${Date.now()}`;
+  await page.locator('[data-new-resource="operator"] input').first().fill(name);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/operators\//);
+  const form = page.locator("[data-spec-editor='operator']");
+  await expect(form.locator('[data-field="operatorType"]')).toHaveValue(name.replace(/[^A-Za-z0-9]+/g, ""));
+  await expect(form.locator('[data-field="code"]')).toContainText("ProcessTupleOperator");
+
+  // The operator is in the palette of a new workflow, typed by its URI.
+  await page.locator('[data-library-link="workflow"]').click();
+  await page.locator('[data-new="workflow"]').click();
+  await page.locator('[data-new-resource="workflow"] input').first().fill(`E2E workflow ${Date.now()}`);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator("[data-workflow-view] [data-workflow-canvas]")).toBeVisible();
+  const palette = page.locator("[data-operator-palette]");
+  await palette.getByPlaceholder("Search operators").fill("E2E rank");
+  await expect(palette.locator('[data-palette-operator^="texera://operators/"]').filter({ hasText: name })).toBeVisible();
+  await page.screenshot({ path: "test-results/custom-operator.png", fullPage: true });
+});
+
 test("a result saved from its run shows the run and the source file in its lineage", async ({ page, request }) => {
   const call = await api(request);
   const ds = await call("POST", "/datasets", { name: `lineage e2e ${Date.now()}`, spec: { format: "csv" } });

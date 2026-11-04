@@ -59,7 +59,7 @@ namespace Routes {
     @doc("Build a version on a unit; returns at once, the build shows in status.")
     @post
     @route("/{rid}/build")
-    @extension("x-texera-permission", "use")
+    @extension("x-texera-permission", "read")
     build(@path rid: Rid, @body body: BuildEnvironment): Accepted<EnvironmentBuild> | Error;
   }
 }

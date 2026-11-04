@@ -109,10 +109,23 @@ Decisions taken in S8 and S9:
   catalog and its peers, lineage, agents as templates, conversations and turns, and the
   closing sections) are current. M1 is closed.
 
-Next: the acceptance items not yet exercised live (a custom Python operator created from its
-page, used in a workflow version and run in the pinned environment, with its deletion refused
-while referenced; sharing a whole project with Bob and his read-only view of it), then the
-out-of-M1 table of PLAN.md in the order the user picks.
+- After the close, the two acceptance items not yet exercised live, now smoke tests in
+  `test.sh`: `smoke-operator.py` (a custom Python operator created as a resource, used by its
+  URI in a workflow, failing without its package and completing in a pinned environment, its
+  column in the result, the workflow recorded as its dependent, deletion refused with 409) and
+  `smoke-share.py` (Alice shares her project with Bob as viewer; Bob finds the workflow, the
+  run and the dataset in search, reads them, runs the workflow on the platform's unit, and gets
+  403 on edit, delete, lease and the grant list; revoked afterwards). Playwright gained the
+  operator page: created from the library, its code in the generated form, found in a new
+  workflow's palette by its URI. The sharing smoke needed one model change: `user` is no
+  longer implied by `viewer` (an explicit grant, editors, or inherited), so a project viewer
+  cannot lease its owner's credentials; the system project grants `user` to `user:*` so the
+  platform's unit, credentials and model endpoint stay usable by everyone; environments need
+  only `read`. All eleven acceptance items are now demonstrated.
+
+Next: the out-of-M1 table of PLAN.md in the order the user picks; the nearest gaps are
+sharing with people who have not logged in yet (a user search on the Identity port) and a
+typed output-columns field on custom operators.
 
 ## 2026-11-03 (session 5, on Linux)
 
