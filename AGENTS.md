@@ -28,7 +28,7 @@ and progress log are in [docs/texera-2-0](docs/texera-2-0/PLAN.md).
 | Area | Path | Detail |
 | --- | --- | --- |
 | API contract and generated code | `api/`, `gen/` | `make generate` ([Makefile](Makefile)) |
-| Catalog (Go): resources, versions, grants, executions, lineage, MCP server | `catalog/` | `catalog/go.mod` |
+| Catalog (Go): resources, versions, grants, executions, lineage, MCP servers | `catalog/` | [catalog/README.md](catalog/README.md) |
 | Agent runtime (Bun/TS, AI SDK 7) | `agent-runtime/` | `agent-runtime/package.json` |
 | Frontend (React) and shared packages | `frontend-next/`, `packages/` | [frontend-next/README.md](frontend-next/README.md) |
 | Computing unit: workflow execution engine (Amber) | `amber/` | [amber/README.md](amber/README.md) |

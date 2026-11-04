@@ -80,5 +80,5 @@ persist, quotas and metering, the Kubernetes unit provider.
 
 `docs/texera-2-0/PROGRESS.md` records every session's work, how it was verified and what came
 next; `PLAN.md` is the milestone; `API-REQUESTS.md` the conventions beyond the contract;
-`bin/texera-2-0/README.md` the stack; `frontend-next/README.md` and `agent-runtime/README.md`
-their parts; `AGENTS.md` the map of the repository.
+`bin/texera-2-0/README.md` the stack; `catalog/README.md`, `agent-runtime/README.md` and
+`frontend-next/README.md` their parts; `AGENTS.md` the map of the repository.
