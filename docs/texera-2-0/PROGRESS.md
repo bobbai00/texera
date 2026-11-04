@@ -323,9 +323,9 @@ Decisions taken in S8 and S9:
   stack: `test.sh scenario` 12 scenarios plus the 5 local ones (`test_doors` new: a person's
   token 403 at the unit, nobody 401, the catalog's client 200, health open, no gateway route;
   only the running unit's token reports, a person, the platform's client and another unit
-  403); `test.sh ui` 7 Playwright tests (the lineage test now walks the run's `used` edge and
-  flips the keep mark); `test.sh evals` both real-agent scenarios and the 7 Playwright tests
-  with the model; `test.sh unit` (Go, runtime, frontend, engine 1379 specs); `test.sh
+  403); `test.sh ui` the 5 Playwright tests that need no model (the lineage test now walks
+  the run's `used` edge and flips the keep mark); `test.sh evals` both real-agent scenarios
+  and all 7 Playwright tests with the model; `test.sh unit` (Go, runtime, frontend, engine 1379 specs); `test.sh
   contract` (adapters, engine integration suites); and the cluster redeployed from scratch
   (`k8s.sh down && k8s.sh up`, the realm with the audience mapper) with `test.sh cluster`: 13
   scenarios and Playwright green. One flake seen and not fixed: a model call stalled for four
