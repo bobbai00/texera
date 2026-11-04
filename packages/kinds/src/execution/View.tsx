@@ -1,19 +1,21 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { executionsCancel, executionsSaveResult } from "@texera/catalog-client";
-import type { Execution, PortResult } from "@texera/catalog-client/types";
+import { workflowsCancelExecution, workflowsSavePort } from "@texera/catalog-client";
+import type { Execution, ExecutionStatus, PortSummary } from "@texera/catalog-client/types";
 import { Badge, Button, DataTable, EmptyState, ErrorNote, Skeleton, Tab, TabPanel, Tabs, TabsList, cn, formatDuration, formatNumber, timeAgo } from "@texera/ui";
-import { AlertTriangle, ChevronLeft, ChevronRight, Cpu, Database, Loader2, Square, Table2, Workflow } from "lucide-react";
+import { AlertTriangle, Braces, ChevronLeft, ChevronRight, Database, GitBranch, Loader2, Square, Table2, Workflow } from "lucide-react";
 import { useState } from "react";
 import { unwrap } from "../api";
-import { ResourceCard } from "../ResourceView";
-import { KindHeader } from "../shell/KindHeader";
+import { UriChip } from "../shell/Chips";
 import { JsonBlock } from "../shell/JsonBlock";
+import { KindHeader } from "../shell/KindHeader";
+import { Lineage } from "../shell/Lineage";
 import { useOpenResource } from "../shell/navigation";
 import type { KindViewProps } from "../types";
-import { executionQuery, PAGE_SIZE, resultQuery } from "./queries";
+import { executionQuery, isLive, PAGE_SIZE, rowsQuery } from "./queries";
 
-const TONE: Record<Execution["status"], "neutral" | "success" | "danger" | "warning"> = {
+const TONE: Record<ExecutionStatus["phase"], "neutral" | "success" | "danger" | "warning"> = {
   pending: "neutral",
+  provisioning: "warning",
   running: "warning",
   completed: "success",
   failed: "danger",
@@ -24,35 +26,42 @@ const TONE: Record<Execution["status"], "neutral" | "success" | "danger" | "warn
 export default function ExecutionView({ ref, mode }: KindViewProps) {
   const queryClient = useQueryClient();
   const { data: x, error } = useQuery(executionQuery(ref.rid));
-  const { beside } = useOpenResource();
+  const workflow = x?.metadata.parent ?? ref.parent ?? "";
   const cancel = useMutation({
-    mutationFn: () => unwrap(executionsCancel({ path: { eid: ref.rid } })),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [{ _id: "executionsRead", path: { eid: ref.rid } }] }),
+    mutationFn: () => unwrap(workflowsCancelExecution({ path: { rid: workflow, eid: ref.rid } })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["resource", ref.rid] }),
   });
   const [tab, setTab] = useState("results");
   if (error) return <ErrorNote error={error} prefix="Could not open this run" className="m-4" />;
   if (!x) return <Skeleton className="m-4 h-64" />;
-  const live = x.status === "pending" || x.status === "running";
-  const errors = Object.entries(x.operators).filter(([, o]) => o.error);
+  const status = x.status ?? { phase: "pending" as const };
+  const live = isLive(x as never);
+  const operators = Object.entries(status.operators ?? {});
+  const errors = operators.filter(([, o]) => o.error);
+  const ports = status.ports ?? [];
+  const inputs = x.spec.inputs ?? [];
   return (
     <div className="flex h-full min-h-0 flex-col" data-execution-view={ref.rid}>
       <KindHeader
-        ref={ref}
+        ref={{ kind: "execution", rid: ref.rid, parent: workflow }}
         mode={mode}
-        name={x.name || `Run ${x.eid.slice(0, 8)}`}
-        meta={`${timeAgo(x.createdAt)} · ${formatDuration(x.startedAt, x.finishedAt) || "not started"} · by ${x.actor.slice(0, 8)}${x.onBehalfOf ? ` for ${x.onBehalfOf.slice(0, 8)}` : ""}`}
+        name={x.metadata.name}
+        meta={
+          <span className="flex items-center gap-1.5">
+            <span>
+              {timeAgo(x.metadata.createdAt)} · {formatDuration(status.startedAt, status.finishedAt) || "not started"}
+            </span>
+            <UriChip uri={x.spec.workflow} />
+            <UriChip uri={x.spec.computingUnit} />
+            {x.spec.environment && <UriChip uri={x.spec.environment} />}
+          </span>
+        }
         actions={
           <>
-            <Badge tone={TONE[x.status]} className="capitalize">
+            <Badge tone={TONE[status.phase]} className="capitalize" data-phase={status.phase}>
               {live && <Loader2 className="size-3 animate-spin" />}
-              {x.status}
+              {status.phase}
             </Badge>
-            <Button variant="outline" size="sm" onClick={() => beside({ kind: "workflow", rid: x.workflow.rid, vno: x.workflow.vno })}>
-              <Workflow /> Workflow v{x.workflow.vno}
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => beside({ kind: "computing_unit", rid: x.computingUnit })}>
-              <Cpu /> Unit
-            </Button>
             {live && (
               <Button variant="secondary" size="sm" onClick={() => cancel.mutate()} disabled={cancel.isPending}>
                 <Square className="fill-current" /> Stop
@@ -61,42 +70,55 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
           </>
         }
       />
-      {x.error !== undefined && x.error !== null && <ErrorNote error={x.error} prefix="The run failed" className="m-3" />}
+      {status.error !== undefined && status.error !== null && <ErrorNote error={status.error} prefix="The run failed" className="m-3" />}
+      {cancel.error && <ErrorNote error={cancel.error} prefix="Could not stop the run" className="m-3" />}
       <Tabs value={tab} onValueChange={v => setTab(String(v))} className="flex min-h-0 flex-1 flex-col">
         <TabsList>
           <Tab value="results">
-            <Table2 /> Results ({x.results.length})
+            <Table2 /> Results ({ports.length})
           </Tab>
           <Tab value="operators">
             <Workflow /> Operators
           </Tab>
           <Tab value="inputs">
-            <Database /> Inputs ({x.inputs.length})
+            <Database /> Inputs ({inputs.length})
           </Tab>
           {errors.length > 0 && (
             <Tab value="errors" className="text-destructive">
               <AlertTriangle /> Errors ({errors.length})
             </Tab>
           )}
-          <Tab value="raw">Raw</Tab>
+          <Tab value="lineage">
+            <GitBranch /> Lineage
+          </Tab>
+          <Tab value="raw">
+            <Braces /> JSON
+          </Tab>
         </TabsList>
         <TabPanel value="results" className="flex min-h-0 flex-1 flex-col">
-          <Results eid={x.eid} results={x.results} completed={x.status === "completed"} />
+          <Results execution={x} workflow={workflow} ports={ports} completed={status.phase === "completed"} />
         </TabPanel>
         <TabPanel value="operators" className="scrollbar-thin overflow-y-auto">
-          <Operators execution={x} />
-        </TabPanel>
-        <TabPanel value="inputs" className="scrollbar-thin space-y-3 overflow-y-auto p-3">
-          {x.inputs.length === 0 ? (
-            <EmptyState>This run read no dataset versions.</EmptyState>
+          {operators.length === 0 ? (
+            <EmptyState>No operator states reported yet.</EmptyState>
           ) : (
-            x.inputs.map(i => <ResourceCard key={`${i.rid}@${i.vno}`} ref={{ kind: "dataset", rid: i.rid, vno: i.vno }} resolveKind />)
+            <DataTable
+              columns={[{ name: "operator" }, { name: "state" }, { name: "tuples", type: "long" }, { name: "node" }]}
+              rows={operators.map(([opid, o]) => [opid, o.state, o.tuples !== undefined ? formatNumber(o.tuples) : "", o.computingNode ?? ""])}
+              className="min-h-0"
+            />
           )}
+        </TabPanel>
+        <TabPanel value="inputs" className="scrollbar-thin space-y-2 overflow-y-auto p-3">
+          {inputs.length === 0 ? <EmptyState>This run read no dataset files.</EmptyState> : inputs.map(uri => <UriChip key={uri} uri={uri} emphasis />)}
         </TabPanel>
         <TabPanel value="errors" className="scrollbar-thin space-y-2 overflow-y-auto p-3">
           {errors.map(([opid, o]) => (
             <ErrorNote key={opid} error={o.error} prefix={opid} />
           ))}
+        </TabPanel>
+        <TabPanel value="lineage" className="scrollbar-thin overflow-y-auto">
+          <Lineage ref={{ kind: "execution", rid: ref.rid, parent: workflow }} />
         </TabPanel>
         <TabPanel value="raw" className="scrollbar-thin overflow-y-auto p-3">
           <JsonBlock value={x} />
@@ -106,65 +128,54 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
   );
 }
 
-function Operators({ execution }: { execution: Execution }) {
-  const rows = Object.entries(execution.operators);
-  if (!rows.length) return <EmptyState>No operator states reported yet.</EmptyState>;
-  return (
-    <DataTable
-      columns={[{ name: "operator" }, { name: "state" }, { name: "tuples", type: "long" }]}
-      rows={rows.map(([opid, o]) => [opid, o.state, o.tuples !== undefined ? formatNumber(o.tuples) : ""])}
-      className="min-h-0"
-    />
-  );
-}
-
-function Results({ eid, results, completed }: { eid: string; results: PortResult[]; completed: boolean }) {
+function Results({ execution, workflow, ports, completed }: { execution: Execution; workflow: string; ports: PortSummary[]; completed: boolean }) {
   const [picked, setPicked] = useState<string>();
-  const key = (r: PortResult) => `${r.opid}:${r.port}`;
-  const active = results.find(r => key(r) === picked) ?? results[0];
+  const key = (p: PortSummary) => `${p.operatorID}:${p.portID}`;
+  const active = ports.find(p => key(p) === picked) ?? ports[0];
   if (!active) return <EmptyState>No port results yet.</EmptyState>;
   return (
     <>
       <div className="scrollbar-thin flex gap-1 overflow-x-auto border-b px-2 py-1.5" role="tablist">
-        {results.map(r => (
+        {ports.map(p => (
           <button
-            key={key(r)}
+            key={key(p)}
             type="button"
             role="tab"
-            aria-selected={key(r) === key(active)}
-            onClick={() => setPicked(key(r))}
+            aria-selected={key(p) === key(active)}
+            onClick={() => setPicked(key(p))}
+            data-port={key(p)}
             className={cn(
               "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium",
-              key(r) === key(active) ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+              key(p) === key(active) ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
             )}>
             <Table2 className="size-3.5" />
-            {r.opid}
-            <span className="opacity-60">{r.port}</span>
-            {r.tupleCount !== undefined && <span className="opacity-60">· {formatNumber(r.tupleCount)}</span>}
+            {p.operatorID}
+            <span className="opacity-60">{p.portID}</span>
+            {p.rows !== undefined && <span className="opacity-60">· {formatNumber(p.rows)}</span>}
           </button>
         ))}
       </div>
-      <ResultPages key={key(active)} eid={eid} result={active} completed={completed} />
+      <PortRows key={key(active)} eid={execution.metadata.rid} workflow={workflow} port={active} completed={completed} />
     </>
   );
 }
 
-function ResultPages({ eid, result, completed }: { eid: string; result: PortResult; completed: boolean }) {
+function PortRows({ eid, workflow, port, completed }: { eid: string; workflow: string; port: PortSummary; completed: boolean }) {
   const [page, setPage] = useState(1);
-  const { data, error, isPending } = useQuery({ ...resultQuery(eid, result.opid, result.port, page), placeholderData: keepPreviousData });
+  const { data, error, isPending } = useQuery({ ...rowsQuery(workflow, eid, port.operatorID, port.portID, page), placeholderData: keepPreviousData });
   if (error) return <ErrorNote error={error} prefix="Could not load the result" className="m-3" />;
   if (isPending) return <Skeleton className="m-3 h-32" />;
-  const total = data.total ?? result.tupleCount ?? data.rows.length;
+  const total = data.total ?? port.rows ?? data.rows.length;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col" data-port-rows>
       <DataTable columns={data.schema.map(a => ({ name: a.attributeName, type: a.attributeType }))} rows={data.rows} className="min-h-0 flex-1" />
       <div className="flex shrink-0 items-center gap-2 border-t px-3 py-1 text-xs text-muted-foreground">
         <span className="flex-1">
           {formatNumber(total)} row{total === 1 ? "" : "s"}
-          {result.table && <span className="ml-2 font-mono text-2xs">{result.table}</span>}
+          {port.table && <span className="ml-2 font-mono text-2xs">{port.table}</span>}
         </span>
-        {completed && <SaveAsDataset eid={eid} result={result} />}
+        {completed && <SaveAsDataset eid={eid} workflow={workflow} port={port} />}
         <Button variant="ghost" size="icon-xs" disabled={page <= 1} onClick={() => setPage(page - 1)} aria-label="Previous page">
           <ChevronLeft />
         </Button>
@@ -179,12 +190,12 @@ function ResultPages({ eid, result, completed }: { eid: string; result: PortResu
   );
 }
 
-/** Keeps a result as a new dataset version; its lineage names this run. Opens it beside. */
-function SaveAsDataset({ eid, result }: { eid: string; result: PortResult }) {
+/** Keeps a result as a new dataset version; its lineage names this port. Opens it beside. */
+function SaveAsDataset({ eid, workflow, port }: { eid: string; workflow: string; port: PortSummary }) {
   const { beside } = useOpenResource();
   const queryClient = useQueryClient();
   const save = useMutation({
-    mutationFn: () => unwrap(executionsSaveResult({ path: { eid, opid: result.opid, port: result.port }, body: {} })),
+    mutationFn: () => unwrap(workflowsSavePort({ path: { rid: workflow, eid, operatorID: port.operatorID, portID: port.portID }, body: {} })),
     onSuccess: v => {
       void queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
       beside({ kind: "dataset", rid: v.rid, vno: v.vno });

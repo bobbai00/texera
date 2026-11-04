@@ -41,13 +41,18 @@
   --kind-conversation: oklch(0.55 0.13 248);
   --kind-workflow: oklch(0.6 0.1 202);
   --kind-dataset: oklch(0.62 0.14 155);
+  --kind-model: oklch(0.6 0.13 175);
   --kind-execution: oklch(0.72 0.15 70);
-  --kind-agent_template: oklch(0.62 0.18 25);
-  --kind-mcp_server: oklch(0.58 0.16 300);
-  --kind-computing_unit: oklch(0.55 0.08 260);
+  --kind-operator: oklch(0.58 0.12 220);
+  --kind-agent-template: oklch(0.62 0.18 25);
+  --kind-mcp-server: oklch(0.58 0.16 300);
+  --kind-computing-unit: oklch(0.55 0.08 260);
   --kind-environment: oklch(0.65 0.13 120);
   --kind-project: oklch(0.6 0.12 40);
   --kind-skill: oklch(0.6 0.15 330);
+  --kind-credential: oklch(0.6 0.14 55);
+  --kind-model-endpoint: oklch(0.56 0.15 285);
+  --kind-settings: oklch(0.5 0.03 240);
 }
 
 .dark {
@@ -105,13 +110,18 @@
   --color-kind-conversation: var(--kind-conversation);
   --color-kind-workflow: var(--kind-workflow);
   --color-kind-dataset: var(--kind-dataset);
+  --color-kind-model: var(--kind-model);
   --color-kind-execution: var(--kind-execution);
-  --color-kind-agent_template: var(--kind-agent_template);
-  --color-kind-mcp_server: var(--kind-mcp_server);
-  --color-kind-computing_unit: var(--kind-computing_unit);
+  --color-kind-operator: var(--kind-operator);
+  --color-kind-agent-template: var(--kind-agent-template);
+  --color-kind-mcp-server: var(--kind-mcp-server);
+  --color-kind-computing-unit: var(--kind-computing-unit);
   --color-kind-environment: var(--kind-environment);
   --color-kind-project: var(--kind-project);
   --color-kind-skill: var(--kind-skill);
+  --color-kind-credential: var(--kind-credential);
+  --color-kind-model-endpoint: var(--kind-model-endpoint);
+  --color-kind-settings: var(--kind-settings);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

@@ -1,24 +1,27 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, DialogContent, DialogRoot, ErrorNote, Field, Input, Textarea } from "@texera/ui";
 import { type FormEvent, useId, useState } from "react";
+import { createResource } from "../api";
+import { settingsQuery } from "../queries";
 import { KINDS } from "../registry";
 import type { KindId, ResourceRef } from "../types";
 import { useOpenResource } from "./navigation";
 
-/** Creates an empty resource of a kind, then opens it. Kinds without `create` do not offer it. */
+/** Creates a resource of a kind with the kind's starting spec, then opens it. */
 export function NewResourceDialog({
   kind,
   open,
   onOpenChange,
-  project,
+  parent,
 }: {
   kind: KindId;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  project?: string;
+  parent?: string;
 }) {
   const spec = KINDS[kind];
   const queryClient = useQueryClient();
+  const { data: settings } = useQuery(settingsQuery());
   const { expand } = useOpenResource();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -26,8 +29,8 @@ export function NewResourceDialog({
   const [busy, setBusy] = useState(false);
   const nameId = useId();
   const descriptionId = useId();
-  if (!spec.create) return null;
-  const create = spec.create;
+  if (!spec.defaultSpec) return null;
+  const defaultSpec = spec.defaultSpec;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -35,11 +38,13 @@ export function NewResourceDialog({
     setBusy(true);
     setError(undefined);
     try {
-      const ref: ResourceRef = await create({ name: name.trim(), description: description.trim() || undefined, project });
+      const input = { name: name.trim(), description: description.trim() || undefined, parent };
+      const created = await createResource(kind, { ...input, spec: defaultSpec(input, settings?.spec.defaults ?? {}) });
       await queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
       onOpenChange(false);
       setName("");
       setDescription("");
+      const ref: ResourceRef = { kind, rid: created.metadata.rid, parent: created.metadata.parent };
       expand(ref);
     } catch (err) {
       setError(err);

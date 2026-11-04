@@ -1,16 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { Button, Skeleton, Tooltip } from "@texera/ui";
 import { type Compilation, deleteOperators, operatorImage, updateOperator } from "@texera/workflow-model";
-import { AlertTriangle, Eye, EyeOff, Trash2, X } from "lucide-react";
+import { AlertTriangle, Eye, EyeOff, Table2, Trash2, X } from "lucide-react";
 import { useStore } from "zustand";
 import { operatorSchemasQuery } from "../queries";
 import type { EditorStore } from "./editor";
 import { PropertyForm } from "./PropertyForm";
 
-/** The selected operator: its name, whether it runs, and its settings. */
+/** The selected operator: its name, whether it runs and keeps its result, and its settings. */
 export function PropertyPanel({ store, compilation }: { store: EditorStore; compilation?: Compilation }) {
   const selected = useStore(store, s => s.selected);
-  const operator = useStore(store, s => s.content.operators.find(o => o.operatorID === selected));
+  const operator = useStore(store, s => s.spec.operators.find(o => o.operatorID === selected));
   const readonly = useStore(store, s => s.readonly);
   const { data: schemas } = useQuery(operatorSchemasQuery());
   if (!operator) return null;
@@ -29,19 +29,28 @@ export function PropertyPanel({ store, compilation }: { store: EditorStore; comp
             value={operator.customDisplayName ?? ""}
             placeholder={schema?.userFriendlyName}
             disabled={readonly}
-            onChange={e => edit(c => updateOperator(c, id, o => ({ ...o, customDisplayName: e.target.value })))}
+            onChange={e => edit(s => updateOperator(s, id, o => ({ ...o, customDisplayName: e.target.value })))}
             className="block w-full truncate rounded bg-transparent text-sm font-semibold outline-none focus:bg-accent/50"
           />
           <div className="truncate text-2xs text-muted-foreground">{schema?.userFriendlyName ?? operator.operatorType}</div>
         </div>
         {!readonly && (
           <>
+            <Tooltip content={operator.viewResult ? "Result kept: readable after the run" : "Keep this operator's result after the run"}>
+              <Button
+                variant={operator.viewResult ? "secondary" : "ghost"}
+                size="icon-sm"
+                aria-label={operator.viewResult ? "Stop keeping the result" : "Keep the result"}
+                onClick={() => edit(s => updateOperator(s, id, o => ({ ...o, viewResult: !o.viewResult })))}>
+                <Table2 />
+              </Button>
+            </Tooltip>
             <Tooltip content={operator.isDisabled ? "Enable: include it in runs" : "Disable: leave it out of runs"}>
               <Button
                 variant="ghost"
                 size="icon-sm"
                 aria-label={operator.isDisabled ? "Enable operator" : "Disable operator"}
-                onClick={() => edit(c => updateOperator(c, id, o => ({ ...o, isDisabled: !o.isDisabled })))}>
+                onClick={() => edit(s => updateOperator(s, id, o => ({ ...o, isDisabled: !o.isDisabled })))}>
                 {operator.isDisabled ? <EyeOff /> : <Eye />}
               </Button>
             </Tooltip>
@@ -51,7 +60,7 @@ export function PropertyPanel({ store, compilation }: { store: EditorStore; comp
                 size="icon-sm"
                 aria-label="Delete operator"
                 onClick={() => {
-                  edit(c => deleteOperators(c, [id]));
+                  edit(s => deleteOperators(s, [id]));
                   select(null);
                 }}>
                 <Trash2 />
@@ -76,7 +85,7 @@ export function PropertyPanel({ store, compilation }: { store: EditorStore; comp
             values={operator.operatorProperties}
             inputs={compilation?.inputs[id] ?? []}
             disabled={readonly}
-            onChange={values => edit(c => updateOperator(c, id, o => ({ ...o, operatorProperties: values })))}
+            onChange={values => edit(s => updateOperator(s, id, o => ({ ...o, operatorProperties: values })))}
           />
         ) : (
           <Skeleton className="h-40" />

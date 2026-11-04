@@ -1,9 +1,9 @@
 // The conversation view model: messages made of parts, built from the catalog's history
-// and from AG-UI events as a run streams. Pure; the hook feeds it.
+// and from AG-UI events as a turn streams. Pure; the hook feeds it.
 
 import type { Message as CatalogMessage } from "@texera/catalog-client/types";
-import { KIND_IDS, type KindId, type ResourceRef, refKey } from "@texera/kinds";
-import type { AgUiEvent, AgUiMessage, Interrupt, JsonPatchOperation } from "./agui/types";
+import { isKindId, isUri, type KindId, refKey, refOf, type ResourceRef } from "@texera/kinds";
+import type { AgUiEvent, AgUiMessage, JsonPatchOperation } from "./agui/types";
 
 export type ToolStatus = "running" | "done" | "error";
 
@@ -22,14 +22,15 @@ export type Part =
       resources: ResourceRef[];
     }
   | { type: "resource"; ref: ResourceRef }
-  | { type: "subagent"; id: string; name: string; status: ToolStatus; error?: string }
-  | { type: "approval"; interrupts: Interrupt[] }
+  | { type: "handoff"; from?: string; to: string; name: string; by: "agent" | "person" }
   | { type: "error"; message: string };
 
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
   parts: Part[];
+  /** For an assistant message: the template version (a URI with `@vno`) that wrote it. */
+  template?: string;
   seq?: number;
   createdAt?: string;
 }
@@ -38,37 +39,47 @@ export interface ChatState {
   messages: ChatMessage[];
   running: boolean;
   runId?: string;
-  /** The agent's shared state (AG-UI StateSnapshot/StateDelta), e.g. a workflow draft. */
+  /** The template version writing now; set when the turn starts, changed by a handoff. */
+  template?: string;
+  /** The agent's shared state (AG-UI StateSnapshot/StateDelta), when it exposes one. */
   state?: unknown;
   steps: string[];
   error?: string;
-  /** Every resource the run touched, in order of first appearance. */
+  /** Every resource the turn touched, in order of first appearance. */
   resources: ResourceRef[];
 }
 
 export const EMPTY_STATE: ChatState = { messages: [], running: false, steps: [], resources: [] };
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
-const isKind = (v: unknown): v is KindId => typeof v === "string" && (KIND_IDS as readonly string[]).includes(v);
+const isKind = (v: unknown): v is KindId => typeof v === "string" && isKindId(v);
 
 /**
- * Resource references inside a tool result, in the shapes the catalog's tools return:
- * the envelope (`{kind, metadata: {rid}}`), a ref (`{kind, rid, vno?}`), an execution
- * (`{eid, workflow}`), a version (`{rid, vno, contentKind}`), or lists and wrappers of those.
+ * Resource references inside a tool result or an event, in the shapes the catalog and the
+ * runtime use: an envelope (`{kind, metadata: {rid, uri, parent}}`), a ref (`{kind, rid, uri?,
+ * vno?}`), a `texera://` URI, or lists and wrappers of those.
  */
 export function extractResourceRefs(value: unknown, depth = 0): ResourceRef[] {
-  if (depth > 4 || value === null || typeof value !== "object") return [];
+  if (depth > 4 || value === null || value === undefined) return [];
+  if (typeof value === "string") {
+    const ref = isUri(value) ? refOf(value) : undefined;
+    return ref ? [ref] : [];
+  }
+  if (typeof value !== "object") return [];
   if (Array.isArray(value)) return dedupe(value.flatMap(v => extractResourceRefs(v, depth + 1)));
   const r = value as Record<string, unknown>;
   const found: ResourceRef[] = [];
-  if (isKind(r.kind) && isRecord(r.metadata) && typeof r.metadata.rid === "string") {
-    found.push({ kind: r.kind, rid: r.metadata.rid });
+  const metadata = isRecord(r.metadata) ? r.metadata : undefined;
+  if (isKind(r.kind) && metadata && typeof metadata.rid === "string") {
+    found.push({ kind: r.kind, rid: metadata.rid, ...(typeof metadata.parent === "string" ? { parent: metadata.parent } : {}) });
   } else if (isKind(r.kind) && typeof r.rid === "string") {
-    found.push({ kind: r.kind, rid: r.rid, ...(typeof r.vno === "number" ? { vno: r.vno } : {}) });
-  } else if (typeof r.eid === "string" && isRecord(r.workflow)) {
-    found.push({ kind: "execution", rid: r.eid });
+    const fromUri = typeof r.uri === "string" ? refOf(r.uri) : undefined;
+    found.push(fromUri ?? { kind: r.kind, rid: r.rid, ...(typeof r.vno === "number" ? { vno: r.vno } : {}) });
+  } else if (typeof r.uri === "string" && isUri(r.uri)) {
+    const ref = refOf(r.uri);
+    if (ref) found.push(ref);
   }
-  for (const key of ["resource", "resources", "workflow", "dataset", "version", "execution", "items", "result", "data"]) {
+  for (const key of ["resource", "resources", "workflow", "dataset", "version", "execution", "items", "result", "data", "structuredContent"]) {
     if (key in r) found.push(...extractResourceRefs(r[key], depth + 1));
   }
   return dedupe(found);
@@ -118,13 +129,16 @@ export function applyPatch(target: unknown, ops: JsonPatchOperation[]): unknown 
 
 function withMessage(state: ChatState, id: string, role: ChatMessage["role"], update: (m: ChatMessage) => ChatMessage): ChatState {
   const index = state.messages.findIndex(m => m.id === id);
-  if (index === -1) return { ...state, messages: [...state.messages, update({ id, role, parts: [] })] };
+  if (index === -1) {
+    const fresh: ChatMessage = { id, role, parts: [], ...(role === "assistant" && state.template ? { template: state.template } : {}) };
+    return { ...state, messages: [...state.messages, update(fresh)] };
+  }
   const messages = state.messages.slice();
   messages[index] = update(messages[index] as ChatMessage);
   return { ...state, messages };
 }
 
-/** The assistant message a part without a message id belongs to: the newest one of this run. */
+/** The assistant message a part without a message id belongs to: the newest one of this turn. */
 function currentAssistantId(state: ChatState): string {
   const last = [...state.messages].reverse().find(m => m.role === "assistant");
   return last?.id ?? `run-${state.runId ?? "local"}`;
@@ -132,17 +146,12 @@ function currentAssistantId(state: ChatState): string {
 
 function appendText(m: ChatMessage, kind: "text" | "reasoning", delta: string): ChatMessage {
   const last = m.parts.at(-1);
-  if (last?.type === kind) {
-    return { ...m, parts: [...m.parts.slice(0, -1), { type: kind, text: last.text + delta }] };
-  }
+  if (last?.type === kind) return { ...m, parts: [...m.parts.slice(0, -1), { type: kind, text: last.text + delta }] };
   return { ...m, parts: [...m.parts, { type: kind, text: delta }] };
 }
 
 function updateTool(state: ChatState, toolCallId: string, update: (p: Extract<Part, { type: "tool" }>) => Part): ChatState {
-  const messages = state.messages.map(m => ({
-    ...m,
-    parts: m.parts.map(p => (p.type === "tool" && p.id === toolCallId ? update(p) : p)),
-  }));
+  const messages = state.messages.map(m => ({ ...m, parts: m.parts.map(p => (p.type === "tool" && p.id === toolCallId ? update(p) : p)) }));
   return { ...state, messages };
 }
 
@@ -158,16 +167,8 @@ export function applyEvent(state: ChatState, event: AgUiEvent): ChatState {
   switch (event.type) {
     case "RUN_STARTED":
       return { ...state, running: true, runId: event.runId, error: undefined, steps: [] };
-    case "RUN_FINISHED": {
-      const next = { ...state, running: false, steps: [] };
-      if (event.outcome?.type === "interrupt") {
-        return withMessage(next, currentAssistantId(next), "assistant", m => ({
-          ...m,
-          parts: [...m.parts, { type: "approval", interrupts: event.outcome?.type === "interrupt" ? (event.outcome.interrupts ?? []) : [] }],
-        }));
-      }
-      return next;
-    }
+    case "RUN_FINISHED":
+      return { ...state, running: false, steps: [] };
     case "RUN_ERROR":
       return withMessage({ ...state, running: false, error: event.message }, currentAssistantId(state), "assistant", m => ({
         ...m,
@@ -240,29 +241,16 @@ export function applyEvent(state: ChatState, event: AgUiEvent): ChatState {
         const refs = extractResourceRefs(event.value);
         if (!refs.length) return state;
         const next = addResources(state, refs);
-        return withMessage(next, currentAssistantId(next), "assistant", m => ({
-          ...m,
-          parts: [...m.parts, ...refs.map(ref => ({ type: "resource" as const, ref }))],
-        }));
+        return withMessage(next, currentAssistantId(next), "assistant", m => ({ ...m, parts: [...m.parts, ...refs.map(ref => ({ type: "resource" as const, ref }))] }));
+      }
+      if (event.name === "texera.handoff" && isRecord(event.value) && typeof event.value.to === "string") {
+        const v = event.value as { from?: string; to: string; name?: string; by?: string };
+        const part: Part = { type: "handoff", from: v.from, to: v.to, name: v.name ?? "another agent", by: v.by === "person" ? "person" : "agent" };
+        // The handoff closes the current assistant message; the next one belongs to the new template.
+        const id = `handoff-${state.messages.length}-${v.to}`;
+        return withMessage({ ...state, template: v.to }, id, "system", m => ({ ...m, parts: [part] }));
       }
       return state;
-    }
-    case "SUBAGENT_STARTED":
-      return withMessage(state, event.parentMessageId ?? currentAssistantId(state), "assistant", m => ({
-        ...m,
-        parts: [...m.parts, { type: "subagent", id: event.subagentRunId, name: event.name, status: "running" }],
-      }));
-    case "SUBAGENT_FINISHED":
-    case "SUBAGENT_ERROR": {
-      const messages = state.messages.map(m => ({
-        ...m,
-        parts: m.parts.map(p =>
-          p.type === "subagent" && p.id === event.subagentRunId
-            ? { ...p, status: event.type === "SUBAGENT_ERROR" ? ("error" as const) : ("done" as const), error: event.type === "SUBAGENT_ERROR" ? event.message : undefined }
-            : p
-        ),
-      }));
-      return { ...state, messages };
     }
     default:
       return state;
@@ -302,8 +290,7 @@ export function fromHistory(messages: CatalogMessage[]): ChatMessage[] {
             args: typeof p.args === "string" ? p.args : JSON.stringify(p.args ?? {}),
             input: p.args,
             status: "done",
-            resources: extractResourceRefs(p.result),
-            result: p.result,
+            resources: [],
           };
           tools.set(part.id, part);
           parts.push(part);
@@ -311,21 +298,25 @@ export function fromHistory(messages: CatalogMessage[]): ChatMessage[] {
         }
         case "tool_result": {
           const refs = extractResourceRefs(p.result);
+          const failed = isRecord(p.result) && (typeof p.result.error === "string" || p.result.isError === true);
           const call = p.toolCallId ? tools.get(p.toolCallId) : undefined;
           if (call) {
             call.result = p.result;
             call.resources = refs;
+            if (failed) {
+              call.status = "error";
+              call.error = String((p.result as { error?: unknown }).error ?? "The tool failed.");
+            }
           } else {
-            parts.push({ type: "tool", id: p.toolCallId ?? crypto.randomUUID(), name: p.toolName ?? "tool", args: "", result: p.result, status: "done", resources: refs });
+            parts.push({ type: "tool", id: p.toolCallId ?? crypto.randomUUID(), name: p.toolName ?? "tool", args: "", result: p.result, status: failed ? "error" : "done", resources: refs });
           }
           break;
         }
-        case "resource":
-          {
-            const kind = p.resource ? kindOf(p) : undefined;
-            if (p.resource && kind) parts.push({ type: "resource", ref: { kind, rid: p.resource.rid, vno: p.resource.vno } });
-          }
+        case "resource": {
+          const ref = p.resource ? refOf(p.resource) : undefined;
+          if (ref) parts.push({ type: "resource", ref });
           break;
+        }
         case "file":
           parts.push({ type: "text", text: `[file: ${String(p.file?.name ?? "attachment")}]` });
           break;
@@ -336,18 +327,37 @@ export function fromHistory(messages: CatalogMessage[]): ChatMessage[] {
     }
     if (parts.length === 0 && m.role !== "tool") continue;
     if (m.role === "tool" && parts.every(p => p.type === "tool" && tools.has(p.id))) continue;
-    out.push({ id: `seq-${m.seq}`, role: m.role, parts, seq: m.seq, createdAt: m.createdAt });
+    if (m.role === "system") {
+      // A system note naming an agent template records a change of hands: by the template that
+      // wrote the note (a handoff), or by the person (no template).
+      const to = parts.find(p => p.type === "resource" && p.ref.kind === "agent-template");
+      if (to?.type === "resource") {
+        const uri = m.parts.find(p => p.type === "resource")?.resource ?? "";
+        out.push({ id: `seq-${m.seq}`, role: "system", seq: m.seq, createdAt: m.createdAt, parts: [{ type: "handoff", from: m.template, to: uri, name: "", by: m.template ? "agent" : "person" }] });
+        continue;
+      }
+    }
+    out.push({ id: `seq-${m.seq}`, role: m.role, parts, seq: m.seq, createdAt: m.createdAt, ...(m.template ? { template: m.template } : {}) });
   }
   return out;
-}
-
-/** A persisted resource part names its kind; a part from an older runtime without one is skipped. */
-function kindOf(p: CatalogMessage["parts"][number]): KindId | undefined {
-  const kind = p.resource?.kind;
-  return isKind(kind) ? kind : undefined;
 }
 
 /** Every resource the conversation's messages reference, in order. */
 export function resourcesOf(messages: ChatMessage[]): ResourceRef[] {
   return dedupe(messages.flatMap(m => m.parts.flatMap(p => (p.type === "tool" ? p.resources : p.type === "resource" ? [p.ref] : []))));
+}
+
+/** The template versions the messages were written by, in order of first appearance. */
+export function templatesOf(messages: ChatMessage[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of messages) {
+    for (const uri of [m.template, ...m.parts.flatMap(p => (p.type === "handoff" ? [p.to, p.from] : []))]) {
+      if (uri && !seen.has(uri)) {
+        seen.add(uri);
+        out.push(uri);
+      }
+    }
+  }
+  return out;
 }

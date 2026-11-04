@@ -1,5 +1,5 @@
 import { Outlet } from "@tanstack/react-router";
-import { ResourceView } from "@texera/kinds";
+import { panelRef, ResourceView } from "@texera/kinds";
 import { Shell, useOpenPanel } from "@texera/ui";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { PanelSync } from "./PanelSync";
@@ -14,6 +14,7 @@ export function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoaded, setSearchLoaded] = useState(false);
   const panel = useOpenPanel();
+  const ref = panelRef(panel);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -43,16 +44,9 @@ export function AppShell() {
         sidebarOpen={sidebarOpen}
         onOpenSidebar={() => setSidebarOpen(true)}
         panel={
-          panel ? (
-            <section
-              className="h-full min-w-0 bg-background"
-              aria-label="Resource panel"
-              data-panel={`${panel.kind}:${panel.rid}`}>
-              <ResourceView
-                key={`${panel.kind}:${panel.rid}:${panel.vno ?? ""}`}
-                ref={{ kind: panel.kind as never, rid: panel.rid, vno: panel.vno }}
-                mode="panel"
-              />
+          ref ? (
+            <section className="h-full min-w-0 bg-background" aria-label="Resource panel" data-panel={panel}>
+              <ResourceView key={panel} ref={ref} mode="panel" />
             </section>
           ) : null
         }>

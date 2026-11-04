@@ -1,31 +1,31 @@
 // The contract every kind module fulfils. The registry maps a kind to its module; the
 // chat, the library, the side panel and the full page render through `ResourceView`.
+// What the contract knows about a kind (plural, versioned, nested) comes from the
+// generated kind table; a module adds what the app knows (icon, forms, cards).
 
 import type { QueryClient } from "@tanstack/react-query";
-import type { Resource, ResourceKind } from "@texera/catalog-client/types";
+import type { Defaults, Resource, ResourceKind } from "@texera/catalog-client/types";
 import type { LucideIcon } from "lucide-react";
 import type { ComponentType, LazyExoticComponent } from "react";
+import { KIND_TABLE, type KindEntry } from "./kinds.gen";
 
-/** Catalog resource kinds plus executions, which have their own ids and routes. */
-export type KindId = ResourceKind | "execution";
+/** The kinds, as the contract names them. */
+export type KindId = ResourceKind;
 
-export const KIND_IDS: readonly KindId[] = [
-  "conversation",
-  "workflow",
-  "dataset",
-  "execution",
-  "agent_template",
-  "mcp_server",
-  "computing_unit",
-  "environment",
-  "project",
-  "skill",
-] as const;
+export const KIND_IDS: readonly KindId[] = KIND_TABLE.map(k => k.kind as KindId);
 
+/** The contract's facts about a kind. */
+export const kindEntry = (kind: KindId): KindEntry => KIND_TABLE.find(k => k.kind === kind) as KindEntry;
+
+/**
+ * A reference to a resource, or to one of its versions. `parent` is the parent's rid of a
+ * nested kind (the workflow of an execution); it is known once the envelope has been read.
+ */
 export interface ResourceRef {
   kind: KindId;
   rid: string;
   vno?: number;
+  parent?: string;
 }
 
 export type ViewMode = "card" | "panel" | "page";
@@ -41,31 +41,48 @@ export interface KindViewProps {
   mode: "panel" | "page";
 }
 
+/** A kind-specific tab of the generic page. */
+export interface KindTab {
+  value: string;
+  label: string;
+  icon?: LucideIcon;
+  Component: ComponentType<{ resource: Resource; ref: ResourceRef; mode: "panel" | "page" }>;
+}
+
 export interface CreateInput {
   name: string;
   description?: string;
-  project?: string;
+  /** The project; the caller's home project when absent. */
+  parent?: string;
 }
 
 export interface KindSpec {
   kind: KindId;
   label: string;
   plural: string;
-  /** URL segment of the page: `/w/{rid}`. */
-  slug: string;
-  /** URL segment of the library list: `/library/workflows`. */
-  librarySlug: string;
   icon: LucideIcon;
   /** Tailwind classes for the kind's icon chip, from the kind's accent token. */
   accent: string;
-  Card: LazyExoticComponent<ComponentType<KindCardProps>>;
-  View: LazyExoticComponent<ComponentType<KindViewProps>>;
-  /** Starts the view's requests while its code loads. */
-  prefetch?: (queryClient: QueryClient, ref: ResourceRef) => Promise<unknown>;
-  /** Creates an empty resource of the kind; absent for kinds made elsewhere (runs, chats). */
-  create?: (input: CreateInput) => Promise<ResourceRef>;
+  /** Replaces the generic card. */
+  Card?: LazyExoticComponent<ComponentType<KindCardProps>>;
+  /** Replaces the generic page and panel. */
+  View?: LazyExoticComponent<ComponentType<KindViewProps>>;
+  /** Replaces the schema form in the generic page's spec tab. */
+  Editor?: ComponentType<{ resource: Resource; readonly?: boolean }>;
+  /** Tabs the generic page shows before the shared ones (spec, versions, access, lineage). */
+  tabs?: KindTab[];
+  /** Header actions of the generic page. */
+  Actions?: ComponentType<{ resource: Resource }>;
+  /** The spec a new resource starts with; absent for kinds made elsewhere (runs, chats). */
+  defaultSpec?: (input: CreateInput, defaults: Defaults) => unknown;
   /** Short facts for lists and cards, from the envelope. */
   facts?: (resource: Resource) => string[];
+  /** Spec fields the schema form shows as multi-line text, by property name. */
+  long?: string[];
+  /** Spec fields the schema form does not show (set by the platform). */
+  hidden?: string[];
+  /** Starts the view's requests while its code loads. */
+  prefetch?: (queryClient: QueryClient, ref: ResourceRef) => Promise<unknown>;
 }
 
 export const refKey = (r: ResourceRef) => `${r.kind}:${r.rid}${r.vno !== undefined ? `@${r.vno}` : ""}`;

@@ -1,9 +1,8 @@
-// The logical plan the compiler and the engine take: operators with their properties
-// spread flat, links by port position. The engine rejects fields it does not know, so
-// nothing else goes in.
+// The port positions a compilation answers by: the engine keys ports by ordinal, the spec
+// by id. Used to read a CompileResult back onto the spec's operators.
 
 import { enabledGraph } from "./graph";
-import type { OperatorPredicate, WorkflowContent } from "./types";
+import type { WorkflowSpec } from "./types";
 
 export interface PortIdentity {
   id: number;
@@ -18,46 +17,23 @@ export interface LogicalLink {
 }
 
 export interface LogicalPlan {
-  operators: Record<string, unknown>[];
+  operatorIds: string[];
   links: LogicalLink[];
-  opsToViewResult: string[];
-  opsToReuseResult: string[];
 }
 
-const toLogical = (op: OperatorPredicate) => ({
-  ...op.operatorProperties,
-  operatorID: op.operatorID,
-  operatorType: op.operatorType,
-  inputPorts: op.inputPorts,
-  outputPorts: op.outputPorts,
-});
-
-/** The enabled part of the workflow, or only what `targetOperatorId` depends on ("run up to here"). */
-export function logicalPlan(content: WorkflowContent, targetOperatorId?: string): LogicalPlan {
-  let { operators, links } = enabledGraph(content);
-  if (targetOperatorId) {
-    const keep = new Set<string>();
-    const visit = (id: string) => {
-      if (keep.has(id)) return;
-      keep.add(id);
-      for (const l of links) if (l.target.operatorID === id) visit(l.source.operatorID);
-    };
-    visit(targetOperatorId);
-    operators = operators.filter(o => keep.has(o.operatorID));
-    links = links.filter(l => keep.has(l.source.operatorID) && keep.has(l.target.operatorID));
-  }
+/** The enabled part of the workflow, with links by port position. */
+export function logicalPlan(spec: WorkflowSpec): LogicalPlan {
+  const { operators, links } = enabledGraph(spec);
   const byId = new Map(operators.map(o => [o.operatorID, o]));
   const ordinal = (opId: string, portId: string, side: "inputPorts" | "outputPorts") =>
-    byId.get(opId)?.[side].findIndex(p => p.portID === portId) ?? -1;
+    byId.get(opId)?.[side]?.findIndex(p => p.portID === portId) ?? -1;
   return {
-    operators: operators.map(toLogical),
+    operatorIds: operators.map(o => o.operatorID),
     links: links.map(l => ({
       fromOpId: l.source.operatorID,
       fromPortId: { id: ordinal(l.source.operatorID, l.source.portID, "outputPorts"), internal: false },
       toOpId: l.target.operatorID,
       toPortId: { id: ordinal(l.target.operatorID, l.target.portID, "inputPorts"), internal: false },
     })),
-    opsToViewResult: operators.filter(o => o.viewResult).map(o => o.operatorID),
-    opsToReuseResult: operators.filter(o => o.markedForReuse).map(o => o.operatorID),
   };
 }

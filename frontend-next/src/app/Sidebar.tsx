@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { conversationsListOptions } from "@texera/catalog-client/query";
-import { KINDS, LIBRARY_KINDS } from "@texera/kinds";
+import { KINDS, LIBRARY_GROUPS, meQuery, pluralOf, searchQuery } from "@texera/kinds";
 import {
   Avatar,
   Button,
@@ -15,14 +14,15 @@ import {
   Skeleton,
   toggleTheme,
 } from "@texera/ui";
-import { LogOut, MoonStar, PanelLeftClose, Search, SquarePen } from "lucide-react";
+import { LogOut, MoonStar, PanelLeftClose, Search, Settings, SquarePen } from "lucide-react";
 import { signOut, useSession } from "@/auth/session";
 
 export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSearch: () => void }) {
   const user = useSession();
   const navigate = useNavigate();
+  const { data: me } = useQuery(meQuery());
   const { data: chats, isPending } = useQuery({
-    ...conversationsListOptions({ query: { limit: 50 } }),
+    ...searchQuery({ kind: "conversation", limit: 50 }),
     staleTime: 15_000,
   });
 
@@ -49,38 +49,47 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
         </Button>
       </div>
 
-      <div className="mt-4 px-2">
-        <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">Library</h2>
-        {LIBRARY_KINDS.map(kind => {
-          const spec = KINDS[kind];
-          return (
-            <Link
-              key={kind}
-              to="/library/$kind"
-              params={{ kind: spec.librarySlug }}
-              data-library-link={kind}
-              className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm hover:bg-accent data-[status=active]:bg-accent data-[status=active]:font-medium">
-              <spec.icon className="size-4 text-muted-foreground" />
-              {spec.plural}
-            </Link>
-          );
-        })}
-      </div>
-
-      <div className="mt-4 flex min-h-0 flex-1 flex-col px-2">
-        <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">Chats</h2>
-        <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pb-2">
+      <div className="scrollbar-thin mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        {LIBRARY_GROUPS.map(group => (
+          <section key={group.title} className="mb-3">
+            <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">{group.title}</h2>
+            {group.kinds.map(kind => {
+              const spec = KINDS[kind];
+              return (
+                <Link
+                  key={kind}
+                  to="/$plural"
+                  params={{ plural: pluralOf(kind) }}
+                  data-library-link={kind}
+                  className="flex items-center gap-2.5 rounded-lg px-2 py-1 text-sm hover:bg-accent data-[status=active]:bg-accent data-[status=active]:font-medium">
+                  <spec.icon className="size-4 text-muted-foreground" />
+                  {spec.plural}
+                </Link>
+              );
+            })}
+          </section>
+        ))}
+        {me?.admin && (
+          <Link
+            to="/settings"
+            data-settings-link
+            className="flex items-center gap-2.5 rounded-lg px-2 py-1 text-sm hover:bg-accent data-[status=active]:bg-accent data-[status=active]:font-medium">
+            <Settings className="size-4 text-muted-foreground" /> Settings
+          </Link>
+        )}
+        <section className="mt-3">
+          <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">Chats</h2>
           {isPending && [0, 1, 2].map(i => <Skeleton key={i} className="mx-2 my-1.5 h-6" />)}
           {chats?.items.map(chat => (
             <Link
               key={chat.metadata.rid}
-              to="/c/$rid"
+              to="/conversations/$rid"
               params={{ rid: chat.metadata.rid }}
-              className="block truncate rounded-lg px-2 py-1.5 text-sm text-foreground/85 hover:bg-accent data-[status=active]:bg-accent data-[status=active]:text-foreground">
+              className="block truncate rounded-lg px-2 py-1 text-sm text-foreground/85 hover:bg-accent data-[status=active]:bg-accent data-[status=active]:text-foreground">
               {chat.metadata.name}
             </Link>
           ))}
-        </div>
+        </section>
       </div>
 
       <div className="border-t p-2">

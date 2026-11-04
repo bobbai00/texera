@@ -1,90 +1,70 @@
-// Operator types as the catalog serves them (GET /catalog/v1/operators), mapped onto the
-// editor's OperatorSchema, plus the guards that turn a version's untyped content into a
-// WorkflowContent.
+// Operator types as the catalog serves them (the operator resources of the system project
+// and the person's own custom operators), mapped onto the editor's OperatorSchema, plus the
+// guards that fill in what a spec written by an agent may leave out.
 
-import type { OperatorType, OperatorTypeList } from "@texera/catalog-client/types";
-import type { JsonSchema, OperatorGroup, OperatorMetadata, OperatorSchema, PortSchema, WorkflowContent } from "./types";
+import type { Operator, OperatorPortSpec } from "@texera/catalog-client/types";
+import type { JsonSchema, OperatorSchema, PortSchema, WorkflowOperator, WorkflowPort, WorkflowSpec } from "./types";
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
-function toPort(p: unknown): PortSchema {
-  if (!isRecord(p)) return {};
+const toPort = (p: OperatorPortSpec): PortSchema => ({
+  ...(p.displayName ? { displayName: p.displayName } : {}),
+  ...(p.allowMultiInputs !== undefined ? { allowMultiLinks: p.allowMultiInputs } : {}),
+});
+
+/** One operator resource as the editor's schema. A custom operator is typed by its URI with `@vno`. */
+export function fromOperatorResource(op: Operator): OperatorSchema {
+  const builtin = op.status?.builtin === true || !op.spec.implementation;
   return {
-    displayName: typeof p.displayName === "string" ? p.displayName : undefined,
-    allowMultiLinks: typeof p.allowMultiLinks === "boolean" ? p.allowMultiLinks : undefined,
-    dependencies: Array.isArray(p.dependencies) ? (p.dependencies as PortSchema["dependencies"]) : undefined,
+    operatorType: builtin ? op.spec.operatorType : `${op.metadata.uri}@${op.metadata.head}`,
+    userFriendlyName: op.spec.displayName || op.spec.operatorType,
+    operatorDescription: op.spec.description,
+    operatorGroupName: op.spec.group || (builtin ? "Other" : "Custom"),
+    jsonSchema: isRecord(op.spec.propertiesSchema) ? (op.spec.propertiesSchema as JsonSchema) : {},
+    inputPorts: (op.spec.inputPorts ?? []).map(toPort),
+    outputPorts: (op.spec.outputPorts ?? []).map(toPort),
+    ...(builtin ? {} : { custom: { rid: op.metadata.rid, vno: op.metadata.head } }),
   };
-}
-
-/** One catalog operator type as the editor's schema. */
-export function fromCatalogOperator(op: OperatorType): OperatorSchema {
-  const extra = op as OperatorType & { dynamicInputPorts?: boolean; dynamicOutputPorts?: boolean };
-  return {
-    operatorType: op.operatorType,
-    operatorVersion: op.version ?? "",
-    userFriendlyName: op.userFriendlyName,
-    operatorDescription: op.operatorDescription,
-    operatorGroupName: op.operatorGroupName,
-    jsonSchema: isRecord(op.jsonSchema) ? (op.jsonSchema as JsonSchema) : {},
-    inputPorts: (op.inputPorts ?? []).map(toPort),
-    outputPorts: (op.outputPorts ?? []).map(toPort),
-    dynamicInputPorts: extra.dynamicInputPorts,
-    dynamicOutputPorts: extra.dynamicOutputPorts,
-  };
-}
-
-/** The catalog's operator list as the editor's metadata. Groups come through as the engine's group tree. */
-export function fromCatalogOperators(list: OperatorTypeList): OperatorMetadata {
-  const groups = (list.groups ?? []).filter(isRecord).map(toGroup);
-  return { operators: list.operators.map(fromCatalogOperator), groups };
-}
-
-function toGroup(g: Record<string, unknown>): OperatorGroup {
-  const children = Array.isArray(g.children) ? g.children.filter(isRecord).map(toGroup) : null;
-  return { groupName: String(g.groupName ?? ""), children };
 }
 
 /** Operator schemas by type, for the editor's palette and property panel. */
-export const schemaMap = (meta: OperatorMetadata): Map<string, OperatorSchema> =>
-  new Map(meta.operators.map(o => [o.operatorType, o]));
+export const schemaMap = (operators: Operator[]): Map<string, OperatorSchema> =>
+  new Map(operators.map(fromOperatorResource).map(s => [s.operatorType, s]));
 
-/** The icon of an operator type, served beside the app. */
-export const operatorImage = (operatorType: string) => `/operator-images/${operatorType}.png`;
+/** The icon of an operator type, served beside the app; custom operators share one. */
+export const operatorImage = (operatorType: string) =>
+  operatorType.startsWith("texera://") ? "/operator-images/PythonUDFV2.png" : `/operator-images/${operatorType}.png`;
 
-export const EMPTY_CONTENT: WorkflowContent = {
-  operators: [],
-  operatorPositions: {},
-  links: [],
-  commentBoxes: [],
-  settings: { dataTransferBatchSize: 400, executionMode: "PIPELINED" },
-};
+export const EMPTY_SPEC: WorkflowSpec = { operators: [], links: [] };
+
+/** The catalog's rule for an operator without ports: sources have no input, everything has one output. */
+export const isSourceType = (operatorType: string) => /scan|source|generator/i.test(operatorType);
+
+const DEFAULT_INPUTS: WorkflowPort[] = [{ portID: "input-0" }];
+const DEFAULT_OUTPUTS: WorkflowPort[] = [{ portID: "output-0" }];
+
+/** An operator with its ports made explicit, as the catalog does before compiling. */
+export function withPorts(op: WorkflowOperator): WorkflowOperator {
+  return {
+    ...op,
+    operatorProperties: isRecord(op.operatorProperties) ? op.operatorProperties : {},
+    inputPorts: op.inputPorts?.length ? op.inputPorts : isSourceType(op.operatorType) ? [] : DEFAULT_INPUTS,
+    outputPorts: op.outputPorts?.length ? op.outputPorts : DEFAULT_OUTPUTS,
+  };
+}
 
 /**
- * A version's content as WorkflowContent. Content written by agents or older tools may
- * omit positions, comment boxes or settings; those get defaults so the rest of the app
- * never checks for them.
+ * A version's content as a WorkflowSpec with explicit ports. Specs written by agents may
+ * omit ports and properties; those get the catalog's defaults so the rest of the app never
+ * checks for them.
  */
-export function normalizeContent(content: unknown): WorkflowContent {
-  if (!isRecord(content)) return { ...EMPTY_CONTENT };
-  const operators = Array.isArray(content.operators) ? (content.operators as WorkflowContent["operators"]) : [];
-  const settings = isRecord(content.settings) ? (content.settings as Partial<WorkflowContent["settings"]>) : {};
+export function normalizeSpec(content: unknown): WorkflowSpec {
+  if (!isRecord(content)) return { ...EMPTY_SPEC };
+  const operators = Array.isArray(content.operators) ? (content.operators as WorkflowOperator[]) : [];
   return {
-    operators: operators.map(op => ({
-      ...op,
-      operatorProperties: isRecord(op.operatorProperties) ? op.operatorProperties : {},
-      inputPorts: Array.isArray(op.inputPorts) ? op.inputPorts : [],
-      outputPorts: Array.isArray(op.outputPorts) ? op.outputPorts : [],
-      showAdvanced: op.showAdvanced ?? false,
-    })),
-    operatorPositions: isRecord(content.operatorPositions)
-      ? (content.operatorPositions as WorkflowContent["operatorPositions"])
-      : {},
-    links: Array.isArray(content.links) ? (content.links as WorkflowContent["links"]) : [],
-    commentBoxes: Array.isArray(content.commentBoxes) ? content.commentBoxes : [],
-    settings: {
-      dataTransferBatchSize: settings.dataTransferBatchSize ?? 400,
-      executionMode: settings.executionMode ?? "PIPELINED",
-    },
-    ...(content.formBinding !== undefined ? { formBinding: content.formBinding } : {}),
+    operators: operators.map(withPorts),
+    links: Array.isArray(content.links) ? (content.links as WorkflowSpec["links"]) : [],
+    ...(typeof content.defaultEnvironment === "string" ? { defaultEnvironment: content.defaultEnvironment } : {}),
+    ...(typeof content.defaultComputingUnit === "string" ? { defaultComputingUnit: content.defaultComputingUnit } : {}),
   };
 }

@@ -37,3 +37,29 @@ export function KindHeader({
     />
   );
 }
+
+/** A name that edits in place: blur or Enter saves, Escape restores. */
+export function EditableName({ value, onChange, disabled, label }: { value: string; onChange: (name: string) => void; disabled?: boolean; label: string }) {
+  return (
+    <input
+      aria-label={label}
+      key={value}
+      defaultValue={value}
+      disabled={disabled}
+      onBlur={e => {
+        const next = e.target.value.trim();
+        if (next && next !== value) onChange(next);
+        else e.target.value = value;
+      }}
+      onKeyDown={e => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          e.currentTarget.value = value;
+          e.currentTarget.blur();
+        }
+      }}
+      className="block w-full truncate rounded bg-transparent text-sm font-semibold outline-none focus:bg-accent/50 disabled:opacity-100"
+      data-resource-name
+    />
+  );
+}

@@ -1,60 +1,53 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { workflowsRun } from "@texera/catalog-client";
+import type { ExecutionStatus } from "@texera/catalog-client/types";
 import { ReactFlowProvider, useReactFlow, useStoreApi } from "@xyflow/react";
-import { Badge, Button, EmptyState, ErrorNote, Select, Skeleton, Tab, TabPanel, Tabs, TabsList, Tooltip, cn, timeAgo } from "@texera/ui";
-import {
-  addOperator,
-  type Compilation,
-  freeSpot,
-  newOperator,
-  type OperatorOverlay,
-  STATUS_OF,
-  type WorkflowContent,
-} from "@texera/workflow-model";
-import { AlertTriangle, Blocks, Check, CircleDashed, Cpu, GitBranch, History, Loader2, Play, Square, Workflow } from "lucide-react";
+import { Badge, Button, EmptyState, ErrorNote, Select, Skeleton, Tab, TabPanel, Tabs, TabsList, cn, timeAgo } from "@texera/ui";
+import { addOperator, type Compilation, freeSpot, newOperator, normalizeSpec, type OperatorOverlay, statusOf, type WorkflowSpec } from "@texera/workflow-model";
+import { AlertTriangle, Blocks, Check, Cpu, GitBranch, History, Loader2, Play, Users, Workflow } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Group, Panel, Separator } from "react-resizable-panels";
 import { useStore } from "zustand";
 import { unwrap } from "../api";
-import { ACTIVE_STATES, type RunSnapshot } from "../engine/engine";
-import { useWorkflowRun } from "../engine/useWorkflowRun";
-import { operatorSchemasQuery, unitsQuery } from "../queries";
-import { KindHeader } from "../shell/KindHeader";
+import { keysOf, operatorSchemasQuery, unitsQuery } from "../queries";
+import { Access } from "../shell/Access";
+import { EditableName, KindHeader } from "../shell/KindHeader";
 import { Lineage } from "../shell/Lineage";
 import { metaLine } from "../shell/MetaLine";
 import { useOpenResource } from "../shell/navigation";
 import { Versions } from "../shell/Versions";
 import type { KindViewProps } from "../types";
+import { uriOf } from "../uri";
 import { acquireEditor, type EditorStore, releaseEditor } from "./editor";
 import { EditorCanvas } from "./EditorCanvas";
 import { OperatorPalette } from "./OperatorPalette";
 import { PropertyPanel } from "./PropertyPanel";
-import { compilationQuery, contentQuery, runsQuery, workflowQuery } from "./queries";
-import { ResultsPanel } from "./ResultsPanel";
+import { compilationQuery, executionsQuery, versionSpecQuery, workflowQuery } from "./queries";
 
 const UNIT_KEY = "texera-unit";
+const LIVE = new Set<ExecutionStatus["phase"]>(["pending", "provisioning", "running"]);
 
 /** The workflow workspace: the same view in the side panel next to a chat and as a full page. */
 export default function WorkflowView({ ref, mode }: KindViewProps) {
   const { data: workflow, error } = useQuery(workflowQuery(ref.rid));
   const [vno, setVno] = useState<number | undefined>(ref.vno);
-  const { data: version, error: contentError } = useQuery(contentQuery(ref.rid, vno));
-  if (error || contentError) return <ErrorNote error={error ?? contentError} prefix="Could not open this workflow" className="m-4" />;
-  if (!workflow || !version) return <Skeleton className="m-4 h-[calc(100%-2rem)]" />;
-  const pinned = vno !== undefined && vno !== workflow.metadata.headVersion;
+  const pinned = workflow !== undefined && vno !== undefined && vno !== workflow.metadata.head;
+  const version = useQuery({ ...versionSpecQuery(ref.rid, vno ?? 0), enabled: pinned });
+  if (error || version.error) return <ErrorNote error={error ?? version.error} prefix="Could not open this workflow" className="m-4" />;
+  if (!workflow || (pinned && !version.data)) return <Skeleton className="m-4 h-[calc(100%-2rem)]" />;
+  const spec = pinned ? (version.data as WorkflowSpec) : normalizeSpec(workflow.spec);
   return (
     <Editor
       key={`${ref.rid}:${pinned ? vno : "head"}`}
       rid={ref.rid}
       mode={mode}
       name={workflow.metadata.name}
-      meta={metaLine(workflow.metadata)}
-      headVno={workflow.metadata.headVersion}
-      content={version.content}
-      contentVno={version.vno}
+      meta={metaLine("workflow", workflow.metadata)}
+      headVno={workflow.metadata.head}
+      spec={spec}
+      specVno={pinned ? (vno as number) : workflow.metadata.head}
       pinned={pinned}
       onPin={setVno}
-      defaultUnit={workflow.spec.defaultComputingUnit}
+      defaultUnit={spec.defaultComputingUnit}
     />
   );
 }
@@ -65,8 +58,8 @@ function Editor({
   name,
   meta,
   headVno,
-  content,
-  contentVno,
+  spec,
+  specVno,
   pinned,
   onPin,
   defaultUnit,
@@ -76,8 +69,8 @@ function Editor({
   name: string;
   meta: string;
   headVno: number;
-  content: WorkflowContent;
-  contentVno: number;
+  spec: WorkflowSpec;
+  specVno: number;
   pinned: boolean;
   onPin: (vno: number | undefined) => void;
   defaultUnit?: string;
@@ -85,23 +78,19 @@ function Editor({
   const queryClient = useQueryClient();
   const [store, setStore] = useState<EditorStore>();
   useEffect(() => {
-    const s = acquireEditor({ rid, name, headVno: contentVno, content, readonly: pinned });
+    const s = acquireEditor({ rid, name, headVno: specVno, spec, readonly: pinned });
     setStore(s);
     return () => releaseEditor(rid);
-    // The store is created once per (rid, pinned version); later content arrives through adopt below.
+    // The store is created once per (rid, pinned version); later specs arrive through adopt below.
     // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   }, [rid, pinned]);
   useEffect(() => {
-    store?.getState().adopt(content, contentVno, name);
-  }, [store, content, contentVno, name]);
+    store?.getState().adopt(spec, specVno, name);
+  }, [store, spec, specVno, name]);
   useEffect(() => {
-    // A save made a version: lists and the head content follow without a refetch storm.
+    // A save made a version: the envelope and the lists follow without a refetch storm.
     return store?.subscribe((state, previous) => {
-      if (state.headVno !== previous.headVno) {
-        queryClient.invalidateQueries({ queryKey: ["workflow-content", rid] });
-        queryClient.invalidateQueries({ queryKey: [{ _id: "workflowsRead", path: { rid } }] });
-        queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesListVersions", path: { rid } }] });
-      }
+      if (state.headVno !== previous.headVno) for (const key of keysOf(rid)) queryClient.invalidateQueries({ queryKey: key });
     });
   }, [store, queryClient, rid]);
   if (!store) return <Skeleton className="m-4 h-[calc(100%-2rem)]" />;
@@ -112,13 +101,13 @@ function Editor({
   );
 }
 
-function overlayFor(content: WorkflowContent, compilation: Compilation | undefined, run: RunSnapshot) {
+function overlayFor(spec: WorkflowSpec, compilation: Compilation | undefined, run: ExecutionStatus | undefined) {
   const overlay: Record<string, OperatorOverlay> = {};
-  for (const op of content.operators) {
-    const progress = run.operators[op.operatorID];
+  for (const op of spec.operators) {
+    const progress = run?.operators?.[op.operatorID];
     const error = compilation?.errors[op.operatorID];
     overlay[op.operatorID] = {
-      ...(progress ? { status: STATUS_OF[progress.state], rows: progress.outputRows } : {}),
+      ...(progress ? { status: statusOf(progress.state), rows: progress.tuples } : {}),
       ...(error ? { error } : {}),
     };
   }
@@ -151,7 +140,7 @@ function EditorLayout({
   defaultUnit?: string;
 }) {
   const rid = store.getState().rid;
-  const content = useStore(store, s => s.content);
+  const spec = useStore(store, s => s.spec);
   const name = useStore(store, s => s.name);
   const selected = useStore(store, s => s.selected);
   const readonly = useStore(store, s => s.readonly);
@@ -160,26 +149,29 @@ function EditorLayout({
   const { data: schemas } = useQuery(operatorSchemasQuery());
   const { data: units } = useQuery(unitsQuery());
   const [unitPick, setUnitPick] = useState<string | undefined>(() => defaultUnit ?? rememberedUnit());
-  const unit = units?.find(u => u.metadata.rid === unitPick)?.metadata.rid ?? units?.find(u => u.status?.phase === "ready")?.metadata.rid ?? units?.[0]?.metadata.rid;
-  const { data: compilation } = useQuery(compilationQuery(rid, content, unit));
-  const { runner, snapshot } = useWorkflowRun(rid, unit);
+  const unit = units?.find(u => u.metadata.uri === unitPick) ?? units?.find(u => u.status?.phase === "ready") ?? units?.[0];
+  const { data: compilation } = useQuery(compilationQuery(rid, spec, unit?.metadata.uri));
+  const runs = useQuery({
+    ...executionsQuery(rid),
+    refetchInterval: q => (q.state.data?.items.some(x => LIVE.has(x.status?.phase ?? "pending")) ? 2000 : false),
+  });
+  const latest = runs.data?.items[0];
   const [paletteOpen, setPaletteOpen] = useState(mode === "page" && !readonly);
   const [tab, setTab] = useState("canvas");
-  const overlay = useMemo(() => overlayFor(content, compilation, snapshot), [content, compilation, snapshot]);
-  const running = ACTIVE_STATES.has(snapshot.state);
-  const showResults = !!runner && (snapshot.state !== "Uninitialized" || Object.keys(snapshot.outputs).length > 0);
+  const overlay = useMemo(() => overlayFor(spec, compilation, latest?.status), [spec, compilation, latest?.status]);
   const { beside } = useOpenResource();
+  const live = latest !== undefined && LIVE.has(latest.status?.phase ?? "pending");
 
   const run = useMutation({
     mutationFn: async () => {
       await store.getState().flush();
       if (!unit) throw new Error("No computing unit is available.");
-      runner?.reset();
-      return unwrap(workflowsRun({ path: { rid }, body: { vno: store.getState().headVno, computingUnit: unit, name: store.getState().name } }));
+      return unwrap(workflowsRun({ path: { rid }, body: { vno: store.getState().headVno, computingUnit: unit.metadata.uri, name: `${store.getState().name} v${store.getState().headVno}` } }));
     },
-    onSuccess: () => {
+    onSuccess: execution => {
       queryClient.invalidateQueries({ queryKey: [{ _id: "workflowsListExecutions", path: { rid } }] });
-      queryClient.invalidateQueries({ queryKey: [{ _id: "executionsList" }] });
+      queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
+      beside({ kind: "execution", rid: execution.metadata.rid, parent: rid });
     },
   });
 
@@ -189,13 +181,14 @@ function EditorLayout({
     const schema = schemas?.get(type);
     if (!schema) return;
     const op = newOperator(schema);
-    const { content: current, selected: after } = store.getState();
-    const anchor = after ? current.operatorPositions[after] : undefined;
+    const { positions, selected: after } = store.getState();
+    const anchor = after ? positions[after] : undefined;
     const { width, height } = flowStore.getState();
     const view = getViewport();
     const middle = { x: (width / 2 - view.x) / view.zoom - 28, y: (height / 2 - view.y) / view.zoom - 28 };
-    const spot = freeSpot(current, anchor ? { x: anchor.x + 180, y: anchor.y } : middle);
-    store.getState().edit(c => addOperator(c, op, spot));
+    const spot = freeSpot(positions, anchor ? { x: anchor.x + 180, y: anchor.y } : middle);
+    store.getState().move({ [op.operatorID]: spot });
+    store.getState().edit(s => addOperator(s, op));
     store.getState().select(op.operatorID);
     setTimeout(() => void setCenter(spot.x + 28, spot.y + 28, { zoom: getViewport().zoom, duration: 200 }), 60);
   };
@@ -214,17 +207,7 @@ function EditorLayout({
       <KindHeader
         ref={{ kind: "workflow", rid }}
         mode={mode}
-        name={
-          <input
-            aria-label="Workflow name"
-            defaultValue={name}
-            key={name}
-            disabled={readonly}
-            onBlur={e => store.getState().rename(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && e.currentTarget.blur()}
-            className="block w-full truncate rounded bg-transparent text-sm font-semibold outline-none focus:bg-accent/50"
-          />
-        }
+        name={<EditableName value={name} onChange={n => store.getState().rename(n)} disabled={readonly} label="Workflow name" />}
         meta={
           <span className="flex items-center gap-1.5">
             {pinned ? (
@@ -245,22 +228,25 @@ function EditorLayout({
             {units && units.length > 0 && (
               <Select
                 aria-label="Computing unit"
-                value={unit ?? null}
+                value={unit?.metadata.uri ?? null}
                 onChange={pickUnit}
-                options={units.map(u => ({ value: u.metadata.rid, label: u.metadata.name }))}
+                options={units.map(u => ({ value: u.metadata.uri, label: u.metadata.name }))}
                 className="w-40"
               />
             )}
-            <RunState snapshot={snapshot} unitName={units?.find(u => u.metadata.rid === unit)?.metadata.name} noUnit={units !== undefined && !unit} />
-            {running ? (
-              <Button size="sm" variant="secondary" onClick={runner?.kill} disabled={!runner}>
-                <Square className="fill-current" /> Stop
-              </Button>
-            ) : (
-              <Button size="sm" onClick={() => run.mutate()} disabled={!unit || run.isPending || content.operators.length === 0} data-run>
-                {run.isPending ? <Loader2 className="animate-spin" /> : <Play />} Run
-              </Button>
+            {units !== undefined && !unit && (
+              <Badge tone="danger">
+                <Cpu className="size-3" /> No computing unit
+              </Badge>
             )}
+            {live && latest && (
+              <Badge tone="warning">
+                <Loader2 className="size-3 animate-spin" /> {latest.status?.phase}
+              </Badge>
+            )}
+            <Button size="sm" onClick={() => run.mutate()} disabled={!unit || run.isPending || spec.operators.length === 0 || pinned} data-run>
+              {run.isPending ? <Loader2 className="animate-spin" /> : <Play />} Run
+            </Button>
           </>
         }
       />
@@ -270,22 +256,20 @@ function EditorLayout({
           <Tab value="canvas">
             <Workflow /> Canvas
           </Tab>
+          <Tab value="runs">
+            <Play /> Runs{runs.data ? ` (${runs.data.items.length})` : ""}
+          </Tab>
           <Tab value="versions">
             <History /> Versions
           </Tab>
-          <Tab value="runs">
-            <Play /> Runs
+          <Tab value="access">
+            <Users /> Access
           </Tab>
           <Tab value="lineage">
             <GitBranch /> Lineage
           </Tab>
           {!readonly && tab === "canvas" && (
-            <Button
-              variant={paletteOpen ? "secondary" : "ghost"}
-              size="icon-xs"
-              className="ml-auto"
-              onClick={() => setPaletteOpen(o => !o)}
-              aria-label="Toggle operator palette">
+            <Button variant={paletteOpen ? "secondary" : "ghost"} size="icon-xs" className="ml-auto" onClick={() => setPaletteOpen(o => !o)} aria-label="Toggle operator palette">
               <Blocks />
             </Button>
           )}
@@ -296,32 +280,23 @@ function EditorLayout({
               <OperatorPalette onAdd={addFromPalette} />
             </aside>
           )}
-          <Group orientation="vertical" className="min-w-0 flex-1">
-            <Panel id="canvas" minSize="25%">
-              <div className="flex h-full min-h-0">
-                <EditorCanvas store={store} overlay={overlay} className="relative min-w-0 flex-1 bg-canvas" />
-                {selected && (
-                  <aside className="w-80 shrink-0 border-l bg-background">
-                    <PropertyPanel store={store} compilation={compilation} />
-                  </aside>
-                )}
-              </div>
-            </Panel>
-            {showResults && runner && (
-              <>
-                <Separator className="h-px bg-border transition-colors hover:bg-primary data-[separator=active]:bg-primary" />
-                <Panel id="results" defaultSize="38%" minSize="15%">
-                  <ResultsPanel runner={runner} snapshot={snapshot} operators={content.operators} focus={selected} />
-                </Panel>
-              </>
+          <div className="flex min-h-0 min-w-0 flex-1">
+            <EditorCanvas store={store} overlay={overlay} className="relative min-w-0 flex-1 bg-canvas" />
+            {selected && (
+              <aside className="w-80 shrink-0 border-l bg-background">
+                <PropertyPanel store={store} compilation={compilation} />
+              </aside>
             )}
-          </Group>
+          </div>
+        </TabPanel>
+        <TabPanel value="runs" className="scrollbar-thin overflow-y-auto">
+          <Runs rid={rid} onOpen={eid => beside({ kind: "execution", rid: eid, parent: rid })} />
         </TabPanel>
         <TabPanel value="versions" className="scrollbar-thin overflow-y-auto">
           <Versions rid={rid} head={headVno} selected={pinned ? vno : undefined} onSelect={onPin} />
         </TabPanel>
-        <TabPanel value="runs" className="scrollbar-thin overflow-y-auto">
-          <Runs rid={rid} onOpen={eid => beside({ kind: "execution", rid: eid })} />
+        <TabPanel value="access" className="scrollbar-thin overflow-y-auto">
+          <AccessOf rid={rid} />
         </TabPanel>
         <TabPanel value="lineage" className="scrollbar-thin overflow-y-auto">
           <Lineage ref={{ kind: "workflow", rid, vno }} />
@@ -331,23 +306,31 @@ function EditorLayout({
   );
 }
 
+function AccessOf({ rid }: { rid: string }) {
+  const { data } = useQuery(workflowQuery(rid));
+  return data ? <Access resource={data} /> : <Skeleton className="m-3 h-24" />;
+}
+
 function Runs({ rid, onOpen }: { rid: string; onOpen: (eid: string) => void }) {
-  const { data, isPending, error } = useQuery(runsQuery(rid));
+  const { data, isPending, error } = useQuery(executionsQuery(rid));
   if (error) return <ErrorNote error={error} prefix="Could not load runs" className="m-3" />;
   if (isPending) return <Skeleton className="m-3 h-24" />;
   if (!data.items.length) return <EmptyState>No runs yet.</EmptyState>;
   return (
     <ul className="divide-y" data-runs>
-      {data.items.map(x => (
-        <li key={x.eid}>
-          <button type="button" onClick={() => onOpen(x.eid)} className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-accent/60">
-            <Badge tone={x.status === "completed" ? "success" : x.status === "failed" ? "danger" : "neutral"}>{x.status}</Badge>
-            <span className="min-w-0 flex-1 truncate">{x.name || `Run ${x.eid.slice(0, 8)}`}</span>
-            <span className="text-xs text-muted-foreground">v{x.workflow.vno}</span>
-            <span className="text-xs text-muted-foreground">{timeAgo(x.createdAt)}</span>
-          </button>
-        </li>
-      ))}
+      {data.items.map(x => {
+        const phase = x.status?.phase ?? "pending";
+        return (
+          <li key={x.metadata.rid}>
+            <button type="button" onClick={() => onOpen(x.metadata.rid)} className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-accent/60" data-run-row={phase}>
+              <Badge tone={phase === "completed" ? "success" : phase === "failed" || phase === "cancelled" ? "danger" : "warning"}>{phase}</Badge>
+              <span className="min-w-0 flex-1 truncate">{x.metadata.name}</span>
+              <span className="text-xs text-muted-foreground">{x.spec.workflow.split("@")[1] ? `v${x.spec.workflow.split("@")[1]}` : ""}</span>
+              <span className="text-xs text-muted-foreground">{timeAgo(x.metadata.createdAt)}</span>
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -363,7 +346,7 @@ function SaveIndicator({ store }: { store: EditorStore }) {
     );
   if (state === "saved")
     return (
-      <span className="inline-flex items-center gap-1">
+      <span className={cn("inline-flex items-center gap-1")}>
         <Check className="size-3" /> Saved
       </span>
     );
@@ -374,25 +357,4 @@ function SaveIndicator({ store }: { store: EditorStore }) {
   );
 }
 
-function RunState({ snapshot, unitName, noUnit }: { snapshot: RunSnapshot; unitName?: string; noUnit: boolean }) {
-  if (noUnit) {
-    return (
-      <Badge tone="danger">
-        <Cpu className="size-3" /> No computing unit
-      </Badge>
-    );
-  }
-  const running = ACTIVE_STATES.has(snapshot.state);
-  return (
-    <Tooltip content={unitName ? `Runs on "${unitName}"` : "Connecting to a computing unit"}>
-      <Badge
-        className={cn(
-          snapshot.state === "Completed" && "text-success",
-          (snapshot.state === "Failed" || snapshot.state === "Killed") && "text-destructive"
-        )}>
-        {running ? <Loader2 className="size-3 animate-spin" /> : snapshot.connected ? <Cpu className="size-3" /> : <CircleDashed className="size-3" />}
-        {snapshot.state === "Uninitialized" ? (snapshot.connected ? "Ready" : "Connecting") : snapshot.state}
-      </Badge>
-    </Tooltip>
-  );
-}
+export { uriOf };

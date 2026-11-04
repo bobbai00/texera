@@ -1,5 +1,5 @@
 import type { Edge, Node } from "@xyflow/react";
-import type { WorkflowContent } from "./types";
+import type { Positions, WorkflowSpec } from "./types";
 
 export type OperatorStatus = "running" | "completed" | "failed";
 
@@ -26,25 +26,30 @@ export interface OperatorOverlay {
 
 export type OperatorNode = Node<OperatorNodeData, "operator">;
 
-/** Maps the workflow JSON onto React Flow nodes and edges. Pure. */
+/** The label of an operator on the canvas: its custom name, else its type (a custom operator by its short name). */
+export const operatorLabel = (op: { operatorType: string; customDisplayName?: string }) =>
+  op.customDisplayName || (op.operatorType.startsWith("texera://") ? "Custom operator" : op.operatorType);
+
+/** Maps the spec onto React Flow nodes and edges. Pure. */
 export function toFlow(
-  content: WorkflowContent,
+  spec: WorkflowSpec,
+  positions: Positions,
   overlay: Record<string, OperatorOverlay> = {}
 ): { nodes: OperatorNode[]; edges: Edge[] } {
-  const nodes: OperatorNode[] = content.operators.map(op => ({
+  const nodes: OperatorNode[] = spec.operators.map(op => ({
     id: op.operatorID,
     type: "operator",
-    position: content.operatorPositions[op.operatorID] ?? { x: 0, y: 0 },
+    position: positions[op.operatorID] ?? { x: 0, y: 0 },
     data: {
       operatorType: op.operatorType,
-      label: op.customDisplayName ?? op.operatorType,
-      inputs: op.inputPorts.map(p => ({ id: p.portID, label: p.displayName || undefined })),
-      outputs: op.outputPorts.map(p => ({ id: p.portID, label: p.displayName || undefined })),
+      label: operatorLabel(op),
+      inputs: (op.inputPorts ?? []).map(p => ({ id: p.portID, label: p.displayName || undefined })),
+      outputs: (op.outputPorts ?? []).map(p => ({ id: p.portID, label: p.displayName || undefined })),
       disabled: op.isDisabled,
       ...overlay[op.operatorID],
     },
   }));
-  const edges: Edge[] = content.links.map(l => ({
+  const edges: Edge[] = spec.links.map(l => ({
     id: l.linkID,
     source: l.source.operatorID,
     sourceHandle: l.source.portID,
@@ -54,15 +59,18 @@ export function toFlow(
   return { nodes, edges };
 }
 
-/** Engine operator states as node status. */
+/** Engine operator states (as the catalog records them) as node status. */
 export const STATUS_OF: Record<string, OperatorStatus> = {
-  Initializing: "running",
-  Ready: "running",
-  Running: "running",
-  Pausing: "running",
-  Paused: "running",
-  Resuming: "running",
-  Completed: "completed",
-  Failed: "failed",
-  Killed: "failed",
+  initializing: "running",
+  ready: "running",
+  running: "running",
+  pausing: "running",
+  paused: "running",
+  resuming: "running",
+  completed: "completed",
+  failed: "failed",
+  killed: "failed",
 };
+
+export const statusOf = (state: string | undefined): OperatorStatus | undefined =>
+  state ? STATUS_OF[state.toLowerCase()] : undefined;

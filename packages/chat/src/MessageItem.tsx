@@ -1,10 +1,25 @@
-import { ResourceCard } from "@texera/kinds";
+import { KindIcon, ResourceCard } from "@texera/kinds";
 import { memo } from "react";
 import type { ChatMessage } from "./model";
-import { ApprovalPart, ErrorPart, ReasoningPart, SubagentPart, TextPart, ToolCallPart } from "./parts";
+import { ErrorPart, HandoffPart, ReasoningPart, TextPart, ToolCallPart } from "./parts";
+import type { TemplateLabel } from "./templates";
 
-/** One message. Memoized on the message object so earlier messages never re-render while a reply streams. */
-export const MessageItem = memo(function MessageItem({ message, streaming }: { message: ChatMessage; streaming: boolean }) {
+/**
+ * One message. Memoized on the message object so earlier messages never re-render while a
+ * reply streams. An assistant message is labelled with the template version that wrote it.
+ */
+export const MessageItem = memo(function MessageItem({
+  message,
+  streaming,
+  labels,
+  showLabel,
+}: {
+  message: ChatMessage;
+  streaming: boolean;
+  labels: Map<string, TemplateLabel>;
+  /** Whether to show the template label: the first message of a run of the same template. */
+  showLabel: boolean;
+}) {
   if (message.role === "user") {
     const texts = message.parts.filter(p => p.type === "text");
     const resources = message.parts.filter(p => p.type === "resource");
@@ -28,9 +43,28 @@ export const MessageItem = memo(function MessageItem({ message, streaming }: { m
       </div>
     );
   }
-  if (message.role === "system") return null;
+  if (message.role === "system") {
+    return (
+      <div data-message-role="system">
+        {message.parts.map((part, i) => {
+          const key = `${message.id}-${i}`;
+          if (part.type === "handoff") return <HandoffPart key={key} part={part} toName={labels.get(part.to)?.name ?? part.name} fromName={part.from ? labels.get(part.from)?.name : undefined} />;
+          if (part.type === "text") return <p key={key} className="py-1 text-center text-xs text-muted-foreground">{part.text}</p>;
+          return null;
+        })}
+      </div>
+    );
+  }
+  const label = message.template ? labels.get(message.template) : undefined;
   return (
-    <div className="space-y-3 text-sm leading-relaxed" data-message-role={message.role}>
+    <div className="space-y-3 text-sm leading-relaxed" data-message-role={message.role} data-template={label?.name}>
+      {showLabel && label && (
+        <div className="flex items-center gap-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase" data-message-template={label.name}>
+          <KindIcon kind="agent-template" className="size-5 rounded-md [&_svg]:size-3" />
+          {label.name}
+          {label.vno !== undefined && <span className="normal-case opacity-70">v{label.vno}</span>}
+        </div>
+      )}
       {message.parts.map((part, i) => {
         const key = `${message.id}-${i}`;
         switch (part.type) {
@@ -42,10 +76,8 @@ export const MessageItem = memo(function MessageItem({ message, streaming }: { m
             return <ToolCallPart key={key} part={part} />;
           case "resource":
             return <ResourceCard key={key} ref={part.ref} />;
-          case "subagent":
-            return <SubagentPart key={key} part={part} />;
-          case "approval":
-            return <ApprovalPart key={key} part={part} />;
+          case "handoff":
+            return <HandoffPart key={key} part={part} toName={labels.get(part.to)?.name ?? part.name} />;
           case "error":
             return <ErrorPart key={key} message={part.message} />;
           default:

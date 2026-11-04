@@ -30,7 +30,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
       <Command.Input
         value={query}
         onValueChange={setQuery}
-        placeholder="Search workflows, datasets, templates, chats…"
+        placeholder="Search workflows, datasets, agents, chats…"
         className="h-12 w-full border-b bg-transparent px-4 text-sm outline-none"
       />
       <Command.List className="scrollbar-thin max-h-96 overflow-y-auto p-2">
@@ -54,7 +54,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                 <Command.Item
                   key={r.metadata.rid}
                   value={`${r.metadata.name} ${kind} ${r.metadata.rid}`}
-                  onSelect={() => go(href({ kind, rid: r.metadata.rid }))}
+                  onSelect={() => go(href({ kind, rid: r.metadata.rid, parent: r.metadata.parent }))}
                   className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-foreground data-[selected=true]:bg-accent">
                   <KindIcon kind={kind} className="size-6 [&_svg]:size-3.5" />
                   <span className="truncate">{r.metadata.name}</span>

@@ -82,7 +82,7 @@ host uses. No OrbStack-specific hostnames are needed; `TEXERA2_S3_ENDPOINT` and
 | 28085 | Computing unit (Amber); actor port 2652 |
 | 23002 | Agent runtime (AI SDK 7, AG-UI) |
 | 5174 | Frontend (vite) |
-| 23010 | Example third-party MCP server, started by `test.sh e2e` for the templates check |
+| 23010 | Bio MCP server (PubMed, genes, variants, proteins), behind the gateway at `/bio-mcp`; its key is a seeded credential |
 | 18081 | Keycloak (admin/admin; users alice/alice, bob/bob, texera-admin/admin) |
 | 18082 | OpenFGA HTTP API |
 | 19001 | RustFS S3 (texera / texera-secret) |
@@ -97,9 +97,9 @@ host uses. No OrbStack-specific hostnames are needed; `TEXERA2_S3_ENDPOINT` and
 | `smoke-run.sh` | Compile and run on the unit, results, port-level lineage reported back to the catalog, a result saved as a dataset version produced by the run |
 | `smoke-retention.py` | Every execution keeps its results after later runs and after the unit's idle release |
 | `smoke-env.py` | A Python UDF fails without its package and completes in an Environment that lists it |
-| `smoke-chat.py` | A real-model chat builds, edits and reruns a workflow, then saves the result as a dataset; everything is attributed to the agent on behalf of the person, with lineage to the run |
-| `smoke-templates.py` | A template binds an external MCP server beside the built-in one; the agent uses both |
-| `frontend-next/e2e` (Playwright) | Sign-in, chat with attachments, the library, a real-model chat that tracks what it built, saving a result from its run page |
+| `smoke-chat.py` | A real-model chat: the Data Analyst builds, edits and reruns a workflow over the iris dataset, then saves the result as a dataset; every resource carries the turn and the template version as its origin, with lineage to the run |
+| `smoke-chat.py --demo` | The M1 scenario: the Bio Researcher answers with cited research ideas through the bio MCP server, then hands the chat to the Data Analyst, which runs the analysis |
+| `frontend-next/e2e` (Playwright) | Sign-in, a chat with an attachment that becomes a dataset, switching agents through the switcher and `/mode`, creating and editing an agent template from its page, a saved result's lineage, and with the model: the Data Analyst chat that tracks what it built and the Bio Researcher's handoff |
 
 ## Kubernetes (deployment only, not for development)
 

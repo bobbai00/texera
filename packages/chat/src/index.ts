@@ -1,10 +1,11 @@
 export { ChatView } from "./ChatView";
-export { NewChat, type NewChatResult } from "./NewChat";
-export { ModePicker } from "./ModePicker";
+export { NewChat } from "./NewChat";
+export { TemplatePicker } from "./TemplatePicker";
 export { Composer } from "./Composer";
 export { MessageItem } from "./MessageItem";
 export { ResourcesRail } from "./ResourcesRail";
-export { useConversation, type Attachment } from "./useConversation";
+export { useConversation, agUiUrl, type Attachment } from "./useConversation";
+export { useTemplateLabels, type TemplateLabel } from "./templates";
 export * from "./model";
 export { runAgent, readSse } from "./agui/client";
 export type * from "./agui/types";

@@ -1,39 +1,34 @@
 import { useQuery } from "@tanstack/react-query";
 import { Input, Skeleton } from "@texera/ui";
-import { type OperatorGroup, operatorImage } from "@texera/workflow-model";
+import { type OperatorSchema, operatorImage } from "@texera/workflow-model";
 import { Search } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
-import { operatorsQuery } from "../queries";
+import { operatorSchemasQuery } from "../queries";
 
 export const OPERATOR_DRAG_TYPE = "application/x-texera-operator";
 
 // Not offered for new workflows, as in the classic operator menu.
 const HIDDEN = new Set(["PythonUDF", "Dummy", "Sleep"]);
 
-/** Searchable, grouped list of every operator the engine offers; click one, or drag it onto the canvas, to add it. */
+/** Searchable, grouped list of every operator type the caller may use; click one, or drag it onto the canvas, to add it. */
 export function OperatorPalette({ onAdd }: { onAdd?: (operatorType: string) => void }) {
-  const { data } = useQuery(operatorsQuery());
+  const { data } = useQuery(operatorSchemasQuery());
   const [query, setQuery] = useState("");
   const q = useDeferredValue(query.trim().toLowerCase());
 
   const groups = useMemo(() => {
     if (!data) return [];
-    const byGroup = new Map<string, typeof data.operators>();
-    const walk = (list: OperatorGroup[]) => {
-      for (const g of list) {
-        byGroup.set(g.groupName, []);
-        walk(g.children ?? []);
-      }
-    };
-    walk(data.groups);
-    for (const op of [...data.operators].sort((a, b) => a.operatorType.localeCompare(b.operatorType))) {
+    const byGroup = new Map<string, OperatorSchema[]>();
+    const sorted = [...data.values()].sort((a, b) => a.userFriendlyName.localeCompare(b.userFriendlyName));
+    for (const op of sorted) {
       if (HIDDEN.has(op.operatorType)) continue;
       if (q && !`${op.userFriendlyName} ${op.operatorType} ${op.operatorGroupName}`.toLowerCase().includes(q)) continue;
       const list = byGroup.get(op.operatorGroupName) ?? [];
       list.push(op);
       byGroup.set(op.operatorGroupName, list);
     }
-    return [...byGroup.entries()].filter(([, ops]) => ops.length > 0);
+    // Custom operators first, then the engine's groups alphabetically.
+    return [...byGroup.entries()].sort(([a], [b]) => (a === "Custom" ? -1 : b === "Custom" ? 1 : a.localeCompare(b)));
   }, [data, q]);
 
   return (

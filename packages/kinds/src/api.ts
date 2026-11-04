@@ -1,5 +1,10 @@
 // Turning the generated client's `{data, error, response}` results into values or a typed
-// error that carries the HTTP status, so callers can tell a conflict from a failure.
+// error that carries the HTTP status, and the one place that maps a kind onto its generated
+// create and update calls, so the generic page can write any kind.
+
+import * as sdk from "@texera/catalog-client";
+import type { Resource, UpdateMetadata } from "@texera/catalog-client/types";
+import type { CreateInput, KindId } from "./types";
 
 export class CatalogError extends Error {
   readonly status: number;
@@ -31,4 +36,81 @@ export async function unwrap<T>(call: Promise<Result<T>>): Promise<T> {
     throw new CatalogError(status, message || `HTTP ${status}`, code);
   }
   return r.data as T;
+}
+
+type Create = (options: { body: never }) => Promise<Result<Resource>>;
+type Update = (options: { path: { rid: string }; body: never; headers?: { "If-Match"?: string } }) => Promise<Result<Resource>>;
+
+// The typed kind routes, by kind. Executions are created by a run; settings is a singleton.
+const CREATE: Partial<Record<KindId, Create>> = {
+  "agent-template": sdk.agentTemplatesCreate as Create,
+  "computing-unit": sdk.computingUnitsCreate as Create,
+  conversation: sdk.conversationsCreate as Create,
+  credential: sdk.credentialsCreate as Create,
+  dataset: sdk.datasetsCreate as Create,
+  environment: sdk.environmentsCreate as Create,
+  "mcp-server": sdk.mcpServersCreate as Create,
+  model: sdk.modelsCreate as Create,
+  "model-endpoint": sdk.modelEndpointsCreate as Create,
+  operator: sdk.operatorsCreate as Create,
+  project: sdk.projectsCreate as Create,
+  skill: sdk.skillsCreate as Create,
+  workflow: sdk.workflowsCreate as Create,
+};
+
+const UPDATE: Partial<Record<KindId, Update>> = {
+  "agent-template": sdk.agentTemplatesUpdate as Update,
+  "computing-unit": sdk.computingUnitsUpdate as Update,
+  conversation: sdk.conversationsUpdate as Update,
+  credential: sdk.credentialsUpdate as Update,
+  dataset: sdk.datasetsUpdate as Update,
+  environment: sdk.environmentsUpdate as Update,
+  "mcp-server": sdk.mcpServersUpdate as Update,
+  model: sdk.modelsUpdate as Update,
+  "model-endpoint": sdk.modelEndpointsUpdate as Update,
+  operator: sdk.operatorsUpdate as Update,
+  project: sdk.projectsUpdate as Update,
+  skill: sdk.skillsUpdate as Update,
+  workflow: sdk.workflowsUpdate as Update,
+};
+
+export const canCreate = (kind: KindId) => kind in CREATE;
+export const canUpdate = (kind: KindId) => kind in UPDATE || kind === "settings";
+
+export interface CreateBody extends CreateInput {
+  spec: unknown;
+  visibility?: "private" | "public";
+  labels?: Record<string, string>;
+  message?: string;
+}
+
+/** Creates a resource of a kind through its typed route. */
+export function createResource(kind: KindId, body: CreateBody): Promise<Resource> {
+  const create = CREATE[kind];
+  if (!create) throw new CatalogError(400, `${kind} cannot be created directly`);
+  return unwrap(create({ body: body as never }));
+}
+
+export interface UpdateSpecBody {
+  spec: unknown;
+  message?: string;
+  expectedHead?: number;
+}
+
+/** Replaces the spec of a resource through its typed route; a versioned kind gets a new version. */
+export function updateSpec(kind: KindId, rid: string, body: UpdateSpecBody, etag?: string): Promise<Resource> {
+  if (kind === "settings") {
+    return unwrap(sdk.settingsRoutesUpdate({ body: body as never, headers: etag ? { "If-Match": etag } : undefined })) as Promise<Resource>;
+  }
+  const update = UPDATE[kind];
+  if (!update) throw new CatalogError(400, `${kind} cannot be updated`);
+  return unwrap(update({ path: { rid }, body: body as never, headers: etag ? { "If-Match": etag } : undefined }));
+}
+
+export function updateMetadata(rid: string, body: UpdateMetadata, etag?: string): Promise<Resource> {
+  return unwrap(sdk.resourcesUpdateMetadata({ path: { rid }, body, headers: etag ? { "If-Match": etag } : undefined }));
+}
+
+export function deleteResource(rid: string): Promise<void> {
+  return unwrap(sdk.resourcesDelete({ path: { rid } })).then(() => undefined);
 }

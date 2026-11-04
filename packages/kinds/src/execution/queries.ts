@@ -1,15 +1,25 @@
-import { executionsReadOptions, executionsResultOptions } from "@texera/catalog-client/query";
-import type { Execution } from "@texera/catalog-client/types";
+import { queryOptions } from "@tanstack/react-query";
+import { workflowsReadRows } from "@texera/catalog-client";
+import type { Execution, ExecutionStatus, Resource } from "@texera/catalog-client/types";
+import { unwrap } from "../api";
+import { resourceQuery } from "../queries";
 
-const LIVE = new Set<Execution["status"]>(["pending", "running"]);
+export const LIVE = new Set<ExecutionStatus["phase"]>(["pending", "provisioning", "running"]);
 
-/** An execution, polled while it runs. */
+export const isLive = (x: Resource | undefined) => x !== undefined && LIVE.has((x.status as ExecutionStatus | undefined)?.phase ?? "pending");
+
+/** An execution, polled while it runs. The generic read serves it; its parent is the workflow. */
 export const executionQuery = (eid: string) => ({
-  ...executionsReadOptions({ path: { eid } }),
-  refetchInterval: (query: { state: { data?: Execution } }) => (query.state.data && LIVE.has(query.state.data.status) ? 2000 : false),
+  ...resourceQuery(eid),
+  select: (r: Resource) => r as unknown as Execution,
+  refetchInterval: (query: { state: { data?: Resource } }) => (isLive(query.state.data) ? 2000 : false),
 });
 
 export const PAGE_SIZE = 50;
 
-export const resultQuery = (eid: string, opid: string, port: string, page: number) =>
-  executionsResultOptions({ path: { eid, opid, port }, query: { offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE } });
+export const rowsQuery = (workflow: string, eid: string, operatorID: string, portID: string, page: number) =>
+  queryOptions({
+    queryKey: ["rows", eid, operatorID, portID, page],
+    queryFn: () => unwrap(workflowsReadRows({ path: { rid: workflow, eid, operatorID, portID }, query: { offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE } })),
+    staleTime: Number.POSITIVE_INFINITY,
+  });

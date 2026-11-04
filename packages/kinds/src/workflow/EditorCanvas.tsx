@@ -19,7 +19,6 @@ import {
   deleteLinks,
   deleteOperators,
   linkProblem,
-  moveOperators,
   newOperator,
   type OperatorNode,
   type OperatorOverlay,
@@ -47,10 +46,11 @@ export function EditorCanvas({
   overlay?: Record<string, OperatorOverlay>;
   className?: string;
 }) {
-  const content = useStore(store, s => s.content);
+  const spec = useStore(store, s => s.spec);
+  const positions = useStore(store, s => s.positions);
   const selected = useStore(store, s => s.selected);
   const readonly = useStore(store, s => s.readonly);
-  const [fitOnOpen] = useState(() => store.getState().content.operators.length <= FIT_UP_TO);
+  const [fitOnOpen] = useState(() => store.getState().spec.operators.length <= FIT_UP_TO);
   const wrapper = useRef<HTMLDivElement>(null);
   const userMoved = useRef(false);
   const [compact, setCompact] = useState(false);
@@ -68,12 +68,12 @@ export function EditorCanvas({
     observer.observe(el);
     return () => observer.disconnect();
   }, [fitOnOpen, fitView]);
-  const flow = useMemo(() => toFlow(content, overlay), [content, overlay]);
+  const flow = useMemo(() => toFlow(spec, positions, overlay), [spec, positions, overlay]);
   const [nodes, setNodes, onNodesChange] = useNodesState<OperatorNode>(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(flow.edges);
   const { data: schemas } = useQuery(operatorSchemasQuery());
 
-  // Content is the truth; React Flow keeps what it measured and what is being dragged.
+  // The store is the truth; React Flow keeps what it measured and what is being dragged.
   useEffect(() => {
     setNodes(previous => {
       const before = new Map(previous.map(n => [n.id, n]));
@@ -105,7 +105,7 @@ export function EditorCanvas({
   const isValidConnection = useCallback(
     (c: Connection | Edge) =>
       !linkProblem(
-        store.getState().content,
+        store.getState().spec,
         { operatorID: c.source, portID: c.sourceHandle ?? "" },
         { operatorID: c.target, portID: c.targetHandle ?? "" }
       ),
@@ -118,7 +118,9 @@ export function EditorCanvas({
       if (!schema || readonly) return;
       e.preventDefault();
       const op = newOperator(schema);
-      edit(cur => addOperator(cur, op, screenToFlowPosition({ x: e.clientX - 28, y: e.clientY - 28 })));
+      const at = screenToFlowPosition({ x: e.clientX - 28, y: e.clientY - 28 });
+      store.getState().move({ [op.operatorID]: at });
+      edit(cur => addOperator(cur, op));
       store.getState().select(op.operatorID);
     },
     [schemas, readonly, edit, screenToFlowPosition, store]
@@ -150,7 +152,7 @@ export function EditorCanvas({
         onConnect={readonly ? undefined : onConnect}
         isValidConnection={isValidConnection}
         onNodeDragStop={(_, __, dragged) =>
-          edit(cur => moveOperators(cur, Object.fromEntries(dragged.map(n => [n.id, { x: n.position.x, y: n.position.y }]))))
+          store.getState().move(Object.fromEntries(dragged.map(n => [n.id, { x: n.position.x, y: n.position.y }])))
         }
         onNodesDelete={deleted => edit(cur => deleteOperators(cur, deleted.map(n => n.id)))}
         onEdgesDelete={deleted => edit(cur => deleteLinks(cur, deleted.map(e => e.id)))}

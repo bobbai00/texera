@@ -2,7 +2,7 @@ import "@texera/ui/styles/tokens.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { client } from "@texera/catalog-client";
-import { CatalogError, configureEngine } from "@texera/kinds";
+import { CatalogError } from "@texera/kinds";
 import { ToastProvider } from "@texera/ui";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -11,7 +11,6 @@ import { routeTree } from "./routeTree.gen";
 
 // Every catalog call goes through the gateway on this origin with the session's token.
 client.setConfig({ baseUrl: "/", auth: () => getAccessToken() });
-configureEngine({ getToken: getAccessToken });
 
 const queryClient = new QueryClient({
   defaultOptions: {

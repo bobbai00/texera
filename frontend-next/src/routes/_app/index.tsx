@@ -9,7 +9,7 @@ function greeting() {
   return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }
 
-/** "/" starts a chat: pick a mode, and the conversation plus its agent are created. */
+/** "/" starts a chat: pick an agent template, and the conversation is created. */
 function NewChatPage() {
   const user = useSession();
   const navigate = useNavigate();
@@ -18,7 +18,7 @@ function NewChatPage() {
       <div className="flex min-h-full flex-col items-center justify-center px-4 py-12">
         <NewChat
           greeting={`${greeting()}, ${user?.name.split(/[\s.@]/)[0] || "there"}`}
-          onCreated={chat => navigate({ to: "/c/$rid", params: { rid: chat.rid } })}
+          onCreated={rid => navigate({ to: "/conversations/$rid", params: { rid } })}
         />
       </div>
     </div>

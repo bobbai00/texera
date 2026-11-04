@@ -1,17 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
-import { datasetsFilesOptions, datasetsListOptions } from "@texera/catalog-client/query";
-import type { Dataset } from "@texera/catalog-client/types";
+import type { Resource } from "@texera/catalog-client/types";
 import { Button, Input, PopoverContent, PopoverRoot, PopoverTrigger, Skeleton, formatBytes } from "@texera/ui";
 import { ChevronLeft, Database, FileText, FolderOpen, GitCommitVertical } from "lucide-react";
 import { useDeferredValue, useState } from "react";
-import { versionsQuery } from "../queries";
+import { filesQuery } from "../files/api";
+import { searchQuery, versionsQuery } from "../queries";
+import { fileUri, uriOf } from "../uri";
 
 /**
- * A dataset file reference: `dataset://<rid>@<vno>/<path>` (or the version alone). The
- * catalog resolves these to presigned URLs when the workflow runs.
+ * A dataset file reference as operators take it: `texera://datasets/{rid}@{vno}/files/{path}`,
+ * or the version alone. The catalog resolves these to presigned URLs when the workflow runs.
  */
 export const datasetFileRef = (rid: string, vno: number, path?: string) =>
-  `dataset://${rid}@${vno}${path ? `/${path}` : ""}`;
+  path ? fileUri({ kind: "dataset", rid, vno }, path) : uriOf({ kind: "dataset", rid, vno });
 
 export function DatasetFilePicker({
   id,
@@ -32,7 +33,7 @@ export function DatasetFilePicker({
       <Input
         id={id}
         value={value}
-        placeholder={mode === "file" ? "dataset://<rid>@<vno>/file.csv" : "dataset://<rid>@<vno>"}
+        placeholder={mode === "file" ? "texera://datasets/<rid>@<vno>/files/file.csv" : "texera://datasets/<rid>@<vno>"}
         disabled={disabled}
         onChange={e => onChange(e.target.value)}
         className="h-8 min-w-0 flex-1 font-mono text-2xs"
@@ -60,8 +61,8 @@ export function DatasetFilePicker({
 }
 
 function Browser({ mode, onPick }: { mode: "file" | "version"; onPick: (path: string) => void }) {
-  const { data } = useQuery(datasetsListOptions({ query: { limit: 100 } }));
-  const [picked, setPicked] = useState<Dataset>();
+  const { data } = useQuery(searchQuery({ kind: "dataset", limit: 100 }));
+  const [picked, setPicked] = useState<Resource>();
   const [query, setQuery] = useState("");
   const q = useDeferredValue(query.trim().toLowerCase());
 
@@ -76,14 +77,10 @@ function Browser({ mode, onPick }: { mode: "file" | "version"; onPick: (path: st
         {!data && <Skeleton className="m-1 h-24" />}
         {data && list.length === 0 && <p className="p-3 text-xs text-muted-foreground">No datasets.</p>}
         {list.map(d => (
-          <button
-            key={d.metadata.rid}
-            type="button"
-            onClick={() => setPicked(d)}
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-accent">
+          <button key={d.metadata.rid} type="button" onClick={() => setPicked(d)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-accent">
             <Database className="size-3.5 shrink-0 text-kind-dataset" />
             <span className="min-w-0 flex-1 truncate font-medium">{d.metadata.name}</span>
-            <span className="truncate text-muted-foreground">v{d.metadata.headVersion}</span>
+            <span className="truncate text-muted-foreground">v{d.metadata.head}</span>
           </button>
         ))}
       </div>
@@ -91,25 +88,12 @@ function Browser({ mode, onPick }: { mode: "file" | "version"; onPick: (path: st
   );
 }
 
-function Versions({
-  dataset,
-  mode,
-  onBack,
-  onPick,
-}: {
-  dataset: Dataset;
-  mode: "file" | "version";
-  onBack: () => void;
-  onPick: (path: string) => void;
-}) {
+function Versions({ dataset, mode, onBack, onPick }: { dataset: Resource; mode: "file" | "version"; onBack: () => void; onPick: (path: string) => void }) {
   const rid = dataset.metadata.rid;
   const { data: versions } = useQuery(versionsQuery(rid));
   const [vno, setVno] = useState<number>();
   const version = versions?.items.find(v => v.vno === vno) ?? versions?.items[0];
-  const { data: files } = useQuery({
-    ...datasetsFilesOptions({ path: { rid, vno: version?.vno ?? 0 } }),
-    enabled: !!version && mode === "file",
-  });
+  const { data: files } = useQuery({ ...filesQuery("dataset", rid, version?.vno ?? 0), enabled: !!version && mode === "file" });
 
   return (
     <div className="flex max-h-96 flex-col">
@@ -119,11 +103,7 @@ function Versions({
         </Button>
         <span className="min-w-0 flex-1 truncate text-xs font-semibold">{dataset.metadata.name}</span>
         {mode === "file" && versions && versions.items.length > 0 && (
-          <select
-            aria-label="Version"
-            value={version?.vno}
-            onChange={e => setVno(Number(e.target.value))}
-            className="control h-7 px-1.5 text-xs">
+          <select aria-label="Version" value={version?.vno} onChange={e => setVno(Number(e.target.value))} className="control h-7 px-1.5 text-xs">
             {versions.items.map(v => (
               <option key={v.vno} value={v.vno}>
                 v{v.vno}
@@ -137,22 +117,14 @@ function Versions({
         {versions?.items.length === 0 && <p className="p-3 text-xs text-muted-foreground">This dataset has no version yet.</p>}
         {mode === "version" &&
           versions?.items.map(v => (
-            <button
-              key={v.vno}
-              type="button"
-              onClick={() => onPick(datasetFileRef(rid, v.vno))}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-accent">
+            <button key={v.vno} type="button" onClick={() => onPick(datasetFileRef(rid, v.vno))} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-accent">
               <GitCommitVertical className="size-3.5 text-muted-foreground" />v{v.vno}
             </button>
           ))}
         {mode === "file" &&
           version &&
           files?.files.map(f => (
-            <button
-              key={f.path}
-              type="button"
-              onClick={() => onPick(datasetFileRef(rid, version.vno, f.path))}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-accent">
+            <button key={f.path} type="button" onClick={() => onPick(datasetFileRef(rid, version.vno, f.path))} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-accent">
               <FileText className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate">{f.path}</span>
               <span className="text-muted-foreground">{formatBytes(f.size)}</span>

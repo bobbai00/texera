@@ -1,27 +1,28 @@
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@texera/ui";
-import { useEffect } from "react";
+import { normalizeSpec } from "@texera/workflow-model";
+import { useEffect, useMemo } from "react";
 import { CardShell, useCardSummary } from "../shell/CardShell";
 import type { KindCardProps } from "../types";
 import { openEditor } from "./editor";
-import { contentQuery } from "./queries";
+import { versionSpecQuery } from "./queries";
 import { WorkflowCanvas } from "./WorkflowCanvas";
 
 /** A workflow inside a chat message or a list: a live picture of its graph. */
 export default function WorkflowCard({ ref, resource }: KindCardProps) {
-  const { summary } = useCardSummary(ref, resource);
-  const { data } = useQuery(contentQuery(ref.rid, ref.vno));
-  const n = data?.content.operators.length;
+  const { resource: r, summary } = useCardSummary(ref, resource);
+  const pinned = useQuery({ ...versionSpecQuery(ref.rid, ref.vno ?? 0), enabled: ref.vno !== undefined });
+  const spec = useMemo(() => (ref.vno !== undefined ? pinned.data : r ? normalizeSpec(r.spec) : undefined), [ref.vno, pinned.data, r]);
   // A newer version arrived (an agent's edit): a workflow open beside the chat follows it.
   useEffect(() => {
-    if (data && ref.vno === undefined) openEditor(ref.rid)?.getState().adopt(data.content, data.vno);
-  }, [data, ref.rid, ref.vno]);
+    if (r && ref.vno === undefined) openEditor(ref.rid)?.getState().adopt(normalizeSpec(r.spec), r.metadata.head, r.metadata.name);
+  }, [r, ref.rid, ref.vno]);
   return (
-    <CardShell ref={ref} summary={summary && { ...summary, facts: [...(summary.facts ?? []), ...(n !== undefined ? [`${n} operator${n === 1 ? "" : "s"}`] : [])] }}>
+    <CardShell ref={ref} summary={summary}>
       <div className="h-56 bg-canvas">
-        {data ? (
-          data.content.operators.length > 0 ? (
-            <WorkflowCanvas content={data.content} className="size-full" />
+        {spec ? (
+          spec.operators.length > 0 ? (
+            <WorkflowCanvas spec={spec} className="size-full" />
           ) : (
             <p className="flex size-full items-center justify-center text-sm text-muted-foreground">No operators yet</p>
           )

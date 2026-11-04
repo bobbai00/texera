@@ -1,39 +1,29 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Resource } from "@texera/catalog-client/types";
-import { Button, cn, Skeleton, Tooltip } from "@texera/ui";
+import { Button, Skeleton, Tooltip, cn } from "@texera/ui";
 import { Maximize2, PanelRight } from "lucide-react";
 import type { ReactNode } from "react";
-import { executionSummaryQuery, resourceQuery } from "../queries";
+import { resourceQuery } from "../queries";
 import { KINDS } from "../registry";
-import type { ResourceRef } from "../types";
+import type { KindCardProps, ResourceRef } from "../types";
 import { KindIcon } from "./KindIcon";
 import { useOpenResource } from "./navigation";
 
-/** What a card header needs to show, for resources and for runs alike. */
 export interface CardSummary {
   name: string;
   facts?: string[];
 }
 
-/** Loads the summary of a reference: the envelope for resources, the execution for runs. */
-export function useCardSummary(ref: ResourceRef, given?: Resource): { summary?: CardSummary; error?: unknown } {
-  const spec = KINDS[ref.kind];
-  const isRun = ref.kind === "execution";
-  const resource = useQuery({ ...resourceQuery(ref.rid), enabled: !given && !isRun });
-  const run = useQuery({ ...executionSummaryQuery(ref.rid), enabled: isRun });
-  if (isRun) {
-    if (!run.data) return { error: run.error };
-    return { summary: { name: run.data.name || "Run", facts: [run.data.status] } };
-  }
-  const r = given ?? resource.data;
-  if (!r) return { error: resource.error };
-  return { summary: { name: r.metadata.name, facts: spec.facts?.(r) } };
+/** The envelope of a card's resource (given or fetched) and the summary cards show. */
+export function useCardSummary(ref: ResourceRef, given?: Resource) {
+  const { data } = useQuery({ ...resourceQuery(ref.rid), enabled: !given });
+  const resource = given ?? data;
+  const facts = resource ? (KINDS[ref.kind].facts?.(resource) ?? []) : [];
+  const summary: CardSummary | undefined = resource ? { name: resource.metadata.name, facts } : undefined;
+  return { resource, summary };
 }
 
-/**
- * The frame every card shares: kind, name, open-beside and expand, facts. Kind-specific
- * content goes in `children`.
- */
+/** The frame every card shares: the kind, the name, open-beside and open-page, and facts. */
 export function CardShell({
   ref,
   summary,
@@ -84,5 +74,16 @@ export function CardShell({
         </div>
       )}
     </div>
+  );
+}
+
+/** The card of a kind with nothing special to show: the name, the description and the facts. */
+export function GenericCard({ ref, resource }: KindCardProps) {
+  const { resource: r, summary } = useCardSummary(ref, resource);
+  const parent = r ? { ...ref, parent: r.metadata.parent } : ref;
+  return (
+    <CardShell ref={parent} summary={summary}>
+      {r?.metadata.description && <p className="px-3 py-2 text-sm text-muted-foreground">{r.metadata.description}</p>}
+    </CardShell>
   );
 }

@@ -1,128 +1,121 @@
+import type { Message } from "@texera/catalog-client/types";
 import { describe, expect, it } from "vitest";
 import type { AgUiEvent } from "./agui/types";
-import { applyEvent, applyPatch, EMPTY_STATE, extractResourceRefs, fromHistory, resourcesOf } from "./model";
+import { applyEvent, applyPatch, type ChatState, EMPTY_STATE, extractResourceRefs, fromHistory, resourcesOf, templatesOf } from "./model";
 
-const run = (events: AgUiEvent[]) => events.reduce(applyEvent, EMPTY_STATE);
+const W = "0b7a1c2d-0000-4000-8000-000000000001";
+const E = "0b7a1c2d-0000-4000-8000-000000000002";
+const T = `texera://agent-templates/0b7a1c2d-0000-4000-8000-000000000003@2`;
 
-describe("AG-UI reducer", () => {
-  it("streams text into one assistant message", () => {
+const run = (events: AgUiEvent[], start: ChatState = { ...EMPTY_STATE, template: T }) => events.reduce(applyEvent, start);
+
+describe("extractResourceRefs", () => {
+  it("finds envelopes, refs and URIs in the shapes tools and events use", () => {
+    expect(extractResourceRefs({ kind: "workflow", metadata: { rid: W, uri: `texera://workflows/${W}`, parent: "p" } })).toEqual([{ kind: "workflow", rid: W, parent: "p" }]);
+    expect(extractResourceRefs({ kind: "dataset", rid: W, uri: `texera://datasets/${W}@2` })).toEqual([{ kind: "dataset", rid: W, vno: 2 }]);
+    expect(extractResourceRefs(`texera://workflows/${W}/executions/${E}`)).toEqual([{ kind: "execution", rid: E, parent: W }]);
+    expect(extractResourceRefs({ content: [{ type: "text", text: "no refs" }], items: [{ kind: "skill", rid: W }] })).toEqual([{ kind: "skill", rid: W }]);
+    expect(extractResourceRefs({ kind: "nope", rid: W })).toEqual([]);
+    expect(extractResourceRefs("just text")).toEqual([]);
+  });
+});
+
+describe("applyEvent", () => {
+  it("streams text and tool calls into the assistant message of the turn, labelled with the template", () => {
     const state = run([
-      { type: "RUN_STARTED", threadId: "t", runId: "r1" },
+      { type: "RUN_STARTED", threadId: "c", runId: "r1" },
       { type: "TEXT_MESSAGE_START", messageId: "m1", role: "assistant" },
-      { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "Hel" },
-      { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "lo" },
-      { type: "TEXT_MESSAGE_END", messageId: "m1" },
-      { type: "RUN_FINISHED", threadId: "t", runId: "r1" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "Hello" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: " there" },
+      { type: "TOOL_CALL_START", toolCallId: "t1", toolCallName: "search_resources", parentMessageId: "m1" },
+      { type: "TOOL_CALL_ARGS", toolCallId: "t1", delta: '{"q":' },
+      { type: "TOOL_CALL_ARGS", toolCallId: "t1", delta: '"iris"}' },
+      { type: "TOOL_CALL_END", toolCallId: "t1" },
+      { type: "TOOL_CALL_RESULT", messageId: "x", toolCallId: "t1", content: JSON.stringify({ items: [{ kind: "dataset", metadata: { rid: W } }] }) },
+      { type: "RUN_FINISHED", threadId: "c", runId: "r1" },
     ]);
     expect(state.running).toBe(false);
     expect(state.messages).toHaveLength(1);
-    expect(state.messages[0]?.parts).toEqual([{ type: "text", text: "Hello" }]);
+    const m = state.messages[0];
+    expect(m?.template).toBe(T);
+    expect(m?.parts[0]).toEqual({ type: "text", text: "Hello there" });
+    expect(m?.parts[1]).toMatchObject({ type: "tool", name: "search_resources", input: { q: "iris" }, status: "done", resources: [{ kind: "dataset", rid: W }] });
+    expect(state.resources).toEqual([{ kind: "dataset", rid: W }]);
   });
 
-  it("builds tool calls from start/args/end/result and lifts resources out of results", () => {
+  it("records a handoff as a divider and labels later messages with the new template", () => {
+    const next = `texera://agent-templates/0b7a1c2d-0000-4000-8000-000000000004@1`;
     const state = run([
-      { type: "RUN_STARTED", threadId: "t", runId: "r1" },
-      { type: "TOOL_CALL_START", toolCallId: "c1", toolCallName: "run_workflow", parentMessageId: "m1" },
-      { type: "TOOL_CALL_ARGS", toolCallId: "c1", delta: '{"rid":' },
-      { type: "TOOL_CALL_ARGS", toolCallId: "c1", delta: '"w1"}' },
-      { type: "TOOL_CALL_END", toolCallId: "c1" },
-      {
-        type: "TOOL_CALL_RESULT",
-        messageId: "m2",
-        toolCallId: "c1",
-        content: JSON.stringify({ eid: "e1", workflow: { rid: "w1", vno: 3 }, status: "completed" }),
-      },
+      { type: "RUN_STARTED", threadId: "c", runId: "r1" },
+      { type: "TEXT_MESSAGE_START", messageId: "m1", role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "Handing over." },
+      { type: "CUSTOM", name: "texera.handoff", value: { from: T, to: next, name: "Data Analyst", by: "agent" } },
+      { type: "TEXT_MESSAGE_START", messageId: "m2", role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "m2", delta: "On it." },
     ]);
-    const tool = state.messages[0]?.parts[0];
-    expect(tool?.type).toBe("tool");
-    if (tool?.type !== "tool") throw new Error("expected a tool part");
-    expect(tool.input).toEqual({ rid: "w1" });
-    expect(tool.status).toBe("done");
-    expect(tool.resources).toEqual([{ kind: "execution", rid: "e1" }]);
-    expect(state.resources).toEqual([{ kind: "execution", rid: "e1" }]);
+    expect(state.messages.map(m => m.role)).toEqual(["assistant", "system", "assistant"]);
+    expect(state.messages[1]?.parts[0]).toEqual({ type: "handoff", from: T, to: next, name: "Data Analyst", by: "agent" });
+    expect(state.messages[0]?.template).toBe(T);
+    expect(state.messages[2]?.template).toBe(next);
+    expect(templatesOf(state.messages)).toEqual([T, next]);
   });
 
-  it("marks failed tools, custom resource events and subagents", () => {
+  it("marks a failed tool and a run error", () => {
     const state = run([
-      { type: "RUN_STARTED", threadId: "t", runId: "r1" },
-      { type: "TOOL_CALL_CHUNK", toolCallId: "c1", toolCallName: "edit_workflow", delta: "{}" },
-      { type: "TOOL_CALL_RESULT", messageId: "m", toolCallId: "c1", content: JSON.stringify({ error: "head moved" }) },
-      { type: "CUSTOM", name: "texera.resource", value: { kind: "dataset", rid: "d1", vno: 1 } },
-      { type: "SUBAGENT_STARTED", subagentRunId: "s1", name: "searcher" },
-      { type: "SUBAGENT_FINISHED", subagentRunId: "s1" },
+      { type: "RUN_STARTED", threadId: "c", runId: "r1" },
+      { type: "TOOL_CALL_START", toolCallId: "t1", toolCallName: "run_workflow" },
+      { type: "TOOL_CALL_RESULT", messageId: "x", toolCallId: "t1", content: JSON.stringify({ error: "no unit" }) },
       { type: "RUN_ERROR", message: "boom" },
     ]);
-    const parts = state.messages[0]?.parts ?? [];
-    expect(parts[0]).toMatchObject({ type: "tool", status: "error", error: "head moved" });
-    expect(parts[1]).toEqual({ type: "resource", ref: { kind: "dataset", rid: "d1", vno: 1 } });
-    expect(parts[2]).toMatchObject({ type: "subagent", status: "done" });
-    expect(parts[3]).toEqual({ type: "error", message: "boom" });
+    expect(state.messages[0]?.parts[0]).toMatchObject({ type: "tool", status: "error", error: "no unit" });
+    expect(state.messages[0]?.parts[1]).toEqual({ type: "error", message: "boom" });
     expect(state.error).toBe("boom");
-    expect(state.resources).toEqual([{ kind: "dataset", rid: "d1", vno: 1 }]);
   });
 
-  it("keeps shared state through snapshots and JSON Patch deltas", () => {
+  it("surfaces resources the runtime announces and applies state patches", () => {
     const state = run([
-      { type: "STATE_SNAPSHOT", snapshot: { draft: { operators: [] } } },
-      { type: "STATE_DELTA", delta: [{ op: "add", path: "/draft/operators/-", value: { operatorID: "a" } }] },
-      { type: "STATE_DELTA", delta: [{ op: "replace", path: "/draft/name", value: "Sales" }] },
+      { type: "RUN_STARTED", threadId: "c", runId: "r1" },
+      { type: "CUSTOM", name: "texera.resource", value: { kind: "workflow", rid: W, uri: `texera://workflows/${W}@3` } },
+      { type: "STATE_SNAPSHOT", snapshot: { draft: { n: 1 } } },
+      { type: "STATE_DELTA", delta: [{ op: "replace", path: "/draft/n", value: 2 }] },
     ]);
-    expect(state.state).toEqual({ draft: { operators: [{ operatorID: "a" }], name: "Sales" } });
-    expect(applyPatch({ a: { b: 1 } }, [{ op: "remove", path: "/a/b" }])).toEqual({ a: {} });
-  });
-
-  it("records an interrupt as an approval part", () => {
-    const state = run([
-      { type: "RUN_STARTED", threadId: "t", runId: "r1" },
-      { type: "TEXT_MESSAGE_CHUNK", messageId: "m1", delta: "May I run it?" },
-      { type: "RUN_FINISHED", threadId: "t", runId: "r1", outcome: { type: "interrupt", interrupts: [{ id: "i1", reason: "run_workflow" }] } },
-    ]);
-    expect(state.messages[0]?.parts.at(-1)).toEqual({ type: "approval", interrupts: [{ id: "i1", reason: "run_workflow" }] });
+    expect(state.messages[0]?.parts).toEqual([{ type: "resource", ref: { kind: "workflow", rid: W, vno: 3 } }]);
+    expect(state.state).toEqual({ draft: { n: 2 } });
+    expect(applyPatch([1, 2], [{ op: "add", path: "/-", value: 3 }])).toEqual([1, 2, 3]);
   });
 });
 
-describe("resource refs", () => {
-  it("finds envelopes, refs, executions and versions in nested results", () => {
-    expect(
-      extractResourceRefs({
-        workflow: { kind: "workflow", metadata: { rid: "w1", name: "x" } },
-        version: { rid: "w1", vno: 2, contentKind: "json" },
-        items: [{ kind: "dataset", rid: "d1" }, { kind: "dataset", rid: "d1" }],
-      })
-    ).toEqual([
-      { kind: "workflow", rid: "w1" },
-      { kind: "dataset", rid: "d1" },
-    ]);
-  });
-});
-
-describe("history", () => {
-  it("maps persisted messages and attaches tool results to their calls", () => {
-    const messages = fromHistory([
-      { conversation: "c", seq: 1, role: "user", author: "p", parts: [{ type: "text", text: "hi" }], createdAt: "2026-11-03T00:00:00Z" },
+describe("fromHistory", () => {
+  it("rebuilds messages from the catalog, attaching results to calls and keeping the template", () => {
+    const base: Omit<Message, "seq" | "role" | "parts"> = { conversation: "c", author: "p", createdAt: "2026-11-04T00:00:00Z" };
+    const history: Message[] = [
+      { ...base, seq: 1, role: "user", parts: [{ type: "text", text: "hi" }] },
       {
-        conversation: "c",
+        ...base,
         seq: 2,
         role: "assistant",
-        author: "a",
+        template: T,
         parts: [
-          { type: "text", text: "Building it." },
-          { type: "tool_call", toolCallId: "c1", toolName: "create_workflow", args: { name: "Sales" } },
+          { type: "tool_call", toolCallId: "t1", toolName: "get_workflow", args: { rid: W } },
+          { type: "tool_result", toolCallId: "t1", toolName: "get_workflow", result: { kind: "workflow", metadata: { rid: W } } },
+          { type: "resource", resource: `texera://workflows/${W}@2` },
+          { type: "text", text: "done" },
         ],
-        createdAt: "2026-11-03T00:00:01Z",
       },
-      {
-        conversation: "c",
-        seq: 3,
-        role: "tool",
-        author: "a",
-        parts: [{ type: "tool_result", toolCallId: "c1", result: { workflow: { kind: "workflow", metadata: { rid: "w1" } } } }],
-        createdAt: "2026-11-03T00:00:02Z",
-      },
-    ]);
-    expect(messages).toHaveLength(2);
-    const tool = messages[1]?.parts[1];
-    expect(tool).toMatchObject({ type: "tool", name: "create_workflow", resources: [{ kind: "workflow", rid: "w1" }] });
-    expect(resourcesOf(messages)).toEqual([{ kind: "workflow", rid: "w1" }]);
+      { ...base, seq: 3, role: "system", parts: [{ type: "resource", resource: `texera://agent-templates/${W}@1` }, { type: "text", text: "Switched to Data Analyst." }] },
+      { ...base, seq: 4, role: "system", template: T, parts: [{ type: "resource", resource: `texera://agent-templates/${W}@1` }, { type: "text", text: "handed over" }] },
+      { ...base, seq: 5, role: "system", parts: [{ type: "text", text: "A plain note." }] },
+    ];
+    const messages = fromHistory(history);
+    expect(messages.map(m => m.role)).toEqual(["user", "assistant", "system", "system", "system"]);
+    expect(messages[2]?.parts[0]).toEqual({ type: "handoff", from: undefined, to: `texera://agent-templates/${W}@1`, name: "", by: "person" });
+    expect(messages[3]?.parts[0]).toMatchObject({ type: "handoff", from: T, by: "agent" });
+    expect(messages[4]?.parts[0]).toEqual({ type: "text", text: "A plain note." });
+    const assistant = messages[1];
+    expect(assistant?.template).toBe(T);
+    expect(assistant?.parts).toHaveLength(3);
+    expect(assistant?.parts[0]).toMatchObject({ type: "tool", name: "get_workflow", input: { rid: W }, result: { kind: "workflow", metadata: { rid: W } }, resources: [{ kind: "workflow", rid: W }] });
+    expect(assistant?.parts[1]).toEqual({ type: "resource", ref: { kind: "workflow", rid: W, vno: 2 } });
+    expect(resourcesOf(messages)).toEqual([{ kind: "workflow", rid: W }]);
   });
 });

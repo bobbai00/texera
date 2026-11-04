@@ -1,17 +1,6 @@
-import {
-  Background,
-  BackgroundVariant,
-  type Edge,
-  MarkerType,
-  ReactFlow,
-  ReactFlowProvider,
-  useEdgesState,
-  useNodesInitialized,
-  useNodesState,
-  useReactFlow,
-} from "@xyflow/react";
+import { Background, BackgroundVariant, type Edge, MarkerType, ReactFlow, ReactFlowProvider, useEdgesState, useNodesInitialized, useNodesState, useReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { type OperatorNode, type OperatorOverlay, toFlow, type WorkflowContent } from "@texera/workflow-model";
+import { layoutPositions, type OperatorNode, type OperatorOverlay, toFlow, type WorkflowSpec } from "@texera/workflow-model";
 import { useEffect, useMemo } from "react";
 import { nodeTypes } from "./OperatorNode";
 
@@ -24,12 +13,12 @@ export const defaultEdgeOptions = {
 };
 
 interface Props {
-  content: WorkflowContent;
+  spec: WorkflowSpec;
   overlay?: Record<string, OperatorOverlay>;
   className?: string;
 }
 
-/** A read-only picture of a workflow, as cards show it. It follows `content` as it changes. */
+/** A read-only picture of a workflow, as cards show it, laid out from the graph. It follows `spec` as it changes. */
 export function WorkflowCanvas(props: Props) {
   return (
     <ReactFlowProvider>
@@ -38,8 +27,8 @@ export function WorkflowCanvas(props: Props) {
   );
 }
 
-function Preview({ content, overlay, className }: Props) {
-  const flow = useMemo(() => toFlow(content, overlay), [content, overlay]);
+function Preview({ spec, overlay, className }: Props) {
+  const flow = useMemo(() => toFlow(spec, layoutPositions(spec), overlay), [spec, overlay]);
   const [nodes, setNodes, onNodesChange] = useNodesState<OperatorNode>(flow.nodes);
   const [edges, setEdges] = useEdgesState<Edge>(flow.edges);
   const { fitView } = useReactFlow();

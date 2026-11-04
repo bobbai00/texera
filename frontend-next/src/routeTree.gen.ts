@@ -13,9 +13,11 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as CallbackRouteImport } from './routes/callback'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
-import { Route as AppSegRidRouteImport } from './routes/_app/$seg.$rid'
-import { Route as AppCRidRouteImport } from './routes/_app/c.$rid'
-import { Route as AppLibraryKindRouteImport } from './routes/_app/library.$kind'
+import { Route as AppPluralRouteImport } from './routes/_app/$plural'
+import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppPluralRidRouteImport } from './routes/_app/$plural_.$rid'
+import { Route as AppConversationsRidRouteImport } from './routes/_app/conversations.$rid'
+import { Route as AppWorkflowsRidExecutionsEidRouteImport } from './routes/_app/workflows.$rid.executions.$eid'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -36,63 +38,97 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
-const AppSegRidRoute = AppSegRidRouteImport.update({
-  id: '/$seg/$rid',
-  path: '/$seg/$rid',
+const AppPluralRoute = AppPluralRouteImport.update({
+  id: '/$plural',
+  path: '/$plural',
   getParentRoute: () => AppRoute,
 } as any)
-const AppCRidRoute = AppCRidRouteImport.update({
-  id: '/c/$rid',
-  path: '/c/$rid',
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
-const AppLibraryKindRoute = AppLibraryKindRouteImport.update({
-  id: '/library/$kind',
-  path: '/library/$kind',
+const AppPluralRidRoute = AppPluralRidRouteImport.update({
+  id: '/$plural_/$rid',
+  path: '/$plural/$rid',
   getParentRoute: () => AppRoute,
 } as any)
+const AppConversationsRidRoute = AppConversationsRidRouteImport.update({
+  id: '/conversations/$rid',
+  path: '/conversations/$rid',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWorkflowsRidExecutionsEidRoute =
+  AppWorkflowsRidExecutionsEidRouteImport.update({
+    id: '/workflows/$rid/executions/$eid',
+    path: '/workflows/$rid/executions/$eid',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/callback': typeof CallbackRoute
   '/login': typeof LoginRoute
-  '/$seg/$rid': typeof AppSegRidRoute
-  '/c/$rid': typeof AppCRidRoute
-  '/library/$kind': typeof AppLibraryKindRoute
+  '/$plural': typeof AppPluralRoute
+  '/settings': typeof AppSettingsRoute
+  '/$plural/$rid': typeof AppPluralRidRoute
+  '/conversations/$rid': typeof AppConversationsRidRoute
+  '/workflows/$rid/executions/$eid': typeof AppWorkflowsRidExecutionsEidRoute
 }
 export interface FileRoutesByTo {
   '/callback': typeof CallbackRoute
   '/login': typeof LoginRoute
+  '/$plural': typeof AppPluralRoute
+  '/settings': typeof AppSettingsRoute
   '/': typeof AppIndexRoute
-  '/$seg/$rid': typeof AppSegRidRoute
-  '/c/$rid': typeof AppCRidRoute
-  '/library/$kind': typeof AppLibraryKindRoute
+  '/$plural/$rid': typeof AppPluralRidRoute
+  '/conversations/$rid': typeof AppConversationsRidRoute
+  '/workflows/$rid/executions/$eid': typeof AppWorkflowsRidExecutionsEidRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/callback': typeof CallbackRoute
   '/login': typeof LoginRoute
+  '/_app/$plural': typeof AppPluralRoute
+  '/_app/settings': typeof AppSettingsRoute
   '/_app/': typeof AppIndexRoute
-  '/_app/$seg/$rid': typeof AppSegRidRoute
-  '/_app/c/$rid': typeof AppCRidRoute
-  '/_app/library/$kind': typeof AppLibraryKindRoute
+  '/_app/$plural_/$rid': typeof AppPluralRidRoute
+  '/_app/conversations/$rid': typeof AppConversationsRidRoute
+  '/_app/workflows/$rid/executions/$eid': typeof AppWorkflowsRidExecutionsEidRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/callback' | '/login' | '/$seg/$rid' | '/c/$rid' | '/library/$kind'
+    | '/'
+    | '/callback'
+    | '/login'
+    | '/$plural'
+    | '/settings'
+    | '/$plural/$rid'
+    | '/conversations/$rid'
+    | '/workflows/$rid/executions/$eid'
   fileRoutesByTo: FileRoutesByTo
-  to: '/callback' | '/login' | '/' | '/$seg/$rid' | '/c/$rid' | '/library/$kind'
+  to:
+    | '/callback'
+    | '/login'
+    | '/$plural'
+    | '/settings'
+    | '/'
+    | '/$plural/$rid'
+    | '/conversations/$rid'
+    | '/workflows/$rid/executions/$eid'
   id:
     | '__root__'
     | '/_app'
     | '/callback'
     | '/login'
+    | '/_app/$plural'
+    | '/_app/settings'
     | '/_app/'
-    | '/_app/$seg/$rid'
-    | '/_app/c/$rid'
-    | '/_app/library/$kind'
+    | '/_app/$plural_/$rid'
+    | '/_app/conversations/$rid'
+    | '/_app/workflows/$rid/executions/$eid'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -131,42 +167,60 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/$seg/$rid': {
-      id: '/_app/$seg/$rid'
-      path: '/$seg/$rid'
-      fullPath: '/$seg/$rid'
-      preLoaderRoute: typeof AppSegRidRouteImport
+    '/_app/$plural': {
+      id: '/_app/$plural'
+      path: '/$plural'
+      fullPath: '/$plural'
+      preLoaderRoute: typeof AppPluralRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/c/$rid': {
-      id: '/_app/c/$rid'
-      path: '/c/$rid'
-      fullPath: '/c/$rid'
-      preLoaderRoute: typeof AppCRidRouteImport
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/library/$kind': {
-      id: '/_app/library/$kind'
-      path: '/library/$kind'
-      fullPath: '/library/$kind'
-      preLoaderRoute: typeof AppLibraryKindRouteImport
+    '/_app/$plural_/$rid': {
+      id: '/_app/$plural_/$rid'
+      path: '/$plural/$rid'
+      fullPath: '/$plural/$rid'
+      preLoaderRoute: typeof AppPluralRidRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/conversations/$rid': {
+      id: '/_app/conversations/$rid'
+      path: '/conversations/$rid'
+      fullPath: '/conversations/$rid'
+      preLoaderRoute: typeof AppConversationsRidRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/workflows/$rid/executions/$eid': {
+      id: '/_app/workflows/$rid/executions/$eid'
+      path: '/workflows/$rid/executions/$eid'
+      fullPath: '/workflows/$rid/executions/$eid'
+      preLoaderRoute: typeof AppWorkflowsRidExecutionsEidRouteImport
       parentRoute: typeof AppRoute
     }
   }
 }
 
 interface AppRouteChildren {
+  AppPluralRoute: typeof AppPluralRoute
+  AppSettingsRoute: typeof AppSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
-  AppSegRidRoute: typeof AppSegRidRoute
-  AppCRidRoute: typeof AppCRidRoute
-  AppLibraryKindRoute: typeof AppLibraryKindRoute
+  AppPluralRidRoute: typeof AppPluralRidRoute
+  AppConversationsRidRoute: typeof AppConversationsRidRoute
+  AppWorkflowsRidExecutionsEidRoute: typeof AppWorkflowsRidExecutionsEidRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppPluralRoute: AppPluralRoute,
+  AppSettingsRoute: AppSettingsRoute,
   AppIndexRoute: AppIndexRoute,
-  AppSegRidRoute: AppSegRidRoute,
-  AppCRidRoute: AppCRidRoute,
-  AppLibraryKindRoute: AppLibraryKindRoute,
+  AppPluralRidRoute: AppPluralRidRoute,
+  AppConversationsRidRoute: AppConversationsRidRoute,
+  AppWorkflowsRidExecutionsEidRoute: AppWorkflowsRidExecutionsEidRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

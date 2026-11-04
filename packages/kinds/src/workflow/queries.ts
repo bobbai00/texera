@@ -1,34 +1,29 @@
 import { queryOptions } from "@tanstack/react-query";
-import { workflowsContent, workflowsValidate } from "@texera/catalog-client";
-import { workflowsListExecutionsOptions, workflowsReadOptions } from "@texera/catalog-client/query";
-import { type Compilation, interpret, logicalPlan, normalizeContent, type WorkflowContent } from "@texera/workflow-model";
+import { workflowsValidate } from "@texera/catalog-client";
+import { workflowsListExecutionsOptions, workflowsReadOptions, workflowsReadVersionOptions } from "@texera/catalog-client/query";
+import { type Compilation, interpret, logicalPlan, normalizeSpec, type WorkflowSpec } from "@texera/workflow-model";
 import { unwrap } from "../api";
 
 export const workflowQuery = (rid: string) => workflowsReadOptions({ path: { rid } });
 
-/** A version's content, normalized; the head when `vno` is absent. */
-export const contentQuery = (rid: string, vno?: number) =>
-  queryOptions({
-    queryKey: ["workflow-content", rid, vno ?? "head"],
-    queryFn: async () => {
-      const version = await unwrap(workflowsContent({ path: { rid }, query: vno !== undefined ? { vno } : undefined }));
-      return { vno: version.vno, content: normalizeContent(version.content), version };
-    },
-  });
+/** The spec of one version, normalized. */
+export const versionSpecQuery = (rid: string, vno: number) => ({
+  ...workflowsReadVersionOptions({ path: { rid, vno } }),
+  select: (v: { content: unknown }) => normalizeSpec(v.content),
+  staleTime: Number.POSITIVE_INFINITY,
+});
 
-export const runsQuery = (rid: string) => workflowsListExecutionsOptions({ path: { rid }, query: { limit: 50 } });
+export const executionsQuery = (rid: string) => workflowsListExecutionsOptions({ path: { rid }, query: { limit: 50 } });
 
-/** Compiles draft content on a unit: output schemas per port and errors per operator. */
-export const compilationQuery = (rid: string, content: WorkflowContent | undefined, unit?: string) => {
-  const plan = content?.operators.length ? logicalPlan(content) : undefined;
-  const key = plan ? JSON.stringify({ operators: plan.operators, links: plan.links }) : undefined;
+/** Compiles a draft spec on a unit: output schemas per port and errors per operator. */
+export const compilationQuery = (rid: string, spec: WorkflowSpec | undefined, unit?: string) => {
+  const plan = spec?.operators.length ? logicalPlan(spec) : undefined;
+  const key = spec ? JSON.stringify({ operators: spec.operators, links: spec.links }) : undefined;
   return queryOptions({
     queryKey: ["compile", rid, unit ?? "", key ?? ""],
     enabled: !!plan,
     queryFn: async (): Promise<Compilation> => {
-      const result = await unwrap(
-        workflowsValidate({ path: { rid }, body: { content }, query: unit ? { computingUnit: unit } : undefined })
-      );
+      const result = await unwrap(workflowsValidate({ path: { rid }, body: { spec, ...(unit ? { computingUnit: unit } : {}) } }));
       return interpret(plan as NonNullable<typeof plan>, result);
     },
     staleTime: Number.POSITIVE_INFINITY,

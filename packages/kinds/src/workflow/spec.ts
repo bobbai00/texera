@@ -1,28 +1,24 @@
-import { workflowsCreateWithContent } from "@texera/catalog-client";
-import { EMPTY_CONTENT } from "@texera/workflow-model";
+import type { WorkflowSpec, WorkflowStatus } from "@texera/catalog-client/types";
+import { EMPTY_SPEC } from "@texera/workflow-model";
 import { Workflow } from "lucide-react";
 import { lazy } from "react";
-import { unwrap } from "../api";
 import type { KindSpec } from "../types";
-import { contentQuery, workflowQuery } from "./queries";
+import { workflowQuery } from "./queries";
 
 export const workflowKind: KindSpec = {
   kind: "workflow",
   label: "Workflow",
   plural: "Workflows",
-  slug: "w",
-  librarySlug: "workflows",
   icon: Workflow,
   accent: "bg-kind-workflow/12 text-kind-workflow",
   Card: lazy(() => import("./Card")),
   View: lazy(() => import("./View")),
-  prefetch: (qc, ref) =>
-    Promise.all([qc.prefetchQuery(workflowQuery(ref.rid)), qc.prefetchQuery(contentQuery(ref.rid, ref.vno))]),
-  create: async ({ name, description, project }) => {
-    const { workflow } = await unwrap(
-      workflowsCreateWithContent({ body: { name, description, project, content: EMPTY_CONTENT } })
-    );
-    return { kind: "workflow", rid: workflow.metadata.rid };
+  prefetch: (qc, ref) => qc.prefetchQuery(workflowQuery(ref.rid)),
+  defaultSpec: () => EMPTY_SPEC,
+  facts: r => {
+    const spec = r.spec as Partial<WorkflowSpec>;
+    const n = spec.operators?.length ?? 0;
+    const runs = (r.status as WorkflowStatus | undefined)?.executions;
+    return [`v${r.metadata.head}`, `${n} operator${n === 1 ? "" : "s"}`, ...(runs ? [`${runs} run${runs === 1 ? "" : "s"}`] : [])];
   },
-  facts: r => [`v${r.metadata.headVersion}`],
 };

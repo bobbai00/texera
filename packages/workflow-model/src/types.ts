@@ -1,63 +1,23 @@
-// The engine's workflow JSON (what a workflow version's content holds), unchanged
-// from what the engine compiles, so workflows edited here run there as they are.
+// The workflow spec as the catalog stores it (a version's content is a WorkflowSpec),
+// unchanged from what the engine compiles, so a workflow edited here runs there as it is.
+// Positions are the app's: derived from the graph, never written into the spec.
 
-export type { Attribute } from "@texera/catalog-client/types";
+import type { Attribute, WorkflowLink, WorkflowOperator, WorkflowPort, WorkflowSpec } from "@texera/catalog-client/types";
+
+export type { Attribute, WorkflowLink, WorkflowOperator, WorkflowPort, WorkflowSpec };
 
 export interface Point {
   x: number;
   y: number;
 }
 
-export interface PortDescription {
-  portID: string;
-  displayName?: string;
-  disallowMultiInputs?: boolean;
-  isDynamicPort?: boolean;
-  partitionRequirement?: unknown;
-  dependencies?: { id: number; internal: boolean }[];
-}
-
-export interface OperatorPredicate {
-  operatorID: string;
-  operatorType: string;
-  operatorVersion: string;
-  operatorProperties: Record<string, unknown>;
-  inputPorts: PortDescription[];
-  outputPorts: PortDescription[];
-  dynamicInputPorts?: boolean;
-  dynamicOutputPorts?: boolean;
-  showAdvanced: boolean;
-  isDisabled?: boolean;
-  viewResult?: boolean;
-  markedForReuse?: boolean;
-  customDisplayName?: string;
-}
+/** Where each operator sits on the canvas, by operator id. */
+export type Positions = Record<string, Point>;
 
 export interface LogicalPort {
   operatorID: string;
   /** `input-<n>` or `output-<n>`. */
   portID: string;
-}
-
-export interface OperatorLink {
-  linkID: string;
-  source: LogicalPort;
-  target: LogicalPort;
-}
-
-export interface WorkflowSettings {
-  dataTransferBatchSize: number;
-  executionMode?: "PIPELINED" | "MATERIALIZED";
-}
-
-export interface WorkflowContent {
-  operators: OperatorPredicate[];
-  operatorPositions: Record<string, Point>;
-  links: OperatorLink[];
-  commentBoxes: unknown[];
-  settings: WorkflowSettings;
-  /** The Form View definition; kept when saving, never edited here. */
-  formBinding?: unknown;
 }
 
 /**
@@ -74,6 +34,7 @@ export interface JsonSchema {
   required?: string[];
   items?: JsonSchema;
   definitions?: Record<string, JsonSchema>;
+  $defs?: Record<string, JsonSchema>;
   $ref?: string;
   oneOf?: JsonSchema[];
   anyOf?: JsonSchema[];
@@ -87,6 +48,7 @@ export interface JsonSchema {
   minItems?: number;
   uniqueItems?: boolean;
   readOnly?: boolean;
+  additionalProperties?: boolean | JsonSchema;
   options?: { hidden?: boolean };
   /** Column pickers: one column, or several, from the operator's input on `autofillAttributeOnPort`. */
   autofill?: "attributeName" | "attributeNameList";
@@ -107,29 +69,18 @@ export interface JsonSchema {
 export interface PortSchema {
   displayName?: string;
   allowMultiLinks?: boolean;
-  dependencies?: { id: number; internal: boolean }[];
 }
 
 /** One operator type, as the editor needs it: its schema and how to build an instance of it. */
 export interface OperatorSchema {
+  /** A built-in type name, or a custom operator's URI with `@vno`. */
   operatorType: string;
-  operatorVersion: string;
   userFriendlyName: string;
   operatorDescription?: string;
   operatorGroupName: string;
   jsonSchema: JsonSchema;
   inputPorts: PortSchema[];
   outputPorts: PortSchema[];
-  dynamicInputPorts?: boolean;
-  dynamicOutputPorts?: boolean;
-}
-
-export interface OperatorGroup {
-  groupName: string;
-  children?: OperatorGroup[] | null;
-}
-
-export interface OperatorMetadata {
-  operators: OperatorSchema[];
-  groups: OperatorGroup[];
+  /** The custom operator resource this type comes from, when it is one. */
+  custom?: { rid: string; vno: number };
 }
