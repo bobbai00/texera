@@ -135,6 +135,12 @@ test("creates a custom operator from its page and finds it in a workflow's palet
   const form = page.locator("[data-spec-editor='operator']");
   await expect(form.locator('[data-field="operatorType"]')).toHaveValue(name.replace(/[^A-Za-z0-9]+/g, ""));
   await expect(form.locator('[data-field="code"]')).toContainText("ProcessTupleOperator");
+  // A property marked format: credential becomes a credential picker in the workflow editor.
+  await form
+    .locator('[data-field="propertiesSchema"]')
+    .fill(JSON.stringify({ type: "object", properties: { apiKey: { type: "string", format: "credential", description: "The service key" } } }));
+  await form.locator("[data-save-spec]").click();
+  await expect(form.locator("[data-save-spec]")).toBeDisabled();
 
   // The operator is in the palette of a new workflow, typed by its URI.
   await page.locator('[data-library-link="workflow"]').click();
@@ -144,7 +150,12 @@ test("creates a custom operator from its page and finds it in a workflow's palet
   await expect(page.locator("[data-workflow-view] [data-workflow-canvas]")).toBeVisible();
   const palette = page.locator("[data-operator-palette]");
   await palette.getByPlaceholder("Search operators").fill("E2E rank");
-  await expect(palette.locator('[data-palette-operator^="texera://operators/"]').filter({ hasText: name })).toBeVisible();
+  const entry = palette.locator('[data-palette-operator^="texera://operators/"]').filter({ hasText: name });
+  await expect(entry).toBeVisible();
+  await entry.click();
+  const properties = page.locator("[data-property-panel]");
+  await expect(properties).toBeVisible();
+  await expect(properties.locator("[data-credential-picker]")).toBeVisible();
   await page.screenshot({ path: "test-results/custom-operator.png", fullPage: true });
 });
 
