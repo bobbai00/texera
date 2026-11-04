@@ -63,7 +63,7 @@ test("signs in, starts a chat with an agent template and attaches a CSV that bec
 
   // The dataset opens beside the chat and shows its file, named by its URI.
   await page.locator('[data-resource-card="dataset"] [aria-label="Open beside"]').first().click();
-  const view = page.locator('[data-panel] [data-resource-view="dataset"]');
+  const view = page.locator('[data-side-panel] [data-resource-view="dataset"]');
   await expect(view).toBeVisible();
   await expect(view.locator('[data-file="penguins.csv"]')).toBeVisible();
   await expect(view.locator("[data-file-uri]")).toContainText(/texera:\/\/datasets\/.+@1\/files\/penguins\.csv/);
@@ -171,7 +171,7 @@ test("a result saved from its run shows the run and the source file in its linea
   await expect(execution.locator("[data-phase]")).toHaveText("completed");
   await expect(execution.locator("[data-port-rows]")).toBeVisible();
   await execution.locator("[data-save-result]").click();
-  const saved = page.locator('[data-panel] [data-resource-view="dataset"]');
+  const saved = page.locator('[data-side-panel] [data-resource-view="dataset"]');
   await expect(saved).toBeVisible();
   await saved.getByRole("tab", { name: "Lineage" }).click();
   const lineage = saved.locator("[data-lineage]");
@@ -207,7 +207,7 @@ test("a Data Analyst chat answers from a workflow it built and the chat tracks i
   const built = page.locator('[data-rail-item="workflow"]').first();
   await expect(built).toBeVisible({ timeout: 30_000 });
   await built.click();
-  const view = page.locator("[data-panel] [data-workflow-view]").first();
+  const view = page.locator("[data-side-panel] [data-workflow-view]").first();
   await expect(view).toBeVisible();
   await expect(view.locator("[data-workflow-canvas]").first()).toBeVisible();
   await view.getByRole("tab", { name: "Versions" }).click();

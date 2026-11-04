@@ -32,11 +32,8 @@ export function ResourceTable({ resources, loading }: { resources: Resource[] | 
               <button type="button" onClick={() => expand(ref)} className="block max-w-full truncate text-left text-sm font-medium hover:underline">
                 {r.metadata.name}
               </button>
-              <div className="flex items-center gap-2 truncate text-xs text-muted-foreground">
-                {r.metadata.description && <span className="truncate">{r.metadata.description}</span>}
-                {facts.map(f => (
-                  <span key={f}>· {f}</span>
-                ))}
+              <div className="truncate text-xs text-muted-foreground">
+                {[r.metadata.description, ...facts].filter(Boolean).join(" · ")}
               </div>
             </div>
             {r.metadata.origin && <OriginChip origin={r.metadata.origin} className="hidden md:inline-flex" />}

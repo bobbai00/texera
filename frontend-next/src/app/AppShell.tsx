@@ -45,7 +45,7 @@ export function AppShell() {
         onOpenSidebar={() => setSidebarOpen(true)}
         panel={
           ref ? (
-            <section className="h-full min-w-0 bg-background" aria-label="Resource panel" data-panel={panel}>
+            <section className="h-full min-w-0 bg-background" aria-label="Resource panel" data-side-panel={panel}>
               <ResourceView key={panel} ref={ref} mode="panel" />
             </section>
           ) : null
