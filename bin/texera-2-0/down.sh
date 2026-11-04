@@ -29,7 +29,7 @@ source "$HERE/lib.sh"
 
 stop frontend 5174
 stop agent-runtime 23002
-stop example-mcp 23010
+stop bio-mcp 23010
 stop unit 28085
 stop catalog 8090
 

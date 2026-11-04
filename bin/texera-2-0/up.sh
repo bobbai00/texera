@@ -41,9 +41,19 @@ ensure_python_env
 
 echo "== infrastructure (compose project texera2)"
 docker compose -f "$HERE/docker-compose.yml" up -d
-docker compose -f "$HERE/docker-compose.yml" wait openfga-migrate rustfs-init lakekeeper-init >/dev/null
+docker compose -f "$HERE/docker-compose.yml" wait openfga-migrate openbao-init rustfs-init lakekeeper-init >/dev/null
 wait_for keycloak 180 http_ok "http://localhost:8088/auth/realms/texera/.well-known/openid-configuration"
 wait_for openfga 60 http_ok "http://localhost:18082/healthz"
+wait_for openbao 60 http_ok "http://localhost:18200/v1/sys/health"
+# The platform's model key goes into the secret store, never into a service's environment or
+# the database; the catalog seeds a credential that points at it and the agent runtime leases it.
+model_key=${ANTHROPIC_API_KEY:-$(env_file_value ANTHROPIC_API_KEY)}
+if [ -n "$model_key" ]; then
+  printf '%s' "$model_key" | docker compose -f "$HERE/docker-compose.yml" exec -T -e BAO_TOKEN=texera-dev-root openbao \
+    bao kv put -mount=texera platform/anthropic value=- >/dev/null
+  echo "openbao: the platform model key is loaded"
+fi
+unset model_key
 # Volumes made before init.sql listed them lack the test databases; create what is missing.
 for db in catalog_test texera_iceberg_catalog; do
   if ! docker compose -f "$HERE/docker-compose.yml" exec -T postgres \
@@ -59,6 +69,11 @@ wait_for catalog 120 http_ok "http://localhost:8090/healthz"
 
 start unit 28085 "$ROOT" "exec '$HERE/run-unit.sh'"
 wait_for unit 900 http_ok "http://localhost:28085/api/health"
+
+# The bio MCP server (PubMed, genes, variants, proteins) behind the gateway at /bio-mcp; its
+# API key is a credential the catalog seeds, so agents reach it through a lease.
+start bio-mcp 23010 "$ROOT/bio-mcp-service" "PORT=23010 MCP_PATH=/bio-mcp BIOMCP_API_KEY=\${TEXERA2_BIOMCP_KEY:-texera-bio-dev-key} exec bun run src/index.ts"
+wait_for bio-mcp 60 http_ok "http://localhost:23010/healthcheck"
 
 if [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "$(env_file_value ANTHROPIC_API_KEY)" ]; then
   start agent-runtime 23002 "$ROOT" "exec '$HERE/run-agent-runtime.sh'"

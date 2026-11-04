@@ -89,6 +89,43 @@ services:
       timeout: 3s
       retries: 10
 
+  openbao:
+    image: openbao/openbao:2.4.1
+    container_name: texera2-openbao
+    # Dev mode: in-memory storage, unsealed, one root token. up.sh loads the platform's model
+    # key on every start; credentials people create live as long as the container does.
+    command: ["server", "-dev", "-dev-root-token-id=texera-dev-root", "-dev-listen-address=0.0.0.0:8200"]
+    environment:
+      BAO_ADDR: http://127.0.0.1:8200
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "127.0.0.1:18200:8200"
+    healthcheck:
+      test: ["CMD", "bao", "status", "-address=http://127.0.0.1:8200"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  openbao-init:
+    image: openbao/openbao:2.4.1
+    container_name: texera2-openbao-init
+    depends_on:
+      openbao:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      BAO_ADDR: http://openbao:8200
+      BAO_TOKEN: texera-dev-root
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if ! bao secrets list -format=json | grep -q '"texera/"'; then
+          bao secrets enable -path=texera -version=2 kv
+        fi
+        echo "secret mount texera ready"
+
   rustfs:
     image: rustfs/rustfs:1.0.0
     container_name: texera2-rustfs

@@ -37,8 +37,22 @@ static_resources:
                             envoy.filters.http.ext_authz:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
                               disabled: true
+                        # The app's branding before anyone has logged in.
+                        - match: { path: "/catalog/v1/settings/public" }
+                          route: { cluster: catalog, timeout: 15s }
+                          typed_per_filter_config:
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
                         - match: { prefix: "/catalog/" }
                           route: { cluster: catalog, timeout: 600s }
+                        # The bio MCP server checks its own API key; agents reach it through the gateway.
+                        - match: { prefix: "/bio-mcp" }
+                          route: { cluster: biomcp, timeout: 600s }
+                          typed_per_filter_config:
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
                         - match: { prefix: "/access/" }
                           route: { cluster: catalog, timeout: 15s }
                         - match: { prefix: "/lineage/" }
@@ -92,6 +106,8 @@ static_resources:
                               requirements:
                                 - provider_name: keycloak
                                 - allow_missing: {}
+                        - match: { path: "/catalog/v1/settings/public" }
+                        - match: { prefix: "/bio-mcp" }
                         - match: { prefix: "/catalog/" }
                           requires: { provider_name: keycloak }
                         - match: { prefix: "/access/" }
@@ -160,6 +176,16 @@ static_resources:
               - endpoint:
                   address:
                     socket_address: { address: host.docker.internal, port_value: 23002 }
+    - name: biomcp
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: biomcp
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: host.docker.internal, port_value: 23010 }
     - name: unit
       type: STRICT_DNS
       connect_timeout: 5s
