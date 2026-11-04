@@ -13,6 +13,7 @@ import {
 } from "@texera/workflow-model";
 import { Plus, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
+import { CredentialPicker } from "./CredentialPicker";
 import { DatasetFilePicker } from "./DatasetFilePicker";
 
 /** What every field needs: the operator's root schema (for $refs) and its input columns per port. */
@@ -188,6 +189,8 @@ function Field({
             className="text-xs"
           />
         );
+      case "credential":
+        return <CredentialPicker id={id} value={typeof value === "string" ? value : ""} onChange={onChange} disabled={ctx.disabled} />;
       case "file":
       case "datasetVersion":
         return (

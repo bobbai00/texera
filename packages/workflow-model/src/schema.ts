@@ -33,6 +33,7 @@ export function choices(schema: JsonSchema): unknown[] | undefined {
 export type FieldKind =
   | "file"
   | "datasetVersion"
+  | "credential"
   | "attribute"
   | "attributeList"
   | "code"
@@ -55,6 +56,7 @@ export function fieldKind(key: string, raw: JsonSchema, root: JsonSchema): Field
   const schema = resolve(raw, root);
   if (key === "fileName") return "file";
   if (key === "datasetVersionPath") return "datasetVersion";
+  if (schema.format === "credential") return "credential";
   if (schema.autofill === "attributeName") return "attribute";
   if (schema.autofill === "attributeNameList") return "attributeList";
   if (schema.description?.trim().toLowerCase() === CODE_DESCRIPTION) return "code";

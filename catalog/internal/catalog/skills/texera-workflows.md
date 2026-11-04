@@ -38,6 +38,8 @@ A workflow's spec is a dataflow graph: `operators` and `links`. Each operator ha
 
 ## Data
 
+A property whose schema says `format: credential` takes a credential URI, `texera://credentials/<rid>` (find them with `search_resources` kind `credential`); the catalog leases the secret when the workflow runs and puts it in the plan, so the spec never holds a value. A custom operator (an `operatorType` that is an operator URI) receives its instance properties in its code as the dict `PROPS`.
+
 A scan reads a dataset file through its URI `texera://datasets/<dataset rid>@<version>/files/<path>`: the dataset URI `search_resources` returns, the version number, and the path `list_dataset_files` returns. Read the file's first lines with `read_dataset_file` first: they settle the header, the delimiter, and how numbers and missing values are written. The columns of a CSV scan are the header's cells verbatim, case and spaces included; types are inferred from the values.
 
 ## The cycle

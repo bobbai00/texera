@@ -92,6 +92,7 @@ e2e() {
   step "environments: UDF with a package" python3 "$HERE/smoke-env.py"
   step "custom operator: pinned environment, delete refused" python3 "$HERE/smoke-operator.py"
   step "sharing a project: a viewer reads and runs" python3 "$HERE/smoke-share.py"
+  step "credentials in operator properties" python3 "$HERE/smoke-credential.py"
   if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${TEXERA_ENV_FILE:-}" ]; then
     skip "chat (real model)" "no ANTHROPIC_API_KEY"
     skip "bio researcher, handoff to the analyst (real model)" "no ANTHROPIC_API_KEY"

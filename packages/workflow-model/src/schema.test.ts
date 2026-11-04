@@ -92,3 +92,10 @@ describe("property schema", () => {
     expect(setValue({}, "n", 0, false)).toEqual({ n: 0 });
   });
 });
+
+describe("credential fields", () => {
+  it("renders a property marked format: credential with the credential picker", () => {
+    expect(fieldKind("apiKey", { type: "string", format: "credential" }, {})).toBe("credential");
+    expect(fieldKind("apiKey", { type: "string" }, {})).toBe("text");
+  });
+});

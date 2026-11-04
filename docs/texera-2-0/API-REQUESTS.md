@@ -51,6 +51,14 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 2. **A custom operator's output columns.** The engine's Python operator keeps the input
    columns and needs the ones the code adds declared up front: `implementation.python.
    outputColumns` on the operator's spec, which the catalog copies into the compiled plan.
+3. **Credentials in properties.** A property whose schema has `format: credential` holds a
+   credential URI, `texera://credentials/{rid}` or `...#field`; when a run starts the catalog
+   leases the credential for that execution (the caller must be allowed to use it) and puts
+   the secret where the URI was, in the plan the engine receives. Versions and executions
+   keep the URI. A compile (`validate`) leaves the URI in place.
+4. **A custom operator's properties.** The instance properties of a custom operator do not go
+   to the engine as operator properties; they reach its Python code as the dict `PROPS`,
+   with credentials substituted. Dataset file URIs inside `PROPS` are not resolved.
 
 ## agent runtime
 

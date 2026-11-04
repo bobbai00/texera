@@ -28,6 +28,8 @@ export interface JsonSchema {
   type?: string | string[];
   title?: string;
   description?: string;
+  /** `credential`: the field takes a credential URI; the catalog substitutes the secret at run time. */
+  format?: string;
   enum?: unknown[];
   default?: unknown;
   properties?: Record<string, JsonSchema>;

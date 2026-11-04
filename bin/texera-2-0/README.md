@@ -99,6 +99,7 @@ host uses. No OrbStack-specific hostnames are needed; `TEXERA2_S3_ENDPOINT` and
 | `smoke-env.py` | A Python UDF fails without its package and completes in an Environment that lists it |
 | `smoke-operator.py` | A custom Python operator, created as a resource and used by its URI, runs in a pinned environment; deleting it is refused while a workflow references it |
 | `smoke-share.py` | A viewer of a project finds its workflow, run and dataset in search, reads them and runs the workflow, but cannot edit, delete or lease the owner's credential |
+| `smoke-credential.py` | A credential named by an operator property reaches the engine as the secret, leased for the run; the version keeps the URI; a viewer who may not use it is refused |
 | `smoke-chat.py` | A real-model chat: the Data Analyst builds, edits and reruns a workflow over the iris dataset, then saves the result as a dataset; every resource carries the turn and the template version as its origin, with lineage to the run |
 | `smoke-chat.py --demo` | The M1 scenario: the Bio Researcher answers with cited research ideas through the bio MCP server, then hands the chat to the Data Analyst, which runs the analysis |
 | `frontend-next/e2e` (Playwright) | Sign-in, a chat with an attachment that becomes a dataset, switching agents through the switcher and `/mode`, creating and editing an agent template from its page, a saved result's lineage, and with the model: the Data Analyst chat that tracks what it built and the Bio Researcher's handoff |

@@ -147,6 +147,18 @@ Decisions taken in S8 and S9:
   settings page is read-only for non-administrators. `test.sh e2e` on the reused stack:
   eleven of eleven, Playwright seven of seven.
 
+- Credentials in operator properties (the user's pick). A property whose schema says
+  `format: credential` holds a credential URI; when a run starts the catalog leases every
+  credential the plan names for that execution, with the caller's permission, and puts the
+  secret where the URI was in the plan the engine receives. Versions and executions keep the
+  URI; a compile leaves it in place. A custom operator now receives its instance properties
+  in its code as `PROPS` (they no longer reach the engine as operator properties), with
+  credentials substituted. The property form shows a credential picker for such fields, and
+  the workflow skill tells agents the rule. Checks: a server test on the plan the fake unit
+  receives and on the stored documents, and `smoke-credential.py` on the stack (the code saw
+  the leased secret, the version keeps the URI, a project viewer is refused until granted
+  `user` on the credential).
+
 Next: the out-of-M1 table of PLAN.md in the order the user picks.
 
 ## 2026-11-03 (session 5, on Linux)

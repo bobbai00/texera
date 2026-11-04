@@ -148,6 +148,12 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 	s.Relay.Flush(ctx)
 	execURI := URI(exec).String()
+	// Credentials the properties name are leased for this run and put into the plan now; the
+	// stored spec keeps the URIs. A refusal fails the run before the engine sees it.
+	if err := s.leaseSecrets(ctx, caller, plan, execURI); err != nil {
+		s.setPhase(ctx, exec.RID, api.ExecutionPhaseFailed, map[string]any{"message": err.Error()})
+		return nil, err
+	}
 	if edges := usedEdges(exec, execURI, plan); len(edges) > 0 {
 		if err := s.Store.AddEdges(ctx, edges); err != nil {
 			s.Log.Warn("used edges", "execution", exec.RID, "err", err)
