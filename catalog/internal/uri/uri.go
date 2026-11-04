@@ -129,7 +129,9 @@ func splitVersion(seg string) (string, int, error) {
 func Of(kind kinds.Kind, rid string) Ref { return Ref{Kind: kind, Rid: rid} }
 
 // Nested names a nested resource under its parent.
-func Nested(kind kinds.Kind, parent, rid string) Ref { return Ref{Kind: kind, Rid: rid, Parent: parent} }
+func Nested(kind kinds.Kind, parent, rid string) Ref {
+	return Ref{Kind: kind, Rid: rid, Parent: parent}
+}
 
 // Resource returns the name without version and subresource.
 func (r Ref) Resource() Ref { return Ref{Kind: r.Kind, Rid: r.Rid, Parent: r.Parent} }

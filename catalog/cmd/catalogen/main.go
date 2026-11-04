@@ -112,13 +112,13 @@ func main() {
 	bundle = append(bundle, '\n')
 
 	outputs := map[string][]byte{
-		"catalog/internal/kinds/kinds.gen.go":                   mustFormat(renderKindsGo(kinds)),
-		"catalog/internal/kinds/schema.gen.json":                bundle,
-		"catalog/internal/mcp/tools.gen.go":                     mustFormat(renderToolsGo(tools)),
-		"catalog/internal/authz/permissions.gen.go":             mustFormat(renderPermissionsGo(perms)),
+		"catalog/internal/kinds/kinds.gen.go":                    mustFormat(renderKindsGo(kinds)),
+		"catalog/internal/kinds/schema.gen.json":                 bundle,
+		"catalog/internal/mcp/tools.gen.go":                      mustFormat(renderToolsGo(tools)),
+		"catalog/internal/authz/permissions.gen.go":              mustFormat(renderPermissionsGo(perms)),
 		"catalog/internal/store/migrations/0002_indexes.gen.sql": renderIndexesSQL(kinds),
-		"packages/kinds/src/kinds.gen.ts":                       renderKindsTS(kinds),
-		"packages/kinds/src/schema.gen.json":                    bundle,
+		"packages/kinds/src/kinds.gen.ts":                        renderKindsTS(kinds),
+		"packages/kinds/src/schema.gen.json":                     bundle,
 	}
 	for rel, body := range outputs {
 		path := filepath.Join(*root, rel)
