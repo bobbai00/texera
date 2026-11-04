@@ -188,7 +188,7 @@ test("a Data Analyst chat answers from a workflow it built and the chat tracks i
 
 // The M1 scenario: alice starts with the Bio Researcher, gets cited research ideas, then asks for
 // an analysis; the Bio Researcher hands the chat to the Data Analyst, which answers from a run.
-test("the Bio Researcher hands the chat to the Data Analyst for the analysis", async ({ page }) => {
+test("the Bio Researcher hands the chat to the Data Analyst for the analysis, which then shares the data", async ({ page, request }) => {
   test.skip(!!process.env.TEXERA_E2E_SKIP_MODEL, "needs the real model");
   test.setTimeout(420_000);
   await signIn(page);
@@ -206,4 +206,14 @@ test("the Bio Researcher hands the chat to the Data Analyst for the analysis", a
   await expect(page.locator("[data-current-template]")).toHaveText("Data Analyst");
   await expect(page.locator('[data-message-template="Data Analyst"]').first()).toBeVisible();
   await page.screenshot({ path: "test-results/handoff.png", fullPage: true });
+
+  // The active agent shares through the catalog server: afterwards bob can read alice's iris.
+  await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible({ timeout: 60_000 });
+  await say(page, "Share my iris dataset with Bob so he can read it.");
+  await expect(page.locator('[data-tool="grant_access"][data-tool-state="done"]').first()).toBeVisible({ timeout: 180_000 });
+  await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible({ timeout: 60_000 });
+  const asBob = await api(request, "bob", "bob");
+  const bob = await asBob("GET", "/me");
+  const visible = await asBob("GET", "/datasets?q=iris");
+  expect(visible.items.some((d: { metadata: { name: string; owner: string } }) => d.metadata.name === "iris" && d.metadata.owner !== bob.principal.pid)).toBe(true);
 });

@@ -146,6 +146,7 @@ def main() -> int:
         turns = [
             "I study CRISPR off-target effects. Give me three research ideas grounded in recent literature, with citations.",
             "Now analyze the iris dataset in my catalog: what is the average petal length per species? Build and run a workflow and report the numbers.",
+            "Share my iris dataset with Bob so he can read it.",
         ]
     for i, prompt in enumerate(p for p in turns if p):
         print(f"turn {i + 1}: {prompt}")
@@ -159,6 +160,14 @@ def main() -> int:
     print(f"conversation template now: {conv['spec']['template']}")
     resources = api(tok, "GET", f"/conversations/{crid}/resources")
     print(f"resources created in this chat: {[(r['kind'], r['metadata']['name'], r['metadata']['head']) for r in resources]}")
+    if args.demo:
+        # The share went through the catalog MCP server: bob now reads alice's iris.
+        bob = token("bob", "bob")
+        pid = api(bob, "GET", "/me")["principal"]["pid"]
+        shared = [d for d in api(bob, "GET", "/datasets?q=iris")["items"] if d["metadata"]["name"] == "iris" and d["metadata"]["owner"] != pid]
+        print(f"bob can read {len(shared)} iris dataset(s) owned by someone else")
+        print("\nRESULT:", "PASS" if shared else "CHECK")
+        return 0 if shared else 1
     return 0
 
 

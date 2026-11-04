@@ -2,7 +2,7 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
-## 2026-11-04 (session 6, on Linux): M1 steps S1 to S7
+## 2026-11-04 (session 6, on Linux): M1 steps S1 to S9
 
 Done and verified (branch `texera-2-0`, each step a pushed commit):
 - S1 Contract v2 under `api/catalog/`: the envelope, one file per kind (fifteen kinds), the
@@ -64,8 +64,39 @@ Decisions taken while implementing (PLAN.md decisions still hold):
   which built and ran the workflow and reported the averages; the conversation's template
   changed and every assistant message carries the template version that wrote it.
 
-Next: S8 the frontend, S9 the agents demo as a Playwright test and a Haiku smoke run, S10
-close (`test.sh` green from a clean `up.sh`).
+- S8 Frontend rebuilt on contract v2 (commit 60516ce70). The kinds package takes what a kind is
+  from the generated kind table and names everything with the one URI grammar (`uri.ts`,
+  mirroring `internal/uri`, with round-trip tests); a generic page renders any kind from its
+  envelope: a form generated from the kind's JSON Schema (JSON a click away), versions, access
+  (visibility and grants with principal search), lineage walked over the edge table plus the
+  specs that reference it. One file per kind; folders for the workflow editor (the spec holds no
+  positions, the app lays the graph out), the execution page (phase, operators, the port view
+  with paged rows, save as dataset), the agent template form, the shared files tabs and the
+  credential's write-only secret form. The engine WebSocket client is gone: runs are the
+  catalog's. Routes are the catalog's paths (`/workflows/{rid}/executions/{eid}`); `?panel=`
+  holds the same path. The chat labels every assistant message with the template version that
+  wrote it, shows the current agent with a switcher that goes through `/mode`, and renders
+  handoffs as dividers; the runtime records a handoff or a switch as a system note naming the
+  new template (commit 7b20b051d). vitest 55 green; typecheck and lint clean.
+- S9 Agents demo. Playwright on Chrome against the dev stack, six tests green: sign-in and a
+  chat with an attachment that becomes a dataset; switching agents through the switcher and
+  `/mode` without a model; creating an agent template from its page, editing it into v2 and
+  starting a chat with it; a saved result's lineage (derived from the port, the run, the file it
+  read); with the model, the Data Analyst's loop that tracks the workflow it built, and the Bio
+  Researcher's cited ideas followed by the handoff to the Data Analyst, whose answer carries the
+  averages and who then shares the dataset with Bob through the catalog server (checked as Bob).
+  `smoke-chat.py --demo` runs the same three turns from the command line.
+
+Decisions taken in S8 and S9:
+- Names are unique per project and kind, so a new chat is named by its agent and its start
+  time, and a second upload of the same file name gets its own dataset.
+- The switcher sends `/mode <uri>` through the runtime rather than writing the conversation's
+  spec itself: one path for a change of hands, recorded the same way whoever asked for it.
+- System notes stay out of the model's history; the model sees a change of agent through the
+  labelled messages.
+
+Next: S10 close: the remaining seeding, the README and the design doc's "What changes from the
+current code" and roadmap sections, memory notes; `test.sh` green from a clean `up.sh`.
 
 ## 2026-11-03 (session 5, on Linux)
 

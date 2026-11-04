@@ -76,7 +76,7 @@ is versioned, attributed to the agent on the person's behalf, and linked by line
 | `catalog/` | The Go control plane: resources and versions, grants and the policy decision point, executions and lineage, datasets, computing units, environments, the MCP server |
 | `agent-runtime/` | The agent runtime (Vercel AI SDK 7): AG-UI chat streams, agent templates, pluggable MCP servers |
 | `amber/` | The computing unit: Amber as a pure workflow engine that reports runs back as OpenLineage events |
-| `frontend-next/`, `packages/` | The React app and its shared packages |
+| `frontend-next/`, `packages/` | The React app (the chat, a generic page for every kind, the workflow editor) and its shared packages |
 | `common/` | Engine libraries: workflow core, operators, compiler, config, auth |
 | `bin/texera-2-0/` | The dev stack: `up.sh`, `test.sh`, `down.sh` (see its README) |
 | `docs/texera-2-0/` | The plan and the progress log |
