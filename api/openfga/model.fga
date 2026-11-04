@@ -1,6 +1,15 @@
 model
   schema 1.1
 
+# Texera 2.0 authorization model, version 2.
+#
+# Every catalog resource is a `resource` object whose id is its rid. Grants are the four
+# relations owner, editor, viewer and user; `parent` carries them down the tree (project to
+# workflow to execution). A public resource has `viewer` granted to `user:*`. Permissions are
+# the computed relations the catalog checks (`can_*`); the REST operations map to them through
+# x-texera-permission. `type agent` is reserved for agents with identities of their own; in the
+# current design agents act as the person.
+
 type user
 
 type agent
@@ -14,10 +23,22 @@ type group
 type resource
   relations
     define parent: [resource]
-    define owner: [user, agent] or owner from parent
+
+    define owner: [user, agent, group#member] or owner from parent
     define editor: [user, agent, group#member] or owner or editor from parent
     define viewer: [user, agent, group#member, user:*] or editor or viewer from parent
+    # user: may run on a computing unit or use a credential or a model endpoint without reading its spec.
+    define user: [user, agent, group#member, user:*] or viewer or user from parent
+
     define can_read: viewer
     define can_write: editor
     define can_share: owner
     define can_delete: owner
+    # execute: run a workflow; viewers may run what they can read.
+    define can_execute: viewer
+    # use: lease a credential, call a model endpoint, build an environment.
+    define can_use: user
+    # run_on: start an execution on a computing unit.
+    define can_run_on: user
+    # rotate: write a credential's secret.
+    define can_rotate: editor

@@ -1,3 +1,2 @@
-import "./common.tsp";
-import "./catalog.tsp";
+import "./catalog/main.tsp";
 import "./engine.tsp";
