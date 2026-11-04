@@ -108,6 +108,11 @@ test("lists the library, creates an agent template from its page, edits it into 
   await expect(page.locator("[data-versions] li")).toHaveCount(2);
   await page.getByRole("tab", { name: "Access" }).click();
   await expect(page.locator("[data-grants]")).toBeVisible();
+  // Sharing finds people in the directory whether or not they have logged in.
+  await page.getByLabel("Principal").fill("bob");
+  await page.locator('[data-principal="Bob Builder"]').click();
+  await page.locator("[data-grant-button]").click();
+  await expect(page.locator('[data-grant="viewer"]').filter({ hasText: "Bob Builder" })).toBeVisible();
   await page.screenshot({ path: "test-results/template-page.png", fullPage: true });
 
   await page.locator("[data-new-chat-link]").click();

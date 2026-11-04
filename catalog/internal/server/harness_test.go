@@ -51,6 +51,14 @@ func (fakeIdentity) Verify(_ context.Context, token string) (ports.Claims, error
 
 func (fakeIdentity) ServiceToken(context.Context) (string, error) { return "service", nil }
 
+// SearchUsers knows one person who has never logged in: carol.
+func (fakeIdentity) SearchUsers(_ context.Context, q string, _ int) ([]ports.User, error) {
+	if strings.Contains(strings.ToLower(q), "car") {
+		return []ports.User{{Subject: "sub:carol", DisplayName: "Carol Lovelace", Email: "carol@example.org"}}, nil
+	}
+	return nil, nil
+}
+
 // fakeUnit is an engine: health, operators, compile, start, status, results, environments.
 type fakeUnit struct {
 	*httptest.Server

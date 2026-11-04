@@ -224,6 +224,16 @@
         "admin"
       ],
       "id": "5569f38e-2beb-4a8b-ac52-1c77fcbf0121"
+    },
+    {
+      "username": "service-account-texera-services",
+      "enabled": true,
+      "serviceAccountClientId": "texera-services",
+      "clientRoles": {
+        "realm-management": [
+          "view-users"
+        ]
+      }
     }
   ]
 }

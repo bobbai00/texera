@@ -32,6 +32,17 @@ type Claims struct {
 type Identity interface {
 	Verify(ctx context.Context, token string) (Claims, error)
 	ServiceToken(ctx context.Context) (string, error)
+	// SearchUsers finds people in the identity provider's directory by name or email, so a
+	// resource can be shared with someone who has not logged in yet. An empty query matches
+	// nobody; an unsupported directory returns no users and no error.
+	SearchUsers(ctx context.Context, q string, limit int) ([]User, error)
+}
+
+// User is a person as the identity provider knows them; Subject is what their tokens carry.
+type User struct {
+	Subject     string
+	DisplayName string
+	Email       string
 }
 
 // ErrUnauthenticated is returned for a missing or invalid token.

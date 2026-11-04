@@ -123,9 +123,15 @@ Decisions taken in S8 and S9:
   platform's unit, credentials and model endpoint stay usable by everyone; environments need
   only `read`. All eleven acceptance items are now demonstrated.
 
-Next: the out-of-M1 table of PLAN.md in the order the user picks; the nearest gaps are
-sharing with people who have not logged in yet (a user search on the Identity port) and a
-typed output-columns field on custom operators.
+- Sharing with people who have not logged in yet: the Identity port gained `SearchUsers`, the
+  Keycloak adapter asks the admin API with the service client's token (the realm now gives
+  `texera-services` the `view-users` role), and `Principals` merges the directory into the
+  catalog's rows, recording a found person so they can be granted access; their first login
+  takes the principal over (server test, live check against a never-logged-in admin, the
+  share form in Playwright). The demo smoke no longer logs Bob in first.
+
+Next: the out-of-M1 table of PLAN.md in the order the user picks; nearest: a typed
+output-columns field on custom operators, canvas positions kept in the person's preferences.
 
 ## 2026-11-03 (session 5, on Linux)
 

@@ -11,6 +11,21 @@ import (
 
 const principalColumns = `pid, kind, display_name, subject, email, admin, preferences, created_at, updated_at`
 
+// ImportUser records a person the identity provider knows before their first login, so they
+// can be granted access; a later login fills in what the token says. An existing principal
+// is returned as it is.
+func (s *Store) ImportUser(ctx context.Context, subject, displayName, email string) (*Principal, error) {
+	var created bool
+	row := s.pool.QueryRow(ctx, `INSERT INTO principal (kind, display_name, subject, email, admin) VALUES ('user', $1, $2, nullif($3, ''), false)
+		ON CONFLICT (subject) DO UPDATE SET updated_at = principal.updated_at
+		RETURNING `+principalColumns+`, (xmax = 0)`, displayName, subject, email)
+	p, err := scanPrincipalCreated(row, &created)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
 // EnsureUser finds or creates the user with the given subject and refreshes what the token
 // says about them; it reports whether the user is new.
 func (s *Store) EnsureUser(ctx context.Context, subject, displayName, email string, admin bool) (*Principal, bool, error) {

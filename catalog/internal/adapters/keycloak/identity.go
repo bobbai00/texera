@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -126,6 +127,73 @@ func (id *Identity) Verify(ctx context.Context, raw string) (ports.Claims, error
 }
 
 // ServiceToken returns a cached client-credentials token, refreshed a minute before expiry.
+// SearchUsers asks Keycloak's admin API for people matching the query, with the service
+// client's token; the client needs the realm-management role view-users. The admin URL is
+// the token URL's realm with /admin in front: .../realms/{r}/protocol/... -> .../admin/realms/{r}/users.
+func (id *Identity) SearchUsers(ctx context.Context, q string, limit int) ([]ports.User, error) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	token, err := id.ServiceToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	base := adminUsersURL(id.tokenURL)
+	if base == "" {
+		return nil, nil
+	}
+	params := url.Values{"search": {q}, "max": {strconv.Itoa(limit)}, "briefRepresentation": {"true"}, "enabled": {"true"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("user search: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("user search: status %d", resp.StatusCode)
+	}
+	var found []struct {
+		ID        string `json:"id"`
+		Username  string `json:"username"`
+		FirstName string `json:"firstName"`
+		LastName  string `json:"lastName"`
+		Email     string `json:"email"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&found); err != nil {
+		return nil, err
+	}
+	out := make([]ports.User, 0, len(found))
+	for _, u := range found {
+		if strings.HasPrefix(u.Username, "service-account-") {
+			continue
+		}
+		name := strings.TrimSpace(u.FirstName + " " + u.LastName)
+		if name == "" {
+			name = u.Username
+		}
+		out = append(out, ports.User{Subject: u.ID, DisplayName: name, Email: u.Email})
+	}
+	return out, nil
+}
+
+// adminUsersURL turns .../realms/{realm}/protocol/openid-connect/token into .../admin/realms/{realm}/users.
+func adminUsersURL(tokenURL string) string {
+	i := strings.Index(tokenURL, "/realms/")
+	j := strings.Index(tokenURL, "/protocol/")
+	if i < 0 || j < i {
+		return ""
+	}
+	return tokenURL[:i] + "/admin" + tokenURL[i:j] + "/users"
+}
+
 func (id *Identity) ServiceToken(ctx context.Context) (string, error) {
 	id.mu.Lock()
 	defer id.mu.Unlock()

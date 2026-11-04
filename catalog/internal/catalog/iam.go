@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -44,7 +45,37 @@ func (s *Service) UpdatePreferences(ctx context.Context, caller *auth.Caller, pr
 
 // Principals searches people and groups.
 func (s *Service) Principals(ctx context.Context, q, kind string, limit int) ([]store.Principal, error) {
-	return s.Store.SearchPrincipals(ctx, q, kind, limit)
+	known, err := s.Store.SearchPrincipals(ctx, q, kind, limit)
+	if err != nil {
+		return nil, err
+	}
+	// People who have not logged in yet come from the identity provider's directory and are
+	// recorded so they can be granted access; a failing directory degrades to the catalog's own.
+	if strings.TrimSpace(q) == "" || (kind != "" && kind != "user") {
+		return known, nil
+	}
+	users, err := s.Identity.SearchUsers(ctx, q, limit)
+	if err != nil {
+		s.Log.Warn("user search", "err", err)
+		return known, nil
+	}
+	seen := map[string]bool{}
+	for _, p := range known {
+		if p.Subject != nil {
+			seen[*p.Subject] = true
+		}
+	}
+	for _, u := range users {
+		if seen[u.Subject] || len(known) >= limit && limit > 0 {
+			continue
+		}
+		p, err := s.Store.ImportUser(ctx, u.Subject, u.DisplayName, u.Email)
+		if err != nil {
+			return nil, err
+		}
+		known = append(known, *p)
+	}
+	return known, nil
 }
 
 // Principal returns one principal.

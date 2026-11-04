@@ -36,10 +36,10 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    409), so the app names a new chat by its agent and start time, and a second upload of the
    same file name gets its own dataset.
 
-8. **Principals.** The catalog knows a person once they have logged in (`/me` creates the
-   principal), so sharing with someone before their first login finds nobody; the demo logs
-   Bob in first. The extension is a user search on the Identity port backed by the OIDC
-   provider's directory, so `search_principals` can offer people who have not logged in yet.
+8. **Principals.** `search_principals` and the share form find people who have logged in
+   and, through the Identity port's user search (Keycloak's admin API with the service
+   client's `view-users` role), people in the directory who have not; the latter are recorded
+   as principals when found, and their first login fills in the rest. Groups are catalog rows.
 
 ## catalog
 
