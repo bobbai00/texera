@@ -25,6 +25,8 @@ model PythonOperator {
   code: string;
   @doc("The environment its packages come from; absent means the run's environment.")
   environment?: Uri;
+  @doc("The columns the code adds to each tuple, declared so the engine can type the output; input columns pass through.")
+  outputColumns?: Attribute[];
 }
 
 model OperatorImplementation {

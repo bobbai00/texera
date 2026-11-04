@@ -6783,6 +6783,11 @@ components:
         environment:
           $ref: '#/components/schemas/Uri'
           description: The environment its packages come from; absent means the run's environment.
+        outputColumns:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attribute'
+          description: The columns the code adds to each tuple, declared so the engine can type the output; input columns pass through.
     Relation:
       type: string
       enum:

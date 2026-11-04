@@ -48,10 +48,9 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    platform's unit, credentials and model endpoint are usable by everyone through `parent`.
    A person's own credential is usable by its owner and editors, or by whoever is granted
    `user` on it or on its project.
-2. **A custom operator's output columns.** The engine's Python operator needs the columns the
-   code adds declared up front; a custom operator declares them in its `propertiesSchema`
-   under `x-texera-output-columns` (a list of `{attributeName, attributeType}`), which the
-   catalog copies into the compiled plan. A typed field on `OperatorSpec` is the extension.
+2. **A custom operator's output columns.** The engine's Python operator keeps the input
+   columns and needs the ones the code adds declared up front: `implementation.python.
+   outputColumns` on the operator's spec, which the catalog copies into the compiled plan.
 
 ## agent runtime
 

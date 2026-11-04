@@ -678,7 +678,8 @@ export const zProjectSpec = z.object({
 
 export const zPythonOperator = z.object({
     code: z.string(),
-    environment: zUri.optional()
+    environment: zUri.optional(),
+    outputColumns: z.array(zAttribute).optional()
 });
 
 export const zOperatorImplementation = z.object({

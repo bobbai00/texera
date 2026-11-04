@@ -76,8 +76,7 @@ def main() -> int:
         "spec": {
             "operatorType": f"OrdinalRank{stamp}", "displayName": "Ordinal rank", "group": "Custom",
             "inputPorts": [{"portID": "input-0"}], "outputPorts": [{"portID": "output-0"}],
-            "propertiesSchema": {"type": "object", "properties": {}, "x-texera-output-columns": [{"attributeName": "rank", "attributeType": "string"}]},
-            "implementation": {"python": {"code": UDF}},
+            "implementation": {"python": {"code": UDF, "outputColumns": [{"attributeName": "rank", "attributeType": "string"}]}},
         },
     })
     op_uri = f"{op['metadata']['uri']}@{op['metadata']['head']}"

@@ -212,14 +212,12 @@ func (s *Service) compileCustomOperator(ctx context.Context, caller *auth.Caller
 	if spec.Implementation == nil || spec.Implementation.Python == nil || strings.TrimSpace(spec.Implementation.Python.Code) == "" {
 		return nil, Invalid(name+" has no Python implementation", nil)
 	}
-	props := map[string]any{"code": spec.Implementation.Python.Code, "workers": 1, "retainInputColumns": true, "defaultEnv": true, "outputColumns": []any{}}
-	if spec.PropertiesSchema != nil {
-		if schema, ok := spec.PropertiesSchema.(map[string]any); ok {
-			if cols, ok := schema["x-texera-output-columns"]; ok {
-				props["outputColumns"] = cols
-			}
-		}
+	// The engine's Python operator keeps the input columns and needs the added ones declared.
+	columns := []api.Attribute{}
+	if spec.Implementation.Python.OutputColumns != nil {
+		columns = *spec.Implementation.Python.OutputColumns
 	}
+	props := map[string]any{"code": spec.Implementation.Python.Code, "workers": 1, "retainInputColumns": true, "defaultEnv": true, "outputColumns": columns}
 	return props, nil
 }
 
