@@ -1,9 +1,10 @@
 // The open workflow: one store per workflow, shared by every view of it, holding the spec
 // being edited and its canvas positions, and saving the spec shortly after each change as a
 // new version (POST /workflows/{rid}/edit with the head the editor saw, so two writers never
-// silently overwrite each other). Positions stay in the app: the spec is the engine's plan.
+// silently overwrite each other). Positions stay out of the spec, which is the engine's plan:
+// a person's moves are kept in their preferences, the free-form document the app owns.
 
-import { workflowsEdit } from "@texera/catalog-client";
+import { meGet, meUpdatePreferences, workflowsEdit } from "@texera/catalog-client";
 import type { WorkflowVersion } from "@texera/catalog-client/types";
 import { type Point, type Positions, reconcilePositions, type WorkflowSpec } from "@texera/workflow-model";
 import { createStore, type StoreApi } from "zustand";
@@ -17,6 +18,8 @@ export interface OpenWorkflow {
   headVno: number;
   spec: WorkflowSpec;
   readonly: boolean;
+  /** Positions the person set before, from their preferences; the rest is laid out. */
+  positions?: Positions;
 }
 
 export interface EditorState {
@@ -43,11 +46,21 @@ export interface EditorState {
 export interface EditorDeps {
   save: (rid: string, spec: WorkflowSpec, expectedHead: number) => Promise<WorkflowVersion>;
   rename: (rid: string, name: string) => Promise<void>;
+  /** Keeps the person's canvas positions for this workflow; absent means they are not kept. */
+  savePositions?: (rid: string, positions: Positions) => Promise<void>;
   /** Called with every version this editor created, so caches can follow. */
   onSaved?: (version: WorkflowVersion, spec: WorkflowSpec) => void;
 }
 
 const SAVE_DELAY_MS = 800;
+const POSITIONS_DELAY_MS = 1500;
+
+/** Where a person's canvas layouts live in their preferences: `canvas[rid]`. */
+export function canvasPositions(preferences: Record<string, unknown> | undefined, rid: string): Positions {
+  const canvas = preferences?.canvas;
+  const mine = canvas && typeof canvas === "object" ? (canvas as Record<string, unknown>)[rid] : undefined;
+  return mine && typeof mine === "object" ? (mine as Positions) : {};
+}
 
 export type EditorStore = StoreApi<EditorState>;
 
@@ -56,11 +69,17 @@ export const catalogDeps: EditorDeps = {
   rename: async (rid, name) => {
     await updateMetadata(rid, { name });
   },
+  savePositions: async (rid, positions) => {
+    const me = await unwrap(meGet());
+    const canvas = { ...(me.preferences.canvas as Record<string, unknown> | undefined), [rid]: positions };
+    await unwrap(meUpdatePreferences({ body: { ...me.preferences, canvas } }));
+  },
 };
 
 export function createEditorStore(workflow: OpenWorkflow, deps: EditorDeps): EditorStore {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight: Promise<void> | undefined;
+  let positionsTimer: ReturnType<typeof setTimeout> | undefined;
 
   const store = createStore<EditorState>()((set, get) => {
     const save = async (): Promise<void> => {
@@ -99,7 +118,7 @@ export function createEditorStore(workflow: OpenWorkflow, deps: EditorDeps): Edi
       name: workflow.name,
       headVno: workflow.headVno,
       spec: workflow.spec,
-      positions: reconcilePositions(workflow.spec, {}),
+      positions: reconcilePositions(workflow.spec, workflow.positions ?? {}),
       readonly: workflow.readonly,
       selected: null,
       saveState: "saved",
@@ -110,7 +129,15 @@ export function createEditorStore(workflow: OpenWorkflow, deps: EditorDeps): Edi
         set({ spec, positions: reconcilePositions(spec, get().positions), saveState: "pending" });
         schedule();
       },
-      move: moves => set({ positions: { ...get().positions, ...moves } }),
+      move: moves => {
+        set({ positions: { ...get().positions, ...moves } });
+        if (!deps.savePositions) return;
+        if (positionsTimer) clearTimeout(positionsTimer);
+        positionsTimer = setTimeout(() => {
+          positionsTimer = undefined;
+          void deps.savePositions?.(get().rid, get().positions).catch(e => set({ saveError: e instanceof Error ? e.message : String(e) }));
+        }, POSITIONS_DELAY_MS);
+      },
       rename: name => {
         const next = name.trim();
         if (get().readonly || !next || next === get().name) return;
@@ -125,6 +152,11 @@ export function createEditorStore(workflow: OpenWorkflow, deps: EditorDeps): Edi
         set({ spec, positions: reconcilePositions(spec, get().positions), headVno: vno, saveState: "saved", saveError: undefined, ...(name ? { name } : {}) });
       },
       flush: async () => {
+        if (positionsTimer) {
+          clearTimeout(positionsTimer);
+          positionsTimer = undefined;
+          await deps.savePositions?.(get().rid, get().positions).catch(() => undefined);
+        }
         if (timer) {
           clearTimeout(timer);
           await save();

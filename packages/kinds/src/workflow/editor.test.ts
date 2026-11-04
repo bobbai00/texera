@@ -85,6 +85,22 @@ describe("editor store", () => {
     expect(store.getState().saveState).toBe("saved");
   });
 
+  it("starts from the person's kept positions and keeps their moves, debounced, outside the spec", async () => {
+    const kept: Record<string, unknown>[] = [];
+    deps.savePositions = async (_rid, positions) => {
+      kept.push(positions);
+    };
+    const spec = addOperator(addOperator(EMPTY_SPEC, op("a")), op("b"));
+    const store = createEditorStore({ ...workflow, spec, positions: { a: { x: 300, y: 300 } } }, deps);
+    expect(store.getState().positions.a).toEqual({ x: 300, y: 300 });
+    expect(store.getState().positions.b).toBeDefined();
+    store.getState().move({ b: { x: 1, y: 1 } });
+    store.getState().move({ b: { x: 2, y: 2 } });
+    await vi.runAllTimersAsync();
+    expect(kept).toEqual([{ a: { x: 300, y: 300 }, b: { x: 2, y: 2 } }]);
+    expect(saves).toHaveLength(0);
+  });
+
   it("does nothing while read-only and saves a rename through its own call", async () => {
     const renames: string[] = [];
     deps.rename = async (_rid, name) => {

@@ -8,7 +8,7 @@ import { AlertTriangle, Blocks, Check, Cpu, GitBranch, History, Loader2, Play, U
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "zustand";
 import { unwrap } from "../api";
-import { keysOf, operatorSchemasQuery, unitsQuery } from "../queries";
+import { keysOf, meQuery, operatorSchemasQuery, unitsQuery } from "../queries";
 import { Access } from "../shell/Access";
 import { EditableName, KindHeader } from "../shell/KindHeader";
 import { Lineage } from "../shell/Lineage";
@@ -17,7 +17,7 @@ import { useOpenResource } from "../shell/navigation";
 import { Versions } from "../shell/Versions";
 import type { KindViewProps } from "../types";
 import { uriOf } from "../uri";
-import { acquireEditor, type EditorStore, releaseEditor } from "./editor";
+import { acquireEditor, canvasPositions, type EditorStore, releaseEditor } from "./editor";
 import { EditorCanvas } from "./EditorCanvas";
 import { OperatorPalette } from "./OperatorPalette";
 import { PropertyPanel } from "./PropertyPanel";
@@ -77,13 +77,17 @@ function Editor({
 }) {
   const queryClient = useQueryClient();
   const [store, setStore] = useState<EditorStore>();
+  // The person's own layout of this canvas comes from their preferences, loaded once.
+  const { data: me } = useQuery(meQuery());
+  const ready = me !== undefined;
   useEffect(() => {
-    const s = acquireEditor({ rid, name, headVno: specVno, spec, readonly: pinned });
+    if (!me) return;
+    const s = acquireEditor({ rid, name, headVno: specVno, spec, readonly: pinned, positions: canvasPositions(me.preferences, rid) });
     setStore(s);
     return () => releaseEditor(rid);
-    // The store is created once per (rid, pinned version); later specs arrive through adopt below.
+    // The store is created once per (rid, pinned version) when the preferences are known; later specs arrive through adopt below.
     // biome-ignore lint/correctness/useExhaustiveDependencies: see above
-  }, [rid, pinned]);
+  }, [rid, pinned, ready]);
   useEffect(() => {
     store?.getState().adopt(spec, specVno, name);
   }, [store, spec, specVno, name]);

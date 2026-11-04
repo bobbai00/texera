@@ -28,8 +28,8 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    `texera://datasets/{rid}@{vno}/files/{path}` (and the version URI alone for version
    pickers), which the catalog resolves to presigned URLs when it builds the plan.
 5. **Canvas positions.** The workflow spec is the engine's plan and holds no positions; the
-   app lays the graph out (sources left, one column per hop) and keeps a person's moves for
-   the open editor only.
+   app lays the graph out (sources left, one column per hop) and keeps a person's moves in
+   their preferences under `canvas[rid]`, so a layout is theirs and survives a reload.
 6. **Compile result port keys.** `CompileResult.operatorOutputSchemas[op]` keyed by
    `"<port>_false"` (the engine's serializer) or `"<port>"`; both are read.
 7. **Names.** Names are unique per project and kind (the catalog refuses a duplicate with

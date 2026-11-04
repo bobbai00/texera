@@ -103,7 +103,7 @@ description, the kind's own tabs, then the spec as a form generated from the kin
 downstream, plus the specs that reference it) and the envelope itself. Most kinds are a single
 file under `kinds/` that declares the registry entry; the ones with their own surfaces are
 folders: `workflow/` (the canvas editor; the spec holds no positions, the app lays the graph
-out), `execution/` (phase, operators, the port view with paged rows, save as dataset),
+out and keeps a person's moves in their preferences), `execution/` (phase, operators, the port view with paged rows, save as dataset),
 `agent-template/` (the form over card, model endpoint, prompt, skills, MCP servers, handoffs and
 loop), `files/` (the files and staging tabs datasets and models share).
 
