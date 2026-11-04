@@ -19,7 +19,12 @@ export interface HistoryOptions {
 export function toModelMessages(history: Message[], options: HistoryOptions = {}): ModelMessage[] {
   const out: ModelMessage[] = [];
   for (const m of history) {
-    if (m.role === "user" || m.role === "system") {
+    if (m.role === "system") {
+      // System notes (a switch, a handoff) are the person's record; the model sees the change
+      // through the labelled messages, and providers refuse system messages mid-conversation.
+      continue;
+    }
+    if (m.role === "user") {
       const text = m.parts
         .filter((p) => p.type === "text" && p.text)
         .map((p) => p.text as string)

@@ -182,10 +182,16 @@ describe("POST /agents/conversations/:rid/ag-ui", () => {
     expect(fake.messages.map((m) => [m.role, m.template])).toEqual([
       ["user", undefined],
       ["assistant", `${BIO_URI}@1`],
+      ["system", `${BIO_URI}@1`],
       ["assistant", `${ANALYST_URI}@1`],
     ]);
     expect(fake.messages[1]?.parts.map((p) => p.type)).toEqual(["tool_call", "tool_result"]);
-    expect(fake.messages[2]?.parts[0]?.text).toBe("Here is the analysis.");
+    // The record of the handoff: written by the Bio Researcher, naming the Data Analyst.
+    expect(fake.messages[2]?.parts.map((p) => [p.type, p.resource ?? p.text])).toEqual([
+      ["resource", `${ANALYST_URI}@1`],
+      ["text", "Bio Researcher handed the chat to Data Analyst."],
+    ]);
+    expect(fake.messages[3]?.parts[0]?.text).toBe("Here is the analysis.");
     expect(fake.conversation.status.activeTurn).toBeUndefined();
   });
 

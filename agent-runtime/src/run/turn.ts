@@ -202,6 +202,20 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
       conversation = conversation ?? (await deps.catalog.getConversation(rid, auth()));
       await deps.catalog.updateConversationSpec(rid, { ...conversation.spec, template: baseUri(next.uri) }, auth());
       log.info("handoff", { from: template.name, to: next.name });
+      // The record of the handoff: a system note written by the template that handed off, naming the one that takes over.
+      await deps.catalog.appendMessage(
+        rid,
+        {
+          turn: turn.turn,
+          role: "system",
+          template: template.uri,
+          parts: [
+            { type: "resource", resource: next.uri },
+            { type: "text", text: `${template.name} handed the chat to ${next.name}.` },
+          ],
+        },
+        auth(),
+      );
       yield events.handoff({ from: template.uri, to: next.uri, name: next.name, by: "agent" });
       context.setTemplate(next.uri);
       current = next.uri;
@@ -249,7 +263,18 @@ async function* switchMode(
     const conversation = await deps.catalog.getConversation(rid, auth);
     await deps.catalog.updateConversationSpec(rid, { ...conversation.spec, template: baseUri(template.uri) }, auth);
     const note = `Switched to ${template.name}.`;
-    await deps.catalog.appendMessage(rid, { role: "system", parts: [{ type: "text", text: note }] }, auth);
+    // A system note with no template: the person switched; the resource part names the new one.
+    await deps.catalog.appendMessage(
+      rid,
+      {
+        role: "system",
+        parts: [
+          { type: "resource", resource: template.uri },
+          { type: "text", text: note },
+        ],
+      },
+      auth,
+    );
     yield events.handoff({ to: template.uri, name: template.name, by: "person" });
     const id = newId();
     yield events.textStart(id);
