@@ -132,6 +132,9 @@ def main() -> int:
 
     tok = token(args.user, args.user)
     ensure_iris(tok)
+    if args.demo:
+        # The catalog knows a principal once they have logged in; the share turn needs Bob known.
+        api(token("bob", "bob"), "GET", "/me")
     units = api(tok, "GET", "/computing-units/available")
     unit = next(u for u in units if u["status"]["phase"] == "ready")
     first = "Bio Researcher" if args.demo else args.template

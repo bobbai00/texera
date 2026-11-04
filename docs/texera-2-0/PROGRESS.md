@@ -2,7 +2,7 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
-## 2026-11-04 (session 6, on Linux): M1 steps S1 to S9
+## 2026-11-04 (session 6, on Linux): M1 steps S1 to S10
 
 Done and verified (branch `texera-2-0`, each step a pushed commit):
 - S1 Contract v2 under `api/catalog/`: the envelope, one file per kind (fifteen kinds), the
@@ -95,8 +95,24 @@ Decisions taken in S8 and S9:
 - System notes stay out of the model's history; the model sees a change of agent through the
   labelled messages.
 
-Next: S10 close: the remaining seeding, the README and the design doc's "What changes from the
-current code" and roadmap sections, memory notes; `test.sh` green from a clean `up.sh`.
+- S10 Close. The gate ran as `down.sh --wipe && up.sh && test.sh` on this machine: the wiped
+  stack came up with the model key loaded into OpenBao; thirteen steps, twelve green on the
+  first run (catalog, runtime and frontend suites; engine `sbt test` 145 s and its integration
+  suites 199 s; smoke-catalog, smoke-run, retention, environments, the real-model chat, the
+  Playwright suite of six, the unit restart). The one failure was the demo's last turn: on a
+  wiped stack Bob had never logged in, so `search_principals` found nobody to share with. The
+  demo now logs Bob in first and passes (ideas, handoff, analysis, share, checked as Bob); the
+  limitation and its extension point (a user search on the Identity port) are recorded in
+  `API-REQUESTS.md`. Admins come from the Keycloak realm role `admin`, so no admins group is
+  seeded. The frontend and dev READMEs, the root README table, the conventions note and the
+  design doc ("Texera 2.0 Resource Model and Implementation Architecture", rev 19: the
+  catalog and its peers, lineage, agents as templates, conversations and turns, and the
+  closing sections) are current. M1 is closed.
+
+Next: the acceptance items not yet exercised live (a custom Python operator created from its
+page, used in a workflow version and run in the pinned environment, with its deletion refused
+while referenced; sharing a whole project with Bob and his read-only view of it), then the
+out-of-M1 table of PLAN.md in the order the user picks.
 
 ## 2026-11-03 (session 5, on Linux)
 
