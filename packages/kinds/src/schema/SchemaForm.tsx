@@ -20,7 +20,11 @@ export interface SchemaFormProps {
   className?: string;
 }
 
-const title = (key: string) => key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^\w/, c => c.toUpperCase());
+const title = (key: string) =>
+  key
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/^\w/, c => c.toUpperCase())
+    .replace(/\b(Url|Uri|Id)\b/g, s => s.toUpperCase());
 
 export function SchemaForm({ schema, value, onChange, long = [], hidden = [], disabled = false, className }: SchemaFormProps) {
   const s = deref(schema);

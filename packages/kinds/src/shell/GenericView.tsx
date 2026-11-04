@@ -28,7 +28,18 @@ export function GenericView({ ref, mode }: KindViewProps) {
   return <ResourcePage resource={data} ref={{ ...ref, kind: data.kind, parent: data.metadata.parent }} mode={mode} />;
 }
 
-export function ResourcePage({ resource, ref, mode }: { resource: Resource; ref: ResourceRef; mode: "panel" | "page" }) {
+export function ResourcePage({
+  resource,
+  ref,
+  mode,
+  readonly = false,
+}: {
+  resource: Resource;
+  ref: ResourceRef;
+  mode: "panel" | "page";
+  /** Shows the spec without letting it be saved, for callers who know the caller may not write. */
+  readonly?: boolean;
+}) {
   const kind = resource.kind;
   const spec = KINDS[kind];
   const entry = kindEntry(kind);
@@ -121,7 +132,7 @@ export function ResourcePage({ resource, ref, mode }: { resource: Resource; ref:
           </TabPanel>
         ))}
         <TabPanel value="spec" className="scrollbar-thin overflow-y-auto">
-          <Editor key={`${resource.metadata.etag}:${pinned}`} resource={resource} readonly={pinned} />
+          <Editor key={`${resource.metadata.etag}:${pinned}`} resource={resource} readonly={pinned || readonly} />
         </TabPanel>
         {entry.versioned && (
           <TabPanel value="versions" className="scrollbar-thin overflow-y-auto">
