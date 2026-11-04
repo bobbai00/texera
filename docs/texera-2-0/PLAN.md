@@ -5,6 +5,13 @@ Branch `texera-2-0`, in its own worktree of the main checkout. The design is the
 engineering blueprint for the first end-to-end slice and the running notes that survive
 context resets. Keep it current: `PROGRESS.md` beside it records what is done and verified.
 
+The resource model and the implementation architecture settled on 2026-11-03 are in the
+Claude Doc "Texera 2.0 Resource Model and Implementation Architecture"
+(https://claude.ai/artifact/LCDUYos77DAM24TL1hyDCQ): kinds, names and URIs, versions,
+executions, compute, operators, access control, settings and quotas, credentials and models,
+the codegen pipeline, the service map with adapters, the roadmap and the open decisions.
+Where it differs from the design doc or from this file, it wins.
+
 ## What the slice must do (acceptance)
 
 1. A person logs in through Keycloak (OIDC, PKCE). Every service verifies RS256 tokens
