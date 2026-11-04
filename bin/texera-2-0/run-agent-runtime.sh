@@ -8,11 +8,8 @@ ROOT=$(cd "$HERE/../.." && pwd)
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
 cd "$ROOT/agent-runtime"
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  ANTHROPIC_API_KEY=$(env_file_value ANTHROPIC_API_KEY)
-  export ANTHROPIC_API_KEY
-fi
-[ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ANTHROPIC_API_KEY is not set (put it in the environment, TEXERA_ENV_FILE or $ROOT/.env)"; exit 1; }
+# The runtime holds no model key: the platform model endpoint names a credential whose value
+# up.sh loads into the secret store, and the runtime leases it per turn.
 export TEXERA_AGENT_PORT=${TEXERA_AGENT_PORT:-23002}
 export TEXERA_PUBLIC_URL=${TEXERA_PUBLIC_URL:-http://localhost:8088}
 export TEXERA_CATALOG_URL=${TEXERA_CATALOG_URL:-http://localhost:8088}

@@ -52,6 +52,7 @@ if [ -n "$model_key" ]; then
   printf '%s' "$model_key" | docker compose -f "$HERE/docker-compose.yml" exec -T -e BAO_TOKEN=texera-dev-root openbao \
     bao kv put -mount=texera platform/anthropic value=- >/dev/null
   echo "openbao: the platform model key is loaded"
+  model_key_loaded=1
 fi
 unset model_key
 # Volumes made before init.sql listed them lack the test databases; create what is missing.
@@ -75,11 +76,10 @@ wait_for unit 900 http_ok "http://localhost:28085/api/health"
 start bio-mcp 23010 "$ROOT/bio-mcp-service" "PORT=23010 MCP_PATH=/bio-mcp BIOMCP_API_KEY=\${TEXERA2_BIOMCP_KEY:-texera-bio-dev-key} exec bun run src/index.ts"
 wait_for bio-mcp 60 http_ok "http://localhost:23010/healthcheck"
 
-if [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "$(env_file_value ANTHROPIC_API_KEY)" ]; then
-  start agent-runtime 23002 "$ROOT" "exec '$HERE/run-agent-runtime.sh'"
-  wait_for agent-runtime 60 lsof -nP -iTCP:23002 -sTCP:LISTEN
-else
-  echo "agent-runtime: skipped; put ANTHROPIC_API_KEY in the environment or in $ROOT/.env to chat"
+start agent-runtime 23002 "$ROOT" "exec '$HERE/run-agent-runtime.sh'"
+wait_for agent-runtime 60 lsof -nP -iTCP:23002 -sTCP:LISTEN
+if [ -z "$model_key_loaded" ]; then
+  echo "agent-runtime: up, but no model key was loaded; put ANTHROPIC_API_KEY in the environment or in $ROOT/.env to chat"
 fi
 
 start frontend 5174 "$ROOT/frontend-next" "exec bun run dev"

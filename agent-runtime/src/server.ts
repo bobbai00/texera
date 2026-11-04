@@ -7,14 +7,14 @@ import type { RuntimeDeps } from "./protocol/deps.ts";
 
 export type { RuntimeDeps } from "./protocol/deps.ts";
 
-/** The HTTP surface: health, AG-UI runs, and the A2A card and endpoint per agent. */
+/** The HTTP surface: health, the AG-UI run of a conversation, and the A2A card and endpoint of a template. */
 export function createApp(deps: RuntimeDeps): Hono {
   const app = new Hono();
 
-  app.get("/healthz", (c) => c.json({ status: "ok", agents: deps.host.size }));
-  app.post("/agents/:pid/ag-ui", agUiHandler(deps));
-  app.get("/agents/:pid/.well-known/agent-card.json", agentCardHandler(deps));
-  app.post("/agents/:pid/a2a", a2aHandler(deps));
+  app.get("/healthz", (c) => c.json({ status: "ok" }));
+  app.post("/agents/conversations/:rid/ag-ui", agUiHandler(deps));
+  app.get("/agents/templates/:rid/.well-known/agent-card.json", agentCardHandler(deps));
+  app.post("/agents/templates/:rid/a2a", a2aHandler(deps));
 
   app.onError((err, c) => {
     const status =

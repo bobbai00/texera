@@ -48,7 +48,7 @@ describe("StreamMapper", () => {
     const envelope = {
       apiVersion: "catalog.texera.apache.org/v1",
       kind: "workflow",
-      metadata: { rid: RID, headVersion: 3, name: "w" },
+      metadata: { rid: RID, uri: `texera://workflows/${RID}`, head: 3, name: "w" },
       spec: {},
     };
     const { events, types, mapper } = mapAll([
@@ -75,9 +75,14 @@ describe("StreamMapper", () => {
     ]);
     expect(events[0]).toMatchObject({ toolCallId: "c1", toolCallName: "get_resource" });
     expect(events[4]).toMatchObject({ toolCallId: "c1", role: "tool", content: JSON.stringify(envelope) });
-    expect(events[5]).toMatchObject({ name: RESOURCE_EVENT, value: { kind: "workflow", rid: RID, vno: 3 } });
+    expect(events[5]).toMatchObject({
+      name: RESOURCE_EVENT,
+      value: { kind: "workflow", rid: RID, vno: 3, uri: `texera://workflows/${RID}` },
+    });
     expect(mapper.collected.toolCalls).toEqual([{ toolCallId: "c1", toolName: "get_resource", input: { rid: RID } }]);
-    expect(mapper.collected.resources).toEqual([{ kind: "workflow", rid: RID, vno: 3 }]);
+    expect(mapper.collected.resources).toEqual([
+      { kind: "workflow", rid: RID, uri: `texera://workflows/${RID}`, vno: 3 },
+    ]);
   });
 
   test("emits a whole tool call when the provider did not stream its input", () => {
@@ -103,9 +108,13 @@ describe("StreamMapper", () => {
 
   test("finds executions and versions inside MCP text content", () => {
     const eid = "77777777-7777-4777-8777-777777777777";
-    const output = {
-      content: [{ type: "text", text: JSON.stringify({ eid, status: "completed", workflow: { rid: RID, vno: 2 } }) }],
+    const execution = {
+      kind: "execution",
+      metadata: { rid: eid, uri: `texera://workflows/${RID}/executions/${eid}`, head: 0 },
+      spec: {},
+      status: { phase: "completed" },
     };
+    const output = { content: [{ type: "text", text: JSON.stringify(execution) }] };
     const { events } = mapAll([
       { type: "tool-result", toolCallId: "c4", toolName: "run_workflow", input: {}, output } as never,
     ]);

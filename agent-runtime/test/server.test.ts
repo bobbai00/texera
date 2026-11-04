@@ -1,22 +1,28 @@
 /**
- * End to end over HTTP with everything faked: the identity provider, the catalog and
- * the model. A turn with one tool call streams AG-UI events and persists both messages.
+ * End to end over HTTP with everything faked: the identity provider, the catalog and the
+ * model. A turn streams AG-UI events and persists its messages; a handoff switches the
+ * conversation's template mid-turn; `/mode` switches it without a model.
  */
 import { describe, expect, test } from "bun:test";
 import { EventType } from "@ag-ui/core";
 import { type ToolSet, tool } from "ai";
 import { z } from "zod";
 import { buildAgent } from "../src/agent/build.ts";
-import { TurnContext } from "../src/agent/turn-context.ts";
 import { AuthError } from "../src/auth/jwt.ts";
 import { CatalogClient } from "../src/catalog/client.ts";
 import type { RuntimeConfig } from "../src/config.ts";
-import { AgentHost } from "../src/host/agent-host.ts";
-import type { AgentInstance, Spawner } from "../src/host/spawner.ts";
 import { silentLogger } from "../src/log.ts";
-import { RESOURCE_EVENT } from "../src/run/ag-ui-events.ts";
+import { HANDOFF_EVENT, RESOURCE_EVENT } from "../src/run/ag-ui-events.ts";
 import { createApp } from "../src/server.ts";
-import { CONVERSATION_RID, fakeCatalog, PID, TEMPLATE_RID } from "./helpers/fake-catalog.ts";
+import {
+  ANALYST_URI,
+  BIO_TEMPLATE_RID,
+  BIO_URI,
+  CONVERSATION_RID,
+  type FakeCatalogOptions,
+  fakeCatalog,
+  TEMPLATE_RID,
+} from "./helpers/fake-catalog.ts";
 import { type ScriptedResponse, scriptedModel } from "./helpers/mock-model.ts";
 
 const WORKFLOW_RID = "88888888-8888-4888-8888-888888888888";
@@ -31,52 +37,35 @@ const config: RuntimeConfig = {
   tokenUrl: "http://idp/token",
   serviceClientId: "svc",
   serviceClientSecret: "s",
-  llm: { provider: "anthropic", apiKey: "unused", defaultModel: "scripted" },
   maxSteps: 5,
   answerPolicy: "free",
+  maxHandoffs: 2,
 };
 
-/** A spawner whose agent runs a scripted model with one local tool. */
-function scriptedSpawner(responses: ScriptedResponse[], tools: ToolSet): Spawner & { spawned: number } {
-  const spawner = {
-    spawned: 0,
-    async spawn(ctx): Promise<AgentInstance> {
-      spawner.spawned += 1;
-      const template = {
-        ref: ctx.record.template,
-        name: "Data Analyst",
-        spec: { card: { name: "Data Analyst", description: "d" } },
-      };
-      const built = buildAgent({
-        template,
-        skills: [],
-        model: scriptedModel(responses),
-        maxSteps: 5,
-        extraTools: tools,
-      });
-      return {
-        pid: ctx.pid,
-        template,
-        conversation: ctx.record.conversation,
-        built,
-        userToken: ctx.auth.userToken,
-        turn: new TurnContext(ctx.pid),
-        createdAt: Date.now(),
-        close: async () => {},
-      };
-    },
-  } satisfies Spawner & { spawned: number };
-  return spawner;
-}
-
-function makeApp(spawner: Spawner) {
-  const fake = fakeCatalog();
+/** An app whose agents run a scripted model with local tools; no MCP servers are mounted. */
+function makeApp(responses: ScriptedResponse[], tools: ToolSet = {}, options: FakeCatalogOptions = {}) {
+  const fake = fakeCatalog({ ...options, template: { catalogTools: false, ...options.template } });
   const catalog = new CatalogClient({ baseUrl: "http://catalog", fetch: fake.fetch });
+  const model = scriptedModel(responses);
+  const builds: string[] = [];
   const app = createApp({
     config,
     log: silentLogger,
     catalog,
-    host: new AgentHost(spawner),
+    build: (input) => {
+      builds.push(input.template.name);
+      return buildAgent(
+        {
+          catalog,
+          publicUrl: config.publicUrl,
+          maxSteps: config.maxSteps,
+          log: silentLogger,
+          modelFactory: () => model,
+          extraTools: tools,
+        },
+        input,
+      );
+    },
     verifyUser: async (token) => {
       if (token !== "user-token") throw new AuthError("bad token");
       return { subject: "alice", token, claims: {} };
@@ -84,7 +73,7 @@ function makeApp(spawner: Spawner) {
     serviceTokens: { get: async () => "service-token", invalidate() {} },
     newId: () => "fixed-id",
   });
-  return { app, fake };
+  return { app, fake, builds };
 }
 
 async function readSse(res: Response) {
@@ -95,40 +84,43 @@ async function readSse(res: Response) {
     .map((block) => JSON.parse(block.slice("data: ".length)) as { type: string } & Record<string, unknown>);
 }
 
-const runInput = (text: string) => ({
+const runInput = (text: string, forwardedProps?: Record<string, unknown>) => ({
   threadId: CONVERSATION_RID,
   runId: "run-1",
   messages: [{ id: "m1", role: "user", content: text }],
   tools: [],
   context: [],
   state: {},
+  ...(forwardedProps ? { forwardedProps } : {}),
 });
 
-describe("POST /agents/:pid/ag-ui", () => {
-  test("streams a full turn with a tool call and persists both messages", async () => {
+const post = (app: ReturnType<typeof createApp>, body: unknown, token = "user-token") =>
+  app.request(`/agents/conversations/${CONVERSATION_RID}/ag-ui`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+describe("POST /agents/conversations/:rid/ag-ui", () => {
+  test("streams a full turn with a tool call and persists both messages with the turn and the template", async () => {
     const getResource = tool({
       description: "get",
       inputSchema: z.object({ rid: z.string() }),
       execute: async ({ rid }) => ({
         apiVersion: "catalog.texera.apache.org/v1",
         kind: "workflow",
-        metadata: { rid, headVersion: 2, name: "penguins" },
+        metadata: { rid, uri: `texera://workflows/${rid}`, head: 2, name: "penguins" },
         spec: {},
       }),
     });
-    const spawner = scriptedSpawner(
+    const { app, fake, builds } = makeApp(
       [
         { toolCalls: [{ id: "c1", toolName: "get_resource", input: { rid: WORKFLOW_RID } }] },
         { text: "The workflow has two operators." },
       ],
       { get_resource: getResource },
     );
-    const { app, fake } = makeApp(spawner);
-    const res = await app.request(`/agents/${PID}/ag-ui`, {
-      method: "POST",
-      headers: { authorization: "Bearer user-token", "content-type": "application/json" },
-      body: JSON.stringify(runInput("Describe the workflow")),
-    });
+    const res = await post(app, runInput("Describe the workflow"));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     const events = await readSse(res);
@@ -139,115 +131,156 @@ describe("POST /agents/:pid/ag-ui", () => {
     expect(types).toContain(EventType.TOOL_CALL_RESULT);
     expect(types).toContain(EventType.TEXT_MESSAGE_CONTENT);
     const resource = events.find((e) => e.type === EventType.CUSTOM);
-    expect(resource).toMatchObject({ name: RESOURCE_EVENT, value: { kind: "workflow", rid: WORKFLOW_RID, vno: 2 } });
+    expect(resource).toMatchObject({
+      name: RESOURCE_EVENT,
+      value: { kind: "workflow", rid: WORKFLOW_RID, vno: 2, uri: `texera://workflows/${WORKFLOW_RID}` },
+    });
     expect(events.filter((e) => e.type === EventType.STEP_STARTED)).toHaveLength(2);
 
-    // The catalog holds the user message and the assistant message with every part.
+    // The catalog holds the user message and the assistant message with every part, both in the turn.
     expect(fake.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
-    const assistant = fake.messages[1];
-    const kinds = assistant?.parts.map((p) => p.type);
-    expect(kinds).toEqual(["tool_call", "tool_result", "resource", "text"]);
+    const [user, assistant] = fake.messages;
+    expect(user?.turn).toBeDefined();
+    expect(assistant?.turn).toBe(user?.turn);
+    expect(assistant?.template).toBe(`${ANALYST_URI}@1`);
+    expect(assistant?.parts.map((p) => p.type)).toEqual(["tool_call", "tool_result", "resource", "text"]);
     expect(assistant?.parts[3]?.text).toBe("The workflow has two operators.");
-    expect(assistant?.parts[2]?.resource).toEqual({ kind: "workflow", rid: WORKFLOW_RID, vno: 2 });
-    // Every catalog call carried the delegation headers.
-    for (const call of fake.calls) {
+    expect(assistant?.parts[2]?.resource).toBe(`texera://workflows/${WORKFLOW_RID}`);
+    // The turn was taken and released; the model key was leased for the conversation.
+    expect(fake.conversation.status.activeTurn).toBeUndefined();
+    expect(fake.leases).toEqual([`texera://conversations/${CONVERSATION_RID}`]);
+    // Every call inside the turn carried the service token and the origin; the first did not.
+    const inside = fake.calls.filter((c) => c.headers["x-texera-origin"]);
+    expect(inside.length).toBeGreaterThan(3);
+    for (const call of inside) {
       expect(call.headers.authorization).toBe("Bearer user-token");
-      expect(call.headers["x-texera-agent"]).toBe(PID);
       expect(call.headers["x-texera-service-token"]).toBe("service-token");
+      expect(call.headers["x-texera-origin"]).toMatch(
+        new RegExp(`^conversation=${CONVERSATION_RID};turn=turn-\\d+;template=${ANALYST_URI}@1$`),
+      );
     }
-    // The agent record was read for the template, pinned at its version.
-    expect(fake.calls[0]?.path).toBe(`/catalog/v1/agents/${PID}`);
-    expect(spawner.spawned).toBe(1);
+    expect(builds).toEqual(["Data Analyst"]);
   });
 
-  test("reuses the live agent across turns and rebuilds it when the token changes", async () => {
-    const spawner = scriptedSpawner([{ text: "one" }, { text: "two" }, { text: "three" }], {});
-    const { app } = makeApp(spawner);
-    const post = (token: string) =>
-      app.request(`/agents/${PID}/ag-ui`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify(runInput("hi")),
-      });
-    expect((await post("user-token")).status).toBe(200);
-    expect((await post("user-token")).status).toBe(200);
-    expect(spawner.spawned).toBe(1);
+  test("a handoff switches the conversation's template and the target finishes the turn", async () => {
+    const { app, fake, builds } = makeApp(
+      [
+        { toolCalls: [{ id: "h1", toolName: "handoff", input: { template: ANALYST_URI, reason: "data work" } }] },
+        { text: "Here is the analysis." },
+      ],
+      {},
+      { conversationTemplate: BIO_URI },
+    );
+    const events = await readSse(await post(app, runInput("Analyze iris.csv")));
+    const handoff = events.find((e) => e.type === EventType.CUSTOM && e.name === HANDOFF_EVENT);
+    expect(handoff).toMatchObject({
+      value: { from: `${BIO_URI}@1`, to: `${ANALYST_URI}@1`, name: "Data Analyst", by: "agent" },
+    });
+    expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+    expect(builds).toEqual(["Bio Researcher", "Data Analyst"]);
+    expect(fake.conversation.spec.template).toBe(ANALYST_URI);
+    expect(fake.messages.map((m) => [m.role, m.template])).toEqual([
+      ["user", undefined],
+      ["assistant", `${BIO_URI}@1`],
+      ["assistant", `${ANALYST_URI}@1`],
+    ]);
+    expect(fake.messages[1]?.parts.map((p) => p.type)).toEqual(["tool_call", "tool_result"]);
+    expect(fake.messages[2]?.parts[0]?.text).toBe("Here is the analysis.");
+    expect(fake.conversation.status.activeTurn).toBeUndefined();
   });
 
-  test("rejects missing and invalid tokens, unknown agents and bad input", async () => {
-    const { app } = makeApp(scriptedSpawner([{ text: "x" }], {}));
+  test("/mode switches the template without a model call", async () => {
+    const { app, fake, builds } = makeApp([{ text: "never" }]);
+    const events = await readSse(await post(app, runInput("/mode Bio Researcher")));
+    expect(events.map((e) => e.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.CUSTOM,
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+      EventType.TEXT_MESSAGE_END,
+      EventType.RUN_FINISHED,
+    ]);
+    expect(events[1]).toMatchObject({
+      name: HANDOFF_EVENT,
+      value: { to: `${BIO_URI}@1`, name: "Bio Researcher", by: "person" },
+    });
+    expect(fake.conversation.spec.template).toBe(BIO_URI);
+    expect(fake.messages).toHaveLength(1);
+    expect(fake.messages[0]).toMatchObject({ role: "system" });
+    expect(builds).toEqual([]);
+  });
+
+  test("forwardedProps.template runs the turn on another template", async () => {
+    const { app, fake, builds } = makeApp([{ text: "hello from bio" }]);
+    const events = await readSse(await post(app, runInput("hi", { template: BIO_URI })));
+    expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+    expect(builds).toEqual(["Bio Researcher"]);
+    expect(fake.conversation.spec.template).toBe(BIO_URI);
+  });
+
+  test("a second turn while one runs is refused with turn_active", async () => {
+    const { app, fake } = makeApp([{ text: "x" }]);
+    fake.conversation.status.activeTurn = "other";
+    const events = await readSse(await post(app, runInput("hi")));
+    expect(events.map((e) => e.type)).toEqual([EventType.RUN_STARTED, EventType.RUN_ERROR]);
+    expect(events[1]).toMatchObject({ code: "turn_active" });
+  });
+
+  test("rejects missing and invalid tokens and bad input", async () => {
+    const { app } = makeApp([{ text: "x" }]);
     const body = JSON.stringify(runInput("hi"));
     const headers = { "content-type": "application/json" };
-    expect((await app.request(`/agents/${PID}/ag-ui`, { method: "POST", headers, body })).status).toBe(401);
+    const path = `/agents/conversations/${CONVERSATION_RID}/ag-ui`;
+    expect((await app.request(path, { method: "POST", headers, body })).status).toBe(401);
+    expect(
+      (await app.request(path, { method: "POST", headers: { ...headers, authorization: "Bearer nope" }, body })).status,
+    ).toBe(401);
     expect(
       (
-        await app.request(`/agents/${PID}/ag-ui`, {
+        await app.request(path, {
           method: "POST",
-          headers: { ...headers, authorization: "Bearer nope" },
-          body,
+          headers: { ...headers, authorization: "Bearer user-token" },
+          body: "{}",
         })
       ).status,
-    ).toBe(401);
-    const unknown = await app.request("/agents/unknown/ag-ui", {
-      method: "POST",
-      headers: { ...headers, authorization: "Bearer user-token" },
-      body,
-    });
-    expect(unknown.status).toBe(404);
-    const bad = await app.request(`/agents/${PID}/ag-ui`, {
-      method: "POST",
-      headers: { ...headers, authorization: "Bearer user-token" },
-      body: "{}",
-    });
-    expect(bad.status).toBe(400);
+    ).toBe(400);
   });
 
   test("a run without a user message ends with RUN_ERROR", async () => {
-    const { app, fake } = makeApp(scriptedSpawner([{ text: "x" }], {}));
-    const res = await app.request(`/agents/${PID}/ag-ui`, {
-      method: "POST",
-      headers: { authorization: "Bearer user-token", "content-type": "application/json" },
-      body: JSON.stringify({ ...runInput("hi"), messages: [] }),
-    });
-    const events = await readSse(res);
+    const { app, fake } = makeApp([{ text: "x" }]);
+    const events = await readSse(await post(app, { ...runInput("hi"), messages: [] }));
     expect(events.map((e) => e.type)).toEqual([EventType.RUN_STARTED, EventType.RUN_ERROR]);
     expect(fake.messages).toHaveLength(0);
   });
 
-  test("serves the A2A agent card and answers message/send", async () => {
-    const { app } = makeApp(scriptedSpawner([{ text: "pong" }], {}));
-    const card = await app.request(`/agents/${PID}/.well-known/agent-card.json`, {
+  test("serves the A2A agent card of a template and answers message/send", async () => {
+    const { app } = makeApp([{ text: "pong" }]);
+    const card = await app.request(`/agents/templates/${TEMPLATE_RID}/.well-known/agent-card.json`, {
       headers: { authorization: "Bearer user-token" },
     });
     expect(card.status).toBe(200);
     const cardBody = (await card.json()) as { name: string; supportedInterfaces: Array<{ url: string }> };
     expect(cardBody.name).toBe("Data Analyst");
-    expect(cardBody.supportedInterfaces[0]?.url).toBe(`http://gateway/agents/${PID}/a2a`);
+    expect(cardBody.supportedInterfaces[0]?.url).toBe(`http://gateway/agents/templates/${TEMPLATE_RID}/a2a`);
 
-    const rpc = await app.request(`/agents/${PID}/a2a`, {
+    const rpc = await app.request(`/agents/templates/${BIO_TEMPLATE_RID}/a2a`, {
       method: "POST",
       headers: { authorization: "Bearer user-token", "content-type": "application/json" },
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
         method: "SendMessage",
-        params: { message: { messageId: "m1", role: "ROLE_USER", parts: [{ text: "ping" }] } },
+        params: {
+          message: { messageId: "m1", contextId: CONVERSATION_RID, role: "ROLE_USER", parts: [{ text: "ping" }] },
+        },
       }),
     });
     expect(rpc.status).toBe(200);
-    const reply = (await rpc.json()) as { result?: unknown; error?: unknown };
-    expect(JSON.stringify(reply)).toContain("pong");
+    expect(JSON.stringify(await rpc.json())).toContain("pong");
   });
 
-  test("healthz reports the number of live agents", async () => {
-    const { app } = makeApp(scriptedSpawner([{ text: "x" }], {}));
-    const res = await app.request("/healthz");
-    expect(await res.json()).toEqual({ status: "ok", agents: 0 });
-  });
-});
-
-describe("template pinning", () => {
-  test("the agent record names the template version", () => {
-    expect(fakeCatalog().agent.template).toEqual({ rid: TEMPLATE_RID, vno: 1 });
+  test("healthz answers", async () => {
+    const { app } = makeApp([{ text: "x" }]);
+    expect(await (await app.request("/healthz")).json()).toEqual({ status: "ok" });
   });
 });

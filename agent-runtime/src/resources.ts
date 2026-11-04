@@ -1,10 +1,13 @@
 /**
- * Finds references to catalog resources inside tool results, so the chat can show a
- * card for every workflow, dataset, execution or template an agent touched.
+ * Finds references to catalog resources inside tool results, so the chat can show a card
+ * for every workflow, dataset, execution or template an agent touched. A resource is the
+ * envelope `{kind, metadata: {rid, uri, head}}`; a version is `{rid, uri, vno, contentKind}`.
  */
 export interface ResourceRef {
   kind: string;
   rid: string;
+  /** The resource URI, with `@vno` when a version is meant. */
+  uri?: string;
   vno?: number;
 }
 
@@ -47,14 +50,18 @@ export function toolOutputValues(output: unknown): unknown[] {
   return values;
 }
 
+function key(ref: ResourceRef): string {
+  return `${ref.kind}:${ref.rid}:${ref.vno ?? ""}`;
+}
+
 /** Walks a value and collects every resource reference it contains. */
 export function findResourceRefs(value: unknown, depth = 0): ResourceRef[] {
   const refs: ResourceRef[] = [];
   const seen = new Set<string>();
   const add = (ref: ResourceRef) => {
-    const key = `${ref.kind}:${ref.rid}:${ref.vno ?? ""}`;
-    if (!seen.has(key)) {
-      seen.add(key);
+    const k = key(ref);
+    if (!seen.has(k)) {
+      seen.add(k);
       refs.push(ref);
     }
   };
@@ -65,7 +72,6 @@ export function findResourceRefs(value: unknown, depth = 0): ResourceRef[] {
       return;
     }
     if (!isRecord(v)) return;
-    // The catalog envelope: {kind, metadata: {rid, headVersion}}.
     const metadata = v.metadata;
     if (
       typeof v.kind === "string" &&
@@ -73,26 +79,24 @@ export function findResourceRefs(value: unknown, depth = 0): ResourceRef[] {
       typeof metadata.rid === "string" &&
       UUID.test(metadata.rid)
     ) {
-      const vno = typeof metadata.headVersion === "number" ? metadata.headVersion : undefined;
-      add({ kind: v.kind, rid: metadata.rid, vno });
+      const ref: ResourceRef = { kind: v.kind, rid: metadata.rid };
+      if (typeof metadata.uri === "string") ref.uri = metadata.uri;
+      if (typeof metadata.head === "number" && metadata.head > 0) ref.vno = metadata.head;
+      add(ref);
     }
-    // A version: {rid, vno, contentKind}.
     if (
       typeof v.rid === "string" &&
       UUID.test(v.rid) &&
       typeof v.vno === "number" &&
       typeof v.contentKind === "string"
     ) {
-      add({ kind: typeof v.kind === "string" ? v.kind : "version", rid: v.rid, vno: v.vno });
+      const ref: ResourceRef = { kind: typeof v.kind === "string" ? v.kind : "version", rid: v.rid, vno: v.vno };
+      if (typeof v.uri === "string") ref.uri = v.uri;
+      add(ref);
     }
-    // An execution: {eid, workflow: {rid, vno}, status}.
-    if (typeof v.eid === "string" && UUID.test(v.eid) && typeof v.status === "string") {
-      add({ kind: "execution", rid: v.eid });
-    }
-    // Nested: {workflow: {...}, version: {...}} and any other object fields. Listings (a page's
-    // items) are what the agent looked through, not what it touched, so they are skipped.
-    for (const [key, child] of Object.entries(v)) {
-      if (key === "items" && Array.isArray(child)) continue;
+    // Listings (a page's items) are what the agent looked through, not what it touched.
+    for (const [k, child] of Object.entries(v)) {
+      if (k === "items" && Array.isArray(child)) continue;
       walk(child, d + 1);
     }
   };
@@ -106,9 +110,9 @@ export function resourceRefsInToolOutput(output: unknown): ResourceRef[] {
   const seen = new Set<string>();
   for (const value of toolOutputValues(output)) {
     for (const ref of findResourceRefs(value)) {
-      const key = `${ref.kind}:${ref.rid}:${ref.vno ?? ""}`;
-      if (!seen.has(key)) {
-        seen.add(key);
+      const k = key(ref);
+      if (!seen.has(k)) {
+        seen.add(k);
         refs.push(ref);
       }
     }

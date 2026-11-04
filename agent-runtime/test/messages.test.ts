@@ -21,7 +21,7 @@ describe("toModelMessages", () => {
             toolName: "run_workflow",
             result: { eid: "e", status: "completed" },
           },
-          { type: "resource", resource: { kind: "execution", rid: "e" } },
+          { type: "resource", resource: "texera://workflows/w/executions/e" },
         ],
       },
     ];
@@ -58,7 +58,7 @@ describe("toModelMessages", () => {
       { type: "tool_call", toolCallId: "c3", toolName: "list_operators", args: {} },
       { type: "tool_result", toolCallId: "c3", toolName: "list_operators", result: [] },
       { type: "tool_result", toolCallId: "c2", toolName: "run_workflow", result: { status: "completed" } },
-      { type: "resource", resource: { kind: "execution", rid: "e" } },
+      { type: "resource", resource: "texera://workflows/w/executions/e" },
       { type: "text", text: "The mean is 4.26." },
     ];
     const messages = toModelMessages([{ ...base, seq: 2, role: "assistant", parts }]);
@@ -114,7 +114,7 @@ describe("assistantParts", () => {
         { type: "text", text: "Looking it up." },
         { type: "tool_call", toolCallId: "c", toolName: "t", args: { a: 1 } },
         { type: "tool_result", toolCallId: "c", toolName: "t", result: { ok: true } },
-        { type: "resource", resource: { kind: "workflow", rid: "w", vno: 3 } },
+        { type: "resource", resource: "texera://workflows/w@3" },
         { type: "text", text: "  " },
         { type: "text", text: "Done." },
       ],
@@ -125,7 +125,7 @@ describe("assistantParts", () => {
       error: "late failure",
     });
     expect(parts.map((p) => p.type)).toEqual(["text", "tool_call", "tool_result", "resource", "text", "error"]);
-    expect(parts[3]).toEqual({ type: "resource", resource: { kind: "workflow", rid: "w", vno: 3 } });
+    expect(parts[3]).toEqual({ type: "resource", resource: "texera://workflows/w@3" });
     expect(parts[4]).toEqual({ type: "text", text: "Done." });
   });
 });

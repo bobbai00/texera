@@ -1,115 +1,101 @@
 # Texera 2.0 agent runtime
 
-Runs the agents that people chat with. Each agent is built from a catalog agent template:
-model, system prompt, skills (SKILL.md, loaded on demand) and the MCP servers the template
-binds, the built-in Texera "dataflow" server among them, and runs the Dataflow Agent's ReAct
-loop on AI SDK 7 (`src/run/react-loop.ts`). The runtime speaks AG-UI 1.0 to the app and
-A2A 1.0 to other agents; the catalog is the source of truth for conversations, templates,
-skills and MCP servers.
+The chat's host. It runs one turn of a conversation at a time, statelessly: the catalog holds
+the conversation (its current agent template, its messages), the runtime takes the turn lock,
+builds the agent of the template version, runs the ReAct loop on AI SDK 7 with the history
+as context, streams AG-UI 1.0 events to the app, persists the assistant message after every
+step, and releases the lock. Nothing survives a turn; scaling the runtime is running more
+copies.
 
-## The loop
+An agent is a template version running one turn on the person's behalf: the template is the
+definition (prompt, skills, MCP servers, model endpoint, handoffs, loop settings), the
+conversation is the state, the turn is the loop. Agents act with the person's own token, so
+the catalog applies the person's permissions to every tool call and records the turn as the
+origin of everything it creates.
 
-One model call per step; the step's tool calls run; the loop goes on until the model replies
-without a tool call, the step budget is spent, or the run is aborted. Around each call:
+## The turn
 
-- `prepareStep` renders the turn's state into the system prompt: the step budget, the
-  resources the turn has touched (with the ids the model must reuse) and whether a computed
-  result has been shown.
-- `onStepFinish` records the step: text, reasoning, tool calls, results, usage.
-- The answer policy decides whether a reply without a tool call is the answer. `free`: always.
-  `after_result`: only once a result-showing tool succeeded in the turn (`run_workflow`
-  completed, `get_port_result`, `save_result_as_dataset`); before that the reply is sent back
-  with a correction, once by default. The Data Analyst template uses `after_result`.
-- A provider refusal is retried once; a reply cut off at the output limit is continued once;
-  the step limit and a refusal end the turn as `RUN_ERROR`.
-- The prompt is laid out for Anthropic prompt caching: the instructions are a cacheable system
-  message (tools and instructions read from cache on every step and turn), the conversation's
-  newest message is a second breakpoint, and the turn's state is the newest user message, the
-  only part that changes between steps.
-
-A template sets its loop in `spec.loop` (`answer`, `resultTools`, `maxSteps`, `temperature`);
-the runtime's defaults fill in the rest.
+1. `POST /agents/conversations/{rid}/ag-ui` with a `RunAgentInput`; only its newest user
+   message is used, the history comes from the catalog. `forwardedProps.template` switches
+   the conversation's template for this turn and the ones after.
+2. A native command runs without a model: `/mode <name or uri>` switches the template.
+3. The turn lock is taken (`409 turn_active` while another turn runs), the person's message
+   is appended, the template version is resolved, and the agent is built: the model from the
+   template's model endpoint with the key leased from the endpoint's credential; the skills;
+   the MCP servers (the catalog server for every template unless `catalogTools` is false,
+   the platform's servers with the person's token and the turn's origin, any other server
+   with its own headers, `credential:<uri>#<field>` values leased); the `handoff` tool when
+   the template lists handoffs.
+4. The loop streams: one model call per step, the step's tool calls run, until the model
+   replies without a tool call, the step budget is spent, the run is aborted, or a handoff is
+   called. The answer policy (`free` or `after_result`) decides whether a reply without a
+   tool call is the answer. The prompt is laid out for Anthropic prompt caching.
+5. A handoff sets the conversation's template, emits `texera.handoff`, and the target
+   template finishes the same turn on the same stream (at most `TEXERA_AGENT_MAX_HANDOFFS`).
+6. The assistant message is persisted after every step with the template version that wrote
+   it; the lock is released; `RUN_FINISHED` or `RUN_ERROR` ends the stream.
 
 ## Run
 
 ```
 cd agent-runtime
-ANTHROPIC_API_KEY=... bun run dev        # http://localhost:3002, behind the gateway at /agents
-bun test                                  # unit and HTTP tests, no network, no model
+bun run dev          # http://localhost:3002, behind the gateway at /agents
+bun test             # unit and HTTP tests, no network, no model
 bun run typecheck
+bun run lint
 ```
 
 The dev stack (`bin/texera-2-0/`) routes `http://localhost:8088/agents/*` here after the
-gateway has verified the person's Keycloak token.
+gateway has verified the person's Keycloak token. The runtime holds no model key: the
+platform's model endpoint names a credential whose value `up.sh` loads into the secret store.
 
 ## Environment
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `TEXERA_AGENT_PORT` | `3002` | listen port |
-| `TEXERA_PUBLIC_URL` | `http://localhost:8088` | the gateway; the built-in MCP server is `${TEXERA_PUBLIC_URL}/mcp` |
+| `TEXERA_PUBLIC_URL` | `http://localhost:8088` | the gateway; the platform's MCP servers are `${TEXERA_PUBLIC_URL}/mcp/{catalog,dataflow}` |
 | `TEXERA_CATALOG_URL` | `http://localhost:8088` | base URL for catalog calls |
 | `TEXERA_OIDC_ISSUER` | `http://localhost:8088/auth/realms/texera` | issuer user tokens must carry |
 | `TEXERA_OIDC_AUDIENCE` | `texera` | audience user tokens must carry |
 | `TEXERA_OIDC_JWKS_URL` | `${issuer}/protocol/openid-connect/certs` | key set |
 | `TEXERA_OIDC_TOKEN_URL` | `${issuer}/protocol/openid-connect/token` | client-credentials endpoint |
-| `TEXERA_SERVICE_CLIENT_ID` / `_SECRET` | `texera-services` / `texera-services-secret` | the runtime's own identity |
-| `TEXERA_LLM_PROVIDER` | `anthropic` | `anthropic` or `openai-compatible` (LiteLLM) |
-| `TEXERA_LLM_BASE_URL` | – | required for `openai-compatible` |
-| `TEXERA_LLM_API_KEY` | `ANTHROPIC_API_KEY` | provider key |
-| `TEXERA_LLM_DEFAULT_MODEL` | `claude-haiku-5-5` | model when a template names none |
+| `TEXERA_SERVICE_CLIENT_ID` / `_SECRET` | `texera-services` / `texera-services-secret` | the runtime's own identity, which vouches for the turn's origin |
 | `TEXERA_AGENT_MAX_STEPS` | `40` | model steps per turn, unless the template's `loop.maxSteps` says otherwise |
 | `TEXERA_AGENT_ANSWER_POLICY` | `free` | `free` or `after_result`, for templates whose `loop` names none |
+| `TEXERA_AGENT_MAX_HANDOFFS` | `2` | handoffs in one turn |
 | `TEXERA_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 ## Protocol surface
 
 | Route | Protocol | Notes |
 |---|---|---|
-| `GET /healthz` | – | live agent count |
-| `POST /agents/{pid}/ag-ui` | AG-UI 1.0 | `RunAgentInput` in, SSE events out: `RUN_STARTED`, `STEP_*`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`, `CUSTOM` (`texera.resource` with `{kind, rid, vno}`; `texera.correction` with `{reason}` when a reply was sent back), `RUN_FINISHED` / `RUN_ERROR`. Only the newest user message of the input is used; history comes from the catalog. |
-| `GET /agents/{pid}/.well-known/agent-card.json` | A2A 1.0 | the card built from the template |
-| `POST /agents/{pid}/a2a` | A2A 1.0 JSON-RPC | `SendMessage` and `SendStreamingMessage` run the same turn and answer with one agent message |
-
-`pid` is the agent principal the catalog spawned (`GET /catalog/v1/agents/{pid}`); its
-record names the template version and the conversation.
-
-## Identity and delegation
-
-Every request carries the person's bearer token, verified against the Keycloak JWKS. Calls
-to the catalog forward that token in `Authorization` (the person's permissions apply) plus
-`X-Texera-Agent: <pid>` and `X-Texera-Service-Token: <client-credentials token>` so the
-catalog records the acting agent. The built-in MCP server is called with the person's token
-as well, so the PDP decides every tool call.
+| `GET /healthz` | – | liveness |
+| `POST /agents/conversations/{rid}/ag-ui` | AG-UI 1.0 | `RunAgentInput` in, SSE events out: `RUN_STARTED`, `STEP_*`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`, `CUSTOM` (`texera.resource` `{kind, rid, uri?, vno?}`; `texera.handoff` `{from?, to, name, by}`; `texera.correction` `{reason}`), `RUN_FINISHED` / `RUN_ERROR`. The thread is the conversation, the run is the turn. |
+| `GET /agents/templates/{rid}/.well-known/agent-card.json` | A2A 1.0 | the card built from the template |
+| `POST /agents/templates/{rid}/a2a` | A2A 1.0 JSON-RPC | `SendMessage` and `SendStreamingMessage` run a turn of the template; the A2A context is a conversation, and a message without one opens a new conversation for the caller |
 
 ## Layout
 
 ```
 src/config.ts          environment → RuntimeConfig
 src/auth/              user token verification (jose), service token (client credentials)
-src/catalog/           typed catalog client (types from @texera/catalog-client)
-src/agent/             model resolution, system prompt, skills, MCP mounting, agent builder
-src/host/              AgentHost + Spawner (in-process), Sandbox (local)
-src/run/               the ReAct loop (react-loop.ts) and the turn: history → loop → AG-UI events → persisted messages
+src/catalog/           the catalog client over the contract's routes (types from @texera/catalog-client)
+src/agent/             build an agent for a turn: model endpoint + lease, skills, MCP mounts, handoff tool, system prompt
+src/run/               the ReAct loop (react-loop.ts) and the turn: lock → history → loop → AG-UI events → persisted messages
 src/protocol/          AG-UI and A2A HTTP handlers
+src/host/sandbox.ts    the sandbox seam for code-execution tools (unused yet)
 src/server.ts          Hono app;  src/main.ts  Bun server
-test/                  bun tests with a fake catalog, a scripted model and in-memory MCP
+test/                  bun tests with a fake catalog, a scripted model and in-memory MCP servers
 ```
 
 ## Extension points
 
-- **Spawner**: `InProcessSpawner` runs agents in this process; a Kubernetes spawner that
-  starts one process per agent on a sandbox node implements the same interface.
-- **Sandbox**: `LocalSandbox` runs commands as child processes; nothing uses it yet. It is
-  the seam for code-execution tools and for stdio MCP servers, which are refused today.
 - **Tool approval**: AI SDK's `toolApproval` on the loop's `streamText` and AG-UI's
   `RUN_FINISHED` interrupt outcome are the seam for human-in-the-loop; not wired yet.
-- **A2A tasks**: the executor answers with one message per request; long-running tasks,
-  artifacts and push notifications are not implemented.
-- **Sub-agents**: the template's `subagents` policy is read but not acted on.
-- **Model provider**: `TEXERA_LLM_PROVIDER=openai-compatible` points the same code at
-  LiteLLM.
-
-Known gap: `@texera/catalog-client`'s generated bootstrap imports a wrong relative path
-(see `docs/texera-2-0/API-REQUESTS.md`), so this package imports only its types and uses a
-small fetch layer over the contract's routes.
+- **Agents as tools**: a template could call another template over A2A and continue with
+  the answer; the A2A endpoint exists, the tool does not.
+- **A router**: a host step that picks the template from the first message of a new
+  conversation; today the person picks, or the default template applies.
+- **Durable turns**: the per-step persistence is where a checkpoint would go.
+- **Sandbox**: `LocalSandbox` runs commands as child processes; nothing uses it yet.

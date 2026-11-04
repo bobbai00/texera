@@ -1,26 +1,27 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
-import type { LlmConfig } from "../config.ts";
+import type { ModelEndpointRecord } from "../catalog/types.ts";
 
-/**
- * Resolves the language model a template asks for. Direct Anthropic by default; an
- * OpenAI-compatible gateway (LiteLLM) when configured, so the switch is one env var.
- */
-export function resolveModel(config: LlmConfig, modelName?: string): LanguageModel {
-  const id = modelName?.trim() || config.defaultModel;
-  if (config.provider === "openai-compatible") {
-    if (!config.baseUrl) throw new Error("TEXERA_LLM_BASE_URL is required for the openai-compatible provider");
-    const provider = createOpenAICompatible({
-      name: "texera-llm-gateway",
-      baseURL: config.baseUrl,
-      apiKey: config.apiKey ?? "unused",
-    });
-    return provider(id);
-  }
-  if (!config.apiKey) {
-    throw new Error("ANTHROPIC_API_KEY (or TEXERA_LLM_API_KEY) is required for the anthropic provider");
-  }
-  const provider = createAnthropic({ apiKey: config.apiKey, ...(config.baseUrl ? { baseURL: config.baseUrl } : {}) });
-  return provider(id);
+/** Builds a language model from a model endpoint and the leased value of its credential. */
+export type ModelFactory = (endpoint: ModelEndpointRecord, secret: Record<string, string> | undefined) => LanguageModel;
+
+/** The key field of a leased credential: `value`, else `apiKey`, else `key`. */
+export function keyOf(secret: Record<string, string> | undefined): string | undefined {
+  if (!secret) return undefined;
+  return secret.value ?? secret.apiKey ?? secret.key;
 }
+
+/** Direct Anthropic, or an OpenAI-compatible gateway (LiteLLM, vLLM) when the endpoint says so. */
+export const defaultModelFactory: ModelFactory = (endpoint, secret) => {
+  const spec = endpoint.spec;
+  const apiKey = keyOf(secret);
+  if (spec.provider === "openai_compatible") {
+    if (!spec.baseUrl) throw new Error(`model endpoint ${endpoint.name}: openai_compatible needs a baseUrl`);
+    const provider = createOpenAICompatible({ name: endpoint.name, baseURL: spec.baseUrl, apiKey: apiKey ?? "unused" });
+    return provider(spec.model);
+  }
+  if (!apiKey) throw new Error(`model endpoint ${endpoint.name}: its credential holds no key`);
+  const provider = createAnthropic({ apiKey, ...(spec.baseUrl ? { baseURL: spec.baseUrl } : {}) });
+  return provider(spec.model);
+};

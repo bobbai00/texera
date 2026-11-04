@@ -1,8 +1,8 @@
 /**
  * AG-UI 1.0 event construction and the mapping from AI SDK stream parts.
  *
- * The runtime speaks AG-UI to the app: one request in, one ordered stream of typed
- * events out. Everything here is pure so the mapping is testable without a model.
+ * The runtime speaks AG-UI to the app: one request in, one ordered stream of typed events
+ * out. Everything here is pure so the mapping is testable without a model.
  */
 
 import type {
@@ -29,11 +29,23 @@ import { type ResourceRef, resourceRefsInToolOutput } from "../resources.ts";
 
 export type AGUIEvent = BaseEvent;
 
-/** Name of the custom event that announces a catalog resource the agent touched. */
+/** The custom event that announces a catalog resource the agent touched: `{kind, rid, uri?, vno?}`. */
 export const RESOURCE_EVENT = "texera.resource";
 
-/** Name of the custom event that says the loop sent the model's reply back with a correction. */
+/** The custom event that says the loop sent the model's reply back with a correction. */
 export const CORRECTION_EVENT = "texera.correction";
+
+/** The custom event that says the conversation changed template: `{from?, to, name, by}`. */
+export const HANDOFF_EVENT = "texera.handoff";
+
+export interface HandoffValue {
+  /** The template version that handed off; absent when the person switched. */
+  from?: string;
+  /** The template version that takes over. */
+  to: string;
+  name: string;
+  by: "agent" | "person";
+}
 
 const stamp = () => Date.now();
 
@@ -57,11 +69,7 @@ export const events = {
     message,
     ...(code ? { code } : {}),
   }),
-  stepStarted: (stepName: string): StepStartedEvent => ({
-    type: EventType.STEP_STARTED,
-    timestamp: stamp(),
-    stepName,
-  }),
+  stepStarted: (stepName: string): StepStartedEvent => ({ type: EventType.STEP_STARTED, timestamp: stamp(), stepName }),
   stepFinished: (stepName: string): StepFinishedEvent => ({
     type: EventType.STEP_FINISHED,
     timestamp: stamp(),
@@ -122,6 +130,12 @@ export const events = {
     name: CORRECTION_EVENT,
     value: { reason },
   }),
+  handoff: (value: HandoffValue): CustomEvent => ({
+    type: EventType.CUSTOM,
+    timestamp: stamp(),
+    name: HANDOFF_EVENT,
+    value,
+  }),
 };
 
 export interface MapperOptions {
@@ -129,7 +143,7 @@ export interface MapperOptions {
   newId?: () => string;
 }
 
-/** What the mapper has seen, so a turn can be persisted after the stream ends. */
+/** What the mapper has seen, so a turn can be persisted while and after it streams. */
 export interface CollectedTurn {
   /** Every part of the assistant message in stream order: text segments, tool calls, results, resources. */
   parts: MessagePart[];
@@ -150,9 +164,7 @@ export function stringifyToolOutput(output: unknown): string {
   }
 }
 
-/**
- * Maps AI SDK stream parts to AG-UI events, one part at a time, and collects the turn.
- */
+/** Maps AI SDK stream parts to AG-UI events, one part at a time, and collects the turn. */
 export class StreamMapper {
   private readonly newId: () => string;
   private step = 0;
@@ -222,7 +234,6 @@ export class StreamMapper {
           args: part.input,
         });
         if (this.startedToolCalls.has(part.toolCallId)) return [];
-        // A provider that does not stream tool input: emit the whole call at once.
         this.startedToolCalls.add(part.toolCallId);
         return [
           events.toolCallStart(part.toolCallId, part.toolName, this.currentMessageId),
@@ -248,10 +259,7 @@ export class StreamMapper {
         ];
         for (const ref of resourceRefsInToolOutput(part.output)) {
           this.collected.resources.push(ref);
-          this.collected.parts.push({
-            type: "resource",
-            resource: { kind: ref.kind, rid: ref.rid, ...(ref.vno ? { vno: ref.vno } : {}) },
-          });
+          this.collected.parts.push({ type: "resource", resource: ref.uri ?? `texera://${ref.kind}s/${ref.rid}` });
           out.push(events.resource(ref));
         }
         return out;

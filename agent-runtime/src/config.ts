@@ -1,27 +1,16 @@
 /**
  * Runtime configuration, read once from the environment.
  *
- * Every value has a development default that matches `bin/texera-2-0/` so
- * `bun run dev` works against the dev stack with only `ANTHROPIC_API_KEY` set.
+ * Every value has a development default that matches `bin/texera-2-0/`. The runtime holds
+ * no model key: the template's model endpoint names a credential, and the runtime leases its
+ * value from the catalog for each turn.
  */
 import type { AnswerPolicy } from "./run/react-loop.ts";
-
-export type LlmProvider = "anthropic" | "openai-compatible";
-
-export interface LlmConfig {
-  provider: LlmProvider;
-  /** Base URL for the openai-compatible provider (e.g. a LiteLLM gateway). */
-  baseUrl?: string;
-  /** API key for the chosen provider. */
-  apiKey?: string;
-  /** Model used when a template names none. */
-  defaultModel: string;
-}
 
 export interface RuntimeConfig {
   /** Port the HTTP server listens on. */
   port: number;
-  /** The gateway URL as clients see it; the built-in MCP server is `${publicUrl}/mcp`. */
+  /** The gateway URL as clients see it; the catalog's MCP servers live under `${publicUrl}/mcp`. */
   publicUrl: string;
   /** Base URL for catalog calls. */
   catalogUrl: string;
@@ -35,11 +24,12 @@ export interface RuntimeConfig {
   tokenUrl: string;
   serviceClientId: string;
   serviceClientSecret: string;
-  llm: LlmConfig;
   /** Upper bound on model steps per turn; a template's `loop.maxSteps` overrides it. */
   maxSteps: number;
   /** The answer policy templates inherit when their `loop` names none. */
   answerPolicy: AnswerPolicy;
+  /** Handoffs allowed in one turn. */
+  maxHandoffs: number;
 }
 
 function env(name: string, fallback: string): string {
@@ -58,12 +48,6 @@ function envInt(name: string, fallback: number): number {
 /** Builds the configuration from `process.env`. */
 export function loadConfig(): RuntimeConfig {
   const issuer = env("TEXERA_OIDC_ISSUER", "http://localhost:8088/auth/realms/texera");
-  const provider = env("TEXERA_LLM_PROVIDER", "anthropic");
-  if (provider !== "anthropic" && provider !== "openai-compatible") {
-    throw new Error(`TEXERA_LLM_PROVIDER must be anthropic or openai-compatible, got ${provider}`);
-  }
-  const apiKey =
-    process.env.TEXERA_LLM_API_KEY ?? (provider === "anthropic" ? process.env.ANTHROPIC_API_KEY : undefined);
   const answerPolicy = env("TEXERA_AGENT_ANSWER_POLICY", "free");
   if (answerPolicy !== "free" && answerPolicy !== "after_result") {
     throw new Error(`TEXERA_AGENT_ANSWER_POLICY must be free or after_result, got ${answerPolicy}`);
@@ -78,13 +62,8 @@ export function loadConfig(): RuntimeConfig {
     tokenUrl: env("TEXERA_OIDC_TOKEN_URL", `${issuer}/protocol/openid-connect/token`),
     serviceClientId: env("TEXERA_SERVICE_CLIENT_ID", "texera-services"),
     serviceClientSecret: env("TEXERA_SERVICE_CLIENT_SECRET", "texera-services-secret"),
-    llm: {
-      provider,
-      baseUrl: process.env.TEXERA_LLM_BASE_URL,
-      apiKey,
-      defaultModel: env("TEXERA_LLM_DEFAULT_MODEL", "claude-haiku-5-5"),
-    },
     maxSteps: envInt("TEXERA_AGENT_MAX_STEPS", 40),
     answerPolicy,
+    maxHandoffs: envInt("TEXERA_AGENT_MAX_HANDOFFS", 2),
   };
 }

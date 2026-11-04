@@ -1,30 +1,42 @@
 /**
- * Builds the agent for a template: model, system prompt, skills, MCP tools and the ReAct loop
- * that runs them (src/run/react-loop.ts). The template's `loop` settings override the runtime's
- * defaults. `toolApproval` is deliberately not configured yet; it is the seam for human approval.
+ * Builds the agent of a template version for one turn: the model from its endpoint and the
+ * leased credential, the system prompt, the skills, the MCP servers (the catalog server for
+ * every template unless it opts out), the handoff tool, and the loop that runs them. Nothing
+ * survives the turn: `close` drops the MCP sessions.
  */
-import type { LoopSpec } from "@texera/catalog-client/types";
 import type { LanguageModel, ModelMessage, ToolSet } from "ai";
-import type { SkillRecord, TemplateRecord } from "../catalog/types.ts";
+import type { CatalogClient } from "../catalog/client.ts";
+import type { CatalogAuth, LoopSpec, McpBinding, SkillRecord, TemplateRecord } from "../catalog/types.ts";
+import type { Logger } from "../log.ts";
 import { DEFAULT_POLICY, type LoopEvent, type LoopOutcome, type LoopPolicy, runReactLoop } from "../run/react-loop.ts";
-import type { McpMount } from "./mcp-tools.ts";
+import { candidatesOf, HANDOFF_TOOL, type HandoffCandidate, handoffTool } from "./handoff.ts";
+import { builtinBinding, type McpMount, type McpMountOptions, mountMcpBindings } from "./mcp-tools.ts";
+import { defaultModelFactory, type ModelFactory } from "./model.ts";
 import { LOAD_SKILL_TOOL, loadSkillTool } from "./skills.ts";
 import { composeSystemPrompt } from "./system-prompt.ts";
+import type { TurnContext } from "./turn-context.ts";
 
 /** The Dataflow Agent's sampling temperature. */
 export const DEFAULT_TEMPERATURE = 0.2;
 
-export interface BuildAgentOptions {
-  template: TemplateRecord;
-  skills: SkillRecord[];
-  mcp?: McpMount;
-  model: LanguageModel;
-  /** The runtime's step budget per turn; the template's `loop.maxSteps` overrides it. */
+export interface BuildDeps {
+  catalog: CatalogClient;
+  publicUrl: string;
   maxSteps: number;
-  /** The runtime's loop policy defaults; the template's `loop` overrides them. */
   policy?: Partial<LoopPolicy>;
-  /** Extra tools, e.g. from tests or built-in capabilities. */
+  log: Logger;
+  modelFactory?: ModelFactory;
+  transportFactory?: McpMountOptions["transportFactory"];
+  /** Extra tools, from tests. */
   extraTools?: ToolSet;
+}
+
+export interface BuildInput {
+  template: TemplateRecord;
+  auth: CatalogAuth;
+  turn: TurnContext;
+  /** What a lease is for: the conversation URI. */
+  purpose: string;
 }
 
 export interface RunInput {
@@ -33,12 +45,14 @@ export interface RunInput {
 }
 
 export interface BuiltAgent {
+  template: TemplateRecord;
   tools: ToolSet;
   instructions: string;
+  handoffs: HandoffCandidate[];
   policy: LoopPolicy;
   maxSteps: number;
   temperature: number;
-  /** Runs one turn through the loop; the generator's return value says how it ended. */
+  /** Runs one loop; the generator's return value says how it ended. */
   run(input: RunInput): AsyncGenerator<LoopEvent, LoopOutcome>;
   close(): Promise<void>;
 }
@@ -58,35 +72,80 @@ export function resolveLoop(
   };
 }
 
-export function buildAgent(options: BuildAgentOptions): BuiltAgent {
-  const tools: ToolSet = { ...(options.mcp?.tools ?? {}), ...(options.extraTools ?? {}) };
-  if (options.skills.length > 0) tools[LOAD_SKILL_TOOL] = loadSkillTool(options.skills);
-  const instructions = composeSystemPrompt(options.template, options.skills);
-  const { policy, maxSteps, temperature } = resolveLoop(options.template.spec.loop, {
-    maxSteps: options.maxSteps,
-    policy: options.policy,
+/** Loads everything a template version needs and builds its agent. */
+export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<BuiltAgent> {
+  const { catalog } = deps;
+  const { template, auth } = input;
+  const spec = template.spec;
+  const leases = new Map<string, Promise<Record<string, string>>>();
+  const leaseCredential = (uri: string) => {
+    let pending = leases.get(uri);
+    if (!pending) {
+      pending = catalog.lease(uri, input.purpose, auth).then((l) => l.fields);
+      leases.set(uri, pending);
+    }
+    return pending;
+  };
+
+  const endpoint = await catalog.getModelEndpoint(spec.model, auth);
+  const secret = endpoint.spec.credential ? await leaseCredential(endpoint.spec.credential) : undefined;
+  const model: LanguageModel = (deps.modelFactory ?? defaultModelFactory)(endpoint, secret);
+
+  const skills: SkillRecord[] = await Promise.all((spec.skills ?? []).map((uri) => catalog.getSkill(uri, auth)));
+  const handoffTemplates = await Promise.all((spec.handoffs ?? []).map((uri) => catalog.getTemplate(uri, auth)));
+  const handoffs = candidatesOf(handoffTemplates);
+
+  const bindings: McpBinding[] = [...(spec.mcpServers ?? [])];
+  const builtins = new Map<string, ReturnType<typeof builtinBinding>["record"]>();
+  if (spec.catalogTools !== false) {
+    const { record, binding } = builtinBinding("catalog", deps.publicUrl);
+    builtins.set(record.uri, record);
+    bindings.unshift(binding);
+  }
+  const mcp: McpMount = await mountMcpBindings({
+    bindings,
+    resolveServer: async (uri) => builtins.get(uri) ?? catalog.getMcpServer(uri, auth),
+    leaseCredential,
+    userToken: auth.userToken,
+    publicUrl: deps.publicUrl,
+    turn: input.turn,
+    transportFactory: deps.transportFactory,
   });
-  const maxOutputTokens = options.template.spec.model?.maxOutputTokens;
+
+  const tools: ToolSet = { ...mcp.tools, ...(deps.extraTools ?? {}) };
+  if (skills.length > 0) tools[LOAD_SKILL_TOOL] = loadSkillTool(skills);
+  if (handoffs.length > 0) tools[HANDOFF_TOOL] = handoffTool(handoffs);
+  const instructions = composeSystemPrompt(template, skills, handoffs);
+  const { policy, maxSteps, temperature } = resolveLoop(spec.loop, { maxSteps: deps.maxSteps, policy: deps.policy });
+  const maxOutputTokens = endpoint.spec.maxOutputTokens;
+  deps.log.info("agent built", {
+    template: template.uri,
+    model: endpoint.spec.model,
+    tools: Object.keys(tools),
+    servers: mcp.servers.map((s) => s.name),
+    handoffs: handoffs.map((h) => h.name),
+  });
   return {
+    template,
     tools,
     instructions,
+    handoffs,
     policy,
     maxSteps,
     temperature,
-    run: (input) =>
+    run: (run) =>
       runReactLoop({
-        model: options.model,
+        model,
         system: instructions,
         tools,
-        messages: input.messages,
+        messages: run.messages,
         maxSteps,
         policy,
         temperature,
         maxOutputTokens,
-        abortSignal: input.abortSignal,
+        abortSignal: run.abortSignal,
+        interruptTools: handoffs.length > 0 ? [HANDOFF_TOOL] : [],
       }),
-    close: async () => {
-      await options.mcp?.close();
-    },
+    close: () => mcp.close(),
   };
 }

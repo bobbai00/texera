@@ -1,22 +1,28 @@
 /**
- * The runtime's view of the catalog.
- *
- * Types come from the generated `@texera/catalog-client`; the transport is a small
- * fetch layer over the contract's routes so the runtime has no runtime dependency on
- * the generated client's bootstrap (see docs/texera-2-0/API-REQUESTS.md). Every call
- * carries the person's token plus the headers that name the acting agent.
+ * The runtime's view of the catalog: a small fetch layer over the contract's routes, typed
+ * with the generated client's types. Every call carries the person's token, and inside a turn
+ * the service token and the origin the catalog records on what the call creates.
  */
-import type { Conversation, PostMessage } from "@texera/catalog-client/types";
 import {
-  type Agent,
   type AgentTemplateSpec,
+  type AppendMessage,
   type CatalogAuth,
+  type Conversation,
+  formatOrigin,
+  type Lease,
   type McpServerRecord,
+  type McpServerSpec,
   type Message,
-  parseRef,
+  type ModelEndpointRecord,
+  type ModelEndpointSpec,
+  parseUri,
+  type ReplaceMessage,
+  type Resolved,
+  type Resource,
   type SkillRecord,
+  type SkillSpec,
   type TemplateRecord,
-  type VersionRef,
+  type Turn,
 } from "./types.ts";
 
 /** An error returned by the catalog, with its HTTP status. */
@@ -39,21 +45,11 @@ export interface CatalogClientOptions {
   fetch?: FetchLike;
 }
 
-/** Strips YAML frontmatter from a SKILL.md document. */
-export function stripFrontmatter(markdown: string): string {
-  const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(markdown);
-  return m ? markdown.slice(m[0].length) : markdown;
-}
+const API = "/catalog/v1";
 
-interface Envelope<Spec> {
-  metadata: { rid: string; name: string; headVersion: number };
-  spec: Spec;
-}
-
-interface VersionBody {
-  rid: string;
-  vno: number;
-  content?: unknown;
+interface Page<T> {
+  items: T[];
+  nextCursor?: string;
 }
 
 export class CatalogClient {
@@ -65,15 +61,20 @@ export class CatalogClient {
     this.fetchImpl = options.fetch ?? fetch;
   }
 
-  /** Headers for a call made on a person's behalf by an agent. */
+  /** Headers for a call made for a person. */
   static headersFor(auth: CatalogAuth): Record<string, string> {
     const headers: Record<string, string> = { Authorization: `Bearer ${auth.userToken}`, Accept: "application/json" };
-    if (auth.agentPid) headers["X-Texera-Agent"] = auth.agentPid;
     if (auth.serviceToken) headers["X-Texera-Service-Token"] = auth.serviceToken;
+    if (auth.origin) headers["X-Texera-Origin"] = formatOrigin(auth.origin);
     return headers;
   }
 
-  private async request<T>(method: "GET" | "POST", path: string, auth: CatalogAuth, body?: unknown): Promise<T> {
+  private async request<T>(
+    method: "GET" | "POST" | "PUT" | "DELETE",
+    path: string,
+    auth: CatalogAuth,
+    body?: unknown,
+  ): Promise<T> {
     const headers = CatalogClient.headersFor(auth);
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
@@ -97,81 +98,111 @@ export class CatalogClient {
     return (await res.json()) as T;
   }
 
-  getAgent(pid: string, auth: CatalogAuth): Promise<Agent> {
-    return this.request("GET", `/catalog/v1/agents/${encodeURIComponent(pid)}`, auth);
-  }
-
   getConversation(rid: string, auth: CatalogAuth): Promise<Conversation> {
-    return this.request("GET", `/catalog/v1/conversations/${encodeURIComponent(rid)}`, auth);
+    return this.request("GET", `${API}/conversations/${encodeURIComponent(rid)}`, auth);
   }
 
-  private readVersion(rid: string, vno: number, auth: CatalogAuth): Promise<VersionBody> {
-    return this.request("GET", `/catalog/v1/resources/${encodeURIComponent(rid)}/versions/${vno}`, auth);
+  createConversation(name: string, template: string, auth: CatalogAuth): Promise<Conversation> {
+    return this.request("POST", `${API}/conversations`, auth, { name, spec: { template } });
+  }
+
+  /** Replaces the conversation's spec (its current template among it). */
+  updateConversationSpec(rid: string, spec: Conversation["spec"], auth: CatalogAuth): Promise<Conversation> {
+    return this.request("PUT", `${API}/conversations/${encodeURIComponent(rid)}`, auth, { spec });
+  }
+
+  /** Takes the conversation's turn lock; 409 (`turn_active`) while another turn runs. */
+  startTurn(rid: string, template: string | undefined, auth: CatalogAuth): Promise<Turn> {
+    return this.request(
+      "POST",
+      `${API}/conversations/${encodeURIComponent(rid)}/turns`,
+      auth,
+      template ? { template } : {},
+    );
+  }
+
+  endTurn(rid: string, turn: string, auth: CatalogAuth): Promise<void> {
+    return this.request(
+      "DELETE",
+      `${API}/conversations/${encodeURIComponent(rid)}/turns/${encodeURIComponent(turn)}`,
+      auth,
+    );
+  }
+
+  async listMessages(rid: string, auth: CatalogAuth, after?: number): Promise<Message[]> {
+    const query = after === undefined ? "?limit=500" : `?after=${after}&limit=500`;
+    const page = await this.request<Page<Message>>(
+      "GET",
+      `${API}/conversations/${encodeURIComponent(rid)}/messages${query}`,
+      auth,
+    );
+    return page.items;
+  }
+
+  appendMessage(rid: string, body: AppendMessage, auth: CatalogAuth): Promise<Message> {
+    return this.request("POST", `${API}/conversations/${encodeURIComponent(rid)}/messages`, auth, body);
+  }
+
+  replaceMessage(rid: string, seq: number, body: ReplaceMessage, auth: CatalogAuth): Promise<Message> {
+    return this.request("PUT", `${API}/conversations/${encodeURIComponent(rid)}/messages/${seq}`, auth, body);
+  }
+
+  resolve(uri: string, auth: CatalogAuth): Promise<Resolved> {
+    return this.request("GET", `${API}/resources/resolve?uri=${encodeURIComponent(uri)}`, auth);
   }
 
   /**
-   * Loads a template at a pinned version. A version's content is the spec as it was
-   * when the version was made; the head read supplies the name.
+   * Loads a template at the version its URI pins, or at the head. The version's content is the
+   * spec as it was when the version was made.
    */
-  async getTemplate(ref: VersionRef, auth: CatalogAuth): Promise<TemplateRecord> {
-    const head = await this.request<Envelope<AgentTemplateSpec>>(
-      "GET",
-      `/catalog/v1/agent-templates/${encodeURIComponent(ref.rid)}`,
-      auth,
-    );
-    let spec = head.spec;
-    let vno = head.metadata.headVersion;
-    if (ref.vno && ref.vno !== head.metadata.headVersion) {
-      const version = await this.readVersion(ref.rid, ref.vno, auth);
-      if (version.content && typeof version.content === "object") spec = version.content as AgentTemplateSpec;
-      vno = ref.vno;
-    }
-    return { ref: { rid: ref.rid, vno }, name: head.metadata.name, spec };
+  async getTemplate(uri: string, auth: CatalogAuth): Promise<TemplateRecord> {
+    const resolved = await this.resolve(uri, auth);
+    const r = resolved.resource;
+    if (r.kind !== "agent-template") throw new CatalogError(400, "not_a_template", `${uri} is not an agent template`);
+    const spec = (resolved.version ? resolved.version.content : r.spec) as AgentTemplateSpec;
+    const vno = resolved.version ? resolved.version.vno : r.metadata.head;
+    return { uri: `${r.metadata.uri}@${vno}`, rid: r.metadata.rid, vno, name: r.metadata.name, spec };
   }
 
-  async getMcpServer(reference: string, auth: CatalogAuth): Promise<McpServerRecord> {
-    const { rid } = parseRef(reference);
-    const server = await this.request<Envelope<McpServerRecord["spec"]>>(
-      "GET",
-      `/catalog/v1/mcp-servers/${encodeURIComponent(rid)}`,
-      auth,
-    );
-    return { rid, name: server.metadata.name, spec: server.spec };
+  async getSkill(uri: string, auth: CatalogAuth): Promise<SkillRecord> {
+    const resolved = await this.resolve(uri, auth);
+    const r = resolved.resource;
+    const spec = (resolved.version ? resolved.version.content : r.spec) as SkillSpec;
+    const vno = resolved.version ? resolved.version.vno : r.metadata.head;
+    return { uri: `${r.metadata.uri}@${vno}`, name: spec.name, description: spec.description, body: spec.body };
   }
 
-  async getSkill(reference: string, auth: CatalogAuth): Promise<SkillRecord> {
-    const { rid, vno } = parseRef(reference);
-    const head = await this.request<Envelope<SkillRecord["spec"]>>(
-      "GET",
-      `/catalog/v1/skills/${encodeURIComponent(rid)}`,
-      auth,
-    );
-    const version = await this.readVersion(rid, vno ?? head.metadata.headVersion, auth);
-    const content = version.content;
-    const markdown =
-      typeof content === "string"
-        ? content
-        : content && typeof content === "object" && typeof (content as { markdown?: unknown }).markdown === "string"
-          ? (content as { markdown: string }).markdown
-          : "";
-    return { ref: { rid, vno: version.vno }, spec: head.spec, body: stripFrontmatter(markdown) };
+  async getMcpServer(uri: string, auth: CatalogAuth): Promise<McpServerRecord> {
+    const resolved = await this.resolve(uri, auth);
+    const r = resolved.resource;
+    const spec = (resolved.version ? resolved.version.content : r.spec) as McpServerSpec;
+    return { uri: r.metadata.uri, rid: r.metadata.rid, name: r.metadata.name, spec };
   }
 
-  listMessages(conversationRid: string, auth: CatalogAuth, after?: number): Promise<Message[]> {
-    const query = after === undefined ? "" : `?after=${after}`;
-    return this.request(
-      "GET",
-      `/catalog/v1/conversations/${encodeURIComponent(conversationRid)}/messages${query}`,
-      auth,
-    );
+  async getModelEndpoint(uri: string, auth: CatalogAuth): Promise<ModelEndpointRecord> {
+    const resolved = await this.resolve(uri, auth);
+    const r = resolved.resource;
+    return {
+      uri: r.metadata.uri,
+      rid: r.metadata.rid,
+      name: r.metadata.name,
+      spec: r.spec as unknown as ModelEndpointSpec,
+    };
   }
 
-  postMessage(conversationRid: string, body: PostMessage, auth: CatalogAuth): Promise<Message> {
-    return this.request(
-      "POST",
-      `/catalog/v1/conversations/${encodeURIComponent(conversationRid)}/messages`,
+  /** Leases a credential's value for a purpose (the turn's conversation). */
+  lease(credentialUri: string, purpose: string, auth: CatalogAuth): Promise<Lease> {
+    const { rid } = parseUri(credentialUri);
+    return this.request("POST", `${API}/credentials/${encodeURIComponent(rid)}/lease`, auth, { purpose });
+  }
+
+  /** Templates the person may read whose name matches. */
+  async searchTemplates(q: string, auth: CatalogAuth): Promise<Resource[]> {
+    const page = await this.request<Page<Resource>>(
+      "GET",
+      `${API}/agent-templates?q=${encodeURIComponent(q)}&limit=20`,
       auth,
-      body,
     );
+    return page.items;
   }
 }

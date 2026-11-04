@@ -29,7 +29,7 @@ function dataflowTools(runStatus: "completed" | "failed" = "completed"): ToolSet
       description: "create",
       inputSchema: z.object({ name: z.string() }),
       execute: async ({ name }) =>
-        mcpText({ workflow: { kind: "workflow", metadata: { rid: WORKFLOW_RID, name, headVersion: 1 } } }),
+        mcpText({ workflow: { kind: "workflow", metadata: { rid: WORKFLOW_RID, name, head: 1 } } }),
     }),
     run_workflow: tool({
       description: "run",

@@ -11,9 +11,11 @@
  * cut off at the output limit is continued once.
  */
 import {
+  hasToolCall,
   type LanguageModel,
   type ModelMessage,
   type StepResult,
+  type StopCondition,
   type SystemModelMessage,
   stepCountIs,
   streamText,
@@ -95,12 +97,14 @@ export type LoopEvent =
   | { type: "step"; step: LoopStep }
   | { type: "correction"; reason: "premature_answer" | "cut_off" | "refused"; text: string };
 
-export type LoopEnd = "answered" | "step_limit" | "error" | "aborted" | "refused";
+export type LoopEnd = "answered" | "step_limit" | "error" | "aborted" | "refused" | "interrupted";
 
 export interface LoopOutcome {
   reason: LoopEnd;
   state: LoopState;
   usage: LoopUsage;
+  /** For `interrupted`: the call of an interrupt tool the loop stopped at, with its result. */
+  interrupt?: { toolName: string; input: unknown; output: unknown };
 }
 
 export interface ReactLoopOptions {
@@ -117,6 +121,8 @@ export interface ReactLoopOptions {
   renderContext?: (state: LoopState, stepNumber: number) => string;
   /** Provider-side parallel tool calls; off by default so stateful dataflow tools run in order. */
   parallelToolCalls?: boolean;
+  /** Tools whose successful call ends the loop with `interrupted` (a handoff): the caller takes over. */
+  interruptTools?: string[];
 }
 
 export const PREMATURE_ANSWER_CORRECTION =
@@ -326,6 +332,9 @@ export async function* runReactLoop(options: ReactLoopOptions): AsyncGenerator<L
     const finishedSteps: LoopStep[] = [];
     // `stepNumber` counts the steps of this streamText call; earlier calls' steps are in the state.
     const stepsBefore = state.steps.length;
+    const interrupts = options.interruptTools ?? [];
+    const stopWhen: StopCondition<ToolSet>[] = [stepCountIs(remaining)];
+    if (interrupts.length > 0) stopWhen.push(hasToolCall(...interrupts));
     const result = streamText({
       model: options.model,
       instructions: cachedInstructions(options.system),
@@ -334,7 +343,7 @@ export async function* runReactLoop(options: ReactLoopOptions): AsyncGenerator<L
       temperature: options.temperature,
       maxOutputTokens: options.maxOutputTokens,
       abortSignal: options.abortSignal,
-      stopWhen: stepCountIs(remaining),
+      stopWhen,
       toolChoice: "auto",
       providerOptions: { anthropic: { disableParallelToolUse: !(options.parallelToolCalls ?? false) } },
       // Every step re-renders the turn's state at the end of the prompt (the Dataflow Agent's
@@ -368,6 +377,18 @@ export async function* runReactLoop(options: ReactLoopOptions): AsyncGenerator<L
 
     const last = finishedSteps[finishedSteps.length - 1];
     if (!last) return { reason: "error", state, usage };
+    // An interrupt tool that succeeded ends the loop: the caller takes the conversation from here.
+    for (const r of last.toolResults) {
+      if (interrupts.includes(r.toolName) && !r.isError) {
+        const call = last.toolCalls.find((c) => c.toolCallId === r.toolCallId);
+        return {
+          reason: "interrupted",
+          state,
+          usage,
+          interrupt: { toolName: r.toolName, input: call?.input, output: r.output },
+        };
+      }
+    }
     const responseMessages = (await result.response).messages;
     const textOnly = last.toolCalls.length === 0;
     const text = last.text.trim();

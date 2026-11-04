@@ -1,11 +1,13 @@
 /**
- * POST /agents/:pid/ag-ui — the AG-UI 1.0 run endpoint: RunAgentInput in, SSE events out.
+ * POST /agents/conversations/:rid/ag-ui: the AG-UI 1.0 run endpoint of a conversation.
+ * RunAgentInput in, SSE events out. `forwardedProps.template` switches the template for this
+ * turn and the ones after.
  */
 import type { RunAgentInput } from "@ag-ui/core";
 import { EventEncoder } from "@ag-ui/encoder";
 import type { Context } from "hono";
 import { AuthError, bearerToken } from "../auth/jwt.ts";
-import { runTurn } from "../run/turn.ts";
+import { runTurn, type TurnDeps } from "../run/turn.ts";
 import type { RuntimeDeps } from "./deps.ts";
 
 export class BadRequest extends Error {
@@ -22,58 +24,66 @@ export function parseRunInput(body: unknown): RunAgentInput {
   return b as unknown as RunAgentInput;
 }
 
+export function turnDeps(deps: RuntimeDeps): TurnDeps {
+  return {
+    catalog: deps.catalog,
+    log: deps.log,
+    build: deps.build,
+    maxHandoffs: deps.config.maxHandoffs,
+    newId: deps.newId,
+  };
+}
+
+/** Streams a turn's events as SSE. */
+export function streamTurn(c: Context, generator: AsyncGenerator<unknown>) {
+  const encoder = new EventEncoder({ accept: c.req.header("accept") ?? undefined });
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { value, done } = await generator.next();
+      if (done) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(new TextEncoder().encode(encoder.encodeSSE(value as never)));
+    },
+    async cancel() {
+      await generator.return(undefined);
+    },
+  });
+  return c.body(stream, 200, {
+    "content-type": encoder.getContentType(),
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+}
+
 export function agUiHandler(deps: RuntimeDeps) {
   return async (c: Context) => {
-    const pid = c.req.param("pid");
-    if (!pid) throw new BadRequest("pid is required");
+    const rid = c.req.param("rid");
+    if (!rid) throw new BadRequest("rid is required");
     const token = bearerToken(c.req.header("authorization"));
     if (!token) throw new AuthError("missing bearer token");
     const user = await deps.verifyUser(token);
     const input = parseRunInput(await c.req.json());
-
     let serviceToken: string | undefined;
     try {
       serviceToken = await deps.serviceTokens.get();
     } catch (err) {
-      deps.log.warn("no service token; the catalog will not record the acting agent", {
+      deps.log.warn("no service token; the catalog will not record the turn as the origin", {
         error: (err as Error).message,
       });
     }
-    const auth = { userToken: user.token, agentPid: pid, serviceToken };
-    const record = await deps.catalog.getAgent(pid, auth);
-    const conversationRid = record.conversation ?? input.threadId;
-    const instance = await deps.host.acquire(pid, record, auth);
-
-    const encoder = new EventEncoder({ accept: c.req.header("accept") ?? undefined });
-    const signal = c.req.raw.signal;
-    const generator = runTurn(
-      { catalog: deps.catalog, log: deps.log, newId: deps.newId },
-      {
-        instance,
-        conversationRid,
-        input,
-        auth,
-        signal,
-      },
-    );
-    const stream = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        const { value, done } = await generator.next();
-        if (done) {
-          controller.close();
-          return;
-        }
-        controller.enqueue(new TextEncoder().encode(encoder.encodeSSE(value)));
-      },
-      async cancel() {
-        await generator.return(undefined);
-      },
+    const forwarded = (input.forwardedProps ?? {}) as { template?: unknown };
+    const template = typeof forwarded.template === "string" && forwarded.template ? forwarded.template : undefined;
+    const generator = runTurn(turnDeps(deps), {
+      conversationRid: rid,
+      input,
+      userToken: user.token,
+      serviceToken,
+      template,
+      signal: c.req.raw.signal,
     });
-    return c.body(stream, 200, {
-      "content-type": encoder.getContentType(),
-      "cache-control": "no-cache",
-      connection: "keep-alive",
-      "x-accel-buffering": "no",
-    });
+    return streamTurn(c, generator);
   };
 }
