@@ -119,7 +119,12 @@ the `admins` group and a `groups` claim. Gate: `up.sh` from clean; every contain
 
 **S4 Store and ports.** A new `0001_init.sql` with eleven tables: principal, resource,
 resource_version, access_index, access_outbox, blob, dataset_staging, edge, lineage_event,
-message (with the template version that produced an assistant message), credential_lease. `catalog/internal/store` becomes generic: one resource store
+message, credential_lease. A message is (conversation_rid, seq, turn, role, author_pid,
+template_rid, template_vno, parts, created_at): the author is the person whose turn it was,
+the template version names the agent that wrote an assistant message, and the turn id groups
+the messages of one loop. There is no agent or turn table: concurrency is
+`status.activeTurn` on the conversation, and the AG-UI thread and run ids and the A2A context
+and task ids map to the conversation rid and the turn id. `catalog/internal/store` becomes generic: one resource store
 for every kind (create, get, list with filters and the readable index, update with etag, delete,
 versions with digest and expectedHead), plus edges, blobs, staging, messages, agents and leases.
 `catalog/internal/ports` defines Identity, Authorizer, SecretStore, BlobStore, TableCatalog,
