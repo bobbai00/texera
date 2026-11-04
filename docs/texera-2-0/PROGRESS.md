@@ -342,7 +342,11 @@ event mapping out of ingest); quotas and metering, groups beyond admins, a purge
 soft-deleted resources; the units' static S3 key for large binaries scoped to the objects
 prefix; Python 3.11 in the unit image; contract suites for the Lakekeeper and
 Keycloak-workloads adapters; CI for the gate; a per-step timeout in the agent runtime (one
-model call stalled for four minutes during a Playwright run, with no error logged).
+model call stalled for four minutes during a Playwright run, with no error logged); the
+license-header check (`.github/workflows/check-header.yml`, `license-eye header check`)
+fails on this branch, 361 files without a header, most of them the 2.0 code under `catalog/`,
+`packages/`, `tests/e2e/`, `api/` and `docs/`: a `license-eye header fix` sweep before any
+pull request to the main repository.
 
 ## 2026-11-03 (session 5, on Linux)
 
