@@ -1,0 +1,192 @@
+// Package kube is the Kubernetes adapter of ports.UnitProvider: a computing unit whose spec
+// says provider kubernetes becomes one Deployment of the engine image and one Service in the
+// catalog's namespace, named after the unit's rid. Endpoint reconciles them on every call,
+// so a unit that was lost comes back, and Terminate deletes them.
+package kube
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/apache/texera/catalog/internal/api"
+)
+
+const (
+	port       = 8085
+	managedBy  = "texera-catalog"
+	labelRID   = "texera.apache.org/unit"
+	labelApp   = "app.kubernetes.io/name"
+	labelOwner = "app.kubernetes.io/managed-by"
+)
+
+// Options configure the units the adapter creates.
+type Options struct {
+	// Namespace the units live in; the catalog's own.
+	Namespace string
+	// Image of the engine when the unit's spec names none.
+	Image string
+	// Memory the master node requests when the spec names none, e.g. 2Gi.
+	Memory string
+	// Env the engine needs to reach the lake and the identity provider.
+	Env map[string]string
+}
+
+type Provider struct {
+	client kubernetes.Interface
+	opts   Options
+}
+
+// New connects in-cluster, or through the kubeconfig KUBECONFIG or ~/.kube/config names.
+func New(opts Options) (*Provider, error) {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		path := os.Getenv("KUBECONFIG")
+		if path == "" {
+			home, _ := os.UserHomeDir()
+			path = filepath.Join(home, ".kube", "config")
+		}
+		cfg, err = clientcmd.BuildConfigFromFlags("", path)
+		if err != nil {
+			return nil, fmt.Errorf("kubernetes: %w", err)
+		}
+	}
+	client, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return NewWithClient(client, opts), nil
+}
+
+// NewWithClient is for tests and for a caller that has a client already.
+func NewWithClient(client kubernetes.Interface, opts Options) *Provider {
+	if opts.Memory == "" {
+		opts.Memory = "2Gi"
+	}
+	return &Provider{client: client, opts: opts}
+}
+
+func name(rid string) string { return "unit-" + strings.ToLower(rid) }
+
+// Endpoint makes sure the unit's Deployment and Service exist and returns the Service URL.
+func (p *Provider) Endpoint(ctx context.Context, rid string, spec api.ComputingUnitSpec) (string, error) {
+	if spec.Provider != api.UnitProviderKubernetes {
+		return "", fmt.Errorf("provider %q is not kubernetes", spec.Provider)
+	}
+	n := name(rid)
+	deployments := p.client.AppsV1().Deployments(p.opts.Namespace)
+	if _, err := deployments.Get(ctx, n, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+		if _, err := deployments.Create(ctx, p.deployment(rid, spec), metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return "", fmt.Errorf("create deployment %s: %w", n, err)
+		}
+	} else if err != nil {
+		return "", err
+	}
+	services := p.client.CoreV1().Services(p.opts.Namespace)
+	if _, err := services.Get(ctx, n, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+		if _, err := services.Create(ctx, p.service(rid), metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return "", fmt.Errorf("create service %s: %w", n, err)
+		}
+	} else if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("http://%s.%s:%d", n, p.opts.Namespace, port), nil
+}
+
+// Terminate deletes the unit's Deployment and Service.
+func (p *Provider) Terminate(ctx context.Context, rid string, _ api.ComputingUnitSpec) error {
+	n := name(rid)
+	if err := p.client.AppsV1().Deployments(p.opts.Namespace).Delete(ctx, n, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete deployment %s: %w", n, err)
+	}
+	if err := p.client.CoreV1().Services(p.opts.Namespace).Delete(ctx, n, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete service %s: %w", n, err)
+	}
+	return nil
+}
+
+func (p *Provider) labels(rid string) map[string]string {
+	return map[string]string{labelApp: name(rid), labelRID: rid, labelOwner: managedBy}
+}
+
+func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.Deployment {
+	image := p.opts.Image
+	if spec.Engine != nil && spec.Engine.Image != nil && *spec.Engine.Image != "" {
+		image = *spec.Engine.Image
+	}
+	requests := corev1.ResourceList{}
+	memory, cpu := p.opts.Memory, ""
+	if spec.ComputingNodes != nil {
+		for _, n := range *spec.ComputingNodes {
+			if n.Role == api.ComputingNodeSpecRoleMaster {
+				if n.Memory != nil && *n.Memory != "" {
+					memory = *n.Memory
+				}
+				if n.Cpu != nil && *n.Cpu != "" {
+					cpu = *n.Cpu
+				}
+			}
+		}
+	}
+	if q, err := resource.ParseQuantity(memory); err == nil {
+		requests[corev1.ResourceMemory] = q
+	}
+	if cpu != "" {
+		if q, err := resource.ParseQuantity(cpu); err == nil {
+			requests[corev1.ResourceCPU] = q
+		}
+	}
+	env := []corev1.EnvVar{{Name: "TEXERA_UNIT_PORT", Value: fmt.Sprint(port)}}
+	for k, v := range p.opts.Env {
+		env = append(env, corev1.EnvVar{Name: k, Value: v})
+	}
+	replicas := int32(1)
+	labels := p.labels(rid)
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name(rid), Namespace: p.opts.Namespace, Labels: labels},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{labelApp: name(rid)}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:            "unit",
+						Image:           image,
+						ImagePullPolicy: corev1.PullIfNotPresent,
+						Env:             env,
+						Ports:           []corev1.ContainerPort{{ContainerPort: port}},
+						ReadinessProbe: &corev1.Probe{
+							ProbeHandler:     corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/api/health", Port: intstr.FromInt(port)}},
+							PeriodSeconds:    5,
+							FailureThreshold: 60,
+						},
+						Resources: corev1.ResourceRequirements{Requests: requests},
+					}},
+				},
+			},
+		},
+	}
+}
+
+func (p *Provider) service(rid string) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: name(rid), Namespace: p.opts.Namespace, Labels: p.labels(rid)},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{labelApp: name(rid)},
+			Ports:    []corev1.ServicePort{{Name: "http", Port: port, TargetPort: intstr.FromInt(port)}},
+		},
+	}
+}

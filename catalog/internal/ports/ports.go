@@ -89,9 +89,12 @@ var ErrBlobNotFound = errors.New("blob not found")
 
 // UnitProvider provisions computing units: static today, processes and Kubernetes later.
 type UnitProvider interface {
-	// Endpoint returns the unit's base URL as the catalog reaches it, "" while not provisioned.
-	Endpoint(ctx context.Context, spec api.ComputingUnitSpec) (string, error)
-	Terminate(ctx context.Context, spec api.ComputingUnitSpec) error
+	// Endpoint makes sure the unit named by rid exists as its spec asks and returns its base
+	// URL as the catalog reaches it, "" while it is not provisioned yet. It is called on every
+	// status probe, so it must be idempotent and cheap once the unit exists.
+	Endpoint(ctx context.Context, rid string, spec api.ComputingUnitSpec) (string, error)
+	// Terminate releases what the unit holds; a unit that does not exist is not an error.
+	Terminate(ctx context.Context, rid string, spec api.ComputingUnitSpec) error
 }
 
 // LineageSink forwards OpenLineage events to an external consumer.

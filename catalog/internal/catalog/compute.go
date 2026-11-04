@@ -26,7 +26,7 @@ func (s *Service) unitClient(ctx context.Context, unit *store.Resource) (*engine
 	if status.Phase != api.ComputingUnitStatusPhaseReady {
 		return nil, status, nil
 	}
-	endpoint, err := s.Units.Endpoint(ctx, spec)
+	endpoint, err := s.Units.Endpoint(ctx, unit.RID.String(), spec)
 	if err != nil {
 		return nil, status, Unavailable("unit provider", err)
 	}
@@ -51,7 +51,7 @@ func (s *Service) unitStatus(ctx context.Context, unit *store.Resource, spec api
 	next := api.ComputingUnitStatus{Phase: api.ComputingUnitStatusPhasePending}
 	path := "/units/" + unit.RID.String()
 	next.GatewayPath = &path
-	endpoint, err := s.Units.Endpoint(ctx, spec)
+	endpoint, err := s.Units.Endpoint(ctx, unit.RID.String(), spec)
 	switch {
 	case err != nil:
 		next.Phase = api.ComputingUnitStatusPhaseFailed
@@ -145,7 +145,7 @@ func (s *Service) Terminate(ctx context.Context, caller *auth.Caller, rid uuid.U
 	}
 	var spec api.ComputingUnitSpec
 	_ = json.Unmarshal(unit.Spec, &spec)
-	if err := s.Units.Terminate(ctx, spec); err != nil {
+	if err := s.Units.Terminate(ctx, rid.String(), spec); err != nil {
 		return nil, Unavailable("unit provider", err)
 	}
 	r, err := s.Store.UpdateStatus(ctx, rid, mustJSON(api.ComputingUnitStatus{Phase: api.ComputingUnitStatusPhaseTerminated, ComputingNodes: nodesOf(spec, false)}))
@@ -222,7 +222,7 @@ func (s *Service) BuildEnvironment(ctx context.Context, caller *auth.Caller, rid
 	if unitName == "" {
 		return nil, Conflict("no_unit", "no computing unit to build on", nil)
 	}
-	unit, err := s.resourceByURI(ctx, caller, unitName, &unitKind)
+	unit, err := s.unitByURI(ctx, unitName)
 	if err != nil {
 		return nil, err
 	}

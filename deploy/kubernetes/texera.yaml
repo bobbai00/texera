@@ -48,16 +48,26 @@ spec:
     metadata:
       labels: { app: catalog }
     spec:
+      serviceAccountName: catalog
       initContainers:
         - name: wait-for-keycloak
           image: alpine:3.19
           command: ["sh", "-c", "until wget -q -O /dev/null http://keycloak:8080/auth/realms/texera; do sleep 3; done"]
+        - name: wait-for-openbao
+          image: alpine:3.19
+          command: ["sh", "-c", "until wget -q -O /dev/null http://openbao:8200/v1/sys/health; do sleep 3; done"]
       containers:
         - name: catalog
           image: texera/catalog:2.0-dev
           imagePullPolicy: IfNotPresent
           env:
             - { name: TEXERA_DATABASE_URL, value: "postgres://texera:texera@postgres:5432/catalog?sslmode=disable" }
+            - { name: TEXERA_SECRETS_URL, value: "http://openbao:8200" }
+            - { name: TEXERA_STATIC_UNIT_NAME, value: "cluster unit" }
+            # Units of provider kubernetes become Deployments in this namespace.
+            - name: TEXERA_KUBE_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: TEXERA_KUBE_UNIT_IMAGE, value: "texera/computing-unit-master:2.0-dev" }
             - name: TEXERA_PUBLIC_URL
               valueFrom: { configMapKeyRef: { name: texera2-public, key: public-url } }
             - name: TEXERA_OIDC_ISSUER
@@ -164,8 +174,6 @@ spec:
               valueFrom: { configMapKeyRef: { name: texera2-public, key: issuer } }
             - { name: TEXERA_OIDC_JWKS_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/certs" }
             - { name: TEXERA_OIDC_TOKEN_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/token" }
-            - name: ANTHROPIC_API_KEY
-              valueFrom: { secretKeyRef: { name: texera2-llm, key: ANTHROPIC_API_KEY, optional: true } }
           ports:
             - containerPort: 23002
           readinessProbe:
@@ -203,16 +211,55 @@ spec:
             httpGet: { path: /, port: 8080 }
             periodSeconds: 5
 ---
+# The bio MCP server (PubMed, genes, variants, proteins), reached through the gateway at
+# /bio-mcp; its API key is the credential the catalog seeds.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bio-mcp
+spec:
+  selector: { app: bio-mcp }
+  ports:
+    - { name: http, port: 23010 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bio-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: bio-mcp }
+  template:
+    metadata:
+      labels: { app: bio-mcp }
+    spec:
+      containers:
+        - name: bio-mcp
+          image: texera/bio-mcp:2.0-dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: PORT, value: "23010" }
+            - { name: MCP_PATH, value: /bio-mcp }
+            - { name: BIOMCP_API_KEY, value: texera-bio-dev-key }
+          ports:
+            - containerPort: 23010
+          readinessProbe:
+            httpGet: { path: /healthcheck, port: 23010 }
+            periodSeconds: 5
+---
 # The only way in: Envoy checks Keycloak tokens and asks the catalog's PDP, as in the dev stack.
 apiVersion: v1
 kind: Service
 metadata:
   name: gateway
 spec:
-  type: LoadBalancer
+  # kind maps node port 30088 to localhost:28088 (see k8s.sh); on a cluster with a load
+  # balancer, change the type and drop the node port.
+  type: NodePort
   selector: { app: gateway }
   ports:
-    - { name: http, port: 28088, targetPort: 8080 }
+    - { name: http, port: 28088, targetPort: 8080, nodePort: 30088 }
 ---
 apiVersion: apps/v1
 kind: Deployment

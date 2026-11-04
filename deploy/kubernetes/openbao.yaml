@@ -1,0 +1,89 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# OpenBao, the secret store, in dev mode as in the dev stack: in-memory, unsealed, one root
+# token. Credentials people create live as long as the pod does; the platform's model key is
+# written on every `k8s.sh up` by the openbao-init job from the texera2-llm Secret.
+apiVersion: v1
+kind: Service
+metadata:
+  name: openbao
+spec:
+  selector: { app: openbao }
+  ports:
+    - { name: http, port: 8200 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openbao
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: openbao }
+  template:
+    metadata:
+      labels: { app: openbao }
+    spec:
+      containers:
+        - name: openbao
+          image: openbao/openbao:2.4.1
+          args: ["server", "-dev", "-dev-root-token-id=texera-dev-root", "-dev-listen-address=0.0.0.0:8200"]
+          env:
+            - { name: BAO_ADDR, value: "http://127.0.0.1:8200" }
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]
+          ports:
+            - containerPort: 8200
+          readinessProbe:
+            httpGet: { path: /v1/sys/health, port: 8200 }
+            periodSeconds: 5
+---
+# Enables the `texera` KV v2 mount and loads the platform's model key, if the Secret holds one.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openbao-init
+spec:
+  backoffLimit: 20
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: openbao/openbao:2.4.1
+          env:
+            - { name: BAO_ADDR, value: "http://openbao:8200" }
+            - { name: BAO_TOKEN, value: texera-dev-root }
+            - name: ANTHROPIC_API_KEY
+              valueFrom: { secretKeyRef: { name: texera2-llm, key: ANTHROPIC_API_KEY, optional: true } }
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              until bao status >/dev/null 2>&1; do sleep 2; done
+              if ! bao secrets list -format=json | grep -q '"texera/"'; then
+                bao secrets enable -path=texera -version=2 kv
+              fi
+              if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+                printf '%s' "$ANTHROPIC_API_KEY" | bao kv put -mount=texera platform/anthropic value=- >/dev/null
+                echo "platform model key loaded"
+              else
+                echo "no model key in the texera2-llm secret; the chat will not answer"
+              fi
+              echo "secret mount texera ready"

@@ -104,11 +104,36 @@ host uses. No OrbStack-specific hostnames are needed; `TEXERA2_S3_ENDPOINT` and
 | `smoke-chat.py --demo` | The M1 scenario: the Bio Researcher answers with cited research ideas through the bio MCP server, then hands the chat to the Data Analyst, which runs the analysis |
 | `frontend-next/e2e` (Playwright) | Sign-in, a chat with an attachment that becomes a dataset, switching agents through the switcher and `/mode`, creating and editing an agent template from its page, a saved result's lineage, and with the model: the Data Analyst chat that tracks what it built and the Bio Researcher's handoff |
 
-## Kubernetes (deployment only, not for development)
+## Kubernetes
 
-The same services can be deployed as workloads on a local cluster with `bin/texera-2-0/k8s.sh`
-and the manifests in `deploy/kubernetes` (namespace `texera2`, gateway on localhost:28088, the
-services reach each other by cluster names, so the catalog, the unit and the agent runtime take
-explicit `TEXERA_OIDC_JWKS_URL` / `TEXERA_OIDC_TOKEN_URL`). It is a deployment check, needs a
-cluster context (`TEXERA2_KUBE_CONTEXT`, default `orbstack`), and is never required for
-development: the stack above is the development environment.
+The same stack on a local Kubernetes cluster, in one command:
+
+```
+bin/texera-2-0/k8s.sh up            # the kind cluster if missing, the five images, config, workloads, wait
+bin/texera-2-0/k8s.sh check         # the smoke tests against the cluster, including a unit made as a resource
+bin/texera-2-0/k8s.sh status        # pods, services, jobs
+bin/texera-2-0/k8s.sh down          # delete the namespace (the cluster stays)
+bin/texera-2-0/k8s.sh destroy       # delete the kind cluster
+```
+
+Open http://localhost:28088 (alice/alice, bob/bob). On Linux the cluster is [kind](https://kind.sigs.k8s.io)
+(Kubernetes in Docker; `kind` and `kubectl` in `~/.local/bin` are enough), created with node
+port 30088 mapped to localhost:28088. Another local cluster works with `TEXERA2_KUBE_CONTEXT`
+set; remote clusters are refused. Two facts about this host shape the defaults: it is on cgroup
+v1, so the node image is Kubernetes 1.33 (`TEXERA2_KIND_IMAGE` overrides), and kind needs
+higher inotify limits than Ubuntu's defaults (`sysctl fs.inotify.max_user_instances=1024
+fs.inotify.max_user_watches=1048576`).
+
+What runs there: Postgres, Keycloak, OpenFGA, OpenBao (dev mode), RustFS, Lakekeeper, the
+Envoy gateway, the catalog, one static computing unit, the agent runtime, the bio MCP server
+and the frontend behind nginx, from `deploy/kubernetes/` (kustomize) and the images under
+`bin/dockerfiles/`. The config maps are rendered from the dev stack's own files (the realm,
+the gateway, the warehouse and database bootstraps); the model key goes from `.env` into a
+Secret and from there into OpenBao by the `openbao-init` job.
+
+Computing units are resources there like everywhere else: a unit created with
+`provider: kubernetes` (`POST /computing-units`, or the library's "New computing unit")
+becomes a Deployment and a Service in the namespace, named after its rid, that the catalog
+reconciles on every status probe; it reports pending until the engine answers, runs take
+`computingUnit: <its URI>`, `terminate` removes the workloads, and the catalog's service
+account may do nothing else in the cluster (`deploy/kubernetes/rbac.yaml`).

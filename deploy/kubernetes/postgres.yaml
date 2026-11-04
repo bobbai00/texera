@@ -17,16 +17,6 @@
 
 # One Postgres for the catalog, Keycloak, OpenFGA and Lakekeeper (a database each).
 apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: postgres-init
-data:
-  init.sql: |
-    CREATE DATABASE keycloak;
-    CREATE DATABASE openfga;
-    CREATE DATABASE lakekeeper;
----
-apiVersion: v1
 kind: Service
 metadata:
   name: postgres

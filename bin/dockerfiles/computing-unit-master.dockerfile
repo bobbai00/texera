@@ -98,7 +98,7 @@ RUN --mount=type=bind,source=bin/dockerfiles/snapshot,target=/snapshot \
 
 # Install Python packages
 RUN --mount=type=bind,source=bin/dockerfiles/snapshot,target=/snapshot \
-    bash /snapshot/install.sh pip --upgrade setuptools wheel \
+    bash /snapshot/install.sh pip --upgrade setuptools wheel uv \
  && bash /snapshot/install.sh pip-requirements /tmp/requirements.txt \
  && bash /snapshot/install.sh pip-requirements /tmp/operator-requirements.txt
 

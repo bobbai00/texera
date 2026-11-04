@@ -14,11 +14,14 @@ import (
 	"time"
 
 	"github.com/apache/texera/catalog/internal/adapters/keycloak"
+	"github.com/apache/texera/catalog/internal/adapters/kube"
 	"github.com/apache/texera/catalog/internal/adapters/noop"
 	"github.com/apache/texera/catalog/internal/adapters/openbao"
 	"github.com/apache/texera/catalog/internal/adapters/openfga"
 	"github.com/apache/texera/catalog/internal/adapters/s3cas"
 	"github.com/apache/texera/catalog/internal/adapters/staticunit"
+	"github.com/apache/texera/catalog/internal/adapters/unitmux"
+	"github.com/apache/texera/catalog/internal/api"
 	"github.com/apache/texera/catalog/internal/auth"
 	"github.com/apache/texera/catalog/internal/authz"
 	"github.com/apache/texera/catalog/internal/catalog"
@@ -86,11 +89,36 @@ func run(log *slog.Logger) error {
 	relay := authz.NewRelay(outbox{st}, authorizer, log)
 	go relay.Run(ctx, 2*time.Second)
 
+	// Units: static ones always; Kubernetes ones when a namespace is configured.
+	units := unitmux.Mux{api.UnitProviderStatic: staticunit.Provider{}}
+	if cfg.KubeNamespace != "" {
+		jwks := cfg.OIDCJWKSURL
+		if jwks == "" {
+			jwks = cfg.OIDCDiscoveryURL + "/protocol/openid-connect/certs"
+		}
+		kubeUnits, err := kube.New(kube.Options{
+			Namespace: cfg.KubeNamespace, Image: cfg.KubeUnitImage, Memory: cfg.KubeUnitMemory,
+			Env: map[string]string{
+				"TEXERA_OIDC_ISSUER": cfg.OIDCIssuer, "TEXERA_OIDC_JWKS_URL": jwks,
+				"TEXERA_ENV_ROOT": "/tmp/texera-environments", "UDF_PYTHON_PATH": "/usr/bin/python3",
+				"STORAGE_ICEBERG_CATALOG_TYPE": "rest", "STORAGE_ICEBERG_CATALOG_REST_URI": cfg.IcebergCatalogURI,
+				"STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME": cfg.IcebergWarehouse,
+				"STORAGE_S3_ENDPOINT":                         cfg.S3Endpoint, "STORAGE_S3_REGION": cfg.S3Region,
+				"STORAGE_S3_AUTH_USERNAME": cfg.S3AccessKey, "STORAGE_S3_AUTH_PASSWORD": cfg.S3SecretKey,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		units[api.UnitProviderKubernetes] = kubeUnits
+		log.Info("kubernetes units enabled", "namespace", cfg.KubeNamespace, "image", cfg.KubeUnitImage)
+	}
+
 	svc := &catalog.Service{
 		Store: st, PDP: pdp, Relay: relay, Identity: identity,
 		Secrets:     openbao.New(cfg.SecretsURL, cfg.SecretsMount, cfg.SecretsToken),
 		Blobs:       s3cas.New(s3cas.Options{Endpoint: cfg.S3Endpoint, PublicEndpoint: cfg.S3PublicEndpoint, Region: cfg.S3Region, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Bucket: cfg.S3Bucket, PathStyle: cfg.S3PathStyle}),
-		Units:       staticunit.Provider{},
+		Units:       units,
 		LineageSink: noop.Lineage{},
 		Config: catalog.Config{
 			PublicURL: cfg.PublicURL, APIPrefix: server.Prefix, OIDCIssuer: cfg.OIDCIssuer, OIDCClientID: cfg.OIDCAppClientID, BrandName: cfg.BrandName,

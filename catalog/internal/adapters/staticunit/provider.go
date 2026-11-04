@@ -14,7 +14,7 @@ import (
 type Provider struct{}
 
 // Endpoint returns the spec's endpoint.
-func (Provider) Endpoint(_ context.Context, spec api.ComputingUnitSpec) (string, error) {
+func (Provider) Endpoint(_ context.Context, _ string, spec api.ComputingUnitSpec) (string, error) {
 	if spec.Provider != api.UnitProviderStatic {
 		return "", errors.New("only static units are provided in this deployment")
 	}
@@ -25,4 +25,4 @@ func (Provider) Endpoint(_ context.Context, spec api.ComputingUnitSpec) (string,
 }
 
 // Terminate does nothing: a static unit is not the catalog's to stop.
-func (Provider) Terminate(context.Context, api.ComputingUnitSpec) error { return nil }
+func (Provider) Terminate(context.Context, string, api.ComputingUnitSpec) error { return nil }

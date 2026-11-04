@@ -80,7 +80,8 @@ export const computingUnitKind: KindSpec = {
   accent: "bg-kind-computing-unit/12 text-kind-computing-unit",
   tabs: [{ value: "nodes", label: "Nodes", icon: Server, Component: Nodes }],
   Actions,
-  defaultSpec: () => ({ provider: "static", endpoint: "http://localhost:28085" }) satisfies ComputingUnitSpec,
+  // A new unit is one the platform runs: on Kubernetes a Deployment the catalog reconciles.
+  defaultSpec: () => ({ provider: "kubernetes", computingNodes: [{ name: "master", role: "master", memory: "2Gi" }] }) satisfies ComputingUnitSpec,
   facts: r => {
     const spec = r.spec as Partial<ComputingUnitSpec>;
     const status = r.status as Partial<ComputingUnitStatus> | undefined;

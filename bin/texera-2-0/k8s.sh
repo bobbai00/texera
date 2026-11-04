@@ -16,35 +16,75 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Texera 2.0 on the local Kubernetes cluster: builds the images, applies deploy/kubernetes and
-# waits until the gateway answers on http://localhost:28088.
+# Texera 2.0 on a local Kubernetes cluster, in one command:
 #
-#   bin/texera-2-0/k8s.sh up [--no-build]   # TEXERA_ENV_FILE=... also hands over ANTHROPIC_API_KEY
-#   bin/texera-2-0/k8s.sh status
-#   bin/texera-2-0/k8s.sh down              # deletes the namespace, data included
+#   bin/texera-2-0/k8s.sh up            # cluster if missing, images, config, workloads, wait
+#   bin/texera-2-0/k8s.sh up --no-build # reuse the images already built
+#   bin/texera-2-0/k8s.sh check         # the smoke tests against the cluster, a unit made as a resource
+#   bin/texera-2-0/k8s.sh status        # pods, services, jobs
+#   bin/texera-2-0/k8s.sh down          # delete the namespace (the cluster stays)
+#   bin/texera-2-0/k8s.sh destroy       # delete the kind cluster
 #
-# Only the context in TEXERA2_KUBE_CONTEXT (default: orbstack) is touched, and a context that
-# looks like a remote cloud cluster is refused. The config maps come from the files the dev stack
-# uses, so the two cannot drift: the realm, the gateway (pointed at the cluster's services) and
-# the warehouse bootstrap.
+# On Linux the cluster is kind (Kubernetes in Docker), created here with node port 30088 mapped
+# to localhost:28088, the stack's public URL. Another local cluster works with
+# TEXERA2_KUBE_CONTEXT set (OrbStack: `orbstack`); then reach the gateway's node port yourself.
+# The model key goes from ANTHROPIC_API_KEY or TEXERA_ENV_FILE into a Secret and from there
+# into OpenBao; it is never written into a manifest. Remote clusters are refused.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
-CONTEXT=${TEXERA2_KUBE_CONTEXT:-orbstack}
+export PATH=$HOME/.local/bin:$PATH
+# shellcheck source=lib.sh
+source "$HERE/lib.sh"
+CLUSTER=${TEXERA2_KIND_CLUSTER:-texera2}
+# Kubernetes 1.33: its kubelet still runs on cgroup v1 hosts (Ubuntu 20.04); newer node images refuse.
+KIND_IMAGE=${TEXERA2_KIND_IMAGE:-kindest/node:v1.33.4}
+CONTEXT=${TEXERA2_KUBE_CONTEXT:-kind-$CLUSTER}
 NS=texera2
 TAG=2.0-dev
-PUBLIC=http://localhost:28088
+PUBLIC=${TEXERA2_PUBLIC_URL:-http://localhost:28088}
 case "$CONTEXT" in
   *arn:aws* | *eks* | *gke_* | *aks*) echo "refusing to touch $CONTEXT: this script is for a local cluster" >&2; exit 1 ;;
 esac
 k() { kubectl --context "$CONTEXT" -n "$NS" "$@"; }
-APPS=(catalog unit agent-runtime frontend gateway)
+IMAGES=(catalog agent-runtime frontend bio-mcp computing-unit-master)
+APPS=(catalog unit agent-runtime bio-mcp frontend gateway)
+
+need() { command -v "$1" >/dev/null || { echo "$1 is required; see bin/texera-2-0/README.md" >&2; exit 1; }; }
+
+# cluster makes the kind cluster when the context is kind's and the cluster does not exist.
+cluster() {
+  need kubectl
+  if [ "$CONTEXT" != "kind-$CLUSTER" ]; then return 0; fi
+  need kind
+  if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then return 0; fi
+  echo "== kind cluster $CLUSTER (node port 30088 -> localhost:28088)"
+  kind create cluster --name "$CLUSTER" --image "$KIND_IMAGE" --wait 300s --config - <<CONFIG
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30088
+        hostPort: 28088
+        listenAddress: 127.0.0.1
+CONFIG
+}
 
 build() {
-  for image in catalog agent-runtime frontend computing-unit-master; do
+  for image in "${IMAGES[@]}"; do
     echo "== image texera/$image:$TAG"
     docker build -q -f "$ROOT/bin/dockerfiles/$image.dockerfile" -t "texera/$image:$TAG" "$ROOT" >/dev/null
   done
+}
+
+# load puts the images on the cluster's node; kind has no registry.
+load() {
+  if [ "$CONTEXT" != "kind-$CLUSTER" ]; then return 0; fi
+  for image in "${IMAGES[@]}"; do
+    kind load docker-image --name "$CLUSTER" "texera/$image:$TAG" >/dev/null
+  done
+  echo "== images loaded into $CLUSTER"
 }
 
 configure() {
@@ -56,10 +96,14 @@ configure() {
     --dry-run=client -o yaml | k apply -f - >/dev/null
   k create configmap lakekeeper-init --from-file=init.sh="$HERE/lakekeeper/init.sh" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
+  k create configmap postgres-init --from-file=init.sql="$HERE/postgres/init.sql" \
+    --dry-run=client -o yaml | k apply -f - >/dev/null
+  # The gateway config is the dev stack's with the host services replaced by cluster names.
   sed -e "s#issuer: http://localhost:8088/auth/realms/texera#issuer: $PUBLIC/auth/realms/texera#" \
     -e 's#uri: http://host.docker.internal:8090#uri: http://catalog:8090#' \
     -e 's#address: host.docker.internal, port_value: 8090#address: catalog, port_value: 8090#' \
     -e 's#address: host.docker.internal, port_value: 23002#address: agent-runtime, port_value: 23002#' \
+    -e 's#address: host.docker.internal, port_value: 23010#address: bio-mcp, port_value: 23010#' \
     -e 's#address: host.docker.internal, port_value: 28085#address: unit, port_value: 8085#' \
     -e 's#address: host.docker.internal, port_value: 5174#address: frontend, port_value: 8080#' \
     "$HERE/envoy/envoy.yaml" >"$tmp/envoy.yaml"
@@ -69,11 +113,10 @@ configure() {
   fi
   k create configmap gateway-config --from-file=envoy.yaml="$tmp/envoy.yaml" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
-  # The model key goes straight from the env file into a Secret, through a private temp file.
+  # The model key goes straight from the env file into a Secret, through a private temp file;
+  # the openbao-init job moves it into the secret store.
   key=${ANTHROPIC_API_KEY:-}
-  if [ -z "$key" ] && [ -n "${TEXERA_ENV_FILE:-}" ] && [ -f "$TEXERA_ENV_FILE" ]; then
-    key=$(grep -E '^ANTHROPIC_API_KEY=' "$TEXERA_ENV_FILE" | head -1 | cut -d= -f2-)
-  fi
+  if [ -z "$key" ]; then key=$(env_file_value ANTHROPIC_API_KEY); fi
   if [ -n "$key" ]; then
     (umask 077 && printf 'ANTHROPIC_API_KEY=%s\n' "$key" >"$tmp/llm.env")
     k create secret generic texera2-llm --from-env-file="$tmp/llm.env" --dry-run=client -o yaml | k apply -f - >/dev/null
@@ -84,14 +127,14 @@ configure() {
 }
 
 wait_ready() {
-  k wait --for=condition=complete job/rustfs-buckets job/lakekeeper-warehouse --timeout=900s >/dev/null
+  k wait --for=condition=complete job/rustfs-buckets job/lakekeeper-warehouse job/openbao-init --timeout=900s >/dev/null
   for app in postgres rustfs; do k rollout status "statefulset/$app" --timeout=900s >/dev/null; done
-  for app in keycloak openfga lakekeeper "${APPS[@]}"; do
+  for app in keycloak openfga openbao lakekeeper "${APPS[@]}"; do
     k rollout status "deploy/$app" --timeout=900s >/dev/null
     echo "$app: ready"
   done
   for _ in $(seq 1 120); do
-    curl -sf -o /dev/null "$PUBLIC/auth/realms/texera" && curl -sf -o /dev/null "$PUBLIC/" && return 0
+    curl -sf -o /dev/null "$PUBLIC/auth/realms/texera" && curl -sf -o /dev/null "$PUBLIC/catalog/v1/settings/public" && return 0
     sleep 2
   done
   echo "the gateway does not answer on $PUBLIC" >&2
@@ -100,15 +143,29 @@ wait_ready() {
 
 case "${1:-}" in
   up)
+    cluster
     [ "${2:-}" = "--no-build" ] || build
+    load
     configure
+    kubectl --context "$CONTEXT" apply -k "$ROOT/deploy/kubernetes" >/dev/null
+    # Jobs are immutable: a rerun recreates them so the key and the mounts are refreshed.
+    for job in openbao-init; do k delete job "$job" --ignore-not-found >/dev/null; done
     kubectl --context "$CONTEXT" apply -k "$ROOT/deploy/kubernetes" >/dev/null
     # Same tags, new images or config: restart what already runs so it picks them up.
     for app in "${APPS[@]}"; do k rollout restart "deploy/$app" >/dev/null 2>&1 || true; done
     wait_ready
     echo "== up: $PUBLIC (alice/alice, bob/bob)"
     ;;
+  # The end-to-end checks against the cluster's gateway: the catalog, a run on the static
+  # unit, and a unit created as a resource and run on.
+  check)
+    export GW=$PUBLIC
+    "$HERE/smoke-catalog.sh" >/dev/null && echo "catalog: pass"
+    "$HERE/smoke-run.sh" >/dev/null && echo "run on the static unit: pass"
+    python3 "$HERE/smoke-k8s-unit.py"
+    ;;
   status) k get pods,svc,jobs ;;
-  down) kubectl --context "$CONTEXT" delete namespace "$NS" ;;
-  *) echo "usage: $0 up [--no-build] | status | down" >&2; exit 2 ;;
+  down) kubectl --context "$CONTEXT" delete namespace "$NS" --ignore-not-found ;;
+  destroy) need kind; kind delete cluster --name "$CLUSTER" ;;
+  *) echo "usage: $0 up [--no-build] | check | status | down | destroy" >&2; exit 2 ;;
 esac

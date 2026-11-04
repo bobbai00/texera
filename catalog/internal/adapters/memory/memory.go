@@ -190,14 +190,14 @@ func (a *Authorizer) has(subject, relation, object string, depth int) bool {
 // Units is a ports.UnitProvider that answers with the spec's endpoint.
 type Units struct{}
 
-func (Units) Endpoint(_ context.Context, spec api.ComputingUnitSpec) (string, error) {
+func (Units) Endpoint(_ context.Context, _ string, spec api.ComputingUnitSpec) (string, error) {
 	if spec.Endpoint == nil {
 		return "", nil
 	}
 	return *spec.Endpoint, nil
 }
 
-func (Units) Terminate(context.Context, api.ComputingUnitSpec) error { return nil }
+func (Units) Terminate(context.Context, string, api.ComputingUnitSpec) error { return nil }
 
 // Lineage is a ports.LineageSink that keeps the events.
 type Lineage struct {

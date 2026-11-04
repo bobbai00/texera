@@ -69,7 +69,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	if unitName == "" {
 		return nil, Conflict("no_unit", "no computing unit: name one in the request, the workflow, the project or the settings", nil)
 	}
-	unit, err := s.resourceByURI(ctx, caller, unitName, &unitKind)
+	unit, err := s.unitByURI(ctx, unitName)
 	if err != nil {
 		return nil, err
 	}
@@ -399,10 +399,11 @@ func (s *Service) Cancel(ctx context.Context, caller *auth.Caller, workflowRID, 
 }
 
 // executionUnit returns the client of the unit an execution runs on.
-func (s *Service) executionUnit(ctx context.Context, caller *auth.Caller, exec *store.Resource) (*engine.Unit, error) {
+func (s *Service) executionUnit(ctx context.Context, _ *auth.Caller, exec *store.Resource) (*engine.Unit, error) {
+	// The caller was allowed to read the execution; the unit is the catalog's to reach.
 	var spec api.ExecutionSpec
 	_ = json.Unmarshal(exec.Spec, &spec)
-	unit, err := s.resourceByURI(ctx, caller, string(spec.ComputingUnit), &unitKind)
+	unit, err := s.unitByURI(ctx, string(spec.ComputingUnit))
 	if err != nil {
 		return nil, err
 	}
@@ -631,6 +632,28 @@ func cellString(c any) string {
 }
 
 // resourceByURI resolves a resource URI of an expected kind the caller may read.
+// unitByURI loads a computing unit without the read check: running on a unit, compiling or
+// building on it needs can_run_on, which a `user` grant gives without reading the unit's spec.
+// Every caller requires that permission itself.
+func (s *Service) unitByURI(ctx context.Context, name string) (*store.Resource, error) {
+	ref, err := uri.Parse(name)
+	if err != nil {
+		return nil, Invalid(err.Error(), nil)
+	}
+	if ref.Kind.Name != unitKind.Name {
+		return nil, Invalid(fmt.Sprintf("%s is not a computing unit", name), nil)
+	}
+	rid, err := uuid.Parse(ref.Rid)
+	if err != nil {
+		return nil, Invalid(err.Error(), nil)
+	}
+	unit, err := s.Store.GetResource(ctx, rid)
+	if err != nil {
+		return nil, NotFound("computing unit " + rid.String())
+	}
+	return unit, nil
+}
+
 func (s *Service) resourceByURI(ctx context.Context, caller *auth.Caller, name string, kind *kinds.Kind) (*store.Resource, error) {
 	ref, err := uri.Parse(name)
 	if err != nil {

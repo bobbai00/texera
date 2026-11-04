@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/apache/texera/catalog/internal/api"
 	"github.com/apache/texera/catalog/internal/auth"
 	"github.com/apache/texera/catalog/internal/kinds"
 	"github.com/apache/texera/catalog/internal/ports"
@@ -61,6 +62,14 @@ func (s *Service) beforeDelete(ctx context.Context, r *store.Resource) error {
 		path := secretPath(r)
 		if err := s.Secrets.Delete(ctx, path); err != nil && !errors.Is(err, ports.ErrSecretNotFound) {
 			return err
+		}
+	case "computing-unit":
+		// Deleting the resource releases what the provider holds for it.
+		var spec api.ComputingUnitSpec
+		if err := json.Unmarshal(r.Spec, &spec); err == nil {
+			if err := s.Units.Terminate(ctx, r.RID.String(), spec); err != nil {
+				return Unavailable("unit provider", err)
+			}
 		}
 	}
 	return nil

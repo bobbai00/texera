@@ -37,7 +37,7 @@ func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID
 	if unitName == "" {
 		return nil, Conflict("no_unit", "no computing unit to compile on", nil)
 	}
-	unit, err := s.resourceByURI(ctx, caller, unitName, &unitKind)
+	unit, err := s.unitByURI(ctx, unitName)
 	if err != nil {
 		return nil, err
 	}

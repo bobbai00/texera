@@ -31,6 +31,7 @@ COPY api/package.json api/
 COPY packages/ packages/
 COPY agent-runtime/package.json agent-runtime/
 COPY frontend-next/package.json frontend-next/
+COPY bio-mcp-service/package.json bio-mcp-service/
 RUN bun install --frozen-lockfile
 COPY agent-runtime/ agent-runtime/
 COPY LICENSE NOTICE DISCLAIMER ./

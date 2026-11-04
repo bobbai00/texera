@@ -6,8 +6,9 @@ Nov 4, 2026 · JB
 
 Milestone M1, "the catalog contract, minimal and complete" (`docs/texera-2-0/PLAN.md`), is
 closed on branch `texera-2-0` of the fork [bobbai00/texera](https://github.com/bobbai00/texera/tree/texera-2-0),
-worktree `~/Desktop/texera-2-0` on this Linux box. Every piece runs as a local process over a
-Compose stack; Kubernetes is deployment only and not set up here. All eleven acceptance items
+worktree `~/Desktop/texera-2-0` on this Linux box. For development every piece runs as a local
+process over a Compose stack; the same stack also deploys to a local Kubernetes cluster in one
+command, where computing units are created as resources. All eleven acceptance items
 of the plan are demonstrated by automated checks, and the close gate (`down.sh --wipe && up.sh
 && test.sh`) is green.
 
@@ -20,6 +21,7 @@ of the plan are demonstrated by automated checks, and the close gate (`down.sh -
 | Bio MCP server | :23010 | `/bio-mcp`, its key a seeded credential |
 | Frontend (vite) | :5174 | served through the gateway at `/` |
 | Keycloak, OpenFGA, OpenBao, Postgres, RustFS, Lakekeeper | Compose project `texera2` | see `bin/texera-2-0/README.md` for ports |
+| The same stack on Kubernetes | kind cluster `texera2`, namespace `texera2` | `bin/texera-2-0/k8s.sh up`, then http://localhost:28088; `k8s.sh check` proves a unit made as a resource |
 
 ## What is done
 
@@ -57,9 +59,10 @@ Google Chrome here (`TEXERA_E2E_BROWSER_CHANNEL=chrome`, set by the scripts).
 ## Next steps
 
 The out-of-M1 table in `PLAN.md` lists what comes next with the interface each item builds on.
-The nearest gaps: sharing with a person who has not logged in yet (a user search on the
-Identity port), a typed output-columns field on custom operators, canvas positions that
-persist, quotas and metering, the Kubernetes unit provider.
+Done since the close: viewing never implies using, sharing with people who have not logged
+in, typed operator output columns, kept canvas positions, credentials in operator properties,
+images and the one-command Kubernetes deployment, the Kubernetes unit provider. Nearest gaps:
+Lakekeeper on OpenFGA, retention, quotas and metering, groups beyond admins.
 
 ## Gotchas
 

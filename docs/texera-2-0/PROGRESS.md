@@ -159,7 +159,27 @@ Decisions taken in S8 and S9:
   the leased secret, the version keeps the URI, a project viewer is refused until granted
   `user` on the credential).
 
-Next: the out-of-M1 table of PLAN.md in the order the user picks.
+- Kubernetes, in one command (the user's pick, with the unit provider next). `k8s.sh up`
+  creates a kind cluster when missing (Kubernetes 1.33, since this host is on cgroup v1 and
+  newer kubelets refuse it; inotify limits raised), builds the five images (catalog, agent
+  runtime, frontend, bio MCP server, computing unit), loads them, renders the config maps from
+  the dev stack's own files, puts the model key in a Secret that the `openbao-init` job moves
+  into OpenBao, applies the kustomize manifests (now with OpenBao, the bio server, RBAC) and
+  waits; `k8s.sh check` runs the smokes against the cluster. The gateway is a node port kind
+  maps to localhost:28088. Playwright passes against the cluster.
+- The Kubernetes unit provider. The UnitProvider port now names the unit (`Endpoint(rid,
+  spec)` reconciles, `Terminate(rid, spec)` releases); the `kube` adapter makes a unit of
+  `provider: kubernetes` a Deployment and a Service in the catalog's namespace, named after
+  the rid, with the spec's image and the master node's memory and cpu, under a service account
+  that may touch nothing else (`rbac.yaml`); `unitmux` offers static and Kubernetes units side
+  by side; deleting the resource terminates it. A `user` grant on a unit now lets a person
+  compile, build and run on it without reading its spec, as the model always said (the run,
+  validate and build paths loaded the unit through the read-checked lookup). Checks: the
+  adapter against the fake clientset, a server test for a user-only grant, and
+  `smoke-k8s-unit.py` on the cluster: ready in 10 s, a run completes, Bob refused then allowed,
+  terminate removes the workloads, delete succeeds.
+
+Next: Lakekeeper on OpenFGA and retention, as agreed; then quotas and groups.
 
 ## 2026-11-03 (session 5, on Linux)
 

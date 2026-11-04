@@ -23,9 +23,11 @@ kind: Kustomization
 namespace: texera2
 resources:
   - namespace.yaml
+  - rbac.yaml
   - postgres.yaml
   - keycloak.yaml
   - openfga.yaml
+  - openbao.yaml
   - storage.yaml
   - texera.yaml
 labels:

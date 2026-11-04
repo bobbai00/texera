@@ -58,10 +58,16 @@ type Config struct {
 	// Seeds of the dev stack.
 	StaticUnitEndpoint string
 	StaticUnitName     string
-	BioMcpURL          string
-	BioMcpKey          string
-	ModelName          string
-	ModelSecretPath    string
+
+	// Kubernetes units: set the namespace to let the catalog create units as Deployments there
+	// (in-cluster, or through the kubeconfig KUBECONFIG names); empty means static units only.
+	KubeNamespace   string
+	KubeUnitImage   string
+	KubeUnitMemory  string
+	BioMcpURL       string
+	BioMcpKey       string
+	ModelName       string
+	ModelSecretPath string
 
 	PresignTTL       time.Duration
 	LeaseTTL         time.Duration
@@ -102,6 +108,9 @@ func FromEnv() (Config, error) {
 		LineageCallbackURL:  env("TEXERA_LINEAGE_CALLBACK_URL", "http://localhost:8090/lineage/v1/events"),
 		StaticUnitEndpoint:  env("TEXERA_STATIC_UNIT_ENDPOINT", "http://localhost:28085"),
 		StaticUnitName:      env("TEXERA_STATIC_UNIT_NAME", "local unit"),
+		KubeNamespace:       env("TEXERA_KUBE_NAMESPACE", ""),
+		KubeUnitImage:       env("TEXERA_KUBE_UNIT_IMAGE", "texera/computing-unit-master:2.0-dev"),
+		KubeUnitMemory:      env("TEXERA_KUBE_UNIT_MEMORY", "2Gi"),
 		BioMcpURL:           env("TEXERA_BIOMCP_URL", public+"/bio-mcp"),
 		BioMcpKey:           env("TEXERA_BIOMCP_KEY", "texera-bio-dev-key"),
 		ModelName:           env("TEXERA_MODEL_NAME", "claude-haiku-5-5"),
