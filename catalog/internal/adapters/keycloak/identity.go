@@ -1,0 +1,159 @@
+// Package keycloak is the Identity adapter: OIDC token verification against the provider's
+// keys, and client-credentials tokens for the catalog itself. Nothing here is specific to
+// Keycloak beyond the realm-roles claim.
+package keycloak
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+
+	"github.com/apache/texera/catalog/internal/ports"
+)
+
+// Options configure the adapter.
+type Options struct {
+	// Issuer is the issuer claim tokens carry.
+	Issuer string
+	// DiscoveryURL is where OIDC discovery runs when the issuer URL is not reachable from the
+	// catalog; empty means the issuer.
+	DiscoveryURL string
+	// JWKSURL and TokenURL, when set, are used instead of what discovery returns.
+	JWKSURL  string
+	TokenURL string
+	// Audience is the audience tokens must carry.
+	Audience string
+	// ServiceClientID and ServiceClientSecret are the catalog's own client.
+	ServiceClientID     string
+	ServiceClientSecret string
+}
+
+// Identity implements ports.Identity.
+type Identity struct {
+	opts     Options
+	verifier *oidc.IDTokenVerifier
+	tokenURL string
+
+	mu     sync.Mutex
+	token  string
+	expiry time.Time
+}
+
+type claims struct {
+	Subject           string `json:"sub"`
+	Email             string `json:"email"`
+	PreferredUsername string `json:"preferred_username"`
+	Name              string `json:"name"`
+	AuthorizedParty   string `json:"azp"`
+	ClientID          string `json:"client_id"`
+	RealmAccess       struct {
+		Roles []string `json:"roles"`
+	} `json:"realm_access"`
+}
+
+// New discovers the provider (retrying while the dev stack starts) and returns the adapter.
+func New(ctx context.Context, opts Options) (*Identity, error) {
+	id := &Identity{opts: opts, tokenURL: opts.TokenURL}
+	discovery := opts.DiscoveryURL
+	if discovery == "" {
+		discovery = opts.Issuer
+	}
+	if opts.JWKSURL != "" {
+		id.verifier = oidc.NewVerifier(opts.Issuer, oidc.NewRemoteKeySet(ctx, opts.JWKSURL), &oidc.Config{ClientID: opts.Audience})
+	}
+	if id.verifier == nil || id.tokenURL == "" {
+		var provider *oidc.Provider
+		var err error
+		deadline := time.Now().Add(2 * time.Minute)
+		for {
+			provider, err = oidc.NewProvider(oidc.InsecureIssuerURLContext(ctx, opts.Issuer), discovery)
+			if err == nil || time.Now().After(deadline) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("oidc discovery at %s: %w", discovery, err)
+		}
+		if id.verifier == nil {
+			id.verifier = provider.Verifier(&oidc.Config{ClientID: opts.Audience})
+		}
+		if id.tokenURL == "" {
+			id.tokenURL = provider.Endpoint().TokenURL
+		}
+	}
+	return id, nil
+}
+
+// Verify checks signature, issuer, audience and expiry.
+func (id *Identity) Verify(ctx context.Context, raw string) (ports.Claims, error) {
+	tok, err := id.verifier.Verify(ctx, raw)
+	if err != nil {
+		return ports.Claims{}, fmt.Errorf("%w: %v", ports.ErrUnauthenticated, err)
+	}
+	var c claims
+	if err := tok.Claims(&c); err != nil {
+		return ports.Claims{}, fmt.Errorf("%w: claims: %v", ports.ErrUnauthenticated, err)
+	}
+	subject := c.Subject
+	if subject == "" {
+		subject = tok.Subject
+	}
+	client := c.AuthorizedParty
+	if client == "" {
+		client = c.ClientID
+	}
+	return ports.Claims{
+		Subject:  subject,
+		Name:     c.Name,
+		Username: c.PreferredUsername,
+		Email:    c.Email,
+		ClientID: client,
+		Roles:    c.RealmAccess.Roles,
+		Service:  id.opts.ServiceClientID != "" && client == id.opts.ServiceClientID,
+	}, nil
+}
+
+// ServiceToken returns a cached client-credentials token, refreshed a minute before expiry.
+func (id *Identity) ServiceToken(ctx context.Context) (string, error) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	if id.token != "" && time.Until(id.expiry) > time.Minute {
+		return id.token, nil
+	}
+	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {id.opts.ServiceClientID}, "client_secret": {id.opts.ServiceClientSecret}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, id.tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("service token: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("service token: status %d", resp.StatusCode)
+	}
+	var body struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	id.token = body.AccessToken
+	id.expiry = time.Now().Add(time.Duration(body.ExpiresIn) * time.Second)
+	return id.token, nil
+}
