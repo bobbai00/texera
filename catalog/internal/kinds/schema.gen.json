@@ -1,0 +1,4618 @@
+{
+  "$defs": {
+    "AgentCard": {
+      "description": "The agent's card, as A2A presents it and as handoff candidates are described.",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "type": "object"
+    },
+    "AgentTemplate": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/AgentTemplateSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentTemplateStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "agent-template",
+        "parent": "project",
+        "plural": "agent-templates",
+        "versioned": true
+      }
+    },
+    "AgentTemplatePage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/AgentTemplate"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "AgentTemplateSpec": {
+      "properties": {
+        "card": {
+          "$ref": "#/$defs/AgentCard"
+        },
+        "catalogTools": {
+          "description": "Mount the catalog MCP server; default true.",
+          "type": "boolean"
+        },
+        "handoffs": {
+          "description": "Templates this agent may hand the conversation to.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        },
+        "loop": {
+          "$ref": "#/$defs/LoopSpec"
+        },
+        "mcpServers": {
+          "description": "MCP servers the agent mounts, besides the catalog server every template mounts unless `catalogTools` is false.",
+          "items": {
+            "$ref": "#/$defs/McpBinding"
+          },
+          "type": "array"
+        },
+        "model": {
+          "$ref": "#/$defs/Uri",
+          "description": "The model endpoint resource URI."
+        },
+        "prompt": {
+          "description": "The system prompt, Markdown.",
+          "type": "string"
+        },
+        "skills": {
+          "description": "Skill resource URIs, loaded on demand.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "card",
+        "model",
+        "prompt"
+      ],
+      "type": "object"
+    },
+    "AgentTemplateStatus": {
+      "type": "object"
+    },
+    "AgentTemplateVersion": {
+      "description": "A version with typed content, served by the kind routes.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/AgentTemplateSpec"
+        },
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "kind",
+        "vno",
+        "contentKind",
+        "digest",
+        "content",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "AgentTemplateVersionPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/VersionSummary"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "AppendMessage": {
+      "properties": {
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/MessagePart"
+          },
+          "type": "array"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant",
+            "system",
+            "tool"
+          ],
+          "type": "string"
+        },
+        "template": {
+          "$ref": "#/$defs/Uri"
+        },
+        "turn": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "parts"
+      ],
+      "type": "object"
+    },
+    "Attribute": {
+      "properties": {
+        "attributeName": {
+          "type": "string"
+        },
+        "attributeType": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attributeName",
+        "attributeType"
+      ],
+      "type": "object"
+    },
+    "AuthSettings": {
+      "properties": {
+        "clientId": {
+          "type": "string"
+        },
+        "issuer": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issuer",
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "AuthzAction": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "AuthzRequest": {
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/AuthzAction"
+        },
+        "context": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "resource": {
+          "$ref": "#/$defs/AuthzResource"
+        },
+        "subject": {
+          "$ref": "#/$defs/AuthzSubject"
+        }
+      },
+      "required": [
+        "subject",
+        "action",
+        "resource"
+      ],
+      "type": "object"
+    },
+    "AuthzResource": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "properties": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "type": "object"
+    },
+    "AuthzResponse": {
+      "properties": {
+        "context": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "decision": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "decision"
+      ],
+      "type": "object"
+    },
+    "AuthzSubject": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "properties": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "type": "object"
+    },
+    "Branding": {
+      "properties": {
+        "logoUrl": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "BuildEnvironment": {
+      "properties": {
+        "computingUnit": {
+          "$ref": "#/$defs/Uri",
+          "description": "The unit to build on; defaults to the run resolution order."
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno",
+          "description": "The version to build; defaults to the head version."
+        }
+      },
+      "type": "object"
+    },
+    "CommitFiles": {
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CompileResult": {
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "operatorErrors": {
+          "additionalProperties": {},
+          "description": "Errors per operator id.",
+          "type": "object"
+        },
+        "operatorOutputSchemas": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Attribute"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object"
+          },
+          "description": "Output schemas per operator id and output port id.",
+          "type": "object"
+        },
+        "physicalPlan": {}
+      },
+      "required": [
+        "ok",
+        "operatorOutputSchemas",
+        "operatorErrors"
+      ],
+      "type": "object"
+    },
+    "ComputingNodeSpec": {
+      "properties": {
+        "cpu": {
+          "type": "string"
+        },
+        "gpu": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "memory": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "master",
+            "worker",
+            "sandbox"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "role"
+      ],
+      "type": "object"
+    },
+    "ComputingNodeStatus": {
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "role": {
+          "enum": [
+            "master",
+            "worker",
+            "sandbox"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "role",
+        "ready"
+      ],
+      "type": "object"
+    },
+    "ComputingUnit": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/ComputingUnitSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/ComputingUnitStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "computing-unit",
+        "parent": "project",
+        "plural": "computing-units",
+        "versioned": false
+      }
+    },
+    "ComputingUnitPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ComputingUnit"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ComputingUnitSpec": {
+      "properties": {
+        "computingNodes": {
+          "items": {
+            "$ref": "#/$defs/ComputingNodeSpec"
+          },
+          "type": "array"
+        },
+        "endpoint": {
+          "description": "For `static`: the unit's base URL as the catalog reaches it.",
+          "type": "string"
+        },
+        "engine": {
+          "$ref": "#/$defs/EngineSpec"
+        },
+        "provider": {
+          "$ref": "#/$defs/UnitProvider"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "ComputingUnitStatus": {
+      "properties": {
+        "computingNodes": {
+          "items": {
+            "$ref": "#/$defs/ComputingNodeStatus"
+          },
+          "type": "array"
+        },
+        "engine": {
+          "$ref": "#/$defs/EngineStatus"
+        },
+        "environments": {
+          "description": "Environment versions built on this unit.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        },
+        "gatewayPath": {
+          "description": "The path the gateway proxies the unit's WebSocket and HTTP API at.",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "phase": {
+          "enum": [
+            "pending",
+            "ready",
+            "failed",
+            "terminated"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "type": "object"
+    },
+    "ContentKind": {
+      "description": "What a version holds: a snapshot of the spec, a file manifest over blobs, or an Iceberg table reference.",
+      "enum": [
+        "spec",
+        "manifest",
+        "table"
+      ],
+      "type": "string"
+    },
+    "Conversation": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/ConversationSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "conversation",
+        "parent": "project",
+        "plural": "conversations",
+        "versioned": false
+      }
+    },
+    "ConversationPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Conversation"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ConversationSpec": {
+      "properties": {
+        "computingUnit": {
+          "$ref": "#/$defs/Uri",
+          "description": "The computing unit runs in this chat use; defaults to the project's."
+        },
+        "environment": {
+          "$ref": "#/$defs/Uri"
+        },
+        "template": {
+          "$ref": "#/$defs/Uri",
+          "description": "The agent template the next turn runs; set at the start, by the person, or by a handoff."
+        }
+      },
+      "required": [
+        "template"
+      ],
+      "type": "object"
+    },
+    "ConversationStatus": {
+      "properties": {
+        "activeTurn": {
+          "description": "The turn in progress, when one is.",
+          "type": "string"
+        },
+        "lastMessageAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "messages": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "templates": {
+          "description": "Every template version that has written in this conversation.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "messages"
+      ],
+      "type": "object"
+    },
+    "CreateAgentTemplate": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/AgentTemplateSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateComputingUnit": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/ComputingUnitSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateConversation": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/ConversationSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateCredential": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/CredentialSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateDataset": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/DatasetSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateEnvironment": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/EnvironmentSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateMcpServer": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/McpServerSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateModel": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/ModelSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateModelEndpoint": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/ModelEndpointSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateOperator": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/OperatorSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateProject": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/ProjectSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateSkill": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/SkillSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateWorkflow": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/WorkflowSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "Credential": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/CredentialSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/CredentialStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "credential",
+        "parent": "project",
+        "plural": "credentials",
+        "versioned": false
+      }
+    },
+    "CredentialKind": {
+      "enum": [
+        "api_key",
+        "bearer_token",
+        "basic",
+        "oauth_client",
+        "cloud_role",
+        "kubeconfig"
+      ],
+      "type": "string"
+    },
+    "CredentialPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Credential"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "CredentialSpec": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/CredentialKind"
+        },
+        "scope": {
+          "description": "What the credential is for, free text, e.g. the provider or host.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "CredentialStatus": {
+      "properties": {
+        "hasSecret": {
+          "type": "boolean"
+        },
+        "rotatedAt": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "hasSecret"
+      ],
+      "type": "object"
+    },
+    "Dataset": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/DatasetSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/DatasetStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "manifest",
+        "kind": "dataset",
+        "parent": "project",
+        "plural": "datasets",
+        "versioned": true
+      }
+    },
+    "DatasetFile": {
+      "properties": {
+        "contentType": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Digest"
+        },
+        "size": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "size",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "DatasetPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Dataset"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "DatasetSpec": {
+      "properties": {
+        "format": {
+          "description": "A content hint for the files, free-form, e.g. csv or parquet.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "DatasetStatus": {
+      "properties": {
+        "bytes": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "files": {
+          "description": "Files and bytes of the head version.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "staged": {
+          "description": "Files staged for the next version, not yet committed.",
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "DatasetVersion": {
+      "description": "A version with typed content, served by the kind routes.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/Manifest"
+        },
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "kind",
+        "vno",
+        "contentKind",
+        "digest",
+        "content",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "DatasetVersionPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/VersionSummary"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "Defaults": {
+      "properties": {
+        "agentTemplate": {
+          "$ref": "#/$defs/Uri",
+          "description": "The template a new chat starts with when the project names none."
+        },
+        "computingUnit": {
+          "$ref": "#/$defs/Uri"
+        },
+        "environment": {
+          "$ref": "#/$defs/Uri"
+        },
+        "modelEndpoint": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "type": "object"
+    },
+    "Digest": {
+      "description": "A SHA-256 digest, `sha256:` followed by 64 hex characters.",
+      "type": "string"
+    },
+    "Edge": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "attrs": {
+          "additionalProperties": {},
+          "description": "For `produced`: table, snapshot, rows, bytes, hash; for `used`: the port.",
+          "type": "object"
+        },
+        "execution": {
+          "$ref": "#/$defs/Rid",
+          "description": "For runtime relations: the execution that caused the arrow."
+        },
+        "field": {
+          "description": "For `references`: the JSON pointer into the spec that held the URI.",
+          "type": "string"
+        },
+        "from": {
+          "$ref": "#/$defs/Uri"
+        },
+        "relation": {
+          "$ref": "#/$defs/EdgeRelation"
+        },
+        "to": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "from",
+        "relation",
+        "to",
+        "at"
+      ],
+      "type": "object"
+    },
+    "EdgeRelation": {
+      "description": "The relations. `references`: a version's spec names the target. `used`: an execution read the target at a port. `produced`: an execution's port produced the target result. `derivedFrom`: a version was saved from a port result. `reused`: a port reused an earlier port's result.",
+      "enum": [
+        "references",
+        "used",
+        "produced",
+        "derivedFrom",
+        "reused"
+      ],
+      "type": "string"
+    },
+    "EditWorkflow": {
+      "description": "An edit of a workflow: a JSON Patch over the head spec, or a full new spec.",
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "What changed, recorded on the new version.",
+          "type": "string"
+        },
+        "patch": {
+          "items": {
+            "$ref": "#/$defs/JsonPatchOperation"
+          },
+          "type": "array"
+        },
+        "spec": {
+          "$ref": "#/$defs/WorkflowSpec"
+        }
+      },
+      "type": "object"
+    },
+    "EngineSpec": {
+      "properties": {
+        "image": {
+          "description": "The engine image, by tag or digest; absent means the deployment default.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "EngineStatus": {
+      "properties": {
+        "digest": {
+          "description": "The digest of the engine image that is running; operator versions are keyed by it.",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Environment": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/EnvironmentSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/EnvironmentStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "environment",
+        "parent": "project",
+        "plural": "environments",
+        "versioned": true
+      }
+    },
+    "EnvironmentBuild": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "computingUnit": {
+          "$ref": "#/$defs/Uri"
+        },
+        "message": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "building",
+            "ready",
+            "failed"
+          ],
+          "type": "string"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "computingUnit",
+        "vno",
+        "state",
+        "at"
+      ],
+      "type": "object"
+    },
+    "EnvironmentPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Environment"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "EnvironmentSpec": {
+      "properties": {
+        "baseImage": {
+          "description": "Base image for units that build images; absent means the deployment default.",
+          "type": "string"
+        },
+        "python": {
+          "$ref": "#/$defs/PythonEnvironment"
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentStatus": {
+      "properties": {
+        "builds": {
+          "description": "Builds of this environment's versions on units.",
+          "items": {
+            "$ref": "#/$defs/EnvironmentBuild"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentVersion": {
+      "description": "A version with typed content, served by the kind routes.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/EnvironmentSpec"
+        },
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "kind",
+        "vno",
+        "contentKind",
+        "digest",
+        "content",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "EnvironmentVersionPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/VersionSummary"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "Error": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "Execution": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/ExecutionSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/ExecutionStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "index": [
+          "/status/phase",
+          "/spec/computingUnit"
+        ],
+        "kind": "execution",
+        "nested": true,
+        "parent": "workflow",
+        "plural": "executions",
+        "versioned": false
+      }
+    },
+    "ExecutionPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Execution"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ExecutionPhase": {
+      "enum": [
+        "pending",
+        "provisioning",
+        "running",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "type": "string"
+    },
+    "ExecutionPort": {
+      "description": "A port of an execution: an output port with its result, or an input port with its binding.",
+      "properties": {
+        "boundTo": {
+          "$ref": "#/$defs/Uri",
+          "description": "For an input port: the dataset file URI or the upstream port URI it read."
+        },
+        "direction": {
+          "enum": [
+            "input",
+            "output"
+          ],
+          "type": "string"
+        },
+        "operatorID": {
+          "type": "string"
+        },
+        "portID": {
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/PortSummary",
+          "description": "For an output port: its result."
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri",
+        "operatorID",
+        "portID",
+        "direction"
+      ],
+      "type": "object"
+    },
+    "ExecutionSpec": {
+      "properties": {
+        "computingUnit": {
+          "$ref": "#/$defs/Uri"
+        },
+        "environment": {
+          "$ref": "#/$defs/Uri",
+          "description": "The environment version, with `@vno`."
+        },
+        "inputs": {
+          "description": "The dataset file versions the run reads, resolved at start.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        },
+        "parameters": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "workflow": {
+          "$ref": "#/$defs/Uri",
+          "description": "The workflow version, with `@vno`."
+        }
+      },
+      "required": [
+        "workflow",
+        "computingUnit"
+      ],
+      "type": "object"
+    },
+    "ExecutionStatus": {
+      "properties": {
+        "error": {},
+        "finishedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "operators": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OperatorRunStatus"
+          },
+          "type": "object"
+        },
+        "phase": {
+          "$ref": "#/$defs/ExecutionPhase"
+        },
+        "ports": {
+          "items": {
+            "$ref": "#/$defs/PortSummary"
+          },
+          "type": "array"
+        },
+        "startedAt": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "type": "object"
+    },
+    "FileLink": {
+      "properties": {
+        "expiresInSeconds": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "url": {
+          "description": "A presigned URL valid for `expiresInSeconds`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "expiresInSeconds"
+      ],
+      "type": "object"
+    },
+    "Grant": {
+      "properties": {
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/Pid"
+        },
+        "relation": {
+          "$ref": "#/$defs/Relation"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        }
+      },
+      "required": [
+        "rid",
+        "principal",
+        "relation",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "GrantRequest": {
+      "properties": {
+        "relation": {
+          "$ref": "#/$defs/Relation"
+        }
+      },
+      "required": [
+        "relation"
+      ],
+      "type": "object"
+    },
+    "JsonPatchOperation": {
+      "description": "One RFC 6902 JSON Patch operation.",
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "add",
+            "remove",
+            "replace",
+            "move",
+            "copy",
+            "test"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "description": "A JSON Pointer into the spec, e.g. /operators/- to append an operator or /operators/1/operatorProperties/limit.",
+          "type": "string"
+        },
+        "value": {}
+      },
+      "required": [
+        "op",
+        "path"
+      ],
+      "type": "object"
+    },
+    "Lease": {
+      "properties": {
+        "expiresAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "fields": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "lease": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lease",
+        "fields",
+        "expiresAt"
+      ],
+      "type": "object"
+    },
+    "LeaseRequest": {
+      "properties": {
+        "purpose": {
+          "$ref": "#/$defs/Uri",
+          "description": "What the lease is for: an execution or a conversation turn URI; recorded on the lease."
+        }
+      },
+      "required": [
+        "purpose"
+      ],
+      "type": "object"
+    },
+    "LineageDatasetRef": {
+      "properties": {
+        "facets": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "namespace",
+        "name"
+      ],
+      "type": "object"
+    },
+    "LineageDirection": {
+      "enum": [
+        "upstream",
+        "downstream",
+        "both"
+      ],
+      "type": "string"
+    },
+    "LineageEvent": {
+      "properties": {
+        "eventTime": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "eventType": {
+          "enum": [
+            "START",
+            "RUNNING",
+            "COMPLETE",
+            "FAIL",
+            "ABORT"
+          ],
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/LineageDatasetRef"
+          },
+          "type": "array"
+        },
+        "job": {
+          "$ref": "#/$defs/LineageJob"
+        },
+        "outputs": {
+          "items": {
+            "$ref": "#/$defs/LineageDatasetRef"
+          },
+          "type": "array"
+        },
+        "producer": {
+          "type": "string"
+        },
+        "run": {
+          "$ref": "#/$defs/LineageRun"
+        },
+        "schemaURL": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventType",
+        "eventTime",
+        "run",
+        "job",
+        "producer",
+        "schemaURL"
+      ],
+      "type": "object"
+    },
+    "LineageGraph": {
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/Edge"
+          },
+          "type": "array"
+        },
+        "root": {
+          "$ref": "#/$defs/Uri",
+          "description": "The URI the walk started from."
+        }
+      },
+      "required": [
+        "root",
+        "edges"
+      ],
+      "type": "object"
+    },
+    "LineageJob": {
+      "properties": {
+        "facets": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "namespace",
+        "name"
+      ],
+      "type": "object"
+    },
+    "LineageRun": {
+      "properties": {
+        "facets": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "runId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "runId"
+      ],
+      "type": "object"
+    },
+    "LoopSpec": {
+      "description": "How the runtime's loop runs the agent; the runtime's defaults apply to what is absent.",
+      "properties": {
+        "answer": {
+          "description": "When a reply without a tool call is the answer: `free`, always; `after_result`, only once a result-showing tool succeeded in the turn, else the reply is sent back with a correction.",
+          "enum": [
+            "free",
+            "after_result"
+          ],
+          "type": "string"
+        },
+        "maxSteps": {
+          "description": "Model steps per turn.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "resultTools": {
+          "description": "Tools whose successful result counts as a shown result.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "temperature": {
+          "description": "Sampling temperature.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "Manifest": {
+      "description": "The content of a dataset or model version: files over content-addressed blobs.",
+      "properties": {
+        "files": {
+          "items": {
+            "$ref": "#/$defs/DatasetFile"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "files"
+      ],
+      "type": "object"
+    },
+    "McpBinding": {
+      "properties": {
+        "allow": {
+          "description": "Tool names the agent may call; absent means every tool the server exposes.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "server": {
+          "$ref": "#/$defs/Uri",
+          "description": "An MCP server resource URI."
+        }
+      },
+      "required": [
+        "server"
+      ],
+      "type": "object"
+    },
+    "McpServer": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/McpServerSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/McpServerStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "mcp-server",
+        "parent": "project",
+        "plural": "mcp-servers",
+        "versioned": true
+      }
+    },
+    "McpServerPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/McpServer"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "McpServerSpec": {
+      "properties": {
+        "builtin": {
+          "description": "Set for a server the platform provides: catalog, dataflow or scholar. The runtime sends the person's token to a built-in server.",
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Headers sent on every request. A value `credential:\u003curi\u003e` is replaced by that credential's leased secret; a value `credential:\u003curi\u003e#\u003cfield\u003e` by one field of it.",
+          "type": "object"
+        },
+        "url": {
+          "description": "The server URL (streamable HTTP).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "McpServerStatus": {
+      "properties": {
+        "lastChecked": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "tools": {
+          "description": "Tool names discovered at the last check.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "McpServerVersion": {
+      "description": "A version with typed content, served by the kind routes.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/McpServerSpec"
+        },
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "kind",
+        "vno",
+        "contentKind",
+        "digest",
+        "content",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "McpServerVersionPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/VersionSummary"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "Me": {
+      "properties": {
+        "admin": {
+          "description": "Whether the caller is a platform administrator.",
+          "type": "boolean"
+        },
+        "homeProject": {
+          "$ref": "#/$defs/Rid",
+          "description": "The caller's personal project, created at first login."
+        },
+        "preferences": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "principal": {
+          "$ref": "#/$defs/Principal"
+        },
+        "systemProject": {
+          "$ref": "#/$defs/Rid",
+          "description": "The project that holds the platform's built-in resources."
+        }
+      },
+      "required": [
+        "principal",
+        "homeProject",
+        "systemProject",
+        "admin",
+        "preferences"
+      ],
+      "type": "object"
+    },
+    "Message": {
+      "properties": {
+        "author": {
+          "$ref": "#/$defs/Pid",
+          "description": "The person whose turn it was."
+        },
+        "conversation": {
+          "$ref": "#/$defs/Rid"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/MessagePart"
+          },
+          "type": "array"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant",
+            "system",
+            "tool"
+          ],
+          "type": "string"
+        },
+        "seq": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "template": {
+          "$ref": "#/$defs/Uri",
+          "description": "For an assistant message: the template version that wrote it."
+        },
+        "turn": {
+          "description": "The turn this message belongs to.",
+          "type": "string"
+        },
+        "updatedAt": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation",
+        "seq",
+        "role",
+        "author",
+        "parts",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "MessagePage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Message"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "MessagePart": {
+      "description": "One message part: text, reasoning, a tool call, a tool result, a resource reference, a file, or an error.",
+      "properties": {
+        "args": {},
+        "file": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "resource": {
+          "$ref": "#/$defs/Uri",
+          "description": "A resource URI, with `@vno` when a version is meant."
+        },
+        "result": {},
+        "text": {
+          "type": "string"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "text",
+            "reasoning",
+            "tool_call",
+            "tool_result",
+            "resource",
+            "file",
+            "error"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "Model": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/ModelSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/ModelStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "manifest",
+        "kind": "model",
+        "parent": "project",
+        "plural": "models",
+        "versioned": true
+      }
+    },
+    "ModelEndpoint": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/ModelEndpointSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/ModelEndpointStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "model-endpoint",
+        "parent": "project",
+        "plural": "model-endpoints",
+        "versioned": false
+      }
+    },
+    "ModelEndpointPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ModelEndpoint"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ModelEndpointSpec": {
+      "properties": {
+        "baseUrl": {
+          "description": "For openai_compatible: the base URL.",
+          "type": "string"
+        },
+        "capabilities": {
+          "description": "What the model can do, free-form, e.g. tools, vision.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "credential": {
+          "$ref": "#/$defs/Uri",
+          "description": "The credential whose secret is the provider key; absent for a provider that needs none."
+        },
+        "maxOutputTokens": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "model": {
+          "description": "The model name the provider knows, e.g. claude-haiku-5-5.",
+          "type": "string"
+        },
+        "provider": {
+          "$ref": "#/$defs/ModelProvider"
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ],
+      "type": "object"
+    },
+    "ModelEndpointStatus": {
+      "type": "object"
+    },
+    "ModelPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Model"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ModelProvider": {
+      "enum": [
+        "anthropic",
+        "openai_compatible"
+      ],
+      "type": "string"
+    },
+    "ModelSpec": {
+      "properties": {
+        "format": {
+          "description": "The serialization format, e.g. pickle, safetensors, onnx.",
+          "type": "string"
+        },
+        "framework": {
+          "description": "The framework, e.g. sklearn, pytorch, onnx.",
+          "type": "string"
+        },
+        "producedBy": {
+          "$ref": "#/$defs/Uri",
+          "description": "The execution port URI the head version was produced by."
+        },
+        "task": {
+          "description": "The task, e.g. classification.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ModelStatus": {
+      "properties": {
+        "bytes": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "files": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "staged": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ModelVersion": {
+      "description": "A version with typed content, served by the kind routes.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/Manifest"
+        },
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "kind",
+        "vno",
+        "contentKind",
+        "digest",
+        "content",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "ModelVersionPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/VersionSummary"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "Operator": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/OperatorSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/OperatorStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "operator",
+        "parent": "project",
+        "plural": "operators",
+        "versioned": true
+      }
+    },
+    "OperatorImplementation": {
+      "properties": {
+        "python": {
+          "$ref": "#/$defs/PythonOperator"
+        }
+      },
+      "type": "object"
+    },
+    "OperatorPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Operator"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "OperatorPortSpec": {
+      "properties": {
+        "allowMultiInputs": {
+          "type": "boolean"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "isDynamicPort": {
+          "type": "boolean"
+        },
+        "portID": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "portID"
+      ],
+      "type": "object"
+    },
+    "OperatorRunStatus": {
+      "properties": {
+        "computingNode": {
+          "description": "The computing node that ran it.",
+          "type": "string"
+        },
+        "error": {},
+        "state": {
+          "type": "string"
+        },
+        "tuples": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
+    "OperatorSpec": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "implementation": {
+          "$ref": "#/$defs/OperatorImplementation",
+          "description": "Absent for a built-in, whose code is in the engine image."
+        },
+        "inputPorts": {
+          "items": {
+            "$ref": "#/$defs/OperatorPortSpec"
+          },
+          "type": "array"
+        },
+        "operatorType": {
+          "description": "The type name a workflow uses, e.g. CSVFileScan; for a custom operator a name unique in its project.",
+          "type": "string"
+        },
+        "outputPorts": {
+          "items": {
+            "$ref": "#/$defs/OperatorPortSpec"
+          },
+          "type": "array"
+        },
+        "propertiesSchema": {
+          "description": "JSON Schema of the operator's properties."
+        },
+        "requires": {
+          "$ref": "#/$defs/RuntimeSpec"
+        }
+      },
+      "required": [
+        "operatorType"
+      ],
+      "type": "object"
+    },
+    "OperatorStatus": {
+      "properties": {
+        "builtin": {
+          "description": "True for an operator the engine image provides.",
+          "type": "boolean"
+        },
+        "engine": {
+          "description": "The engine image digest the head version was read from.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "OperatorType": {
+      "description": "An operator type from the registry, with its JSON Schema for properties.",
+      "properties": {
+        "inputPorts": {
+          "items": {},
+          "type": "array"
+        },
+        "jsonSchema": {
+          "description": "JSON Schema of the operator's properties."
+        },
+        "operatorDescription": {
+          "type": "string"
+        },
+        "operatorGroupName": {
+          "type": "string"
+        },
+        "operatorType": {
+          "type": "string"
+        },
+        "outputPorts": {
+          "items": {},
+          "type": "array"
+        },
+        "requires": {
+          "$ref": "#/$defs/RuntimeSpec",
+          "description": "Runtime Spec: language, resources, isolation."
+        },
+        "userFriendlyName": {
+          "type": "string"
+        },
+        "version": {
+          "description": "The engine image digest that defines this operator version.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operatorType",
+        "userFriendlyName",
+        "operatorGroupName",
+        "jsonSchema",
+        "inputPorts",
+        "outputPorts"
+      ],
+      "type": "object"
+    },
+    "OperatorTypeList": {
+      "properties": {
+        "groups": {
+          "items": {},
+          "type": "array"
+        },
+        "operators": {
+          "items": {
+            "$ref": "#/$defs/OperatorType"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "operators",
+        "groups"
+      ],
+      "type": "object"
+    },
+    "OperatorVersion": {
+      "description": "A version with typed content, served by the kind routes.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/OperatorSpec"
+        },
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "kind",
+        "vno",
+        "contentKind",
+        "digest",
+        "content",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "OperatorVersionPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/VersionSummary"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "Origin": {
+      "description": "Where a resource or version came from: the chat turn that produced it, and the agent template that ran the turn.",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/Rid"
+        },
+        "template": {
+          "$ref": "#/$defs/Uri",
+          "description": "The agent template version that ran the turn, as a URI with `@vno`."
+        },
+        "turn": {
+          "description": "The turn id, a UUID.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation",
+        "turn"
+      ],
+      "type": "object"
+    },
+    "Pid": {
+      "description": "Principal id, a UUID.",
+      "type": "string"
+    },
+    "PortSummary": {
+      "description": "An output port's result, as the unit reported it at completion.",
+      "properties": {
+        "bytes": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "operatorID": {
+          "type": "string"
+        },
+        "portID": {
+          "type": "string"
+        },
+        "rows": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "schema": {
+          "items": {
+            "$ref": "#/$defs/Attribute"
+          },
+          "type": "array"
+        },
+        "snapshot": {
+          "description": "The Iceberg snapshot id.",
+          "type": "string"
+        },
+        "table": {
+          "description": "The Iceberg table identifier.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operatorID",
+        "portID"
+      ],
+      "type": "object"
+    },
+    "Principal": {
+      "properties": {
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PrincipalKind"
+        },
+        "pid": {
+          "$ref": "#/$defs/Pid"
+        },
+        "subject": {
+          "description": "The OIDC subject of a user.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pid",
+        "kind",
+        "displayName",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "PrincipalKind": {
+      "enum": [
+        "user",
+        "group"
+      ],
+      "type": "string"
+    },
+    "PrincipalPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Principal"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "Project": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/ProjectSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/ProjectStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "project",
+        "plural": "projects",
+        "versioned": false
+      }
+    },
+    "ProjectPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Project"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ProjectSpec": {
+      "properties": {
+        "defaultAgentTemplate": {
+          "$ref": "#/$defs/Uri",
+          "description": "The agent template a new chat in this project starts with."
+        },
+        "defaultComputingUnit": {
+          "$ref": "#/$defs/Uri",
+          "description": "The computing unit a run in this project uses when the request and the workflow name none."
+        },
+        "defaultEnvironment": {
+          "$ref": "#/$defs/Uri",
+          "description": "The environment a run in this project uses when the workflow names none."
+        }
+      },
+      "type": "object"
+    },
+    "ProjectStatus": {
+      "properties": {
+        "resources": {
+          "description": "Live resources with this project as parent.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "PublicSettings": {
+      "description": "What the app needs before anyone has logged in.",
+      "properties": {
+        "auth": {
+          "$ref": "#/$defs/AuthSettings"
+        },
+        "branding": {
+          "$ref": "#/$defs/Branding"
+        }
+      },
+      "required": [
+        "branding",
+        "auth"
+      ],
+      "type": "object"
+    },
+    "PythonEnvironment": {
+      "properties": {
+        "packages": {
+          "description": "Package requirements, PEP 508 lines.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "version": {
+          "description": "Python version range, PEP 440, e.g. `\u003e=3.12,\u003c3.13`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "packages"
+      ],
+      "type": "object"
+    },
+    "PythonOperator": {
+      "properties": {
+        "code": {
+          "description": "The operator's Python source: a class with the engine's UDF interface.",
+          "type": "string"
+        },
+        "environment": {
+          "$ref": "#/$defs/Uri",
+          "description": "The environment its packages come from; absent means the run's environment."
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "Relation": {
+      "description": "The grantable relations. `user` is for computing units: may run on it, without reading its spec.",
+      "enum": [
+        "owner",
+        "editor",
+        "viewer",
+        "user"
+      ],
+      "type": "string"
+    },
+    "ReplaceMessage": {
+      "properties": {
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/MessagePart"
+          },
+          "type": "array"
+        },
+        "template": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "parts"
+      ],
+      "type": "object"
+    },
+    "Resolved": {
+      "description": "A URI resolved to what it names.",
+      "properties": {
+        "resource": {
+          "$ref": "#/$defs/Resource"
+        },
+        "subresource": {
+          "description": "The subresource path after the resource, when the URI carried one, e.g. `files/iris.csv`.",
+          "type": "string"
+        },
+        "version": {
+          "$ref": "#/$defs/Version",
+          "description": "Present when the URI carried `@vno`."
+        }
+      },
+      "required": [
+        "resource"
+      ],
+      "type": "object"
+    },
+    "Resource": {
+      "description": "The untyped envelope, served by the generic routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "status": {
+          "additionalProperties": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "ResourceKind": {
+      "description": "The kinds. The value is the singular kebab-case kind; the collection is its plural.",
+      "enum": [
+        "project",
+        "workflow",
+        "execution",
+        "dataset",
+        "model",
+        "environment",
+        "computing-unit",
+        "operator",
+        "agent-template",
+        "skill",
+        "mcp-server",
+        "conversation",
+        "credential",
+        "model-endpoint",
+        "settings"
+      ],
+      "type": "string"
+    },
+    "ResourceMetadata": {
+      "properties": {
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "description": {
+          "type": "string"
+        },
+        "etag": {
+          "description": "Changes on every write; send it back as If-Match to refuse lost updates.",
+          "type": "string"
+        },
+        "head": {
+          "$ref": "#/$defs/Vno",
+          "description": "The newest version number; 0 for an unversioned kind."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "owner": {
+          "$ref": "#/$defs/Pid"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The immediate parent: the project of a top-level resource, the workflow of an execution. Absent for a project."
+        },
+        "project": {
+          "$ref": "#/$defs/Rid",
+          "description": "The nearest project: the resource itself for a project."
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "updatedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "name",
+        "project",
+        "owner",
+        "visibility",
+        "head",
+        "etag",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
+    "ResourcePage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Resource"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "Rid": {
+      "description": "Resource id, a UUID.",
+      "type": "string"
+    },
+    "RowPage": {
+      "properties": {
+        "offset": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "rows": {
+          "description": "Rows as positional arrays in schema order.",
+          "items": {
+            "items": {},
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "description": "Column names and types of the result.",
+          "items": {
+            "$ref": "#/$defs/Attribute"
+          },
+          "type": "array"
+        },
+        "total": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema",
+        "rows",
+        "offset"
+      ],
+      "type": "object"
+    },
+    "RunWorkflow": {
+      "properties": {
+        "computingUnit": {
+          "$ref": "#/$defs/Uri",
+          "description": "Overrides the workflow's and the project's default unit."
+        },
+        "environment": {
+          "$ref": "#/$defs/Uri",
+          "description": "Overrides the workflow's and the project's default environment; `@vno` pins a version, else the head."
+        },
+        "name": {
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": {},
+          "description": "Per-run inputs; the version itself stays as authored.",
+          "type": "object"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno",
+          "description": "The workflow version to run; defaults to the head version."
+        },
+        "waitSeconds": {
+          "description": "Wait up to this many seconds for the run to finish before returning.",
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "RuntimeSpec": {
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/Rid"
+        },
+        "isolation": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "resources": {
+          "additionalProperties": {},
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "SavePort": {
+      "description": "Save an output port's result as a dataset version.",
+      "properties": {
+        "dataset": {
+          "$ref": "#/$defs/Rid",
+          "description": "The dataset that gets the new version; a new dataset is created when absent."
+        },
+        "message": {
+          "description": "What the version holds, recorded on it.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The new dataset's name, when `dataset` is absent.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The file inside the dataset version; defaults to `\u003coperatorID\u003e.csv`.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SetSecret": {
+      "description": "The secret's fields, e.g. {value} for an API key, {username, password} for basic.",
+      "properties": {
+        "fields": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "type": "object"
+    },
+    "Settings": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/SettingsSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/SettingsStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "settings",
+        "plural": "settings",
+        "singleton": true,
+        "versioned": false
+      }
+    },
+    "SettingsSpec": {
+      "properties": {
+        "branding": {
+          "$ref": "#/$defs/Branding"
+        },
+        "defaults": {
+          "$ref": "#/$defs/Defaults"
+        },
+        "features": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "branding",
+        "defaults"
+      ],
+      "type": "object"
+    },
+    "SettingsStatus": {
+      "type": "object"
+    },
+    "Skill": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/SkillSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/SkillStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "skill",
+        "parent": "project",
+        "plural": "skills",
+        "versioned": true
+      }
+    },
+    "SkillPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Skill"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "SkillSpec": {
+      "properties": {
+        "body": {
+          "description": "The skill's body, Markdown.",
+          "type": "string"
+        },
+        "description": {
+          "description": "When to load it; shown to the agent in its skill index.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The name the agent loads it by.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "body"
+      ],
+      "type": "object"
+    },
+    "SkillStatus": {
+      "type": "object"
+    },
+    "SkillVersion": {
+      "description": "A version with typed content, served by the kind routes.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/SkillSpec"
+        },
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "kind",
+        "vno",
+        "contentKind",
+        "digest",
+        "content",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "SkillVersionPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/VersionSummary"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "StartTurn": {
+      "properties": {
+        "template": {
+          "$ref": "#/$defs/Uri",
+          "description": "Overrides the conversation's template for this turn and the ones after."
+        }
+      },
+      "type": "object"
+    },
+    "Turn": {
+      "properties": {
+        "startedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "template": {
+          "$ref": "#/$defs/Uri",
+          "description": "The template version the turn runs, with `@vno`."
+        },
+        "turn": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn",
+        "template",
+        "startedAt"
+      ],
+      "type": "object"
+    },
+    "UnitProvider": {
+      "enum": [
+        "static",
+        "local",
+        "kubernetes"
+      ],
+      "type": "string"
+    },
+    "UpdateAgentTemplate": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/AgentTemplateSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateComputingUnit": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/ComputingUnitSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateConversation": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/ConversationSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateCredential": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/CredentialSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateDataset": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/DatasetSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateEnvironment": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/EnvironmentSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateMcpServer": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/McpServerSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateMetadata": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "Moves a top-level resource to another project."
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "type": "object"
+    },
+    "UpdateModel": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/ModelSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateModelEndpoint": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/ModelEndpointSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateOperator": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/OperatorSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateProject": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/ProjectSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateSettings": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/SettingsSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateSkill": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/SkillSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateWorkflow": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/WorkflowSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "Uri": {
+      "description": "A resource URI: `texera://` followed by the resource's REST path, optionally `@vno` and a subresource path, e.g. `texera://datasets/{rid}@2/files/iris.csv`.",
+      "type": "string"
+    },
+    "ValidateWorkflow": {
+      "properties": {
+        "computingUnit": {
+          "$ref": "#/$defs/Uri",
+          "description": "The unit whose compiler answers; defaults to the run resolution order."
+        },
+        "spec": {
+          "$ref": "#/$defs/WorkflowSpec",
+          "description": "Compile this draft spec instead of a stored version."
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno",
+          "description": "Compile this version; defaults to the head version."
+        }
+      },
+      "type": "object"
+    },
+    "Version": {
+      "description": "An immutable version of a resource.",
+      "properties": {
+        "content": {},
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest",
+          "description": "SHA-256 of the canonical JSON of the content."
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri",
+          "description": "The resource URI with `@vno`."
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "kind",
+        "vno",
+        "contentKind",
+        "digest",
+        "content",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "VersionSummary": {
+      "description": "A version without its content, as lists return it.",
+      "properties": {
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "vno",
+        "contentKind",
+        "digest",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "VersionSummaryPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/VersionSummary"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "View": {
+      "description": "What a list returns per item: the metadata and status only, or the full envelope.",
+      "enum": [
+        "summary",
+        "full"
+      ],
+      "type": "string"
+    },
+    "Visibility": {
+      "enum": [
+        "private",
+        "public"
+      ],
+      "type": "string"
+    },
+    "Vno": {
+      "description": "Version number within a resource, starting at 1.",
+      "format": "int32",
+      "type": "integer"
+    },
+    "Workflow": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/WorkflowSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/WorkflowStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "workflow",
+        "parent": "project",
+        "plural": "workflows",
+        "versioned": true
+      }
+    },
+    "WorkflowLink": {
+      "description": "A link from one operator's output port to another's input port.",
+      "properties": {
+        "linkID": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/WorkflowLinkEnd"
+        },
+        "target": {
+          "$ref": "#/$defs/WorkflowLinkEnd"
+        }
+      },
+      "required": [
+        "linkID",
+        "source",
+        "target"
+      ],
+      "type": "object"
+    },
+    "WorkflowLinkEnd": {
+      "properties": {
+        "operatorID": {
+          "type": "string"
+        },
+        "portID": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operatorID",
+        "portID"
+      ],
+      "type": "object"
+    },
+    "WorkflowOperator": {
+      "description": "An operator instance in a workflow.",
+      "properties": {
+        "customDisplayName": {
+          "type": "string"
+        },
+        "inputPorts": {
+          "description": "Defaults to one input port input-0 (none for sources).",
+          "items": {
+            "$ref": "#/$defs/WorkflowPort"
+          },
+          "type": "array"
+        },
+        "isDisabled": {
+          "type": "boolean"
+        },
+        "markedForReuse": {
+          "type": "boolean"
+        },
+        "operatorID": {
+          "description": "Unique within the workflow, e.g. scan or avg.",
+          "type": "string"
+        },
+        "operatorProperties": {
+          "additionalProperties": {},
+          "description": "Property values following the operator type's JSON Schema. A file property takes a dataset file URI, texera://datasets/{rid}@{vno}/files/{path}.",
+          "type": "object"
+        },
+        "operatorType": {
+          "description": "A built-in operator type, e.g. CSVFileScan, or the URI of a custom operator with `@vno`.",
+          "type": "string"
+        },
+        "outputPorts": {
+          "description": "Defaults to one output port output-0.",
+          "items": {
+            "$ref": "#/$defs/WorkflowPort"
+          },
+          "type": "array"
+        },
+        "viewResult": {
+          "description": "Store this operator's output so it can be read after the run.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operatorID",
+        "operatorType",
+        "operatorProperties"
+      ],
+      "type": "object"
+    },
+    "WorkflowPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Workflow"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "WorkflowPort": {
+      "description": "A port of an operator in a workflow.",
+      "properties": {
+        "allowMultiInputs": {
+          "type": "boolean"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "isDynamicPort": {
+          "type": "boolean"
+        },
+        "portID": {
+          "description": "input-\u003cn\u003e or output-\u003cn\u003e.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "portID"
+      ],
+      "type": "object"
+    },
+    "WorkflowSpec": {
+      "properties": {
+        "defaultComputingUnit": {
+          "$ref": "#/$defs/Uri",
+          "description": "The computing unit a run uses when the request names none."
+        },
+        "defaultEnvironment": {
+          "$ref": "#/$defs/Uri",
+          "description": "The environment a run uses when the request names none."
+        },
+        "links": {
+          "items": {
+            "$ref": "#/$defs/WorkflowLink"
+          },
+          "type": "array"
+        },
+        "operators": {
+          "items": {
+            "$ref": "#/$defs/WorkflowOperator"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "operators",
+        "links"
+      ],
+      "type": "object"
+    },
+    "WorkflowStatus": {
+      "properties": {
+        "executions": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "lastExecution": {
+          "$ref": "#/$defs/Rid"
+        }
+      },
+      "type": "object"
+    },
+    "WorkflowVersion": {
+      "description": "A version with typed content, served by the kind routes.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/WorkflowSpec"
+        },
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "kind",
+        "vno",
+        "contentKind",
+        "digest",
+        "content",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "WorkflowVersionPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/VersionSummary"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://texera.apache.org/schemas/catalog.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

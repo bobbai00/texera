@@ -3,8 +3,8 @@
 import { type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { agentsList, agentsRead, agentsRetire, agentsSpawn, agentTemplatesCreate, agentTemplatesList, agentTemplatesRead, agentTemplatesUpdateSpec, computingUnitsAvailable, computingUnitsCreate, computingUnitsList, computingUnitsRead, computingUnitsTerminate, computingUnitsUpdateSpec, conversationsCreate, conversationsList, conversationsMessages, conversationsPost, conversationsRead, conversationsResources, conversationsUpdateSpec, datasetsCommit, datasetsCreate, datasetsDownload, datasetsFiles, datasetsLink, datasetsList, datasetsRead, datasetsStaged, datasetsUnstage, datasetsUpdateSpec, datasetsUpload, environmentsCreate, environmentsList, environmentsRead, environmentsUpdateSpec, evaluationEvaluate, eventsIngest, executionsCancel, executionsList, executionsRead, executionsResult, executionsSaveResult, mcpServersCreate, mcpServersList, mcpServersRead, mcpServersUpdateSpec, meGet, operatorsList, type Options, principalsList, principalsRead, projectsCreate, projectsList, projectsRead, projectsUpdateSpec, resourcesCreateVersion, resourcesDelete, resourcesGrant, resourcesLineage, resourcesListGrants, resourcesListVersions, resourcesRead, resourcesReadVersion, resourcesRevoke, resourcesSearch, resourcesUpdateMetadata, skillsCreate, skillsList, skillsRead, skillsUpdateSpec, workflowsContent, workflowsCreate, workflowsCreateWithContent, workflowsEdit, workflowsList, workflowsListExecutions, workflowsRead, workflowsRun, workflowsUpdateSpec, workflowsValidate } from '../sdk.gen';
-import type { AgentsListData, AgentsListError, AgentsListResponse, AgentsReadData, AgentsReadError, AgentsReadResponse, AgentsRetireData, AgentsRetireError, AgentsRetireResponse, AgentsSpawnData, AgentsSpawnError, AgentsSpawnResponse, AgentTemplatesCreateData, AgentTemplatesCreateError, AgentTemplatesCreateResponse, AgentTemplatesListData, AgentTemplatesListError, AgentTemplatesListResponse, AgentTemplatesReadData, AgentTemplatesReadError, AgentTemplatesReadResponse, AgentTemplatesUpdateSpecData, AgentTemplatesUpdateSpecError, AgentTemplatesUpdateSpecResponse, ComputingUnitsAvailableData, ComputingUnitsAvailableError, ComputingUnitsAvailableResponse, ComputingUnitsCreateData, ComputingUnitsCreateError, ComputingUnitsCreateResponse, ComputingUnitsListData, ComputingUnitsListError, ComputingUnitsListResponse, ComputingUnitsReadData, ComputingUnitsReadError, ComputingUnitsReadResponse, ComputingUnitsTerminateData, ComputingUnitsTerminateError, ComputingUnitsTerminateResponse, ComputingUnitsUpdateSpecData, ComputingUnitsUpdateSpecError, ComputingUnitsUpdateSpecResponse, ConversationsCreateData, ConversationsCreateError, ConversationsCreateResponse, ConversationsListData, ConversationsListError, ConversationsListResponse, ConversationsMessagesData, ConversationsMessagesError, ConversationsMessagesResponse, ConversationsPostData, ConversationsPostError, ConversationsPostResponse, ConversationsReadData, ConversationsReadError, ConversationsReadResponse, ConversationsResourcesData, ConversationsResourcesError, ConversationsResourcesResponse, ConversationsUpdateSpecData, ConversationsUpdateSpecError, ConversationsUpdateSpecResponse, DatasetsCommitData, DatasetsCommitError, DatasetsCommitResponse, DatasetsCreateData, DatasetsCreateError, DatasetsCreateResponse, DatasetsDownloadData, DatasetsDownloadError, DatasetsDownloadResponse, DatasetsFilesData, DatasetsFilesError, DatasetsFilesResponse, DatasetsLinkData, DatasetsLinkError, DatasetsLinkResponse, DatasetsListData, DatasetsListError, DatasetsListResponse, DatasetsReadData, DatasetsReadError, DatasetsReadResponse, DatasetsStagedData, DatasetsStagedError, DatasetsStagedResponse, DatasetsUnstageData, DatasetsUnstageError, DatasetsUnstageResponse, DatasetsUpdateSpecData, DatasetsUpdateSpecError, DatasetsUpdateSpecResponse, DatasetsUploadData, DatasetsUploadError, DatasetsUploadResponse, EnvironmentsCreateData, EnvironmentsCreateError, EnvironmentsCreateResponse, EnvironmentsListData, EnvironmentsListError, EnvironmentsListResponse, EnvironmentsReadData, EnvironmentsReadError, EnvironmentsReadResponse, EnvironmentsUpdateSpecData, EnvironmentsUpdateSpecError, EnvironmentsUpdateSpecResponse, EvaluationEvaluateData, EvaluationEvaluateError, EvaluationEvaluateResponse, EventsIngestData, EventsIngestError, EventsIngestResponse, ExecutionsCancelData, ExecutionsCancelError, ExecutionsCancelResponse, ExecutionsListData, ExecutionsListError, ExecutionsListResponse, ExecutionsReadData, ExecutionsReadError, ExecutionsReadResponse, ExecutionsResultData, ExecutionsResultError, ExecutionsResultResponse, ExecutionsSaveResultData, ExecutionsSaveResultError, ExecutionsSaveResultResponse, McpServersCreateData, McpServersCreateError, McpServersCreateResponse, McpServersListData, McpServersListError, McpServersListResponse, McpServersReadData, McpServersReadError, McpServersReadResponse, McpServersUpdateSpecData, McpServersUpdateSpecError, McpServersUpdateSpecResponse, MeGetData, MeGetError, MeGetResponse, OperatorsListData, OperatorsListError, OperatorsListResponse, PrincipalsListData, PrincipalsListError, PrincipalsListResponse, PrincipalsReadData, PrincipalsReadError, PrincipalsReadResponse, ProjectsCreateData, ProjectsCreateError, ProjectsCreateResponse, ProjectsListData, ProjectsListError, ProjectsListResponse, ProjectsReadData, ProjectsReadError, ProjectsReadResponse, ProjectsUpdateSpecData, ProjectsUpdateSpecError, ProjectsUpdateSpecResponse, ResourcesCreateVersionData, ResourcesCreateVersionError, ResourcesCreateVersionResponse, ResourcesDeleteData, ResourcesDeleteError, ResourcesDeleteResponse, ResourcesGrantData, ResourcesGrantError, ResourcesGrantResponse, ResourcesLineageData, ResourcesLineageError, ResourcesLineageResponse, ResourcesListGrantsData, ResourcesListGrantsError, ResourcesListGrantsResponse, ResourcesListVersionsData, ResourcesListVersionsError, ResourcesListVersionsResponse, ResourcesReadData, ResourcesReadError, ResourcesReadResponse, ResourcesReadVersionData, ResourcesReadVersionError, ResourcesReadVersionResponse, ResourcesRevokeData, ResourcesRevokeError, ResourcesRevokeResponse, ResourcesSearchData, ResourcesSearchError, ResourcesSearchResponse, ResourcesUpdateMetadataData, ResourcesUpdateMetadataError, ResourcesUpdateMetadataResponse, SkillsCreateData, SkillsCreateError, SkillsCreateResponse, SkillsListData, SkillsListError, SkillsListResponse, SkillsReadData, SkillsReadError, SkillsReadResponse, SkillsUpdateSpecData, SkillsUpdateSpecError, SkillsUpdateSpecResponse, WorkflowsContentData, WorkflowsContentError, WorkflowsContentResponse, WorkflowsCreateData, WorkflowsCreateError, WorkflowsCreateResponse, WorkflowsCreateWithContentData, WorkflowsCreateWithContentError, WorkflowsCreateWithContentResponse, WorkflowsEditData, WorkflowsEditError, WorkflowsEditResponse, WorkflowsListData, WorkflowsListError, WorkflowsListExecutionsData, WorkflowsListExecutionsError, WorkflowsListExecutionsResponse, WorkflowsListResponse, WorkflowsReadData, WorkflowsReadError, WorkflowsReadResponse, WorkflowsRunData, WorkflowsRunError, WorkflowsRunResponse, WorkflowsUpdateSpecData, WorkflowsUpdateSpecError, WorkflowsUpdateSpecResponse, WorkflowsValidateData, WorkflowsValidateError, WorkflowsValidateResponse } from '../types.gen';
+import { agentTemplatesCreate, agentTemplatesDelete, agentTemplatesList, agentTemplatesListVersions, agentTemplatesRead, agentTemplatesReadVersion, agentTemplatesUpdate, computingUnitsAvailable, computingUnitsCreate, computingUnitsDelete, computingUnitsList, computingUnitsListNodes, computingUnitsOperators, computingUnitsRead, computingUnitsReadNode, computingUnitsTerminate, computingUnitsUpdate, conversationsAppendMessage, conversationsCreate, conversationsDelete, conversationsEndTurn, conversationsList, conversationsListMessages, conversationsRead, conversationsReplaceMessage, conversationsResources, conversationsStartTurn, conversationsUpdate, credentialsCreate, credentialsDelete, credentialsLease, credentialsList, credentialsRead, credentialsSetSecret, credentialsUpdate, datasetsCommit, datasetsCreate, datasetsDelete, datasetsDownload, datasetsFiles, datasetsLink, datasetsList, datasetsListVersions, datasetsRead, datasetsReadVersion, datasetsStaged, datasetsUnstage, datasetsUpdate, datasetsUpload, environmentsBuild, environmentsCreate, environmentsDelete, environmentsList, environmentsListVersions, environmentsRead, environmentsReadVersion, environmentsUpdate, evaluationEvaluate, eventsIngest, executionsList, mcpServersCreate, mcpServersDelete, mcpServersList, mcpServersListVersions, mcpServersRead, mcpServersReadVersion, mcpServersUpdate, meGet, meUpdatePreferences, modelEndpointsCreate, modelEndpointsDelete, modelEndpointsList, modelEndpointsRead, modelEndpointsUpdate, modelsCommit, modelsCreate, modelsDelete, modelsDownload, modelsFiles, modelsLink, modelsList, modelsListVersions, modelsRead, modelsReadVersion, modelsStaged, modelsUnstage, modelsUpdate, modelsUpload, operatorsCreate, operatorsDelete, operatorsList, operatorsListVersions, operatorsRead, operatorsReadVersion, operatorsUpdate, type Options, principalsList, principalsRead, projectsCreate, projectsDelete, projectsList, projectsRead, projectsUpdate, resourcesDelete, resourcesDependents, resourcesGrant, resourcesLineage, resourcesListGrants, resourcesListVersions, resourcesRead, resourcesReadVersion, resourcesResolve, resourcesRevoke, resourcesSearch, resourcesUpdateMetadata, settingsRoutesPublic, settingsRoutesRead, settingsRoutesUpdate, skillsCreate, skillsDelete, skillsList, skillsListVersions, skillsRead, skillsReadVersion, skillsUpdate, workflowsCancelExecution, workflowsCreate, workflowsDelete, workflowsEdit, workflowsList, workflowsListExecutions, workflowsListVersions, workflowsRead, workflowsReadExecution, workflowsReadPort, workflowsReadRows, workflowsReadVersion, workflowsRun, workflowsSavePort, workflowsUpdate, workflowsValidate } from '../sdk.gen';
+import type { AgentTemplatesCreateData, AgentTemplatesCreateError, AgentTemplatesCreateResponse, AgentTemplatesDeleteData, AgentTemplatesDeleteError, AgentTemplatesDeleteResponse, AgentTemplatesListData, AgentTemplatesListError, AgentTemplatesListResponse, AgentTemplatesListVersionsData, AgentTemplatesListVersionsError, AgentTemplatesListVersionsResponse, AgentTemplatesReadData, AgentTemplatesReadError, AgentTemplatesReadResponse, AgentTemplatesReadVersionData, AgentTemplatesReadVersionError, AgentTemplatesReadVersionResponse, AgentTemplatesUpdateData, AgentTemplatesUpdateError, AgentTemplatesUpdateResponse, ComputingUnitsAvailableData, ComputingUnitsAvailableError, ComputingUnitsAvailableResponse, ComputingUnitsCreateData, ComputingUnitsCreateError, ComputingUnitsCreateResponse, ComputingUnitsDeleteData, ComputingUnitsDeleteError, ComputingUnitsDeleteResponse, ComputingUnitsListData, ComputingUnitsListError, ComputingUnitsListNodesData, ComputingUnitsListNodesError, ComputingUnitsListNodesResponse, ComputingUnitsListResponse, ComputingUnitsOperatorsData, ComputingUnitsOperatorsError, ComputingUnitsOperatorsResponse, ComputingUnitsReadData, ComputingUnitsReadError, ComputingUnitsReadNodeData, ComputingUnitsReadNodeError, ComputingUnitsReadNodeResponse, ComputingUnitsReadResponse, ComputingUnitsTerminateData, ComputingUnitsTerminateError, ComputingUnitsTerminateResponse, ComputingUnitsUpdateData, ComputingUnitsUpdateError, ComputingUnitsUpdateResponse, ConversationsAppendMessageData, ConversationsAppendMessageError, ConversationsAppendMessageResponse, ConversationsCreateData, ConversationsCreateError, ConversationsCreateResponse, ConversationsDeleteData, ConversationsDeleteError, ConversationsDeleteResponse, ConversationsEndTurnData, ConversationsEndTurnError, ConversationsEndTurnResponse, ConversationsListData, ConversationsListError, ConversationsListMessagesData, ConversationsListMessagesError, ConversationsListMessagesResponse, ConversationsListResponse, ConversationsReadData, ConversationsReadError, ConversationsReadResponse, ConversationsReplaceMessageData, ConversationsReplaceMessageError, ConversationsReplaceMessageResponse, ConversationsResourcesData, ConversationsResourcesError, ConversationsResourcesResponse, ConversationsStartTurnData, ConversationsStartTurnError, ConversationsStartTurnResponse, ConversationsUpdateData, ConversationsUpdateError, ConversationsUpdateResponse, CredentialsCreateData, CredentialsCreateError, CredentialsCreateResponse, CredentialsDeleteData, CredentialsDeleteError, CredentialsDeleteResponse, CredentialsLeaseData, CredentialsLeaseError, CredentialsLeaseResponse, CredentialsListData, CredentialsListError, CredentialsListResponse, CredentialsReadData, CredentialsReadError, CredentialsReadResponse, CredentialsSetSecretData, CredentialsSetSecretError, CredentialsSetSecretResponse, CredentialsUpdateData, CredentialsUpdateError, CredentialsUpdateResponse, DatasetsCommitData, DatasetsCommitError, DatasetsCommitResponse, DatasetsCreateData, DatasetsCreateError, DatasetsCreateResponse, DatasetsDeleteData, DatasetsDeleteError, DatasetsDeleteResponse, DatasetsDownloadData, DatasetsDownloadError, DatasetsDownloadResponse, DatasetsFilesData, DatasetsFilesError, DatasetsFilesResponse, DatasetsLinkData, DatasetsLinkError, DatasetsLinkResponse, DatasetsListData, DatasetsListError, DatasetsListResponse, DatasetsListVersionsData, DatasetsListVersionsError, DatasetsListVersionsResponse, DatasetsReadData, DatasetsReadError, DatasetsReadResponse, DatasetsReadVersionData, DatasetsReadVersionError, DatasetsReadVersionResponse, DatasetsStagedData, DatasetsStagedError, DatasetsStagedResponse, DatasetsUnstageData, DatasetsUnstageError, DatasetsUnstageResponse, DatasetsUpdateData, DatasetsUpdateError, DatasetsUpdateResponse, DatasetsUploadData, DatasetsUploadError, DatasetsUploadResponse, EnvironmentsBuildData, EnvironmentsBuildError, EnvironmentsBuildResponse, EnvironmentsCreateData, EnvironmentsCreateError, EnvironmentsCreateResponse, EnvironmentsDeleteData, EnvironmentsDeleteError, EnvironmentsDeleteResponse, EnvironmentsListData, EnvironmentsListError, EnvironmentsListResponse, EnvironmentsListVersionsData, EnvironmentsListVersionsError, EnvironmentsListVersionsResponse, EnvironmentsReadData, EnvironmentsReadError, EnvironmentsReadResponse, EnvironmentsReadVersionData, EnvironmentsReadVersionError, EnvironmentsReadVersionResponse, EnvironmentsUpdateData, EnvironmentsUpdateError, EnvironmentsUpdateResponse, EvaluationEvaluateData, EvaluationEvaluateError, EvaluationEvaluateResponse, EventsIngestData, EventsIngestError, EventsIngestResponse, ExecutionsListData, ExecutionsListError, ExecutionsListResponse, McpServersCreateData, McpServersCreateError, McpServersCreateResponse, McpServersDeleteData, McpServersDeleteError, McpServersDeleteResponse, McpServersListData, McpServersListError, McpServersListResponse, McpServersListVersionsData, McpServersListVersionsError, McpServersListVersionsResponse, McpServersReadData, McpServersReadError, McpServersReadResponse, McpServersReadVersionData, McpServersReadVersionError, McpServersReadVersionResponse, McpServersUpdateData, McpServersUpdateError, McpServersUpdateResponse, MeGetData, MeGetError, MeGetResponse, MeUpdatePreferencesData, MeUpdatePreferencesError, MeUpdatePreferencesResponse, ModelEndpointsCreateData, ModelEndpointsCreateError, ModelEndpointsCreateResponse, ModelEndpointsDeleteData, ModelEndpointsDeleteError, ModelEndpointsDeleteResponse, ModelEndpointsListData, ModelEndpointsListError, ModelEndpointsListResponse, ModelEndpointsReadData, ModelEndpointsReadError, ModelEndpointsReadResponse, ModelEndpointsUpdateData, ModelEndpointsUpdateError, ModelEndpointsUpdateResponse, ModelsCommitData, ModelsCommitError, ModelsCommitResponse, ModelsCreateData, ModelsCreateError, ModelsCreateResponse, ModelsDeleteData, ModelsDeleteError, ModelsDeleteResponse, ModelsDownloadData, ModelsDownloadError, ModelsDownloadResponse, ModelsFilesData, ModelsFilesError, ModelsFilesResponse, ModelsLinkData, ModelsLinkError, ModelsLinkResponse, ModelsListData, ModelsListError, ModelsListResponse, ModelsListVersionsData, ModelsListVersionsError, ModelsListVersionsResponse, ModelsReadData, ModelsReadError, ModelsReadResponse, ModelsReadVersionData, ModelsReadVersionError, ModelsReadVersionResponse, ModelsStagedData, ModelsStagedError, ModelsStagedResponse, ModelsUnstageData, ModelsUnstageError, ModelsUnstageResponse, ModelsUpdateData, ModelsUpdateError, ModelsUpdateResponse, ModelsUploadData, ModelsUploadError, ModelsUploadResponse, OperatorsCreateData, OperatorsCreateError, OperatorsCreateResponse, OperatorsDeleteData, OperatorsDeleteError, OperatorsDeleteResponse, OperatorsListData, OperatorsListError, OperatorsListResponse, OperatorsListVersionsData, OperatorsListVersionsError, OperatorsListVersionsResponse, OperatorsReadData, OperatorsReadError, OperatorsReadResponse, OperatorsReadVersionData, OperatorsReadVersionError, OperatorsReadVersionResponse, OperatorsUpdateData, OperatorsUpdateError, OperatorsUpdateResponse, PrincipalsListData, PrincipalsListError, PrincipalsListResponse, PrincipalsReadData, PrincipalsReadError, PrincipalsReadResponse, ProjectsCreateData, ProjectsCreateError, ProjectsCreateResponse, ProjectsDeleteData, ProjectsDeleteError, ProjectsDeleteResponse, ProjectsListData, ProjectsListError, ProjectsListResponse, ProjectsReadData, ProjectsReadError, ProjectsReadResponse, ProjectsUpdateData, ProjectsUpdateError, ProjectsUpdateResponse, ResourcesDeleteData, ResourcesDeleteError, ResourcesDeleteResponse, ResourcesDependentsData, ResourcesDependentsError, ResourcesDependentsResponse, ResourcesGrantData, ResourcesGrantError, ResourcesGrantResponse, ResourcesLineageData, ResourcesLineageError, ResourcesLineageResponse, ResourcesListGrantsData, ResourcesListGrantsError, ResourcesListGrantsResponse, ResourcesListVersionsData, ResourcesListVersionsError, ResourcesListVersionsResponse, ResourcesReadData, ResourcesReadError, ResourcesReadResponse, ResourcesReadVersionData, ResourcesReadVersionError, ResourcesReadVersionResponse, ResourcesResolveData, ResourcesResolveError, ResourcesResolveResponse, ResourcesRevokeData, ResourcesRevokeError, ResourcesRevokeResponse, ResourcesSearchData, ResourcesSearchError, ResourcesSearchResponse, ResourcesUpdateMetadataData, ResourcesUpdateMetadataError, ResourcesUpdateMetadataResponse, SettingsRoutesPublicData, SettingsRoutesPublicError, SettingsRoutesPublicResponse, SettingsRoutesReadData, SettingsRoutesReadError, SettingsRoutesReadResponse, SettingsRoutesUpdateData, SettingsRoutesUpdateError, SettingsRoutesUpdateResponse, SkillsCreateData, SkillsCreateError, SkillsCreateResponse, SkillsDeleteData, SkillsDeleteError, SkillsDeleteResponse, SkillsListData, SkillsListError, SkillsListResponse, SkillsListVersionsData, SkillsListVersionsError, SkillsListVersionsResponse, SkillsReadData, SkillsReadError, SkillsReadResponse, SkillsReadVersionData, SkillsReadVersionError, SkillsReadVersionResponse, SkillsUpdateData, SkillsUpdateError, SkillsUpdateResponse, WorkflowsCancelExecutionData, WorkflowsCancelExecutionError, WorkflowsCancelExecutionResponse, WorkflowsCreateData, WorkflowsCreateError, WorkflowsCreateResponse, WorkflowsDeleteData, WorkflowsDeleteError, WorkflowsDeleteResponse, WorkflowsEditData, WorkflowsEditError, WorkflowsEditResponse, WorkflowsListData, WorkflowsListError, WorkflowsListExecutionsData, WorkflowsListExecutionsError, WorkflowsListExecutionsResponse, WorkflowsListResponse, WorkflowsListVersionsData, WorkflowsListVersionsError, WorkflowsListVersionsResponse, WorkflowsReadData, WorkflowsReadError, WorkflowsReadExecutionData, WorkflowsReadExecutionError, WorkflowsReadExecutionResponse, WorkflowsReadPortData, WorkflowsReadPortError, WorkflowsReadPortResponse, WorkflowsReadResponse, WorkflowsReadRowsData, WorkflowsReadRowsError, WorkflowsReadRowsResponse, WorkflowsReadVersionData, WorkflowsReadVersionError, WorkflowsReadVersionResponse, WorkflowsRunData, WorkflowsRunError, WorkflowsRunResponse, WorkflowsSavePortData, WorkflowsSavePortError, WorkflowsSavePortResponse, WorkflowsUpdateData, WorkflowsUpdateError, WorkflowsUpdateResponse, WorkflowsValidateData, WorkflowsValidateError, WorkflowsValidateResponse } from '../types.gen';
 
 /**
  * AuthZEN access evaluation.
@@ -58,6 +58,9 @@ const createQueryKey = <TOptions extends Options>(id: string, options?: TOptions
 
 export const agentTemplatesListQueryKey = (options?: Options<AgentTemplatesListData>) => createQueryKey('agentTemplatesList', options);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const agentTemplatesListOptions = (options?: Options<AgentTemplatesListData>) => queryOptions<AgentTemplatesListResponse, AgentTemplatesListError, AgentTemplatesListResponse, ReturnType<typeof agentTemplatesListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await agentTemplatesList({
@@ -102,6 +105,9 @@ const createInfiniteParams = <K extends Pick<QueryKey<Options>[0], 'body' | 'hea
 
 export const agentTemplatesListInfiniteQueryKey = (options?: Options<AgentTemplatesListData>): QueryKey<Options<AgentTemplatesListData>> => createQueryKey('agentTemplatesList', options, true);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const agentTemplatesListInfiniteOptions = (options?: Options<AgentTemplatesListData>) => {
     const opts = infiniteQueryOptions<AgentTemplatesListResponse, AgentTemplatesListError, InfiniteData<AgentTemplatesListResponse>, QueryKey<Options<AgentTemplatesListData>>, string | Pick<QueryKey<Options<AgentTemplatesListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
@@ -141,6 +147,23 @@ export const agentTemplatesCreateMutation = (options?: Partial<Options<AgentTemp
     return mutationOptions;
 };
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const agentTemplatesDeleteMutation = (options?: Partial<Options<AgentTemplatesDeleteData>>): UseMutationOptions<AgentTemplatesDeleteResponse, AgentTemplatesDeleteError, Options<AgentTemplatesDeleteData>> => {
+    const mutationOptions: UseMutationOptions<AgentTemplatesDeleteResponse, AgentTemplatesDeleteError, Options<AgentTemplatesDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await agentTemplatesDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
 export const agentTemplatesReadQueryKey = (options: Options<AgentTemplatesReadData>) => createQueryKey('agentTemplatesRead', options);
 
 export const agentTemplatesReadOptions = (options: Options<AgentTemplatesReadData>) => queryOptions<AgentTemplatesReadResponse, AgentTemplatesReadError, AgentTemplatesReadResponse, ReturnType<typeof agentTemplatesReadQueryKey>>({
@@ -156,10 +179,13 @@ export const agentTemplatesReadOptions = (options: Options<AgentTemplatesReadDat
     queryKey: agentTemplatesReadQueryKey(options)
 });
 
-export const agentTemplatesUpdateSpecMutation = (options?: Partial<Options<AgentTemplatesUpdateSpecData>>): UseMutationOptions<AgentTemplatesUpdateSpecResponse, AgentTemplatesUpdateSpecError, Options<AgentTemplatesUpdateSpecData>> => {
-    const mutationOptions: UseMutationOptions<AgentTemplatesUpdateSpecResponse, AgentTemplatesUpdateSpecError, Options<AgentTemplatesUpdateSpecData>> = {
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const agentTemplatesUpdateMutation = (options?: Partial<Options<AgentTemplatesUpdateData>>): UseMutationOptions<AgentTemplatesUpdateResponse, AgentTemplatesUpdateError, Options<AgentTemplatesUpdateData>> => {
+    const mutationOptions: UseMutationOptions<AgentTemplatesUpdateResponse, AgentTemplatesUpdateError, Options<AgentTemplatesUpdateData>> = {
         mutationFn: async (fnOptions) => {
-            const { data } = await agentTemplatesUpdateSpec({
+            const { data } = await agentTemplatesUpdate({
                 ...options,
                 ...fnOptions,
                 throwOnError: true
@@ -170,11 +196,11 @@ export const agentTemplatesUpdateSpecMutation = (options?: Partial<Options<Agent
     return mutationOptions;
 };
 
-export const agentsListQueryKey = (options?: Options<AgentsListData>) => createQueryKey('agentsList', options);
+export const agentTemplatesListVersionsQueryKey = (options: Options<AgentTemplatesListVersionsData>) => createQueryKey('agentTemplatesListVersions', options);
 
-export const agentsListOptions = (options?: Options<AgentsListData>) => queryOptions<AgentsListResponse, AgentsListError, AgentsListResponse, ReturnType<typeof agentsListQueryKey>>({
+export const agentTemplatesListVersionsOptions = (options: Options<AgentTemplatesListVersionsData>) => queryOptions<AgentTemplatesListVersionsResponse, AgentTemplatesListVersionsError, AgentTemplatesListVersionsResponse, ReturnType<typeof agentTemplatesListVersionsQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
-        const { data } = await agentsList({
+        const { data } = await agentTemplatesListVersions({
             ...options,
             ...queryKey[0],
             signal,
@@ -182,28 +208,41 @@ export const agentsListOptions = (options?: Options<AgentsListData>) => queryOpt
         });
         return data;
     },
-    queryKey: agentsListQueryKey(options)
+    queryKey: agentTemplatesListVersionsQueryKey(options)
 });
 
-export const agentsSpawnMutation = (options?: Partial<Options<AgentsSpawnData>>): UseMutationOptions<AgentsSpawnResponse, AgentsSpawnError, Options<AgentsSpawnData>> => {
-    const mutationOptions: UseMutationOptions<AgentsSpawnResponse, AgentsSpawnError, Options<AgentsSpawnData>> = {
-        mutationFn: async (fnOptions) => {
-            const { data } = await agentsSpawn({
+export const agentTemplatesListVersionsInfiniteQueryKey = (options: Options<AgentTemplatesListVersionsData>): QueryKey<Options<AgentTemplatesListVersionsData>> => createQueryKey('agentTemplatesListVersions', options, true);
+
+export const agentTemplatesListVersionsInfiniteOptions = (options: Options<AgentTemplatesListVersionsData>) => {
+    const opts = infiniteQueryOptions<AgentTemplatesListVersionsResponse, AgentTemplatesListVersionsError, InfiniteData<AgentTemplatesListVersionsResponse>, QueryKey<Options<AgentTemplatesListVersionsData>>, string | Pick<QueryKey<Options<AgentTemplatesListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<AgentTemplatesListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await agentTemplatesListVersions({
                 ...options,
-                ...fnOptions,
+                ...params,
+                signal,
                 throwOnError: true
             });
             return data;
-        }
-    };
-    return mutationOptions;
+        },
+        queryKey: agentTemplatesListVersionsInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
 };
 
-export const agentsReadQueryKey = (options: Options<AgentsReadData>) => createQueryKey('agentsRead', options);
+export const agentTemplatesReadVersionQueryKey = (options: Options<AgentTemplatesReadVersionData>) => createQueryKey('agentTemplatesReadVersion', options);
 
-export const agentsReadOptions = (options: Options<AgentsReadData>) => queryOptions<AgentsReadResponse, AgentsReadError, AgentsReadResponse, ReturnType<typeof agentsReadQueryKey>>({
+export const agentTemplatesReadVersionOptions = (options: Options<AgentTemplatesReadVersionData>) => queryOptions<AgentTemplatesReadVersionResponse, AgentTemplatesReadVersionError, AgentTemplatesReadVersionResponse, ReturnType<typeof agentTemplatesReadVersionQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
-        const { data } = await agentsRead({
+        const { data } = await agentTemplatesReadVersion({
             ...options,
             ...queryKey[0],
             signal,
@@ -211,25 +250,14 @@ export const agentsReadOptions = (options: Options<AgentsReadData>) => queryOpti
         });
         return data;
     },
-    queryKey: agentsReadQueryKey(options)
+    queryKey: agentTemplatesReadVersionQueryKey(options)
 });
-
-export const agentsRetireMutation = (options?: Partial<Options<AgentsRetireData>>): UseMutationOptions<AgentsRetireResponse, AgentsRetireError, Options<AgentsRetireData>> => {
-    const mutationOptions: UseMutationOptions<AgentsRetireResponse, AgentsRetireError, Options<AgentsRetireData>> = {
-        mutationFn: async (fnOptions) => {
-            const { data } = await agentsRetire({
-                ...options,
-                ...fnOptions,
-                throwOnError: true
-            });
-            return data;
-        }
-    };
-    return mutationOptions;
-};
 
 export const computingUnitsListQueryKey = (options?: Options<ComputingUnitsListData>) => createQueryKey('computingUnitsList', options);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const computingUnitsListOptions = (options?: Options<ComputingUnitsListData>) => queryOptions<ComputingUnitsListResponse, ComputingUnitsListError, ComputingUnitsListResponse, ReturnType<typeof computingUnitsListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await computingUnitsList({
@@ -245,6 +273,9 @@ export const computingUnitsListOptions = (options?: Options<ComputingUnitsListDa
 
 export const computingUnitsListInfiniteQueryKey = (options?: Options<ComputingUnitsListData>): QueryKey<Options<ComputingUnitsListData>> => createQueryKey('computingUnitsList', options, true);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const computingUnitsListInfiniteOptions = (options?: Options<ComputingUnitsListData>) => {
     const opts = infiniteQueryOptions<ComputingUnitsListResponse, ComputingUnitsListError, InfiniteData<ComputingUnitsListResponse>, QueryKey<Options<ComputingUnitsListData>>, string | Pick<QueryKey<Options<ComputingUnitsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
@@ -287,7 +318,7 @@ export const computingUnitsCreateMutation = (options?: Partial<Options<Computing
 export const computingUnitsAvailableQueryKey = (options?: Options<ComputingUnitsAvailableData>) => createQueryKey('computingUnitsAvailable', options);
 
 /**
- * Units the caller may run on, with live status.
+ * The units the caller may run on, with live status.
  */
 export const computingUnitsAvailableOptions = (options?: Options<ComputingUnitsAvailableData>) => queryOptions<ComputingUnitsAvailableResponse, ComputingUnitsAvailableError, ComputingUnitsAvailableResponse, ReturnType<typeof computingUnitsAvailableQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -301,6 +332,23 @@ export const computingUnitsAvailableOptions = (options?: Options<ComputingUnitsA
     },
     queryKey: computingUnitsAvailableQueryKey(options)
 });
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const computingUnitsDeleteMutation = (options?: Partial<Options<ComputingUnitsDeleteData>>): UseMutationOptions<ComputingUnitsDeleteResponse, ComputingUnitsDeleteError, Options<ComputingUnitsDeleteData>> => {
+    const mutationOptions: UseMutationOptions<ComputingUnitsDeleteResponse, ComputingUnitsDeleteError, Options<ComputingUnitsDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await computingUnitsDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
 
 export const computingUnitsReadQueryKey = (options: Options<ComputingUnitsReadData>) => createQueryKey('computingUnitsRead', options);
 
@@ -317,10 +365,13 @@ export const computingUnitsReadOptions = (options: Options<ComputingUnitsReadDat
     queryKey: computingUnitsReadQueryKey(options)
 });
 
-export const computingUnitsUpdateSpecMutation = (options?: Partial<Options<ComputingUnitsUpdateSpecData>>): UseMutationOptions<ComputingUnitsUpdateSpecResponse, ComputingUnitsUpdateSpecError, Options<ComputingUnitsUpdateSpecData>> => {
-    const mutationOptions: UseMutationOptions<ComputingUnitsUpdateSpecResponse, ComputingUnitsUpdateSpecError, Options<ComputingUnitsUpdateSpecData>> = {
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const computingUnitsUpdateMutation = (options?: Partial<Options<ComputingUnitsUpdateData>>): UseMutationOptions<ComputingUnitsUpdateResponse, ComputingUnitsUpdateError, Options<ComputingUnitsUpdateData>> => {
+    const mutationOptions: UseMutationOptions<ComputingUnitsUpdateResponse, ComputingUnitsUpdateError, Options<ComputingUnitsUpdateData>> = {
         mutationFn: async (fnOptions) => {
-            const { data } = await computingUnitsUpdateSpec({
+            const { data } = await computingUnitsUpdate({
                 ...options,
                 ...fnOptions,
                 throwOnError: true
@@ -330,6 +381,54 @@ export const computingUnitsUpdateSpecMutation = (options?: Partial<Options<Compu
     };
     return mutationOptions;
 };
+
+export const computingUnitsListNodesQueryKey = (options: Options<ComputingUnitsListNodesData>) => createQueryKey('computingUnitsListNodes', options);
+
+export const computingUnitsListNodesOptions = (options: Options<ComputingUnitsListNodesData>) => queryOptions<ComputingUnitsListNodesResponse, ComputingUnitsListNodesError, ComputingUnitsListNodesResponse, ReturnType<typeof computingUnitsListNodesQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await computingUnitsListNodes({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: computingUnitsListNodesQueryKey(options)
+});
+
+export const computingUnitsReadNodeQueryKey = (options: Options<ComputingUnitsReadNodeData>) => createQueryKey('computingUnitsReadNode', options);
+
+export const computingUnitsReadNodeOptions = (options: Options<ComputingUnitsReadNodeData>) => queryOptions<ComputingUnitsReadNodeResponse, ComputingUnitsReadNodeError, ComputingUnitsReadNodeResponse, ReturnType<typeof computingUnitsReadNodeQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await computingUnitsReadNode({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: computingUnitsReadNodeQueryKey(options)
+});
+
+export const computingUnitsOperatorsQueryKey = (options: Options<ComputingUnitsOperatorsData>) => createQueryKey('computingUnitsOperators', options);
+
+/**
+ * The operator types the unit's engine provides, as its registry reports them.
+ */
+export const computingUnitsOperatorsOptions = (options: Options<ComputingUnitsOperatorsData>) => queryOptions<ComputingUnitsOperatorsResponse, ComputingUnitsOperatorsError, ComputingUnitsOperatorsResponse, ReturnType<typeof computingUnitsOperatorsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await computingUnitsOperators({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: computingUnitsOperatorsQueryKey(options)
+});
 
 export const computingUnitsTerminateMutation = (options?: Partial<Options<ComputingUnitsTerminateData>>): UseMutationOptions<ComputingUnitsTerminateResponse, ComputingUnitsTerminateError, Options<ComputingUnitsTerminateData>> => {
     const mutationOptions: UseMutationOptions<ComputingUnitsTerminateResponse, ComputingUnitsTerminateError, Options<ComputingUnitsTerminateData>> = {
@@ -347,6 +446,9 @@ export const computingUnitsTerminateMutation = (options?: Partial<Options<Comput
 
 export const conversationsListQueryKey = (options?: Options<ConversationsListData>) => createQueryKey('conversationsList', options);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const conversationsListOptions = (options?: Options<ConversationsListData>) => queryOptions<ConversationsListResponse, ConversationsListError, ConversationsListResponse, ReturnType<typeof conversationsListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await conversationsList({
@@ -362,6 +464,9 @@ export const conversationsListOptions = (options?: Options<ConversationsListData
 
 export const conversationsListInfiniteQueryKey = (options?: Options<ConversationsListData>): QueryKey<Options<ConversationsListData>> => createQueryKey('conversationsList', options, true);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const conversationsListInfiniteOptions = (options?: Options<ConversationsListData>) => {
     const opts = infiniteQueryOptions<ConversationsListResponse, ConversationsListError, InfiniteData<ConversationsListResponse>, QueryKey<Options<ConversationsListData>>, string | Pick<QueryKey<Options<ConversationsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
@@ -401,6 +506,23 @@ export const conversationsCreateMutation = (options?: Partial<Options<Conversati
     return mutationOptions;
 };
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const conversationsDeleteMutation = (options?: Partial<Options<ConversationsDeleteData>>): UseMutationOptions<ConversationsDeleteResponse, ConversationsDeleteError, Options<ConversationsDeleteData>> => {
+    const mutationOptions: UseMutationOptions<ConversationsDeleteResponse, ConversationsDeleteError, Options<ConversationsDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await conversationsDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
 export const conversationsReadQueryKey = (options: Options<ConversationsReadData>) => createQueryKey('conversationsRead', options);
 
 export const conversationsReadOptions = (options: Options<ConversationsReadData>) => queryOptions<ConversationsReadResponse, ConversationsReadError, ConversationsReadResponse, ReturnType<typeof conversationsReadQueryKey>>({
@@ -416,10 +538,13 @@ export const conversationsReadOptions = (options: Options<ConversationsReadData>
     queryKey: conversationsReadQueryKey(options)
 });
 
-export const conversationsUpdateSpecMutation = (options?: Partial<Options<ConversationsUpdateSpecData>>): UseMutationOptions<ConversationsUpdateSpecResponse, ConversationsUpdateSpecError, Options<ConversationsUpdateSpecData>> => {
-    const mutationOptions: UseMutationOptions<ConversationsUpdateSpecResponse, ConversationsUpdateSpecError, Options<ConversationsUpdateSpecData>> = {
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const conversationsUpdateMutation = (options?: Partial<Options<ConversationsUpdateData>>): UseMutationOptions<ConversationsUpdateResponse, ConversationsUpdateError, Options<ConversationsUpdateData>> => {
+    const mutationOptions: UseMutationOptions<ConversationsUpdateResponse, ConversationsUpdateError, Options<ConversationsUpdateData>> = {
         mutationFn: async (fnOptions) => {
-            const { data } = await conversationsUpdateSpec({
+            const { data } = await conversationsUpdate({
                 ...options,
                 ...fnOptions,
                 throwOnError: true
@@ -430,11 +555,11 @@ export const conversationsUpdateSpecMutation = (options?: Partial<Options<Conver
     return mutationOptions;
 };
 
-export const conversationsMessagesQueryKey = (options: Options<ConversationsMessagesData>) => createQueryKey('conversationsMessages', options);
+export const conversationsListMessagesQueryKey = (options: Options<ConversationsListMessagesData>) => createQueryKey('conversationsListMessages', options);
 
-export const conversationsMessagesOptions = (options: Options<ConversationsMessagesData>) => queryOptions<ConversationsMessagesResponse, ConversationsMessagesError, ConversationsMessagesResponse, ReturnType<typeof conversationsMessagesQueryKey>>({
+export const conversationsListMessagesOptions = (options: Options<ConversationsListMessagesData>) => queryOptions<ConversationsListMessagesResponse, ConversationsListMessagesError, ConversationsListMessagesResponse, ReturnType<typeof conversationsListMessagesQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
-        const { data } = await conversationsMessages({
+        const { data } = await conversationsListMessages({
             ...options,
             ...queryKey[0],
             signal,
@@ -442,24 +567,24 @@ export const conversationsMessagesOptions = (options: Options<ConversationsMessa
         });
         return data;
     },
-    queryKey: conversationsMessagesQueryKey(options)
+    queryKey: conversationsListMessagesQueryKey(options)
 });
 
-export const conversationsMessagesInfiniteQueryKey = (options: Options<ConversationsMessagesData>): QueryKey<Options<ConversationsMessagesData>> => createQueryKey('conversationsMessages', options, true);
+export const conversationsListMessagesInfiniteQueryKey = (options: Options<ConversationsListMessagesData>): QueryKey<Options<ConversationsListMessagesData>> => createQueryKey('conversationsListMessages', options, true);
 
-export const conversationsMessagesInfiniteOptions = (options: Options<ConversationsMessagesData>) => {
-    const opts = infiniteQueryOptions<ConversationsMessagesResponse, ConversationsMessagesError, InfiniteData<ConversationsMessagesResponse>, QueryKey<Options<ConversationsMessagesData>>, number | Pick<QueryKey<Options<ConversationsMessagesData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+export const conversationsListMessagesInfiniteOptions = (options: Options<ConversationsListMessagesData>) => {
+    const opts = infiniteQueryOptions<ConversationsListMessagesResponse, ConversationsListMessagesError, InfiniteData<ConversationsListMessagesResponse>, QueryKey<Options<ConversationsListMessagesData>>, number | Pick<QueryKey<Options<ConversationsListMessagesData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
     {
         queryFn: async ({ pageParam, queryKey, signal }) => {
             // @ts-ignore
-            const page: Pick<QueryKey<Options<ConversationsMessagesData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+            const page: Pick<QueryKey<Options<ConversationsListMessagesData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
                 query: {
                     after: pageParam
                 }
             };
             const params = createInfiniteParams(queryKey, page);
-            const { data } = await conversationsMessages({
+            const { data } = await conversationsListMessages({
                 ...options,
                 ...params,
                 signal,
@@ -467,15 +592,35 @@ export const conversationsMessagesInfiniteOptions = (options: Options<Conversati
             });
             return data;
         },
-        queryKey: conversationsMessagesInfiniteQueryKey(options)
+        queryKey: conversationsListMessagesInfiniteQueryKey(options)
     });
     return opts as Omit<typeof opts, 'initialData'>;
 };
 
-export const conversationsPostMutation = (options?: Partial<Options<ConversationsPostData>>): UseMutationOptions<ConversationsPostResponse, ConversationsPostError, Options<ConversationsPostData>> => {
-    const mutationOptions: UseMutationOptions<ConversationsPostResponse, ConversationsPostError, Options<ConversationsPostData>> = {
+/**
+ * Append a message; `seq` is assigned in order.
+ */
+export const conversationsAppendMessageMutation = (options?: Partial<Options<ConversationsAppendMessageData>>): UseMutationOptions<ConversationsAppendMessageResponse, ConversationsAppendMessageError, Options<ConversationsAppendMessageData>> => {
+    const mutationOptions: UseMutationOptions<ConversationsAppendMessageResponse, ConversationsAppendMessageError, Options<ConversationsAppendMessageData>> = {
         mutationFn: async (fnOptions) => {
-            const { data } = await conversationsPost({
+            const { data } = await conversationsAppendMessage({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Replace the parts of a message, for the assistant message a turn is still writing.
+ */
+export const conversationsReplaceMessageMutation = (options?: Partial<Options<ConversationsReplaceMessageData>>): UseMutationOptions<ConversationsReplaceMessageResponse, ConversationsReplaceMessageError, Options<ConversationsReplaceMessageData>> => {
+    const mutationOptions: UseMutationOptions<ConversationsReplaceMessageResponse, ConversationsReplaceMessageError, Options<ConversationsReplaceMessageData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await conversationsReplaceMessage({
                 ...options,
                 ...fnOptions,
                 throwOnError: true
@@ -489,7 +634,7 @@ export const conversationsPostMutation = (options?: Partial<Options<Conversation
 export const conversationsResourcesQueryKey = (options: Options<ConversationsResourcesData>) => createQueryKey('conversationsResources', options);
 
 /**
- * Resources whose origin is this conversation.
+ * The resources whose origin is this conversation.
  */
 export const conversationsResourcesOptions = (options: Options<ConversationsResourcesData>) => queryOptions<ConversationsResourcesResponse, ConversationsResourcesError, ConversationsResourcesResponse, ReturnType<typeof conversationsResourcesQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -504,8 +649,190 @@ export const conversationsResourcesOptions = (options: Options<ConversationsReso
     queryKey: conversationsResourcesQueryKey(options)
 });
 
+/**
+ * Start a turn: takes the conversation's turn lock, refused with 409 while another turn runs.
+ */
+export const conversationsStartTurnMutation = (options?: Partial<Options<ConversationsStartTurnData>>): UseMutationOptions<ConversationsStartTurnResponse, ConversationsStartTurnError, Options<ConversationsStartTurnData>> => {
+    const mutationOptions: UseMutationOptions<ConversationsStartTurnResponse, ConversationsStartTurnError, Options<ConversationsStartTurnData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await conversationsStartTurn({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * End a turn: releases the lock.
+ */
+export const conversationsEndTurnMutation = (options?: Partial<Options<ConversationsEndTurnData>>): UseMutationOptions<ConversationsEndTurnResponse, ConversationsEndTurnError, Options<ConversationsEndTurnData>> => {
+    const mutationOptions: UseMutationOptions<ConversationsEndTurnResponse, ConversationsEndTurnError, Options<ConversationsEndTurnData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await conversationsEndTurn({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const credentialsListQueryKey = (options?: Options<CredentialsListData>) => createQueryKey('credentialsList', options);
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const credentialsListOptions = (options?: Options<CredentialsListData>) => queryOptions<CredentialsListResponse, CredentialsListError, CredentialsListResponse, ReturnType<typeof credentialsListQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await credentialsList({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: credentialsListQueryKey(options)
+});
+
+export const credentialsListInfiniteQueryKey = (options?: Options<CredentialsListData>): QueryKey<Options<CredentialsListData>> => createQueryKey('credentialsList', options, true);
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const credentialsListInfiniteOptions = (options?: Options<CredentialsListData>) => {
+    const opts = infiniteQueryOptions<CredentialsListResponse, CredentialsListError, InfiniteData<CredentialsListResponse>, QueryKey<Options<CredentialsListData>>, string | Pick<QueryKey<Options<CredentialsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<CredentialsListData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await credentialsList({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: credentialsListInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const credentialsCreateMutation = (options?: Partial<Options<CredentialsCreateData>>): UseMutationOptions<CredentialsCreateResponse, CredentialsCreateError, Options<CredentialsCreateData>> => {
+    const mutationOptions: UseMutationOptions<CredentialsCreateResponse, CredentialsCreateError, Options<CredentialsCreateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await credentialsCreate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const credentialsDeleteMutation = (options?: Partial<Options<CredentialsDeleteData>>): UseMutationOptions<CredentialsDeleteResponse, CredentialsDeleteError, Options<CredentialsDeleteData>> => {
+    const mutationOptions: UseMutationOptions<CredentialsDeleteResponse, CredentialsDeleteError, Options<CredentialsDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await credentialsDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const credentialsReadQueryKey = (options: Options<CredentialsReadData>) => createQueryKey('credentialsRead', options);
+
+export const credentialsReadOptions = (options: Options<CredentialsReadData>) => queryOptions<CredentialsReadResponse, CredentialsReadError, CredentialsReadResponse, ReturnType<typeof credentialsReadQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await credentialsRead({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: credentialsReadQueryKey(options)
+});
+
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const credentialsUpdateMutation = (options?: Partial<Options<CredentialsUpdateData>>): UseMutationOptions<CredentialsUpdateResponse, CredentialsUpdateError, Options<CredentialsUpdateData>> => {
+    const mutationOptions: UseMutationOptions<CredentialsUpdateResponse, CredentialsUpdateError, Options<CredentialsUpdateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await credentialsUpdate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Lease the secret for a run or a turn; the use is logged.
+ */
+export const credentialsLeaseMutation = (options?: Partial<Options<CredentialsLeaseData>>): UseMutationOptions<CredentialsLeaseResponse, CredentialsLeaseError, Options<CredentialsLeaseData>> => {
+    const mutationOptions: UseMutationOptions<CredentialsLeaseResponse, CredentialsLeaseError, Options<CredentialsLeaseData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await credentialsLease({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Write the secret; replaces the previous value.
+ */
+export const credentialsSetSecretMutation = (options?: Partial<Options<CredentialsSetSecretData>>): UseMutationOptions<CredentialsSetSecretResponse, CredentialsSetSecretError, Options<CredentialsSetSecretData>> => {
+    const mutationOptions: UseMutationOptions<CredentialsSetSecretResponse, CredentialsSetSecretError, Options<CredentialsSetSecretData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await credentialsSetSecret({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
 export const datasetsListQueryKey = (options?: Options<DatasetsListData>) => createQueryKey('datasetsList', options);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const datasetsListOptions = (options?: Options<DatasetsListData>) => queryOptions<DatasetsListResponse, DatasetsListError, DatasetsListResponse, ReturnType<typeof datasetsListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await datasetsList({
@@ -521,6 +848,9 @@ export const datasetsListOptions = (options?: Options<DatasetsListData>) => quer
 
 export const datasetsListInfiniteQueryKey = (options?: Options<DatasetsListData>): QueryKey<Options<DatasetsListData>> => createQueryKey('datasetsList', options, true);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const datasetsListInfiniteOptions = (options?: Options<DatasetsListData>) => {
     const opts = infiniteQueryOptions<DatasetsListResponse, DatasetsListError, InfiniteData<DatasetsListResponse>, QueryKey<Options<DatasetsListData>>, string | Pick<QueryKey<Options<DatasetsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
@@ -560,6 +890,23 @@ export const datasetsCreateMutation = (options?: Partial<Options<DatasetsCreateD
     return mutationOptions;
 };
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const datasetsDeleteMutation = (options?: Partial<Options<DatasetsDeleteData>>): UseMutationOptions<DatasetsDeleteResponse, DatasetsDeleteError, Options<DatasetsDeleteData>> => {
+    const mutationOptions: UseMutationOptions<DatasetsDeleteResponse, DatasetsDeleteError, Options<DatasetsDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await datasetsDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
 export const datasetsReadQueryKey = (options: Options<DatasetsReadData>) => createQueryKey('datasetsRead', options);
 
 export const datasetsReadOptions = (options: Options<DatasetsReadData>) => queryOptions<DatasetsReadResponse, DatasetsReadError, DatasetsReadResponse, ReturnType<typeof datasetsReadQueryKey>>({
@@ -575,10 +922,13 @@ export const datasetsReadOptions = (options: Options<DatasetsReadData>) => query
     queryKey: datasetsReadQueryKey(options)
 });
 
-export const datasetsUpdateSpecMutation = (options?: Partial<Options<DatasetsUpdateSpecData>>): UseMutationOptions<DatasetsUpdateSpecResponse, DatasetsUpdateSpecError, Options<DatasetsUpdateSpecData>> => {
-    const mutationOptions: UseMutationOptions<DatasetsUpdateSpecResponse, DatasetsUpdateSpecError, Options<DatasetsUpdateSpecData>> = {
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const datasetsUpdateMutation = (options?: Partial<Options<DatasetsUpdateData>>): UseMutationOptions<DatasetsUpdateResponse, DatasetsUpdateError, Options<DatasetsUpdateData>> => {
+    const mutationOptions: UseMutationOptions<DatasetsUpdateResponse, DatasetsUpdateError, Options<DatasetsUpdateData>> = {
         mutationFn: async (fnOptions) => {
-            const { data } = await datasetsUpdateSpec({
+            const { data } = await datasetsUpdate({
                 ...options,
                 ...fnOptions,
                 throwOnError: true
@@ -621,7 +971,7 @@ export const datasetsUnstageMutation = (options?: Partial<Options<DatasetsUnstag
 };
 
 /**
- * Upload a file into the dataset's staging area; commit makes a version.
+ * Upload a file into the staging area; commit makes a version. The same bytes are stored once.
  */
 export const datasetsUploadMutation = (options?: Partial<Options<DatasetsUploadData>>): UseMutationOptions<DatasetsUploadResponse, DatasetsUploadError, Options<DatasetsUploadData>> => {
     const mutationOptions: UseMutationOptions<DatasetsUploadResponse, DatasetsUploadError, Options<DatasetsUploadData>> = {
@@ -652,6 +1002,63 @@ export const datasetsStagedOptions = (options: Options<DatasetsStagedData>) => q
     queryKey: datasetsStagedQueryKey(options)
 });
 
+export const datasetsListVersionsQueryKey = (options: Options<DatasetsListVersionsData>) => createQueryKey('datasetsListVersions', options);
+
+export const datasetsListVersionsOptions = (options: Options<DatasetsListVersionsData>) => queryOptions<DatasetsListVersionsResponse, DatasetsListVersionsError, DatasetsListVersionsResponse, ReturnType<typeof datasetsListVersionsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await datasetsListVersions({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: datasetsListVersionsQueryKey(options)
+});
+
+export const datasetsListVersionsInfiniteQueryKey = (options: Options<DatasetsListVersionsData>): QueryKey<Options<DatasetsListVersionsData>> => createQueryKey('datasetsListVersions', options, true);
+
+export const datasetsListVersionsInfiniteOptions = (options: Options<DatasetsListVersionsData>) => {
+    const opts = infiniteQueryOptions<DatasetsListVersionsResponse, DatasetsListVersionsError, InfiniteData<DatasetsListVersionsResponse>, QueryKey<Options<DatasetsListVersionsData>>, string | Pick<QueryKey<Options<DatasetsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<DatasetsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await datasetsListVersions({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: datasetsListVersionsInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const datasetsReadVersionQueryKey = (options: Options<DatasetsReadVersionData>) => createQueryKey('datasetsReadVersion', options);
+
+export const datasetsReadVersionOptions = (options: Options<DatasetsReadVersionData>) => queryOptions<DatasetsReadVersionResponse, DatasetsReadVersionError, DatasetsReadVersionResponse, ReturnType<typeof datasetsReadVersionQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await datasetsReadVersion({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: datasetsReadVersionQueryKey(options)
+});
+
 export const datasetsFilesQueryKey = (options: Options<DatasetsFilesData>) => createQueryKey('datasetsFiles', options);
 
 export const datasetsFilesOptions = (options: Options<DatasetsFilesData>) => queryOptions<DatasetsFilesResponse, DatasetsFilesError, DatasetsFilesResponse, ReturnType<typeof datasetsFilesQueryKey>>({
@@ -670,7 +1077,7 @@ export const datasetsFilesOptions = (options: Options<DatasetsFilesData>) => que
 export const datasetsDownloadQueryKey = (options: Options<DatasetsDownloadData>) => createQueryKey('datasetsDownload', options);
 
 /**
- * Read a file of a version, bounded by `maxBytes`.
+ * Read a file of a version; `Range` and `maxBytes` bound the answer.
  */
 export const datasetsDownloadOptions = (options: Options<DatasetsDownloadData>) => queryOptions<DatasetsDownloadResponse, DatasetsDownloadError, DatasetsDownloadResponse, ReturnType<typeof datasetsDownloadQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -705,6 +1112,9 @@ export const datasetsLinkOptions = (options: Options<DatasetsLinkData>) => query
 
 export const environmentsListQueryKey = (options?: Options<EnvironmentsListData>) => createQueryKey('environmentsList', options);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const environmentsListOptions = (options?: Options<EnvironmentsListData>) => queryOptions<EnvironmentsListResponse, EnvironmentsListError, EnvironmentsListResponse, ReturnType<typeof environmentsListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await environmentsList({
@@ -720,6 +1130,9 @@ export const environmentsListOptions = (options?: Options<EnvironmentsListData>)
 
 export const environmentsListInfiniteQueryKey = (options?: Options<EnvironmentsListData>): QueryKey<Options<EnvironmentsListData>> => createQueryKey('environmentsList', options, true);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const environmentsListInfiniteOptions = (options?: Options<EnvironmentsListData>) => {
     const opts = infiniteQueryOptions<EnvironmentsListResponse, EnvironmentsListError, InfiniteData<EnvironmentsListResponse>, QueryKey<Options<EnvironmentsListData>>, string | Pick<QueryKey<Options<EnvironmentsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
@@ -759,6 +1172,23 @@ export const environmentsCreateMutation = (options?: Partial<Options<Environment
     return mutationOptions;
 };
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const environmentsDeleteMutation = (options?: Partial<Options<EnvironmentsDeleteData>>): UseMutationOptions<EnvironmentsDeleteResponse, EnvironmentsDeleteError, Options<EnvironmentsDeleteData>> => {
+    const mutationOptions: UseMutationOptions<EnvironmentsDeleteResponse, EnvironmentsDeleteError, Options<EnvironmentsDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await environmentsDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
 export const environmentsReadQueryKey = (options: Options<EnvironmentsReadData>) => createQueryKey('environmentsRead', options);
 
 export const environmentsReadOptions = (options: Options<EnvironmentsReadData>) => queryOptions<EnvironmentsReadResponse, EnvironmentsReadError, EnvironmentsReadResponse, ReturnType<typeof environmentsReadQueryKey>>({
@@ -774,10 +1204,13 @@ export const environmentsReadOptions = (options: Options<EnvironmentsReadData>) 
     queryKey: environmentsReadQueryKey(options)
 });
 
-export const environmentsUpdateSpecMutation = (options?: Partial<Options<EnvironmentsUpdateSpecData>>): UseMutationOptions<EnvironmentsUpdateSpecResponse, EnvironmentsUpdateSpecError, Options<EnvironmentsUpdateSpecData>> => {
-    const mutationOptions: UseMutationOptions<EnvironmentsUpdateSpecResponse, EnvironmentsUpdateSpecError, Options<EnvironmentsUpdateSpecData>> = {
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const environmentsUpdateMutation = (options?: Partial<Options<EnvironmentsUpdateData>>): UseMutationOptions<EnvironmentsUpdateResponse, EnvironmentsUpdateError, Options<EnvironmentsUpdateData>> => {
+    const mutationOptions: UseMutationOptions<EnvironmentsUpdateResponse, EnvironmentsUpdateError, Options<EnvironmentsUpdateData>> = {
         mutationFn: async (fnOptions) => {
-            const { data } = await environmentsUpdateSpec({
+            const { data } = await environmentsUpdate({
                 ...options,
                 ...fnOptions,
                 throwOnError: true
@@ -788,8 +1221,85 @@ export const environmentsUpdateSpecMutation = (options?: Partial<Options<Environ
     return mutationOptions;
 };
 
+/**
+ * Build a version on a unit; returns at once, the build shows in status.
+ */
+export const environmentsBuildMutation = (options?: Partial<Options<EnvironmentsBuildData>>): UseMutationOptions<EnvironmentsBuildResponse, EnvironmentsBuildError, Options<EnvironmentsBuildData>> => {
+    const mutationOptions: UseMutationOptions<EnvironmentsBuildResponse, EnvironmentsBuildError, Options<EnvironmentsBuildData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await environmentsBuild({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const environmentsListVersionsQueryKey = (options: Options<EnvironmentsListVersionsData>) => createQueryKey('environmentsListVersions', options);
+
+export const environmentsListVersionsOptions = (options: Options<EnvironmentsListVersionsData>) => queryOptions<EnvironmentsListVersionsResponse, EnvironmentsListVersionsError, EnvironmentsListVersionsResponse, ReturnType<typeof environmentsListVersionsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await environmentsListVersions({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: environmentsListVersionsQueryKey(options)
+});
+
+export const environmentsListVersionsInfiniteQueryKey = (options: Options<EnvironmentsListVersionsData>): QueryKey<Options<EnvironmentsListVersionsData>> => createQueryKey('environmentsListVersions', options, true);
+
+export const environmentsListVersionsInfiniteOptions = (options: Options<EnvironmentsListVersionsData>) => {
+    const opts = infiniteQueryOptions<EnvironmentsListVersionsResponse, EnvironmentsListVersionsError, InfiniteData<EnvironmentsListVersionsResponse>, QueryKey<Options<EnvironmentsListVersionsData>>, string | Pick<QueryKey<Options<EnvironmentsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<EnvironmentsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await environmentsListVersions({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: environmentsListVersionsInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const environmentsReadVersionQueryKey = (options: Options<EnvironmentsReadVersionData>) => createQueryKey('environmentsReadVersion', options);
+
+export const environmentsReadVersionOptions = (options: Options<EnvironmentsReadVersionData>) => queryOptions<EnvironmentsReadVersionResponse, EnvironmentsReadVersionError, EnvironmentsReadVersionResponse, ReturnType<typeof environmentsReadVersionQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await environmentsReadVersion({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: environmentsReadVersionQueryKey(options)
+});
+
 export const executionsListQueryKey = (options?: Options<ExecutionsListData>) => createQueryKey('executionsList', options);
 
+/**
+ * Executions across workflows the caller may read.
+ */
 export const executionsListOptions = (options?: Options<ExecutionsListData>) => queryOptions<ExecutionsListResponse, ExecutionsListError, ExecutionsListResponse, ReturnType<typeof executionsListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await executionsList({
@@ -805,6 +1315,9 @@ export const executionsListOptions = (options?: Options<ExecutionsListData>) => 
 
 export const executionsListInfiniteQueryKey = (options?: Options<ExecutionsListData>): QueryKey<Options<ExecutionsListData>> => createQueryKey('executionsList', options, true);
 
+/**
+ * Executions across workflows the caller may read.
+ */
 export const executionsListInfiniteOptions = (options?: Options<ExecutionsListData>) => {
     const opts = infiniteQueryOptions<ExecutionsListResponse, ExecutionsListError, InfiniteData<ExecutionsListResponse>, QueryKey<Options<ExecutionsListData>>, string | Pick<QueryKey<Options<ExecutionsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
@@ -830,102 +1343,11 @@ export const executionsListInfiniteOptions = (options?: Options<ExecutionsListDa
     return opts as Omit<typeof opts, 'initialData'>;
 };
 
-export const executionsReadQueryKey = (options: Options<ExecutionsReadData>) => createQueryKey('executionsRead', options);
-
-export const executionsReadOptions = (options: Options<ExecutionsReadData>) => queryOptions<ExecutionsReadResponse, ExecutionsReadError, ExecutionsReadResponse, ReturnType<typeof executionsReadQueryKey>>({
-    queryFn: async ({ queryKey, signal }) => {
-        const { data } = await executionsRead({
-            ...options,
-            ...queryKey[0],
-            signal,
-            throwOnError: true
-        });
-        return data;
-    },
-    queryKey: executionsReadQueryKey(options)
-});
-
-export const executionsCancelMutation = (options?: Partial<Options<ExecutionsCancelData>>): UseMutationOptions<ExecutionsCancelResponse, ExecutionsCancelError, Options<ExecutionsCancelData>> => {
-    const mutationOptions: UseMutationOptions<ExecutionsCancelResponse, ExecutionsCancelError, Options<ExecutionsCancelData>> = {
-        mutationFn: async (fnOptions) => {
-            const { data } = await executionsCancel({
-                ...options,
-                ...fnOptions,
-                throwOnError: true
-            });
-            return data;
-        }
-    };
-    return mutationOptions;
-};
-
-export const executionsResultQueryKey = (options: Options<ExecutionsResultData>) => createQueryKey('executionsResult', options);
-
-/**
- * A page of a port result's rows, bounded.
- */
-export const executionsResultOptions = (options: Options<ExecutionsResultData>) => queryOptions<ExecutionsResultResponse, ExecutionsResultError, ExecutionsResultResponse, ReturnType<typeof executionsResultQueryKey>>({
-    queryFn: async ({ queryKey, signal }) => {
-        const { data } = await executionsResult({
-            ...options,
-            ...queryKey[0],
-            signal,
-            throwOnError: true
-        });
-        return data;
-    },
-    queryKey: executionsResultQueryKey(options)
-});
-
-export const executionsResultInfiniteQueryKey = (options: Options<ExecutionsResultData>): QueryKey<Options<ExecutionsResultData>> => createQueryKey('executionsResult', options, true);
-
-/**
- * A page of a port result's rows, bounded.
- */
-export const executionsResultInfiniteOptions = (options: Options<ExecutionsResultData>) => {
-    const opts = infiniteQueryOptions<ExecutionsResultResponse, ExecutionsResultError, InfiniteData<ExecutionsResultResponse>, QueryKey<Options<ExecutionsResultData>>, number | Pick<QueryKey<Options<ExecutionsResultData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
-    // @ts-ignore
-    {
-        queryFn: async ({ pageParam, queryKey, signal }) => {
-            // @ts-ignore
-            const page: Pick<QueryKey<Options<ExecutionsResultData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
-                query: {
-                    offset: pageParam
-                }
-            };
-            const params = createInfiniteParams(queryKey, page);
-            const { data } = await executionsResult({
-                ...options,
-                ...params,
-                signal,
-                throwOnError: true
-            });
-            return data;
-        },
-        queryKey: executionsResultInfiniteQueryKey(options)
-    });
-    return opts as Omit<typeof opts, 'initialData'>;
-};
-
-/**
- * Save a port result as a new dataset version (CSV). Lineage records it as produced by the execution's workflow version.
- */
-export const executionsSaveResultMutation = (options?: Partial<Options<ExecutionsSaveResultData>>): UseMutationOptions<ExecutionsSaveResultResponse, ExecutionsSaveResultError, Options<ExecutionsSaveResultData>> => {
-    const mutationOptions: UseMutationOptions<ExecutionsSaveResultResponse, ExecutionsSaveResultError, Options<ExecutionsSaveResultData>> = {
-        mutationFn: async (fnOptions) => {
-            const { data } = await executionsSaveResult({
-                ...options,
-                ...fnOptions,
-                throwOnError: true
-            });
-            return data;
-        }
-    };
-    return mutationOptions;
-};
-
 export const mcpServersListQueryKey = (options?: Options<McpServersListData>) => createQueryKey('mcpServersList', options);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const mcpServersListOptions = (options?: Options<McpServersListData>) => queryOptions<McpServersListResponse, McpServersListError, McpServersListResponse, ReturnType<typeof mcpServersListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await mcpServersList({
@@ -941,6 +1363,9 @@ export const mcpServersListOptions = (options?: Options<McpServersListData>) => 
 
 export const mcpServersListInfiniteQueryKey = (options?: Options<McpServersListData>): QueryKey<Options<McpServersListData>> => createQueryKey('mcpServersList', options, true);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const mcpServersListInfiniteOptions = (options?: Options<McpServersListData>) => {
     const opts = infiniteQueryOptions<McpServersListResponse, McpServersListError, InfiniteData<McpServersListResponse>, QueryKey<Options<McpServersListData>>, string | Pick<QueryKey<Options<McpServersListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
@@ -980,6 +1405,23 @@ export const mcpServersCreateMutation = (options?: Partial<Options<McpServersCre
     return mutationOptions;
 };
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const mcpServersDeleteMutation = (options?: Partial<Options<McpServersDeleteData>>): UseMutationOptions<McpServersDeleteResponse, McpServersDeleteError, Options<McpServersDeleteData>> => {
+    const mutationOptions: UseMutationOptions<McpServersDeleteResponse, McpServersDeleteError, Options<McpServersDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await mcpServersDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
 export const mcpServersReadQueryKey = (options: Options<McpServersReadData>) => createQueryKey('mcpServersRead', options);
 
 export const mcpServersReadOptions = (options: Options<McpServersReadData>) => queryOptions<McpServersReadResponse, McpServersReadError, McpServersReadResponse, ReturnType<typeof mcpServersReadQueryKey>>({
@@ -995,10 +1437,13 @@ export const mcpServersReadOptions = (options: Options<McpServersReadData>) => q
     queryKey: mcpServersReadQueryKey(options)
 });
 
-export const mcpServersUpdateSpecMutation = (options?: Partial<Options<McpServersUpdateSpecData>>): UseMutationOptions<McpServersUpdateSpecResponse, McpServersUpdateSpecError, Options<McpServersUpdateSpecData>> => {
-    const mutationOptions: UseMutationOptions<McpServersUpdateSpecResponse, McpServersUpdateSpecError, Options<McpServersUpdateSpecData>> = {
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const mcpServersUpdateMutation = (options?: Partial<Options<McpServersUpdateData>>): UseMutationOptions<McpServersUpdateResponse, McpServersUpdateError, Options<McpServersUpdateData>> => {
+    const mutationOptions: UseMutationOptions<McpServersUpdateResponse, McpServersUpdateError, Options<McpServersUpdateData>> = {
         mutationFn: async (fnOptions) => {
-            const { data } = await mcpServersUpdateSpec({
+            const { data } = await mcpServersUpdate({
                 ...options,
                 ...fnOptions,
                 throwOnError: true
@@ -1009,10 +1454,67 @@ export const mcpServersUpdateSpecMutation = (options?: Partial<Options<McpServer
     return mutationOptions;
 };
 
+export const mcpServersListVersionsQueryKey = (options: Options<McpServersListVersionsData>) => createQueryKey('mcpServersListVersions', options);
+
+export const mcpServersListVersionsOptions = (options: Options<McpServersListVersionsData>) => queryOptions<McpServersListVersionsResponse, McpServersListVersionsError, McpServersListVersionsResponse, ReturnType<typeof mcpServersListVersionsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await mcpServersListVersions({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: mcpServersListVersionsQueryKey(options)
+});
+
+export const mcpServersListVersionsInfiniteQueryKey = (options: Options<McpServersListVersionsData>): QueryKey<Options<McpServersListVersionsData>> => createQueryKey('mcpServersListVersions', options, true);
+
+export const mcpServersListVersionsInfiniteOptions = (options: Options<McpServersListVersionsData>) => {
+    const opts = infiniteQueryOptions<McpServersListVersionsResponse, McpServersListVersionsError, InfiniteData<McpServersListVersionsResponse>, QueryKey<Options<McpServersListVersionsData>>, string | Pick<QueryKey<Options<McpServersListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<McpServersListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await mcpServersListVersions({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: mcpServersListVersionsInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const mcpServersReadVersionQueryKey = (options: Options<McpServersReadVersionData>) => createQueryKey('mcpServersReadVersion', options);
+
+export const mcpServersReadVersionOptions = (options: Options<McpServersReadVersionData>) => queryOptions<McpServersReadVersionResponse, McpServersReadVersionError, McpServersReadVersionResponse, ReturnType<typeof mcpServersReadVersionQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await mcpServersReadVersion({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: mcpServersReadVersionQueryKey(options)
+});
+
 export const meGetQueryKey = (options?: Options<MeGetData>) => createQueryKey('meGet', options);
 
 /**
- * The calling principal and its home project; creates both on first login.
+ * The calling principal, its projects and preferences; creates the principal and its home project on first login.
  */
 export const meGetOptions = (options?: Options<MeGetData>) => queryOptions<MeGetResponse, MeGetError, MeGetResponse, ReturnType<typeof meGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -1027,8 +1529,421 @@ export const meGetOptions = (options?: Options<MeGetData>) => queryOptions<MeGet
     queryKey: meGetQueryKey(options)
 });
 
+/**
+ * Replace the caller's preferences, a free-form document the app owns.
+ */
+export const meUpdatePreferencesMutation = (options?: Partial<Options<MeUpdatePreferencesData>>): UseMutationOptions<MeUpdatePreferencesResponse, MeUpdatePreferencesError, Options<MeUpdatePreferencesData>> => {
+    const mutationOptions: UseMutationOptions<MeUpdatePreferencesResponse, MeUpdatePreferencesError, Options<MeUpdatePreferencesData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await meUpdatePreferences({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const modelEndpointsListQueryKey = (options?: Options<ModelEndpointsListData>) => createQueryKey('modelEndpointsList', options);
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const modelEndpointsListOptions = (options?: Options<ModelEndpointsListData>) => queryOptions<ModelEndpointsListResponse, ModelEndpointsListError, ModelEndpointsListResponse, ReturnType<typeof modelEndpointsListQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await modelEndpointsList({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: modelEndpointsListQueryKey(options)
+});
+
+export const modelEndpointsListInfiniteQueryKey = (options?: Options<ModelEndpointsListData>): QueryKey<Options<ModelEndpointsListData>> => createQueryKey('modelEndpointsList', options, true);
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const modelEndpointsListInfiniteOptions = (options?: Options<ModelEndpointsListData>) => {
+    const opts = infiniteQueryOptions<ModelEndpointsListResponse, ModelEndpointsListError, InfiniteData<ModelEndpointsListResponse>, QueryKey<Options<ModelEndpointsListData>>, string | Pick<QueryKey<Options<ModelEndpointsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ModelEndpointsListData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await modelEndpointsList({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: modelEndpointsListInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const modelEndpointsCreateMutation = (options?: Partial<Options<ModelEndpointsCreateData>>): UseMutationOptions<ModelEndpointsCreateResponse, ModelEndpointsCreateError, Options<ModelEndpointsCreateData>> => {
+    const mutationOptions: UseMutationOptions<ModelEndpointsCreateResponse, ModelEndpointsCreateError, Options<ModelEndpointsCreateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await modelEndpointsCreate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const modelEndpointsDeleteMutation = (options?: Partial<Options<ModelEndpointsDeleteData>>): UseMutationOptions<ModelEndpointsDeleteResponse, ModelEndpointsDeleteError, Options<ModelEndpointsDeleteData>> => {
+    const mutationOptions: UseMutationOptions<ModelEndpointsDeleteResponse, ModelEndpointsDeleteError, Options<ModelEndpointsDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await modelEndpointsDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const modelEndpointsReadQueryKey = (options: Options<ModelEndpointsReadData>) => createQueryKey('modelEndpointsRead', options);
+
+export const modelEndpointsReadOptions = (options: Options<ModelEndpointsReadData>) => queryOptions<ModelEndpointsReadResponse, ModelEndpointsReadError, ModelEndpointsReadResponse, ReturnType<typeof modelEndpointsReadQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await modelEndpointsRead({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: modelEndpointsReadQueryKey(options)
+});
+
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const modelEndpointsUpdateMutation = (options?: Partial<Options<ModelEndpointsUpdateData>>): UseMutationOptions<ModelEndpointsUpdateResponse, ModelEndpointsUpdateError, Options<ModelEndpointsUpdateData>> => {
+    const mutationOptions: UseMutationOptions<ModelEndpointsUpdateResponse, ModelEndpointsUpdateError, Options<ModelEndpointsUpdateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await modelEndpointsUpdate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const modelsListQueryKey = (options?: Options<ModelsListData>) => createQueryKey('modelsList', options);
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const modelsListOptions = (options?: Options<ModelsListData>) => queryOptions<ModelsListResponse, ModelsListError, ModelsListResponse, ReturnType<typeof modelsListQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await modelsList({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: modelsListQueryKey(options)
+});
+
+export const modelsListInfiniteQueryKey = (options?: Options<ModelsListData>): QueryKey<Options<ModelsListData>> => createQueryKey('modelsList', options, true);
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const modelsListInfiniteOptions = (options?: Options<ModelsListData>) => {
+    const opts = infiniteQueryOptions<ModelsListResponse, ModelsListError, InfiniteData<ModelsListResponse>, QueryKey<Options<ModelsListData>>, string | Pick<QueryKey<Options<ModelsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ModelsListData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await modelsList({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: modelsListInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const modelsCreateMutation = (options?: Partial<Options<ModelsCreateData>>): UseMutationOptions<ModelsCreateResponse, ModelsCreateError, Options<ModelsCreateData>> => {
+    const mutationOptions: UseMutationOptions<ModelsCreateResponse, ModelsCreateError, Options<ModelsCreateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await modelsCreate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const modelsDeleteMutation = (options?: Partial<Options<ModelsDeleteData>>): UseMutationOptions<ModelsDeleteResponse, ModelsDeleteError, Options<ModelsDeleteData>> => {
+    const mutationOptions: UseMutationOptions<ModelsDeleteResponse, ModelsDeleteError, Options<ModelsDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await modelsDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const modelsReadQueryKey = (options: Options<ModelsReadData>) => createQueryKey('modelsRead', options);
+
+export const modelsReadOptions = (options: Options<ModelsReadData>) => queryOptions<ModelsReadResponse, ModelsReadError, ModelsReadResponse, ReturnType<typeof modelsReadQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await modelsRead({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: modelsReadQueryKey(options)
+});
+
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const modelsUpdateMutation = (options?: Partial<Options<ModelsUpdateData>>): UseMutationOptions<ModelsUpdateResponse, ModelsUpdateError, Options<ModelsUpdateData>> => {
+    const mutationOptions: UseMutationOptions<ModelsUpdateResponse, ModelsUpdateError, Options<ModelsUpdateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await modelsUpdate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Commit the staged files, over the head version's files, as a new version.
+ */
+export const modelsCommitMutation = (options?: Partial<Options<ModelsCommitData>>): UseMutationOptions<ModelsCommitResponse, ModelsCommitError, Options<ModelsCommitData>> => {
+    const mutationOptions: UseMutationOptions<ModelsCommitResponse, ModelsCommitError, Options<ModelsCommitData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await modelsCommit({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const modelsUnstageMutation = (options?: Partial<Options<ModelsUnstageData>>): UseMutationOptions<ModelsUnstageResponse, ModelsUnstageError, Options<ModelsUnstageData>> => {
+    const mutationOptions: UseMutationOptions<ModelsUnstageResponse, ModelsUnstageError, Options<ModelsUnstageData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await modelsUnstage({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Upload a file into the staging area; commit makes a version. The same bytes are stored once.
+ */
+export const modelsUploadMutation = (options?: Partial<Options<ModelsUploadData>>): UseMutationOptions<ModelsUploadResponse, ModelsUploadError, Options<ModelsUploadData>> => {
+    const mutationOptions: UseMutationOptions<ModelsUploadResponse, ModelsUploadError, Options<ModelsUploadData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await modelsUpload({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const modelsStagedQueryKey = (options: Options<ModelsStagedData>) => createQueryKey('modelsStaged', options);
+
+export const modelsStagedOptions = (options: Options<ModelsStagedData>) => queryOptions<ModelsStagedResponse, ModelsStagedError, ModelsStagedResponse, ReturnType<typeof modelsStagedQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await modelsStaged({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: modelsStagedQueryKey(options)
+});
+
+export const modelsListVersionsQueryKey = (options: Options<ModelsListVersionsData>) => createQueryKey('modelsListVersions', options);
+
+export const modelsListVersionsOptions = (options: Options<ModelsListVersionsData>) => queryOptions<ModelsListVersionsResponse, ModelsListVersionsError, ModelsListVersionsResponse, ReturnType<typeof modelsListVersionsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await modelsListVersions({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: modelsListVersionsQueryKey(options)
+});
+
+export const modelsListVersionsInfiniteQueryKey = (options: Options<ModelsListVersionsData>): QueryKey<Options<ModelsListVersionsData>> => createQueryKey('modelsListVersions', options, true);
+
+export const modelsListVersionsInfiniteOptions = (options: Options<ModelsListVersionsData>) => {
+    const opts = infiniteQueryOptions<ModelsListVersionsResponse, ModelsListVersionsError, InfiniteData<ModelsListVersionsResponse>, QueryKey<Options<ModelsListVersionsData>>, string | Pick<QueryKey<Options<ModelsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ModelsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await modelsListVersions({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: modelsListVersionsInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const modelsReadVersionQueryKey = (options: Options<ModelsReadVersionData>) => createQueryKey('modelsReadVersion', options);
+
+export const modelsReadVersionOptions = (options: Options<ModelsReadVersionData>) => queryOptions<ModelsReadVersionResponse, ModelsReadVersionError, ModelsReadVersionResponse, ReturnType<typeof modelsReadVersionQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await modelsReadVersion({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: modelsReadVersionQueryKey(options)
+});
+
+export const modelsFilesQueryKey = (options: Options<ModelsFilesData>) => createQueryKey('modelsFiles', options);
+
+export const modelsFilesOptions = (options: Options<ModelsFilesData>) => queryOptions<ModelsFilesResponse, ModelsFilesError, ModelsFilesResponse, ReturnType<typeof modelsFilesQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await modelsFiles({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: modelsFilesQueryKey(options)
+});
+
+export const modelsDownloadQueryKey = (options: Options<ModelsDownloadData>) => createQueryKey('modelsDownload', options);
+
+/**
+ * Read a file of a version; `Range` and `maxBytes` bound the answer.
+ */
+export const modelsDownloadOptions = (options: Options<ModelsDownloadData>) => queryOptions<ModelsDownloadResponse, ModelsDownloadError, ModelsDownloadResponse, ReturnType<typeof modelsDownloadQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await modelsDownload({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: modelsDownloadQueryKey(options)
+});
+
+export const modelsLinkQueryKey = (options: Options<ModelsLinkData>) => createQueryKey('modelsLink', options);
+
+/**
+ * A presigned URL for a file of a version, for engines and browsers.
+ */
+export const modelsLinkOptions = (options: Options<ModelsLinkData>) => queryOptions<ModelsLinkResponse, ModelsLinkError, ModelsLinkResponse, ReturnType<typeof modelsLinkQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await modelsLink({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: modelsLinkQueryKey(options)
+});
+
 export const operatorsListQueryKey = (options?: Options<OperatorsListData>) => createQueryKey('operatorsList', options);
 
+/**
+ * List the operators the caller may use, built-ins and custom. The summary view carries the type, name, group and description; the full view adds the property schema and ports.
+ */
 export const operatorsListOptions = (options?: Options<OperatorsListData>) => queryOptions<OperatorsListResponse, OperatorsListError, OperatorsListResponse, ReturnType<typeof operatorsListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await operatorsList({
@@ -1042,8 +1957,161 @@ export const operatorsListOptions = (options?: Options<OperatorsListData>) => qu
     queryKey: operatorsListQueryKey(options)
 });
 
+export const operatorsListInfiniteQueryKey = (options?: Options<OperatorsListData>): QueryKey<Options<OperatorsListData>> => createQueryKey('operatorsList', options, true);
+
+/**
+ * List the operators the caller may use, built-ins and custom. The summary view carries the type, name, group and description; the full view adds the property schema and ports.
+ */
+export const operatorsListInfiniteOptions = (options?: Options<OperatorsListData>) => {
+    const opts = infiniteQueryOptions<OperatorsListResponse, OperatorsListError, InfiniteData<OperatorsListResponse>, QueryKey<Options<OperatorsListData>>, string | Pick<QueryKey<Options<OperatorsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<OperatorsListData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await operatorsList({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: operatorsListInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const operatorsCreateMutation = (options?: Partial<Options<OperatorsCreateData>>): UseMutationOptions<OperatorsCreateResponse, OperatorsCreateError, Options<OperatorsCreateData>> => {
+    const mutationOptions: UseMutationOptions<OperatorsCreateResponse, OperatorsCreateError, Options<OperatorsCreateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await operatorsCreate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const operatorsDeleteMutation = (options?: Partial<Options<OperatorsDeleteData>>): UseMutationOptions<OperatorsDeleteResponse, OperatorsDeleteError, Options<OperatorsDeleteData>> => {
+    const mutationOptions: UseMutationOptions<OperatorsDeleteResponse, OperatorsDeleteError, Options<OperatorsDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await operatorsDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const operatorsReadQueryKey = (options: Options<OperatorsReadData>) => createQueryKey('operatorsRead', options);
+
+export const operatorsReadOptions = (options: Options<OperatorsReadData>) => queryOptions<OperatorsReadResponse, OperatorsReadError, OperatorsReadResponse, ReturnType<typeof operatorsReadQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await operatorsRead({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: operatorsReadQueryKey(options)
+});
+
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const operatorsUpdateMutation = (options?: Partial<Options<OperatorsUpdateData>>): UseMutationOptions<OperatorsUpdateResponse, OperatorsUpdateError, Options<OperatorsUpdateData>> => {
+    const mutationOptions: UseMutationOptions<OperatorsUpdateResponse, OperatorsUpdateError, Options<OperatorsUpdateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await operatorsUpdate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const operatorsListVersionsQueryKey = (options: Options<OperatorsListVersionsData>) => createQueryKey('operatorsListVersions', options);
+
+export const operatorsListVersionsOptions = (options: Options<OperatorsListVersionsData>) => queryOptions<OperatorsListVersionsResponse, OperatorsListVersionsError, OperatorsListVersionsResponse, ReturnType<typeof operatorsListVersionsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await operatorsListVersions({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: operatorsListVersionsQueryKey(options)
+});
+
+export const operatorsListVersionsInfiniteQueryKey = (options: Options<OperatorsListVersionsData>): QueryKey<Options<OperatorsListVersionsData>> => createQueryKey('operatorsListVersions', options, true);
+
+export const operatorsListVersionsInfiniteOptions = (options: Options<OperatorsListVersionsData>) => {
+    const opts = infiniteQueryOptions<OperatorsListVersionsResponse, OperatorsListVersionsError, InfiniteData<OperatorsListVersionsResponse>, QueryKey<Options<OperatorsListVersionsData>>, string | Pick<QueryKey<Options<OperatorsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<OperatorsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await operatorsListVersions({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: operatorsListVersionsInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const operatorsReadVersionQueryKey = (options: Options<OperatorsReadVersionData>) => createQueryKey('operatorsReadVersion', options);
+
+export const operatorsReadVersionOptions = (options: Options<OperatorsReadVersionData>) => queryOptions<OperatorsReadVersionResponse, OperatorsReadVersionError, OperatorsReadVersionResponse, ReturnType<typeof operatorsReadVersionQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await operatorsReadVersion({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: operatorsReadVersionQueryKey(options)
+});
+
 export const principalsListQueryKey = (options?: Options<PrincipalsListData>) => createQueryKey('principalsList', options);
 
+/**
+ * Search the principals known to the catalog (everyone who has logged in, and groups), for sharing.
+ */
 export const principalsListOptions = (options?: Options<PrincipalsListData>) => queryOptions<PrincipalsListResponse, PrincipalsListError, PrincipalsListResponse, ReturnType<typeof principalsListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await principalsList({
@@ -1074,6 +2142,9 @@ export const principalsReadOptions = (options: Options<PrincipalsReadData>) => q
 
 export const projectsListQueryKey = (options?: Options<ProjectsListData>) => createQueryKey('projectsList', options);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const projectsListOptions = (options?: Options<ProjectsListData>) => queryOptions<ProjectsListResponse, ProjectsListError, ProjectsListResponse, ReturnType<typeof projectsListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await projectsList({
@@ -1089,6 +2160,9 @@ export const projectsListOptions = (options?: Options<ProjectsListData>) => quer
 
 export const projectsListInfiniteQueryKey = (options?: Options<ProjectsListData>): QueryKey<Options<ProjectsListData>> => createQueryKey('projectsList', options, true);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const projectsListInfiniteOptions = (options?: Options<ProjectsListData>) => {
     const opts = infiniteQueryOptions<ProjectsListResponse, ProjectsListError, InfiniteData<ProjectsListResponse>, QueryKey<Options<ProjectsListData>>, string | Pick<QueryKey<Options<ProjectsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
@@ -1128,6 +2202,23 @@ export const projectsCreateMutation = (options?: Partial<Options<ProjectsCreateD
     return mutationOptions;
 };
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const projectsDeleteMutation = (options?: Partial<Options<ProjectsDeleteData>>): UseMutationOptions<ProjectsDeleteResponse, ProjectsDeleteError, Options<ProjectsDeleteData>> => {
+    const mutationOptions: UseMutationOptions<ProjectsDeleteResponse, ProjectsDeleteError, Options<ProjectsDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await projectsDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
 export const projectsReadQueryKey = (options: Options<ProjectsReadData>) => createQueryKey('projectsRead', options);
 
 export const projectsReadOptions = (options: Options<ProjectsReadData>) => queryOptions<ProjectsReadResponse, ProjectsReadError, ProjectsReadResponse, ReturnType<typeof projectsReadQueryKey>>({
@@ -1143,10 +2234,13 @@ export const projectsReadOptions = (options: Options<ProjectsReadData>) => query
     queryKey: projectsReadQueryKey(options)
 });
 
-export const projectsUpdateSpecMutation = (options?: Partial<Options<ProjectsUpdateSpecData>>): UseMutationOptions<ProjectsUpdateSpecResponse, ProjectsUpdateSpecError, Options<ProjectsUpdateSpecData>> => {
-    const mutationOptions: UseMutationOptions<ProjectsUpdateSpecResponse, ProjectsUpdateSpecError, Options<ProjectsUpdateSpecData>> = {
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const projectsUpdateMutation = (options?: Partial<Options<ProjectsUpdateData>>): UseMutationOptions<ProjectsUpdateResponse, ProjectsUpdateError, Options<ProjectsUpdateData>> => {
+    const mutationOptions: UseMutationOptions<ProjectsUpdateResponse, ProjectsUpdateError, Options<ProjectsUpdateData>> = {
         mutationFn: async (fnOptions) => {
-            const { data } = await projectsUpdateSpec({
+            const { data } = await projectsUpdate({
                 ...options,
                 ...fnOptions,
                 throwOnError: true
@@ -1160,7 +2254,7 @@ export const projectsUpdateSpecMutation = (options?: Partial<Options<ProjectsUpd
 export const resourcesSearchQueryKey = (options?: Options<ResourcesSearchData>) => createQueryKey('resourcesSearch', options);
 
 /**
- * Search resources the caller may read.
+ * Search the resources the caller may read, across kinds.
  */
 export const resourcesSearchOptions = (options?: Options<ResourcesSearchData>) => queryOptions<ResourcesSearchResponse, ResourcesSearchError, ResourcesSearchResponse, ReturnType<typeof resourcesSearchQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -1178,7 +2272,7 @@ export const resourcesSearchOptions = (options?: Options<ResourcesSearchData>) =
 export const resourcesSearchInfiniteQueryKey = (options?: Options<ResourcesSearchData>): QueryKey<Options<ResourcesSearchData>> => createQueryKey('resourcesSearch', options, true);
 
 /**
- * Search resources the caller may read.
+ * Search the resources the caller may read, across kinds.
  */
 export const resourcesSearchInfiniteOptions = (options?: Options<ResourcesSearchData>) => {
     const opts = infiniteQueryOptions<ResourcesSearchResponse, ResourcesSearchError, InfiniteData<ResourcesSearchResponse>, QueryKey<Options<ResourcesSearchData>>, string | Pick<QueryKey<Options<ResourcesSearchData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
@@ -1204,6 +2298,24 @@ export const resourcesSearchInfiniteOptions = (options?: Options<ResourcesSearch
     });
     return opts as Omit<typeof opts, 'initialData'>;
 };
+
+export const resourcesResolveQueryKey = (options: Options<ResourcesResolveData>) => createQueryKey('resourcesResolve', options);
+
+/**
+ * Resolve a `texera://` URI to its resource, version and subresource path.
+ */
+export const resourcesResolveOptions = (options: Options<ResourcesResolveData>) => queryOptions<ResourcesResolveResponse, ResourcesResolveError, ResourcesResolveResponse, ReturnType<typeof resourcesResolveQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await resourcesResolve({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: resourcesResolveQueryKey(options)
+});
 
 export const resourcesDeleteMutation = (options?: Partial<Options<ResourcesDeleteData>>): UseMutationOptions<ResourcesDeleteResponse, ResourcesDeleteError, Options<ResourcesDeleteData>> => {
     const mutationOptions: UseMutationOptions<ResourcesDeleteResponse, ResourcesDeleteError, Options<ResourcesDeleteData>> = {
@@ -1247,6 +2359,24 @@ export const resourcesUpdateMetadataMutation = (options?: Partial<Options<Resour
     };
     return mutationOptions;
 };
+
+export const resourcesDependentsQueryKey = (options: Options<ResourcesDependentsData>) => createQueryKey('resourcesDependents', options);
+
+/**
+ * The resources whose specs reference this one.
+ */
+export const resourcesDependentsOptions = (options: Options<ResourcesDependentsData>) => queryOptions<ResourcesDependentsResponse, ResourcesDependentsError, ResourcesDependentsResponse, ReturnType<typeof resourcesDependentsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await resourcesDependents({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: resourcesDependentsQueryKey(options)
+});
 
 export const resourcesListGrantsQueryKey = (options: Options<ResourcesListGrantsData>) => createQueryKey('resourcesListGrants', options);
 
@@ -1293,6 +2423,9 @@ export const resourcesGrantMutation = (options?: Partial<Options<ResourcesGrantD
 
 export const resourcesLineageQueryKey = (options: Options<ResourcesLineageData>) => createQueryKey('resourcesLineage', options);
 
+/**
+ * Walk the lineage graph from a resource or one of its versions.
+ */
 export const resourcesLineageOptions = (options: Options<ResourcesLineageData>) => queryOptions<ResourcesLineageResponse, ResourcesLineageError, ResourcesLineageResponse, ReturnType<typeof resourcesLineageQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await resourcesLineage({
@@ -1348,23 +2481,6 @@ export const resourcesListVersionsInfiniteOptions = (options: Options<ResourcesL
     return opts as Omit<typeof opts, 'initialData'>;
 };
 
-/**
- * Create a new version from full content or a JSON Patch to the head.
- */
-export const resourcesCreateVersionMutation = (options?: Partial<Options<ResourcesCreateVersionData>>): UseMutationOptions<ResourcesCreateVersionResponse, ResourcesCreateVersionError, Options<ResourcesCreateVersionData>> => {
-    const mutationOptions: UseMutationOptions<ResourcesCreateVersionResponse, ResourcesCreateVersionError, Options<ResourcesCreateVersionData>> = {
-        mutationFn: async (fnOptions) => {
-            const { data } = await resourcesCreateVersion({
-                ...options,
-                ...fnOptions,
-                throwOnError: true
-            });
-            return data;
-        }
-    };
-    return mutationOptions;
-};
-
 export const resourcesReadVersionQueryKey = (options: Options<ResourcesReadVersionData>) => createQueryKey('resourcesReadVersion', options);
 
 export const resourcesReadVersionOptions = (options: Options<ResourcesReadVersionData>) => queryOptions<ResourcesReadVersionResponse, ResourcesReadVersionError, ResourcesReadVersionResponse, ReturnType<typeof resourcesReadVersionQueryKey>>({
@@ -1380,8 +2496,58 @@ export const resourcesReadVersionOptions = (options: Options<ResourcesReadVersio
     queryKey: resourcesReadVersionQueryKey(options)
 });
 
+export const settingsRoutesReadQueryKey = (options?: Options<SettingsRoutesReadData>) => createQueryKey('settingsRoutesRead', options);
+
+export const settingsRoutesReadOptions = (options?: Options<SettingsRoutesReadData>) => queryOptions<SettingsRoutesReadResponse, SettingsRoutesReadError, SettingsRoutesReadResponse, ReturnType<typeof settingsRoutesReadQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await settingsRoutesRead({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: settingsRoutesReadQueryKey(options)
+});
+
+export const settingsRoutesUpdateMutation = (options?: Partial<Options<SettingsRoutesUpdateData>>): UseMutationOptions<SettingsRoutesUpdateResponse, SettingsRoutesUpdateError, Options<SettingsRoutesUpdateData>> => {
+    const mutationOptions: UseMutationOptions<SettingsRoutesUpdateResponse, SettingsRoutesUpdateError, Options<SettingsRoutesUpdateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await settingsRoutesUpdate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const settingsRoutesPublicQueryKey = (options?: Options<SettingsRoutesPublicData>) => createQueryKey('settingsRoutesPublic', options);
+
+/**
+ * Served without a token.
+ */
+export const settingsRoutesPublicOptions = (options?: Options<SettingsRoutesPublicData>) => queryOptions<SettingsRoutesPublicResponse, SettingsRoutesPublicError, SettingsRoutesPublicResponse, ReturnType<typeof settingsRoutesPublicQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await settingsRoutesPublic({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: settingsRoutesPublicQueryKey(options)
+});
+
 export const skillsListQueryKey = (options?: Options<SkillsListData>) => createQueryKey('skillsList', options);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const skillsListOptions = (options?: Options<SkillsListData>) => queryOptions<SkillsListResponse, SkillsListError, SkillsListResponse, ReturnType<typeof skillsListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await skillsList({
@@ -1397,6 +2563,9 @@ export const skillsListOptions = (options?: Options<SkillsListData>) => queryOpt
 
 export const skillsListInfiniteQueryKey = (options?: Options<SkillsListData>): QueryKey<Options<SkillsListData>> => createQueryKey('skillsList', options, true);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const skillsListInfiniteOptions = (options?: Options<SkillsListData>) => {
     const opts = infiniteQueryOptions<SkillsListResponse, SkillsListError, InfiniteData<SkillsListResponse>, QueryKey<Options<SkillsListData>>, string | Pick<QueryKey<Options<SkillsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
@@ -1436,6 +2605,23 @@ export const skillsCreateMutation = (options?: Partial<Options<SkillsCreateData>
     return mutationOptions;
 };
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const skillsDeleteMutation = (options?: Partial<Options<SkillsDeleteData>>): UseMutationOptions<SkillsDeleteResponse, SkillsDeleteError, Options<SkillsDeleteData>> => {
+    const mutationOptions: UseMutationOptions<SkillsDeleteResponse, SkillsDeleteError, Options<SkillsDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await skillsDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
 export const skillsReadQueryKey = (options: Options<SkillsReadData>) => createQueryKey('skillsRead', options);
 
 export const skillsReadOptions = (options: Options<SkillsReadData>) => queryOptions<SkillsReadResponse, SkillsReadError, SkillsReadResponse, ReturnType<typeof skillsReadQueryKey>>({
@@ -1451,10 +2637,13 @@ export const skillsReadOptions = (options: Options<SkillsReadData>) => queryOpti
     queryKey: skillsReadQueryKey(options)
 });
 
-export const skillsUpdateSpecMutation = (options?: Partial<Options<SkillsUpdateSpecData>>): UseMutationOptions<SkillsUpdateSpecResponse, SkillsUpdateSpecError, Options<SkillsUpdateSpecData>> => {
-    const mutationOptions: UseMutationOptions<SkillsUpdateSpecResponse, SkillsUpdateSpecError, Options<SkillsUpdateSpecData>> = {
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const skillsUpdateMutation = (options?: Partial<Options<SkillsUpdateData>>): UseMutationOptions<SkillsUpdateResponse, SkillsUpdateError, Options<SkillsUpdateData>> => {
+    const mutationOptions: UseMutationOptions<SkillsUpdateResponse, SkillsUpdateError, Options<SkillsUpdateData>> = {
         mutationFn: async (fnOptions) => {
-            const { data } = await skillsUpdateSpec({
+            const { data } = await skillsUpdate({
                 ...options,
                 ...fnOptions,
                 throwOnError: true
@@ -1465,8 +2654,68 @@ export const skillsUpdateSpecMutation = (options?: Partial<Options<SkillsUpdateS
     return mutationOptions;
 };
 
+export const skillsListVersionsQueryKey = (options: Options<SkillsListVersionsData>) => createQueryKey('skillsListVersions', options);
+
+export const skillsListVersionsOptions = (options: Options<SkillsListVersionsData>) => queryOptions<SkillsListVersionsResponse, SkillsListVersionsError, SkillsListVersionsResponse, ReturnType<typeof skillsListVersionsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await skillsListVersions({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: skillsListVersionsQueryKey(options)
+});
+
+export const skillsListVersionsInfiniteQueryKey = (options: Options<SkillsListVersionsData>): QueryKey<Options<SkillsListVersionsData>> => createQueryKey('skillsListVersions', options, true);
+
+export const skillsListVersionsInfiniteOptions = (options: Options<SkillsListVersionsData>) => {
+    const opts = infiniteQueryOptions<SkillsListVersionsResponse, SkillsListVersionsError, InfiniteData<SkillsListVersionsResponse>, QueryKey<Options<SkillsListVersionsData>>, string | Pick<QueryKey<Options<SkillsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<SkillsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await skillsListVersions({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: skillsListVersionsInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const skillsReadVersionQueryKey = (options: Options<SkillsReadVersionData>) => createQueryKey('skillsReadVersion', options);
+
+export const skillsReadVersionOptions = (options: Options<SkillsReadVersionData>) => queryOptions<SkillsReadVersionResponse, SkillsReadVersionError, SkillsReadVersionResponse, ReturnType<typeof skillsReadVersionQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await skillsReadVersion({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: skillsReadVersionQueryKey(options)
+});
+
 export const workflowsListQueryKey = (options?: Options<WorkflowsListData>) => createQueryKey('workflowsList', options);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const workflowsListOptions = (options?: Options<WorkflowsListData>) => queryOptions<WorkflowsListResponse, WorkflowsListError, WorkflowsListResponse, ReturnType<typeof workflowsListQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await workflowsList({
@@ -1482,6 +2731,9 @@ export const workflowsListOptions = (options?: Options<WorkflowsListData>) => qu
 
 export const workflowsListInfiniteQueryKey = (options?: Options<WorkflowsListData>): QueryKey<Options<WorkflowsListData>> => createQueryKey('workflowsList', options, true);
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const workflowsListInfiniteOptions = (options?: Options<WorkflowsListData>) => {
     const opts = infiniteQueryOptions<WorkflowsListResponse, WorkflowsListError, InfiniteData<WorkflowsListResponse>, QueryKey<Options<WorkflowsListData>>, string | Pick<QueryKey<Options<WorkflowsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
     // @ts-ignore
@@ -1522,12 +2774,12 @@ export const workflowsCreateMutation = (options?: Partial<Options<WorkflowsCreat
 };
 
 /**
- * Create a workflow with its first version's content (the logical plan JSON).
+ * Delete the resource; refused with 409 while another resource references it.
  */
-export const workflowsCreateWithContentMutation = (options?: Partial<Options<WorkflowsCreateWithContentData>>): UseMutationOptions<WorkflowsCreateWithContentResponse, WorkflowsCreateWithContentError, Options<WorkflowsCreateWithContentData>> => {
-    const mutationOptions: UseMutationOptions<WorkflowsCreateWithContentResponse, WorkflowsCreateWithContentError, Options<WorkflowsCreateWithContentData>> = {
+export const workflowsDeleteMutation = (options?: Partial<Options<WorkflowsDeleteData>>): UseMutationOptions<WorkflowsDeleteResponse, WorkflowsDeleteError, Options<WorkflowsDeleteData>> => {
+    const mutationOptions: UseMutationOptions<WorkflowsDeleteResponse, WorkflowsDeleteError, Options<WorkflowsDeleteData>> = {
         mutationFn: async (fnOptions) => {
-            const { data } = await workflowsCreateWithContent({
+            const { data } = await workflowsDelete({
                 ...options,
                 ...fnOptions,
                 throwOnError: true
@@ -1553,10 +2805,13 @@ export const workflowsReadOptions = (options: Options<WorkflowsReadData>) => que
     queryKey: workflowsReadQueryKey(options)
 });
 
-export const workflowsUpdateSpecMutation = (options?: Partial<Options<WorkflowsUpdateSpecData>>): UseMutationOptions<WorkflowsUpdateSpecResponse, WorkflowsUpdateSpecError, Options<WorkflowsUpdateSpecData>> => {
-    const mutationOptions: UseMutationOptions<WorkflowsUpdateSpecResponse, WorkflowsUpdateSpecError, Options<WorkflowsUpdateSpecData>> = {
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const workflowsUpdateMutation = (options?: Partial<Options<WorkflowsUpdateData>>): UseMutationOptions<WorkflowsUpdateResponse, WorkflowsUpdateError, Options<WorkflowsUpdateData>> => {
+    const mutationOptions: UseMutationOptions<WorkflowsUpdateResponse, WorkflowsUpdateError, Options<WorkflowsUpdateData>> = {
         mutationFn: async (fnOptions) => {
-            const { data } = await workflowsUpdateSpec({
+            const { data } = await workflowsUpdate({
                 ...options,
                 ...fnOptions,
                 throwOnError: true
@@ -1567,26 +2822,8 @@ export const workflowsUpdateSpecMutation = (options?: Partial<Options<WorkflowsU
     return mutationOptions;
 };
 
-export const workflowsContentQueryKey = (options: Options<WorkflowsContentData>) => createQueryKey('workflowsContent', options);
-
 /**
- * The head version's content, or a given version.
- */
-export const workflowsContentOptions = (options: Options<WorkflowsContentData>) => queryOptions<WorkflowsContentResponse, WorkflowsContentError, WorkflowsContentResponse, ReturnType<typeof workflowsContentQueryKey>>({
-    queryFn: async ({ queryKey, signal }) => {
-        const { data } = await workflowsContent({
-            ...options,
-            ...queryKey[0],
-            signal,
-            throwOnError: true
-        });
-        return data;
-    },
-    queryKey: workflowsContentQueryKey(options)
-});
-
-/**
- * Edit a workflow: a JSON Patch to the head content yields a new version.
+ * Edit a workflow: a JSON Patch to the head spec, or a full spec, yields a new version.
  */
 export const workflowsEditMutation = (options?: Partial<Options<WorkflowsEditData>>): UseMutationOptions<WorkflowsEditResponse, WorkflowsEditError, Options<WorkflowsEditData>> => {
     const mutationOptions: UseMutationOptions<WorkflowsEditResponse, WorkflowsEditError, Options<WorkflowsEditData>> = {
@@ -1644,8 +2881,120 @@ export const workflowsListExecutionsInfiniteOptions = (options: Options<Workflow
     return opts as Omit<typeof opts, 'initialData'>;
 };
 
+export const workflowsReadExecutionQueryKey = (options: Options<WorkflowsReadExecutionData>) => createQueryKey('workflowsReadExecution', options);
+
+export const workflowsReadExecutionOptions = (options: Options<WorkflowsReadExecutionData>) => queryOptions<WorkflowsReadExecutionResponse, WorkflowsReadExecutionError, WorkflowsReadExecutionResponse, ReturnType<typeof workflowsReadExecutionQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await workflowsReadExecution({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: workflowsReadExecutionQueryKey(options)
+});
+
+export const workflowsCancelExecutionMutation = (options?: Partial<Options<WorkflowsCancelExecutionData>>): UseMutationOptions<WorkflowsCancelExecutionResponse, WorkflowsCancelExecutionError, Options<WorkflowsCancelExecutionData>> => {
+    const mutationOptions: UseMutationOptions<WorkflowsCancelExecutionResponse, WorkflowsCancelExecutionError, Options<WorkflowsCancelExecutionData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await workflowsCancelExecution({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const workflowsReadPortQueryKey = (options: Options<WorkflowsReadPortData>) => createQueryKey('workflowsReadPort', options);
+
 /**
- * Run a workflow version on a computing unit; returns the execution.
+ * What a port of an execution holds: for an output port its result, for an input port its binding.
+ */
+export const workflowsReadPortOptions = (options: Options<WorkflowsReadPortData>) => queryOptions<WorkflowsReadPortResponse, WorkflowsReadPortError, WorkflowsReadPortResponse, ReturnType<typeof workflowsReadPortQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await workflowsReadPort({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: workflowsReadPortQueryKey(options)
+});
+
+export const workflowsReadRowsQueryKey = (options: Options<WorkflowsReadRowsData>) => createQueryKey('workflowsReadRows', options);
+
+/**
+ * A bounded page of an output port's rows.
+ */
+export const workflowsReadRowsOptions = (options: Options<WorkflowsReadRowsData>) => queryOptions<WorkflowsReadRowsResponse, WorkflowsReadRowsError, WorkflowsReadRowsResponse, ReturnType<typeof workflowsReadRowsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await workflowsReadRows({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: workflowsReadRowsQueryKey(options)
+});
+
+export const workflowsReadRowsInfiniteQueryKey = (options: Options<WorkflowsReadRowsData>): QueryKey<Options<WorkflowsReadRowsData>> => createQueryKey('workflowsReadRows', options, true);
+
+/**
+ * A bounded page of an output port's rows.
+ */
+export const workflowsReadRowsInfiniteOptions = (options: Options<WorkflowsReadRowsData>) => {
+    const opts = infiniteQueryOptions<WorkflowsReadRowsResponse, WorkflowsReadRowsError, InfiniteData<WorkflowsReadRowsResponse>, QueryKey<Options<WorkflowsReadRowsData>>, number | Pick<QueryKey<Options<WorkflowsReadRowsData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<WorkflowsReadRowsData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    offset: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await workflowsReadRows({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: workflowsReadRowsInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+/**
+ * Save an output port's result as a dataset version; lineage records it as derived from the port.
+ */
+export const workflowsSavePortMutation = (options?: Partial<Options<WorkflowsSavePortData>>): UseMutationOptions<WorkflowsSavePortResponse, WorkflowsSavePortError, Options<WorkflowsSavePortData>> => {
+    const mutationOptions: UseMutationOptions<WorkflowsSavePortResponse, WorkflowsSavePortError, Options<WorkflowsSavePortData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await workflowsSavePort({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Run a workflow version; the execution is created under the workflow.
  */
 export const workflowsRunMutation = (options?: Partial<Options<WorkflowsRunData>>): UseMutationOptions<WorkflowsRunResponse, WorkflowsRunError, Options<WorkflowsRunData>> => {
     const mutationOptions: UseMutationOptions<WorkflowsRunResponse, WorkflowsRunError, Options<WorkflowsRunData>> = {
@@ -1662,7 +3011,7 @@ export const workflowsRunMutation = (options?: Partial<Options<WorkflowsRunData>
 };
 
 /**
- * Compile a version or draft content: output schemas per port and errors per operator.
+ * Compile a version or a draft on a computing unit: output schemas per port and errors per operator.
  */
 export const workflowsValidateMutation = (options?: Partial<Options<WorkflowsValidateData>>): UseMutationOptions<WorkflowsValidateResponse, WorkflowsValidateError, Options<WorkflowsValidateData>> => {
     const mutationOptions: UseMutationOptions<WorkflowsValidateResponse, WorkflowsValidateError, Options<WorkflowsValidateData>> = {
@@ -1678,8 +3027,65 @@ export const workflowsValidateMutation = (options?: Partial<Options<WorkflowsVal
     return mutationOptions;
 };
 
+export const workflowsListVersionsQueryKey = (options: Options<WorkflowsListVersionsData>) => createQueryKey('workflowsListVersions', options);
+
+export const workflowsListVersionsOptions = (options: Options<WorkflowsListVersionsData>) => queryOptions<WorkflowsListVersionsResponse, WorkflowsListVersionsError, WorkflowsListVersionsResponse, ReturnType<typeof workflowsListVersionsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await workflowsListVersions({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: workflowsListVersionsQueryKey(options)
+});
+
+export const workflowsListVersionsInfiniteQueryKey = (options: Options<WorkflowsListVersionsData>): QueryKey<Options<WorkflowsListVersionsData>> => createQueryKey('workflowsListVersions', options, true);
+
+export const workflowsListVersionsInfiniteOptions = (options: Options<WorkflowsListVersionsData>) => {
+    const opts = infiniteQueryOptions<WorkflowsListVersionsResponse, WorkflowsListVersionsError, InfiniteData<WorkflowsListVersionsResponse>, QueryKey<Options<WorkflowsListVersionsData>>, string | Pick<QueryKey<Options<WorkflowsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<WorkflowsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await workflowsListVersions({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: workflowsListVersionsInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const workflowsReadVersionQueryKey = (options: Options<WorkflowsReadVersionData>) => createQueryKey('workflowsReadVersion', options);
+
+export const workflowsReadVersionOptions = (options: Options<WorkflowsReadVersionData>) => queryOptions<WorkflowsReadVersionResponse, WorkflowsReadVersionError, WorkflowsReadVersionResponse, ReturnType<typeof workflowsReadVersionQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await workflowsReadVersion({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: workflowsReadVersionQueryKey(options)
+});
+
 /**
- * OpenLineage run events posted by engines; service authentication.
+ * OpenLineage run events posted by engines and other producers; service authentication.
  */
 export const eventsIngestMutation = (options?: Partial<Options<EventsIngestData>>): UseMutationOptions<EventsIngestResponse, EventsIngestError, Options<EventsIngestData>> => {
     const mutationOptions: UseMutationOptions<EventsIngestResponse, EventsIngestError, Options<EventsIngestData>> = {

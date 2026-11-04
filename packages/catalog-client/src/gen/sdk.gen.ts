@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AgentsListData, AgentsListErrors, AgentsListResponses, AgentsReadData, AgentsReadErrors, AgentsReadResponses, AgentsRetireData, AgentsRetireErrors, AgentsRetireResponses, AgentsSpawnData, AgentsSpawnErrors, AgentsSpawnResponses, AgentTemplatesCreateData, AgentTemplatesCreateErrors, AgentTemplatesCreateResponses, AgentTemplatesListData, AgentTemplatesListErrors, AgentTemplatesListResponses, AgentTemplatesReadData, AgentTemplatesReadErrors, AgentTemplatesReadResponses, AgentTemplatesUpdateSpecData, AgentTemplatesUpdateSpecErrors, AgentTemplatesUpdateSpecResponses, ComputingUnitsAvailableData, ComputingUnitsAvailableErrors, ComputingUnitsAvailableResponses, ComputingUnitsCreateData, ComputingUnitsCreateErrors, ComputingUnitsCreateResponses, ComputingUnitsListData, ComputingUnitsListErrors, ComputingUnitsListResponses, ComputingUnitsReadData, ComputingUnitsReadErrors, ComputingUnitsReadResponses, ComputingUnitsTerminateData, ComputingUnitsTerminateErrors, ComputingUnitsTerminateResponses, ComputingUnitsUpdateSpecData, ComputingUnitsUpdateSpecErrors, ComputingUnitsUpdateSpecResponses, ConversationsCreateData, ConversationsCreateErrors, ConversationsCreateResponses, ConversationsListData, ConversationsListErrors, ConversationsListResponses, ConversationsMessagesData, ConversationsMessagesErrors, ConversationsMessagesResponses, ConversationsPostData, ConversationsPostErrors, ConversationsPostResponses, ConversationsReadData, ConversationsReadErrors, ConversationsReadResponses, ConversationsResourcesData, ConversationsResourcesErrors, ConversationsResourcesResponses, ConversationsUpdateSpecData, ConversationsUpdateSpecErrors, ConversationsUpdateSpecResponses, DatasetsCommitData, DatasetsCommitErrors, DatasetsCommitResponses, DatasetsCreateData, DatasetsCreateErrors, DatasetsCreateResponses, DatasetsDownloadData, DatasetsDownloadErrors, DatasetsDownloadResponses, DatasetsFilesData, DatasetsFilesErrors, DatasetsFilesResponses, DatasetsLinkData, DatasetsLinkErrors, DatasetsLinkResponses, DatasetsListData, DatasetsListErrors, DatasetsListResponses, DatasetsReadData, DatasetsReadErrors, DatasetsReadResponses, DatasetsStagedData, DatasetsStagedErrors, DatasetsStagedResponses, DatasetsUnstageData, DatasetsUnstageErrors, DatasetsUnstageResponses, DatasetsUpdateSpecData, DatasetsUpdateSpecErrors, DatasetsUpdateSpecResponses, DatasetsUploadData, DatasetsUploadErrors, DatasetsUploadResponses, EnvironmentsCreateData, EnvironmentsCreateErrors, EnvironmentsCreateResponses, EnvironmentsListData, EnvironmentsListErrors, EnvironmentsListResponses, EnvironmentsReadData, EnvironmentsReadErrors, EnvironmentsReadResponses, EnvironmentsUpdateSpecData, EnvironmentsUpdateSpecErrors, EnvironmentsUpdateSpecResponses, EvaluationEvaluateData, EvaluationEvaluateErrors, EvaluationEvaluateResponses, EventsIngestData, EventsIngestErrors, EventsIngestResponses, ExecutionsCancelData, ExecutionsCancelErrors, ExecutionsCancelResponses, ExecutionsListData, ExecutionsListErrors, ExecutionsListResponses, ExecutionsReadData, ExecutionsReadErrors, ExecutionsReadResponses, ExecutionsResultData, ExecutionsResultErrors, ExecutionsResultResponses, ExecutionsSaveResultData, ExecutionsSaveResultErrors, ExecutionsSaveResultResponses, McpServersCreateData, McpServersCreateErrors, McpServersCreateResponses, McpServersListData, McpServersListErrors, McpServersListResponses, McpServersReadData, McpServersReadErrors, McpServersReadResponses, McpServersUpdateSpecData, McpServersUpdateSpecErrors, McpServersUpdateSpecResponses, MeGetData, MeGetErrors, MeGetResponses, OperatorsListData, OperatorsListErrors, OperatorsListResponses, PrincipalsListData, PrincipalsListErrors, PrincipalsListResponses, PrincipalsReadData, PrincipalsReadErrors, PrincipalsReadResponses, ProjectsCreateData, ProjectsCreateErrors, ProjectsCreateResponses, ProjectsListData, ProjectsListErrors, ProjectsListResponses, ProjectsReadData, ProjectsReadErrors, ProjectsReadResponses, ProjectsUpdateSpecData, ProjectsUpdateSpecErrors, ProjectsUpdateSpecResponses, ResourcesCreateVersionData, ResourcesCreateVersionErrors, ResourcesCreateVersionResponses, ResourcesDeleteData, ResourcesDeleteErrors, ResourcesDeleteResponses, ResourcesGrantData, ResourcesGrantErrors, ResourcesGrantResponses, ResourcesLineageData, ResourcesLineageErrors, ResourcesLineageResponses, ResourcesListGrantsData, ResourcesListGrantsErrors, ResourcesListGrantsResponses, ResourcesListVersionsData, ResourcesListVersionsErrors, ResourcesListVersionsResponses, ResourcesReadData, ResourcesReadErrors, ResourcesReadResponses, ResourcesReadVersionData, ResourcesReadVersionErrors, ResourcesReadVersionResponses, ResourcesRevokeData, ResourcesRevokeErrors, ResourcesRevokeResponses, ResourcesSearchData, ResourcesSearchErrors, ResourcesSearchResponses, ResourcesUpdateMetadataData, ResourcesUpdateMetadataErrors, ResourcesUpdateMetadataResponses, SkillsCreateData, SkillsCreateErrors, SkillsCreateResponses, SkillsListData, SkillsListErrors, SkillsListResponses, SkillsReadData, SkillsReadErrors, SkillsReadResponses, SkillsUpdateSpecData, SkillsUpdateSpecErrors, SkillsUpdateSpecResponses, WorkflowsContentData, WorkflowsContentErrors, WorkflowsContentResponses, WorkflowsCreateData, WorkflowsCreateErrors, WorkflowsCreateResponses, WorkflowsCreateWithContentData, WorkflowsCreateWithContentErrors, WorkflowsCreateWithContentResponses, WorkflowsEditData, WorkflowsEditErrors, WorkflowsEditResponses, WorkflowsListData, WorkflowsListErrors, WorkflowsListExecutionsData, WorkflowsListExecutionsErrors, WorkflowsListExecutionsResponses, WorkflowsListResponses, WorkflowsReadData, WorkflowsReadErrors, WorkflowsReadResponses, WorkflowsRunData, WorkflowsRunErrors, WorkflowsRunResponses, WorkflowsUpdateSpecData, WorkflowsUpdateSpecErrors, WorkflowsUpdateSpecResponses, WorkflowsValidateData, WorkflowsValidateErrors, WorkflowsValidateResponses } from './types.gen';
+import type { AgentTemplatesCreateData, AgentTemplatesCreateErrors, AgentTemplatesCreateResponses, AgentTemplatesDeleteData, AgentTemplatesDeleteErrors, AgentTemplatesDeleteResponses, AgentTemplatesListData, AgentTemplatesListErrors, AgentTemplatesListResponses, AgentTemplatesListVersionsData, AgentTemplatesListVersionsErrors, AgentTemplatesListVersionsResponses, AgentTemplatesReadData, AgentTemplatesReadErrors, AgentTemplatesReadResponses, AgentTemplatesReadVersionData, AgentTemplatesReadVersionErrors, AgentTemplatesReadVersionResponses, AgentTemplatesUpdateData, AgentTemplatesUpdateErrors, AgentTemplatesUpdateResponses, ComputingUnitsAvailableData, ComputingUnitsAvailableErrors, ComputingUnitsAvailableResponses, ComputingUnitsCreateData, ComputingUnitsCreateErrors, ComputingUnitsCreateResponses, ComputingUnitsDeleteData, ComputingUnitsDeleteErrors, ComputingUnitsDeleteResponses, ComputingUnitsListData, ComputingUnitsListErrors, ComputingUnitsListNodesData, ComputingUnitsListNodesErrors, ComputingUnitsListNodesResponses, ComputingUnitsListResponses, ComputingUnitsOperatorsData, ComputingUnitsOperatorsErrors, ComputingUnitsOperatorsResponses, ComputingUnitsReadData, ComputingUnitsReadErrors, ComputingUnitsReadNodeData, ComputingUnitsReadNodeErrors, ComputingUnitsReadNodeResponses, ComputingUnitsReadResponses, ComputingUnitsTerminateData, ComputingUnitsTerminateErrors, ComputingUnitsTerminateResponses, ComputingUnitsUpdateData, ComputingUnitsUpdateErrors, ComputingUnitsUpdateResponses, ConversationsAppendMessageData, ConversationsAppendMessageErrors, ConversationsAppendMessageResponses, ConversationsCreateData, ConversationsCreateErrors, ConversationsCreateResponses, ConversationsDeleteData, ConversationsDeleteErrors, ConversationsDeleteResponses, ConversationsEndTurnData, ConversationsEndTurnErrors, ConversationsEndTurnResponses, ConversationsListData, ConversationsListErrors, ConversationsListMessagesData, ConversationsListMessagesErrors, ConversationsListMessagesResponses, ConversationsListResponses, ConversationsReadData, ConversationsReadErrors, ConversationsReadResponses, ConversationsReplaceMessageData, ConversationsReplaceMessageErrors, ConversationsReplaceMessageResponses, ConversationsResourcesData, ConversationsResourcesErrors, ConversationsResourcesResponses, ConversationsStartTurnData, ConversationsStartTurnErrors, ConversationsStartTurnResponses, ConversationsUpdateData, ConversationsUpdateErrors, ConversationsUpdateResponses, CredentialsCreateData, CredentialsCreateErrors, CredentialsCreateResponses, CredentialsDeleteData, CredentialsDeleteErrors, CredentialsDeleteResponses, CredentialsLeaseData, CredentialsLeaseErrors, CredentialsLeaseResponses, CredentialsListData, CredentialsListErrors, CredentialsListResponses, CredentialsReadData, CredentialsReadErrors, CredentialsReadResponses, CredentialsSetSecretData, CredentialsSetSecretErrors, CredentialsSetSecretResponses, CredentialsUpdateData, CredentialsUpdateErrors, CredentialsUpdateResponses, DatasetsCommitData, DatasetsCommitErrors, DatasetsCommitResponses, DatasetsCreateData, DatasetsCreateErrors, DatasetsCreateResponses, DatasetsDeleteData, DatasetsDeleteErrors, DatasetsDeleteResponses, DatasetsDownloadData, DatasetsDownloadErrors, DatasetsDownloadResponses, DatasetsFilesData, DatasetsFilesErrors, DatasetsFilesResponses, DatasetsLinkData, DatasetsLinkErrors, DatasetsLinkResponses, DatasetsListData, DatasetsListErrors, DatasetsListResponses, DatasetsListVersionsData, DatasetsListVersionsErrors, DatasetsListVersionsResponses, DatasetsReadData, DatasetsReadErrors, DatasetsReadResponses, DatasetsReadVersionData, DatasetsReadVersionErrors, DatasetsReadVersionResponses, DatasetsStagedData, DatasetsStagedErrors, DatasetsStagedResponses, DatasetsUnstageData, DatasetsUnstageErrors, DatasetsUnstageResponses, DatasetsUpdateData, DatasetsUpdateErrors, DatasetsUpdateResponses, DatasetsUploadData, DatasetsUploadErrors, DatasetsUploadResponses, EnvironmentsBuildData, EnvironmentsBuildErrors, EnvironmentsBuildResponses, EnvironmentsCreateData, EnvironmentsCreateErrors, EnvironmentsCreateResponses, EnvironmentsDeleteData, EnvironmentsDeleteErrors, EnvironmentsDeleteResponses, EnvironmentsListData, EnvironmentsListErrors, EnvironmentsListResponses, EnvironmentsListVersionsData, EnvironmentsListVersionsErrors, EnvironmentsListVersionsResponses, EnvironmentsReadData, EnvironmentsReadErrors, EnvironmentsReadResponses, EnvironmentsReadVersionData, EnvironmentsReadVersionErrors, EnvironmentsReadVersionResponses, EnvironmentsUpdateData, EnvironmentsUpdateErrors, EnvironmentsUpdateResponses, EvaluationEvaluateData, EvaluationEvaluateErrors, EvaluationEvaluateResponses, EventsIngestData, EventsIngestErrors, EventsIngestResponses, ExecutionsListData, ExecutionsListErrors, ExecutionsListResponses, McpServersCreateData, McpServersCreateErrors, McpServersCreateResponses, McpServersDeleteData, McpServersDeleteErrors, McpServersDeleteResponses, McpServersListData, McpServersListErrors, McpServersListResponses, McpServersListVersionsData, McpServersListVersionsErrors, McpServersListVersionsResponses, McpServersReadData, McpServersReadErrors, McpServersReadResponses, McpServersReadVersionData, McpServersReadVersionErrors, McpServersReadVersionResponses, McpServersUpdateData, McpServersUpdateErrors, McpServersUpdateResponses, MeGetData, MeGetErrors, MeGetResponses, MeUpdatePreferencesData, MeUpdatePreferencesErrors, MeUpdatePreferencesResponses, ModelEndpointsCreateData, ModelEndpointsCreateErrors, ModelEndpointsCreateResponses, ModelEndpointsDeleteData, ModelEndpointsDeleteErrors, ModelEndpointsDeleteResponses, ModelEndpointsListData, ModelEndpointsListErrors, ModelEndpointsListResponses, ModelEndpointsReadData, ModelEndpointsReadErrors, ModelEndpointsReadResponses, ModelEndpointsUpdateData, ModelEndpointsUpdateErrors, ModelEndpointsUpdateResponses, ModelsCommitData, ModelsCommitErrors, ModelsCommitResponses, ModelsCreateData, ModelsCreateErrors, ModelsCreateResponses, ModelsDeleteData, ModelsDeleteErrors, ModelsDeleteResponses, ModelsDownloadData, ModelsDownloadErrors, ModelsDownloadResponses, ModelsFilesData, ModelsFilesErrors, ModelsFilesResponses, ModelsLinkData, ModelsLinkErrors, ModelsLinkResponses, ModelsListData, ModelsListErrors, ModelsListResponses, ModelsListVersionsData, ModelsListVersionsErrors, ModelsListVersionsResponses, ModelsReadData, ModelsReadErrors, ModelsReadResponses, ModelsReadVersionData, ModelsReadVersionErrors, ModelsReadVersionResponses, ModelsStagedData, ModelsStagedErrors, ModelsStagedResponses, ModelsUnstageData, ModelsUnstageErrors, ModelsUnstageResponses, ModelsUpdateData, ModelsUpdateErrors, ModelsUpdateResponses, ModelsUploadData, ModelsUploadErrors, ModelsUploadResponses, OperatorsCreateData, OperatorsCreateErrors, OperatorsCreateResponses, OperatorsDeleteData, OperatorsDeleteErrors, OperatorsDeleteResponses, OperatorsListData, OperatorsListErrors, OperatorsListResponses, OperatorsListVersionsData, OperatorsListVersionsErrors, OperatorsListVersionsResponses, OperatorsReadData, OperatorsReadErrors, OperatorsReadResponses, OperatorsReadVersionData, OperatorsReadVersionErrors, OperatorsReadVersionResponses, OperatorsUpdateData, OperatorsUpdateErrors, OperatorsUpdateResponses, PrincipalsListData, PrincipalsListErrors, PrincipalsListResponses, PrincipalsReadData, PrincipalsReadErrors, PrincipalsReadResponses, ProjectsCreateData, ProjectsCreateErrors, ProjectsCreateResponses, ProjectsDeleteData, ProjectsDeleteErrors, ProjectsDeleteResponses, ProjectsListData, ProjectsListErrors, ProjectsListResponses, ProjectsReadData, ProjectsReadErrors, ProjectsReadResponses, ProjectsUpdateData, ProjectsUpdateErrors, ProjectsUpdateResponses, ResourcesDeleteData, ResourcesDeleteErrors, ResourcesDeleteResponses, ResourcesDependentsData, ResourcesDependentsErrors, ResourcesDependentsResponses, ResourcesGrantData, ResourcesGrantErrors, ResourcesGrantResponses, ResourcesLineageData, ResourcesLineageErrors, ResourcesLineageResponses, ResourcesListGrantsData, ResourcesListGrantsErrors, ResourcesListGrantsResponses, ResourcesListVersionsData, ResourcesListVersionsErrors, ResourcesListVersionsResponses, ResourcesReadData, ResourcesReadErrors, ResourcesReadResponses, ResourcesReadVersionData, ResourcesReadVersionErrors, ResourcesReadVersionResponses, ResourcesResolveData, ResourcesResolveErrors, ResourcesResolveResponses, ResourcesRevokeData, ResourcesRevokeErrors, ResourcesRevokeResponses, ResourcesSearchData, ResourcesSearchErrors, ResourcesSearchResponses, ResourcesUpdateMetadataData, ResourcesUpdateMetadataErrors, ResourcesUpdateMetadataResponses, SettingsRoutesPublicData, SettingsRoutesPublicErrors, SettingsRoutesPublicResponses, SettingsRoutesReadData, SettingsRoutesReadErrors, SettingsRoutesReadResponses, SettingsRoutesUpdateData, SettingsRoutesUpdateErrors, SettingsRoutesUpdateResponses, SkillsCreateData, SkillsCreateErrors, SkillsCreateResponses, SkillsDeleteData, SkillsDeleteErrors, SkillsDeleteResponses, SkillsListData, SkillsListErrors, SkillsListResponses, SkillsListVersionsData, SkillsListVersionsErrors, SkillsListVersionsResponses, SkillsReadData, SkillsReadErrors, SkillsReadResponses, SkillsReadVersionData, SkillsReadVersionErrors, SkillsReadVersionResponses, SkillsUpdateData, SkillsUpdateErrors, SkillsUpdateResponses, WorkflowsCancelExecutionData, WorkflowsCancelExecutionErrors, WorkflowsCancelExecutionResponses, WorkflowsCreateData, WorkflowsCreateErrors, WorkflowsCreateResponses, WorkflowsDeleteData, WorkflowsDeleteErrors, WorkflowsDeleteResponses, WorkflowsEditData, WorkflowsEditErrors, WorkflowsEditResponses, WorkflowsListData, WorkflowsListErrors, WorkflowsListExecutionsData, WorkflowsListExecutionsErrors, WorkflowsListExecutionsResponses, WorkflowsListResponses, WorkflowsListVersionsData, WorkflowsListVersionsErrors, WorkflowsListVersionsResponses, WorkflowsReadData, WorkflowsReadErrors, WorkflowsReadExecutionData, WorkflowsReadExecutionErrors, WorkflowsReadExecutionResponses, WorkflowsReadPortData, WorkflowsReadPortErrors, WorkflowsReadPortResponses, WorkflowsReadResponses, WorkflowsReadRowsData, WorkflowsReadRowsErrors, WorkflowsReadRowsResponses, WorkflowsReadVersionData, WorkflowsReadVersionErrors, WorkflowsReadVersionResponses, WorkflowsRunData, WorkflowsRunErrors, WorkflowsRunResponses, WorkflowsSavePortData, WorkflowsSavePortErrors, WorkflowsSavePortResponses, WorkflowsUpdateData, WorkflowsUpdateErrors, WorkflowsUpdateResponses, WorkflowsValidateData, WorkflowsValidateErrors, WorkflowsValidateResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -31,6 +31,9 @@ export const evaluationEvaluate = <ThrowOnError extends boolean = false>(options
     }
 });
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const agentTemplatesList = <ThrowOnError extends boolean = false>(options?: Options<AgentTemplatesListData, ThrowOnError>): RequestResult<AgentTemplatesListResponses, AgentTemplatesListErrors, ThrowOnError> => (options?.client ?? client).get<AgentTemplatesListResponses, AgentTemplatesListErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/agent-templates',
@@ -47,13 +50,25 @@ export const agentTemplatesCreate = <ThrowOnError extends boolean = false>(optio
     }
 });
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const agentTemplatesDelete = <ThrowOnError extends boolean = false>(options: Options<AgentTemplatesDeleteData, ThrowOnError>): RequestResult<AgentTemplatesDeleteResponses, AgentTemplatesDeleteErrors, ThrowOnError> => (options.client ?? client).delete<AgentTemplatesDeleteResponses, AgentTemplatesDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/agent-templates/{rid}',
+    ...options
+});
+
 export const agentTemplatesRead = <ThrowOnError extends boolean = false>(options: Options<AgentTemplatesReadData, ThrowOnError>): RequestResult<AgentTemplatesReadResponses, AgentTemplatesReadErrors, ThrowOnError> => (options.client ?? client).get<AgentTemplatesReadResponses, AgentTemplatesReadErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/agent-templates/{rid}',
     ...options
 });
 
-export const agentTemplatesUpdateSpec = <ThrowOnError extends boolean = false>(options: Options<AgentTemplatesUpdateSpecData, ThrowOnError>): RequestResult<AgentTemplatesUpdateSpecResponses, AgentTemplatesUpdateSpecErrors, ThrowOnError> => (options.client ?? client).put<AgentTemplatesUpdateSpecResponses, AgentTemplatesUpdateSpecErrors, ThrowOnError>({
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const agentTemplatesUpdate = <ThrowOnError extends boolean = false>(options: Options<AgentTemplatesUpdateData, ThrowOnError>): RequestResult<AgentTemplatesUpdateResponses, AgentTemplatesUpdateErrors, ThrowOnError> => (options.client ?? client).put<AgentTemplatesUpdateResponses, AgentTemplatesUpdateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/agent-templates/{rid}',
     ...options,
@@ -63,34 +78,21 @@ export const agentTemplatesUpdateSpec = <ThrowOnError extends boolean = false>(o
     }
 });
 
-export const agentsList = <ThrowOnError extends boolean = false>(options?: Options<AgentsListData, ThrowOnError>): RequestResult<AgentsListResponses, AgentsListErrors, ThrowOnError> => (options?.client ?? client).get<AgentsListResponses, AgentsListErrors, ThrowOnError>({
+export const agentTemplatesListVersions = <ThrowOnError extends boolean = false>(options: Options<AgentTemplatesListVersionsData, ThrowOnError>): RequestResult<AgentTemplatesListVersionsResponses, AgentTemplatesListVersionsErrors, ThrowOnError> => (options.client ?? client).get<AgentTemplatesListVersionsResponses, AgentTemplatesListVersionsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/agents',
+    url: '/catalog/v1/agent-templates/{rid}/versions',
     ...options
 });
 
-export const agentsSpawn = <ThrowOnError extends boolean = false>(options: Options<AgentsSpawnData, ThrowOnError>): RequestResult<AgentsSpawnResponses, AgentsSpawnErrors, ThrowOnError> => (options.client ?? client).post<AgentsSpawnResponses, AgentsSpawnErrors, ThrowOnError>({
+export const agentTemplatesReadVersion = <ThrowOnError extends boolean = false>(options: Options<AgentTemplatesReadVersionData, ThrowOnError>): RequestResult<AgentTemplatesReadVersionResponses, AgentTemplatesReadVersionErrors, ThrowOnError> => (options.client ?? client).get<AgentTemplatesReadVersionResponses, AgentTemplatesReadVersionErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/agents',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-export const agentsRead = <ThrowOnError extends boolean = false>(options: Options<AgentsReadData, ThrowOnError>): RequestResult<AgentsReadResponses, AgentsReadErrors, ThrowOnError> => (options.client ?? client).get<AgentsReadResponses, AgentsReadErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/agents/{pid}',
+    url: '/catalog/v1/agent-templates/{rid}/versions/{vno}',
     ...options
 });
 
-export const agentsRetire = <ThrowOnError extends boolean = false>(options: Options<AgentsRetireData, ThrowOnError>): RequestResult<AgentsRetireResponses, AgentsRetireErrors, ThrowOnError> => (options.client ?? client).post<AgentsRetireResponses, AgentsRetireErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/agents/{pid}/retire',
-    ...options
-});
-
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const computingUnitsList = <ThrowOnError extends boolean = false>(options?: Options<ComputingUnitsListData, ThrowOnError>): RequestResult<ComputingUnitsListResponses, ComputingUnitsListErrors, ThrowOnError> => (options?.client ?? client).get<ComputingUnitsListResponses, ComputingUnitsListErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/computing-units',
@@ -108,11 +110,20 @@ export const computingUnitsCreate = <ThrowOnError extends boolean = false>(optio
 });
 
 /**
- * Units the caller may run on, with live status.
+ * The units the caller may run on, with live status.
  */
 export const computingUnitsAvailable = <ThrowOnError extends boolean = false>(options?: Options<ComputingUnitsAvailableData, ThrowOnError>): RequestResult<ComputingUnitsAvailableResponses, ComputingUnitsAvailableErrors, ThrowOnError> => (options?.client ?? client).get<ComputingUnitsAvailableResponses, ComputingUnitsAvailableErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/computing-units/available',
+    ...options
+});
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const computingUnitsDelete = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsDeleteData, ThrowOnError>): RequestResult<ComputingUnitsDeleteResponses, ComputingUnitsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ComputingUnitsDeleteResponses, ComputingUnitsDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/computing-units/{rid}',
     ...options
 });
 
@@ -122,7 +133,10 @@ export const computingUnitsRead = <ThrowOnError extends boolean = false>(options
     ...options
 });
 
-export const computingUnitsUpdateSpec = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsUpdateSpecData, ThrowOnError>): RequestResult<ComputingUnitsUpdateSpecResponses, ComputingUnitsUpdateSpecErrors, ThrowOnError> => (options.client ?? client).put<ComputingUnitsUpdateSpecResponses, ComputingUnitsUpdateSpecErrors, ThrowOnError>({
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const computingUnitsUpdate = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsUpdateData, ThrowOnError>): RequestResult<ComputingUnitsUpdateResponses, ComputingUnitsUpdateErrors, ThrowOnError> => (options.client ?? client).put<ComputingUnitsUpdateResponses, ComputingUnitsUpdateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/computing-units/{rid}',
     ...options,
@@ -132,12 +146,36 @@ export const computingUnitsUpdateSpec = <ThrowOnError extends boolean = false>(o
     }
 });
 
+export const computingUnitsListNodes = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsListNodesData, ThrowOnError>): RequestResult<ComputingUnitsListNodesResponses, ComputingUnitsListNodesErrors, ThrowOnError> => (options.client ?? client).get<ComputingUnitsListNodesResponses, ComputingUnitsListNodesErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/computing-units/{rid}/computing-nodes',
+    ...options
+});
+
+export const computingUnitsReadNode = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsReadNodeData, ThrowOnError>): RequestResult<ComputingUnitsReadNodeResponses, ComputingUnitsReadNodeErrors, ThrowOnError> => (options.client ?? client).get<ComputingUnitsReadNodeResponses, ComputingUnitsReadNodeErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/computing-units/{rid}/computing-nodes/{name}',
+    ...options
+});
+
+/**
+ * The operator types the unit's engine provides, as its registry reports them.
+ */
+export const computingUnitsOperators = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsOperatorsData, ThrowOnError>): RequestResult<ComputingUnitsOperatorsResponses, ComputingUnitsOperatorsErrors, ThrowOnError> => (options.client ?? client).get<ComputingUnitsOperatorsResponses, ComputingUnitsOperatorsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/computing-units/{rid}/operators',
+    ...options
+});
+
 export const computingUnitsTerminate = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsTerminateData, ThrowOnError>): RequestResult<ComputingUnitsTerminateResponses, ComputingUnitsTerminateErrors, ThrowOnError> => (options.client ?? client).post<ComputingUnitsTerminateResponses, ComputingUnitsTerminateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/computing-units/{rid}/terminate',
     ...options
 });
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const conversationsList = <ThrowOnError extends boolean = false>(options?: Options<ConversationsListData, ThrowOnError>): RequestResult<ConversationsListResponses, ConversationsListErrors, ThrowOnError> => (options?.client ?? client).get<ConversationsListResponses, ConversationsListErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/conversations',
@@ -154,13 +192,25 @@ export const conversationsCreate = <ThrowOnError extends boolean = false>(option
     }
 });
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const conversationsDelete = <ThrowOnError extends boolean = false>(options: Options<ConversationsDeleteData, ThrowOnError>): RequestResult<ConversationsDeleteResponses, ConversationsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ConversationsDeleteResponses, ConversationsDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/conversations/{rid}',
+    ...options
+});
+
 export const conversationsRead = <ThrowOnError extends boolean = false>(options: Options<ConversationsReadData, ThrowOnError>): RequestResult<ConversationsReadResponses, ConversationsReadErrors, ThrowOnError> => (options.client ?? client).get<ConversationsReadResponses, ConversationsReadErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/conversations/{rid}',
     ...options
 });
 
-export const conversationsUpdateSpec = <ThrowOnError extends boolean = false>(options: Options<ConversationsUpdateSpecData, ThrowOnError>): RequestResult<ConversationsUpdateSpecResponses, ConversationsUpdateSpecErrors, ThrowOnError> => (options.client ?? client).put<ConversationsUpdateSpecResponses, ConversationsUpdateSpecErrors, ThrowOnError>({
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const conversationsUpdate = <ThrowOnError extends boolean = false>(options: Options<ConversationsUpdateData, ThrowOnError>): RequestResult<ConversationsUpdateResponses, ConversationsUpdateErrors, ThrowOnError> => (options.client ?? client).put<ConversationsUpdateResponses, ConversationsUpdateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/conversations/{rid}',
     ...options,
@@ -170,13 +220,16 @@ export const conversationsUpdateSpec = <ThrowOnError extends boolean = false>(op
     }
 });
 
-export const conversationsMessages = <ThrowOnError extends boolean = false>(options: Options<ConversationsMessagesData, ThrowOnError>): RequestResult<ConversationsMessagesResponses, ConversationsMessagesErrors, ThrowOnError> => (options.client ?? client).get<ConversationsMessagesResponses, ConversationsMessagesErrors, ThrowOnError>({
+export const conversationsListMessages = <ThrowOnError extends boolean = false>(options: Options<ConversationsListMessagesData, ThrowOnError>): RequestResult<ConversationsListMessagesResponses, ConversationsListMessagesErrors, ThrowOnError> => (options.client ?? client).get<ConversationsListMessagesResponses, ConversationsListMessagesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/conversations/{rid}/messages',
     ...options
 });
 
-export const conversationsPost = <ThrowOnError extends boolean = false>(options: Options<ConversationsPostData, ThrowOnError>): RequestResult<ConversationsPostResponses, ConversationsPostErrors, ThrowOnError> => (options.client ?? client).post<ConversationsPostResponses, ConversationsPostErrors, ThrowOnError>({
+/**
+ * Append a message; `seq` is assigned in order.
+ */
+export const conversationsAppendMessage = <ThrowOnError extends boolean = false>(options: Options<ConversationsAppendMessageData, ThrowOnError>): RequestResult<ConversationsAppendMessageResponses, ConversationsAppendMessageErrors, ThrowOnError> => (options.client ?? client).post<ConversationsAppendMessageResponses, ConversationsAppendMessageErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/conversations/{rid}/messages',
     ...options,
@@ -187,7 +240,20 @@ export const conversationsPost = <ThrowOnError extends boolean = false>(options:
 });
 
 /**
- * Resources whose origin is this conversation.
+ * Replace the parts of a message, for the assistant message a turn is still writing.
+ */
+export const conversationsReplaceMessage = <ThrowOnError extends boolean = false>(options: Options<ConversationsReplaceMessageData, ThrowOnError>): RequestResult<ConversationsReplaceMessageResponses, ConversationsReplaceMessageErrors, ThrowOnError> => (options.client ?? client).put<ConversationsReplaceMessageResponses, ConversationsReplaceMessageErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/conversations/{rid}/messages/{seq}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * The resources whose origin is this conversation.
  */
 export const conversationsResources = <ThrowOnError extends boolean = false>(options: Options<ConversationsResourcesData, ThrowOnError>): RequestResult<ConversationsResourcesResponses, ConversationsResourcesErrors, ThrowOnError> => (options.client ?? client).get<ConversationsResourcesResponses, ConversationsResourcesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -195,6 +261,104 @@ export const conversationsResources = <ThrowOnError extends boolean = false>(opt
     ...options
 });
 
+/**
+ * Start a turn: takes the conversation's turn lock, refused with 409 while another turn runs.
+ */
+export const conversationsStartTurn = <ThrowOnError extends boolean = false>(options: Options<ConversationsStartTurnData, ThrowOnError>): RequestResult<ConversationsStartTurnResponses, ConversationsStartTurnErrors, ThrowOnError> => (options.client ?? client).post<ConversationsStartTurnResponses, ConversationsStartTurnErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/conversations/{rid}/turns',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * End a turn: releases the lock.
+ */
+export const conversationsEndTurn = <ThrowOnError extends boolean = false>(options: Options<ConversationsEndTurnData, ThrowOnError>): RequestResult<ConversationsEndTurnResponses, ConversationsEndTurnErrors, ThrowOnError> => (options.client ?? client).delete<ConversationsEndTurnResponses, ConversationsEndTurnErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/conversations/{rid}/turns/{turn}',
+    ...options
+});
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const credentialsList = <ThrowOnError extends boolean = false>(options?: Options<CredentialsListData, ThrowOnError>): RequestResult<CredentialsListResponses, CredentialsListErrors, ThrowOnError> => (options?.client ?? client).get<CredentialsListResponses, CredentialsListErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/credentials',
+    ...options
+});
+
+export const credentialsCreate = <ThrowOnError extends boolean = false>(options: Options<CredentialsCreateData, ThrowOnError>): RequestResult<CredentialsCreateResponses, CredentialsCreateErrors, ThrowOnError> => (options.client ?? client).post<CredentialsCreateResponses, CredentialsCreateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/credentials',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const credentialsDelete = <ThrowOnError extends boolean = false>(options: Options<CredentialsDeleteData, ThrowOnError>): RequestResult<CredentialsDeleteResponses, CredentialsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<CredentialsDeleteResponses, CredentialsDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/credentials/{rid}',
+    ...options
+});
+
+export const credentialsRead = <ThrowOnError extends boolean = false>(options: Options<CredentialsReadData, ThrowOnError>): RequestResult<CredentialsReadResponses, CredentialsReadErrors, ThrowOnError> => (options.client ?? client).get<CredentialsReadResponses, CredentialsReadErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/credentials/{rid}',
+    ...options
+});
+
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const credentialsUpdate = <ThrowOnError extends boolean = false>(options: Options<CredentialsUpdateData, ThrowOnError>): RequestResult<CredentialsUpdateResponses, CredentialsUpdateErrors, ThrowOnError> => (options.client ?? client).put<CredentialsUpdateResponses, CredentialsUpdateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/credentials/{rid}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Lease the secret for a run or a turn; the use is logged.
+ */
+export const credentialsLease = <ThrowOnError extends boolean = false>(options: Options<CredentialsLeaseData, ThrowOnError>): RequestResult<CredentialsLeaseResponses, CredentialsLeaseErrors, ThrowOnError> => (options.client ?? client).post<CredentialsLeaseResponses, CredentialsLeaseErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/credentials/{rid}/lease',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Write the secret; replaces the previous value.
+ */
+export const credentialsSetSecret = <ThrowOnError extends boolean = false>(options: Options<CredentialsSetSecretData, ThrowOnError>): RequestResult<CredentialsSetSecretResponses, CredentialsSetSecretErrors, ThrowOnError> => (options.client ?? client).put<CredentialsSetSecretResponses, CredentialsSetSecretErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/credentials/{rid}/secret',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const datasetsList = <ThrowOnError extends boolean = false>(options?: Options<DatasetsListData, ThrowOnError>): RequestResult<DatasetsListResponses, DatasetsListErrors, ThrowOnError> => (options?.client ?? client).get<DatasetsListResponses, DatasetsListErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/datasets',
@@ -211,13 +375,25 @@ export const datasetsCreate = <ThrowOnError extends boolean = false>(options: Op
     }
 });
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const datasetsDelete = <ThrowOnError extends boolean = false>(options: Options<DatasetsDeleteData, ThrowOnError>): RequestResult<DatasetsDeleteResponses, DatasetsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<DatasetsDeleteResponses, DatasetsDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/datasets/{rid}',
+    ...options
+});
+
 export const datasetsRead = <ThrowOnError extends boolean = false>(options: Options<DatasetsReadData, ThrowOnError>): RequestResult<DatasetsReadResponses, DatasetsReadErrors, ThrowOnError> => (options.client ?? client).get<DatasetsReadResponses, DatasetsReadErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/datasets/{rid}',
     ...options
 });
 
-export const datasetsUpdateSpec = <ThrowOnError extends boolean = false>(options: Options<DatasetsUpdateSpecData, ThrowOnError>): RequestResult<DatasetsUpdateSpecResponses, DatasetsUpdateSpecErrors, ThrowOnError> => (options.client ?? client).put<DatasetsUpdateSpecResponses, DatasetsUpdateSpecErrors, ThrowOnError>({
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const datasetsUpdate = <ThrowOnError extends boolean = false>(options: Options<DatasetsUpdateData, ThrowOnError>): RequestResult<DatasetsUpdateResponses, DatasetsUpdateErrors, ThrowOnError> => (options.client ?? client).put<DatasetsUpdateResponses, DatasetsUpdateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/datasets/{rid}',
     ...options,
@@ -247,7 +423,7 @@ export const datasetsUnstage = <ThrowOnError extends boolean = false>(options: O
 });
 
 /**
- * Upload a file into the dataset's staging area; commit makes a version.
+ * Upload a file into the staging area; commit makes a version. The same bytes are stored once.
  */
 export const datasetsUpload = <ThrowOnError extends boolean = false>(options: Options<DatasetsUploadData, ThrowOnError>): RequestResult<DatasetsUploadResponses, DatasetsUploadErrors, ThrowOnError> => (options.client ?? client).put<DatasetsUploadResponses, DatasetsUploadErrors, ThrowOnError>({
     bodySerializer: null,
@@ -266,6 +442,18 @@ export const datasetsStaged = <ThrowOnError extends boolean = false>(options: Op
     ...options
 });
 
+export const datasetsListVersions = <ThrowOnError extends boolean = false>(options: Options<DatasetsListVersionsData, ThrowOnError>): RequestResult<DatasetsListVersionsResponses, DatasetsListVersionsErrors, ThrowOnError> => (options.client ?? client).get<DatasetsListVersionsResponses, DatasetsListVersionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/datasets/{rid}/versions',
+    ...options
+});
+
+export const datasetsReadVersion = <ThrowOnError extends boolean = false>(options: Options<DatasetsReadVersionData, ThrowOnError>): RequestResult<DatasetsReadVersionResponses, DatasetsReadVersionErrors, ThrowOnError> => (options.client ?? client).get<DatasetsReadVersionResponses, DatasetsReadVersionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/datasets/{rid}/versions/{vno}',
+    ...options
+});
+
 export const datasetsFiles = <ThrowOnError extends boolean = false>(options: Options<DatasetsFilesData, ThrowOnError>): RequestResult<DatasetsFilesResponses, DatasetsFilesErrors, ThrowOnError> => (options.client ?? client).get<DatasetsFilesResponses, DatasetsFilesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/datasets/{rid}/versions/{vno}/files',
@@ -273,7 +461,7 @@ export const datasetsFiles = <ThrowOnError extends boolean = false>(options: Opt
 });
 
 /**
- * Read a file of a version, bounded by `maxBytes`.
+ * Read a file of a version; `Range` and `maxBytes` bound the answer.
  */
 export const datasetsDownload = <ThrowOnError extends boolean = false>(options: Options<DatasetsDownloadData, ThrowOnError>): RequestResult<DatasetsDownloadResponses, DatasetsDownloadErrors, ThrowOnError> => (options.client ?? client).get<DatasetsDownloadResponses, DatasetsDownloadErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -286,10 +474,13 @@ export const datasetsDownload = <ThrowOnError extends boolean = false>(options: 
  */
 export const datasetsLink = <ThrowOnError extends boolean = false>(options: Options<DatasetsLinkData, ThrowOnError>): RequestResult<DatasetsLinkResponses, DatasetsLinkErrors, ThrowOnError> => (options.client ?? client).get<DatasetsLinkResponses, DatasetsLinkErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/datasets/{rid}/versions/{vno}/files/{path}/link',
+    url: '/catalog/v1/datasets/{rid}/versions/{vno}/links/{path}',
     ...options
 });
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const environmentsList = <ThrowOnError extends boolean = false>(options?: Options<EnvironmentsListData, ThrowOnError>): RequestResult<EnvironmentsListResponses, EnvironmentsListErrors, ThrowOnError> => (options?.client ?? client).get<EnvironmentsListResponses, EnvironmentsListErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/environments',
@@ -306,13 +497,25 @@ export const environmentsCreate = <ThrowOnError extends boolean = false>(options
     }
 });
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const environmentsDelete = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsDeleteData, ThrowOnError>): RequestResult<EnvironmentsDeleteResponses, EnvironmentsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<EnvironmentsDeleteResponses, EnvironmentsDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/environments/{rid}',
+    ...options
+});
+
 export const environmentsRead = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsReadData, ThrowOnError>): RequestResult<EnvironmentsReadResponses, EnvironmentsReadErrors, ThrowOnError> => (options.client ?? client).get<EnvironmentsReadResponses, EnvironmentsReadErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/environments/{rid}',
     ...options
 });
 
-export const environmentsUpdateSpec = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsUpdateSpecData, ThrowOnError>): RequestResult<EnvironmentsUpdateSpecResponses, EnvironmentsUpdateSpecErrors, ThrowOnError> => (options.client ?? client).put<EnvironmentsUpdateSpecResponses, EnvironmentsUpdateSpecErrors, ThrowOnError>({
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const environmentsUpdate = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsUpdateData, ThrowOnError>): RequestResult<EnvironmentsUpdateResponses, EnvironmentsUpdateErrors, ThrowOnError> => (options.client ?? client).put<EnvironmentsUpdateResponses, EnvironmentsUpdateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/environments/{rid}',
     ...options,
@@ -322,39 +525,12 @@ export const environmentsUpdateSpec = <ThrowOnError extends boolean = false>(opt
     }
 });
 
-export const executionsList = <ThrowOnError extends boolean = false>(options?: Options<ExecutionsListData, ThrowOnError>): RequestResult<ExecutionsListResponses, ExecutionsListErrors, ThrowOnError> => (options?.client ?? client).get<ExecutionsListResponses, ExecutionsListErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/executions',
-    ...options
-});
-
-export const executionsRead = <ThrowOnError extends boolean = false>(options: Options<ExecutionsReadData, ThrowOnError>): RequestResult<ExecutionsReadResponses, ExecutionsReadErrors, ThrowOnError> => (options.client ?? client).get<ExecutionsReadResponses, ExecutionsReadErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/executions/{eid}',
-    ...options
-});
-
-export const executionsCancel = <ThrowOnError extends boolean = false>(options: Options<ExecutionsCancelData, ThrowOnError>): RequestResult<ExecutionsCancelResponses, ExecutionsCancelErrors, ThrowOnError> => (options.client ?? client).post<ExecutionsCancelResponses, ExecutionsCancelErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/executions/{eid}/cancel',
-    ...options
-});
-
 /**
- * A page of a port result's rows, bounded.
+ * Build a version on a unit; returns at once, the build shows in status.
  */
-export const executionsResult = <ThrowOnError extends boolean = false>(options: Options<ExecutionsResultData, ThrowOnError>): RequestResult<ExecutionsResultResponses, ExecutionsResultErrors, ThrowOnError> => (options.client ?? client).get<ExecutionsResultResponses, ExecutionsResultErrors, ThrowOnError>({
+export const environmentsBuild = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsBuildData, ThrowOnError>): RequestResult<EnvironmentsBuildResponses, EnvironmentsBuildErrors, ThrowOnError> => (options.client ?? client).post<EnvironmentsBuildResponses, EnvironmentsBuildErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/executions/{eid}/results/{opid}/{port}',
-    ...options
-});
-
-/**
- * Save a port result as a new dataset version (CSV). Lineage records it as produced by the execution's workflow version.
- */
-export const executionsSaveResult = <ThrowOnError extends boolean = false>(options: Options<ExecutionsSaveResultData, ThrowOnError>): RequestResult<ExecutionsSaveResultResponses, ExecutionsSaveResultErrors, ThrowOnError> => (options.client ?? client).post<ExecutionsSaveResultResponses, ExecutionsSaveResultErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/executions/{eid}/results/{opid}/{port}/save',
+    url: '/catalog/v1/environments/{rid}/build',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -362,6 +538,30 @@ export const executionsSaveResult = <ThrowOnError extends boolean = false>(optio
     }
 });
 
+export const environmentsListVersions = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsListVersionsData, ThrowOnError>): RequestResult<EnvironmentsListVersionsResponses, EnvironmentsListVersionsErrors, ThrowOnError> => (options.client ?? client).get<EnvironmentsListVersionsResponses, EnvironmentsListVersionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/environments/{rid}/versions',
+    ...options
+});
+
+export const environmentsReadVersion = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsReadVersionData, ThrowOnError>): RequestResult<EnvironmentsReadVersionResponses, EnvironmentsReadVersionErrors, ThrowOnError> => (options.client ?? client).get<EnvironmentsReadVersionResponses, EnvironmentsReadVersionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/environments/{rid}/versions/{vno}',
+    ...options
+});
+
+/**
+ * Executions across workflows the caller may read.
+ */
+export const executionsList = <ThrowOnError extends boolean = false>(options?: Options<ExecutionsListData, ThrowOnError>): RequestResult<ExecutionsListResponses, ExecutionsListErrors, ThrowOnError> => (options?.client ?? client).get<ExecutionsListResponses, ExecutionsListErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/executions',
+    ...options
+});
+
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const mcpServersList = <ThrowOnError extends boolean = false>(options?: Options<McpServersListData, ThrowOnError>): RequestResult<McpServersListResponses, McpServersListErrors, ThrowOnError> => (options?.client ?? client).get<McpServersListResponses, McpServersListErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/mcp-servers',
@@ -378,13 +578,25 @@ export const mcpServersCreate = <ThrowOnError extends boolean = false>(options: 
     }
 });
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const mcpServersDelete = <ThrowOnError extends boolean = false>(options: Options<McpServersDeleteData, ThrowOnError>): RequestResult<McpServersDeleteResponses, McpServersDeleteErrors, ThrowOnError> => (options.client ?? client).delete<McpServersDeleteResponses, McpServersDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/mcp-servers/{rid}',
+    ...options
+});
+
 export const mcpServersRead = <ThrowOnError extends boolean = false>(options: Options<McpServersReadData, ThrowOnError>): RequestResult<McpServersReadResponses, McpServersReadErrors, ThrowOnError> => (options.client ?? client).get<McpServersReadResponses, McpServersReadErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/mcp-servers/{rid}',
     ...options
 });
 
-export const mcpServersUpdateSpec = <ThrowOnError extends boolean = false>(options: Options<McpServersUpdateSpecData, ThrowOnError>): RequestResult<McpServersUpdateSpecResponses, McpServersUpdateSpecErrors, ThrowOnError> => (options.client ?? client).put<McpServersUpdateSpecResponses, McpServersUpdateSpecErrors, ThrowOnError>({
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const mcpServersUpdate = <ThrowOnError extends boolean = false>(options: Options<McpServersUpdateData, ThrowOnError>): RequestResult<McpServersUpdateResponses, McpServersUpdateErrors, ThrowOnError> => (options.client ?? client).put<McpServersUpdateResponses, McpServersUpdateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/mcp-servers/{rid}',
     ...options,
@@ -394,8 +606,20 @@ export const mcpServersUpdateSpec = <ThrowOnError extends boolean = false>(optio
     }
 });
 
+export const mcpServersListVersions = <ThrowOnError extends boolean = false>(options: Options<McpServersListVersionsData, ThrowOnError>): RequestResult<McpServersListVersionsResponses, McpServersListVersionsErrors, ThrowOnError> => (options.client ?? client).get<McpServersListVersionsResponses, McpServersListVersionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/mcp-servers/{rid}/versions',
+    ...options
+});
+
+export const mcpServersReadVersion = <ThrowOnError extends boolean = false>(options: Options<McpServersReadVersionData, ThrowOnError>): RequestResult<McpServersReadVersionResponses, McpServersReadVersionErrors, ThrowOnError> => (options.client ?? client).get<McpServersReadVersionResponses, McpServersReadVersionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/mcp-servers/{rid}/versions/{vno}',
+    ...options
+});
+
 /**
- * The calling principal and its home project; creates both on first login.
+ * The calling principal, its projects and preferences; creates the principal and its home project on first login.
  */
 export const meGet = <ThrowOnError extends boolean = false>(options?: Options<MeGetData, ThrowOnError>): RequestResult<MeGetResponses, MeGetErrors, ThrowOnError> => (options?.client ?? client).get<MeGetResponses, MeGetErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -403,12 +627,250 @@ export const meGet = <ThrowOnError extends boolean = false>(options?: Options<Me
     ...options
 });
 
+/**
+ * Replace the caller's preferences, a free-form document the app owns.
+ */
+export const meUpdatePreferences = <ThrowOnError extends boolean = false>(options: Options<MeUpdatePreferencesData, ThrowOnError>): RequestResult<MeUpdatePreferencesResponses, MeUpdatePreferencesErrors, ThrowOnError> => (options.client ?? client).put<MeUpdatePreferencesResponses, MeUpdatePreferencesErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/me/preferences',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const modelEndpointsList = <ThrowOnError extends boolean = false>(options?: Options<ModelEndpointsListData, ThrowOnError>): RequestResult<ModelEndpointsListResponses, ModelEndpointsListErrors, ThrowOnError> => (options?.client ?? client).get<ModelEndpointsListResponses, ModelEndpointsListErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/model-endpoints',
+    ...options
+});
+
+export const modelEndpointsCreate = <ThrowOnError extends boolean = false>(options: Options<ModelEndpointsCreateData, ThrowOnError>): RequestResult<ModelEndpointsCreateResponses, ModelEndpointsCreateErrors, ThrowOnError> => (options.client ?? client).post<ModelEndpointsCreateResponses, ModelEndpointsCreateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/model-endpoints',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const modelEndpointsDelete = <ThrowOnError extends boolean = false>(options: Options<ModelEndpointsDeleteData, ThrowOnError>): RequestResult<ModelEndpointsDeleteResponses, ModelEndpointsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ModelEndpointsDeleteResponses, ModelEndpointsDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/model-endpoints/{rid}',
+    ...options
+});
+
+export const modelEndpointsRead = <ThrowOnError extends boolean = false>(options: Options<ModelEndpointsReadData, ThrowOnError>): RequestResult<ModelEndpointsReadResponses, ModelEndpointsReadErrors, ThrowOnError> => (options.client ?? client).get<ModelEndpointsReadResponses, ModelEndpointsReadErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/model-endpoints/{rid}',
+    ...options
+});
+
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const modelEndpointsUpdate = <ThrowOnError extends boolean = false>(options: Options<ModelEndpointsUpdateData, ThrowOnError>): RequestResult<ModelEndpointsUpdateResponses, ModelEndpointsUpdateErrors, ThrowOnError> => (options.client ?? client).put<ModelEndpointsUpdateResponses, ModelEndpointsUpdateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/model-endpoints/{rid}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const modelsList = <ThrowOnError extends boolean = false>(options?: Options<ModelsListData, ThrowOnError>): RequestResult<ModelsListResponses, ModelsListErrors, ThrowOnError> => (options?.client ?? client).get<ModelsListResponses, ModelsListErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models',
+    ...options
+});
+
+export const modelsCreate = <ThrowOnError extends boolean = false>(options: Options<ModelsCreateData, ThrowOnError>): RequestResult<ModelsCreateResponses, ModelsCreateErrors, ThrowOnError> => (options.client ?? client).post<ModelsCreateResponses, ModelsCreateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const modelsDelete = <ThrowOnError extends boolean = false>(options: Options<ModelsDeleteData, ThrowOnError>): RequestResult<ModelsDeleteResponses, ModelsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ModelsDeleteResponses, ModelsDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}',
+    ...options
+});
+
+export const modelsRead = <ThrowOnError extends boolean = false>(options: Options<ModelsReadData, ThrowOnError>): RequestResult<ModelsReadResponses, ModelsReadErrors, ThrowOnError> => (options.client ?? client).get<ModelsReadResponses, ModelsReadErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}',
+    ...options
+});
+
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const modelsUpdate = <ThrowOnError extends boolean = false>(options: Options<ModelsUpdateData, ThrowOnError>): RequestResult<ModelsUpdateResponses, ModelsUpdateErrors, ThrowOnError> => (options.client ?? client).put<ModelsUpdateResponses, ModelsUpdateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Commit the staged files, over the head version's files, as a new version.
+ */
+export const modelsCommit = <ThrowOnError extends boolean = false>(options: Options<ModelsCommitData, ThrowOnError>): RequestResult<ModelsCommitResponses, ModelsCommitErrors, ThrowOnError> => (options.client ?? client).post<ModelsCommitResponses, ModelsCommitErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}/commit',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const modelsUnstage = <ThrowOnError extends boolean = false>(options: Options<ModelsUnstageData, ThrowOnError>): RequestResult<ModelsUnstageResponses, ModelsUnstageErrors, ThrowOnError> => (options.client ?? client).delete<ModelsUnstageResponses, ModelsUnstageErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}/files/{path}',
+    ...options
+});
+
+/**
+ * Upload a file into the staging area; commit makes a version. The same bytes are stored once.
+ */
+export const modelsUpload = <ThrowOnError extends boolean = false>(options: Options<ModelsUploadData, ThrowOnError>): RequestResult<ModelsUploadResponses, ModelsUploadErrors, ThrowOnError> => (options.client ?? client).put<ModelsUploadResponses, ModelsUploadErrors, ThrowOnError>({
+    bodySerializer: null,
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}/files/{path}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/octet-stream',
+        ...options.headers
+    }
+});
+
+export const modelsStaged = <ThrowOnError extends boolean = false>(options: Options<ModelsStagedData, ThrowOnError>): RequestResult<ModelsStagedResponses, ModelsStagedErrors, ThrowOnError> => (options.client ?? client).get<ModelsStagedResponses, ModelsStagedErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}/staged',
+    ...options
+});
+
+export const modelsListVersions = <ThrowOnError extends boolean = false>(options: Options<ModelsListVersionsData, ThrowOnError>): RequestResult<ModelsListVersionsResponses, ModelsListVersionsErrors, ThrowOnError> => (options.client ?? client).get<ModelsListVersionsResponses, ModelsListVersionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}/versions',
+    ...options
+});
+
+export const modelsReadVersion = <ThrowOnError extends boolean = false>(options: Options<ModelsReadVersionData, ThrowOnError>): RequestResult<ModelsReadVersionResponses, ModelsReadVersionErrors, ThrowOnError> => (options.client ?? client).get<ModelsReadVersionResponses, ModelsReadVersionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}/versions/{vno}',
+    ...options
+});
+
+export const modelsFiles = <ThrowOnError extends boolean = false>(options: Options<ModelsFilesData, ThrowOnError>): RequestResult<ModelsFilesResponses, ModelsFilesErrors, ThrowOnError> => (options.client ?? client).get<ModelsFilesResponses, ModelsFilesErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}/versions/{vno}/files',
+    ...options
+});
+
+/**
+ * Read a file of a version; `Range` and `maxBytes` bound the answer.
+ */
+export const modelsDownload = <ThrowOnError extends boolean = false>(options: Options<ModelsDownloadData, ThrowOnError>): RequestResult<ModelsDownloadResponses, ModelsDownloadErrors, ThrowOnError> => (options.client ?? client).get<ModelsDownloadResponses, ModelsDownloadErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}/versions/{vno}/files/{path}',
+    ...options
+});
+
+/**
+ * A presigned URL for a file of a version, for engines and browsers.
+ */
+export const modelsLink = <ThrowOnError extends boolean = false>(options: Options<ModelsLinkData, ThrowOnError>): RequestResult<ModelsLinkResponses, ModelsLinkErrors, ThrowOnError> => (options.client ?? client).get<ModelsLinkResponses, ModelsLinkErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/models/{rid}/versions/{vno}/links/{path}',
+    ...options
+});
+
+/**
+ * List the operators the caller may use, built-ins and custom. The summary view carries the type, name, group and description; the full view adds the property schema and ports.
+ */
 export const operatorsList = <ThrowOnError extends boolean = false>(options?: Options<OperatorsListData, ThrowOnError>): RequestResult<OperatorsListResponses, OperatorsListErrors, ThrowOnError> => (options?.client ?? client).get<OperatorsListResponses, OperatorsListErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/operators',
     ...options
 });
 
+export const operatorsCreate = <ThrowOnError extends boolean = false>(options: Options<OperatorsCreateData, ThrowOnError>): RequestResult<OperatorsCreateResponses, OperatorsCreateErrors, ThrowOnError> => (options.client ?? client).post<OperatorsCreateResponses, OperatorsCreateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/operators',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const operatorsDelete = <ThrowOnError extends boolean = false>(options: Options<OperatorsDeleteData, ThrowOnError>): RequestResult<OperatorsDeleteResponses, OperatorsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<OperatorsDeleteResponses, OperatorsDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/operators/{rid}',
+    ...options
+});
+
+export const operatorsRead = <ThrowOnError extends boolean = false>(options: Options<OperatorsReadData, ThrowOnError>): RequestResult<OperatorsReadResponses, OperatorsReadErrors, ThrowOnError> => (options.client ?? client).get<OperatorsReadResponses, OperatorsReadErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/operators/{rid}',
+    ...options
+});
+
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const operatorsUpdate = <ThrowOnError extends boolean = false>(options: Options<OperatorsUpdateData, ThrowOnError>): RequestResult<OperatorsUpdateResponses, OperatorsUpdateErrors, ThrowOnError> => (options.client ?? client).put<OperatorsUpdateResponses, OperatorsUpdateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/operators/{rid}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const operatorsListVersions = <ThrowOnError extends boolean = false>(options: Options<OperatorsListVersionsData, ThrowOnError>): RequestResult<OperatorsListVersionsResponses, OperatorsListVersionsErrors, ThrowOnError> => (options.client ?? client).get<OperatorsListVersionsResponses, OperatorsListVersionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/operators/{rid}/versions',
+    ...options
+});
+
+export const operatorsReadVersion = <ThrowOnError extends boolean = false>(options: Options<OperatorsReadVersionData, ThrowOnError>): RequestResult<OperatorsReadVersionResponses, OperatorsReadVersionErrors, ThrowOnError> => (options.client ?? client).get<OperatorsReadVersionResponses, OperatorsReadVersionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/operators/{rid}/versions/{vno}',
+    ...options
+});
+
+/**
+ * Search the principals known to the catalog (everyone who has logged in, and groups), for sharing.
+ */
 export const principalsList = <ThrowOnError extends boolean = false>(options?: Options<PrincipalsListData, ThrowOnError>): RequestResult<PrincipalsListResponses, PrincipalsListErrors, ThrowOnError> => (options?.client ?? client).get<PrincipalsListResponses, PrincipalsListErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/principals',
@@ -421,6 +883,9 @@ export const principalsRead = <ThrowOnError extends boolean = false>(options: Op
     ...options
 });
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const projectsList = <ThrowOnError extends boolean = false>(options?: Options<ProjectsListData, ThrowOnError>): RequestResult<ProjectsListResponses, ProjectsListErrors, ThrowOnError> => (options?.client ?? client).get<ProjectsListResponses, ProjectsListErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/projects',
@@ -437,13 +902,25 @@ export const projectsCreate = <ThrowOnError extends boolean = false>(options: Op
     }
 });
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const projectsDelete = <ThrowOnError extends boolean = false>(options: Options<ProjectsDeleteData, ThrowOnError>): RequestResult<ProjectsDeleteResponses, ProjectsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ProjectsDeleteResponses, ProjectsDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/projects/{rid}',
+    ...options
+});
+
 export const projectsRead = <ThrowOnError extends boolean = false>(options: Options<ProjectsReadData, ThrowOnError>): RequestResult<ProjectsReadResponses, ProjectsReadErrors, ThrowOnError> => (options.client ?? client).get<ProjectsReadResponses, ProjectsReadErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/projects/{rid}',
     ...options
 });
 
-export const projectsUpdateSpec = <ThrowOnError extends boolean = false>(options: Options<ProjectsUpdateSpecData, ThrowOnError>): RequestResult<ProjectsUpdateSpecResponses, ProjectsUpdateSpecErrors, ThrowOnError> => (options.client ?? client).put<ProjectsUpdateSpecResponses, ProjectsUpdateSpecErrors, ThrowOnError>({
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const projectsUpdate = <ThrowOnError extends boolean = false>(options: Options<ProjectsUpdateData, ThrowOnError>): RequestResult<ProjectsUpdateResponses, ProjectsUpdateErrors, ThrowOnError> => (options.client ?? client).put<ProjectsUpdateResponses, ProjectsUpdateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/projects/{rid}',
     ...options,
@@ -454,11 +931,20 @@ export const projectsUpdateSpec = <ThrowOnError extends boolean = false>(options
 });
 
 /**
- * Search resources the caller may read.
+ * Search the resources the caller may read, across kinds.
  */
 export const resourcesSearch = <ThrowOnError extends boolean = false>(options?: Options<ResourcesSearchData, ThrowOnError>): RequestResult<ResourcesSearchResponses, ResourcesSearchErrors, ThrowOnError> => (options?.client ?? client).get<ResourcesSearchResponses, ResourcesSearchErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/resources',
+    ...options
+});
+
+/**
+ * Resolve a `texera://` URI to its resource, version and subresource path.
+ */
+export const resourcesResolve = <ThrowOnError extends boolean = false>(options: Options<ResourcesResolveData, ThrowOnError>): RequestResult<ResourcesResolveResponses, ResourcesResolveErrors, ThrowOnError> => (options.client ?? client).get<ResourcesResolveResponses, ResourcesResolveErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/resources/resolve',
     ...options
 });
 
@@ -484,6 +970,15 @@ export const resourcesUpdateMetadata = <ThrowOnError extends boolean = false>(op
     }
 });
 
+/**
+ * The resources whose specs reference this one.
+ */
+export const resourcesDependents = <ThrowOnError extends boolean = false>(options: Options<ResourcesDependentsData, ThrowOnError>): RequestResult<ResourcesDependentsResponses, ResourcesDependentsErrors, ThrowOnError> => (options.client ?? client).get<ResourcesDependentsResponses, ResourcesDependentsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/resources/{rid}/dependents',
+    ...options
+});
+
 export const resourcesListGrants = <ThrowOnError extends boolean = false>(options: Options<ResourcesListGrantsData, ThrowOnError>): RequestResult<ResourcesListGrantsResponses, ResourcesListGrantsErrors, ThrowOnError> => (options.client ?? client).get<ResourcesListGrantsResponses, ResourcesListGrantsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/resources/{rid}/grants',
@@ -506,6 +1001,9 @@ export const resourcesGrant = <ThrowOnError extends boolean = false>(options: Op
     }
 });
 
+/**
+ * Walk the lineage graph from a resource or one of its versions.
+ */
 export const resourcesLineage = <ThrowOnError extends boolean = false>(options: Options<ResourcesLineageData, ThrowOnError>): RequestResult<ResourcesLineageResponses, ResourcesLineageErrors, ThrowOnError> => (options.client ?? client).get<ResourcesLineageResponses, ResourcesLineageErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/resources/{rid}/lineage',
@@ -518,12 +1016,21 @@ export const resourcesListVersions = <ThrowOnError extends boolean = false>(opti
     ...options
 });
 
-/**
- * Create a new version from full content or a JSON Patch to the head.
- */
-export const resourcesCreateVersion = <ThrowOnError extends boolean = false>(options: Options<ResourcesCreateVersionData, ThrowOnError>): RequestResult<ResourcesCreateVersionResponses, ResourcesCreateVersionErrors, ThrowOnError> => (options.client ?? client).post<ResourcesCreateVersionResponses, ResourcesCreateVersionErrors, ThrowOnError>({
+export const resourcesReadVersion = <ThrowOnError extends boolean = false>(options: Options<ResourcesReadVersionData, ThrowOnError>): RequestResult<ResourcesReadVersionResponses, ResourcesReadVersionErrors, ThrowOnError> => (options.client ?? client).get<ResourcesReadVersionResponses, ResourcesReadVersionErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/resources/{rid}/versions',
+    url: '/catalog/v1/resources/{rid}/versions/{vno}',
+    ...options
+});
+
+export const settingsRoutesRead = <ThrowOnError extends boolean = false>(options?: Options<SettingsRoutesReadData, ThrowOnError>): RequestResult<SettingsRoutesReadResponses, SettingsRoutesReadErrors, ThrowOnError> => (options?.client ?? client).get<SettingsRoutesReadResponses, SettingsRoutesReadErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/settings',
+    ...options
+});
+
+export const settingsRoutesUpdate = <ThrowOnError extends boolean = false>(options: Options<SettingsRoutesUpdateData, ThrowOnError>): RequestResult<SettingsRoutesUpdateResponses, SettingsRoutesUpdateErrors, ThrowOnError> => (options.client ?? client).put<SettingsRoutesUpdateResponses, SettingsRoutesUpdateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/settings',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -531,12 +1038,18 @@ export const resourcesCreateVersion = <ThrowOnError extends boolean = false>(opt
     }
 });
 
-export const resourcesReadVersion = <ThrowOnError extends boolean = false>(options: Options<ResourcesReadVersionData, ThrowOnError>): RequestResult<ResourcesReadVersionResponses, ResourcesReadVersionErrors, ThrowOnError> => (options.client ?? client).get<ResourcesReadVersionResponses, ResourcesReadVersionErrors, ThrowOnError>({
+/**
+ * Served without a token.
+ */
+export const settingsRoutesPublic = <ThrowOnError extends boolean = false>(options?: Options<SettingsRoutesPublicData, ThrowOnError>): RequestResult<SettingsRoutesPublicResponses, SettingsRoutesPublicErrors, ThrowOnError> => (options?.client ?? client).get<SettingsRoutesPublicResponses, SettingsRoutesPublicErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/resources/{rid}/versions/{vno}',
+    url: '/catalog/v1/settings/public',
     ...options
 });
 
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const skillsList = <ThrowOnError extends boolean = false>(options?: Options<SkillsListData, ThrowOnError>): RequestResult<SkillsListResponses, SkillsListErrors, ThrowOnError> => (options?.client ?? client).get<SkillsListResponses, SkillsListErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/skills',
@@ -553,13 +1066,25 @@ export const skillsCreate = <ThrowOnError extends boolean = false>(options: Opti
     }
 });
 
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const skillsDelete = <ThrowOnError extends boolean = false>(options: Options<SkillsDeleteData, ThrowOnError>): RequestResult<SkillsDeleteResponses, SkillsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<SkillsDeleteResponses, SkillsDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/skills/{rid}',
+    ...options
+});
+
 export const skillsRead = <ThrowOnError extends boolean = false>(options: Options<SkillsReadData, ThrowOnError>): RequestResult<SkillsReadResponses, SkillsReadErrors, ThrowOnError> => (options.client ?? client).get<SkillsReadResponses, SkillsReadErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/skills/{rid}',
     ...options
 });
 
-export const skillsUpdateSpec = <ThrowOnError extends boolean = false>(options: Options<SkillsUpdateSpecData, ThrowOnError>): RequestResult<SkillsUpdateSpecResponses, SkillsUpdateSpecErrors, ThrowOnError> => (options.client ?? client).put<SkillsUpdateSpecResponses, SkillsUpdateSpecErrors, ThrowOnError>({
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const skillsUpdate = <ThrowOnError extends boolean = false>(options: Options<SkillsUpdateData, ThrowOnError>): RequestResult<SkillsUpdateResponses, SkillsUpdateErrors, ThrowOnError> => (options.client ?? client).put<SkillsUpdateResponses, SkillsUpdateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/skills/{rid}',
     ...options,
@@ -569,6 +1094,21 @@ export const skillsUpdateSpec = <ThrowOnError extends boolean = false>(options: 
     }
 });
 
+export const skillsListVersions = <ThrowOnError extends boolean = false>(options: Options<SkillsListVersionsData, ThrowOnError>): RequestResult<SkillsListVersionsResponses, SkillsListVersionsErrors, ThrowOnError> => (options.client ?? client).get<SkillsListVersionsResponses, SkillsListVersionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/skills/{rid}/versions',
+    ...options
+});
+
+export const skillsReadVersion = <ThrowOnError extends boolean = false>(options: Options<SkillsReadVersionData, ThrowOnError>): RequestResult<SkillsReadVersionResponses, SkillsReadVersionErrors, ThrowOnError> => (options.client ?? client).get<SkillsReadVersionResponses, SkillsReadVersionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/skills/{rid}/versions/{vno}',
+    ...options
+});
+
+/**
+ * List the resources of this kind the caller may read.
+ */
 export const workflowsList = <ThrowOnError extends boolean = false>(options?: Options<WorkflowsListData, ThrowOnError>): RequestResult<WorkflowsListResponses, WorkflowsListErrors, ThrowOnError> => (options?.client ?? client).get<WorkflowsListResponses, WorkflowsListErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/workflows',
@@ -586,16 +1126,12 @@ export const workflowsCreate = <ThrowOnError extends boolean = false>(options: O
 });
 
 /**
- * Create a workflow with its first version's content (the logical plan JSON).
+ * Delete the resource; refused with 409 while another resource references it.
  */
-export const workflowsCreateWithContent = <ThrowOnError extends boolean = false>(options: Options<WorkflowsCreateWithContentData, ThrowOnError>): RequestResult<WorkflowsCreateWithContentResponses, WorkflowsCreateWithContentErrors, ThrowOnError> => (options.client ?? client).post<WorkflowsCreateWithContentResponses, WorkflowsCreateWithContentErrors, ThrowOnError>({
+export const workflowsDelete = <ThrowOnError extends boolean = false>(options: Options<WorkflowsDeleteData, ThrowOnError>): RequestResult<WorkflowsDeleteResponses, WorkflowsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<WorkflowsDeleteResponses, WorkflowsDeleteErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/workflows/with-content',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
+    url: '/catalog/v1/workflows/{rid}',
+    ...options
 });
 
 export const workflowsRead = <ThrowOnError extends boolean = false>(options: Options<WorkflowsReadData, ThrowOnError>): RequestResult<WorkflowsReadResponses, WorkflowsReadErrors, ThrowOnError> => (options.client ?? client).get<WorkflowsReadResponses, WorkflowsReadErrors, ThrowOnError>({
@@ -604,7 +1140,10 @@ export const workflowsRead = <ThrowOnError extends boolean = false>(options: Opt
     ...options
 });
 
-export const workflowsUpdateSpec = <ThrowOnError extends boolean = false>(options: Options<WorkflowsUpdateSpecData, ThrowOnError>): RequestResult<WorkflowsUpdateSpecResponses, WorkflowsUpdateSpecErrors, ThrowOnError> => (options.client ?? client).put<WorkflowsUpdateSpecResponses, WorkflowsUpdateSpecErrors, ThrowOnError>({
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const workflowsUpdate = <ThrowOnError extends boolean = false>(options: Options<WorkflowsUpdateData, ThrowOnError>): RequestResult<WorkflowsUpdateResponses, WorkflowsUpdateErrors, ThrowOnError> => (options.client ?? client).put<WorkflowsUpdateResponses, WorkflowsUpdateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/workflows/{rid}',
     ...options,
@@ -615,16 +1154,7 @@ export const workflowsUpdateSpec = <ThrowOnError extends boolean = false>(option
 });
 
 /**
- * The head version's content, or a given version.
- */
-export const workflowsContent = <ThrowOnError extends boolean = false>(options: Options<WorkflowsContentData, ThrowOnError>): RequestResult<WorkflowsContentResponses, WorkflowsContentErrors, ThrowOnError> => (options.client ?? client).get<WorkflowsContentResponses, WorkflowsContentErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/workflows/{rid}/content',
-    ...options
-});
-
-/**
- * Edit a workflow: a JSON Patch to the head content yields a new version.
+ * Edit a workflow: a JSON Patch to the head spec, or a full spec, yields a new version.
  */
 export const workflowsEdit = <ThrowOnError extends boolean = false>(options: Options<WorkflowsEditData, ThrowOnError>): RequestResult<WorkflowsEditResponses, WorkflowsEditErrors, ThrowOnError> => (options.client ?? client).post<WorkflowsEditResponses, WorkflowsEditErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -642,12 +1172,42 @@ export const workflowsListExecutions = <ThrowOnError extends boolean = false>(op
     ...options
 });
 
-/**
- * Run a workflow version on a computing unit; returns the execution.
- */
-export const workflowsRun = <ThrowOnError extends boolean = false>(options: Options<WorkflowsRunData, ThrowOnError>): RequestResult<WorkflowsRunResponses, WorkflowsRunErrors, ThrowOnError> => (options.client ?? client).post<WorkflowsRunResponses, WorkflowsRunErrors, ThrowOnError>({
+export const workflowsReadExecution = <ThrowOnError extends boolean = false>(options: Options<WorkflowsReadExecutionData, ThrowOnError>): RequestResult<WorkflowsReadExecutionResponses, WorkflowsReadExecutionErrors, ThrowOnError> => (options.client ?? client).get<WorkflowsReadExecutionResponses, WorkflowsReadExecutionErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/workflows/{rid}/executions',
+    url: '/catalog/v1/workflows/{rid}/executions/{eid}',
+    ...options
+});
+
+export const workflowsCancelExecution = <ThrowOnError extends boolean = false>(options: Options<WorkflowsCancelExecutionData, ThrowOnError>): RequestResult<WorkflowsCancelExecutionResponses, WorkflowsCancelExecutionErrors, ThrowOnError> => (options.client ?? client).post<WorkflowsCancelExecutionResponses, WorkflowsCancelExecutionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/workflows/{rid}/executions/{eid}/cancel',
+    ...options
+});
+
+/**
+ * What a port of an execution holds: for an output port its result, for an input port its binding.
+ */
+export const workflowsReadPort = <ThrowOnError extends boolean = false>(options: Options<WorkflowsReadPortData, ThrowOnError>): RequestResult<WorkflowsReadPortResponses, WorkflowsReadPortErrors, ThrowOnError> => (options.client ?? client).get<WorkflowsReadPortResponses, WorkflowsReadPortErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/workflows/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}',
+    ...options
+});
+
+/**
+ * A bounded page of an output port's rows.
+ */
+export const workflowsReadRows = <ThrowOnError extends boolean = false>(options: Options<WorkflowsReadRowsData, ThrowOnError>): RequestResult<WorkflowsReadRowsResponses, WorkflowsReadRowsErrors, ThrowOnError> => (options.client ?? client).get<WorkflowsReadRowsResponses, WorkflowsReadRowsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/workflows/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}/rows',
+    ...options
+});
+
+/**
+ * Save an output port's result as a dataset version; lineage records it as derived from the port.
+ */
+export const workflowsSavePort = <ThrowOnError extends boolean = false>(options: Options<WorkflowsSavePortData, ThrowOnError>): RequestResult<WorkflowsSavePortResponses, WorkflowsSavePortErrors, ThrowOnError> => (options.client ?? client).post<WorkflowsSavePortResponses, WorkflowsSavePortErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/workflows/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}/save',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -656,7 +1216,20 @@ export const workflowsRun = <ThrowOnError extends boolean = false>(options: Opti
 });
 
 /**
- * Compile a version or draft content: output schemas per port and errors per operator.
+ * Run a workflow version; the execution is created under the workflow.
+ */
+export const workflowsRun = <ThrowOnError extends boolean = false>(options: Options<WorkflowsRunData, ThrowOnError>): RequestResult<WorkflowsRunResponses, WorkflowsRunErrors, ThrowOnError> => (options.client ?? client).post<WorkflowsRunResponses, WorkflowsRunErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/workflows/{rid}/run',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Compile a version or a draft on a computing unit: output schemas per port and errors per operator.
  */
 export const workflowsValidate = <ThrowOnError extends boolean = false>(options: Options<WorkflowsValidateData, ThrowOnError>): RequestResult<WorkflowsValidateResponses, WorkflowsValidateErrors, ThrowOnError> => (options.client ?? client).post<WorkflowsValidateResponses, WorkflowsValidateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -668,8 +1241,20 @@ export const workflowsValidate = <ThrowOnError extends boolean = false>(options:
     }
 });
 
+export const workflowsListVersions = <ThrowOnError extends boolean = false>(options: Options<WorkflowsListVersionsData, ThrowOnError>): RequestResult<WorkflowsListVersionsResponses, WorkflowsListVersionsErrors, ThrowOnError> => (options.client ?? client).get<WorkflowsListVersionsResponses, WorkflowsListVersionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/workflows/{rid}/versions',
+    ...options
+});
+
+export const workflowsReadVersion = <ThrowOnError extends boolean = false>(options: Options<WorkflowsReadVersionData, ThrowOnError>): RequestResult<WorkflowsReadVersionResponses, WorkflowsReadVersionErrors, ThrowOnError> => (options.client ?? client).get<WorkflowsReadVersionResponses, WorkflowsReadVersionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/workflows/{rid}/versions/{vno}',
+    ...options
+});
+
 /**
- * OpenLineage run events posted by engines; service authentication.
+ * OpenLineage run events posted by engines and other producers; service authentication.
  */
 export const eventsIngest = <ThrowOnError extends boolean = false>(options: Options<EventsIngestData, ThrowOnError>): RequestResult<EventsIngestResponses, EventsIngestErrors, ThrowOnError> => (options.client ?? client).post<EventsIngestResponses, EventsIngestErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
