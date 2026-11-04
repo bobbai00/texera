@@ -1,62 +1,194 @@
 # Texera 2.0 implementation plan
 
 Branch `texera-2-0`, in its own worktree of the main checkout. The design is the Claude Doc
-"Texera as the Workspace for Agentic Collaborative Research" (rev 67). This file is the
-engineering blueprint for the first end-to-end slice and the running notes that survive
-context resets. Keep it current: `PROGRESS.md` beside it records what is done and verified.
-
-The resource model and the implementation architecture settled on 2026-11-03 are in the
-Claude Doc "Texera 2.0 Resource Model and Implementation Architecture"
+"Texera as the Workspace for Agentic Collaborative Research" (rev 67). The resource model and
+the implementation architecture settled on 2026-11-03 are in the Claude Doc "Texera 2.0
+Resource Model and Implementation Architecture"
 (https://claude.ai/artifact/LCDUYos77DAM24TL1hyDCQ): kinds, names and URIs, versions,
 executions, compute, operators, access control, settings and quotas, credentials and models,
-the codegen pipeline, the service map with adapters, the roadmap and the open decisions.
-Where it differs from the design doc or from this file, it wins.
+the codegen pipeline, the service map with adapters, the roadmap and the open decisions. Where
+the two docs differ, the second wins. This file is the newer word on sequencing only, and
+`PROGRESS.md` beside it records what is done and verified.
 
-## What the slice must do (acceptance)
+Settled after the doc, in the same conversation: executions are resources nested under
+workflows; versions, files, operators and ports, computing nodes and messages are subresources
+with their parent's permissions; one `edge` table holds references and lineage as a rebuildable
+index; the catalog is a client of every peer's API and never of its storage; Keycloak's Admin
+API is not used (principal search runs on the catalog's own `principal` table).
 
-1. A person logs in through Keycloak (OIDC, PKCE). Every service verifies RS256 tokens
-   through JWKS; no shared secret anywhere.
-2. The person starts a chat in a mode (an agent template), uploads a CSV (dataset v1), and
-   asks for an analysis. The agent, running on AI SDK 7, uses only the Texera MCP server
-   ("dataflow MCP": operators, edit, compile, run, results) to build a workflow, run it on a
-   computing unit, and answer with results. Every workflow edit by the agent or a person is
-   a new workflow version. Every run is an execution with lineage: which workflow version,
-   which dataset versions, which environment, which port results.
-3. The chat lists the resources it produced; each opens as a card, a side panel or a page.
-4. Agent templates are catalog resources: list, view, create, edit (versioned). A template
-   names MCP servers (catalog resources) it may use; the agent runtime mounts them.
-5. Computing units and environments are catalog resources; an execution runs on a unit in
-   an environment (Python packages) and the engine honors it.
-6. All of it is tested: Go unit and integration tests, Vitest, Playwright, and one real-model
-   end-to-end run with Claude Haiku 5.5 (`ANTHROPIC_API_KEY` from the main repo's `.env`).
+## Milestone M1: the catalog contract, minimal and complete
+
+Planned 2026-11-03. M1 replaces the ordering of phases 1 to 5 of the doc's roadmap with one
+milestone: every kind of the settled model exists behind the generated contract, versioned
+where the model says so, with subresources, grants, lineage and credentials working, and every
+peer behind a port with one adapter and a contract test. Minimal means one adapter per port and
+no feature beyond what the acceptance list exercises. Extensible means the ports, the content
+kinds, the kind registry and the generic UI page exist, so the next adapter or kind is an
+addition and not a change.
+
+### Decisions taken to unblock M1 (override any of them before S4 starts)
+
+1. Blob store: content-addressed S3 under `blobs/sha256/{aa}/{digest}`; lakeFS is an adapter slot.
+2. Names are unique per parent and kind; the rid is the identity and URIs carry rids.
+3. The plan JSON keeps `operatorID`, `operatorType`, `operatorProperties`, `inputPorts[].portID`,
+   `outputPorts[].portID` and `links`.
+4. Quotas and model usage metering are out of M1; no `quota`, `quota_usage` or `model_usage`
+   tables yet.
+5. One seeded model endpoint, `anthropic-platform`, in the system project, referencing the
+   credential `anthropic-platform`. `up.sh` loads the key from the repo-root `.env` into OpenBao
+   and never prints it. The agent runtime leases the key per turn and loses `TEXERA_LLM_API_KEY`.
+6. Grants inherit down the parent chain, project to workflow to execution, as in the model today.
+7. Pre-release: the schema is squashed into a new `0001_init.sql` and the dev stack is reset.
+   No data migration.
+8. The engine is untouched in M1. The catalog compiles custom operators into Python UDF
+   operators before sending the plan, builds the environment before start (execution phase
+   `provisioning`), and refuses a second concurrent run of a workflow on a unit with 409 itself.
+9. Credentials are consumed in M1 by the agent runtime only: the model endpoint's key and MCP
+   server headers. `format: credential` on operator properties is reserved; substitution at run
+   time is the first extension.
+10. The ToolLoopAgent refactor of the runtime loop is not in M1, so the current demo stays the
+    regression signal for the contract reset.
+
+### Steps
+
+Each step is a series of small commits pushed as they land; the gate closes the step. Unit
+tests stay green at every commit. End to end is red between S5 and S8 and green again at S9.
+
+**S1 Contract.** `api/catalog/` replaces `api/catalog.tsp`: `envelope.tsp` (apiVersion, kind,
+metadata with uri, spec, status, versions, grants, search, errors), one file per kind under
+`kinds/` (spec, status, custom methods), `subresources.tsp`, `access.tsp` (the AuthZEN
+evaluation endpoint) and `lineage.tsp` (OpenLineage inbound; upstream and downstream walks).
+Extensions on every kind and operation: `x-texera-kind` {plural, versioned, parent, references,
+index}, `x-texera-permission`, `x-mcp` {server: catalog | dataflow}. `api/openfga/model.fga`
+v2: relations owner, editor, viewer, user; parent; `user:*`; computed can_read, can_write,
+can_share, can_delete, can_execute, can_use, can_run_on, can_rotate. `engine.tsp` is unchanged.
+Gate: `tsp compile` clean; the OpenAPI diff reviewed against the doc's kind table.
+
+**S2 Codegen.** `catalog/cmd/catalogen` (it absorbs `mcpgen`) reads the OpenAPI and emits
+`catalog/internal/kinds/kinds.gen.go` (the registry, embedded JSON Schemas, reference
+extractors as JSON pointers), `catalog/internal/uri/uri.gen.go` and
+`packages/kinds/src/uri.gen.ts` (one grammar, parser and printer), `packages/kinds/src/kinds.gen.ts`,
+the per-server MCP tables `catalog/internal/mcp/{catalog,dataflow}_tools.gen.go`,
+`catalog/internal/authz/permissions_test.gen.go`, `gen/schemas/*.schema.json`, and
+`catalog/internal/store/migrations/0002_indexes.gen.sql` from the declared index fields.
+`make generate` runs tsp, oapi-codegen, catalogen and hey-api; `check-drift` covers every
+output. Gate: `make generate && make check-drift` clean; URI round-trip property tests; the
+permission table test compiles against the model.
+
+**S3 Infrastructure.** Compose gains `openbao` (dev mode, KV v2 mount `texera`, an AppRole for
+the catalog) and an init job; the OpenFGA init loads model v2; the Keycloak realm export gains
+the `admins` group and a `groups` claim. Gate: `up.sh` from clean; every container healthy;
+`smoke-env.py`.
+
+**S4 Store and ports.** A new `0001_init.sql` with twelve tables: principal, resource,
+resource_version, access_index, access_outbox, blob, dataset_staging, edge, lineage_event,
+message, agent, credential_lease. `catalog/internal/store` becomes generic: one resource store
+for every kind (create, get, list with filters and the readable index, update with etag, delete,
+versions with digest and expectedHead), plus edges, blobs, staging, messages, agents and leases.
+`catalog/internal/ports` defines Identity, Authorizer, SecretStore, BlobStore, TableCatalog,
+UnitProvider, EnvironmentBuilder, ModelGateway, LineageSink and SearchIndex.
+`catalog/internal/adapters` holds one adapter each (keycloak, openfga, openbao, s3cas,
+lakekeeper, staticunit, unitenv, anthropic, noop, pgsearch) and memory adapters for tests.
+`catalog/internal/ports/contracttest` has one suite per port, run against the memory adapters in
+unit tests and against the stack under `-tags integration`. The access relay writes tuples from
+the outbox and maintains the index, with a rebuild command. Gate: `go test ./...`;
+`go test -tags integration ./...` against the stack.
+
+**S5 Services.** `catalog/internal/services/{resources,files,executions,compute,operators,agents,credentials,models,iam,lineage}`
+over the ports; `catalog/internal/server` becomes the thin generated strict server that calls
+them. Resources: generic CRUD, versions, subresources, grants, search, lineage walks, `:edit`
+for workflows. Files: upload to blobs, staging, `:commit` to a manifest version, ranged reads,
+presigned URLs. Executions: `:run` with the resolution order request, then workflow defaults,
+then project defaults, then 409; used edges at start; environment build then start; status
+written at transitions; produced edges from the OpenLineage completion report; `:cancel`;
+`:save` with derivedFrom (a CSV export to blobs in M1; the `table` content kind is declared and
+not produced). Compute: the static unit provider, the nodes facet, the operator list per engine
+image digest, built-in operator seeding. Operators: custom Python operators compiled into
+Python UDF operators in the plan. Agents: templates, skills (markdown content kind), MCP
+servers, conversations and messages, agent principals. Credentials: `:secret`, `:lease` with
+the lease log. Models: model-endpoint CRUD with `can_use`; the model kind on the dataset
+machinery with `producedBy`. IAM: me, principal search, the settings singleton with
+`settings/public`. Lineage: OpenLineage inbound mapped to edges. Two MCP servers from the
+generated tables. Gate: `go test ./...`; `smoke-catalog.sh` and `smoke-run.sh` rewritten for
+the new API.
+
+**S6 Engine.** No contract change. Verify the start request, the build endpoints and the
+OpenLineage events against the new catalog and fix only what the smoke run finds. Gate:
+`smoke-run.sh` through Lakekeeper and RustFS.
+
+**S7 Agent runtime.** The catalog client follows the new paths and envelopes; templates
+reference skills, MCP servers and a model endpoint by URI; the model key and `secret:` headers
+come from `:lease`; AG-UI and A2A are unchanged. Gate: `bun test`, typecheck, `smoke-chat.py`
+with Claude Haiku 5.5.
+
+**S8 Frontend.** The regenerated client and kinds; the generic kind page renders any kind from
+its JSON Schema (metadata, spec editor, versions, grants with principal search, dependents and
+lineage from edges); executions under workflows with the port view; dataset files; the
+credential page's write-only secret form. Gate: vitest; Playwright 4/4 on Chrome.
+
+**S9 Close.** Seeding (the system project, built-in operators, templates, skills, MCP servers,
+the model endpoint and its credential, the admins group), README and PROGRESS, the doc's "What
+changes from the current code" and roadmap sections, memory notes. Gate: `test.sh` all green
+from a clean `up.sh`.
+
+### Acceptance (the M1 demo)
+
+1. Alice logs in through Keycloak and has a personal project. The system project holds the
+   built-in operators, the Data Analyst template, its skills, the dataflow MCP server and the
+   platform model endpoint, all public.
+2. She uploads iris.csv: `datasets/{rid}@1` with a manifest over one blob. Uploading the same
+   bytes again creates no second blob.
+3. In a chat the Data Analyst builds `workflows/{rid}@1` to `@3` through the dataflow MCP
+   server and runs it. The run is `workflows/{rid}/executions/{eid}` with ports under it. The
+   runtime leased the platform key from OpenBao and holds no key of its own.
+4. She saves a port: `datasets/{rid2}@1` with `producedBy`. The lineage panel walks upstream to
+   iris.csv and downstream from iris.csv to the new dataset.
+5. She creates a custom Python operator `operators/{rid}@1`, uses it in a workflow version, and
+   the run executes it in the pinned environment. Deleting the operator is refused with the
+   workflow listed as a dependent.
+6. She shares the project with Bob as viewer. Bob finds the workflow, the run and the datasets
+   in search, reads them and runs the workflow. Editing is 403 and leasing the credential is 403.
+7. She creates a credential and an MCP server whose header references it. The runtime mounts
+   the server through a lease and the lease is logged.
+8. `make generate && make check-drift` is clean. The permission table test, the URI round-trip
+   tests and every port's contract suite pass. `test.sh` is green.
+
+### Out of M1, with the interface that stays
+
+| Later | What M1 leaves in place |
+| --- | --- |
+| Kubernetes units, the CRD, Helm | the UnitProvider port and the static adapter |
+| lakeFS, LiteLLM, OpenSearch | the BlobStore, ModelGateway and SearchIndex ports with contract suites |
+| `:save` as an Iceberg table version | the `table` content kind in the contract |
+| quotas and model usage metering | the resolution points at `:run`, upload and lease |
+| credentials in operator properties | `format: credential` reserved in the property schemas |
+| reused and column lineage, external lineage sinks | the edge relations and the LineageSink port |
+| environment images, an image registry, multi-node units | `engine.image`, `status.builds[]`, the nodes facet |
+| groups beyond admins, SCIM | the group principal and the `groups` claim mapping |
+| the ToolLoopAgent loop, tool approval, A2A tasks | the runtime's loop module boundary |
+| Java and Python generated clients | the OpenAPI the generators read |
 
 ## Repository layout (target, this worktree)
 
 ```
-api/                 TypeSpec contract (catalog.tsp, engine.tsp), JSON Schemas, OpenFGA model
-gen/                 generated OpenAPI, Go server, TS client, Java client, MCP tool table
-catalog/             Go control plane: resources, versions, grants, PDP, executions, lineage,
-                     datasets on S3, units, environments, the MCP server, the outbox
-agent-runtime/       TypeScript (Bun/Node, Hono, AI SDK 7): AG-UI stream, A2A server, MCP
-                     client, skills, agent host, sandbox interface
+api/                 TypeSpec contract: catalog/ (envelope, kinds/, subresources, access,
+                     lineage), engine.tsp, openfga/model.fga
+gen/                 generated OpenAPI and JSON Schemas
+catalog/             Go control plane: cmd/catalog, cmd/catalogen; internal/{kinds,uri,ports,
+                     adapters,services,server,store,authn,authz,mcp,config}
+agent-runtime/       TypeScript (Bun, Hono, AI SDK 7): AG-UI stream, A2A server, MCP client,
+                     skills, agent host, sandbox interface
 frontend-next/       the React app (routes, shell); becomes frontend/ at the cutover
-packages/            catalog-client (generated), engine-protocol, workflow-model, ui, kinds, chat
+packages/            catalog-client (generated), kinds (generated registry and URI grammar),
+                     workflow-model, ui, chat
 amber/               the Amber engine as a pure engine (see "Engine boundary")
 common/              workflow-core, workflow-operator, workflow-compiler, config, auth, pybuilder
 bin/texera-2-0/      the dev stack (docker compose) and scripts
 docs/texera-2-0/     this plan, progress, decisions
 ```
 
-Retired in this worktree. Deleted: the Dashboard Service (TexeraWebApplication and
-`amber/.../web/resource/dashboard|auth|hub|...`), access-control-service,
-computing-unit-managing-service, config-service, file-service, workflow-compiling-service
-(folded into the unit), notebook-migration-service, `common/resource`, `common/auth`,
-`common/dao` with jOOQ, the old `sql/`, the Angular `frontend/` (operator icons moved to
-`frontend-next/public/operator-images`), the old `agent-service/`, `pyright-language-service/`,
-the 1.x deployment and tooling under `bin/` (local-dev, single-node, k8s, forum,
-y-websocket-server, pylsp, mounter), and from the engine the LakeFS documents, the dataset-mount
-manager and its execution-time binding, the file-lister operator and every database read. The
-1.x build workflow is replaced by the 2.0 one (`.github/workflows/build.yml`).
+The 1.x services, the Angular frontend, jOOQ and the old deployment tooling were deleted in
+this worktree; the 1.x build workflow is replaced by the 2.0 one (`.github/workflows/build.yml`).
 
 ## Service topology of the dev stack
 
@@ -66,49 +198,31 @@ in containers (compose project `texera2`); no Kubernetes is involved in developm
 `/` → frontend (vite :5174 on the host), `/catalog/v1`, `/access/v1`, `/mcp`, `/lineage/v1`
 → catalog (:8090 host), `/agents` → agent-runtime (:23002 host), `/units/{rid}/wsapi` and
 `/units/{rid}/api` → the unit (ComputingUnitMaster under sbt, :28085 host), `/auth` → Keycloak.
-Infrastructure containers: postgres, keycloak, openfga, rustfs (S3), lakekeeper (Iceberg REST)
-with a socat sidecar that makes 127.0.0.1:19001 reach RustFS inside Lakekeeper's network
-namespace as it does on the host. The unit's Python workers run from the uv-managed `.venv`.
-Details and ports: `bin/texera-2-0/README.md`.
+Infrastructure containers: postgres, keycloak, openfga, openbao (from S3), rustfs (S3),
+lakekeeper (Iceberg REST) with a socat sidecar that makes 127.0.0.1:19001 reach RustFS inside
+Lakekeeper's network namespace as it does on the host. The unit's Python workers run from the
+uv-managed `.venv`. Details and ports: `bin/texera-2-0/README.md`.
 
 ## Engine boundary (Amber as a pure engine)
 
 The unit (ComputingUnitMaster) keeps: the actor system, scheduling, workers, the Python/R
 runtimes, the WebSocket protocol for live events, pause/resume/kill and result pagination,
-the compiler, operator metadata, Iceberg result storage through Lakekeeper.
+the compiler, operator metadata, Iceberg result storage through Lakekeeper. It has no Postgres
+dependency, no dashboard resources, no HS256 JWT, no lakeFS.
 
-The unit loses: every Postgres/jOOQ dependency, the dashboard resources, HS256 JWT, lakeFS,
-the warehouse table lookup, the per-user venv table.
-
-The unit gains:
-- `POST /api/execution/start` with a self-contained `ExecutionStartRequest`: eid, workflow
-  content, resolved dataset inputs (presigned URLs), environment (Python packages), result
-  store config, and the catalog callback URL plus a token.
-- `ExecutionReporter`: execution status, operator states, port results (table, snapshot,
-  count, hash) and OpenLineage run events posted to the catalog.
-- `POST /api/compile` and `GET /api/operators` (metadata) served by the same process.
-- RS256 token verification through JWKS for the WebSocket and HTTP endpoints.
-- `https://` readonly file documents so scans read presigned dataset files.
-- Environment handling keyed by (environment rid, vno) with a venv per environment version.
-
-## Order of work
-
-1. Contract and generators: `api/catalog.tsp`, OpenAPI, Go strict server, TS client, MCP
-   tool table, `make generate`, drift check.
-2. Dev stack: compose file, Keycloak realm, OpenFGA model, Envoy config, Lakekeeper init.
-3. Catalog core: principals, resources, versions, grants, PDP, OIDC; integration tests.
-4. Engine: the boundary above; unit image; run in the stack.
-5. Catalog: executions, lineage, datasets, units, environments, operators, MCP server.
-6. Agent runtime: AG-UI, ToolLoopAgent, MCP client, templates, conversations, A2A.
-7. Frontend: OIDC, generated client, chat with modes, kinds (workflow, dataset, execution,
-   template, MCP server, unit, environment), versions, lineage.
-8. End-to-end with Haiku 5.5; then delete the retired code; update docs.
+Its API to the catalog: `POST /api/executions` with a self-contained `ExecutionStartRequest`
+(eid, workflow content, resolved dataset inputs as presigned URLs, environment, result store
+config, the catalog callback URL plus a token), `GET /api/executions/{eid}`, cancel and
+result pages; `POST /api/compile` and `GET /api/operators`; `POST /api/environments` and the
+build status. It reports execution status and port results as OpenLineage run events to the
+catalog. RS256 token verification through JWKS on the WebSocket and HTTP endpoints. Live
+per-operator progress goes to the app over the unit's WebSocket, not through the catalog.
 
 ## Conventions
 
 - Every new dependency is Apache-2.0, MIT or BSD. No secrets in the repo; the stack reads
-  `ANTHROPIC_API_KEY` from the environment.
+  `ANTHROPIC_API_KEY` from the environment or the gitignored repo-root `.env`.
 - Tests beside the code: `_test.go`, `*.test.ts`, `*.spec.ts`; integration tests need the
   stack and are tagged `integration`.
-- Generated code is committed under `gen/` and checked for drift in CI.
+- Generated code is committed under `gen/` and the `*.gen.*` files, and checked for drift in CI.
 - Observability: OpenTelemetry API only; exporters off by default.
