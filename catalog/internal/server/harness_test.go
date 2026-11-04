@@ -62,8 +62,9 @@ func (fakeIdentity) SearchUsers(_ context.Context, q string, _ int) ([]ports.Use
 // fakeUnit is an engine: health, operators, compile, start, status, results, environments.
 type fakeUnit struct {
 	*httptest.Server
-	mu      sync.Mutex
-	started []map[string]any
+	mu              sync.Mutex
+	started         []map[string]any
+	resultNamespace string
 }
 
 func newFakeUnit(t *testing.T) *fakeUnit {
@@ -99,6 +100,9 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 		writeJSON(w, map[string]any{"eid": r.PathValue("eid"), "status": "cancelled", "operators": map[string]any{}, "results": []any{}})
 	})
 	mux.HandleFunc("GET /api/executions/{eid}/results/{opid}/{port}", func(w http.ResponseWriter, r *http.Request) {
+		u.mu.Lock()
+		u.resultNamespace = r.URL.Query().Get("namespace")
+		u.mu.Unlock()
 		offset := 0
 		fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
 		rows := [][]any{{"setosa", 1.46}, {"versicolor", 4.26}, {"virginica", 5.55}}
@@ -122,6 +126,13 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 	return u
 }
 
+// lastResultNamespace is the namespace the last rows request named.
+func (u *fakeUnit) lastResultNamespace() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.resultNamespace
+}
+
 func (u *fakeUnit) starts() []map[string]any {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -135,15 +146,17 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 // harness is a catalog on the test database with memory adapters and a fake unit.
 type harness struct {
-	t       *testing.T
-	svc     *catalog.Service
-	srv     *server.Server
-	http    *httptest.Server
-	relay   *authz.Relay
-	unit    *fakeUnit
-	secrets *memory.Secrets
-	router  routers.Router
-	doc     *openapi3.T
+	t         *testing.T
+	svc       *catalog.Service
+	srv       *server.Server
+	http      *httptest.Server
+	relay     *authz.Relay
+	unit      *fakeUnit
+	secrets   *memory.Secrets
+	workloads *memory.Workloads
+	lake      *memory.Lake
+	router    routers.Router
+	doc       *openapi3.T
 }
 
 type outbox struct{ st *store.Store }
@@ -191,12 +204,14 @@ func newHarness(t *testing.T) *harness {
 	relay := authz.NewRelay(outbox{st}, authorizer, log)
 	unit := newFakeUnit(t)
 	secrets := memory.NewSecrets()
+	workloads := memory.NewWorkloads()
+	lake := memory.NewLake()
 	svc := &catalog.Service{
-		Store: st, PDP: pdp, Relay: relay, Identity: fakeIdentity{}, Secrets: secrets, Blobs: memory.NewBlobs(), Units: memory.Units{}, LineageSink: &memory.Lineage{},
+		Store: st, PDP: pdp, Relay: relay, Identity: fakeIdentity{}, Secrets: secrets, Blobs: memory.NewBlobs(), Units: memory.Units{}, Workloads: workloads, Lake: lake, LineageSink: &memory.Lineage{},
 		Config: catalog.Config{PublicURL: "http://test", APIPrefix: server.Prefix, OIDCIssuer: "http://test/auth/realms/texera", OIDCClientID: "texera-app", BrandName: "Texera Test",
 			IcebergCatalogURI: "http://lakekeeper/catalog", IcebergWarehouse: "texera", LineageCallbackURL: "http://catalog/lineage/v1/events",
 			PresignTTL: time.Hour, LeaseTTL: time.Hour, MaxDownloadBytes: 1 << 20,
-			StaticUnitEndpoint: unit.URL, StaticUnitName: "test unit", BioMcpURL: "http://test/bio-mcp", BioMcpKey: "bio-dev-key", ModelName: "claude-haiku-5-5", ModelSecretPath: "platform/anthropic"},
+			StaticUnitEndpoint: unit.URL, StaticUnitName: "test unit", StaticUnitClientID: "texera-unit", BioMcpURL: "http://test/bio-mcp", BioMcpKey: "bio-dev-key", ModelName: "claude-haiku-5-5", ModelSecretPath: "platform/anthropic"},
 		Log: log,
 	}
 	if err := svc.Seed(ctx); err != nil {
@@ -219,7 +234,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &harness{t: t, svc: svc, srv: srv, http: hs, relay: relay, unit: unit, secrets: secrets, router: router, doc: doc}
+	return &harness{t: t, svc: svc, srv: srv, http: hs, relay: relay, unit: unit, secrets: secrets, workloads: workloads, lake: lake, router: router, doc: doc}
 }
 
 // do sends a request as the token's user, relays the outbox, and validates the request and
@@ -341,6 +356,18 @@ func (h *harness) create(token, plural, name string, spec any) envelope {
 }
 
 func rid(e envelope) string { return string(e.Metadata.Rid) }
+
+// mustDecode reads a JSON document into out.
+func mustDecode(t *testing.T, raw any, out any) {
+	t.Helper()
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, out); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func field(e envelope, key string) any {
 	if e.Status == nil {

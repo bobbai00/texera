@@ -48,12 +48,23 @@ model ComputingUnitSpec {
   provider: UnitProvider;
   @doc("For `static`: the unit's base URL as the catalog reaches it.")
   endpoint?: string;
+  @doc("For `static`: the OAuth client the unit authenticates to the lake as, configured by its operator; the catalog grants its subject each execution's tables. A unit the catalog provisions gets a client of its own.")
+  clientId?: string;
   engine?: EngineSpec;
   computingNodes?: ComputingNodeSpec[];
 }
 
+@doc("The identity a unit runs with, minted by the catalog in the identity provider: the lake's grants name its subject.")
+model UnitIdentity {
+  @doc("The OAuth client the unit authenticates as.")
+  clientId: string;
+  @doc("The subject its tokens carry.")
+  subject: string;
+}
+
 model ComputingUnitStatus {
   phase: "pending" | "ready" | "failed" | "terminated";
+  identity?: UnitIdentity;
   @doc("The path the gateway proxies the unit's WebSocket and HTTP API at.")
   gatewayPath?: string;
   message?: string;

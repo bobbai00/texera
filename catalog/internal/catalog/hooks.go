@@ -55,6 +55,68 @@ func (s *Service) prepareSpec(ctx context.Context, caller *auth.Caller, k kinds.
 	return normalized, nil
 }
 
+// afterCreate gives a kind what it needs outside the store; an error undoes the creation.
+func (s *Service) afterCreate(ctx context.Context, r *store.Resource) error {
+	if r.Kind != "computing-unit" {
+		return nil
+	}
+	var spec api.ComputingUnitSpec
+	if err := json.Unmarshal(r.Spec, &spec); err != nil {
+		return err
+	}
+	identity, err := s.unitIdentityFor(ctx, r, spec)
+	if err != nil || identity == nil {
+		return err
+	}
+	return s.recordUnitIdentity(ctx, r, identity)
+}
+
+// recordUnitIdentity writes the identity into the unit's status, which starts as pending.
+func (s *Service) recordUnitIdentity(ctx context.Context, r *store.Resource, identity *api.UnitIdentity) error {
+	var status api.ComputingUnitStatus
+	_ = json.Unmarshal(r.Status, &status)
+	if status.Phase == "" {
+		status.Phase = api.ComputingUnitStatusPhasePending
+	}
+	status.Identity = identity
+	updated, err := s.Store.UpdateStatus(ctx, r.RID, mustJSON(status))
+	if err != nil {
+		return err
+	}
+	*r = *updated
+	return nil
+}
+
+// unitIdentityFor is the identity a unit runs with: minted by the catalog for a unit it
+// provisions (the credential goes to the secret store, never the database), or the operator's
+// client for a static unit that names one; nil for a static unit without.
+func (s *Service) unitIdentityFor(ctx context.Context, r *store.Resource, spec api.ComputingUnitSpec) (*api.UnitIdentity, error) {
+	switch spec.Provider {
+	case api.UnitProviderKubernetes:
+		clientID := "unit-" + r.RID.String()
+		w, err := s.Workloads.CreateWorkload(ctx, clientID, "Texera unit "+r.Name)
+		if err != nil {
+			return nil, Unavailable("identity provider", err)
+		}
+		if err := s.Secrets.Put(ctx, unitSecretPath(r.RID), map[string]string{"clientId": w.ClientID, "secret": w.Secret}); err != nil {
+			return nil, Unavailable("secret store", err)
+		}
+		return &api.UnitIdentity{ClientId: w.ClientID, Subject: w.Subject}, nil
+	default:
+		if spec.ClientId == nil || *spec.ClientId == "" {
+			return nil, nil
+		}
+		subject, err := s.Workloads.WorkloadSubject(ctx, *spec.ClientId)
+		if errors.Is(err, ports.ErrWorkloadNotFound) {
+			return nil, Invalid("the identity provider has no client "+*spec.ClientId, nil)
+		}
+		if err != nil {
+			return nil, Unavailable("identity provider", err)
+		}
+		return &api.UnitIdentity{ClientId: *spec.ClientId, Subject: subject}, nil
+	}
+}
+
 // beforeDelete cleans up what a kind holds outside the store.
 func (s *Service) beforeDelete(ctx context.Context, r *store.Resource) error {
 	switch r.Kind {
@@ -64,12 +126,28 @@ func (s *Service) beforeDelete(ctx context.Context, r *store.Resource) error {
 			return err
 		}
 	case "computing-unit":
-		// Deleting the resource releases what the provider holds for it.
+		// Deleting the resource releases what the provider holds for it, and the identity the
+		// catalog minted for it; a static unit's client is its operator's.
 		var spec api.ComputingUnitSpec
 		if err := json.Unmarshal(r.Spec, &spec); err == nil {
 			if err := s.Units.Terminate(ctx, r.RID.String(), spec); err != nil {
 				return Unavailable("unit provider", err)
 			}
+			if spec.Provider == api.UnitProviderKubernetes {
+				if identity := unitIdentity(r); identity != nil {
+					if err := s.Workloads.DeleteWorkload(ctx, identity.ClientId); err != nil {
+						return Unavailable("identity provider", err)
+					}
+				}
+				if err := s.Secrets.Delete(ctx, unitSecretPath(r.RID)); err != nil && !errors.Is(err, ports.ErrSecretNotFound) {
+					return err
+				}
+			}
+		}
+	case "execution":
+		// The run's tables go with it.
+		if err := s.Lake.DropNamespace(ctx, executionNamespace(r.RID)); err != nil {
+			return Unavailable("lake", err)
 		}
 	}
 	return nil

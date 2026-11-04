@@ -150,7 +150,7 @@ paths:
   /api/executions/{eid}/results/{opid}/{port}:
     get:
       operationId: Executions_result
-      description: A page of a port result. `table` is where the catalog recorded the result; a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+      description: A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
       parameters:
         - name: eid
           in: path
@@ -182,6 +182,12 @@ paths:
             format: int32
           explode: false
         - name: table
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: namespace
           in: query
           required: false
           schema:
@@ -538,7 +544,7 @@ components:
           type: string
         namespace:
           type: string
-          description: Namespace prefix for this execution's tables.
+          description: "The namespace the catalog made for this execution: every table of the run goes there, and the unit's identity was granted write access to it."
     Rid:
       type: string
       description: Resource id, a UUID.

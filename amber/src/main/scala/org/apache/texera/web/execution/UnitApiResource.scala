@@ -24,7 +24,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.auth.Auth
-import org.apache.texera.amber.core.storage.DocumentFactory
+import org.apache.texera.amber.core.storage.{DocumentFactory, ExecutionNamespaces}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.{
@@ -345,6 +345,11 @@ class UnitApiResource extends LazyLogging {
       }
     }
     val plan = objectMapper.treeToValue(planNode, classOf[LogicalPlanPojo])
+    // Every table of the run goes into the namespace the catalog made for it, registered before
+    // the first worker can write.
+    request.resultStore.foreach(store =>
+      ExecutionNamespaces.register(ExecutionIdentity(EngineIds.of(request.eid)), store.namespace)
+    )
     val workflowService =
       WorkflowService.getOrCreate(WorkflowIdentity(workflowIdOf(request.workflow.rid)), UNIT_ID)
     // One execution at a time per workflow on this unit.
@@ -535,9 +540,14 @@ class UnitApiResource extends LazyLogging {
       @PathParam("port") port: String,
       @QueryParam("offset") @DefaultValue("0") offset: Long,
       @QueryParam("limit") @DefaultValue("100") limit: Int,
-      @QueryParam("table") table: String
+      @QueryParam("table") table: String,
+      @QueryParam("namespace") namespace: String
   ): RowPage = {
     val portIndex = port.stripPrefix("output-").toIntOption.getOrElse(0)
+    // The namespace the run wrote to, for a unit that did not run it (or restarted since).
+    Option(namespace)
+      .filter(_.nonEmpty)
+      .foreach(ExecutionNamespaces.register(ExecutionIdentity(EngineIds.of(eid)), _))
     // The run's own record while this unit holds it; otherwise where the catalog recorded it.
     val uri = runs
       .get(eid)

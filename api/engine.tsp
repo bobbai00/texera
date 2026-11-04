@@ -41,7 +41,7 @@ model ResultStore {
   @doc("Iceberg REST catalog URI the unit writes results to.")
   catalogUri: string;
   warehouse: string;
-  @doc("Namespace prefix for this execution's tables.")
+  @doc("The namespace the catalog made for this execution: every table of the run goes there, and the unit's identity was granted write access to it.")
   `namespace`: string;
 }
 
@@ -122,8 +122,8 @@ namespace Routes {
     @post start(@body body: ExecutionStartRequest): ExecutionAck | Error;
     @get @route("/{eid}") status(@path eid: string): ExecutionState | Error;
     @post @route("/{eid}/cancel") cancel(@path eid: string): ExecutionState | Error;
-    @doc("A page of a port result. `table` is where the catalog recorded the result; a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.")
-    @get @route("/{eid}/results/{opid}/{port}") result(@path eid: string, @path opid: string, @path port: string, @query offset?: int64, @query limit?: int32, @query table?: string): RowPage | Error;
+    @doc("A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.")
+    @get @route("/{eid}/results/{opid}/{port}") result(@path eid: string, @path opid: string, @path port: string, @query offset?: int64, @query limit?: int32, @query table?: string, @query `namespace`?: string): RowPage | Error;
   }
 
   @route("/environments")

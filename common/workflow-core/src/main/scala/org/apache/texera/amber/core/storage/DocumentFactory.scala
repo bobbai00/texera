@@ -80,7 +80,9 @@ object DocumentFactory {
     val components = decodeURI(uri)
     IcebergLocation(
       components.warehouse,
-      resolveNamespace(components.resourceType),
+      ExecutionNamespaces
+        .lookup(components.executionId)
+        .getOrElse(resolveNamespace(components.resourceType)),
       sanitizeURIPath(uri)
     )
   }

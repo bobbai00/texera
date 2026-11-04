@@ -44,6 +44,7 @@ type Config struct {
 	// The seeds of the dev stack.
 	StaticUnitEndpoint string
 	StaticUnitName     string
+	StaticUnitClientID string
 	BioMcpURL          string
 	BioMcpKey          string
 	ModelName          string
@@ -59,6 +60,8 @@ type Service struct {
 	Secrets     ports.SecretStore
 	Blobs       ports.BlobStore
 	Units       ports.UnitProvider
+	Workloads   ports.Workloads
+	Lake        ports.Lake
 	LineageSink ports.LineageSink
 	Config      Config
 	Log         *slog.Logger

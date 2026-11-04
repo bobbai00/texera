@@ -31,6 +31,11 @@ class StorageConfig:
     ICEBERG_POSTGRES_CATALOG_PASSWORD = None
     ICEBERG_REST_CATALOG_URI = None
     ICEBERG_REST_CATALOG_WAREHOUSE_NAME = None
+    # The unit's OAuth2 client toward the REST catalog; an empty client id means none.
+    ICEBERG_REST_CATALOG_CLIENT_ID = ""
+    ICEBERG_REST_CATALOG_CLIENT_SECRET = ""
+    ICEBERG_REST_CATALOG_TOKEN_URL = ""
+    ICEBERG_REST_CATALOG_SCOPE = ""
     ICEBERG_TABLE_RESULT_NAMESPACE = None
     ICEBERG_TABLE_STATE_NAMESPACE = None
     ICEBERG_FILE_STORAGE_DIRECTORY_PATH = None
@@ -63,6 +68,10 @@ class StorageConfig:
         s3_auth_username,
         s3_auth_password,
         s3_large_binaries_base_uri,
+        rest_catalog_client_id="",
+        rest_catalog_client_secret="",
+        rest_catalog_token_url="",
+        rest_catalog_scope="",
     ):
         if cls._initialized:
             raise RuntimeError(
@@ -75,6 +84,10 @@ class StorageConfig:
         cls.ICEBERG_POSTGRES_CATALOG_PASSWORD = postgres_password
         cls.ICEBERG_REST_CATALOG_URI = rest_catalog_uri
         cls.ICEBERG_REST_CATALOG_WAREHOUSE_NAME = rest_catalog_warehouse_name
+        cls.ICEBERG_REST_CATALOG_CLIENT_ID = rest_catalog_client_id
+        cls.ICEBERG_REST_CATALOG_CLIENT_SECRET = rest_catalog_client_secret
+        cls.ICEBERG_REST_CATALOG_TOKEN_URL = rest_catalog_token_url
+        cls.ICEBERG_REST_CATALOG_SCOPE = rest_catalog_scope
 
         cls.ICEBERG_TABLE_RESULT_NAMESPACE = table_result_namespace
         cls.ICEBERG_TABLE_STATE_NAMESPACE = table_state_namespace

@@ -15,6 +15,7 @@ import (
 
 	"github.com/apache/texera/catalog/internal/adapters/keycloak"
 	"github.com/apache/texera/catalog/internal/adapters/kube"
+	"github.com/apache/texera/catalog/internal/adapters/lakekeeper"
 	"github.com/apache/texera/catalog/internal/adapters/noop"
 	"github.com/apache/texera/catalog/internal/adapters/openbao"
 	"github.com/apache/texera/catalog/internal/adapters/openfga"
@@ -89,12 +90,27 @@ func run(log *slog.Logger) error {
 	relay := authz.NewRelay(outbox{st}, authorizer, log)
 	go relay.Run(ctx, 2*time.Second)
 
+	// The lake: bootstrapped with the catalog as its operator, the warehouse the units write to.
+	lake := lakekeeper.New(lakekeeper.Options{
+		URL: cfg.LakeURL, Warehouse: cfg.IcebergWarehouse,
+		S3Endpoint: cfg.LakeS3Endpoint, S3Region: cfg.S3Region, S3Bucket: cfg.LakeBucket, S3KeyPrefix: cfg.LakeKeyPrefix,
+		S3AccessKey: cfg.S3AccessKey, S3SecretKey: cfg.S3SecretKey, Tokens: identity,
+	}, log)
+	if err := lake.Prepare(ctx); err != nil {
+		return err
+	}
+	log.Info("lake ready", "url", cfg.LakeURL, "warehouse", cfg.IcebergWarehouse)
+
 	// Units: static ones always; Kubernetes ones when a namespace is configured.
 	units := unitmux.Mux{api.UnitProviderStatic: staticunit.Provider{}}
 	if cfg.KubeNamespace != "" {
 		jwks := cfg.OIDCJWKSURL
 		if jwks == "" {
 			jwks = cfg.OIDCDiscoveryURL + "/protocol/openid-connect/certs"
+		}
+		tokenURL := cfg.OIDCTokenURL
+		if tokenURL == "" {
+			tokenURL = cfg.OIDCDiscoveryURL + "/protocol/openid-connect/token"
 		}
 		kubeUnits, err := kube.New(kube.Options{
 			Namespace: cfg.KubeNamespace, Image: cfg.KubeUnitImage, Memory: cfg.KubeUnitMemory,
@@ -103,6 +119,7 @@ func run(log *slog.Logger) error {
 				"TEXERA_ENV_ROOT": "/tmp/texera-environments", "UDF_PYTHON_PATH": "/usr/bin/python3",
 				"STORAGE_ICEBERG_CATALOG_TYPE": "rest", "STORAGE_ICEBERG_CATALOG_REST_URI": cfg.IcebergCatalogURI,
 				"STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME": cfg.IcebergWarehouse,
+				"STORAGE_ICEBERG_CATALOG_REST_TOKEN_URL":      tokenURL,
 				"STORAGE_S3_ENDPOINT":                         cfg.S3Endpoint, "STORAGE_S3_REGION": cfg.S3Region,
 				"STORAGE_S3_AUTH_USERNAME": cfg.S3AccessKey, "STORAGE_S3_AUTH_PASSWORD": cfg.S3SecretKey,
 			},
@@ -119,12 +136,14 @@ func run(log *slog.Logger) error {
 		Secrets:     openbao.New(cfg.SecretsURL, cfg.SecretsMount, cfg.SecretsToken),
 		Blobs:       s3cas.New(s3cas.Options{Endpoint: cfg.S3Endpoint, PublicEndpoint: cfg.S3PublicEndpoint, Region: cfg.S3Region, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Bucket: cfg.S3Bucket, PathStyle: cfg.S3PathStyle}),
 		Units:       units,
+		Workloads:   identity,
+		Lake:        lake,
 		LineageSink: noop.Lineage{},
 		Config: catalog.Config{
 			PublicURL: cfg.PublicURL, APIPrefix: server.Prefix, OIDCIssuer: cfg.OIDCIssuer, OIDCClientID: cfg.OIDCAppClientID, BrandName: cfg.BrandName,
 			IcebergCatalogURI: cfg.IcebergCatalogURI, IcebergWarehouse: cfg.IcebergWarehouse, LineageCallbackURL: cfg.LineageCallbackURL,
 			PresignTTL: cfg.PresignTTL, LeaseTTL: cfg.LeaseTTL, MaxDownloadBytes: cfg.MaxDownloadBytes,
-			StaticUnitEndpoint: cfg.StaticUnitEndpoint, StaticUnitName: cfg.StaticUnitName, BioMcpURL: cfg.BioMcpURL, BioMcpKey: cfg.BioMcpKey,
+			StaticUnitEndpoint: cfg.StaticUnitEndpoint, StaticUnitName: cfg.StaticUnitName, StaticUnitClientID: cfg.StaticUnitClientID, BioMcpURL: cfg.BioMcpURL, BioMcpKey: cfg.BioMcpKey,
 			ModelName: cfg.ModelName, ModelSecretPath: cfg.ModelSecretPath,
 		},
 		Log: log,

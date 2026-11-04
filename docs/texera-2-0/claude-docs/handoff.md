@@ -8,9 +8,11 @@ Milestone M1, "the catalog contract, minimal and complete" (`docs/texera-2-0/PLA
 closed on branch `texera-2-0` of the fork [bobbai00/texera](https://github.com/bobbai00/texera/tree/texera-2-0),
 worktree `~/Desktop/texera-2-0` on this Linux box. For development every piece runs as a local
 process over a Compose stack; the same stack also deploys to a local Kubernetes cluster in one
-command, where computing units are created as resources. All eleven acceptance items
-of the plan are demonstrated by automated checks, and the close gate (`down.sh --wipe && up.sh
-&& test.sh`) is green.
+command, where computing units are created as resources. The lake (Lakekeeper) authenticates
+every caller and authorizes with OpenFGA: each unit runs as a client of its own and reaches only
+the namespaces of the runs it executed, which the catalog opens for it. All eleven acceptance
+items of the plan are demonstrated by automated checks, and the close gate (`down.sh --wipe &&
+up.sh && test.sh`) is green.
 
 | Piece | Where | How to reach it |
 | --- | --- | --- |
@@ -20,7 +22,7 @@ of the plan are demonstrated by automated checks, and the close gate (`down.sh -
 | Agent runtime (Bun) | :23002 | `/agents/conversations/{rid}/ag-ui` |
 | Bio MCP server | :23010 | `/bio-mcp`, its key a seeded credential |
 | Frontend (vite) | :5174 | served through the gateway at `/` |
-| Keycloak, OpenFGA, OpenBao, Postgres, RustFS, Lakekeeper | Compose project `texera2` | see `bin/texera-2-0/README.md` for ports |
+| Keycloak, OpenFGA, OpenBao, Postgres, RustFS, Lakekeeper | Compose project `texera2` | see `bin/texera-2-0/README.md` for ports; Lakekeeper takes a token (the catalog is its operator, the dev unit is `texera-unit`) |
 | The same stack on Kubernetes | kind cluster `texera2`, namespace `texera2` | `bin/texera-2-0/k8s.sh up`, then http://localhost:28088; `k8s.sh check` proves a unit made as a resource |
 
 ## What is done
@@ -61,16 +63,26 @@ Google Chrome here (`TEXERA_E2E_BROWSER_CHANNEL=chrome`, set by the scripts).
 The out-of-M1 table in `PLAN.md` lists what comes next with the interface each item builds on.
 Done since the close: viewing never implies using, sharing with people who have not logged
 in, typed operator output columns, kept canvas positions, credentials in operator properties,
-images and the one-command Kubernetes deployment, the Kubernetes unit provider. Nearest gaps:
-Lakekeeper on OpenFGA, retention, quotas and metering, groups beyond admins.
+images and the one-command Kubernetes deployment, the Kubernetes unit provider, Lakekeeper on
+OpenFGA with one identity per unit. Nearest gaps: retention (an execution delete route, expiry
+of results, unreferenced blobs), quotas and metering, groups beyond admins. Known limit: the
+units still hold the store's static S3 key for large binaries (`STORAGE_S3_AUTH_*`), which also
+reaches the warehouse's files; a key scoped to the objects prefix closes that.
 
 ## Gotchas
 
 - **Never touch the remote EKS cluster** from this machine.
 - **Other stacks share this machine.** Ports 8085, 18085, 2552, 3002, 5173 and 8080 belong to
   them; never stop their processes. `up.sh` refuses a port held by anything outside this worktree.
-- **Keycloak.** After a realm re-import, restart Envoy (it caches the key set) and the agent
-  runtime (its service token). A person exists in the catalog once they have logged in.
+- **Keycloak.** A realm is imported once: a change to `keycloak/texera-realm.json` needs
+  `down.sh --wipe` (`k8s.sh down` on the cluster). After a re-import, restart Envoy (it caches
+  the key set) and the agent runtime (its service token). A person exists in the catalog once
+  they have logged in.
+- **The lake takes a token.** `curl` against Lakekeeper answers 401 without one; the catalog's
+  client `texera-services` is the operator and sees everything, a unit's client only its runs.
+  Keycloak's discovery document names the public issuer, which Lakekeeper reaches through a
+  `socat` forward in its own network namespace (`lakekeeper-net` in Compose, the `auth`
+  sidecar in the pod).
 - **Names are unique per project and kind**; the catalog answers 409 on a duplicate.
 - **Python for engine tests.** The uv-managed `.venv` at the repo root; `test.sh` sets
   `UDF_PYTHON_PATH`. Without it the engine's integration suites hang.

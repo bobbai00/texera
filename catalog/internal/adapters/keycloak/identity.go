@@ -1,6 +1,7 @@
-// Package keycloak is the Identity adapter: OIDC token verification against the provider's
-// keys, and client-credentials tokens for the catalog itself. Nothing here is specific to
-// Keycloak beyond the realm-roles claim.
+// Package keycloak is the Identity and Workloads adapter: OIDC token verification against the
+// provider's keys, client-credentials tokens for the catalog itself, and the admin API for the
+// directory and for unit identities. Nothing here is specific to Keycloak beyond the
+// realm-roles claim and the admin API's shape.
 package keycloak
 
 import (
@@ -126,10 +127,9 @@ func (id *Identity) Verify(ctx context.Context, raw string) (ports.Claims, error
 	}, nil
 }
 
-// ServiceToken returns a cached client-credentials token, refreshed a minute before expiry.
 // SearchUsers asks Keycloak's admin API for people matching the query, with the service
 // client's token; the client needs the realm-management role view-users. The admin URL is
-// the token URL's realm with /admin in front: .../realms/{r}/protocol/... -> .../admin/realms/{r}/users.
+// the token URL's realm with /admin in front: .../realms/{r}/protocol/... -> .../admin/realms/{r}.
 func (id *Identity) SearchUsers(ctx context.Context, q string, limit int) ([]ports.User, error) {
 	q = strings.TrimSpace(q)
 	if q == "" {
@@ -142,12 +142,12 @@ func (id *Identity) SearchUsers(ctx context.Context, q string, limit int) ([]por
 	if err != nil {
 		return nil, err
 	}
-	base := adminUsersURL(id.tokenURL)
+	base := adminURL(id.tokenURL)
 	if base == "" {
 		return nil, nil
 	}
 	params := url.Values{"search": {q}, "max": {strconv.Itoa(limit)}, "briefRepresentation": {"true"}, "enabled": {"true"}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"?"+params.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/users?"+params.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -184,16 +184,17 @@ func (id *Identity) SearchUsers(ctx context.Context, q string, limit int) ([]por
 	return out, nil
 }
 
-// adminUsersURL turns .../realms/{realm}/protocol/openid-connect/token into .../admin/realms/{realm}/users.
-func adminUsersURL(tokenURL string) string {
+// adminURL turns .../realms/{realm}/protocol/openid-connect/token into .../admin/realms/{realm}.
+func adminURL(tokenURL string) string {
 	i := strings.Index(tokenURL, "/realms/")
 	j := strings.Index(tokenURL, "/protocol/")
 	if i < 0 || j < i {
 		return ""
 	}
-	return tokenURL[:i] + "/admin" + tokenURL[i:j] + "/users"
+	return tokenURL[:i] + "/admin" + tokenURL[i:j]
 }
 
+// ServiceToken returns a cached client-credentials token, refreshed a minute before expiry.
 func (id *Identity) ServiceToken(ctx context.Context) (string, error) {
 	id.mu.Lock()
 	defer id.mu.Unlock()

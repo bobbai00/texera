@@ -35,6 +35,15 @@ object StorageConfig {
     conf.getString("storage.iceberg.catalog.rest.warehouse-name")
   val icebergRESTCatalogS3Bucket: String =
     conf.getString("storage.iceberg.catalog.rest.s3-bucket")
+  // The unit's own OAuth2 client toward the REST catalog; an empty client id means none.
+  val icebergRESTCatalogClientId: String =
+    conf.getString("storage.iceberg.catalog.rest.client-id")
+  val icebergRESTCatalogClientSecret: String =
+    conf.getString("storage.iceberg.catalog.rest.client-secret")
+  val icebergRESTCatalogTokenUrl: String =
+    conf.getString("storage.iceberg.catalog.rest.token-url")
+  val icebergRESTCatalogScope: String =
+    conf.getString("storage.iceberg.catalog.rest.scope")
 
   // Iceberg Postgres specifics
   val icebergPostgresCatalogUriWithoutScheme: String =

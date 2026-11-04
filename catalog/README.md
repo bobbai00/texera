@@ -34,8 +34,8 @@ go test -tags integration ./internal/adapters/...   # the port contract suites a
 | `internal/kinds` | the generated kind table and JSON Schema validation of specs and statuses |
 | `internal/uri` | the one grammar of names: `texera://{plural}/{rid}[@vno][/subresource]`, runs nested under workflows, and the reference extractor |
 | `internal/store` | Postgres: eleven tables, generic over kinds (resources, versions, grants and the access index, the outbox, blobs and staging, edges and lineage events, messages, leases) |
-| `internal/ports` | the six ports: Identity, Authorizer, SecretStore, BlobStore, UnitProvider, LineageSink; `contracttest` holds the suite every adapter passes |
-| `internal/adapters` | one adapter per port (keycloak, openfga, openbao, s3cas, staticunit, kube, noop), `unitmux` to offer static and Kubernetes units side by side, and the memory adapters tests use |
+| `internal/ports` | the eight ports: Identity, Workloads (unit identities), Authorizer, SecretStore, BlobStore, UnitProvider, Lake (the table catalog over the warehouse), LineageSink |
+| `internal/adapters` | one adapter per port (keycloak for Identity and Workloads, openfga, openbao, s3cas, staticunit, kube, lakekeeper, noop), `unitmux` to offer static and Kubernetes units side by side, and the memory adapters tests use |
 | `internal/auth`, `internal/authz` | who is calling (OIDC claims to a principal) and the policy decision point with the outbox relay to the authorizer |
 | `internal/catalog` | the domain service, one file per area: resources, hooks per kind, files, plan, executions, lineage, compute, conversations, iam, credentials, seed, prompts, skills |
 | `internal/server` | the HTTP server: generic routes from the kind table plus the actions, validated against the contract in tests |

@@ -56,6 +56,9 @@ spec:
         - name: wait-for-openbao
           image: alpine:3.19
           command: ["sh", "-c", "until wget -q -O /dev/null http://openbao:8200/v1/sys/health; do sleep 3; done"]
+        - name: wait-for-lakekeeper
+          image: alpine:3.19
+          command: ["sh", "-c", "until wget -q -O /dev/null http://lakekeeper:8181/health; do sleep 3; done"]
       containers:
         - name: catalog
           image: texera/catalog:2.0-dev
@@ -80,6 +83,9 @@ spec:
             # Presigned dataset URLs are read by the unit, inside the cluster.
             - { name: TEXERA_S3_PUBLIC_ENDPOINT, value: "http://rustfs:9000" }
             - { name: TEXERA_ICEBERG_CATALOG_URI, value: "http://lakekeeper:8181/catalog" }
+            - { name: TEXERA_LAKE_URL, value: "http://lakekeeper:8181" }
+            # The warehouse's store as Lakekeeper and the units reach it.
+            - { name: TEXERA_LAKE_S3_ENDPOINT, value: "http://rustfs:9000" }
             - { name: TEXERA_STATIC_UNIT_ENDPOINT, value: "http://unit:8085" }
             - { name: TEXERA_LINEAGE_CALLBACK_URL, value: "http://catalog:8090/lineage/v1/events" }
           ports:
@@ -123,6 +129,11 @@ spec:
             - { name: STORAGE_ICEBERG_CATALOG_TYPE, value: rest }
             - { name: STORAGE_ICEBERG_CATALOG_REST_URI, value: "http://lakekeeper:8181/catalog" }
             - { name: STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME, value: texera }
+            # The cluster unit's identity toward the lake: the realm's texera-unit client (dev
+            # values, like the realm's); units the catalog provisions get clients of their own.
+            - { name: STORAGE_ICEBERG_CATALOG_REST_CLIENT_ID, value: texera-unit }
+            - { name: STORAGE_ICEBERG_CATALOG_REST_CLIENT_SECRET, value: texera-unit-secret }
+            - { name: STORAGE_ICEBERG_CATALOG_REST_TOKEN_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/token" }
             - { name: STORAGE_S3_ENDPOINT, value: "http://rustfs:9000" }
             - { name: STORAGE_S3_REGION, value: us-east-1 }
             - { name: STORAGE_S3_AUTH_USERNAME, value: texera }

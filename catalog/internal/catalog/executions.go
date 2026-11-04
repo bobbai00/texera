@@ -148,6 +148,19 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 	s.Relay.Flush(ctx)
 	execURI := URI(exec).String()
+	// The run's tables go into a namespace of their own, which the unit's identity may write;
+	// the lake enforces that whoever else reaches it directly gets nothing of this run.
+	namespace := executionNamespace(exec.RID)
+	subject := ""
+	if identity := unitIdentity(unit); identity != nil {
+		subject = identity.Subject
+	} else {
+		s.Log.Warn("the unit has no identity; the lake will take its writes only if it is open", "unit", unit.RID)
+	}
+	if err := s.Lake.OpenNamespace(ctx, namespace, subject, unit.Name); err != nil {
+		s.setPhase(ctx, exec.RID, api.ExecutionPhaseFailed, map[string]any{"message": "the lake refused the run's namespace: " + err.Error()})
+		return nil, Unavailable("lake", err)
+	}
 	// Credentials the properties name are leased for this run and put into the plan now; the
 	// stored spec keeps the URIs. A refusal fails the run before the engine sees it.
 	if err := s.leaseSecrets(ctx, caller, plan, execURI); err != nil {
@@ -173,7 +186,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 		}{Rid: wf.RID.String(), Vno: int32(version.Vno)},
 		Name:        &name,
 		LogicalPlan: plan.Plan,
-		ResultStore: &engine.ResultStore{CatalogUri: s.Config.IcebergCatalogURI, Warehouse: s.Config.IcebergWarehouse, Namespace: "e_" + strings.ReplaceAll(exec.RID.String(), "-", "")},
+		ResultStore: &engine.ResultStore{CatalogUri: s.Config.IcebergCatalogURI, Warehouse: s.Config.IcebergWarehouse, Namespace: namespace},
 		Reporting:   engine.Reporting{LineageUrl: s.Config.LineageCallbackURL, Token: token},
 		Actor:       caller.PID().String(),
 	}
@@ -398,6 +411,12 @@ func (s *Service) Cancel(ctx context.Context, caller *auth.Caller, workflowRID, 
 	return r, wrap(err, "execution")
 }
 
+// executionNamespace is the namespace an execution's tables live in: the catalog makes it in
+// the lake before the run and drops it with the execution.
+func executionNamespace(rid uuid.UUID) string {
+	return "e_" + strings.ReplaceAll(rid.String(), "-", "")
+}
+
 // executionUnit returns the client of the unit an execution runs on.
 func (s *Service) executionUnit(ctx context.Context, _ *auth.Caller, exec *store.Resource) (*engine.Unit, error) {
 	// The caller was allowed to read the execution; the unit is the catalog's to reach.
@@ -487,7 +506,7 @@ func (s *Service) Rows(ctx context.Context, caller *auth.Caller, workflowRID, ei
 	if err != nil {
 		return nil, err
 	}
-	page, err := client.Result(ctx, eid.String(), operatorID, portID, table, offset, limit)
+	page, err := client.Result(ctx, eid.String(), operatorID, portID, table, executionNamespace(eid), offset, limit)
 	if err != nil {
 		return nil, Unavailable("unit", err)
 	}
@@ -536,7 +555,7 @@ func (s *Service) SavePort(ctx context.Context, caller *auth.Caller, workflowRID
 	var offset int64
 	wroteHeader := false
 	for {
-		page, err := client.Result(ctx, eid.String(), operatorID, portID, table, offset, 1000)
+		page, err := client.Result(ctx, eid.String(), operatorID, portID, table, executionNamespace(eid), offset, 1000)
 		if err != nil {
 			return nil, nil, Unavailable("unit", err)
 		}

@@ -66,6 +66,10 @@ EXPECTED_CONFIG_KEYS = frozenset(
         "icebergPostgresCatalogPassword",
         "icebergRestCatalogUri",
         "icebergRestCatalogWarehouseName",
+        "icebergRestCatalogClientId",
+        "icebergRestCatalogClientSecret",
+        "icebergRestCatalogTokenUrl",
+        "icebergRestCatalogScope",
         "icebergTableNamespace",
         "icebergTableStateNamespace",
         "icebergFileStorageDirectoryPath",
@@ -136,6 +140,10 @@ def main(raw_config: str) -> None:
         config["s3AuthUsername"],
         config["s3AuthPassword"],
         config["s3LargeBinariesBaseUri"],
+        rest_catalog_client_id=config["icebergRestCatalogClientId"],
+        rest_catalog_client_secret=config["icebergRestCatalogClientSecret"],
+        rest_catalog_token_url=config["icebergRestCatalogTokenUrl"],
+        rest_catalog_scope=config["icebergRestCatalogScope"],
     )
 
     # Setting R_HOME environment variable for R-UDF usage

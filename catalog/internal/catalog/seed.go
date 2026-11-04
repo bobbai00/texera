@@ -104,9 +104,23 @@ func (s *Service) Seed(ctx context.Context) error {
 	var unitURI, envURI string
 	if s.Config.StaticUnitEndpoint != "" {
 		spec := api.ComputingUnitSpec{Provider: api.UnitProviderStatic, Endpoint: &s.Config.StaticUnitEndpoint}
+		if s.Config.StaticUnitClientID != "" {
+			spec.ClientId = &s.Config.StaticUnitClientID
+		}
 		unit, err := ensure("computing-unit", s.Config.StaticUnitName, "The computing unit of this deployment", spec, nil, nil)
 		if err != nil {
 			return err
+		}
+		// The client's subject is looked up on every start: the identity provider may have
+		// been recreated since the unit was seeded.
+		identity, err := s.unitIdentityFor(ctx, unit, spec)
+		if err != nil {
+			return fmt.Errorf("the static unit's identity: %w", err)
+		}
+		if identity != nil {
+			if err := s.recordUnitIdentity(ctx, unit, identity); err != nil {
+				return err
+			}
 		}
 		unitURI = URI(unit).String()
 	}

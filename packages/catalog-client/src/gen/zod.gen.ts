@@ -482,6 +482,14 @@ export const zSkillSpec = z.object({
 
 export const zSkillStatus = z.record(z.string(), z.unknown());
 
+/**
+ * The identity a unit runs with, minted by the catalog in the identity provider: the lake's grants name its subject.
+ */
+export const zUnitIdentity = z.object({
+    clientId: z.string(),
+    subject: z.string()
+});
+
 export const zUnitProvider = z.enum([
     'static',
     'local',
@@ -491,6 +499,7 @@ export const zUnitProvider = z.enum([
 export const zComputingUnitSpec = z.object({
     provider: zUnitProvider,
     endpoint: z.string().optional(),
+    clientId: z.string().optional(),
     engine: zEngineSpec.optional(),
     computingNodes: z.array(zComputingNodeSpec).optional()
 });
@@ -507,6 +516,7 @@ export const zComputingUnitStatus = z.object({
         'failed',
         'terminated'
     ]),
+    identity: zUnitIdentity.optional(),
     gatewayPath: z.string().optional(),
     message: z.string().optional(),
     engine: zEngineStatus.optional(),

@@ -8,6 +8,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/apache/texera/catalog/internal/api"
+	"github.com/apache/texera/catalog/internal/ports"
 )
 
 func TestEndpointReconcilesAndTerminateDeletes(t *testing.T) {
@@ -21,12 +22,24 @@ func TestEndpointReconcilesAndTerminateDeletes(t *testing.T) {
 		ComputingNodes: &[]api.ComputingNodeSpec{{Name: "master", Role: api.ComputingNodeSpecRoleMaster, Memory: &memory, Cpu: &cpu}},
 	}
 	rid := "0b7a1c2d-0000-4000-8000-000000000001"
-	url, err := p.Endpoint(ctx, rid, spec)
+	reads := 0
+	identity := func(context.Context) (ports.Workload, error) {
+		reads++
+		return ports.Workload{ClientID: "unit-" + rid, Secret: "s3cret", Subject: "sa"}, nil
+	}
+	url, err := p.Endpoint(ctx, rid, spec, identity)
 	if err != nil || url != "http://unit-"+rid+".texera2:8085" {
 		t.Fatalf("endpoint: %s %v", url, err)
 	}
-	if _, err := p.Endpoint(ctx, rid, spec); err != nil {
+	if _, err := p.Endpoint(ctx, rid, spec, identity); err != nil {
 		t.Fatalf("a second call must be idempotent: %v", err)
+	}
+	if reads != 1 {
+		t.Fatalf("the identity is read once, when the Secret is made: %d reads", reads)
+	}
+	secret, err := client.CoreV1().Secrets("texera2").Get(ctx, "unit-"+rid, metav1.GetOptions{})
+	if err != nil || secret.StringData["client-secret"] != "s3cret" || secret.StringData["client-id"] != "unit-"+rid {
+		t.Fatalf("the identity Secret: %v %v", secret, err)
 	}
 	d, err := client.AppsV1().Deployments("texera2").Get(ctx, "unit-"+rid, metav1.GetOptions{})
 	if err != nil {
@@ -36,19 +49,22 @@ func TestEndpointReconcilesAndTerminateDeletes(t *testing.T) {
 	if c.Image != image || c.Resources.Requests.Memory().String() != "3Gi" || c.Resources.Requests.Cpu().String() != "500m" {
 		t.Fatalf("the spec's image and master node resources: %s %v", c.Image, c.Resources.Requests)
 	}
-	found := false
+	found, fromSecret := false, false
 	for _, e := range c.Env {
 		if e.Name == "STORAGE_S3_ENDPOINT" && e.Value == "http://rustfs:9000" {
 			found = true
 		}
+		if e.Name == "STORAGE_ICEBERG_CATALOG_REST_CLIENT_SECRET" && e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil && e.ValueFrom.SecretKeyRef.Name == "unit-"+rid {
+			fromSecret = true
+		}
 	}
-	if !found {
+	if !found || !fromSecret {
 		t.Fatalf("the engine's env: %v", c.Env)
 	}
 	if _, err := client.CoreV1().Services("texera2").Get(ctx, "unit-"+rid, metav1.GetOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Endpoint(ctx, rid, api.ComputingUnitSpec{Provider: api.UnitProviderStatic}); err == nil {
+	if _, err := p.Endpoint(ctx, rid, api.ComputingUnitSpec{Provider: api.UnitProviderStatic}, identity); err == nil {
 		t.Fatal("a static spec is not this provider's")
 	}
 	if err := p.Terminate(ctx, rid, spec); err != nil {
@@ -56,6 +72,9 @@ func TestEndpointReconcilesAndTerminateDeletes(t *testing.T) {
 	}
 	if _, err := client.AppsV1().Deployments("texera2").Get(ctx, "unit-"+rid, metav1.GetOptions{}); err == nil {
 		t.Fatal("the deployment must be gone")
+	}
+	if _, err := client.CoreV1().Secrets("texera2").Get(ctx, "unit-"+rid, metav1.GetOptions{}); err == nil {
+		t.Fatal("the secret must be gone")
 	}
 	if err := p.Terminate(ctx, rid, spec); err != nil {
 		t.Fatalf("terminating twice is fine: %v", err)

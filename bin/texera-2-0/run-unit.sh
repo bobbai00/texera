@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the computing unit (Amber, ComputingUnitMaster) on the host at :28085 against the dev stack.
-# The unit opens no database: it verifies Keycloak tokens, writes results to Lakekeeper/RustFS and
-# reports to the catalog through OpenLineage events.
+# The unit opens no database: it verifies Keycloak tokens, writes results to Lakekeeper/RustFS as
+# its own client (credentials vended per table) and reports to the catalog through OpenLineage events.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 # The uv-managed environment at the repo root (`uv sync --all-extras`, see pyproject.toml).
@@ -10,6 +10,10 @@ export UDF_PYTHON_PATH
 export STORAGE_ICEBERG_CATALOG_TYPE=rest
 export STORAGE_ICEBERG_CATALOG_REST_URI=${STORAGE_ICEBERG_CATALOG_REST_URI:-http://localhost:18181/catalog}
 export STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME=texera
+# The unit's identity toward the lake: the realm's texera-unit client (see keycloak/texera-realm.json).
+export STORAGE_ICEBERG_CATALOG_REST_CLIENT_ID=${STORAGE_ICEBERG_CATALOG_REST_CLIENT_ID:-texera-unit}
+export STORAGE_ICEBERG_CATALOG_REST_CLIENT_SECRET=${STORAGE_ICEBERG_CATALOG_REST_CLIENT_SECRET:-texera-unit-secret}
+export STORAGE_ICEBERG_CATALOG_REST_TOKEN_URL=${STORAGE_ICEBERG_CATALOG_REST_TOKEN_URL:-http://localhost:18081/auth/realms/texera/protocol/openid-connect/token}
 export STORAGE_S3_ENDPOINT=${STORAGE_S3_ENDPOINT:-http://localhost:19001}
 export STORAGE_S3_REGION=us-east-1
 export STORAGE_S3_AUTH_USERNAME=texera

@@ -221,12 +221,17 @@ export type ComputingUnitSpec = {
      * For `static`: the unit's base URL as the catalog reaches it.
      */
     endpoint?: string;
+    /**
+     * For `static`: the OAuth client the unit authenticates to the lake as, configured by its operator; the catalog grants its subject each execution's tables. A unit the catalog provisions gets a client of its own.
+     */
+    clientId?: string;
     engine?: EngineSpec;
     computingNodes?: Array<ComputingNodeSpec>;
 };
 
 export type ComputingUnitStatus = {
     phase: 'pending' | 'ready' | 'failed' | 'terminated';
+    identity?: UnitIdentity;
     /**
      * The path the gateway proxies the unit's WebSocket and HTTP API at.
      */
@@ -1763,6 +1768,20 @@ export type Turn = {
      */
     template: Uri;
     startedAt: string;
+};
+
+/**
+ * The identity a unit runs with, minted by the catalog in the identity provider: the lake's grants name its subject.
+ */
+export type UnitIdentity = {
+    /**
+     * The OAuth client the unit authenticates as.
+     */
+    clientId: string;
+    /**
+     * The subject its tokens carry.
+     */
+    subject: string;
 };
 
 export type UnitProvider = 'static' | 'local' | 'kubernetes';

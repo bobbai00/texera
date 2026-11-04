@@ -84,10 +84,15 @@ object PythonWorkflowWorker {
       workerId: String,
       outputPort: String,
       rPath: String,
-      largeBinaryBaseUri: String
+      largeBinaryBaseUri: String,
+      tableNamespace: String = ""
   ): Seq[(String, String)] = {
     val isPostgres = StorageConfig.icebergCatalogType == "postgres"
     val isRest = StorageConfig.icebergCatalogType == "rest"
+    val resultNamespace =
+      if (tableNamespace.nonEmpty) tableNamespace else StorageConfig.icebergTableResultNamespace
+    val stateNamespace =
+      if (tableNamespace.nonEmpty) tableNamespace else StorageConfig.icebergTableStateNamespace
     Seq(
       "workerId" -> workerId,
       "outputPort" -> outputPort,
@@ -103,8 +108,15 @@ object PythonWorkflowWorker {
       "icebergRestCatalogUri" -> (if (isRest) StorageConfig.icebergRESTCatalogUri else ""),
       "icebergRestCatalogWarehouseName" ->
         (if (isRest) StorageConfig.icebergRESTCatalogWarehouseName else ""),
-      "icebergTableNamespace" -> StorageConfig.icebergTableResultNamespace,
-      "icebergTableStateNamespace" -> StorageConfig.icebergTableStateNamespace,
+      "icebergRestCatalogClientId" -> (if (isRest) StorageConfig.icebergRESTCatalogClientId
+                                       else ""),
+      "icebergRestCatalogClientSecret" ->
+        (if (isRest) StorageConfig.icebergRESTCatalogClientSecret else ""),
+      "icebergRestCatalogTokenUrl" -> (if (isRest) StorageConfig.icebergRESTCatalogTokenUrl
+                                       else ""),
+      "icebergRestCatalogScope" -> (if (isRest) StorageConfig.icebergRESTCatalogScope else ""),
+      "icebergTableNamespace" -> resultNamespace,
+      "icebergTableStateNamespace" -> stateNamespace,
       "icebergFileStorageDirectoryPath" -> StorageConfig.fileStorageDirectoryPath.toString,
       "icebergTableCommitBatchSize" -> StorageConfig.icebergTableCommitBatchSize.toString,
       "s3Endpoint" -> StorageConfig.s3Endpoint,
@@ -259,7 +271,8 @@ class PythonWorkflowWorker(
       workerConfig.workerId.name,
       Integer.toString(pythonProxyServer.getPortNumber.get()),
       RENVPath,
-      workerConfig.largeBinaryBaseUri
+      workerConfig.largeBinaryBaseUri,
+      workerConfig.tableNamespace
     )
 
     pythonServerProcess = Process(

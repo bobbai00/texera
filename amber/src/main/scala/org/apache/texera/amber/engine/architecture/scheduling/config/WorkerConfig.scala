@@ -20,6 +20,7 @@
 package org.apache.texera.amber.engine.architecture.scheduling.config
 
 import org.apache.texera.common.config.ApplicationConfig
+import org.apache.texera.amber.core.storage.ExecutionNamespaces
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
 import org.apache.texera.amber.core.workflow.PhysicalOp
 import org.apache.texera.amber.util.VirtualIdentityUtils
@@ -47,7 +48,8 @@ case object WorkerConfig {
         VirtualIdentityUtils.createWorkerIdentity(physicalOp.workflowId, physicalOp.id, idx),
         pveName = physicalOp.pveName,
         cuid = cuid,
-        largeBinaryBaseUri = LargeBinaryManager.baseUriForExecution(physicalOp.executionId.id)
+        largeBinaryBaseUri = LargeBinaryManager.baseUriForExecution(physicalOp.executionId.id),
+        tableNamespace = ExecutionNamespaces.lookup(physicalOp.executionId).getOrElse("")
       )
     )
   }
@@ -59,5 +61,8 @@ case class WorkerConfig(
     cuid: Option[Int] = None,
     // Coordinator-named, execution-scoped base URI under which this worker's large binaries
     // live; create() appends a unique suffix. Empty when large binaries are unconfigured.
-    largeBinaryBaseUri: String = ""
+    largeBinaryBaseUri: String = "",
+    // The namespace the catalog made for this execution's tables; empty keeps the configured
+    // per-type namespaces (see ExecutionNamespaces).
+    tableNamespace: String = ""
 )

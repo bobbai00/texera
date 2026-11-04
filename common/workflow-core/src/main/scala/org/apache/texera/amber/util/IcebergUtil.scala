@@ -32,6 +32,7 @@ import org.apache.iceberg.io.{CloseableIterator, InputFile}
 import org.apache.iceberg.jdbc.JdbcCatalog
 import org.apache.iceberg.parquet.{Parquet, ParquetValueReader}
 import org.apache.iceberg.rest.RESTCatalog
+import org.apache.iceberg.rest.auth.OAuth2Properties
 import org.apache.iceberg.types.Type.PrimitiveType
 import org.apache.iceberg.types.Types
 import org.apache.iceberg.{
@@ -118,13 +119,10 @@ object IcebergUtil {
     * Creates and initializes a RESTCatalog with the given parameters.
     * - Configures the catalog to interact with a REST endpoint.
     * - The `warehouse` parameter specifies the root directory for storing table data.
-    * - Sets the file I/O implementation to `HadoopFileIO`.
-    * - Authentication support is not implemented yet (see TODO).
-    *
-    * Note: The only tested REST catalog implementation is `tabulario/iceberg-rest`
-    * (https://hub.docker.com/r/tabulario/iceberg-rest).
-    *
-    * TODO: Add authentication support, such as OAuth2, using `OAuth2Properties`.
+    * - Sets the file I/O implementation to `S3FileIO`.
+    * - With a client id configured, authenticates as that OAuth2 client (client credentials,
+    *   refreshed by the client itself) and asks the catalog for credentials vended per table,
+    *   so the unit never holds a key to the whole warehouse.
     *
     * @param catalogName the name of the catalog.
     * @param warehouse   the root path for the warehouse where the tables are stored.
@@ -141,12 +139,23 @@ object IcebergUtil {
     val properties = Map(
       "warehouse" -> warehouse,
       CatalogProperties.URI -> StorageConfig.icebergRESTCatalogUri,
-      CatalogProperties.FILE_IO_IMPL -> classOf[S3FileIO].getName
-    )
+      CatalogProperties.FILE_IO_IMPL -> classOf[S3FileIO].getName,
+      "header.X-Iceberg-Access-Delegation" -> "vended-credentials"
+    ) ++ restCatalogAuthProperties
 
     catalog.initialize(catalogName, properties.asJava)
     catalog
   }
+
+  /** The OAuth2 client-credentials properties of this unit's identity; empty when it has none. */
+  def restCatalogAuthProperties: Map[String, String] =
+    if (StorageConfig.icebergRESTCatalogClientId.isEmpty) Map.empty
+    else
+      Map(
+        OAuth2Properties.CREDENTIAL -> s"${StorageConfig.icebergRESTCatalogClientId}:${StorageConfig.icebergRESTCatalogClientSecret}",
+        OAuth2Properties.OAUTH2_SERVER_URI -> StorageConfig.icebergRESTCatalogTokenUrl,
+        OAuth2Properties.SCOPE -> StorageConfig.icebergRESTCatalogScope
+      )
 
   def createPostgresCatalog(
       catalogName: String,
@@ -204,9 +213,13 @@ object IcebergUtil {
 
     catalog match {
       case nsCatalog: SupportsNamespaces =>
-        try nsCatalog.createNamespace(namespace, Map.empty[String, String].asJava)
-        catch {
-          case _: AlreadyExistsException => ()
+        // Creating is checked before existence by an authorizing catalog, so a unit that may
+        // only write inside a namespace the catalog made for it must not try to create it.
+        if (!nsCatalog.namespaceExists(namespace)) {
+          try nsCatalog.createNamespace(namespace, Map.empty[String, String].asJava)
+          catch {
+            case _: AlreadyExistsException => ()
+          }
         }
       case _ =>
         throw new IllegalArgumentException(

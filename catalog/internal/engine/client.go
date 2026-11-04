@@ -133,11 +133,15 @@ func (u *Unit) Cancel(ctx context.Context, eid string) (*ExecutionState, error) 
 
 // Result reads a page of a port result. Cells keep their exact numbers (json.Number), so a long
 // column passes through without the float64 rounding a plain decode would apply. table is where
-// the result was recorded (empty when unknown): a unit that no longer holds the run reads it there.
-func (u *Unit) Result(ctx context.Context, eid, opid, port, table string, offset int64, limit int32) (*RowPage, error) {
+// the result was recorded (empty when unknown) and namespace the execution's namespace: a unit
+// that no longer holds the run reads it there.
+func (u *Unit) Result(ctx context.Context, eid, opid, port, table, namespace string, offset int64, limit int32) (*RowPage, error) {
 	params := &ExecutionsResultParams{Offset: &offset, Limit: &limit}
 	if table != "" {
 		params.Table = &table
+	}
+	if namespace != "" {
+		params.Namespace = &namespace
 	}
 	resp, err := u.client.ExecutionsResultWithResponse(ctx, eid, opid, port, params)
 	if err != nil {

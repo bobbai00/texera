@@ -24,6 +24,8 @@ spec:
   selector: { app: openfga }
   ports:
     - { name: http, port: 8080 }
+    # Lakekeeper speaks gRPC to it.
+    - { name: grpc, port: 8081 }
 ---
 apiVersion: apps/v1
 kind: Deployment

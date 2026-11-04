@@ -68,11 +68,15 @@ suites() {
 }
 
 # The engine's integration-tagged suites, on the dev stack's Lakekeeper and RustFS like the unit.
+# They make namespaces of their own, which only the lake's operator may, so they run as the
+# catalog's client rather than the unit's.
 engine_integration() {
   step "engine integration suites (REST catalog)" bash -c "cd '$ROOT' && \
     UDF_PYTHON_PATH='$ROOT/.venv/bin/python' AMBER_TEST_FILTER=integration-only \
     STORAGE_ICEBERG_CATALOG_TYPE=rest \
     STORAGE_ICEBERG_CATALOG_REST_URI=http://localhost:18181/catalog \
+    STORAGE_ICEBERG_CATALOG_REST_CLIENT_ID=texera-services STORAGE_ICEBERG_CATALOG_REST_CLIENT_SECRET=texera-services-secret \
+    STORAGE_ICEBERG_CATALOG_REST_TOKEN_URL=http://localhost:18081/auth/realms/texera/protocol/openid-connect/token \
     STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME=texera STORAGE_S3_ENDPOINT=http://localhost:19001 \
     STORAGE_S3_REGION=us-east-1 STORAGE_S3_AUTH_USERNAME=texera STORAGE_S3_AUTH_PASSWORD=texera-secret \
     sbt -batch WorkflowOperator/test WorkflowExecutionService/test"
@@ -93,6 +97,7 @@ e2e() {
   step "custom operator: pinned environment, delete refused" python3 "$HERE/smoke-operator.py"
   step "sharing a project: a viewer reads and runs" python3 "$HERE/smoke-share.py"
   step "credentials in operator properties" python3 "$HERE/smoke-credential.py"
+  step "the lake: a unit reaches only its own runs" python3 "$HERE/smoke-lake.py"
   if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${TEXERA_ENV_FILE:-}" ]; then
     skip "chat (real model)" "no ANTHROPIC_API_KEY"
     skip "bio researcher, handoff to the analyst (real model)" "no ANTHROPIC_API_KEY"

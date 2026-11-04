@@ -8,13 +8,14 @@ import (
 	"errors"
 
 	"github.com/apache/texera/catalog/internal/api"
+	"github.com/apache/texera/catalog/internal/ports"
 )
 
 // Provider implements ports.UnitProvider.
 type Provider struct{}
 
-// Endpoint returns the spec's endpoint.
-func (Provider) Endpoint(_ context.Context, _ string, spec api.ComputingUnitSpec) (string, error) {
+// Endpoint returns the spec's endpoint; the unit's identity is the operator's to configure.
+func (Provider) Endpoint(_ context.Context, _ string, spec api.ComputingUnitSpec, _ ports.WorkloadSource) (string, error) {
 	if spec.Provider != api.UnitProviderStatic {
 		return "", errors.New("only static units are provided in this deployment")
 	}

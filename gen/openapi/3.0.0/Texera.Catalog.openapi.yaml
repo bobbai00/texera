@@ -4818,6 +4818,9 @@ components:
         endpoint:
           type: string
           description: "For `static`: the unit's base URL as the catalog reaches it."
+        clientId:
+          type: string
+          description: "For `static`: the OAuth client the unit authenticates to the lake as, configured by its operator; the catalog grants its subject each execution's tables. A unit the catalog provisions gets a client of its own."
         engine:
           $ref: '#/components/schemas/EngineSpec'
         computingNodes:
@@ -4836,6 +4839,8 @@ components:
             - ready
             - failed
             - terminated
+        identity:
+          $ref: '#/components/schemas/UnitIdentity'
         gatewayPath:
           type: string
           description: The path the gateway proxies the unit's WebSocket and HTTP API at.
@@ -7241,6 +7246,19 @@ components:
         startedAt:
           type: string
           format: date-time
+    UnitIdentity:
+      type: object
+      required:
+        - clientId
+        - subject
+      properties:
+        clientId:
+          type: string
+          description: The OAuth client the unit authenticates as.
+        subject:
+          type: string
+          description: The subject its tokens carry.
+      description: "The identity a unit runs with, minted by the catalog in the identity provider: the lake's grants name its subject."
     UnitProvider:
       type: string
       enum:

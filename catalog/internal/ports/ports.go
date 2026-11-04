@@ -87,14 +87,57 @@ type BlobStore interface {
 // ErrBlobNotFound is returned when a digest is not stored.
 var ErrBlobNotFound = errors.New("blob not found")
 
-// UnitProvider provisions computing units: static today, processes and Kubernetes later.
+// UnitProvider provisions computing units: static ones that already run, and Kubernetes ones
+// the catalog creates.
 type UnitProvider interface {
 	// Endpoint makes sure the unit named by rid exists as its spec asks and returns its base
 	// URL as the catalog reaches it, "" while it is not provisioned yet. It is called on every
-	// status probe, so it must be idempotent and cheap once the unit exists.
-	Endpoint(ctx context.Context, rid string, spec api.ComputingUnitSpec) (string, error)
+	// status probe, so it must be idempotent and cheap once the unit exists. identity hands
+	// the provider the unit's credential when it provisions the unit; a provider that does not
+	// provision never calls it.
+	Endpoint(ctx context.Context, rid string, spec api.ComputingUnitSpec, identity WorkloadSource) (string, error)
 	// Terminate releases what the unit holds; a unit that does not exist is not an error.
 	Terminate(ctx context.Context, rid string, spec api.ComputingUnitSpec) error
+}
+
+// WorkloadSource reads a unit's identity on demand.
+type WorkloadSource func(ctx context.Context) (Workload, error)
+
+// Workload is a unit's identity: the OAuth client it authenticates as, with its secret, and
+// the subject its tokens carry, which the lake's grants name.
+type Workload struct {
+	ClientID string
+	Secret   string
+	Subject  string
+}
+
+// Workloads mints unit identities in the identity provider: one confidential client with a
+// service account per unit, so a unit only ever reaches what its own grants allow.
+type Workloads interface {
+	// CreateWorkload creates the client named clientID, replacing one that exists, and
+	// returns its credential and subject.
+	CreateWorkload(ctx context.Context, clientID, displayName string) (Workload, error)
+	// DeleteWorkload removes the client; a client that does not exist is not an error.
+	DeleteWorkload(ctx context.Context, clientID string) error
+	// WorkloadSubject returns the subject an existing client's tokens carry.
+	WorkloadSubject(ctx context.Context, clientID string) (string, error)
+}
+
+// ErrWorkloadNotFound is returned when no client has the id.
+var ErrWorkloadNotFound = errors.New("workload not found")
+
+// Lake is the table catalog over the warehouse (the Iceberg REST catalog, Lakekeeper): it
+// holds the result tables and enforces who may touch them.
+type Lake interface {
+	// Prepare makes the lake ready for this deployment: bootstrapped, with the warehouse the
+	// units write to. Idempotent; called at startup.
+	Prepare(ctx context.Context) error
+	// OpenNamespace creates an execution's namespace and lets the workload with the subject
+	// create and write tables in it; name labels the workload in the lake.
+	OpenNamespace(ctx context.Context, namespace, subject, name string) error
+	// DropNamespace drops the namespace with every table in it; a namespace that does not
+	// exist is not an error.
+	DropNamespace(ctx context.Context, namespace string) error
 }
 
 // LineageSink forwards OpenLineage events to an external consumer.

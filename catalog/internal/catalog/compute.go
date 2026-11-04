@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/apache/texera/catalog/internal/authz"
 	"github.com/apache/texera/catalog/internal/engine"
 	"github.com/apache/texera/catalog/internal/kinds"
+	"github.com/apache/texera/catalog/internal/ports"
 	"github.com/apache/texera/catalog/internal/store"
 )
 
@@ -26,7 +28,7 @@ func (s *Service) unitClient(ctx context.Context, unit *store.Resource) (*engine
 	if status.Phase != api.ComputingUnitStatusPhaseReady {
 		return nil, status, nil
 	}
-	endpoint, err := s.Units.Endpoint(ctx, unit.RID.String(), spec)
+	endpoint, err := s.Units.Endpoint(ctx, unit.RID.String(), spec, s.workloadSource(unit))
 	if err != nil {
 		return nil, status, Unavailable("unit provider", err)
 	}
@@ -48,10 +50,10 @@ func (s *Service) unitStatus(ctx context.Context, unit *store.Resource, spec api
 	if current.Phase == api.ComputingUnitStatusPhaseTerminated {
 		return &current
 	}
-	next := api.ComputingUnitStatus{Phase: api.ComputingUnitStatusPhasePending}
+	next := api.ComputingUnitStatus{Phase: api.ComputingUnitStatusPhasePending, Identity: current.Identity}
 	path := "/units/" + unit.RID.String()
 	next.GatewayPath = &path
-	endpoint, err := s.Units.Endpoint(ctx, unit.RID.String(), spec)
+	endpoint, err := s.Units.Endpoint(ctx, unit.RID.String(), spec, s.workloadSource(unit))
 	switch {
 	case err != nil:
 		next.Phase = api.ComputingUnitStatusPhaseFailed
@@ -148,8 +150,37 @@ func (s *Service) Terminate(ctx context.Context, caller *auth.Caller, rid uuid.U
 	if err := s.Units.Terminate(ctx, rid.String(), spec); err != nil {
 		return nil, Unavailable("unit provider", err)
 	}
-	r, err := s.Store.UpdateStatus(ctx, rid, mustJSON(api.ComputingUnitStatus{Phase: api.ComputingUnitStatusPhaseTerminated, ComputingNodes: nodesOf(spec, false)}))
+	// The identity stays: a terminated unit keeps its grants and can come back.
+	r, err := s.Store.UpdateStatus(ctx, rid, mustJSON(api.ComputingUnitStatus{Phase: api.ComputingUnitStatusPhaseTerminated, ComputingNodes: nodesOf(spec, false), Identity: unitIdentity(unit)}))
 	return r, wrap(err, "computing unit")
+}
+
+// unitIdentity is the identity recorded in a unit's status, nil when it has none.
+func unitIdentity(unit *store.Resource) *api.UnitIdentity {
+	var status api.ComputingUnitStatus
+	if err := json.Unmarshal(unit.Status, &status); err != nil {
+		return nil
+	}
+	return status.Identity
+}
+
+// unitSecretPath is where the secret store keeps the credential of a unit the catalog minted.
+func unitSecretPath(rid uuid.UUID) string { return "units/" + rid.String() }
+
+// workloadSource hands a provider the unit's credential: the identity from its status, the
+// secret from the secret store, read only when the provider asks.
+func (s *Service) workloadSource(unit *store.Resource) ports.WorkloadSource {
+	return func(ctx context.Context) (ports.Workload, error) {
+		identity := unitIdentity(unit)
+		if identity == nil {
+			return ports.Workload{}, errors.New("the unit has no identity")
+		}
+		fields, err := s.Secrets.Get(ctx, unitSecretPath(unit.RID))
+		if err != nil {
+			return ports.Workload{}, err
+		}
+		return ports.Workload{ClientID: identity.ClientId, Secret: fields["secret"], Subject: identity.Subject}, nil
+	}
 }
 
 // Nodes lists a unit's computing nodes.

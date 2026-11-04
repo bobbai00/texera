@@ -179,7 +179,44 @@ Decisions taken in S8 and S9:
   `smoke-k8s-unit.py` on the cluster: ready in 10 s, a run completes, Bob refused then allowed,
   terminate removes the workloads, delete succeeds.
 
-Next: Lakekeeper on OpenFGA and retention, as agreed; then quotas and groups.
+- Lakekeeper on OpenFGA, on the design the user approved: "executed by" stays the person and
+  the catalog keeps deciding who reads a result (placement carries the grants, as built); the
+  unit is the person's executor at the lake and presents an identity of its own. Lakekeeper
+  now authenticates every caller against Keycloak and authorizes with OpenFGA (a store of its
+  own on the same server); the catalog bootstraps it as the operator at startup and creates
+  the `texera` warehouse with credential vending (RustFS honours session policies, checked).
+  Two new ports: Workloads (the Keycloak adapter mints one confidential client per unit the
+  catalog provisions, with `manage-clients` on the service client; the secret goes to OpenBao
+  and to the unit's Kubernetes Secret, the subject to `status.identity`; a static unit names
+  its operator's client in `spec.clientId`, the dev stack's `texera-unit`) and Lake (the
+  Lakekeeper adapter: bootstrap, warehouse, namespaces and grants). A run's tables now really
+  live in `e_<execution rid>`: the engine honoured only its configured per-type namespaces
+  before, so `ExecutionNamespaces` registers the catalog's namespace for the execution (the
+  start request, and the `namespace` parameter of a later read), the Python workers get it in
+  their startup config, both Iceberg clients authenticate as the unit's client (OAuth2 client
+  credentials, scope `openid`, since Keycloak refuses unknown scopes) with vended credentials,
+  and neither side tries to create a namespace that exists. Keycloak's discovery document
+  names the public issuer, which Lakekeeper reaches through a `socat` forward in its own
+  network namespace (`lakekeeper-net` in Compose, owning the published port, so Lakekeeper can
+  restart inside it; an `auth` sidecar in the pod); `up.sh` waits on the one-shot containers
+  with `docker wait`, since `docker compose wait` ignores ones that already exited. The
+  warehouse init script is gone. Checks: the adapter against the fake clientset (the identity
+  Secret, read once), server tests (the seeded unit's identity; a run opens its namespace for
+  the unit's subject, the engine is told it and a read names it, deleting the execution drops
+  it; a provisioned unit's client and credential exist and go with it; an unknown static
+  client is refused), `smoke-lake.py` on the stack (the run completes; the lake refuses an
+  anonymous caller and alice's own token; the unit lists only its run's namespace, loads a
+  table with vended credentials; a second unit's identity gets 403/404; deleting it deletes
+  its client and credential), `test.sh e2e` from a wiped stack: thirteen of thirteen once the
+  demo smoke was corrected (it chatted as Bob and asked to share with Bob, passing only on
+  grants Playwright had left behind; it now chats as alice, revokes Bob's earlier grant and
+  checks the turn's own), `k8s.sh check` on a redeployed cluster: the unit's identity Secret,
+  a run on it, Bob refused then allowed, terminate and delete. Known limit: the units still
+  hold the store's static key for large binaries, which also reaches the warehouse's files; a
+  key scoped to the objects prefix closes that.
+
+Next: retention (an execution delete route, expiry of results, unreferenced blobs), as
+agreed; then quotas and groups.
 
 ## 2026-11-03 (session 5, on Linux)
 

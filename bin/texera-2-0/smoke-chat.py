@@ -120,7 +120,7 @@ def run_turn(tok: str, conversation: str, prompt: str, template: str | None = No
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--template", default="Data Analyst")
-    ap.add_argument("--user", default="bob")
+    ap.add_argument("--user", default=None, help="who chats: bob, or alice for the demo (she shares with Bob)")
     ap.add_argument("--prompt", default="Using the iris dataset in my catalog, what is the average petal length for each species? "
                                         "Build and run a Texera workflow to compute it, then report the numbers.")
     ap.add_argument("--followup", default="Now edit that same workflow so it also computes the average sepal width per species, "
@@ -130,8 +130,16 @@ def main() -> int:
     ap.add_argument("--demo", action="store_true", help="the M1 scenario: the Bio Researcher, then a handoff to the Data Analyst")
     args = ap.parse_args()
 
-    tok = token(args.user, args.user)
-    ensure_iris(tok)
+    user = args.user or ("alice" if args.demo else "bob")
+    tok = token(user, user)
+    iris = ensure_iris(tok)
+    if args.demo:
+        # The last turn shares the iris with Bob; it must be the turn that grants it.
+        bob_pid = api(token("bob", "bob"), "GET", "/me")["principal"]["pid"]
+        for g in api(tok, "GET", f"/resources/{iris['metadata']['rid']}/grants"):
+            if g["principal"] == bob_pid:
+                api(tok, "DELETE", f"/resources/{iris['metadata']['rid']}/grants/{bob_pid}")
+                print("revoked bob's earlier grant on the iris")
     units = api(tok, "GET", "/computing-units/available")
     unit = next(u for u in units if u["status"]["phase"] == "ready")
     first = "Bio Researcher" if args.demo else args.template
@@ -161,13 +169,15 @@ def main() -> int:
     resources = api(tok, "GET", f"/conversations/{crid}/resources")
     print(f"resources created in this chat: {[(r['kind'], r['metadata']['name'], r['metadata']['head']) for r in resources]}")
     if args.demo:
-        # The share went through the catalog MCP server: bob now reads alice's iris.
+        # The share went through the catalog MCP server: the turn granted bob the iris, and he
+        # reads it.
+        granted = [g["relation"] for g in api(tok, "GET", f"/resources/{iris['metadata']['rid']}/grants") if g["principal"] == bob_pid]
         bob = token("bob", "bob")
-        pid = api(bob, "GET", "/me")["principal"]["pid"]
-        shared = [d for d in api(bob, "GET", "/datasets?q=iris")["items"] if d["metadata"]["name"] == "iris" and d["metadata"]["owner"] != pid]
-        print(f"bob can read {len(shared)} iris dataset(s) owned by someone else")
-        print("\nRESULT:", "PASS" if shared else "CHECK")
-        return 0 if shared else 1
+        readable = any(d["metadata"]["rid"] == iris["metadata"]["rid"] for d in api(bob, "GET", "/datasets?q=iris")["items"])
+        print(f"bob's grant on {user}'s iris: {granted or 'none'}; bob can read it: {readable}")
+        ok = bool(granted) and readable
+        print("\nRESULT:", "PASS" if ok else "CHECK")
+        return 0 if ok else 1
     return 0
 
 

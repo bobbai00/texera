@@ -94,8 +94,6 @@ configure() {
   kubectl --context "$CONTEXT" apply -f "$ROOT/deploy/kubernetes/namespace.yaml" >/dev/null
   k create configmap keycloak-realm --from-file=texera-realm.json="$HERE/keycloak/texera-realm.json" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
-  k create configmap lakekeeper-init --from-file=init.sh="$HERE/lakekeeper/init.sh" \
-    --dry-run=client -o yaml | k apply -f - >/dev/null
   k create configmap postgres-init --from-file=init.sql="$HERE/postgres/init.sql" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   # The gateway config is the dev stack's with the host services replaced by cluster names.
@@ -127,7 +125,7 @@ configure() {
 }
 
 wait_ready() {
-  k wait --for=condition=complete job/rustfs-buckets job/lakekeeper-warehouse job/openbao-init --timeout=900s >/dev/null
+  k wait --for=condition=complete job/rustfs-buckets job/openbao-init --timeout=900s >/dev/null
   for app in postgres rustfs; do k rollout status "statefulset/$app" --timeout=900s >/dev/null; done
   for app in keycloak openfga openbao lakekeeper "${APPS[@]}"; do
     k rollout status "deploy/$app" --timeout=900s >/dev/null

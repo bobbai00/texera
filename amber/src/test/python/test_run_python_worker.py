@@ -54,6 +54,10 @@ def _full_config() -> dict:
         "icebergPostgresCatalogPassword": "pg-pass",
         "icebergRestCatalogUri": "",
         "icebergRestCatalogWarehouseName": "",
+        "icebergRestCatalogClientId": "",
+        "icebergRestCatalogClientSecret": "",
+        "icebergRestCatalogTokenUrl": "",
+        "icebergRestCatalogScope": "",
         "icebergTableNamespace": "result_ns",
         "icebergTableStateNamespace": "state_ns",
         "icebergFileStorageDirectoryPath": "/tmp/files",
@@ -105,6 +109,10 @@ def test_main_maps_named_config_to_storage_and_worker():
         "s3-user",
         "s3-pass",
         "s3://bucket/base",
+        rest_catalog_client_id="",
+        rest_catalog_client_secret="",
+        rest_catalog_token_url="",
+        rest_catalog_scope="",
     )
     python_worker.assert_called_once_with(
         worker_id="worker-1", host="localhost", output_port=5005
@@ -135,6 +143,10 @@ def test_main_mapping_is_independent_of_key_order():
         "s3-user",
         "s3-pass",
         "s3://bucket/base",
+        rest_catalog_client_id="",
+        rest_catalog_client_secret="",
+        rest_catalog_token_url="",
+        rest_catalog_scope="",
     )
     python_worker.assert_called_once_with(
         worker_id="worker-1", host="localhost", output_port=5005

@@ -17,9 +17,10 @@
 # under the License.
 
 """A computing unit as a resource on Kubernetes: created through the API with provider
-kubernetes, it becomes a Deployment the catalog reconciles; it reports pending, then ready; a
-workflow runs on it; a viewer may not run on it until granted use; terminating it removes the
-Deployment and deleting the resource is refused while it is referenced... then succeeds.
+kubernetes, it becomes a Deployment the catalog reconciles, with a Secret holding the identity
+the catalog minted for it; it reports pending, then ready; a workflow runs on it; a viewer may
+not run on it until granted use; terminating it removes the Deployment and the Secret and
+deleting the resource is refused while it is referenced... then succeeds.
 Runs against a Kubernetes deployment: GW=http://localhost:28088."""
 import importlib.util
 import json
@@ -52,7 +53,7 @@ def call(tok: str, method: str, path: str, body=None) -> tuple[int, object]:
 def deployments(rid: str) -> str:
     """What the cluster holds for the unit, when kubectl is around; '' otherwise."""
     try:
-        out = subprocess.run(["kubectl", "--context", "kind-texera2", "-n", "texera2", "get", "deploy,svc", "-l", f"texera.apache.org/unit={rid}", "-o", "name"],
+        out = subprocess.run(["kubectl", "--context", "kind-texera2", "-n", "texera2", "get", "deploy,svc,secret", "-l", f"texera.apache.org/unit={rid}", "-o", "name"],
                              capture_output=True, text=True, timeout=30)
         return out.stdout.strip()
     except (OSError, subprocess.SubprocessError):
@@ -85,7 +86,9 @@ def main() -> int:
         time.sleep(5)
     check(phase == "ready", f"the unit becomes ready ({phase} after {time.time() - started:.0f}s)")
     held = deployments(rid)
-    check(not held or ("deployment" in held and "service" in held), f"the cluster holds its deployment and service: {held.replace(chr(10), ' ') or 'kubectl not available'}")
+    check(not held or ("deployment" in held and "service" in held and "secret" in held), f"the cluster holds its deployment, service and identity secret: {held.replace(chr(10), ' ') or 'kubectl not available'}")
+    identity = c.api(alice, "GET", f"/computing-units/{rid}")["status"].get("identity") or {}
+    check(identity.get("clientId") == f"unit-{rid}" and bool(identity.get("subject")), f"the unit runs as its own client ({identity.get('clientId')})")
 
     ds = c.ensure_iris(alice)
     file_uri = f"{ds['metadata']['uri']}@{ds['metadata']['head']}/files/iris.csv"

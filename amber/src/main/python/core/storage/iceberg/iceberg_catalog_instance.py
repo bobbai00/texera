@@ -66,6 +66,10 @@ class IcebergCatalogInstance:
                     "texera_iceberg",
                     key,
                     StorageConfig.ICEBERG_REST_CATALOG_URI,
+                    StorageConfig.ICEBERG_REST_CATALOG_CLIENT_ID,
+                    StorageConfig.ICEBERG_REST_CATALOG_CLIENT_SECRET,
+                    StorageConfig.ICEBERG_REST_CATALOG_TOKEN_URL,
+                    StorageConfig.ICEBERG_REST_CATALOG_SCOPE,
                 )
             return cls._catalogs[key]
         else:

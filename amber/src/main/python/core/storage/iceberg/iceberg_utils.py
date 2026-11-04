@@ -223,15 +223,25 @@ def create_rest_catalog(
     catalog_name: str,
     warehouse_name: str,
     rest_uri: str,
+    client_id: str = "",
+    client_secret: str = "",
+    token_url: str = "",
+    scope: str = "",
 ) -> Catalog:
     """
     Creates a REST catalog instance by connecting to a REST endpoint.
     - The warehouse_name parameter specifies the warehouse identifier.
     - S3 settings (endpoint, region, credentials) are supplied by the REST
-      catalog server at runtime.
+      catalog server at runtime, vended per table.
+    - With a client id, the catalog is reached as that OAuth2 client (client
+      credentials against token_url; pyiceberg refreshes the token itself).
     :param catalog_name: the name of the catalog.
     :param warehouse_name: the warehouse identifier.
     :param rest_uri: the URI of the REST catalog endpoint.
+    :param client_id: the unit's OAuth2 client id; empty for no authentication.
+    :param client_secret: the client's secret.
+    :param token_url: the identity provider's token endpoint.
+    :param scope: the scope to request; empty for pyiceberg's default.
     :return: a Catalog instance (REST catalog).
     """
     # PyIceberg caches filesystems per FileIO thread. The additional global S3
@@ -240,14 +250,17 @@ def create_rest_catalog(
     # No Windows-local normalization here (unlike create_postgres_catalog):
     # `warehouse_name` is a logical warehouse identifier resolved by the REST
     # server, whose I/O goes through S3FileIO, not the local filesystem.
-    return load_catalog(
-        catalog_name,
-        **{
-            "type": "rest",
-            "uri": rest_uri,
-            "warehouse": warehouse_name,
-        },
-    )
+    props = {
+        "type": "rest",
+        "uri": rest_uri,
+        "warehouse": warehouse_name,
+    }
+    if client_id:
+        props["credential"] = f"{client_id}:{client_secret}"
+        props["oauth2-server-uri"] = token_url
+        if scope:
+            props["scope"] = scope
+    return load_catalog(catalog_name, **props)
 
 
 def create_table(
@@ -273,7 +286,10 @@ def create_table(
 
     identifier = f"{table_namespace}.{table_name}"
 
-    catalog.create_namespace_if_not_exists(table_namespace)
+    # An authorizing catalog checks the right to create before existence, so a unit that
+    # may only write inside a namespace made for it must not try to create it.
+    if not catalog.namespace_exists(table_namespace):
+        catalog.create_namespace_if_not_exists(table_namespace)
 
     if catalog.table_exists(identifier) and override_if_exists:
         catalog.drop_table(identifier)

@@ -105,10 +105,18 @@ spec:
     metadata:
       labels: { app: lakekeeper }
     spec:
+      # Lakekeeper authenticates every caller against Keycloak and authorizes with OpenFGA (a
+      # store of its own on the same server). The catalog is its operator: it creates the
+      # warehouse and hands each unit's identity the namespaces of the runs it executes.
+      # Keycloak's discovery document names the public issuer (localhost:28088), so the auth
+      # sidecar forwards that address, in this pod, to the gateway.
       initContainers:
         - name: wait-for-postgres
           image: postgres:16-alpine
           command: ["sh", "-c", "until pg_isready -h postgres -U texera; do sleep 2; done"]
+        - name: wait-for-keycloak
+          image: alpine:3.19
+          command: ["sh", "-c", "until wget -q -O /dev/null http://keycloak:8080/auth/realms/texera; do sleep 3; done"]
         - name: migrate
           image: vakamo/lakekeeper:v0.11.0
           command: ["/home/nonroot/lakekeeper"]
@@ -121,6 +129,10 @@ spec:
             - { name: LAKEKEEPER__BASE_URI, value: "http://lakekeeper:8181" }
             - { name: LAKEKEEPER__ENABLE_DEFAULT_PROJECT, value: "true" }
             - { name: LAKEKEEPER__LISTEN_PORT, value: "8181" }
+            - { name: LAKEKEEPER__AUTHZ_BACKEND, value: openfga }
+            - { name: LAKEKEEPER__OPENFGA__ENDPOINT, value: "http://openfga:8081" }
+            - name: LAKEKEEPER__OPENID_PROVIDER_URI
+              valueFrom: { configMapKeyRef: { name: texera2-public, key: issuer } }
             - { name: RUST_LOG, value: info }
       containers:
         - name: lakekeeper
@@ -135,31 +147,18 @@ spec:
             - { name: LAKEKEEPER__BASE_URI, value: "http://lakekeeper:8181" }
             - { name: LAKEKEEPER__ENABLE_DEFAULT_PROJECT, value: "true" }
             - { name: LAKEKEEPER__LISTEN_PORT, value: "8181" }
+            - { name: LAKEKEEPER__AUTHZ_BACKEND, value: openfga }
+            - { name: LAKEKEEPER__OPENFGA__ENDPOINT, value: "http://openfga:8081" }
+            - name: LAKEKEEPER__OPENID_PROVIDER_URI
+              valueFrom: { configMapKeyRef: { name: texera2-public, key: issuer } }
             - { name: RUST_LOG, value: info }
           ports:
             - containerPort: 8181
           readinessProbe:
             exec: { command: ["/home/nonroot/lakekeeper", "healthcheck"] }
             periodSeconds: 5
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: lakekeeper-warehouse
-spec:
-  backoffLimit: 30
-  template:
-    spec:
-      restartPolicy: OnFailure
-      containers:
-        - name: warehouse
-          image: alpine:3.19
-          command: ["/bin/sh", "/init/init.sh"]
-          env:
-            # The endpoint Lakekeeper hands to the unit for result tables: the in-cluster RustFS.
-            - { name: S3_ENDPOINT, value: "http://rustfs:9000" }
-          volumeMounts:
-            - { name: init, mountPath: /init }
-      volumes:
-        - name: init
-          configMap: { name: lakekeeper-init }
+        - name: auth
+          image: alpine/socat:1.8.0.0
+          # The public port of k8s.sh (kind maps 30088 to localhost:28088); the gateway Service
+          # listens on the same number.
+          args: ["TCP4-LISTEN:28088,fork,reuseaddr,bind=127.0.0.1", "TCP:gateway:28088"]

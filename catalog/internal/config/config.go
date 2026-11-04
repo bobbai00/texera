@@ -52,12 +52,20 @@ type Config struct {
 	// Results (Iceberg through Lakekeeper), as the units reach them.
 	IcebergCatalogURI string
 	IcebergWarehouse  string
+	// The lake as the catalog reaches it, and the warehouse's store as Lakekeeper and the
+	// units reach it (the warehouse profile the catalog creates).
+	LakeURL        string
+	LakeS3Endpoint string
+	LakeBucket     string
+	LakeKeyPrefix  string
 	// LineageCallbackURL is where units post OpenLineage events.
 	LineageCallbackURL string
 
-	// Seeds of the dev stack.
+	// Seeds of the dev stack: the unit that already runs, and the OAuth client it presents
+	// to the lake (empty: the unit has no identity and the lake must be open).
 	StaticUnitEndpoint string
 	StaticUnitName     string
+	StaticUnitClientID string
 
 	// Kubernetes units: set the namespace to let the catalog create units as Deployments there
 	// (in-cluster, or through the kubeconfig KUBECONFIG names); empty means static units only.
@@ -105,9 +113,14 @@ func FromEnv() (Config, error) {
 		S3PathStyle:         envBool("TEXERA_S3_PATH_STYLE", true),
 		IcebergCatalogURI:   env("TEXERA_ICEBERG_CATALOG_URI", "http://localhost:18181/catalog"),
 		IcebergWarehouse:    env("TEXERA_ICEBERG_WAREHOUSE", "texera"),
+		LakeURL:             env("TEXERA_LAKE_URL", "http://localhost:18181"),
+		LakeS3Endpoint:      env("TEXERA_LAKE_S3_ENDPOINT", "http://127.0.0.1:19001"),
+		LakeBucket:          env("TEXERA_LAKE_BUCKET", "texera"),
+		LakeKeyPrefix:       env("TEXERA_LAKE_KEY_PREFIX", "warehouse"),
 		LineageCallbackURL:  env("TEXERA_LINEAGE_CALLBACK_URL", "http://localhost:8090/lineage/v1/events"),
 		StaticUnitEndpoint:  env("TEXERA_STATIC_UNIT_ENDPOINT", "http://localhost:28085"),
 		StaticUnitName:      env("TEXERA_STATIC_UNIT_NAME", "local unit"),
+		StaticUnitClientID:  env("TEXERA_STATIC_UNIT_CLIENT_ID", "texera-unit"),
 		KubeNamespace:       env("TEXERA_KUBE_NAMESPACE", ""),
 		KubeUnitImage:       env("TEXERA_KUBE_UNIT_IMAGE", "texera/computing-unit-master:2.0-dev"),
 		KubeUnitMemory:      env("TEXERA_KUBE_UNIT_MEMORY", "2Gi"),

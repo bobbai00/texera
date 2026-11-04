@@ -20,18 +20,20 @@ func (m Mux) pick(spec api.ComputingUnitSpec) (ports.UnitProvider, error) {
 	return p, nil
 }
 
-func (m Mux) Endpoint(ctx context.Context, rid string, spec api.ComputingUnitSpec) (string, error) {
+func (m Mux) Endpoint(ctx context.Context, rid string, spec api.ComputingUnitSpec, identity ports.WorkloadSource) (string, error) {
 	p, err := m.pick(spec)
 	if err != nil {
 		return "", err
 	}
-	return p.Endpoint(ctx, rid, spec)
+	return p.Endpoint(ctx, rid, spec, identity)
 }
 
+// Terminate releases what the unit holds; a unit of a provider this deployment does not offer
+// holds nothing here, so it is not an error.
 func (m Mux) Terminate(ctx context.Context, rid string, spec api.ComputingUnitSpec) error {
-	p, err := m.pick(spec)
-	if err != nil {
-		return err
+	p, ok := m[spec.Provider]
+	if !ok {
+		return nil
 	}
 	return p.Terminate(ctx, rid, spec)
 }

@@ -59,6 +59,15 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 4. **A custom operator's properties.** The instance properties of a custom operator do not go
    to the engine as operator properties; they reach its Python code as the dict `PROPS`,
    with credentials substituted. Dataset file URIs inside `PROPS` are not resolved.
+5. **A unit's identity and the lake.** A computing unit runs as an OAuth client of its own:
+   minted by the catalog for a unit it provisions (`status.identity` names the client and its
+   subject; the secret lives in the secret store and the unit's Kubernetes Secret), or the
+   operator's client for a static unit (`spec.clientId`). A run's tables live in the namespace
+   `e_<execution rid>`, which the catalog creates in the lake and opens for that identity
+   before the engine starts (`ResultStore.namespace`); reads name it again. The lake
+   authenticates every caller and authorizes with the catalog's grants, so a person reads
+   results through the catalog only. Deleting an execution drops its namespace; deleting a
+   provisioned unit deletes its client and credential.
 
 ## agent runtime
 

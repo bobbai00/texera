@@ -15,8 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# The catalog manages computing units as Deployments and Services in its own namespace, and
-# nothing else: the least it needs to make a unit resource a running engine.
+# The catalog manages computing units as Deployments and Services in its own namespace, with
+# one Secret each holding the unit's identity, and nothing else: the least it needs to make a
+# unit resource a running engine.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -31,7 +32,7 @@ rules:
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
-    resources: ["services"]
+    resources: ["services", "secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["pods"]

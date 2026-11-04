@@ -1,6 +1,6 @@
-// Package memory holds in-memory adapters for tests: a secret store, a blob store and an
+// Package memory holds in-memory adapters for tests: a secret store, a blob store, an
 // authorizer with the model's semantics (relation hierarchy, parent inheritance, the public
-// wildcard, group membership).
+// wildcard, group membership), a unit provider, unit identities and a lake.
 package memory
 
 import (
@@ -190,7 +190,7 @@ func (a *Authorizer) has(subject, relation, object string, depth int) bool {
 // Units is a ports.UnitProvider that answers with the spec's endpoint.
 type Units struct{}
 
-func (Units) Endpoint(_ context.Context, _ string, spec api.ComputingUnitSpec) (string, error) {
+func (Units) Endpoint(_ context.Context, _ string, spec api.ComputingUnitSpec, _ ports.WorkloadSource) (string, error) {
 	if spec.Endpoint == nil {
 		return "", nil
 	}
@@ -198,6 +198,90 @@ func (Units) Endpoint(_ context.Context, _ string, spec api.ComputingUnitSpec) (
 }
 
 func (Units) Terminate(context.Context, string, api.ComputingUnitSpec) error { return nil }
+
+// Workloads is a ports.Workloads that mints predictable identities: the subject of client c
+// is "sa:" + c and its secret "secret-" + c. It starts with the dev stack's unit client.
+type Workloads struct {
+	mu      sync.Mutex
+	clients map[string]ports.Workload
+}
+
+// NewWorkloads returns a provider that knows the dev stack's static unit client.
+func NewWorkloads() *Workloads {
+	w := &Workloads{clients: map[string]ports.Workload{}}
+	w.clients["texera-unit"] = workload("texera-unit")
+	return w
+}
+
+func workload(clientID string) ports.Workload {
+	return ports.Workload{ClientID: clientID, Secret: "secret-" + clientID, Subject: "sa:" + clientID}
+}
+
+func (w *Workloads) CreateWorkload(_ context.Context, clientID, _ string) (ports.Workload, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.clients[clientID] = workload(clientID)
+	return w.clients[clientID], nil
+}
+
+func (w *Workloads) DeleteWorkload(_ context.Context, clientID string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.clients, clientID)
+	return nil
+}
+
+func (w *Workloads) WorkloadSubject(_ context.Context, clientID string) (string, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	c, ok := w.clients[clientID]
+	if !ok {
+		return "", ports.ErrWorkloadNotFound
+	}
+	return c.Subject, nil
+}
+
+// Has reports whether the client exists.
+func (w *Workloads) Has(clientID string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, ok := w.clients[clientID]
+	return ok
+}
+
+// Lake is a ports.Lake that remembers which namespaces were opened for whom and dropped.
+type Lake struct {
+	mu      sync.Mutex
+	Opened  map[string]string
+	Dropped []string
+}
+
+// NewLake returns an empty lake.
+func NewLake() *Lake { return &Lake{Opened: map[string]string{}} }
+
+func (l *Lake) Prepare(context.Context) error { return nil }
+
+func (l *Lake) OpenNamespace(_ context.Context, namespace, subject, _ string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Opened[namespace] = subject
+	return nil
+}
+
+func (l *Lake) DropNamespace(_ context.Context, namespace string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.Opened, namespace)
+	l.Dropped = append(l.Dropped, namespace)
+	return nil
+}
+
+// OpenedFor returns the subject a namespace was opened for, "" when it was not.
+func (l *Lake) OpenedFor(namespace string) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.Opened[namespace]
+}
 
 // Lineage is a ports.LineageSink that keeps the events.
 type Lineage struct {

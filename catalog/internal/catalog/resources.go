@@ -87,6 +87,10 @@ func (s *Service) Create(ctx context.Context, caller *auth.Caller, in CreateInpu
 	if err != nil {
 		return nil, nil, wrap(err, k.Name)
 	}
+	if err := s.afterCreate(ctx, r); err != nil {
+		_ = s.Store.DeleteResource(ctx, r.RID)
+		return nil, nil, err
+	}
 	s.Relay.Flush(ctx)
 	return r, v, nil
 }

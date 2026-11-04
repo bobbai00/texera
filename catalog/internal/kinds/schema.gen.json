@@ -527,6 +527,10 @@
     },
     "ComputingUnitSpec": {
       "properties": {
+        "clientId": {
+          "description": "For `static`: the OAuth client the unit authenticates to the lake as, configured by its operator; the catalog grants its subject each execution's tables. A unit the catalog provisions gets a client of its own.",
+          "type": "string"
+        },
         "computingNodes": {
           "items": {
             "$ref": "#/$defs/ComputingNodeSpec"
@@ -570,6 +574,9 @@
         "gatewayPath": {
           "description": "The path the gateway proxies the unit's WebSocket and HTTP API at.",
           "type": "string"
+        },
+        "identity": {
+          "$ref": "#/$defs/UnitIdentity"
         },
         "message": {
           "type": "string"
@@ -3896,6 +3903,24 @@
         "turn",
         "template",
         "startedAt"
+      ],
+      "type": "object"
+    },
+    "UnitIdentity": {
+      "description": "The identity a unit runs with, minted by the catalog in the identity provider: the lake's grants name its subject.",
+      "properties": {
+        "clientId": {
+          "description": "The OAuth client the unit authenticates as.",
+          "type": "string"
+        },
+        "subject": {
+          "description": "The subject its tokens carry.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "clientId",
+        "subject"
       ],
       "type": "object"
     },

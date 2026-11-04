@@ -65,12 +65,28 @@ drives the installed Google Chrome instead (`TEXERA_E2E_BROWSER_CHANNEL=chrome`)
 ## How the containers and the host meet
 
 The gateway reaches the host services as `host.docker.internal` (mapped to the host gateway on
-Linux). Lakekeeper hands the warehouse's S3 endpoint to the engine on the host, so that endpoint
-is `http://127.0.0.1:19001` on both sides: the host's published RustFS port, and inside
-Lakekeeper's network namespace a `socat` sidecar (`lakekeeper-s3`) that forwards the same address
-to the `rustfs` container. Lakekeeper's own base URI is `http://localhost:18181`, which only the
-host uses. No OrbStack-specific hostnames are needed; `TEXERA2_S3_ENDPOINT` and
-`TEXERA2_LAKEKEEPER_URI` override both.
+Linux). Two public addresses must work inside Lakekeeper's container exactly as on the host, so
+Lakekeeper runs in the network namespace of `lakekeeper-net`, a `socat` container with two
+forwards: `127.0.0.1:19001` to `rustfs` (Lakekeeper hands that S3 endpoint to the engine on the
+host, and the host's published RustFS port is the same address) and `127.0.0.1:8088` to the
+gateway (Keycloak's discovery document names the public issuer `http://localhost:8088/auth/...`,
+and Lakekeeper fetches its signing keys from there). Lakekeeper's own base URI is
+`http://localhost:18181`, which only the host uses. No OrbStack-specific hostnames are needed;
+`TEXERA2_S3_ENDPOINT` and `TEXERA2_LAKEKEEPER_URI` override both.
+
+## The lake
+
+Lakekeeper authenticates every caller against Keycloak and authorizes with OpenFGA (a store of
+its own, `lakekeeper`, on the stack's OpenFGA server). The catalog bootstraps it as its operator
+at startup and creates the `texera` warehouse with credential vending on, so a unit never holds
+a key to the whole store. A run gets a namespace of its own (`e_<execution rid>`), which the
+catalog opens for the identity of the unit that runs it: every table of the run goes there, and
+nobody else, not even a person with their own token, gets anything from the lake directly;
+people read results through the catalog, which decides. The dev stack's unit presents the
+realm's `texera-unit` client (`run-unit.sh`); a unit the catalog provisions on Kubernetes gets a
+client of its own, minted in Keycloak, whose secret goes to OpenBao and to the unit's Secret.
+Changing the realm (`keycloak/texera-realm.json`) needs `down.sh --wipe` (`k8s.sh down` on the
+cluster): Keycloak imports a realm only once.
 
 ## Ports
 
@@ -84,9 +100,9 @@ host uses. No OrbStack-specific hostnames are needed; `TEXERA2_S3_ENDPOINT` and
 | 5174 | Frontend (vite) |
 | 23010 | Bio MCP server (PubMed, genes, variants, proteins), behind the gateway at `/bio-mcp`; its key is a seeded credential |
 | 18081 | Keycloak (admin/admin; users alice/alice, bob/bob, texera-admin/admin) |
-| 18082 | OpenFGA HTTP API |
+| 18082 | OpenFGA HTTP API (gRPC 8081 inside the network, for Lakekeeper) |
 | 19001 | RustFS S3 (texera / texera-secret) |
-| 18181 | Lakekeeper Iceberg REST |
+| 18181 | Lakekeeper Iceberg REST and management API (a token is required; the catalog is the operator) |
 | 15432 | Postgres (texera/texera; databases catalog, keycloak, openfga, lakekeeper) |
 
 ## End-to-end checks
@@ -100,6 +116,7 @@ host uses. No OrbStack-specific hostnames are needed; `TEXERA2_S3_ENDPOINT` and
 | `smoke-operator.py` | A custom Python operator, created as a resource and used by its URI, runs in a pinned environment; deleting it is refused while a workflow references it |
 | `smoke-share.py` | A viewer of a project finds its workflow, run and dataset in search, reads them and runs the workflow, but cannot edit, delete or lease the owner's credential |
 | `smoke-credential.py` | A credential named by an operator property reaches the engine as the secret, leased for the run; the version keeps the URI; a viewer who may not use it is refused |
+| `smoke-lake.py` | The lake enforces the catalog's decision: a run's tables live in a namespace of their own that the unit which ran it reads with vended credentials; anonymous callers, a person's own token and another unit's identity get nothing; deleting a provisioned unit deletes its identity and credential |
 | `smoke-chat.py` | A real-model chat: the Data Analyst builds, edits and reruns a workflow over the iris dataset, then saves the result as a dataset; every resource carries the turn and the template version as its origin, with lineage to the run |
 | `smoke-chat.py --demo` | The M1 scenario: the Bio Researcher answers with cited research ideas through the bio MCP server, then hands the chat to the Data Analyst, which runs the analysis |
 | `frontend-next/e2e` (Playwright) | Sign-in, a chat with an attachment that becomes a dataset, switching agents through the switcher and `/mode`, creating and editing an agent template from its page, a saved result's lineage, and with the model: the Data Analyst chat that tracks what it built and the Bio Researcher's handoff |
@@ -124,12 +141,13 @@ v1, so the node image is Kubernetes 1.33 (`TEXERA2_KIND_IMAGE` overrides), and k
 higher inotify limits than Ubuntu's defaults (`sysctl fs.inotify.max_user_instances=1024
 fs.inotify.max_user_watches=1048576`).
 
-What runs there: Postgres, Keycloak, OpenFGA, OpenBao (dev mode), RustFS, Lakekeeper, the
-Envoy gateway, the catalog, one static computing unit, the agent runtime, the bio MCP server
-and the frontend behind nginx, from `deploy/kubernetes/` (kustomize) and the images under
-`bin/dockerfiles/`. The config maps are rendered from the dev stack's own files (the realm,
-the gateway, the warehouse and database bootstraps); the model key goes from `.env` into a
-Secret and from there into OpenBao by the `openbao-init` job.
+What runs there: Postgres, Keycloak, OpenFGA, OpenBao (dev mode), RustFS, Lakekeeper (with
+authentication and OpenFGA, bootstrapped by the catalog, reaching the public issuer through a
+`socat` sidecar in its pod), the Envoy gateway, the catalog, one static computing unit, the
+agent runtime, the bio MCP server and the frontend behind nginx, from `deploy/kubernetes/`
+(kustomize) and the images under `bin/dockerfiles/`. The config maps are rendered from the
+dev stack's own files (the realm, the gateway, the database bootstrap); the model key goes
+from `.env` into a Secret and from there into OpenBao by the `openbao-init` job.
 
 Computing units are resources there like everywhere else: a unit created with
 `provider: kubernetes` (`POST /computing-units`, or the library's "New computing unit")

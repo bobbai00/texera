@@ -164,6 +164,36 @@
       "optionalClientScopes": [
         "offline_access"
       ]
+    },
+    {
+      "clientId": "texera-unit",
+      "name": "Texera computing unit (the dev stack's static unit)",
+      "description": "The identity the dev stack's unit presents to the lake; units the catalog provisions get clients of their own.",
+      "publicClient": false,
+      "secret": "texera-unit-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "acr",
+        "profile",
+        "email",
+        "roles",
+        "web-origins"
+      ],
+      "protocolMappers": [
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -231,7 +261,9 @@
       "serviceAccountClientId": "texera-services",
       "clientRoles": {
         "realm-management": [
-          "view-users"
+          "view-users",
+          "manage-clients",
+          "view-clients"
         ]
       }
     }

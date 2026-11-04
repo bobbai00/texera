@@ -1,7 +1,8 @@
 // Package kube is the Kubernetes adapter of ports.UnitProvider: a computing unit whose spec
-// says provider kubernetes becomes one Deployment of the engine image and one Service in the
-// catalog's namespace, named after the unit's rid. Endpoint reconciles them on every call,
-// so a unit that was lost comes back, and Terminate deletes them.
+// says provider kubernetes becomes one Secret holding its identity, one Deployment of the
+// engine image and one Service in the catalog's namespace, named after the unit's rid.
+// Endpoint reconciles them on every call, so a unit that was lost comes back, and Terminate
+// deletes them.
 package kube
 
 import (
@@ -22,6 +23,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/apache/texera/catalog/internal/api"
+	"github.com/apache/texera/catalog/internal/ports"
 )
 
 const (
@@ -30,6 +32,11 @@ const (
 	labelRID   = "texera.apache.org/unit"
 	labelApp   = "app.kubernetes.io/name"
 	labelOwner = "app.kubernetes.io/managed-by"
+	// The identity Secret's keys, read by the engine as its catalog client.
+	keyClientID     = "client-id"
+	keyClientSecret = "client-secret"
+	envClientID     = "STORAGE_ICEBERG_CATALOG_REST_CLIENT_ID"
+	envClientSecret = "STORAGE_ICEBERG_CATALOG_REST_CLIENT_SECRET"
 )
 
 // Options configure the units the adapter creates.
@@ -80,12 +87,28 @@ func NewWithClient(client kubernetes.Interface, opts Options) *Provider {
 
 func name(rid string) string { return "unit-" + strings.ToLower(rid) }
 
-// Endpoint makes sure the unit's Deployment and Service exist and returns the Service URL.
-func (p *Provider) Endpoint(ctx context.Context, rid string, spec api.ComputingUnitSpec) (string, error) {
+// Endpoint makes sure the unit's Secret, Deployment and Service exist and returns the
+// Service URL. The Secret is written from the identity only when it is missing.
+func (p *Provider) Endpoint(ctx context.Context, rid string, spec api.ComputingUnitSpec, identity ports.WorkloadSource) (string, error) {
 	if spec.Provider != api.UnitProviderKubernetes {
 		return "", fmt.Errorf("provider %q is not kubernetes", spec.Provider)
 	}
 	n := name(rid)
+	secrets := p.client.CoreV1().Secrets(p.opts.Namespace)
+	if _, err := secrets.Get(ctx, n, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+		if identity == nil {
+			return "", fmt.Errorf("unit %s has no identity to run with", rid)
+		}
+		w, err := identity(ctx)
+		if err != nil {
+			return "", fmt.Errorf("identity of unit %s: %w", rid, err)
+		}
+		if _, err := secrets.Create(ctx, p.secret(rid, w), metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return "", fmt.Errorf("create secret %s: %w", n, err)
+		}
+	} else if err != nil {
+		return "", err
+	}
 	deployments := p.client.AppsV1().Deployments(p.opts.Namespace)
 	if _, err := deployments.Get(ctx, n, metav1.GetOptions{}); apierrors.IsNotFound(err) {
 		if _, err := deployments.Create(ctx, p.deployment(rid, spec), metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -105,7 +128,7 @@ func (p *Provider) Endpoint(ctx context.Context, rid string, spec api.ComputingU
 	return fmt.Sprintf("http://%s.%s:%d", n, p.opts.Namespace, port), nil
 }
 
-// Terminate deletes the unit's Deployment and Service.
+// Terminate deletes the unit's Deployment, Service and Secret.
 func (p *Provider) Terminate(ctx context.Context, rid string, _ api.ComputingUnitSpec) error {
 	n := name(rid)
 	if err := p.client.AppsV1().Deployments(p.opts.Namespace).Delete(ctx, n, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
@@ -114,7 +137,17 @@ func (p *Provider) Terminate(ctx context.Context, rid string, _ api.ComputingUni
 	if err := p.client.CoreV1().Services(p.opts.Namespace).Delete(ctx, n, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete service %s: %w", n, err)
 	}
+	if err := p.client.CoreV1().Secrets(p.opts.Namespace).Delete(ctx, n, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete secret %s: %w", n, err)
+	}
 	return nil
+}
+
+func (p *Provider) secret(rid string, w ports.Workload) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name(rid), Namespace: p.opts.Namespace, Labels: p.labels(rid)},
+		StringData: map[string]string{keyClientID: w.ClientID, keyClientSecret: w.Secret},
+	}
 }
 
 func (p *Provider) labels(rid string) map[string]string {
@@ -151,6 +184,12 @@ func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.De
 	env := []corev1.EnvVar{{Name: "TEXERA_UNIT_PORT", Value: fmt.Sprint(port)}}
 	for k, v := range p.opts.Env {
 		env = append(env, corev1.EnvVar{Name: k, Value: v})
+	}
+	// The identity comes from the unit's Secret, never from the pod spec.
+	for envName, key := range map[string]string{envClientID: keyClientID, envClientSecret: keyClientSecret} {
+		env = append(env, corev1.EnvVar{Name: envName, ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name(rid)}, Key: key},
+		}})
 	}
 	replicas := int32(1)
 	labels := p.labels(rid)

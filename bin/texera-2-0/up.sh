@@ -41,10 +41,16 @@ ensure_python_env
 
 echo "== infrastructure (compose project texera2)"
 docker compose -f "$HERE/docker-compose.yml" up -d
-docker compose -f "$HERE/docker-compose.yml" wait openfga-migrate openbao-init rustfs-init lakekeeper-init >/dev/null
+# The one-shot containers must have succeeded (`docker compose wait` ignores ones that already
+# exited, so it is not usable here).
+for init in openfga-migrate openbao-init rustfs-init lakekeeper-migrate; do
+  code=$(docker wait "texera2-$init")
+  [ "$code" = "0" ] || { echo "$init failed (exit $code); see: docker logs texera2-$init" >&2; exit 1; }
+done
 wait_for keycloak 180 http_ok "http://localhost:8088/auth/realms/texera/.well-known/openid-configuration"
 wait_for openfga 60 http_ok "http://localhost:18082/healthz"
 wait_for openbao 60 http_ok "http://localhost:18200/v1/sys/health"
+wait_for lakekeeper 120 http_ok "http://localhost:18181/health"
 # The platform's model key goes into the secret store, never into a service's environment or
 # the database; the catalog seeds a credential that points at it and the agent runtime leases it.
 model_key=${ANTHROPIC_API_KEY:-$(env_file_value ANTHROPIC_API_KEY)}
