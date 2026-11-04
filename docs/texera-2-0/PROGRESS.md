@@ -138,6 +138,15 @@ Decisions taken in S8 and S9:
   make with a timestamp, since names are unique per project and kind, and the Playwright
   assertions accept the averages as the model rounds them.
 
+- A screenshot tour of the generic pages (dataset, run, template, credential, model endpoint,
+  environment, unit, project, settings, chat) found one bug: a link carrying `?panel=` lost
+  its panel on arrival, because the panel sync's two directions undid each other; one ref now
+  records the last value either side wrote, and the chat test reloads the page to prove the
+  panel comes back. Also: the side panel has its own attribute (`data-side-panel`), library
+  rows join description and facts cleanly, generated labels write URL, URI and ID, and the
+  settings page is read-only for non-administrators. `test.sh e2e` on the reused stack:
+  eleven of eleven, Playwright seven of seven.
+
 Next: the out-of-M1 table of PLAN.md in the order the user picks.
 
 ## 2026-11-03 (session 5, on Linux)
