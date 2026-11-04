@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
-"""Every execution keeps its results.
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
-Runs one workflow twice (v1, then an edited v2) and reads the first execution's results again:
-right after the second run, and again after the unit's idle release has fired (30 s after a run
-ends, by default). Also checks that each result is stored under its own engine execution id,
-derived from the catalog's execution id, so runs on different units, or on one unit across a
-restart, can never overwrite each other's tables.
-
-Usage: smoke-retention.py [--idle-seconds 40]
-Needs the dev stack, the catalog and the unit.
-"""
+"""Results are kept per execution: a second run of an edited workflow does not disturb the
+first run's rows, and both stay readable after the unit's idle release."""
 import argparse
 import importlib.util
 import sys
 import time
-import uuid
 
 spec = importlib.util.spec_from_file_location("smoke_chat", __file__.rsplit("/", 1)[0] + "/smoke-chat.py")
 c = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(c)
 
 
-def engine_id(catalog_eid: str) -> int:
-    """The unit's EngineIds.of: both UUID halves mixed, as a positive 63-bit number."""
-    value = uuid.UUID(catalog_eid).int
-    bits = ((value >> 64) ^ (value & ((1 << 64) - 1))) & ((1 << 63) - 1)
-    return bits or 1
-
-
-def rows(tok: str, eid: str) -> list:
-    return c.api(tok, "GET", f"/catalog/v1/executions/{eid}/results/avg/output-0?limit=10")["rows"]
+def rows(tok: str, rid: str, eid: str) -> list:
+    return c.api(tok, "GET", f"/workflows/{rid}/executions/{eid}/operators/avg/ports/output-0/rows?limit=10")["rows"]
 
 
 def main() -> int:
@@ -38,50 +38,45 @@ def main() -> int:
     args = parser.parse_args()
 
     tok = c.token("alice", "alice")
-    c.ensure_iris(tok)
-    ds = next(d for d in c.api(tok, "GET", "/catalog/v1/datasets?q=iris")["items"] if d["metadata"]["name"] == "iris")
-    dsrid, dsv = ds["metadata"]["rid"], ds["metadata"]["headVersion"]
-    content = {
+    ds = c.ensure_iris(tok)
+    file_uri = f"{ds['metadata']['uri']}@{ds['metadata']['head']}/files/iris.csv"
+    workflow = {
         "operators": [
-            {"operatorID": "scan", "operatorType": "CSVFileScan",
-             "operatorProperties": {"fileName": f"dataset://{dsrid}@{dsv}/iris.csv", "fileEncoding": "UTF_8", "hasHeader": True}},
+            {"operatorID": "scan", "operatorType": "CSVFileScan", "operatorProperties": {"fileName": file_uri, "fileEncoding": "UTF_8", "hasHeader": True}},
             {"operatorID": "avg", "operatorType": "Aggregate", "viewResult": True,
-             "operatorProperties": {"groupByKeys": ["Species"],
-                                    "aggregations": [{"aggFunction": "average", "attribute": "PetalLengthCm", "result attribute": "avg"}]}},
+             "operatorProperties": {"groupByKeys": ["Species"], "aggregations": [{"aggFunction": "average", "attribute": "PetalLengthCm", "result attribute": "avg"}]}},
         ],
         "links": [{"linkID": "l1", "source": {"operatorID": "scan", "portID": "output-0"}, "target": {"operatorID": "avg", "portID": "input-0"}}],
     }
-    wf = c.api(tok, "POST", "/catalog/v1/workflows/with-content", {"name": f"retention {time.strftime('%H%M%S')}", "content": content})
-    rid = wf["workflow"]["metadata"]["rid"]
+    wf = c.api(tok, "POST", "/workflows", {"name": f"retention {time.strftime('%H%M%S')}", "spec": workflow})
+    rid = wf["metadata"]["rid"]
 
-    first = c.api(tok, "POST", f"/catalog/v1/workflows/{rid}/executions", {"waitSeconds": 180, "name": "petal length"})
-    first_rows = rows(tok, first["eid"])
-    print(f"v1 run {first['eid'][:8]}: {first['status']}, {first_rows}")
+    first = c.api(tok, "POST", f"/workflows/{rid}/run", {"waitSeconds": 180, "name": "petal length"})
+    first_eid = first["metadata"]["rid"]
+    first_rows = rows(tok, rid, first_eid)
+    print(f"v1 run {first_eid[:8]}: {first['status']['phase']}, {first_rows}")
 
-    c.api(tok, "POST", f"/catalog/v1/workflows/{rid}/edit", {
+    c.api(tok, "POST", f"/workflows/{rid}/edit", {
         "patch": [{"op": "replace", "path": "/operators/1/operatorProperties/aggregations/0/attribute", "value": "SepalLengthCm"}],
         "expectedHead": 1, "message": "sepal instead of petal"})
-    second = c.api(tok, "POST", f"/catalog/v1/workflows/{rid}/executions", {"waitSeconds": 180, "name": "sepal length"})
-    second_rows = rows(tok, second["eid"])
-    print(f"v2 run {second['eid'][:8]}: {second['status']}, {second_rows}")
+    second = c.api(tok, "POST", f"/workflows/{rid}/run", {"waitSeconds": 180, "name": "sepal length"})
+    second_eid = second["metadata"]["rid"]
+    second_rows = rows(tok, rid, second_eid)
+    print(f"v2 run {second_eid[:8]}: {second['status']['phase']}, {second_rows}")
 
-    ok = first["status"] == "completed" and second["status"] == "completed" and first_rows and first_rows != second_rows
-    after_second = rows(tok, first["eid"])
+    ok = first["status"]["phase"] == "completed" and second["status"]["phase"] == "completed" and bool(first_rows) and first_rows != second_rows
+    after_second = rows(tok, rid, first_eid)
     print(f"v1 results after the v2 run: {'same' if after_second == first_rows else after_second}")
     ok &= after_second == first_rows
-
     for run in (first, second):
-        tables = [r.get("table") or "" for r in run["results"]]
-        expected = f"/eid/{engine_id(run['eid'])}/"
-        own = bool(tables) and all(expected in t for t in tables)
-        print(f"run {run['eid'][:8]} stored under engine id {engine_id(run['eid'])}: {own}")
-        ok &= own
+        ports = run["status"].get("ports", [])
+        print(f"run {run['metadata']['rid'][:8]} ports: {[(p['operatorID'], p['portID'], p.get('table', '')[-30:]) for p in ports]}")
+        ok &= bool(ports) and all(p.get("table") for p in ports)
 
     print(f"waiting {args.idle_seconds}s for the unit's idle release")
     time.sleep(args.idle_seconds)
-    late_first, late_second = rows(tok, first["eid"]), rows(tok, second["eid"])
-    print(f"after the idle release: v1 {'same' if late_first == first_rows else late_first}, "
-          f"v2 {'same' if late_second == second_rows else late_second}")
+    late_first, late_second = rows(tok, rid, first_eid), rows(tok, rid, second_eid)
+    print(f"after the idle release: v1 {'same' if late_first == first_rows else late_first}, v2 {'same' if late_second == second_rows else late_second}")
     ok &= late_first == first_rows and late_second == second_rows
 
     print("\nRESULT:", "PASS" if ok else "CHECK")

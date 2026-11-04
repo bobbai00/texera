@@ -22,7 +22,7 @@
 #   bin/texera-2-0/test.sh e2e      # end to end through the gateway (need up.sh)
 #   bin/texera-2-0/test.sh          # both
 #
-# The real-model checks (chat, templates with an external MCP server, the Playwright chat) run
+# The real-model checks (the chat, the bio researcher's handoff, the Playwright chat) run
 # when ANTHROPIC_API_KEY or TEXERA_ENV_FILE is set, and are reported as skipped otherwise.
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -92,7 +92,7 @@ e2e() {
   step "environments: UDF with a package" python3 "$HERE/smoke-env.py"
   if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${TEXERA_ENV_FILE:-}" ]; then
     skip "chat (real model)" "no ANTHROPIC_API_KEY"
-    skip "templates + external MCP (real model)" "no ANTHROPIC_API_KEY"
+    skip "bio researcher, handoff to the analyst (real model)" "no ANTHROPIC_API_KEY"
     step "frontend e2e (Playwright, no model)" bash -c "cd '$ROOT/frontend-next' && TEXERA_E2E_SKIP_MODEL=1 bunx playwright test"
     step "results after a unit restart" python3 "$HERE/smoke-restart.py"
     return
@@ -101,10 +101,8 @@ e2e() {
     skip "chat (real model)" "agent runtime not running"
     return
   fi
-  start example-mcp 23010 "$ROOT" "exec bun agent-runtime/examples/mcp-iris-facts/server.ts" >/dev/null
-  wait_for example-mcp 30 lsof -nP -iTCP:23010 -sTCP:LISTEN >/dev/null
   step "chat (real model)" python3 "$HERE/smoke-chat.py"
-  step "templates + external MCP (real model)" python3 "$HERE/smoke-templates.py"
+  step "bio researcher, handoff to the analyst (real model)" python3 "$HERE/smoke-chat.py" --demo
   step "frontend e2e (Playwright)" bash -c "cd '$ROOT/frontend-next' && bunx playwright test"
   # Last: it restarts the unit.
   step "results after a unit restart" python3 "$HERE/smoke-restart.py"

@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
-"""A finished run's results survive a restart of the unit that ran it.
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
-The unit keeps its runs in memory only. After it restarts, the catalog still serves an old run's
-results: it hands the unit the table the lineage events recorded, and the unit reads it there
-once it checked the table belongs to that execution.
-
-Restarts the unit of this worktree (bin/texera-2-0/lib.sh). Needs the dev stack and the catalog.
-"""
+"""A completed run's rows stay readable after the unit restarts: the catalog recorded the
+result's table and the unit serves it from the warehouse."""
 import importlib.util
 import os
 import pathlib
@@ -33,31 +44,30 @@ def restart_unit() -> None:
 
 def main() -> int:
     tok = c.token("alice", "alice")
-    c.ensure_iris(tok)
-    ds = next(d for d in c.api(tok, "GET", "/catalog/v1/datasets?q=iris")["items"] if d["metadata"]["name"] == "iris")
-    content = {
+    ds = c.ensure_iris(tok)
+    file_uri = f"{ds['metadata']['uri']}@{ds['metadata']['head']}/files/iris.csv"
+    workflow = {
         "operators": [
-            {"operatorID": "scan", "operatorType": "CSVFileScan",
-             "operatorProperties": {"fileName": f"dataset://{ds['metadata']['rid']}@{ds['metadata']['headVersion']}/iris.csv",
-                                    "fileEncoding": "UTF_8", "hasHeader": True}},
+            {"operatorID": "scan", "operatorType": "CSVFileScan", "operatorProperties": {"fileName": file_uri, "fileEncoding": "UTF_8", "hasHeader": True}},
             {"operatorID": "avg", "operatorType": "Aggregate", "viewResult": True,
-             "operatorProperties": {"groupByKeys": ["Species"],
-                                    "aggregations": [{"aggFunction": "average", "attribute": "SepalWidthCm", "result attribute": "avg"}]}},
+             "operatorProperties": {"groupByKeys": ["Species"], "aggregations": [{"aggFunction": "average", "attribute": "SepalWidthCm", "result attribute": "avg"}]}},
         ],
         "links": [{"linkID": "l1", "source": {"operatorID": "scan", "portID": "output-0"}, "target": {"operatorID": "avg", "portID": "input-0"}}],
     }
-    wf = c.api(tok, "POST", "/catalog/v1/workflows/with-content", {"name": f"restart {time.strftime('%H%M%S')}", "content": content})
-    run = c.api(tok, "POST", f"/catalog/v1/workflows/{wf['workflow']['metadata']['rid']}/executions", {"waitSeconds": 180})
-    path = f"/catalog/v1/executions/{run['eid']}/results/avg/output-0?limit=10"
+    wf = c.api(tok, "POST", "/workflows", {"name": f"restart {time.strftime('%H%M%S')}", "spec": workflow})
+    rid = wf["metadata"]["rid"]
+    run = c.api(tok, "POST", f"/workflows/{rid}/run", {"waitSeconds": 180})
+    eid = run["metadata"]["rid"]
+    path = f"/workflows/{rid}/executions/{eid}/operators/avg/ports/output-0/rows?limit=10"
     before = c.api(tok, "GET", path)["rows"]
-    print(f"run {run['eid'][:8]}: {run['status']}, {before}")
+    print(f"run {eid[:8]}: {run['status']['phase']}, {before}")
 
     print("restarting the unit")
     restart_unit()
     after = c.api(tok, "GET", path)["rows"]
     print(f"after the restart: {'same' if after == before else after}")
 
-    ok = run["status"] == "completed" and bool(before) and after == before
+    ok = run["status"]["phase"] == "completed" and bool(before) and after == before
     print("\nRESULT:", "PASS" if ok else "CHECK")
     return 0 if ok else 1
 
