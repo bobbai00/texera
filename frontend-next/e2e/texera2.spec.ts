@@ -68,6 +68,10 @@ test("signs in, starts a chat with an agent template and attaches a CSV that bec
   await expect(view.locator('[data-file="penguins.csv"]')).toBeVisible();
   await expect(view.locator("[data-file-uri]")).toContainText(/texera:\/\/datasets\/.+@1\/files\/penguins\.csv/);
   await expect(page).toHaveURL(/panel=datasets(%2F|\/)/);
+  // The link carries the panel: reloading it brings the same view back.
+  await page.reload();
+  await expect(page.locator('[data-side-panel] [data-resource-view="dataset"]')).toBeVisible();
+  await expect(page.locator('[data-side-panel] [data-file="penguins.csv"]')).toBeVisible();
   await page.screenshot({ path: "test-results/chat-with-dataset.png", fullPage: true });
 });
 
