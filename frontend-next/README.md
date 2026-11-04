@@ -15,13 +15,17 @@ bun install
 # the dev stack (Envoy, Keycloak, OpenFGA, Postgres, RustFS, Lakekeeper)
 cd bin/texera-2-0 && docker compose up -d
 
-# the catalog on :8090 and the agent runtime on :3002 (see their READMEs), then
+# the catalog on :8090 and the agent runtime on :23002 (see their READMEs), then
 cd frontend-next && bun run dev        # vite on :5174
+
+# or all of the above in one command, from the repository root
+bin/texera-2-0/up.sh
 ```
 
 Open **http://localhost:8088/** — the gateway — not the vite port. The gateway proxies `/` to
-vite (HMR included), checks the Keycloak token on `/catalog`, `/agents` and `/units`, and
-serves Keycloak at `/auth`. Test users: `alice`/`alice`, `bob`/`bob`.
+vite (HMR included), checks the Keycloak token on `/catalog`, `/mcp` and `/agents`, and
+serves Keycloak at `/auth`; computing units are not reachable through it, the catalog talks
+to them. Test users: `alice`/`alice`, `bob`/`bob`.
 
 | Script | What |
 |---|---|
@@ -103,7 +107,7 @@ description, the kind's own tabs, then the spec as a form generated from the kin
 downstream, plus the specs that reference it) and the envelope itself. Most kinds are a single
 file under `kinds/` that declares the registry entry; the ones with their own surfaces are
 folders: `workflow/` (the canvas editor; the spec holds no positions, the app lays the graph
-out and keeps a person's moves in their preferences), `execution/` (phase, operators, the port view with paged rows, save as dataset),
+out and keeps a person's moves in their preferences), `execution/` (phase, operators, the port view with paged rows, the keep mark),
 `agent-template/` (the form over card, model endpoint, prompt, skills, MCP servers, handoffs and
 loop), `files/` (the files and staging tabs datasets and models share).
 

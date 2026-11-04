@@ -113,7 +113,9 @@ reaches the warehouse's files; a key scoped to the objects prefix closes that.
 
 ## Where to read more
 
-`docs/texera-2-0/PROGRESS.md` records every session's work, how it was verified and what came
+`docs/texera-2-0/GUIDE.md` is how to use the whole thing, from the first sign-in to the API
+by hand and your own agents (`bin/texera-2-0/examples/walkthrough.py` is the runnable tour);
+`PROGRESS.md` records every session's work, how it was verified and what came
 next; `PLAN.md` is the milestone; `API-REQUESTS.md` the conventions beyond the contract;
 `bin/texera-2-0/README.md` the stack; `catalog/README.md`, `agent-runtime/README.md` and
 `frontend-next/README.md` their parts; `AGENTS.md` the map of the repository.

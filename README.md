@@ -70,16 +70,32 @@ This branch reorganizes Texera around chat-first data analysis: people ask an ag
 builds and runs workflows through the Texera MCP server, and every resource it creates or changes
 is versioned, attributed to the agent on the person's behalf, and linked by lineage.
 
+Quick start, on a machine with Docker, Go, JDK 17 with sbt, Bun and uv:
+
+```
+cp .env.example .env            # put ANTHROPIC_API_KEY in it (the agents need a model; the rest works without)
+bin/texera-2-0/up.sh            # the containers, then the catalog, the computing unit, the agent runtime, the frontend
+open http://localhost:8088      # alice/alice or bob/bob
+bin/texera-2-0/test.sh scenario # the end-to-end scenarios against what runs
+```
+
+**[docs/texera-2-0/GUIDE.md](docs/texera-2-0/GUIDE.md) is the guide to using it**: the
+workspace, agents, workflows and runs, datasets, sharing, computing units, the API by hand,
+the MCP servers for your own agents, the tests, the Kubernetes deployment.
+
 | Path | What it is |
 |---|---|
 | `api/` | The TypeSpec contract; `make generate` emits OpenAPI, the Go server, the TypeScript client and the MCP tool table |
-| `catalog/` | The Go control plane: resources and versions, grants and the policy decision point, executions and lineage, datasets, computing units, environments, the MCP server |
+| `catalog/` | The Go control plane: resources and versions, grants and the policy decision point, executions and lineage, datasets, computing units, environments, the MCP servers |
 | `agent-runtime/` | The agent runtime (Vercel AI SDK 7): AG-UI chat streams, agent templates, pluggable MCP servers |
 | `amber/` | The computing unit: Amber as a pure workflow engine that reports runs back as OpenLineage events |
 | `frontend-next/`, `packages/` | The React app (the chat, a generic page for every kind, the workflow editor) and its shared packages |
 | `common/` | Engine libraries: workflow core, operators, compiler, config, auth |
-| `bin/texera-2-0/` | The dev stack: `up.sh`, `test.sh`, `down.sh` (see its README) |
-| `docs/texera-2-0/` | The plan and the progress log |
+| `bio-mcp-service/` | The Bio MCP server (PubMed, genes, variants, proteins) the Bio Researcher uses |
+| `bin/texera-2-0/` | The dev stack: `up.sh`, `test.sh`, `down.sh`, `k8s.sh`, the API walkthrough under `examples/` (see its README) |
+| `bin/dockerfiles/`, `deploy/kubernetes/` | The images and the kustomize manifests `k8s.sh` deploys |
+| `tests/e2e/` | The end-to-end scenarios (pytest), one module per use case |
+| `docs/texera-2-0/` | The guide, the testing guide, the conventions between the parts, the plan and the progress log |
 
 
 # Citation

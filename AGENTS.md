@@ -55,6 +55,7 @@ and progress log are in [docs/texera-2-0](docs/texera-2-0/PLAN.md).
 | Issue templates | [bug](.github/ISSUE_TEMPLATE/bug-template.yaml) / [task](.github/ISSUE_TEMPLATE/task-template.yaml) / [feature](.github/ISSUE_TEMPLATE/feature-template.yaml) |
 | License-header coverage; vendored `workflow-operator` | [.licenserc.yaml](.licenserc.yaml); [project/AddMetaInfLicenseFiles.scala](project/AddMetaInfLicenseFiles.scala) |
 | Run, test and deploy Texera 2.0 (`up.sh`, `test.sh`, `down.sh`, `k8s.sh`) | [bin/texera-2-0](bin/texera-2-0/README.md) |
+| Use Texera 2.0: the workspace, agents, runs, the API by hand, your own agents | [docs/texera-2-0/GUIDE.md](docs/texera-2-0/GUIDE.md); the runnable tour `bin/texera-2-0/examples/walkthrough.py` |
 
 If a topic is above, **read that file** instead of asking here.
 

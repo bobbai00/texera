@@ -27,12 +27,17 @@ Postgres, RustFS (S3) and Lakekeeper (Iceberg REST). Everything is reached throu
 
 ```
 bin/texera-2-0/up.sh                      # bring everything up (idempotent)
-bin/texera-2-0/test.sh                    # all suites, then the end-to-end checks
-bin/texera-2-0/test.sh suites             # only the unit and integration suites
-bin/texera-2-0/test.sh e2e                # only the end-to-end checks against the running stack
+bin/texera-2-0/test.sh unit               # no stack needed: catalog, engine, runtime, frontend
+bin/texera-2-0/test.sh scenario           # the end-to-end scenarios against the running stack
+bin/texera-2-0/test.sh ui                 # Playwright against the running stack
+bin/texera-2-0/test.sh evals              # the real agents through the real model
+bin/texera-2-0/test.sh all                # every layer on the running stack; `gate` wipes first
 bin/texera-2-0/down.sh                    # stop it all, keep the data
 bin/texera-2-0/down.sh --wipe             # stop it all and delete the volumes
 ```
+
+How to use what comes up, from the first sign-in to runs, agents and the API by hand:
+`docs/texera-2-0/GUIDE.md`.
 
 `up.sh` reuses a service that already runs from this worktree and refuses to start when another
 process holds one of its ports. Logs go to `logs/texera-2-0/<service>.log`, test logs to
