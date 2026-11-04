@@ -2,7 +2,7 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
-## 2026-11-04 (session 6, on Linux): M1 steps S1 to S5
+## 2026-11-04 (session 6, on Linux): M1 steps S1 to S7
 
 Done and verified (branch `texera-2-0`, each step a pushed commit):
 - S1 Contract v2 under `api/catalog/`: the envelope, one file per kind (fifteen kinds), the
@@ -43,8 +43,29 @@ Decisions taken while implementing (PLAN.md decisions still hold):
 - `view=summary|full` applies to the operator list only (the property schemas are heavy);
   other lists carry full envelopes.
 
-Next: S6 verify the engine against the new catalog on the stack, S7 the agent runtime as a
-stateless turn runner, S8 the frontend, S9 the agents demo, S10 close.
+- S6 Engine, verified unchanged against the new catalog on the live stack. Per decision 7 the
+  dev database and the OpenFGA store were dropped and recreated (the old `principal` table
+  lacked `admin`), and Envoy was recreated so it knew the public settings and `/bio-mcp`
+  routes. `smoke-catalog.sh` green end to end (seeds, versions, sharing, files and references,
+  a conversation turn with an origin, both MCP servers: 10 catalog and 13 dataflow tools);
+  `smoke-run.sh` green (validate, run, ports, rows, the used/produced/derivedFrom lineage,
+  the saved CSV); `smoke-env.py` PASS (a UDF importing `humanize` fails without an
+  environment and completes with one, the build shows `ready`, the execution pins `@1`).
+- S7 Agent runtime rewritten as a stateless turn runner over contract v2: `config.ts` carries
+  no model key (the endpoint and its leased secret come from the catalog), templates, skills,
+  MCP servers and model endpoints are read by URI through `resolve`, the ReAct loop takes
+  `interruptTools` and reports an `interrupted` outcome, the turn pins the template version
+  at `startTurn`, persists each step through `replaceMessage`, handles `/mode` natively and
+  runs the handoff loop (the conversation's template changes, `texera.handoff` is emitted).
+  `bun test` 45/45, typecheck and lint clean. On the stack with the real model: the Data
+  Analyst answered the iris question in 11.8 s (search, files, read, skill, create, validate,
+  run, port result, answer); `smoke-chat.py --demo` ran the M1 scenario: the Bio Researcher
+  gave three cited CRISPR off-target ideas, then handed the conversation to the Data Analyst,
+  which built and ran the workflow and reported the averages; the conversation's template
+  changed and every assistant message carries the template version that wrote it.
+
+Next: S8 the frontend, S9 the agents demo as a Playwright test and a Haiku smoke run, S10
+close (`test.sh` green from a clean `up.sh`).
 
 ## 2026-11-03 (session 5, on Linux)
 
