@@ -59,8 +59,8 @@ file `TEXERA_ENV_FILE` names, or from a `.env` at the repo root (gitignored; `KE
 `export KEY=VALUE` lines). Without it everything but the agent runtime starts.
 
 The Playwright checks use Playwright's bundled Chromium (`cd frontend-next && bunx playwright
-install chromium`); where Playwright ships no build for the host (Ubuntu 20.04, say), `test.sh`
-drives the installed Google Chrome instead (`TEXERA_E2E_BROWSER_CHANNEL=chrome`).
+install chromium`); where Playwright ships no build for the host (Ubuntu 20.04, say), set
+`TEXERA_E2E_BROWSER_CHANNEL=chrome` to drive the installed Google Chrome instead.
 
 ## How the containers and the host meet
 
@@ -114,19 +114,11 @@ its page), which takes its tables with it; a run a dataset version derives from 
 
 ## End-to-end checks
 
-| Script | What it proves |
-|---|---|
-| `smoke-catalog.sh` | Auth, workflow versions by content and JSON patch, validation, sharing through the PDP, datasets, MCP |
-| `smoke-run.sh` | Compile and run on the unit, results, port-level lineage reported back to the catalog, a result saved as a dataset version produced by the run |
-| `smoke-retention.py` | Every execution keeps its results after later runs and after the unit's idle release; a run can be deleted with its tables; an administrator's sweep under a retention policy expires old results (the record stays, the rows answer 410) |
-| `smoke-env.py` | A Python UDF fails without its package and completes in an Environment that lists it |
-| `smoke-operator.py` | A custom Python operator, created as a resource and used by its URI, runs in a pinned environment; deleting it is refused while a workflow references it |
-| `smoke-share.py` | A viewer of a project finds its workflow, run and dataset in search, reads them and runs the workflow, but cannot edit, delete or lease the owner's credential |
-| `smoke-credential.py` | A credential named by an operator property reaches the engine as the secret, leased for the run; the version keeps the URI; a viewer who may not use it is refused |
-| `smoke-lake.py` | The lake enforces the catalog's decision: a run's tables live in a namespace of their own that the unit which ran it reads with vended credentials; anonymous callers, a person's own token and another unit's identity get nothing; deleting a provisioned unit deletes its identity and credential |
-| `smoke-chat.py` | A real-model chat: the Data Analyst builds, edits and reruns a workflow over the iris dataset, then saves the result as a dataset; every resource carries the turn and the template version as its origin, with lineage to the run |
-| `smoke-chat.py --demo` | The M1 scenario: the Bio Researcher answers with cited research ideas through the bio MCP server, then hands the chat to the Data Analyst, which runs the analysis |
-| `frontend-next/e2e` (Playwright) | Sign-in, a chat with an attachment that becomes a dataset, switching agents through the switcher and `/mode`, creating and editing an agent template from its page, a saved result's lineage, and with the model: the Data Analyst chat that tracks what it built and the Bio Researcher's handoff |
+`bin/texera-2-0/test.sh` runs the tests in four layers, `unit | contract | scenario | ui`, plus
+`evals` (the real agents through the real model), `cluster` (the same scenarios and Playwright
+against the Kubernetes deployment) and `gate` (a wiped stack, then everything). The scenarios
+are pytest modules under `tests/e2e/`, one per use case; `docs/texera-2-0/TESTING.md` is the
+guide: what each proves, the markers, the fixtures, how to add one.
 
 ## Kubernetes
 
@@ -134,7 +126,7 @@ The same stack on a local Kubernetes cluster, in one command:
 
 ```
 bin/texera-2-0/k8s.sh up            # the kind cluster if missing, the five images, config, workloads, wait
-bin/texera-2-0/k8s.sh check         # the smoke tests against the cluster, including a unit made as a resource
+bin/texera-2-0/k8s.sh check         # test.sh cluster: the scenarios and Playwright against the cluster
 bin/texera-2-0/k8s.sh status        # pods, services, jobs
 bin/texera-2-0/k8s.sh down          # delete the namespace (the cluster stays)
 bin/texera-2-0/k8s.sh destroy       # delete the kind cluster

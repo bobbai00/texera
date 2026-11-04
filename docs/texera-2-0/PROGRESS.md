@@ -245,8 +245,32 @@ Decisions taken in S8 and S9:
   cancelled), and `smoke-k8s-unit.py` on the rebuilt cluster: the memory request goes from
   2Gi to 3Gi, the rollout completes, the unit is ready again and a run on it completes.
 
+- The test framework (the user's ask: a self-contained, framework-oriented way to test the
+  MVP end to end, real agents and frontend included). Four layers with one runner each behind
+  `test.sh unit | contract | scenario | ui`, plus `evals` (real agents through the real
+  model), `cluster` (the same scenarios and Playwright against the Kubernetes deployment;
+  `k8s.sh check` delegates to it) and `gate` (a wiped stack, then everything). The eleven
+  smoke scripts became thirteen pytest scenarios in `tests/e2e/`, one module per use case,
+  over a helper package (the API as a person, AG-UI turns, the lake, kubectl) and fixtures: a
+  project per test deleted with everything in it at the end, the iris dataset, a ready unit,
+  guards that put the settings and the grants back; markers `model`, `cluster`, `local`,
+  `destructive`, `slow` gate what runs. JUnit reports from pytest and Playwright in
+  `logs/texera-2-0/reports/`. `docs/texera-2-0/TESTING.md` is the guide and the scenario
+  catalog. The first full run found a real bug: after an hour the unit's Lakekeeper token
+  expired and the Iceberg Java client refreshes it by OAuth token exchange, which Keycloak
+  refuses unless enabled on the client; `texera-unit` and the catalog-minted unit clients now
+  have it on (the exchange was checked by hand; the realm change needs a wipe).
+
+  Verified: `test.sh unit`, `contract`, `scenario` (twelve, then the three local ones),
+  `ui` (seven), `evals` (both real-agent scenarios and Playwright with the model) all green on
+  the local stack; `test.sh cluster` green on the redeployed cluster (thirteen scenarios
+  including the unit lifecycle, Playwright) once the environment and operator scenarios
+  accepted the cluster image's bare `ModuleNotFoundError` (its Python 3.10 lacks the error
+  notes the engine uses to name the module).
+
 Next: quotas and metering, groups beyond admins, a purge of soft-deleted resources; the
-units' static S3 key for large binaries scoped to the objects prefix.
+units' static S3 key for large binaries scoped to the objects prefix; Python 3.11 in the unit
+image; contract suites for the Lakekeeper and Keycloak-workloads adapters; CI for the gate.
 
 ## 2026-11-03 (session 5, on Linux)
 

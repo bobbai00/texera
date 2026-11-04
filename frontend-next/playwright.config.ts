@@ -11,7 +11,7 @@ export default defineConfig({
   timeout: 120_000,
   expect: { timeout: 15_000 },
   retries: 0,
-  reporter: "list",
+  reporter: process.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE ? [["list"], ["junit", { outputFile: process.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE }]] : "list",
   use: {
     baseURL: process.env.TEXERA_BASE_URL ?? "http://localhost:8088",
     trace: "retain-on-failure",

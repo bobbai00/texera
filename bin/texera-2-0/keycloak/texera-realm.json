@@ -168,7 +168,7 @@
     {
       "clientId": "texera-unit",
       "name": "Texera computing unit (the dev stack's static unit)",
-      "description": "The identity the dev stack's unit presents to the lake; units the catalog provisions get clients of their own.",
+      "description": "The identity the dev stack's unit presents to the lake; units the catalog provisions get clients of their own. Token exchange is on because the Iceberg Java client refreshes its token that way.",
       "publicClient": false,
       "secret": "texera-unit-secret",
       "standardFlowEnabled": false,
@@ -193,7 +193,10 @@
             "introspection.token.claim": "true"
           }
         }
-      ]
+      ],
+      "attributes": {
+        "standard.token.exchange.enabled": "true"
+      }
     }
   ],
   "users": [

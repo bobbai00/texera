@@ -1,0 +1,39 @@
+"""A custom Python operator: created as a resource, used in a workflow by its URI, run in a
+pinned environment, listed beside the built-ins; deleting it is refused while a workflow
+references it. Acceptance item 5."""
+import json
+
+import pytest
+
+from texera_e2e import workflows as w
+
+
+@pytest.mark.slow
+def test_a_custom_operator_runs_and_is_referenced(alice, project, iris, unit):
+    env = alice.create("environments", "humanize", {"python": {"packages": ["humanize==4.11.0"]}}, project=project)
+    op = alice.create("operators", "Ordinal rank", {
+        "operatorType": "OrdinalRank", "displayName": "Ordinal rank", "group": "Custom",
+        "inputPorts": [{"portID": "input-0"}], "outputPorts": [{"portID": "output-0"}],
+        "implementation": {"python": {"code": w.UDF_RANK, "outputColumns": [{"attributeName": "rank", "attributeType": "string"}]}},
+    }, project=project, description="Adds an ordinal rank column from Id")
+    op_uri = f"{op['metadata']['uri']}@{op['metadata']['head']}"
+    listed = alice.get("/operators?q=Ordinal+rank")["items"]
+    assert any(o["metadata"]["rid"] == op["metadata"]["rid"] and not (o.get("status") or {}).get("builtin") for o in listed)
+
+    wf = alice.create("workflows", "ranked iris", w.with_operator(iris.file, op_uri, opid="rank"), project=project)
+    rid = wf["metadata"]["rid"]
+    assert alice.post(f"/workflows/{rid}/validate", {})["ok"]
+    plain = w.run(alice, rid, "no environment", computingUnit=unit)
+    # The engine names the missing module when its Python is 3.11 or newer; the cluster image's
+    # 3.10 cannot (`add_note`), so the message is a bare ModuleNotFoundError there.
+    assert plain["status"]["phase"] == "failed" and w.missing_module(plain, "humanize")
+    pinned = w.run(alice, rid, "pinned environment", wait=600, computingUnit=unit, environment=env["metadata"]["uri"])
+    assert pinned["status"]["phase"] == "completed", w.error_text(pinned)
+    assert pinned["spec"]["environment"] == f"{env['metadata']['uri']}@1"
+    page = w.rows(alice, rid, pinned["metadata"]["rid"], opid="rank", limit=3)
+    assert page["rows"][0][w.column(page, "rank")] == "1st"
+
+    dependents = alice.get(f"/resources/{op['metadata']['rid']}/dependents")
+    assert any(e["from"].startswith(wf["metadata"]["uri"]) and e["relation"] == "references" for e in dependents)
+    status, body = alice.call("DELETE", f"/operators/{op['metadata']['rid']}")
+    assert status == 409 and wf["metadata"]["uri"] in json.dumps(body)

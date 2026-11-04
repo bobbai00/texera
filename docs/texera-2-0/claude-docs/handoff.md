@@ -40,23 +40,26 @@ up.sh && test.sh`) is green.
 - The frontend: a generic page for every kind from its JSON Schema (spec, versions, access,
   lineage), the workflow editor, the run page with the port view, the agent template form, the
   chat with the agent switcher and labelled messages.
-- Checks: Go, Bun and vitest suites; the engine's sbt suites; eight smoke scripts through the
-  gateway; Playwright on Chrome with seven tests, two of them with the real model.
+- Checks in four layers (`docs/texera-2-0/TESTING.md`): unit (Go, sbt, Bun, vitest), contract
+  (adapters and the engine against the stack's peers), scenario (thirteen pytest scenarios in
+  `tests/e2e/`, one per use case, each in a project of its own), ui (Playwright, seven tests);
+  plus evals (the real agents through the real model) and the same against the cluster.
 
 ## Run and test
 
-```bash
-bin/texera-2-0/up.sh            # the stack and the host services; idempotent
-bin/texera-2-0/test.sh          # suites, then the end-to-end checks (needs up.sh)
-bin/texera-2-0/test.sh suites   # Go, TypeScript and sbt suites only
-bin/texera-2-0/test.sh e2e      # end-to-end only
-bin/texera-2-0/down.sh --wipe   # stop everything and drop the volumes
-python3 bin/texera-2-0/smoke-chat.py --demo   # the M1 scenario with the real model
+```
+bin/texera-2-0/up.sh              # the stack: containers, then the catalog, unit, runtime, bio server, frontend
+bin/texera-2-0/test.sh unit       # no stack: catalog, engine, runtime, frontend
+bin/texera-2-0/test.sh scenario   # the end-to-end scenarios (pytest, tests/e2e) against the stack
+bin/texera-2-0/test.sh ui         # Playwright against the stack
+bin/texera-2-0/test.sh evals      # the real agents through the real model (needs the key)
+bin/texera-2-0/test.sh gate       # down --wipe, up, then everything: the close gate
+bin/texera-2-0/k8s.sh up && bin/texera-2-0/k8s.sh check   # the cluster, then the scenarios against it
 ```
 
-The model key is read at launch from the gitignored repo-root `.env` (`ANTHROPIC_API_KEY`) and
-loaded into OpenBao; without it everything but the chat works. Playwright drives the installed
-Google Chrome here (`TEXERA_E2E_BROWSER_CHANNEL=chrome`, set by the scripts).
+`docs/texera-2-0/TESTING.md` explains the layers, the scenario catalog (one module per use
+case), the fixtures (a project per test that goes away with it, guards for settings and
+grants) and how to add a scenario. Reports: `logs/texera-2-0/reports/*.xml`.
 
 ## Next steps
 

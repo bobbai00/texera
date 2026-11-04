@@ -20,7 +20,7 @@
 #
 #   bin/texera-2-0/k8s.sh up            # cluster if missing, images, config, workloads, wait
 #   bin/texera-2-0/k8s.sh up --no-build # reuse the images already built
-#   bin/texera-2-0/k8s.sh check         # the smoke tests against the cluster, a unit made as a resource
+#   bin/texera-2-0/k8s.sh check         # test.sh cluster: the scenarios and Playwright against the cluster
 #   bin/texera-2-0/k8s.sh status        # pods, services, jobs
 #   bin/texera-2-0/k8s.sh down          # delete the namespace (the cluster stays)
 #   bin/texera-2-0/k8s.sh destroy       # delete the kind cluster
@@ -154,14 +154,9 @@ case "${1:-}" in
     wait_ready
     echo "== up: $PUBLIC (alice/alice, bob/bob)"
     ;;
-  # The end-to-end checks against the cluster's gateway: the catalog, a run on the static
-  # unit, and a unit created as a resource and run on.
-  check)
-    export GW=$PUBLIC
-    "$HERE/smoke-catalog.sh" >/dev/null && echo "catalog: pass"
-    "$HERE/smoke-run.sh" >/dev/null && echo "run on the static unit: pass"
-    python3 "$HERE/smoke-k8s-unit.py"
-    ;;
+  # The end-to-end checks against the cluster's gateway: the scenarios and Playwright, plus the
+  # unit made as a resource (test.sh cluster).
+  check) TEXERA2_PUBLIC_URL=$PUBLIC exec "$HERE/test.sh" cluster ;;
   status) k get pods,svc,jobs ;;
   down) kubectl --context "$CONTEXT" delete namespace "$NS" --ignore-not-found ;;
   destroy) need kind; kind delete cluster --name "$CLUSTER" ;;

@@ -28,6 +28,8 @@ func (id *Identity) CreateWorkload(ctx context.Context, clientID, displayName st
 		"clientId": clientID, "name": displayName, "enabled": true, "protocol": "openid-connect",
 		"publicClient": false, "serviceAccountsEnabled": true,
 		"standardFlowEnabled": false, "implicitFlowEnabled": false, "directAccessGrantsEnabled": false,
+		// The Iceberg Java client refreshes an expiring token by token exchange.
+		"attributes": map[string]string{"standard.token.exchange.enabled": "true"},
 	}
 	resp, err := id.admin(ctx, http.MethodPost, "clients", nil, body)
 	if err != nil {
