@@ -2,6 +2,50 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-04 (session 6, on Linux): M1 steps S1 to S5
+
+Done and verified (branch `texera-2-0`, each step a pushed commit):
+- S1 Contract v2 under `api/catalog/`: the envelope, one file per kind (fifteen kinds), the
+  subresources, the AuthZEN and OpenLineage routes, `x-texera-kind`, `x-texera-permission`
+  and `x-mcp` (with the server); OpenFGA model v2 (owner, editor, viewer, user; parent;
+  computed permissions). Actions are verb subresources (`/{rid}/run`), not `:verb`, because
+  Go's router cannot match a colon inside a segment; the URI grammar never carried verbs.
+- S2 `cmd/catalogen` emits the kind table (Go and TS), the JSON Schema bundle, the MCP tool
+  table, the permission table and the index migration; oapi-codegen generates types only; the
+  server is generic over the kind table and validated against the OpenAPI document in tests.
+  `internal/uri` is the one grammar with round-trip tests and the reference extractor.
+- S3 Stack: OpenBao (dev mode, `texera` KV v2 mount) with `up.sh` loading the model key over
+  stdin; Envoy serves `/catalog/v1/settings/public` without a token and routes `/bio-mcp` to
+  the bio MCP service copied from dknet-ai-public (`bio-mcp-service/`, a bun workspace,
+  :23010, dev API key `texera-bio-dev-key`).
+- S4 Store (eleven tables, generic over kinds, tests on the stack's Postgres) and ports
+  (Identity, Authorizer, SecretStore, BlobStore, UnitProvider, LineageSink) with one adapter
+  each plus memory adapters; contract suites pass in memory and against OpenBao, RustFS and
+  OpenFGA under `-tags integration`.
+- S5 `internal/catalog` (one Service, one file per area), `internal/server` (generic routes
+  from the kind table plus the actions), `internal/mcp` (the bridge: a tool call is the
+  operation's request against the API in process), `cmd/catalog` wiring. Tests: every
+  response validated against the contract; every operation of the permission table routed;
+  lifecycle, sharing, files, references and delete refusal, a run against a fake unit with
+  OpenLineage events, ports, rows, save with derivedFrom and the lineage walks, conversations
+  and turns, origins, credentials and leases, units and AuthZEN. `go test -p 1 ./...` green
+  (the store and server suites share the test database, so serial).
+
+Decisions taken while implementing (PLAN.md decisions still hold):
+- The outbox relay flushes synchronously on the write path (`Relay.Flush`), so a resource is
+  visible to the authorizer before its request answers; the background loop retries failures.
+- Downloads are served as `application/octet-stream` as the contract says, with the file's
+  own type in `X-Texera-Content-Type`; a ranged read answers 206 with `Content-Range`.
+- A slash inside a file path is percent-encoded in the URL (`files/dir%2Ffile.csv`); the Go
+  router also accepts the raw form.
+- The run resolution order is request, workflow, project, settings; the settings singleton is
+  seeded with the Data Analyst template, the default environment and the dev unit.
+- `view=summary|full` applies to the operator list only (the property schemas are heavy);
+  other lists carry full envelopes.
+
+Next: S6 verify the engine against the new catalog on the stack, S7 the agent runtime as a
+stateless turn runner, S8 the frontend, S9 the agents demo, S10 close.
+
 ## 2026-11-03 (session 5, on Linux)
 
 Done and verified:
