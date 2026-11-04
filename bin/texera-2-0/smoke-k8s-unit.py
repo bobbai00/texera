@@ -18,9 +18,10 @@
 
 """A computing unit as a resource on Kubernetes: created through the API with provider
 kubernetes, it becomes a Deployment the catalog reconciles, with a Secret holding the identity
-the catalog minted for it; it reports pending, then ready; a workflow runs on it; a viewer may
-not run on it until granted use; terminating it removes the Deployment and the Secret and
-deleting the resource is refused while it is referenced... then succeeds.
+the catalog minted for it; it reports pending, then ready; a workflow runs on it; a changed
+spec (more memory) rolls the Deployment and the unit runs again; a viewer may not run on it
+until granted use; terminating it removes the Deployment and the Secret and deleting the
+resource succeeds afterwards.
 Runs against a Kubernetes deployment: GW=http://localhost:28088."""
 import importlib.util
 import json
@@ -50,6 +51,36 @@ def call(tok: str, method: str, path: str, body=None) -> tuple[int, object]:
             return e.code, raw.decode(errors="replace")
 
 
+def memory_request(rid: str) -> str:
+    """The master container's memory request as the cluster holds it; '' without kubectl."""
+    try:
+        out = subprocess.run(["kubectl", "--context", "kind-texera2", "-n", "texera2", "get", "deploy", f"unit-{rid}",
+                              "-o", "jsonpath={.spec.template.spec.containers[0].resources.requests.memory}"],
+                             capture_output=True, text=True, timeout=30)
+        return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def rolled_out(rid: str) -> None:
+    """Waits for the unit's Deployment to finish rolling, when kubectl is around."""
+    try:
+        subprocess.run(["kubectl", "--context", "kind-texera2", "-n", "texera2", "rollout", "status", f"deploy/unit-{rid}", "--timeout=600s"],
+                       capture_output=True, text=True, timeout=620)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def wait_ready(tok: str, rid: str, seconds: int) -> tuple[str, float]:
+    phase, started = None, time.time()
+    while time.time() - started < seconds:
+        phase = c.api(tok, "GET", f"/computing-units/{rid}")["status"]["phase"]
+        if phase == "ready":
+            break
+        time.sleep(5)
+    return phase, time.time() - started
+
+
 def deployments(rid: str) -> str:
     """What the cluster holds for the unit, when kubectl is around; '' otherwise."""
     try:
@@ -77,14 +108,8 @@ def main() -> int:
     })
     rid, uri = unit["metadata"]["rid"], unit["metadata"]["uri"]
     print(f"unit {uri}")
-    phase = None
-    started = time.time()
-    while time.time() - started < 600:
-        phase = c.api(alice, "GET", f"/computing-units/{rid}")["status"]["phase"]
-        if phase == "ready":
-            break
-        time.sleep(5)
-    check(phase == "ready", f"the unit becomes ready ({phase} after {time.time() - started:.0f}s)")
+    phase, took = wait_ready(alice, rid, 600)
+    check(phase == "ready", f"the unit becomes ready ({phase} after {took:.0f}s)")
     held = deployments(rid)
     check(not held or ("deployment" in held and "service" in held and "secret" in held), f"the cluster holds its deployment, service and identity secret: {held.replace(chr(10), ' ') or 'kubectl not available'}")
     identity = c.api(alice, "GET", f"/computing-units/{rid}")["status"].get("identity") or {}
@@ -108,6 +133,16 @@ def main() -> int:
         if run["status"]["phase"] == "completed":
             page = c.api(alice, "GET", f"/workflows/{wrid}/executions/{run['metadata']['rid']}/operators/avg/ports/output-0/rows?limit=5")
             check(len(page["rows"]) == 3, f"its rows are readable: {page['rows']}")
+        # A changed spec rolls the Deployment: more memory, then the unit is ready again and runs.
+        before = memory_request(rid)
+        c.api(alice, "PUT", f"/computing-units/{rid}", {"spec": {"provider": "kubernetes", "computingNodes": [{"name": "master", "role": "master", "memory": "3Gi"}]}})
+        started = time.time()
+        rolled_out(rid)
+        phase, took = wait_ready(alice, rid, 600)
+        after = memory_request(rid)
+        check(phase == "ready" and (not after or (before == "2Gi" and after == "3Gi")), f"a spec change rolls the unit (memory {before or '?'} to {after or '?'}, rolled out and {phase} after {time.time() - started:.0f}s)")
+        again = c.api(alice, "POST", f"/workflows/{wrid}/run", {"waitSeconds": 300, "computingUnit": uri, "name": f"run after the change {stamp}"})
+        check(again["status"]["phase"] == "completed", f"a run on the changed unit completes ({again['status']['phase']})")
         c.api(alice, "PUT", f"/resources/{wrid}/grants/{bob_pid}", {"relation": "viewer"})
         c.api(alice, "PUT", f"/resources/{ds['metadata']['rid']}/grants/{bob_pid}", {"relation": "viewer"})
         status, body = call(bob, "POST", f"/workflows/{wrid}/run", {"waitSeconds": 60, "computingUnit": uri, "name": f"bob on alice's unit {stamp}"})

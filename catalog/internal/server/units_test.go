@@ -42,3 +42,43 @@ func TestUnitUseWithoutRead(t *testing.T) {
 	}
 	_ = server.Prefix
 }
+
+// Updating a unit: a changed spec is taken and reconciled, the provider cannot change, and a
+// unit with a run on it waits until the run is over.
+func TestUnitUpdate(t *testing.T) {
+	h := newHarness(t)
+	cluster := h.create("alice", "computing-units", "alice's cluster unit", map[string]any{"provider": "kubernetes", "computingNodes": []any{map[string]any{"name": "master", "role": "master", "memory": "2Gi"}}})
+	bigger := map[string]any{"provider": "kubernetes", "computingNodes": []any{map[string]any{"name": "master", "role": "master", "memory": "3Gi"}}}
+	var updated envelope
+	h.mustJSON("alice", "PUT", p+"/computing-units/"+rid(cluster), map[string]any{"spec": bigger}, &updated)
+	var spec map[string]any
+	mustDecode(t, updated.Spec, &spec)
+	if nodes, _ := spec["computingNodes"].([]any); len(nodes) != 1 || nodes[0].(map[string]any)["memory"] != "3Gi" {
+		t.Fatalf("the spec changed: %v", spec)
+	}
+	var status map[string]any
+	mustDecode(t, updated.Status, &status)
+	if status["identity"] == nil {
+		t.Fatalf("the identity survives an update: %v", status)
+	}
+	if code, body := h.do("alice", "PUT", p+"/computing-units/"+rid(cluster), map[string]any{"spec": map[string]any{"provider": "static", "endpoint": h.unit.URL}}); code != http.StatusBadRequest {
+		t.Fatalf("the provider cannot change: %d %s", code, body)
+	}
+
+	engine := h.create("alice", "computing-units", "alice's engine", map[string]any{"provider": "static", "endpoint": h.unit.URL})
+	ds := h.create("alice", "datasets", "iris", map[string]any{"format": "csv"})
+	h.mustJSON("alice", "PUT", p+"/datasets/"+rid(ds)+"/files/iris.csv", "Species,PetalLengthCm\nsetosa,1.4\n", nil)
+	h.mustJSON("alice", "POST", p+"/datasets/"+rid(ds)+"/commit", map[string]any{}, nil)
+	wf := h.create("alice", "workflows", "on alice's engine", map[string]any{
+		"operators": []any{map[string]any{"operatorID": "scan", "operatorType": "CSVFileScan", "viewResult": true, "operatorProperties": map[string]any{"fileName": string(ds.Metadata.Uri) + "@1/files/iris.csv"}}},
+		"links":     []any{},
+	})
+	var exec envelope
+	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{"name": "busy", "computingUnit": string(engine.Metadata.Uri)}, &exec)
+	described := map[string]any{"provider": "static", "endpoint": h.unit.URL, "computingNodes": []any{map[string]any{"name": "master", "role": "master", "memory": "8Gi"}}}
+	if code, body := h.do("alice", "PUT", p+"/computing-units/"+rid(engine), map[string]any{"spec": described}); code != http.StatusConflict {
+		t.Fatalf("a unit with a run on it waits: %d %s", code, body)
+	}
+	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/executions/"+rid(exec)+"/cancel", map[string]any{}, nil)
+	h.mustJSON("alice", "PUT", p+"/computing-units/"+rid(engine), map[string]any{"spec": described}, &updated)
+}

@@ -1,8 +1,8 @@
 // Package kube is the Kubernetes adapter of ports.UnitProvider: a computing unit whose spec
 // says provider kubernetes becomes one Secret holding its identity, one Deployment of the
 // engine image and one Service in the catalog's namespace, named after the unit's rid.
-// Endpoint reconciles them on every call, so a unit that was lost comes back, and Terminate
-// deletes them.
+// Endpoint reconciles them on every call, so a unit that was lost comes back and a changed
+// spec (image, memory, cpu) rolls the Deployment, and Terminate deletes them.
 package kube
 
 import (
@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -110,12 +112,22 @@ func (p *Provider) Endpoint(ctx context.Context, rid string, spec api.ComputingU
 		return "", err
 	}
 	deployments := p.client.AppsV1().Deployments(p.opts.Namespace)
-	if _, err := deployments.Get(ctx, n, metav1.GetOptions{}); apierrors.IsNotFound(err) {
-		if _, err := deployments.Create(ctx, p.deployment(rid, spec), metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	desired := p.deployment(rid, spec)
+	existing, err := deployments.Get(ctx, n, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		if _, err := deployments.Create(ctx, desired, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 			return "", fmt.Errorf("create deployment %s: %w", n, err)
 		}
-	} else if err != nil {
+	case err != nil:
 		return "", err
+	case drifted(existing, desired):
+		// The spec changed: the Deployment rolls to it.
+		existing.Spec.Replicas = desired.Spec.Replicas
+		existing.Spec.Template = desired.Spec.Template
+		if _, err := deployments.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+			return "", fmt.Errorf("update deployment %s: %w", n, err)
+		}
 	}
 	services := p.client.CoreV1().Services(p.opts.Namespace)
 	if _, err := services.Get(ctx, n, metav1.GetOptions{}); apierrors.IsNotFound(err) {
@@ -191,6 +203,8 @@ func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.De
 			SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name(rid)}, Key: key},
 		}})
 	}
+	// In a fixed order, so a reconcile compares like with like.
+	sort.Slice(env, func(i, j int) bool { return env[i].Name < env[j].Name })
 	replicas := int32(1)
 	labels := p.labels(rid)
 	return &appsv1.Deployment{
@@ -218,6 +232,24 @@ func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.De
 			},
 		},
 	}
+}
+
+// drifted reports whether what the spec asks for differs from what runs: the image, the
+// requests, the environment or the replica count. Only the fields the catalog sets count,
+// since the API server fills in defaults the desired object does not carry.
+func drifted(existing, desired *appsv1.Deployment) bool {
+	have, want := existing.Spec.Template.Spec.Containers, desired.Spec.Template.Spec.Containers
+	if len(have) != len(want) {
+		return true
+	}
+	for i := range want {
+		if have[i].Image != want[i].Image ||
+			!apiequality.Semantic.DeepEqual(have[i].Resources.Requests, want[i].Resources.Requests) ||
+			!apiequality.Semantic.DeepEqual(have[i].Env, want[i].Env) {
+			return true
+		}
+	}
+	return !apiequality.Semantic.DeepEqual(existing.Spec.Replicas, desired.Spec.Replicas)
 }
 
 func (p *Provider) service(rid string) *corev1.Service {

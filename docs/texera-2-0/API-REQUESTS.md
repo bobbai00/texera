@@ -76,6 +76,11 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    `retention.blobs` (default a day) removes uploaded files that no version and no staging
    names. The catalog sweeps hourly; administrators run one with
    `POST /settings/retention/sweep`.
+7. **Updating a unit.** `PUT /computing-units/{rid}` takes a new spec like any kind; a
+   Kubernetes unit rolls its Deployment to it at once (image, memory, cpu), and the next
+   status probes say pending until the new pod answers. The provider cannot change, and a
+   unit with a run on it (pending, provisioning or running) answers 409 until the run is over.
+   A static unit's identity follows its `clientId`.
 
 ## agent runtime
 

@@ -160,5 +160,7 @@ Computing units are resources there like everywhere else: a unit created with
 `provider: kubernetes` (`POST /computing-units`, or the library's "New computing unit")
 becomes a Deployment and a Service in the namespace, named after its rid, that the catalog
 reconciles on every status probe; it reports pending until the engine answers, runs take
-`computingUnit: <its URI>`, `terminate` removes the workloads, and the catalog's service
-account may do nothing else in the cluster (`deploy/kubernetes/rbac.yaml`).
+`computingUnit: <its URI>`, a changed spec (image, memory, cpu) rolls the Deployment at once
+(the provider is fixed, and a unit with a run on it answers 409 until the run is over),
+`terminate` removes the workloads, and the catalog's service account may do nothing else in
+the cluster (`deploy/kubernetes/rbac.yaml`).

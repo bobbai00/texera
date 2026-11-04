@@ -64,6 +64,39 @@ func TestEndpointReconcilesAndTerminateDeletes(t *testing.T) {
 	if _, err := client.CoreV1().Services("texera2").Get(ctx, "unit-"+rid, metav1.GetOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	// A changed spec rolls the Deployment; an unchanged one is left alone.
+	updates := func() int {
+		n := 0
+		for _, a := range client.Actions() {
+			if a.GetVerb() == "update" && a.GetResource().Resource == "deployments" {
+				n++
+			}
+		}
+		return n
+	}
+	if updates() != 0 {
+		t.Fatalf("no update before the spec changed: %d", updates())
+	}
+	bigger, newer := "4Gi", "texera/engine:newer"
+	changed := api.ComputingUnitSpec{
+		Provider:       api.UnitProviderKubernetes,
+		Engine:         &api.EngineSpec{Image: &newer},
+		ComputingNodes: &[]api.ComputingNodeSpec{{Name: "master", Role: api.ComputingNodeSpecRoleMaster, Memory: &bigger, Cpu: &cpu}},
+	}
+	if _, err := p.Endpoint(ctx, rid, changed, identity); err != nil {
+		t.Fatal(err)
+	}
+	d, err = client.AppsV1().Deployments("texera2").Get(ctx, "unit-"+rid, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c = d.Spec.Template.Spec.Containers[0]
+	if c.Image != newer || c.Resources.Requests.Memory().String() != "4Gi" || updates() != 1 {
+		t.Fatalf("the changed spec reaches the deployment: %s %v (%d updates)", c.Image, c.Resources.Requests, updates())
+	}
+	if _, err := p.Endpoint(ctx, rid, changed, identity); err != nil || updates() != 1 {
+		t.Fatalf("the same spec again is not an update: %v (%d updates)", err, updates())
+	}
 	if _, err := p.Endpoint(ctx, rid, api.ComputingUnitSpec{Provider: api.UnitProviderStatic}, identity); err == nil {
 		t.Fatal("a static spec is not this provider's")
 	}

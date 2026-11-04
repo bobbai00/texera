@@ -232,6 +232,19 @@ Decisions taken in S8 and S9:
   the finished runs, the v2 run says when and answers 410; the policy is cleared afterwards).
   The cluster was not redeployed for this: retention is catalog-internal.
 
+- Updating a unit, the one gap left in "computing units managed as resources" (the user asked
+  for it before quotas). `PUT /computing-units/{rid}` now reaches the cluster: the Kubernetes
+  provider compares what runs with what the spec asks (image, requests, environment,
+  replicas; only the fields the catalog sets, since the API server fills in defaults) and
+  rolls the Deployment when they differ, at once from the update's hook and again on any
+  probe. The provider cannot change, and a unit with a run on it (pending, provisioning or
+  running) answers 409 until the run is over; a static unit's identity follows its
+  `clientId`. Checks: the provider test (a changed image and memory reach the Deployment in
+  one update, the same spec again is none), a server test (the memory change is taken and the
+  identity kept, a provider change is 400, a unit with a run on it is 409 until the run is
+  cancelled), and `smoke-k8s-unit.py` on the rebuilt cluster: the memory request goes from
+  2Gi to 3Gi, the rollout completes, the unit is ready again and a run on it completes.
+
 Next: quotas and metering, groups beyond admins, a purge of soft-deleted resources; the
 units' static S3 key for large binaries scoped to the objects prefix.
 

@@ -233,6 +233,9 @@ func (s *Service) UpdateSpec(ctx context.Context, caller *auth.Caller, k kinds.K
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := s.beforeUpdate(ctx, r, spec); err != nil {
+		return nil, nil, err
+	}
 	versioned := k.Versioned && k.Content == "spec"
 	from := URI(r)
 	expected := in.ExpectedHead
@@ -253,6 +256,9 @@ func (s *Service) UpdateSpec(ctx context.Context, caller *auth.Caller, k kinds.K
 	})
 	if err != nil {
 		return nil, nil, wrap(err, k.Name)
+	}
+	if err := s.afterUpdate(ctx, updated); err != nil {
+		return nil, nil, err
 	}
 	return updated, v, nil
 }

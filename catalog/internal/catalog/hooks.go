@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/apache/texera/catalog/internal/api"
@@ -115,6 +116,59 @@ func (s *Service) unitIdentityFor(ctx context.Context, r *store.Resource, spec a
 		}
 		return &api.UnitIdentity{ClientId: *spec.ClientId, Subject: subject}, nil
 	}
+}
+
+// beforeUpdate refuses a spec change a kind cannot take.
+func (s *Service) beforeUpdate(ctx context.Context, r *store.Resource, spec json.RawMessage) error {
+	if r.Kind != "computing-unit" {
+		return nil
+	}
+	var current, next api.ComputingUnitSpec
+	_ = json.Unmarshal(r.Spec, &current)
+	if err := json.Unmarshal(spec, &next); err != nil {
+		return err
+	}
+	if next.Provider != current.Provider {
+		return Invalid("a unit's provider cannot change; make a new unit", nil)
+	}
+	// A change rolls the unit: nothing may be running on it.
+	for _, phase := range []api.ExecutionPhase{api.ExecutionPhasePending, api.ExecutionPhaseProvisioning, api.ExecutionPhaseRunning} {
+		running, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "execution", Fields: map[string]string{"/spec/computingUnit": URI(r).String(), "/status/phase": string(phase)}, Limit: 1})
+		if err != nil {
+			return err
+		}
+		if len(running) > 0 {
+			return Conflict("running", fmt.Sprintf("execution %s is %s on %s; cancel it or wait", running[0].RID, phase, r.Name), map[string]any{"execution": running[0].RID.String()})
+		}
+	}
+	return nil
+}
+
+// afterUpdate applies a changed spec outside the store: a provisioned unit rolls to it at
+// once, a static unit's identity follows its client.
+func (s *Service) afterUpdate(ctx context.Context, r *store.Resource) error {
+	if r.Kind != "computing-unit" {
+		return nil
+	}
+	var spec api.ComputingUnitSpec
+	if err := json.Unmarshal(r.Spec, &spec); err != nil {
+		return err
+	}
+	switch spec.Provider {
+	case api.UnitProviderKubernetes:
+		if _, err := s.Units.Endpoint(ctx, r.RID.String(), spec, s.workloadSource(r)); err != nil {
+			return Unavailable("unit provider", err)
+		}
+	default:
+		identity, err := s.unitIdentityFor(ctx, r, spec)
+		if err != nil {
+			return err
+		}
+		if identity != nil || unitIdentity(r) != nil {
+			return s.recordUnitIdentity(ctx, r, identity)
+		}
+	}
+	return nil
 }
 
 // beforeDelete cleans up what a kind holds outside the store.
