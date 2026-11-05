@@ -18,8 +18,10 @@ def test_me_and_the_public_settings(alice, anon):
 
 
 def test_the_seeds(alice):
-    names = {t["metadata"]["name"] for t in alice.get("/agent-templates")["items"]}
-    assert {"Data Analyst", "Bio Researcher"} <= names
+    # One agent is the entry to every chat: the platform ships it, and it is the default.
+    agents = [t for t in alice.get("/agent-templates")["items"] if t["metadata"].get("labels", {}).get("texera.builtin") == "true"]
+    assert [t["metadata"]["name"] for t in agents] == ["Texera Agent"]
+    assert alice.get("/settings")["spec"]["defaults"]["agentTemplate"] == agents[0]["metadata"]["uri"]
     assert any(u["status"]["phase"] == "ready" for u in alice.get("/computing-units/available")), "a ready unit"
     servers = {s["metadata"]["name"] for s in alice.get("/mcp-servers")["items"]}
     assert {"catalog", "dataflow"} <= servers
@@ -103,8 +105,20 @@ def test_the_mcp_servers(alice, anon, project):
     assert status == 200 and init["result"]["serverInfo"]["name"]
     _, catalog_tools = alice.mcp("catalog", "tools/list")
     _, dataflow_tools = alice.mcp("dataflow", "tools/list")
-    assert "resolve_uri" in {t["name"] for t in catalog_tools["result"]["tools"]}
-    assert "get_workflow" in {t["name"] for t in dataflow_tools["result"]["tools"]}
+    catalog = {t["name"] for t in catalog_tools["result"]["tools"]}
+    dataflow = {t["name"] for t in dataflow_tools["result"]["tools"]}
+    # The two servers share nothing. Dataflow holds the verbs of a workflow and its runs; what
+    # exists (resources, dataset files, operators, units, people, sharing) is the catalog's.
+    assert not catalog & dataflow, catalog & dataflow
+    assert dataflow == {"create_workflow", "get_workflow", "edit_workflow", "validate_workflow", "run_workflow",
+                        "get_execution", "pause_execution", "resume_execution", "get_port_result"}
+    assert {"search_resources", "resolve_uri", "get_resource", "list_versions", "get_version", "get_lineage", "grant_access",
+            "search_principals", "whoami", "list_dataset_files", "read_dataset_file", "commit_dataset_version",
+            "list_operators", "list_computing_units"} == catalog
+    _, units = alice.mcp("catalog", "tools/call", {"name": "list_computing_units", "arguments": {}})
+    assert any(u["status"]["phase"] == "ready" for u in units["result"]["structuredContent"]["items"]), units
+    _, scan = alice.mcp("catalog", "tools/call", {"name": "list_operators", "arguments": {"q": "CSVFileScan"}})
+    assert not scan["result"].get("isError") and "CSVFileScan" in scan["result"]["content"][0]["text"]
     _, got = alice.mcp("dataflow", "tools/call", {"name": "get_workflow", "arguments": {"rid": wf["metadata"]["rid"]}})
     assert got["result"]["structuredContent"]["metadata"]["head"] == 1
     _, resolved = alice.mcp("catalog", "tools/call", {"name": "resolve_uri", "arguments": {"uri": wf["metadata"]["uri"] + "@1"}})

@@ -1,6 +1,6 @@
 import { KindIcon, PrincipalName, ResourceCard } from "@texera/kinds";
 import { memo } from "react";
-import type { ChatMessage } from "./model";
+import { type ChatMessage, visibleParts } from "./model";
 import { ErrorPart, HandoffPart, ReasoningPart, TextPart, ToolCallPart } from "./parts";
 import type { TemplateLabel } from "./templates";
 
@@ -64,6 +64,7 @@ export const MessageItem = memo(function MessageItem({
     );
   }
   const label = message.template ? labels.get(message.template) : undefined;
+  const parts = visibleParts(message.parts);
   return (
     <div className="space-y-3 text-sm leading-relaxed" data-message-role={message.role} data-template={label?.name}>
       {showLabel && label && (
@@ -73,11 +74,11 @@ export const MessageItem = memo(function MessageItem({
           {label.vno !== undefined && <span className="normal-case opacity-70">v{label.vno}</span>}
         </div>
       )}
-      {message.parts.map((part, i) => {
+      {parts.map((part, i) => {
         const key = `${message.id}-${i}`;
         switch (part.type) {
           case "text":
-            return <TextPart key={key} text={part.text} streaming={streaming && i === message.parts.length - 1} />;
+            return <TextPart key={key} text={part.text} streaming={streaming && i === parts.length - 1} />;
           case "reasoning":
             return <ReasoningPart key={key} text={part.text} />;
           case "tool":

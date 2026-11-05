@@ -221,12 +221,26 @@ type UpdateSpecInput struct {
 }
 
 // UpdateSpec replaces a spec; a kind that snapshots its spec gets a new version.
+// platformOnly refuses a change to a built-in resource by anyone but the platform. What the
+// platform ships is defined in its repository and its deployment's configuration, and the seed
+// puts it back at every start: a change through the API would be silently undone, so it is
+// refused, also for an administrator.
+func platformOnly(caller *auth.Caller, r *store.Resource) error {
+	if caller.Service || r.Labels["texera.builtin"] != "true" {
+		return nil
+	}
+	return Conflict("builtin", fmt.Sprintf("%s is built in: it changes with the platform, not through the API", r.Name), nil)
+}
+
 func (s *Service) UpdateSpec(ctx context.Context, caller *auth.Caller, k kinds.Kind, in UpdateSpecInput) (*store.Resource, *store.Version, error) {
 	r, err := s.Get(ctx, caller, &k, in.RID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if err := s.require(ctx, caller, authz.Write, r.RID); err != nil {
+		return nil, nil, err
+	}
+	if err := platformOnly(caller, r); err != nil {
 		return nil, nil, err
 	}
 	spec, err := s.prepareSpec(ctx, caller, k, r.Name, in.Spec)
@@ -322,6 +336,9 @@ func (s *Service) Delete(ctx context.Context, caller *auth.Caller, kind *kinds.K
 		return err
 	}
 	if err := s.require(ctx, caller, authz.Delete, r.RID); err != nil {
+		return err
+	}
+	if err := platformOnly(caller, r); err != nil {
 		return err
 	}
 	if r.Kind == "settings" {

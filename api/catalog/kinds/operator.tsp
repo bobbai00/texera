@@ -71,7 +71,7 @@ namespace Routes {
     @get
     @extension("x-texera-permission", "list")
     @extension("x-mcp", #{
-      server: "dataflow",
+      server: "catalog",
       tool: "list_operators",
       description: "List the operator types available: without q or group, a compact list of types, names, groups and descriptions; with q (an operator name or part of it) or group, the matching operators with their property JSON Schema and ports. Use the exact operatorType values when building a workflow.",
       readOnlyHint: true,

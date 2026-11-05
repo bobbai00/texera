@@ -101,12 +101,6 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateAgentTemplate'
-      x-mcp:
-        server: catalog
-        tool: create_agent_template
-        description: 'Create an agent template: a card (name, description), a model endpoint URI, a system prompt, and optionally skills, MCP servers and handoff templates. Find model endpoints and MCP servers with search_resources.'
-        readOnlyHint: false
-        destructiveHint: false
       x-texera-permission: create
   /catalog/v1/agent-templates/{rid}:
     get:
@@ -342,9 +336,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: dataflow
+        server: catalog
         tool: list_computing_units
-        description: List the computing units the caller can run workflows on, with status.
+        description: List the computing units the caller can run workflows on, with status. A run in a chat uses the chat's unit unless the call names another.
         readOnlyHint: true
       x-texera-permission: list
   /catalog/v1/computing-units/{rid}:
@@ -1251,7 +1245,7 @@ paths:
             schema:
               $ref: '#/components/schemas/CommitFiles'
       x-mcp:
-        server: dataflow
+        server: catalog
         tool: commit_dataset_version
         description: Commit a dataset's staged files as a new immutable version.
         readOnlyHint: false
@@ -1431,7 +1425,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: dataflow
+        server: catalog
         tool: list_dataset_files
         description: List the files of a dataset version with sizes and digests.
         readOnlyHint: true
@@ -1495,7 +1489,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: dataflow
+        server: catalog
         tool: read_dataset_file
         description: Read the beginning of a dataset file (bounded bytes), e.g. to inspect a CSV header.
         readOnlyHint: true
@@ -2754,7 +2748,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: dataflow
+        server: catalog
         tool: list_operators
         description: 'List the operator types available: without q or group, a compact list of types, names, groups and descriptions; with q (an operator name or part of it) or group, the matching operators with their property JSON Schema and ports. Use the exact operatorType values when building a workflow.'
         readOnlyHint: true
@@ -4408,7 +4402,7 @@ paths:
       x-mcp:
         server: dataflow
         tool: run_workflow
-        description: Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states and port results.
+        description: Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the chat's unit; name one only when the person asks for another.
         readOnlyHint: false
         destructiveHint: false
         idempotentHint: false
@@ -4445,7 +4439,7 @@ paths:
       x-mcp:
         server: dataflow
         tool: validate_workflow
-        description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator."
+        description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator. Leave computingUnit out to use the chat's unit."
         readOnlyHint: true
       x-texera-permission: read
   /catalog/v1/workflows/{rid}/versions:

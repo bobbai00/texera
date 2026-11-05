@@ -1,16 +1,31 @@
 /**
  * Builds the agent of a template version for one turn: the model from its endpoint and the
  * leased credential, the system prompt, the skills, the MCP servers (the catalog server for
- * every template unless it opts out), the handoff tool, and the loop that runs them. Nothing
- * survives the turn: `close` drops the MCP sessions.
+ * every template unless it opts out), the handoff tool, and the loop that runs them. The chat's
+ * own facts (the date, its computing unit, add-ons that could not be mounted) go into every
+ * step's turn state. Nothing survives the turn: `close` drops the MCP sessions.
  */
 import type { LanguageModel, ModelMessage, ToolSet } from "ai";
 import type { CatalogClient } from "../catalog/client.ts";
 import type { CatalogAuth, LoopSpec, McpBinding, SkillRecord, TemplateRecord } from "../catalog/types.ts";
 import type { Logger } from "../log.ts";
-import { DEFAULT_POLICY, type LoopEvent, type LoopOutcome, type LoopPolicy, runReactLoop } from "../run/react-loop.ts";
+import {
+  DEFAULT_POLICY,
+  type LoopEvent,
+  type LoopOutcome,
+  type LoopPolicy,
+  renderTurnState,
+  runReactLoop,
+} from "../run/react-loop.ts";
+import { type ChatFacts, chatContext } from "./chat-context.ts";
 import { candidatesOf, HANDOFF_TOOL, type HandoffCandidate, handoffTool } from "./handoff.ts";
-import { builtinBinding, type McpMount, type McpMountOptions, mountMcpBindings } from "./mcp-tools.ts";
+import {
+  builtinBinding,
+  type McpMount,
+  type McpMountOptions,
+  mountMcpBindings,
+  type UnavailableServer,
+} from "./mcp-tools.ts";
 import { defaultModelFactory, type ModelFactory } from "./model.ts";
 import { LOAD_SKILL_TOOL, loadSkillTool } from "./skills.ts";
 import { composeSystemPrompt } from "./system-prompt.ts";
@@ -29,6 +44,8 @@ export interface BuildDeps {
   transportFactory?: McpMountOptions["transportFactory"];
   /** Extra tools, from tests. */
   extraTools?: ToolSet;
+  /** The clock, for the date an agent is told; tests fix it. */
+  now?: () => Date;
 }
 
 export interface BuildInput {
@@ -37,6 +54,8 @@ export interface BuildInput {
   turn: TurnContext;
   /** What a lease is for: the conversation URI. */
   purpose: string;
+  /** The chat's settings the agent is told. */
+  chat?: ChatFacts;
 }
 
 export interface RunInput {
@@ -49,6 +68,8 @@ export interface BuiltAgent {
   tools: ToolSet;
   instructions: string;
   handoffs: HandoffCandidate[];
+  /** The add-on servers left out of this turn. */
+  unavailable: UnavailableServer[];
   policy: LoopPolicy;
   maxSteps: number;
   temperature: number;
@@ -118,11 +139,20 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
   const instructions = composeSystemPrompt(template, skills, handoffs);
   const { policy, maxSteps, temperature } = resolveLoop(spec.loop, { maxSteps: deps.maxSteps, policy: deps.policy });
   const maxOutputTokens = endpoint.spec.maxOutputTokens;
+  for (const missing of mcp.unavailable) {
+    deps.log.warn("add-on left out of the turn", { server: missing.name, uri: missing.uri, reason: missing.reason });
+  }
+  const chat = chatContext({
+    today: (deps.now ?? (() => new Date()))(),
+    chat: input.chat,
+    unavailable: mcp.unavailable,
+  });
   deps.log.info("agent built", {
     template: template.uri,
     model: endpoint.spec.model,
     tools: Object.keys(tools),
     servers: mcp.servers.map((s) => s.name),
+    unavailable: mcp.unavailable.map((s) => s.name),
     handoffs: handoffs.map((h) => h.name),
   });
   return {
@@ -130,6 +160,7 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
     tools,
     instructions,
     handoffs,
+    unavailable: mcp.unavailable,
     policy,
     maxSteps,
     temperature,
@@ -145,6 +176,7 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
         maxOutputTokens,
         abortSignal: run.abortSignal,
         interruptTools: handoffs.length > 0 ? [HANDOFF_TOOL] : [],
+        renderContext: (state, step) => `${renderTurnState(state, step)}\n\n${chat}`,
       }),
     close: () => mcp.close(),
   };

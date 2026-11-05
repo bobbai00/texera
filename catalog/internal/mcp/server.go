@@ -44,20 +44,23 @@ func Handler(server string, api http.Handler, resolver *texauth.Resolver, public
 }
 
 var instructions = map[string]string{
-	"catalog": `The Texera catalog: every resource (workflows, datasets, executions, agent templates, skills,
-MCP servers, computing units, environments, operators, conversations, credentials, model endpoints)
+	"catalog": `The Texera catalog: what exists. Every resource (workflows, datasets, executions, skills, MCP
+servers, computing units, environments, operators, conversations, credentials, model endpoints)
 has a texera:// URI, versions, grants and lineage. search_resources finds things by kind, project
 or text; resolve_uri and get_resource read one; list_versions and get_version read history;
 get_lineage shows where a version came from and what was made from it; grant_access shares a
-resource with a principal found by search_principals; create_agent_template makes a new agent.`,
-	"dataflow": `Texera workflows are dataflow graphs of operators that run on computing units; datasets are
-versioned files; every edit is a version and every run is an execution with lineage. Typical
-flow: list_dataset_files and read_dataset_file to see the data, list_operators with q to learn an
-operator's property schema, create_workflow with a spec {operators, links} where a scan's
-fileName is texera://datasets/<rid>@<vno>/files/<path>, validate_workflow until it reports ok,
-run_workflow with waitSeconds, then get_port_result for rows; results live with the run.
-edit_workflow applies an RFC 6902 patch and makes a new version. get_execution follows a run
-that is still going; pause_execution and resume_execution hold and continue it.`,
+resource with a principal found by search_principals. Datasets are versioned files:
+list_dataset_files and read_dataset_file look at a version, commit_dataset_version makes one.
+list_operators, with q, gives an operator's property schema and ports; list_computing_units the
+units the caller may run on. Building and running workflows is the dataflow server's.`,
+	"dataflow": `Texera workflows are dataflow graphs of operators that run on computing units; every edit is
+a version and every run is an execution with lineage. This server holds the verbs of a workflow
+and its runs, and nothing else: create_workflow with a spec {operators, links} where a scan's
+fileName is texera://datasets/<rid>@<vno>/files/<path>, get_workflow to read it, edit_workflow
+to apply an RFC 6902 patch as a new version, validate_workflow until it reports ok, run_workflow
+with waitSeconds, then get_port_result for rows; results live with the run. get_execution
+follows a run that is still going; pause_execution and resume_execution hold and continue it.
+The data, the operators' schemas and the computing units are found through the catalog server.`,
 }
 
 // maxToolTextBytes bounds what a tool returns to a model.

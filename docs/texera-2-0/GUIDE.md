@@ -40,13 +40,13 @@ The same stack on Kubernetes: `bin/texera-2-0/k8s.sh up`, then http://localhost:
 
 ## 2. The workspace
 
-**A chat.** The home page starts a conversation: pick an agent template (the Data Analyst
-answers data questions by building and running workflows; the Bio Researcher grounds
-biomedical ideas in PubMed and hands analyses to the Data Analyst) and a computing unit, then
-ask. Attach a CSV from the composer and it becomes a dataset of yours. Every resource the
-agent makes or touches shows as a card in the message and in the rail beside the chat. Each
-assistant message is labelled with the template version that wrote it; switch agents with the
-switcher or by typing `/mode <template>`, and a handoff by an agent shows as a divider.
+**A chat.** The home page starts a conversation with the Texera Agent, the one agent of the
+deployment: it answers data questions by building and running workflows, and grounds research
+questions in the biomedical literature. Pick the computing unit the chat's runs use, then ask.
+Attach a CSV from the composer and it becomes a dataset of yours, shown as a card of your
+message. Every resource the agent makes or touches shows as a card in the message and in the
+rail beside the chat. Each assistant message is labelled with the version of the agent that
+wrote it. A turn that fails says why in the chat, and still does after a reload.
 
 **A chat with others.** Share a conversation like any resource and it is a group chat: an
 editor posts and takes turns, a viewer reads along. Their messages arrive as they are sent,
@@ -56,8 +56,7 @@ Bob's turn, so the history says who asked what. The same works from the API: a g
 conversation is the membership, every message carries its author, and the turn lock names
 its holder.
 
-**The library.** Every kind has a page under its plural: `/workflows`, `/datasets`,
-`/agent-templates`, `/operators`, `/environments`, `/computing-units`, `/credentials`,
+**The library.** Every kind has a page under its plural: `/workflows`, `/datasets`, `/operators`, `/environments`, `/computing-units`, `/credentials`,
 `/mcp-servers`, `/model-endpoints`, `/skills`, `/projects`, and `/settings` for
 administrators. "New …" opens a form generated from the kind's schema. A resource's page has
 its spec (a form, the JSON a click away), its versions, who can access it, its lineage and the
@@ -93,24 +92,45 @@ environment, unit, model endpoint) and retention (section 5).
 
 ## 3. Agents
 
-An agent is an **agent template** running one turn of a conversation on the person's behalf,
-with the person's own permissions. A template is a resource like any other: a card, a model
-endpoint, a system prompt, skills loaded on demand, the MCP servers it mounts (the catalog
-server with every operation as a tool is mounted unless `catalogTools` is false), the
-templates it may hand off to, and the loop settings (`answer: free | after_result`,
-`maxSteps`). Create your own from `/agent-templates`; it is versioned, shareable and appears
-in the picker of a new chat.
+One agent is the entry to every chat: the **Texera Agent**. It runs one turn of a
+conversation at a time, on the person's behalf and with the person's own permissions.
+
+**What it is made of.** A system prompt, tools, and skills.
+
+- **Basic tools**, always there: the catalog server and the dataflow server, the platform's own
+  MCP servers, plus `load_skill`. The two servers share no tool. The dataflow server holds the
+  verbs of a workflow and its runs (`create_workflow`, `edit_workflow`, `validate_workflow`,
+  `run_workflow`, `get_port_result`, …); everything that exists is the catalog server's:
+  resources and their versions, lineage and sharing, dataset files, operators, computing units.
+- **Add-ons**: any other MCP server; the platform ships the bio server (PubMed, genes,
+  variants, proteins). An add-on that cannot be reached is left out of the turn and the agent
+  is told, so it says so instead of answering from memory; the turn goes on with the rest.
+- **Skills** are Markdown the agent loads by name when it needs them (building workflows,
+  Python operators, reading results, the literature review), so the prompt stays short.
+- The agent is told, at every step, today's date and the computing unit of the chat.
+
+**Where it is defined.** The agent is a file in the repository,
+`catalog/internal/catalog/agents/texera-agent.md` (its card and its system prompt), next to the
+skills in `skills/*.md`; the model endpoint, the skills and the MCP servers it uses are a few
+lines of `seed.go`. The catalog seeds it at start as a built-in agent template, the settings'
+default. A changed file is a new version at the next start; a turn runs the newest version,
+and every message records the version that wrote it, so a change is traceable and is undone by
+reverting the file. What the platform ships changes only this way: the API refuses to edit or
+delete a built-in resource (`409 builtin`), also for an administrator, because the next start
+would silently undo it. The model, its key and the bio server's address come from the
+deployment (`TEXERA_MODEL_NAME`, the key in `.env`, `TEXERA_BIOMCP_URL`).
 
 - **Model endpoints** name a provider and a model (`anthropic`, or `openai_compatible` with a
   base URL) and the **credential** whose secret is the key. The runtime holds no key: it
-  leases the credential for the turn. The platform's endpoint uses the key from `.env`.
-- **Skills** are Markdown the agent loads by name when its index says they apply (the seeded
-  ones: building workflows, Python operators, reading results, the literature review).
+  leases the credential for the turn.
 - **MCP servers** are any streamable-HTTP server; a header value `credential:<uri>` or
-  `credential:<uri>#<field>` is replaced by the leased secret. The platform provides
-  `catalog`, `dataflow` and the bio server (PubMed, genes, variants, proteins).
+  `credential:<uri>#<field>` is replaced by the leased secret.
 - The conversation keeps the history; the runtime is stateless, so one turn runs at a time
   (`409 turn_active` otherwise) and a crash loses nothing.
+
+Not offered for now: agents of your own, switching agents in a chat, and handing a chat from
+one agent to another. The agent template kind, `/mode` and the handoff tool remain in the code
+for when they return; chats started with an agent of an older release keep working with it.
 
 ## 4. Workflows and runs, by the API
 
@@ -219,16 +239,26 @@ compiles first. Toward the lake and the catalog a unit has an identity of its ow
 reaches only the namespaces of the runs it executed. Grant `user` on a unit to let someone
 run on it; `GET /computing-units/available` lists the ones you may use.
 
+A run goes to the unit the request names, else the chat's, else the workflow's, the project's
+or the platform's default. The chat's unit is the one picked when the chat started: the catalog
+applies it to every compile and run the agent makes in that chat, so the agent need not be
+told, and names a unit itself only when you ask for another. It gives no right to the unit:
+the person is authorized on it like on any other.
+
 ## 7. Your own agents and tools
 
 Anything that holds a person's token can do what the person can:
 
 - **The MCP servers.** `POST {gw}/mcp/catalog` and `POST {gw}/mcp/dataflow` are streamable
   HTTP MCP servers (`Accept: application/json, text/event-stream`), one tool per operation of
-  the contract: the dataflow server has the workflow tools (`create_workflow`,
-  `edit_workflow`, `validate_workflow`, `run_workflow`, `get_port_result`, the dataset file
-  tools); the catalog server the rest (`whoami`, `search_resources`, `resolve_uri`,
-  `grant_access`, …). Point Claude Code, an SDK agent or any MCP client at them with a
+  the contract, and no tool on both: the dataflow server has the verbs of a workflow and its
+  runs (`create_workflow`, `get_workflow`, `edit_workflow`, `validate_workflow`,
+  `run_workflow`, `get_execution`, `pause_execution`, `resume_execution`,
+  `get_port_result`); the catalog server everything else (`whoami`, `search_resources`,
+  `resolve_uri`, `get_resource`, `list_versions`, `get_version`, `get_lineage`,
+  `grant_access`, `search_principals`, the dataset file tools, `list_operators`,
+  `list_computing_units`). A tool that fails answers with the status and the words of the
+  error, the engine's own when the engine refused. Point Claude Code, an SDK agent or any MCP client at them with a
   bearer token. The walkthrough shows one call.
 - **The chat protocol.** `POST {gw}/agents/conversations/{rid}/ag-ui` runs one turn of the
   conversation's template with an AG-UI `RunAgentInput` (only the new user message; the
@@ -270,12 +300,15 @@ rolls it; `terminate` removes it. Details, the images and the manifests:
 - **401 from the gateway.** The token is missing, expired or for another issuer; a realm
   change (`bin/texera-2-0/keycloak/texera-realm.json`) needs `down.sh --wipe`, Keycloak
   imports a realm once.
-- **409.** A duplicate name in the project; a delete of something still referenced or still
+- **409.** An edit or delete of a built-in resource (`builtin`); a duplicate name in the project; a delete of something still referenced or still
   holding children (the response lists them); a run on a unit that already runs one of this
   workflow; a unit with a run on it being changed.
 - **410** on a run's rows: its results expired under the retention policy; keep runs you need.
 - **403** where you expected to be allowed: viewing never implies using; ask for `user` on the
   unit, credential or model endpoint, or `editor` to write.
+- **A run failed.** Its page and `get_execution` give the reason: an operator's own exception
+  (a Python operator that raises fails the run, with its traceback, instead of waiting), a
+  compile error per operator, or what the engine refused.
 - **The unit is not ready.** `logs/texera-2-0/unit.log`; the engine compiles with sbt on the
   first start and the catalog shows the unit as pending until its health answers.
 - **Playwright has no browser.** `cd frontend-next && bunx playwright install chromium`, or

@@ -26,52 +26,78 @@ import (
 //go:embed skills/*.md
 var skillFiles embed.FS
 
+// The agent the platform ships, in the same form: the frontmatter is its card, the body its
+// system prompt. The file is the source of truth; a changed file is a new version of the
+// template at the next start, and a turn runs the newest version.
+//
+//go:embed agents/texera-agent.md
+var agentFile []byte
+
 var (
 	leadingComment = regexp.MustCompile(`(?s)\A\s*<!--.*?-->\s*`)
 	frontmatter    = regexp.MustCompile(`(?s)\A---\r?\n(.*?)\r?\n---\r?\n`)
 )
 
-type shippedSkill struct {
+// shipped is a file the platform ships: its frontmatter's name and description, and its body.
+type shipped struct {
 	Name, Description, Body string
 }
 
-func shippedSkills() ([]shippedSkill, error) {
+// parseShipped reads one shipped file: the license comment is dropped, the frontmatter must
+// give a name and a description, and the rest is the body.
+func parseShipped(file string, data []byte) (shipped, error) {
+	content := leadingComment.ReplaceAllString(string(data), "")
+	m := frontmatter.FindStringSubmatch(content)
+	if m == nil {
+		return shipped{}, fmt.Errorf("%s: no frontmatter", file)
+	}
+	out := shipped{Body: strings.TrimSpace(content[len(m[0]):])}
+	for _, line := range strings.Split(m[1], "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		switch strings.TrimSpace(key) {
+		case "name":
+			out.Name = value
+		case "description":
+			out.Description = value
+		}
+	}
+	if out.Name == "" || out.Description == "" {
+		return shipped{}, fmt.Errorf("%s: the frontmatter needs name and description", file)
+	}
+	if out.Body == "" {
+		return shipped{}, fmt.Errorf("%s: no body", file)
+	}
+	return out, nil
+}
+
+func shippedSkills() ([]shipped, error) {
 	names, err := fs.Glob(skillFiles, "skills/*.md")
 	if err != nil {
 		return nil, err
 	}
 	sort.Strings(names)
-	var out []shippedSkill
+	var out []shipped
 	for _, name := range names {
 		data, err := skillFiles.ReadFile(name)
 		if err != nil {
 			return nil, err
 		}
-		content := leadingComment.ReplaceAllString(string(data), "")
-		m := frontmatter.FindStringSubmatch(content)
-		if m == nil {
-			return nil, fmt.Errorf("%s: no frontmatter", name)
-		}
-		sk := shippedSkill{Body: strings.TrimSpace(content[len(m[0]):])}
-		for _, line := range strings.Split(m[1], "\n") {
-			key, value, ok := strings.Cut(line, ":")
-			if !ok {
-				continue
-			}
-			value = strings.Trim(strings.TrimSpace(value), `"'`)
-			switch strings.TrimSpace(key) {
-			case "name":
-				sk.Name = value
-			case "description":
-				sk.Description = value
-			}
-		}
-		if sk.Name == "" || sk.Description == "" {
-			return nil, fmt.Errorf("%s: the frontmatter needs name and description", name)
+		sk, err := parseShipped(name, data)
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, sk)
 	}
 	return out, nil
+}
+
+// shippedAgent is the platform's agent: its card and its system prompt.
+func shippedAgent() (shipped, error) {
+	return parseShipped("agents/texera-agent.md", agentFile)
 }
 
 // Seed creates the platform principal, the system project, the settings, and the built-in
@@ -189,42 +215,61 @@ func (s *Service) Seed(ctx context.Context) error {
 		skillURIs[sk.Name] = URI(r).String()
 	}
 
-	afterResult := api.LoopSpecAnswerAfterResult
-	analyst, err := ensure("agent-template", "Data Analyst", "Analyzes datasets by building and running Texera workflows",
+	// One agent is the entry to every chat. It mounts the platform's dataflow server and the bio
+	// add-on (the catalog server is every agent's), and loads every shipped skill on demand. It
+	// answers every kind of question, so a reply without a tool call is its answer.
+	card, err := shippedAgent()
+	if err != nil {
+		return err
+	}
+	var allSkills []string
+	for _, sk := range skills {
+		allSkills = append(allSkills, skillURIs[sk.Name])
+	}
+	free := api.LoopSpecAnswerFree
+	agent, err := ensure("agent-template", card.Name, card.Description,
 		api.AgentTemplateSpec{
-			Card:       api.AgentCard{Name: "Data Analyst", Description: "Answers data questions by building, running and reading Texera workflows over the person's datasets; computes every number it reports."},
+			Card:       api.AgentCard{Name: card.Name, Description: card.Description},
 			Model:      api.Uri(URI(model).String()),
-			Prompt:     dataAnalystPrompt,
-			Skills:     uris(skillURIs["texera-workflows"], skillURIs["python-udf"], skillURIs["reading-results"]),
-			McpServers: &[]api.McpBinding{{Server: api.Uri(URI(dataflowMcp).String())}},
-			Loop:       &api.LoopSpec{Answer: &afterResult},
+			Prompt:     card.Body,
+			Skills:     uris(allSkills...),
+			McpServers: &[]api.McpBinding{{Server: api.Uri(URI(dataflowMcp).String())}, {Server: api.Uri(URI(bioMcp).String())}},
+			Loop:       &api.LoopSpec{Answer: &free},
 		}, nil, nil)
 	if err != nil {
 		return err
 	}
-	free := api.LoopSpecAnswerFree
-	if _, err := ensure("agent-template", "Bio Researcher", "Grounds biomedical research ideas in the literature, genes, variants and proteins",
-		api.AgentTemplateSpec{
-			Card:       api.AgentCard{Name: "Bio Researcher", Description: "Proposes and grounds biomedical research ideas with PubMed, citation networks, gene, variant and protein lookups; hands data analysis to the Data Analyst."},
-			Model:      api.Uri(URI(model).String()),
-			Prompt:     bioResearcherPrompt,
-			Skills:     uris(skillURIs["literature-review"]),
-			McpServers: &[]api.McpBinding{{Server: api.Uri(URI(bioMcp).String())}},
-			Handoffs:   uris(URI(analyst).String()),
-			Loop:       &api.LoopSpec{Answer: &free},
-		}, nil, nil); err != nil {
+	// Agents an older release shipped stay, so the chats that use them keep working; they are no
+	// longer anybody's default.
+	retired, err := s.retiredAgents(ctx, project, agent)
+	if err != nil {
 		return err
 	}
 
-	settings := api.SettingsSpec{Branding: api.Branding{Name: s.Config.BrandName}, Defaults: api.Defaults{AgentTemplate: uriPtr(URI(analyst).String()), Environment: uriPtr(envURI), ModelEndpoint: uriPtr(URI(model).String())}}
+	settings := api.SettingsSpec{Branding: api.Branding{Name: s.Config.BrandName}, Defaults: api.Defaults{AgentTemplate: uriPtr(URI(agent).String()), Environment: uriPtr(envURI), ModelEndpoint: uriPtr(URI(model).String())}}
 	if unitURI != "" {
 		settings.Defaults.ComputingUnit = uriPtr(unitURI)
 	}
-	if err := s.ensureSettings(ctx, caller, settings); err != nil {
+	if err := s.ensureSettings(ctx, caller, settings, retired); err != nil {
 		return err
 	}
 	s.Relay.Flush(ctx)
 	return nil
+}
+
+// retiredAgents lists, by URI, the built-in agent templates the platform no longer ships.
+func (s *Service) retiredAgents(ctx context.Context, project *store.Resource, shippedAgent *store.Resource) (map[string]bool, error) {
+	builtins, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "agent-template", ParentRID: &project.RID, Labels: map[string]string{"texera.builtin": "true"}, Limit: 200})
+	if err != nil {
+		return nil, err
+	}
+	retired := map[string]bool{}
+	for i := range builtins {
+		if builtins[i].RID != shippedAgent.RID {
+			retired[URI(&builtins[i]).String()] = true
+		}
+	}
+	return retired, nil
 }
 
 func (s *Service) ensureSystemProject(ctx context.Context, caller *auth.Caller) (*store.Resource, error) {
@@ -293,7 +338,9 @@ func (s *Service) ensureBuiltin(ctx context.Context, caller *auth.Caller, projec
 	return r, nil
 }
 
-func (s *Service) ensureSettings(ctx context.Context, caller *auth.Caller, spec api.SettingsSpec) error {
+// ensureSettings creates the settings, or fills what the deployment has not set. retiredAgents
+// are agent templates that may no longer be the default: the shipped one takes their place.
+func (s *Service) ensureSettings(ctx context.Context, caller *auth.Caller, spec api.SettingsSpec, retiredAgents map[string]bool) error {
 	k, _ := kinds.ByName("settings")
 	r, err := s.Store.GetResource(ctx, SettingsRID)
 	if err != nil {
@@ -325,6 +372,10 @@ func (s *Service) ensureSettings(ctx context.Context, caller *auth.Caller, spec 
 				*dst = src
 				changed = true
 			}
+		}
+		if current.Defaults.AgentTemplate != nil && retiredAgents[string(*current.Defaults.AgentTemplate)] {
+			current.Defaults.AgentTemplate = spec.Defaults.AgentTemplate
+			changed = true
 		}
 		fill(&current.Defaults.AgentTemplate, spec.Defaults.AgentTemplate)
 		fill(&current.Defaults.Environment, spec.Defaults.Environment)

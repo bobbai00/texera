@@ -14,6 +14,8 @@ export const SKILL_RID = "55555555-5555-4555-8555-555555555555";
 export const USER_PID = "66666666-6666-4666-8666-666666666666";
 export const MODEL_RID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 export const CREDENTIAL_RID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+export const UNIT_RID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+export const UNIT_URI = `texera://computing-units/${UNIT_RID}`;
 
 export const ANALYST_URI = `texera://agent-templates/${TEMPLATE_RID}`;
 export const BIO_URI = `texera://agent-templates/${BIO_TEMPLATE_RID}`;
@@ -36,9 +38,11 @@ export interface FakeCatalogOptions {
   skill?: SkillSpec;
   /** The conversation's template at the start; default the Data Analyst. */
   conversationTemplate?: string;
+  /** The computing unit the conversation names, with its state. */
+  conversationUnit?: { name: string; phase: string };
 }
 
-function envelope(kind: string, rid: string, name: string, spec: unknown, head = 1) {
+function envelope(kind: string, rid: string, name: string, spec: unknown, head = 1, status?: unknown) {
   const plural = `${kind}s`;
   return {
     apiVersion: "catalog.texera.apache.org/v1",
@@ -57,6 +61,7 @@ function envelope(kind: string, rid: string, name: string, spec: unknown, head =
       updatedAt: "2026-01-01T00:00:00Z",
     },
     spec,
+    ...(status !== undefined ? { status } : {}),
   };
 }
 
@@ -79,7 +84,10 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
   };
   const analystHead = Math.max(1, ...Object.keys(options.templateVersions ?? {}).map(Number));
   const conversation = {
-    spec: { template: options.conversationTemplate ?? ANALYST_URI } as Record<string, unknown>,
+    spec: {
+      template: options.conversationTemplate ?? ANALYST_URI,
+      ...(options.conversationUnit ? { computingUnit: UNIT_URI } : {}),
+    } as Record<string, unknown>,
     status: { messages: 0 } as Record<string, unknown>,
   };
   const leases: string[] = [];
@@ -92,7 +100,15 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
 
   const resources: Record<
     string,
-    { kind: string; rid: string; name: string; spec: unknown; head: number; versions?: Record<number, unknown> }
+    {
+      kind: string;
+      rid: string;
+      name: string;
+      spec: unknown;
+      head: number;
+      versions?: Record<number, unknown>;
+      status?: unknown;
+    }
   > = {
     [`agent-templates/${TEMPLATE_RID}`]: {
       kind: "agent-template",
@@ -132,6 +148,15 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       spec: options.mcpServer,
       head: 1,
     };
+  if (options.conversationUnit)
+    resources[`computing-units/${UNIT_RID}`] = {
+      kind: "computing-unit",
+      rid: UNIT_RID,
+      name: options.conversationUnit.name,
+      spec: { provider: "static" },
+      head: 0,
+      status: { phase: options.conversationUnit.phase },
+    };
   if (options.skill)
     resources[`skills/${SKILL_RID}`] = {
       kind: "skill",
@@ -159,7 +184,7 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       const m = /^texera:\/\/([a-z-]+)\/([0-9a-f-]{36})(?:@(\d+))?$/i.exec(uri);
       const r = m ? resources[`${m[1]}/${m[2]}`] : undefined;
       if (!m || !r) return json(404, { code: "not_found", message: `no resource ${uri}` });
-      const out: Record<string, unknown> = { resource: envelope(r.kind, r.rid, r.name, r.spec, r.head) };
+      const out: Record<string, unknown> = { resource: envelope(r.kind, r.rid, r.name, r.spec, r.head, r.status) };
       if (m[3]) {
         const vno = Number(m[3]);
         const content = vno === r.head ? r.spec : r.versions?.[vno];

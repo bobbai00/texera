@@ -25,7 +25,7 @@ from texera_e2e.events import Watch
 
 def test_a_shared_chat_is_a_group_chat(alice, bob, project, grants_guard):
     alice_pid, bob_pid = alice.pid(), bob.pid()
-    crid = chat.conversation(alice, "team chat", chat.template_uri(alice, "Data Analyst"), project=project)
+    crid = chat.conversation(alice, "team chat", chat.agent_uri(alice), project=project)
     first = alice.post(f"/conversations/{crid}/messages", {"role": "user", "parts": [{"type": "text", "text": "hello team"}]})
     assert first["author"] == alice_pid
 

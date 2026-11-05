@@ -4,6 +4,11 @@
  * catalog's PDP applies the person's permissions and records the turn on what the tools
  * create. Any other server gets the headers its resource configures, with `credential:<uri>`
  * values replaced by the leased secret, and nothing else.
+ *
+ * The platform's servers are an agent's basic tools: without them it cannot work, so a failure to
+ * mount one fails the turn. Every other server is an add-on: one that cannot be reached, does not
+ * answer in time or whose credential cannot be leased is left out and named, and the turn goes on
+ * with the rest.
  */
 import { createMCPClient, type MCPClient, type MCPTransport } from "@ai-sdk/mcp";
 import type { ToolSet } from "ai";
@@ -27,6 +32,15 @@ export interface McpMountOptions {
     url: string,
     headers: Record<string, string>,
   ) => MCPTransport | undefined;
+  /** How long an add-on may take to connect and list its tools; default 10 s. */
+  addOnTimeoutMs?: number;
+}
+
+/** An add-on server left out of a turn, and why. */
+export interface UnavailableServer {
+  name: string;
+  uri: string;
+  reason: string;
 }
 
 export interface MountedServer {
@@ -38,7 +52,34 @@ export interface MountedServer {
 export interface McpMount {
   tools: ToolSet;
   servers: MountedServer[];
+  /** The add-ons that could not be mounted. */
+  unavailable: UnavailableServer[];
   close(): Promise<void>;
+}
+
+export const DEFAULT_ADD_ON_TIMEOUT_MS = 10_000;
+
+/** Waits for a promise for at most `ms`; `late` runs on a value that arrives after the wait gave up. */
+async function within<T>(promise: Promise<T>, ms: number, late?: (value: T) => void): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let gaveUp = false;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      gaveUp = true;
+      reject(new Error(`no answer within ${ms} ms`));
+    }, ms);
+  });
+  promise.then(
+    (value) => {
+      if (gaveUp) late?.(value);
+    },
+    () => {},
+  );
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const CREDENTIAL = /^credential:(texera:\/\/credentials\/[0-9a-f-]{36})(?:#(.+))?$/i;
@@ -89,23 +130,37 @@ export async function mountMcpBindings(options: McpMountOptions): Promise<McpMou
   const clients: MCPClient[] = [];
   const tools: ToolSet = {};
   const servers: MountedServer[] = [];
+  const unavailable: UnavailableServer[] = [];
+  const timeout = options.addOnTimeoutMs ?? DEFAULT_ADD_ON_TIMEOUT_MS;
   try {
     for (const binding of options.bindings) {
       const server = await options.resolveServer(binding.server);
-      const { url, headers } = await connectionFor(server, options);
-      const transport = options.transportFactory?.(server, url, headers) ?? { type: "http" as const, url, headers };
-      const client = await createMCPClient({ transport });
-      clients.push(client);
-      const all = await client.tools();
-      const allow = binding.allow ? new Set(binding.allow) : undefined;
-      const mounted: string[] = [];
-      for (const [name, t] of Object.entries(all)) {
-        if (allow && !allow.has(name)) continue;
-        const key = name in tools ? `${sanitize(server.name)}__${name}` : name;
-        tools[key] = t;
-        mounted.push(key);
+      const addOn = !server.spec.builtin;
+      // An add-on gets a bounded wait; a client that connects after it is closed again.
+      const bounded = <T>(work: Promise<T>, late?: (value: T) => void) => (addOn ? within(work, timeout, late) : work);
+      try {
+        const { url, headers } = await connectionFor(server, options);
+        const transport = options.transportFactory?.(server, url, headers) ?? { type: "http" as const, url, headers };
+        const client = await bounded(createMCPClient({ transport }), (late) => void late.close().catch(() => {}));
+        clients.push(client);
+        const all = await bounded(client.tools());
+        const allow = binding.allow ? new Set(binding.allow) : undefined;
+        const mounted: string[] = [];
+        for (const [name, t] of Object.entries(all)) {
+          if (allow && !allow.has(name)) continue;
+          const key = name in tools ? `${sanitize(server.name)}__${name}` : name;
+          tools[key] = t;
+          mounted.push(key);
+        }
+        servers.push({ name: server.name, uri: server.uri, toolNames: mounted });
+      } catch (err) {
+        if (!addOn) throw err;
+        unavailable.push({
+          name: server.name,
+          uri: server.uri,
+          reason: err instanceof Error ? err.message : String(err),
+        });
       }
-      servers.push({ name: server.name, uri: server.uri, toolNames: mounted });
     }
   } catch (err) {
     await Promise.allSettled(clients.map((c) => c.close()));
@@ -114,6 +169,7 @@ export async function mountMcpBindings(options: McpMountOptions): Promise<McpMou
   return {
     tools,
     servers,
+    unavailable,
     close: async () => {
       await Promise.allSettled(clients.map((c) => c.close()));
     },

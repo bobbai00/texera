@@ -105,10 +105,10 @@ class Api:
     def revoke(self, rid: str, pid: str) -> None:
         self.call("DELETE", f"/resources/{rid}/grants/{pid}")
 
-    def mcp(self, server: str, method: str, params: dict | None = None, id: int = 1) -> tuple[int, Any]:
+    def mcp(self, server: str, method: str, params: dict | None = None, id: int = 1, headers: dict | None = None) -> tuple[int, Any]:
         """One JSON-RPC call to an MCP server behind the gateway; the first SSE event's data."""
         body = {"jsonrpc": "2.0", "id": id, "method": method, "params": params or {}}
-        h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+        h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", **(headers or {})}
         if self.token:
             h["Authorization"] = f"Bearer {self.token}"
         req = urllib.request.Request(f"{self.gw}/mcp/{server}", method="POST", headers=h, data=json.dumps(body).encode())

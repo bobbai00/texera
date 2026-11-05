@@ -25,7 +25,10 @@ origin of everything it creates.
    the MCP servers (the catalog server for every template unless `catalogTools` is false,
    the platform's servers with the person's token and the turn's origin, any other server
    with its own headers, `credential:<uri>#<field>` values leased); the `handoff` tool when
-   the template lists handoffs.
+   the template lists handoffs. The platform's servers are the agent's basic tools and a
+   turn fails without them; any other server is an add-on, left out of the turn and named
+   to the agent when it cannot be reached. The agent is also told the date and the chat's
+   computing unit, at the end of every step's prompt (`src/agent/chat-context.ts`).
 4. The loop streams: one model call per step, the step's tool calls run, until the model
    replies without a tool call, the step budget is spent, the run is aborted, or a handoff is
    called. The answer policy (`free` or `after_result`) decides whether a reply without a
@@ -33,7 +36,11 @@ origin of everything it creates.
 5. A handoff sets the conversation's template, emits `texera.handoff`, and the target
    template finishes the same turn on the same stream (at most `TEXERA_AGENT_MAX_HANDOFFS`).
 6. The assistant message is persisted after every step with the template version that wrote
-   it; the lock is released; `RUN_FINISHED` or `RUN_ERROR` ends the stream.
+   it; a turn that fails before or outside the loop is recorded as an `error` part; the lock
+   is released; `RUN_FINISHED` or `RUN_ERROR` ends the stream.
+
+The platform ships one agent, the Texera Agent, which lists no handoffs: `/mode` and the
+handoff tool are kept for agents that will.
 
 ## Run
 

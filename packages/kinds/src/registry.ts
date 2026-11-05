@@ -36,10 +36,13 @@ export const KINDS: Record<KindId, KindSpec> = {
   settings: settingsKind,
 };
 
-/** The library's sections, in sidebar order. */
+/**
+ * The library's sections, in sidebar order. Agent templates are not among them: every chat runs
+ * the deployment's one agent, so there is nothing to pick or make; the kind and its page stay.
+ */
 export const LIBRARY_GROUPS: { title: string; kinds: KindId[] }[] = [
   { title: "Work", kinds: ["workflow", "execution", "dataset", "model", "operator", "environment", "computing-unit"] },
-  { title: "Agents", kinds: ["agent-template", "skill", "mcp-server", "model-endpoint", "credential"] },
+  { title: "Agent", kinds: ["skill", "mcp-server", "model-endpoint", "credential"] },
   { title: "Projects", kinds: ["project"] },
 ];
 

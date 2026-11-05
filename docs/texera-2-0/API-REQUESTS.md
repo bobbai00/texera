@@ -11,7 +11,10 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 1. **AG-UI run input.** The app posts to `POST /agents/conversations/{rid}/ag-ui` an AG-UI
    `RunAgentInput` whose `messages` holds only the new user message (`{id, role: "user",
    content}`); the runtime loads the history from the catalog (`threadId` is the conversation
-   rid). An attached dataset is named in the text as `Attached dataset "<name>" (<uri>)`.
+   rid). An attachment travels by reference: AG-UI binary content `{type: "binary", mimeType:
+   "application/vnd.texera.resource", url: "<the resource's URI>", filename}` beside the text.
+   The runtime keeps it as a `resource` part of the person's message (its `text` the file
+   name), and the model reads it as the line `Attached dataset "<name>" (<uri>)`.
    `forwardedProps.template` may name a template URI to run this turn and the ones after.
 2. **Resources in tool results and events.** The app renders a card for any of these shapes
    found in a tool result (nested up to four levels): an envelope `{kind, metadata: {rid, uri,
@@ -22,8 +25,9 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 3. **A change of hands in the history.** A system message whose parts hold a `resource` naming
    an agent template version records that the conversation changed template: written by the
    template that handed off (the message's `template` field) or, without one, by the person
-   (`/mode`, typed or picked from the switcher). The app renders it as a divider; the runtime
-   keeps system messages out of the model's history.
+   (`/mode`). The app renders it as a divider; the runtime keeps system messages out of the
+   model's history. The app offers no way to change hands for now: every chat runs the
+   deployment's one agent.
 4. **Dataset file references in operator properties.** The app writes
    `texera://datasets/{rid}@{vno}/files/{path}` (and the version URI alone for version
    pickers), which the catalog resolves to presigned URLs when it builds the plan.
@@ -135,11 +139,44 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    `RUNNING` events), which land in `status.operators`; progress that arrives after the
    terminal report is ignored. Both verbs are MCP tools of the dataflow server.
 
+## catalog and its tools
+
+1. **The chat's unit.** A compile or a run takes its computing unit from the request, else
+   from the chat it was made in, else from the workflow, the project and the settings. The
+   chat is the call's origin (`X-Texera-Origin`), which the catalog honors only with the
+   runtime's service token; the conversation's `spec.computingUnit` is applied by the catalog
+   itself, so no agent has to pass it. The caller is authorized on that unit as on any other.
+2. **A unit's errors.** A unit answers an error in the contract's shape, `{code, message}`
+   with a string code and the engine's own words. The catalog keeps the class and the words:
+   a 400 or 422 of the unit is `400 invalid`, a 404 `404 not_found`, a 409 `409 conflict`,
+   anything else `502 unit_error`; `502 unavailable` is left for a unit that did not answer.
+   It reads the message from any JSON body that has one, whatever the code's type, so a unit
+   of another version still says what went wrong. A tool call answers `<status>: <body>`
+   with `isError`, so an agent reads the same words.
+3. **A port before its table is written.** While a run goes, reading the rows of an output
+   port the plan names answers an empty page, not an error; once the run is over, a missing
+   table is `404`.
+4. **An operator that raises.** A Python operator's exception fails the run: the unit reports
+   `failed` with the exception as the run's error and as the operator's, instead of leaving
+   the worker paused for an interactive console nobody attends.
+5. **Built-ins.** A resource labelled `texera.builtin` is written by the platform alone: an
+   edit or a delete through the API answers `409 builtin`, also for an administrator.
+6. **The two MCP servers share no tool.** An operation under `/workflows` is a dataflow tool;
+   every other `x-mcp` operation is a catalog tool.
+
 ## agent runtime
 
 1. **Turn headers.** Every catalog call made during a turn carries the person's token and the
-   origin headers (`X-Texera-Conversation`, `X-Texera-Turn`, `X-Texera-Template`) the catalog
-   records as the origin of what the turn creates; the service token identifies the runtime.
-2. **Built-in MCP servers.** A server resource with `spec.builtin` set (`catalog`, `dataflow`,
-   `biomcp`) is reached with the person's token; any other server with the headers its spec
-   lists, `credential:<uri>[#field]` values replaced by a lease taken for the turn.
+   origin header (`X-Texera-Origin: conversation=…;turn=…;template=…`) the catalog records as
+   the origin of what the turn creates, with `X-Texera-Service-Token` to vouch for it.
+2. **Basic tools and add-ons.** A server resource with `spec.builtin` set (`catalog`,
+   `dataflow`) is the platform's own: it is reached through the gateway with the person's
+   token, and a turn fails without it. Any other server is an add-on, reached at its own URL
+   with the headers its spec lists, `credential:<uri>[#field]` values replaced by a lease
+   taken for the turn; one that cannot be reached within ten seconds, or whose credential
+   cannot be leased, is left out of the turn and named to the agent.
+3. **What the agent is told about the chat.** Every step's prompt ends with the turn state
+   and the chat's facts: today's date, the computing unit the chat names (name, URI, state),
+   and the add-ons left out. The instructions before it are the same text for every chat.
+4. **A turn that fails.** Whatever ends a turn in error is written to the conversation as an
+   `error` part of an assistant message, so the reason outlives the stream.

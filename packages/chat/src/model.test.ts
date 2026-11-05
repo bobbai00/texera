@@ -1,7 +1,7 @@
 import type { Message } from "@texera/catalog-client/types";
 import { describe, expect, it } from "vitest";
 import type { AgUiEvent } from "./agui/types";
-import { applyEvent, applyPatch, type ChatState, EMPTY_STATE, extractResourceRefs, fromHistory, resourcesOf, templatesOf } from "./model";
+import { applyEvent, applyPatch, type ChatState, EMPTY_STATE, extractResourceRefs, fromHistory, messageContent, resourcesOf, settled, toolFailure, visibleParts, templatesOf } from "./model";
 
 const W = "0b7a1c2d-0000-4000-8000-000000000001";
 const E = "0b7a1c2d-0000-4000-8000-000000000002";
@@ -125,5 +125,106 @@ describe("fromHistory", () => {
     expect(assistant?.parts[0]).toMatchObject({ type: "tool", name: "get_workflow", input: { rid: W }, result: { kind: "workflow", metadata: { rid: W } }, resources: [{ kind: "workflow", rid: W }] });
     expect(assistant?.parts[1]).toEqual({ type: "resource", ref: { kind: "workflow", rid: W, vno: 2 } });
     expect(resourcesOf(messages)).toEqual([{ kind: "workflow", rid: W }]);
+  });
+});
+
+describe("visibleParts", () => {
+  const ref = { kind: "workflow" as const, rid: W };
+  it("keeps a resource once per message, in the place it first appears", () => {
+    const parts = visibleParts([
+      { type: "resource", ref },
+      { type: "text", text: "Built it." },
+      { type: "resource", ref },
+      { type: "resource", ref: { kind: "execution", rid: E } },
+    ]);
+    expect(parts.map(p => p.type)).toEqual(["resource", "text", "resource"]);
+  });
+  it("treats versions of one resource as that one resource", () => {
+    expect(visibleParts([{ type: "resource", ref: { ...ref, vno: 1 } }, { type: "resource", ref: { ...ref, vno: 2 } }])).toHaveLength(1);
+  });
+  it("leaves everything else alone, and an empty message empty", () => {
+    expect(visibleParts([])).toEqual([]);
+    const text = { type: "text" as const, text: "same" };
+    expect(visibleParts([text, text])).toEqual([text, text]);
+  });
+});
+
+describe("settled", () => {
+  const failed: ChatState = { ...EMPTY_STATE, error: "Unable to connect.", messages: [{ id: "u", role: "user", parts: [{ type: "text", text: "Hi" }] }] };
+  it("leaves nothing when the turn went well: the catalog's copy takes over", () => {
+    expect(settled({ ...EMPTY_STATE, messages: failed.messages }, false)).toEqual(EMPTY_STATE);
+  });
+  it("leaves nothing when the catalog has the error too, so it does not show twice", () => {
+    expect(settled(failed, true)).toEqual(EMPTY_STATE);
+  });
+  it("keeps an error the catalog never got, and only the error", () => {
+    const after = settled(failed, false);
+    expect(after.messages).toHaveLength(1);
+    expect(after.messages[0]?.parts).toEqual([{ type: "error", message: "Unable to connect." }]);
+    expect(after.running).toBe(false);
+  });
+});
+
+describe("toolFailure", () => {
+  it("reads a plain error", () => {
+    expect(toolFailure({ error: "boom" })).toBe("boom");
+  });
+  it("reads an MCP error result's text, not a generic line", () => {
+    expect(toolFailure({ isError: true, content: [{ type: "text", text: "the unit is pending" }] })).toBe("the unit is pending");
+  });
+  it("reads the message of an error the catalog answered through a tool", () => {
+    const text = '404: {"code":"not_found","message":"no result for nosuch/output-0"}';
+    expect(toolFailure({ isError: true, content: [{ type: "text", text }] })).toBe("no result for nosuch/output-0");
+  });
+  it("keeps text that only looks like that", () => {
+    expect(toolFailure({ isError: true, content: [{ type: "text", text: "404: {not json}" }] })).toBe("404: {not json}");
+  });
+  it("still says something when the error has no words", () => {
+    expect(toolFailure({ isError: true })).toBe("The tool failed.");
+    expect(toolFailure({ isError: true, content: [] })).toBe("The tool failed.");
+  });
+  it("is nothing for a result that did not fail", () => {
+    for (const result of [{ isError: false, content: [] }, { rows: [] }, "text", 3, null, undefined]) expect(toolFailure(result)).toBeUndefined();
+  });
+  it("shows on the tool part, live and from history", () => {
+    const result = { isError: true, content: [{ type: "text", text: "the engine said no" }] };
+    const live = run([
+      { type: "TOOL_CALL_START", toolCallId: "c1", toolCallName: "run_workflow" },
+      { type: "TOOL_CALL_RESULT", messageId: "m", toolCallId: "c1", content: JSON.stringify(result) },
+    ] as AgUiEvent[]);
+    expect(live.messages[0]?.parts[0]).toMatchObject({ status: "error", error: "the engine said no" });
+    const history = fromHistory([
+      { seq: 1, role: "assistant", parts: [{ type: "tool_call", toolCallId: "c1", toolName: "run_workflow" }, { type: "tool_result", toolCallId: "c1", toolName: "run_workflow", result }] },
+    ] as Message[]);
+    expect(history[0]?.parts[0]).toMatchObject({ status: "error", error: "the engine said no" });
+  });
+});
+
+describe("messageContent", () => {
+  const dataset = { ref: { kind: "dataset" as const, rid: W, vno: 1 }, name: "iris.csv" };
+  it("is the text when nothing is attached", () => {
+    expect(messageContent("Hello", [])).toBe("Hello");
+  });
+  it("attaches by URI as binary content, leaving the text as the person wrote it", () => {
+    expect(messageContent("What is this?", [dataset])).toEqual([
+      { type: "text", text: "What is this?" },
+      { type: "binary", mimeType: "application/vnd.texera.resource", url: `texera://datasets/${W}@1`, filename: "iris.csv" },
+    ]);
+  });
+  it("has no empty text part when only a file is sent", () => {
+    expect(messageContent("", [dataset])).toEqual([expect.objectContaining({ type: "binary" })]);
+  });
+});
+
+describe("an attachment in the history", () => {
+  it("is a card of the person's message, with no URI among the words", () => {
+    const [message] = fromHistory([
+      { seq: 1, role: "user", parts: [{ type: "text", text: "What is this?" }, { type: "resource", resource: `texera://datasets/${W}@1`, text: "iris.csv" }] },
+    ] as Message[]);
+    expect(message?.parts).toEqual([
+      { type: "text", text: "What is this?" },
+      { type: "resource", ref: { kind: "dataset", rid: W, vno: 1 } },
+    ]);
+    expect(resourcesOf(message ? [message] : [])).toEqual([{ kind: "dataset", rid: W, vno: 1 }]);
   });
 });

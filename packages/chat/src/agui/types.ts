@@ -203,7 +203,7 @@ export interface JsonPatchOperation {
 export interface AgUiMessage {
   id: string;
   role: "user" | "assistant" | "system" | "developer" | "tool" | "activity" | "reasoning";
-  content?: string | { type: string; text?: string }[];
+  content?: string | { type: string; text?: string; mimeType?: string; url?: string; filename?: string }[];
   name?: string;
   toolCalls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
   toolCallId?: string;

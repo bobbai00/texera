@@ -2,7 +2,6 @@
 // tool itself is a one-line step. Everything comes from the kinds registry, never from
 // a tool name. A handoff is a divider between the agents of a conversation.
 
-import { ResourceCard } from "@texera/kinds";
 import { cn } from "@texera/ui";
 import { AlertTriangle, ArrowRightLeft, Brain, Check, ChevronDown, Loader2, Wrench } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
@@ -55,9 +54,6 @@ export function ToolCallPart({ part }: { part: Extract<Part, { type: "tool" }> }
         </div>
       )}
       {part.error && <p className="text-xs whitespace-pre-wrap text-destructive">{part.error}</p>}
-      {part.resources.map(ref => (
-        <ResourceCard key={`${ref.kind}:${ref.rid}`} ref={ref} />
-      ))}
     </div>
   );
 }

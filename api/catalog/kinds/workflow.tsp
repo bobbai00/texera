@@ -170,7 +170,7 @@ namespace Routes {
     @extension("x-mcp", #{
       server: "dataflow",
       tool: "validate_workflow",
-      description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator.",
+      description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator. Leave computingUnit out to use the chat's unit.",
       readOnlyHint: true,
     })
     validate(@path rid: Rid, @body body: ValidateWorkflow): WorkflowValidation | Error;
@@ -182,7 +182,7 @@ namespace Routes {
     @extension("x-mcp", #{
       server: "dataflow",
       tool: "run_workflow",
-      description: "Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states and port results.",
+      description: "Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the chat's unit; name one only when the person asks for another.",
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,

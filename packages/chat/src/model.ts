@@ -2,7 +2,7 @@
 // and from AG-UI events as a turn streams. Pure; the hook feeds it.
 
 import type { Message as CatalogMessage } from "@texera/catalog-client/types";
-import { isKindId, isUri, type KindId, refKey, refOf, type ResourceRef } from "@texera/kinds";
+import { isKindId, isUri, type KindId, refKey, refOf, type ResourceRef, uriOf } from "@texera/kinds";
 import type { AgUiEvent, AgUiMessage, JsonPatchOperation } from "./agui/types";
 
 export type ToolStatus = "running" | "done" | "error";
@@ -52,6 +52,36 @@ export interface ChatState {
 }
 
 export const EMPTY_STATE: ChatState = { messages: [], running: false, steps: [], resources: [] };
+
+/**
+ * What stays on screen once the catalog has the turn: its copy replaces the live one, except an
+ * error it never got (the connection dropped, say), which would otherwise vanish with no trace.
+ */
+export function settled(live: ChatState, catalogHasTheError: boolean): ChatState {
+  if (!live.error || catalogHasTheError) return EMPTY_STATE;
+  return { ...EMPTY_STATE, error: live.error, messages: [{ id: `error-${live.runId ?? "turn"}`, role: "assistant", parts: [{ type: "error", message: live.error }] }] };
+}
+
+/** A message's parts as they show: each resource once, however many of its tools named it. */
+export function visibleParts(parts: Part[]): Part[] {
+  const seen = new Set<string>();
+  return parts.filter(p => {
+    if (p.type !== "resource") return true;
+    const key = `${p.ref.kind}:${p.ref.rid}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** A person's message as a run's input: attachments go by URI, as AG-UI binary content. */
+export function messageContent(text: string, attachments: { ref: ResourceRef; name: string }[]): NonNullable<AgUiMessage["content"]> {
+  if (attachments.length === 0) return text;
+  return [
+    ...(text ? [{ type: "text", text }] : []),
+    ...attachments.map(a => ({ type: "binary", mimeType: "application/vnd.texera.resource", url: uriOf(a.ref), filename: a.name })),
+  ];
+}
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const isKind = (v: unknown): v is KindId => typeof v === "string" && isKindId(v);
@@ -104,6 +134,22 @@ const parseJson = (text: string): unknown => {
     return text;
   }
 };
+
+/**
+ * What a failed tool said, or undefined when it did not fail: a plain `{error}`, or the text of an
+ * MCP error result. The catalog's tools answer `<status>: <its JSON error>`; its message is the words.
+ */
+export function toolFailure(result: unknown): string | undefined {
+  if (!isRecord(result)) return undefined;
+  if (typeof result.error === "string") return result.error;
+  if (result.isError !== true) return undefined;
+  const content = Array.isArray(result.content) ? result.content : [];
+  const text = content.flatMap(c => (isRecord(c) && typeof c.text === "string" ? [c.text] : [])).join("\n");
+  const json = /^\d{3}: (\{.*\})$/s.exec(text)?.[1];
+  const parsed = json ? parseJson(json) : undefined;
+  if (isRecord(parsed) && typeof parsed.message === "string" && parsed.message) return parsed.message;
+  return text || "The tool failed.";
+}
 
 /** A minimal RFC 6902 patch for `/a/b` paths over JSON objects and arrays. */
 export function applyPatch(target: unknown, ops: JsonPatchOperation[]): unknown {
@@ -222,12 +268,12 @@ export function applyEvent(state: ChatState, event: AgUiEvent): ChatState {
     case "TOOL_CALL_RESULT": {
       const result = parseJson(event.content);
       const refs = extractResourceRefs(result);
-      const failed = isRecord(result) && (typeof result.error === "string" || result.isError === true);
+      const failure = toolFailure(result);
       const next = updateTool(state, event.toolCallId, p => ({
         ...p,
         result,
-        status: failed ? "error" : "done",
-        error: failed ? String((result as { error?: unknown }).error ?? "The tool failed.") : undefined,
+        status: failure ? "error" : "done",
+        error: failure,
         resources: refs,
       }));
       return addResources(next, refs);
@@ -300,17 +346,17 @@ export function fromHistory(messages: CatalogMessage[]): ChatMessage[] {
         }
         case "tool_result": {
           const refs = extractResourceRefs(p.result);
-          const failed = isRecord(p.result) && (typeof p.result.error === "string" || p.result.isError === true);
+          const failure = toolFailure(p.result);
           const call = p.toolCallId ? tools.get(p.toolCallId) : undefined;
           if (call) {
             call.result = p.result;
             call.resources = refs;
-            if (failed) {
+            if (failure) {
               call.status = "error";
-              call.error = String((p.result as { error?: unknown }).error ?? "The tool failed.");
+              call.error = failure;
             }
           } else {
-            parts.push({ type: "tool", id: p.toolCallId ?? crypto.randomUUID(), name: p.toolName ?? "tool", args: "", result: p.result, status: failed ? "error" : "done", resources: refs });
+            parts.push({ type: "tool", id: p.toolCallId ?? crypto.randomUUID(), name: p.toolName ?? "tool", args: "", result: p.result, status: failure ? "error" : "done", error: failure, resources: refs });
           }
           break;
         }

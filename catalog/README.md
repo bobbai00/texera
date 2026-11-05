@@ -37,7 +37,7 @@ go test -tags integration ./internal/adapters/...   # the port contract suites a
 | `internal/ports` | the eight ports: Identity, Workloads (unit identities), Authorizer, SecretStore, BlobStore, UnitProvider, Lake (the table catalog over the warehouse), LineageSink |
 | `internal/adapters` | one adapter per port (keycloak for Identity and Workloads, openfga, openbao, s3cas, staticunit, kube, lakekeeper, noop), `unitmux` to offer static and Kubernetes units side by side, and the memory adapters tests use |
 | `internal/auth`, `internal/authz` | who is calling (OIDC claims to a principal) and the policy decision point with the outbox relay to the authorizer |
-| `internal/catalog` | the domain service, one file per area: resources, hooks per kind, files, plan, executions, lineage, compute, conversations, iam, credentials, seed, prompts, skills |
+| `internal/catalog` | the domain service, one file per area: resources, hooks per kind, files, plan, executions, lineage, compute, conversations, iam, credentials, seed, the shipped agent (`agents/`) and skills (`skills/`) |
 | `internal/server` | the HTTP server: generic routes from the kind table plus the actions, validated against the contract in tests |
 | `internal/mcp` | the MCP bridge: a tool call becomes the operation's request against the API in process, with the caller's token |
 | `internal/engine` | the client of a computing unit's engine API |

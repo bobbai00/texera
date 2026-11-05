@@ -18,6 +18,7 @@ import (
 
 	"github.com/apache/texera/catalog/internal/auth"
 	"github.com/apache/texera/catalog/internal/authz"
+	"github.com/apache/texera/catalog/internal/engine"
 	"github.com/apache/texera/catalog/internal/ports"
 	"github.com/apache/texera/catalog/internal/store"
 )
@@ -118,6 +119,26 @@ func Precondition() *Error {
 // Unavailable is a peer that did not answer.
 func Unavailable(what string, err error) *Error {
 	return &Error{Status: http.StatusBadGateway, Code: "unavailable", Message: what + ": " + err.Error()}
+}
+
+// UnitFailed translates a failed call to a computing unit. What the engine refused keeps its class
+// and its own words, so a person or an agent reads the real reason; an engine that failed still says
+// what it said; a unit that did not answer is a peer that is unavailable.
+func UnitFailed(err error) *Error {
+	var refused *engine.UnitError
+	if !errors.As(err, &refused) {
+		return Unavailable("unit", err)
+	}
+	message := refused.Message()
+	switch refused.Status {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		return Invalid(message, nil)
+	case http.StatusNotFound:
+		return &Error{Status: http.StatusNotFound, Code: "not_found", Message: message}
+	case http.StatusConflict:
+		return Conflict("conflict", message, nil)
+	}
+	return &Error{Status: http.StatusBadGateway, Code: "unit_error", Message: "unit: " + message}
 }
 
 // wrap translates store and decision errors into API errors.

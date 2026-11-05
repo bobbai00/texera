@@ -3,7 +3,9 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -65,9 +67,9 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 	project := s.projectSpec(ctx, wf.ProjectRID)
 	settings := s.settingsSpec(ctx)
-	unitName := firstNonEmpty(in.ComputingUnit, uriString(spec.DefaultComputingUnit), uriString(project.DefaultComputingUnit), uriString(settings.Defaults.ComputingUnit))
+	unitName := firstNonEmpty(in.ComputingUnit, s.chatUnit(ctx, caller), uriString(spec.DefaultComputingUnit), uriString(project.DefaultComputingUnit), uriString(settings.Defaults.ComputingUnit))
 	if unitName == "" {
-		return nil, Conflict("no_unit", "no computing unit: name one in the request, the workflow, the project or the settings", nil)
+		return nil, Conflict("no_unit", "no computing unit: name one in the request, the chat, the workflow, the project or the settings", nil)
 	}
 	unit, err := s.unitByURI(ctx, unitName)
 	if err != nil {
@@ -435,7 +437,7 @@ func (s *Service) control(ctx context.Context, caller *auth.Caller, workflowRID,
 		return nil, err
 	}
 	if _, err := do(client, ctx, eid.String()); err != nil {
-		return nil, Unavailable("the computing unit", err)
+		return nil, UnitFailed(err)
 	}
 	r, err = s.Store.GetResource(ctx, eid)
 	return r, wrap(err, "execution")
@@ -579,11 +581,42 @@ func (s *Service) Rows(ctx context.Context, caller *auth.Caller, workflowRID, ei
 	if err != nil {
 		return nil, err
 	}
-	page, err := client.Result(ctx, eid.String(), operatorID, portID, plannedTable(r, operatorID, portID), executionNamespace(eid), offset, limit)
+	table := plannedTable(r, operatorID, portID)
+	page, err := client.Result(ctx, eid.String(), operatorID, portID, table, executionNamespace(eid), offset, limit)
 	if err != nil {
-		return nil, Unavailable("unit", err)
+		// A port the plan names has no table until the run writes it: nothing to read yet.
+		var refused *engine.UnitError
+		if table != "" && errors.As(err, &refused) && refused.Status == http.StatusNotFound && !finished(r) {
+			return &engine.RowPage{Offset: offset, Rows: [][]any{}, Schema: []engine.Attribute{}}, nil
+		}
+		return nil, UnitFailed(err)
 	}
 	return page, nil
+}
+
+// finished tells whether an execution has reached a terminal phase.
+func finished(r *store.Resource) bool {
+	var st api.ExecutionStatus
+	_ = json.Unmarshal(r.Status, &st)
+	return isTerminal(st.Phase)
+}
+
+// chatUnit is the computing unit of the chat a call acts in, when the runtime vouches for one:
+// a person picks where the runs of a chat go, and an agent's run goes there without having to be
+// told. It gives no right to the unit; the caller is authorized on it like on any other.
+func (s *Service) chatUnit(ctx context.Context, caller *auth.Caller) string {
+	if caller.Origin == nil {
+		return ""
+	}
+	conversation, err := s.Store.GetResource(ctx, caller.Origin.Conversation)
+	if err != nil || conversation.Kind != "conversation" {
+		return ""
+	}
+	var spec api.ConversationSpec
+	if err := json.Unmarshal(conversation.Spec, &spec); err != nil {
+		return ""
+	}
+	return uriString(spec.ComputingUnit)
 }
 
 // unitByURI loads a computing unit without the read check: running on a unit, compiling or

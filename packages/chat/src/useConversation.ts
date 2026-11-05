@@ -3,11 +3,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { conversationsListMessagesOptions } from "@texera/catalog-client/query";
 import type { Message, MessagePage } from "@texera/catalog-client/types";
-import { type ResourceRef, uriOf, useWatch } from "@texera/kinds";
+import { type ResourceRef, useWatch } from "@texera/kinds";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { newRunId, runAgent } from "./agui/client";
 import type { AgUiEvent, RunAgentInput } from "./agui/types";
-import { applyEvent, type ChatMessage, type ChatState, EMPTY_STATE, fromHistory, resourcesOf } from "./model";
+import { applyEvent, type ChatMessage, type ChatState, EMPTY_STATE, fromHistory, messageContent, resourcesOf, settled } from "./model";
 
 export interface Attachment {
   ref: ResourceRef;
@@ -23,7 +23,7 @@ export interface ConversationOptions {
   onRunEnd?: () => void;
 }
 
-type LiveAction = { type: "event"; event: AgUiEvent } | { type: "user"; message: ChatMessage; template?: string } | { type: "reset" } | { type: "fail"; message: string };
+type LiveAction = { type: "event"; event: AgUiEvent } | { type: "user"; message: ChatMessage; template?: string } | { type: "settle"; catalogHasTheError: boolean } | { type: "fail"; message: string };
 
 function liveReducer(state: ChatState, action: LiveAction): ChatState {
   switch (action.type) {
@@ -33,8 +33,8 @@ function liveReducer(state: ChatState, action: LiveAction): ChatState {
       return { ...state, messages: [...state.messages, action.message], error: undefined, template: action.template };
     case "fail":
       return { ...state, running: false, error: action.message, messages: [...state.messages, { id: `err-${Date.now()}`, role: "assistant", parts: [{ type: "error", message: action.message }] }] };
-    case "reset":
-      return EMPTY_STATE;
+    case "settle":
+      return settled(state, action.catalogHasTheError);
   }
 }
 
@@ -53,6 +53,8 @@ export function useConversation({ rid, template, getToken, onRunEnd }: Conversat
   const history = useQuery({ ...conversationsListMessagesOptions({ path: { rid }, query: { limit: 500 } }), staleTime: 10_000 });
   const [live, dispatch] = useReducer(liveReducer, EMPTY_STATE);
   const [baseline, setBaseline] = useState<number>();
+  // True from the moment a message is sent until its request is over and the history re-read.
+  const [inFlight, setInFlight] = useState(false);
   const abort = useRef<AbortController>(null);
 
   const persisted = useMemo(() => fromHistory(history.data?.items ?? []), [history.data]);
@@ -71,13 +73,16 @@ export function useConversation({ rid, template, getToken, onRunEnd }: Conversat
     },
   });
 
-  // Once the catalog has the turn the stream showed, the persisted copy replaces the live one.
+  // Once the turn's request is over and the catalog has the turn, its copy replaces the live one.
+  // Not before: a message from someone else in the chat can arrive while this turn is starting,
+  // and must not be taken for it.
   useEffect(() => {
-    if (baseline !== undefined && !live.running && maxSeq > baseline) {
-      dispatch({ type: "reset" });
+    if (baseline !== undefined && !inFlight && maxSeq > baseline) {
+      const turn = history.data?.items.filter(m => m.seq > baseline) ?? [];
+      dispatch({ type: "settle", catalogHasTheError: turn.some(m => m.parts.some(p => p.type === "error")) });
       setBaseline(undefined);
     }
-  }, [baseline, live.running, maxSeq]);
+  }, [baseline, inFlight, maxSeq, history.data]);
 
   const messages = useMemo(() => [...persisted, ...live.messages], [persisted, live.messages]);
   const resources = useMemo(() => {
@@ -93,16 +98,16 @@ export function useConversation({ rid, template, getToken, onRunEnd }: Conversat
   const send = useCallback(
     async (text: string, attachments: Attachment[] = []) => {
       const messageId = crypto.randomUUID();
-      const content = [text, ...attachments.map(a => `Attached ${a.ref.kind} "${a.name}" (${uriOf(a.ref)})`)].filter(Boolean).join("\n");
       dispatch({
         type: "user",
         message: { id: messageId, role: "user", parts: [...(text ? [{ type: "text" as const, text }] : []), ...attachments.map(a => ({ type: "resource" as const, ref: a.ref }))] },
         template,
       });
       setBaseline(maxSeq);
+      setInFlight(true);
       const controller = new AbortController();
       abort.current = controller;
-      const input: RunAgentInput = { threadId: rid, runId: newRunId(), messages: [{ id: messageId, role: "user", content }], tools: [], context: [], forwardedProps: {} };
+      const input: RunAgentInput = { threadId: rid, runId: newRunId(), messages: [{ id: messageId, role: "user", content: messageContent(text, attachments) }], tools: [], context: [], forwardedProps: {} };
       try {
         await runAgent({ url: agUiUrl(rid), input, token: getToken(), signal: controller.signal, onEvent: event => dispatch({ type: "event", event }) });
       } catch (e) {
@@ -113,6 +118,7 @@ export function useConversation({ rid, template, getToken, onRunEnd }: Conversat
         queryClient.invalidateQueries({ queryKey: [{ _id: "conversationsResources", path: { rid } }] });
         queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
         queryClient.invalidateQueries({ queryKey: ["resource", rid] });
+        setInFlight(false);
         onRunEnd?.();
       }
     },

@@ -21,18 +21,6 @@ func TestMeAndSeed(t *testing.T) {
 	if me.HomeProject == "" || me.SystemProject == "" || me.Admin {
 		t.Fatalf("me: %+v", me)
 	}
-	var page api.ResourcePage
-	h.mustJSON("alice", "GET", p+"/agent-templates", nil, &page)
-	names := map[string]bool{}
-	for _, tpl := range page.Items {
-		names[tpl.Metadata.Name] = true
-		if tpl.Metadata.Visibility != "public" || tpl.Metadata.Head != 1 {
-			t.Errorf("template %s: %+v", tpl.Metadata.Name, tpl.Metadata)
-		}
-	}
-	if !names["Data Analyst"] || !names["Bio Researcher"] {
-		t.Fatalf("templates: %v", names)
-	}
 	var settings api.PublicSettings
 	h.mustJSON("", "GET", p+"/settings/public", nil, &settings)
 	if settings.Branding.Name != "Texera Test" || settings.Auth.ClientId != "texera-app" {

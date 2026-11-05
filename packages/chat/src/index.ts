@@ -1,6 +1,5 @@
 export { ChatView } from "./ChatView";
 export { NewChat } from "./NewChat";
-export { TemplatePicker } from "./TemplatePicker";
 export { Composer } from "./Composer";
 export { MessageItem } from "./MessageItem";
 export { ResourcesRail } from "./ResourcesRail";

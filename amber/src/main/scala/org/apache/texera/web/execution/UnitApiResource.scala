@@ -22,6 +22,7 @@ package org.apache.texera.web.execution
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.ObjectNode
+import com.google.protobuf.timestamp.Timestamp
 import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.auth.Auth
 import org.apache.texera.amber.core.storage.{
@@ -38,6 +39,12 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext, WorkflowSettings}
+import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
+import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
+import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
+  ConsoleMessage,
+  ConsoleMessageType
+}
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.{
   COMPLETED,
@@ -47,6 +54,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 }
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.executionruntimestate.{
+  ExecutionConsoleStore,
   ExecutionMetadataStore,
   ExecutionStatsStore
 }
@@ -260,6 +268,26 @@ object UnitApiResource {
 
   def isTerminal(state: WorkflowAggregatedState): Boolean =
     state == COMPLETED || state == FAILED || state == KILLED || state == TERMINATED
+
+  /** The first error an operator's console holds, with the operator it came from. */
+  def firstOperatorError(console: ExecutionConsoleStore): Option[(String, ConsoleMessage)] =
+    console.operatorConsole.iterator
+      .flatMap {
+        case (opid, operator) =>
+          operator.consoleMessages.find(_.msgType == ConsoleMessageType.ERROR).map(opid -> _)
+      }
+      .nextOption()
+
+  /** An operator's error as the run's fatal error, in the operator's own words. */
+  def fatalErrorOf(opid: String, error: ConsoleMessage): WorkflowFatalError =
+    WorkflowFatalError(
+      EXECUTION_FAILURE,
+      Timestamp(error.timestamp.seconds, error.timestamp.nanos),
+      error.title,
+      error.message,
+      opid,
+      error.workerId
+    )
 }
 
 /**
@@ -507,6 +535,29 @@ class UnitApiResource extends LazyLogging {
       .subscribe((state: ExecutionMetadataStore) => reportTerminal(state))
     val current = executionService.executionStateStore.metadataStore.getState
     if (isTerminal(current.state)) reportTerminal(current)
+    // A Python operator that raises pauses its worker for an interactive console nobody attends
+    // here, and the run would wait forever without saying why. It fails instead, in the operator's
+    // own words, the way a fatal error ends a run.
+    def failOnOperatorError(console: ExecutionConsoleStore): Unit =
+      synchronized {
+        val stateStore = executionService.executionStateStore
+        firstOperatorError(console)
+          .filterNot(_ => isTerminal(stateStore.metadataStore.getState.state))
+          .foreach {
+            case (opid, error) =>
+              logger.warn(s"execution ${request.eid}: operator $opid failed: ${error.title}")
+              if (executionService.client != null) executionService.client.shutdown()
+              stateStore.statsStore.updateState(s => s.withEndTimeStamp(System.currentTimeMillis()))
+              stateStore.metadataStore.updateState(m =>
+                updateWorkflowState(FAILED, m).addFatalErrors(fatalErrorOf(opid, error))
+              )
+          }
+      }
+    executionService.executionStateStore.consoleStore.getStateObservable
+      .filter((console: ExecutionConsoleStore) => firstOperatorError(console).isDefined)
+      .firstElement()
+      .subscribe((console: ExecutionConsoleStore) => failOnOperatorError(console))
+    failOnOperatorError(executionService.executionStateStore.consoleStore.getState)
     ExecutionAck(request.eid, accepted = true)
   }
 

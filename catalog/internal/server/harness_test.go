@@ -76,7 +76,25 @@ type fakeUnit struct {
 	mu              sync.Mutex
 	started         []map[string]any
 	controlled      []string
+	compiled        int
 	resultNamespace string
+	// refuse, when set, answers before the engine does: a request it returns true for is done.
+	refuse func(w http.ResponseWriter, r *http.Request) bool
+}
+
+// refusing makes the unit answer like Dropwizard's own error mappers: a numeric code and a message.
+func (u *fakeUnit) refusing(suffix string, status int, message string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.refuse = func(w http.ResponseWriter, r *http.Request) bool {
+		if !strings.HasSuffix(r.URL.Path, suffix) {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": status, "message": message})
+		return true
+	}
 }
 
 func newFakeUnit(t *testing.T) *fakeUnit {
@@ -95,6 +113,9 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 		}})
 	})
 	mux.HandleFunc("POST /api/compile", func(w http.ResponseWriter, r *http.Request) {
+		u.mu.Lock()
+		u.compiled++
+		u.mu.Unlock()
 		writeJSON(w, map[string]any{"ok": true, "operatorOutputSchemas": map[string]any{"scan": map[string]any{"output-0": []any{map[string]any{"attributeName": "a", "attributeType": "integer"}}}}, "operatorErrors": map[string]any{}})
 	})
 	mux.HandleFunc("POST /api/executions", func(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +163,14 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 	mux.HandleFunc("GET /api/environments/{rid}/{vno}", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"rid": r.PathValue("rid"), "vno": 1, "status": "ready"})
 	})
-	u.Server = httptest.NewServer(mux)
+	u.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.mu.Lock()
+		refuse := u.refuse
+		u.mu.Unlock()
+		if refuse == nil || !refuse(w, r) {
+			mux.ServeHTTP(w, r)
+		}
+	}))
 	t.Cleanup(u.Close)
 	return u
 }
@@ -152,6 +180,13 @@ func (u *fakeUnit) controls() []string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return append([]string(nil), u.controlled...)
+}
+
+// compiles counts the plans the unit was asked to compile.
+func (u *fakeUnit) compiles() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.compiled
 }
 
 // lastResultNamespace is the namespace the last rows request named.

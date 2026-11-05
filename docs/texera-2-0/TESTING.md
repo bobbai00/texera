@@ -26,7 +26,7 @@ Bob) goes through a guard fixture that puts it back.
 
 | Use case | Module | Markers | About |
 | --- | --- | --- | --- |
-| Who I am, the seeds, workflow versions and edits, sharing, dataset files and references, a conversation's turn and origin, the two MCP servers (acceptance 1, 2) | `test_catalog.py` | | 5 s |
+| Who I am, the seeds, workflow versions and edits, sharing, dataset files and references, a conversation's turn and origin, the two MCP servers and the tools each one has, with none on both (acceptance 1, 2) | `test_catalog.py` | | 5 s |
 | A run in three phases: the dry run's plan is the run's, stored without secrets; the tables the catalog named, ports, rows, lineage; the keep mark (acceptance 3, 4 at the API) | `test_run.py` | | 15 s |
 | Results kept per execution across runs and the unit's idle release; a run deleted with its tables | `test_results.py` | slow | 1 min |
 | Old results expire under the retention policy; the record stays; a kept run does not expire | `test_results.py` | destructive | 20 s |
@@ -40,8 +40,12 @@ Bob) goes through a guard fixture that puts it back.
 | The unit's doors: its API answers the catalog alone, the gateway has no route to it, only the running unit reports on a run | `test_doors.py` | local | 20 s |
 | Results survive a restart of the unit | `test_unit_restart.py` | local, destructive | 2 min |
 | A computing unit as a resource on Kubernetes: ready, run, spec change rolls it, use granted, terminate, delete | `test_cluster_unit.py` | cluster, slow | 2 min |
-| The Data Analyst builds, runs, edits and reruns through a chat (acceptance 3, 9) | `test_agents.py` | model, slow | 2 min, about 30 model calls |
-| The Bio Researcher answers with cited ideas, hands off to the analyst, which runs and shares with Bob (acceptance 10, 11) | `test_agents.py` | model, slow | 3 min, about 40 model calls |
+| What the engine says reaches whoever asked, through the API and the dataflow tools: a raising operator fails the run in its own words, a compile error, a port with no result; a port is empty until its table is written | `test_engine_errors.py` | | 30 s |
+| The agent runtime reaches every MCP server a template mounts, from inside its pod | `test_cluster_agents.py` | cluster | 5 s |
+| A chat names the unit its runs use: a tool call made in the chat compiles and runs there, a unit named in the call wins, outside a chat nothing changes, a forged origin is refused | `test_chat_unit.py` | | 20 s |
+| The Texera Agent builds, runs, edits and reruns through a chat (acceptance 3, 9) | `test_agents.py` | model, slow | 2 min, about 30 model calls |
+| One agent, one chat: it consults the bio tools for research ideas, analyzes the person's data from a run, and shares it with Bob, with no handoff (acceptance 10, 11) | `test_agents.py` | model, slow | 3 min, about 40 model calls |
+| The agent's runs go to the unit the chat names, without being told | `test_agents.py` | model, slow | 1 min, about 10 model calls |
 | Bob, an editor of Alice's chat, asks the analyst; the question and the answer are his turn, and Alice reads them | `test_agents.py` | model, slow | 30 s, a few model calls |
 
 Markers gate what runs: `model`, `cluster`, `local` and `destructive` tests are skipped unless
@@ -50,13 +54,16 @@ passes the right ones per layer. `local` means the Compose stack's host ports (L
 Keycloak, OpenBao, the unit process); `destructive` means other tests may see the effect
 (the unit restarts, every finished run on the stack expires), so those run last.
 
-Playwright covers the pages: sign-in, a chat with an upload that becomes a dataset, the
-agent switcher and `/mode`, the template page, the operator page, a run's lineage and its
-keep mark, two people in one chat (the other's messages and turn arrive live, under their
+Playwright covers the pages: sign-in, a chat with an upload that becomes a dataset and stays
+a card of the message, a turn that fails and says why across a reload, a long first answer
+that ends up on screen, the operator page with its versions and sharing, a run's lineage and
+its keep mark, two people in one chat (the other's messages and turn arrive live, under their
 name), a run page that follows a slow run and pauses and resumes it, and with the model the
-two chat scenarios (`frontend-next/e2e/texera2.spec.ts`). The two model scenarios make the
-iris dataset they ask about in a project of their own and remove it at the end with what the
-chat made, as the pytest scenarios do; a wiped stack has no iris to find otherwise.
+two chat scenarios: the agent answering from a workflow it built on the unit the chat names,
+and one agent researching, analyzing and sharing in one chat
+(`frontend-next/e2e/texera2.spec.ts`). The two model scenarios make the iris dataset they ask
+about in a project of their own and remove it at the end with what the chat made, as the
+pytest scenarios do; a wiped stack has no iris to find otherwise.
 
 ## Rules
 

@@ -213,7 +213,7 @@ func (s *Service) UnitOperators(ctx context.Context, caller *auth.Caller, rid uu
 	}
 	list, err := client.Operators(ctx)
 	if err != nil {
-		return nil, Unavailable("unit", err)
+		return nil, UnitFailed(err)
 	}
 	if q == "" && group == "" {
 		return list, nil

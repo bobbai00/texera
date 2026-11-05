@@ -140,7 +140,8 @@ bin/texera-2-0/k8s.sh destroy       # delete the kind cluster
 Open http://localhost:28088 (alice/alice, bob/bob). On Linux the cluster is [kind](https://kind.sigs.k8s.io)
 (Kubernetes in Docker; `kind` and `kubectl` in `~/.local/bin` are enough), created with node
 port 30088 mapped to localhost:28088. Another local cluster works with `TEXERA2_KUBE_CONTEXT`
-set; remote clusters are refused. Two facts about this host shape the defaults: it is on cgroup
+set (`orbstack` on macOS with OrbStack; the gateway is made a LoadBalancer there, which such a
+cluster publishes on localhost); remote clusters are refused. Two facts about this host shape the defaults: it is on cgroup
 v1, so the node image is Kubernetes 1.33 (`TEXERA2_KIND_IMAGE` overrides), and kind needs
 higher inotify limits than Ubuntu's defaults (`sysctl fs.inotify.max_user_instances=1024
 fs.inotify.max_user_watches=1048576`).

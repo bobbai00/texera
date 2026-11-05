@@ -46,11 +46,15 @@ automated checks, and the close gate (`down.sh --wipe && up.sh && test.sh`) is g
   an in-process broker on the store's writes; a run has pause and resume, forwarded to the
   unit, whose lineage reports (progress once a second, paused, running) drive the phase.
 - The agent runtime as a stateless turn runner: a template version runs one turn of a
-  conversation as the person; handoffs between templates; `/mode`; the platform key leased
-  from OpenBao per turn. Two seeded templates, Data Analyst and Bio Researcher.
+  conversation as the person; the platform key leased from OpenBao per turn. One seeded
+  agent since Nov 5, the Texera Agent, the entry to every chat (it replaced the Data Analyst
+  and the Bio Researcher): the catalog and dataflow servers are its basic tools, the bio
+  server an add-on a turn can go without, and it is told the chat's computing unit. Handoffs
+  between templates and `/mode` remain in the runtime, unused by the shipped agent.
 - The frontend: a generic page for every kind from its JSON Schema (spec, versions, access,
-  lineage), the workflow editor, the run page with the port view, the agent template form, the
-  chat with the agent switcher and labelled messages; the run page and the chat follow their
+  lineage), the workflow editor, the run page with the port view, the chat with labelled
+  messages (no agent picker or switcher since Nov 5; the agent template form stays, unlinked);
+  the run page and the chat follow their
   resource's event stream, so a shared chat is a group chat (authors named, the other's turn
   shown and waited for) and a run shows its progress and its pause and resume buttons.
 - Checks in four layers (`docs/texera-2-0/TESTING.md`): unit (Go, sbt, Bun, vitest), contract

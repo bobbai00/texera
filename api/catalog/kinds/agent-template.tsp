@@ -67,16 +67,5 @@ model AgentTemplateVersionPage is Page<VersionSummary>;
 namespace Routes {
   @route("/agent-templates")
   interface AgentTemplates
-    extends VersionedKindRoutes<AgentTemplate, AgentTemplatePage, CreateAgentTemplate, UpdateAgentTemplate, AgentTemplateVersion, AgentTemplateVersionPage> {
-    @post
-    @extension("x-texera-permission", "create")
-    @extension("x-mcp", #{
-      server: "catalog",
-      tool: "create_agent_template",
-      description: "Create an agent template: a card (name, description), a model endpoint URI, a system prompt, and optionally skills, MCP servers and handoff templates. Find model endpoints and MCP servers with search_resources.",
-      readOnlyHint: false,
-      destructiveHint: false,
-    })
-    create(@body body: CreateAgentTemplate): Created<AgentTemplate> | Error;
-  }
+    extends VersionedKindRoutes<AgentTemplate, AgentTemplatePage, CreateAgentTemplate, UpdateAgentTemplate, AgentTemplateVersion, AgentTemplateVersionPage> {}
 }

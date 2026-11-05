@@ -88,6 +88,9 @@ spec:
             - { name: TEXERA_LAKE_S3_ENDPOINT, value: "http://rustfs:9000" }
             - { name: TEXERA_STATIC_UNIT_ENDPOINT, value: "http://unit:8085" }
             - { name: TEXERA_LINEAGE_CALLBACK_URL, value: "http://catalog:8090/lineage/v1/events" }
+            # The bio MCP server as the agent runtime reaches it: not by the public URL, which
+            # inside a pod is the pod itself. The platform's own servers are rewritten at mount.
+            - { name: TEXERA_BIOMCP_URL, value: "http://gateway:28088/bio-mcp" }
           ports:
             - containerPort: 8090
           readinessProbe:

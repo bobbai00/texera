@@ -21,7 +21,9 @@ import {
   CONVERSATION_RID,
   type FakeCatalogOptions,
   fakeCatalog,
+  MCP_RID,
   TEMPLATE_RID,
+  UNIT_URI,
 } from "./helpers/fake-catalog.ts";
 import { type ScriptedResponse, scriptedModel } from "./helpers/mock-model.ts";
 
@@ -62,6 +64,7 @@ function makeApp(responses: ScriptedResponse[], tools: ToolSet = {}, options: Fa
           log: silentLogger,
           modelFactory: () => model,
           extraTools: tools,
+          now: () => new Date("2026-11-05T12:00:00Z"),
         },
         input,
       );
@@ -73,7 +76,7 @@ function makeApp(responses: ScriptedResponse[], tools: ToolSet = {}, options: Fa
     serviceTokens: { get: async () => "service-token", invalidate() {} },
     newId: () => "fixed-id",
   });
-  return { app, fake, builds };
+  return { app, fake, builds, model };
 }
 
 async function readSse(res: Response) {
@@ -257,6 +260,109 @@ describe("POST /agents/conversations/:rid/ag-ui", () => {
     const events = await readSse(await post(app, { ...runInput("hi"), messages: [] }));
     expect(events.map((e) => e.type)).toEqual([EventType.RUN_STARTED, EventType.RUN_ERROR]);
     expect(fake.messages).toHaveLength(0);
+  });
+
+  test("a turn whose agent cannot be built says why, and the chat keeps it", async () => {
+    // The template names a model endpoint that is not there: no agent, and no model to call.
+    const { app, fake } = makeApp(
+      [],
+      {},
+      { template: { model: "texera://model-endpoints/00000000-0000-4000-8000-000000000000" } },
+    );
+    const events = await readSse(await post(app, runInput("Hello")));
+    const error = events.at(-1) as unknown as { type: string; message: string; code: string };
+    expect(error.type).toBe(EventType.RUN_ERROR);
+    expect(error.code).toBe("turn_failed");
+    expect(error.message).not.toBe("");
+    // The person's message and the reason are both in the record, so a reload still shows them.
+    expect(fake.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(fake.messages[1]?.parts).toEqual([{ type: "error", text: error.message }]);
+    expect(fake.messages[1]?.template).toBe(`${ANALYST_URI}@1`);
+    expect(fake.conversation.status.activeTurn).toBeUndefined();
+  });
+
+  const turnState = (model: { doStreamCalls: Array<{ prompt: unknown }> }) => {
+    const prompt = model.doStreamCalls[0]?.prompt as Array<{ role: string; content: unknown }>;
+    return JSON.stringify(prompt.at(-1)?.content);
+  };
+
+  test("an add-on that cannot be reached does not stop the turn, and the agent is told", async () => {
+    const { app, fake, model } = makeApp(
+      [{ text: "The bio tools are down right now." }],
+      {},
+      {
+        mcpServer: { url: "http://127.0.0.1:9/nowhere" },
+        template: { mcpServers: [{ server: `texera://mcp-servers/${MCP_RID}` }] },
+      },
+    );
+    const events = await readSse(await post(app, runInput("Find papers on Cas9.")));
+    expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+    expect(events.some((e) => e.type === EventType.RUN_ERROR)).toBe(false);
+    expect(fake.messages.at(-1)?.parts.at(-1)?.text).toBe("The bio tools are down right now.");
+    expect(turnState(model)).toContain("Not available in this turn: the texera tools");
+  });
+
+  test("the agent is told the date and the computing unit this chat's runs use", async () => {
+    const { app, model } = makeApp(
+      [{ text: "On alice's unit." }],
+      {},
+      { conversationUnit: { name: "alice's unit", phase: "ready" } },
+    );
+    await readSse(await post(app, runInput("Where will this run?")));
+    const state = turnState(model);
+    expect(state).toContain("## Turn state");
+    expect(state).toContain("Today is 2026-11-05.");
+    expect(state).toContain(`Computing unit: alice's unit (${UNIT_URI}), ready.`);
+  });
+
+  test("a chat without a unit says nothing about one", async () => {
+    const { app, model } = makeApp([{ text: "Hello." }]);
+    await readSse(await post(app, runInput("Hi")));
+    expect(turnState(model)).toContain("Today is 2026-11-05.");
+    expect(turnState(model)).not.toContain("Computing unit");
+  });
+
+  const withAttachment = (content: unknown[]) => ({
+    ...runInput("x"),
+    messages: [{ id: "m1", role: "user", content }],
+  });
+  const iris = {
+    type: "binary",
+    mimeType: "application/vnd.texera.resource",
+    url: "texera://datasets/d1@1",
+    filename: "iris.csv",
+  };
+
+  test("an attachment is kept as a resource of the person's message, and the model is told", async () => {
+    const { app, fake, model } = makeApp([{ text: "It has flowers." }]);
+    const events = await readSse(
+      await post(app, withAttachment([{ type: "text", text: "What is in this file?" }, iris])),
+    );
+    expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+    expect(fake.messages[0]?.parts).toEqual([
+      { type: "text", text: "What is in this file?" },
+      { type: "resource", resource: "texera://datasets/d1@1", text: "iris.csv" },
+    ]);
+    expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain(
+      'Attached dataset \\"iris.csv\\" (texera://datasets/d1@1)',
+    );
+  });
+
+  test("an attachment alone is a message", async () => {
+    const { app, fake } = makeApp([{ text: "Got it." }]);
+    const events = await readSse(await post(app, withAttachment([iris])));
+    expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+    expect(fake.messages[0]?.parts).toEqual([
+      { type: "resource", resource: "texera://datasets/d1@1", text: "iris.csv" },
+    ]);
+  });
+
+  test("binary content that names no catalog resource is not an attachment", async () => {
+    const { app, fake } = makeApp([]);
+    const foreign = { type: "binary", mimeType: "image/png", url: "https://example.com/a.png" };
+    const events = await readSse(await post(app, withAttachment([foreign])));
+    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "bad_request" });
+    expect(fake.messages).toEqual([]);
   });
 
   test("serves the A2A agent card of a template and answers message/send", async () => {

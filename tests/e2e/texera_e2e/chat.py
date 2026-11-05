@@ -2,16 +2,41 @@
 from __future__ import annotations
 
 import json
-import urllib.parse
 import urllib.request
 import uuid
 
 from .client import Api
 
 
-def template_uri(api: Api, name: str) -> str:
-    templates = api.get(f"/agent-templates?q={urllib.parse.quote(name)}")["items"]
-    return next(t for t in templates if t["metadata"]["name"] == name)["metadata"]["uri"]
+def agent_uri(api: Api) -> str:
+    """The deployment's agent: the template every new chat runs."""
+    return api.get("/settings")["spec"]["defaults"]["agentTemplate"]
+
+
+def tool(api: Api, server: str, name: str, headers: dict | None = None, **arguments) -> tuple[bool, str]:
+    """Calls an MCP tool as an agent does: whether it failed, and the text it answered."""
+    status, body = api.mcp(server, "tools/call", {"name": name, "arguments": arguments}, headers=headers)
+    assert status == 200, (status, body)
+    result = body["result"]
+    return bool(result.get("isError")), "\n".join(c.get("text", "") for c in result["content"])
+
+
+def in_turn(api: Api, conversation: str, service_token: str) -> tuple[str, dict]:
+    """Starts a turn and returns it with the headers the runtime puts on a tool call made in
+    it: the chat as the call's origin, vouched for by the service token."""
+    turn = api.post(f"/conversations/{conversation}/turns", {})
+    origin = f"conversation={conversation};turn={turn['turn']};template={turn['template']}"
+    return turn["turn"], {"X-Texera-Origin": origin, "X-Texera-Service-Token": service_token}
+
+
+def second_unit(api: Api, project: str, name: str = "a second unit") -> str:
+    """Another computing unit resource at the deployment's engine, so a test can tell where a
+    run went on any stack; returns its URI."""
+    base = next(u for u in api.get("/computing-units/available") if u["spec"]["provider"] == "static")
+    spec = {"provider": "static", "endpoint": base["spec"]["endpoint"]}
+    if base["spec"].get("clientId"):
+        spec["clientId"] = base["spec"]["clientId"]
+    return api.create("computing-units", name, spec, project=project)["metadata"]["uri"]
 
 
 class Turn:

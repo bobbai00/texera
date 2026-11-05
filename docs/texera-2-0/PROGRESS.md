@@ -2,6 +2,102 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-05 (session 7, on the Mac): one agent, a clean tool split, errors that say why
+
+Asked, after an end-to-end run of the cluster deployment through the browser with the real
+model found six defects, to fix them and to simplify the agents: one agent as the entry to
+every chat, basic tools with MCP servers as add-ons, no overlap between the catalog and the
+dataflow MCP servers, and a proper way to store and manage the agent. One commit on top of
+`ca4f8c750`.
+
+Done:
+- **One agent.** The Data Analyst and the Bio Researcher are replaced by the Texera Agent,
+  the settings' default and the only seeded template. Its card and system prompt are a file,
+  `catalog/internal/catalog/agents/texera-agent.md`, embedded like the skills (`prompts.go`
+  is gone); `seed.go` gives it the model endpoint, the four skills, the dataflow server and
+  the bio add-on, and the loop rule `free` (one agent answers every kind of question, so
+  "compute before you answer a data question" is a rule of the prompt, checked by the
+  evals). The app has no agent picker, no switcher and no agent templates link; the kind, its
+  page, `/mode` and the handoff tool stay in the code, unused. On a stack seeded by an older
+  release the old agents stay for the chats that use them, and the settings' default moves
+  to the Texera Agent when it pointed at one of them.
+- **Built-ins change only through the platform.** `UpdateSpec` and `Delete` refuse a
+  resource labelled `texera.builtin` for anyone but the service caller (`409 builtin`):
+  the seed already overwrote such an edit at the next start, silently, also an
+  administrator's.
+- **The two MCP servers share no tool.** An `x-mcp` operation under `/workflows` is a
+  dataflow tool (9: create, get, edit, validate, run, get_execution, pause, resume,
+  get_port_result); the dataset file tools, `list_operators` and `list_computing_units` moved
+  to the catalog server (14); `create_agent_template` is no longer a tool. The contract was
+  regenerated; `make generate` reproduces the tree.
+- **Basic tools and add-ons.** A server with `spec.builtin` is the platform's and a turn
+  fails without it. Any other server is an add-on: one that cannot be reached within 10 s,
+  or whose credential cannot be leased, is left out of the turn, and the agent is told so in
+  the turn state. One unreachable server used to fail every turn of every agent that mounted it.
+- **The chat's unit** (defect 1). The unit picked when a chat starts was stored and never
+  read. The catalog now applies it: a compile or a run takes its unit from the request, else
+  from the conversation named by the call's origin, else from the workflow, the project, the
+  settings. The agent is also told the unit, with the date, at the end of every step's
+  prompt (`chat-context.ts`), and passes none.
+- **The bio server on Kubernetes** (defect 2). `deploy/kubernetes/texera.yaml` sets
+  `TEXERA_BIOMCP_URL=http://gateway:28088/bio-mcp`; the default, the public URL, is the pod
+  itself from inside the agent runtime, so every Bio Researcher turn on a cluster failed with
+  "Unable to connect". `test_cluster_agents.py` reads every add-on's URL from the runtime's
+  pod; `k8s.sh check` ran no model test, which is how this went unseen.
+- **A failed turn stays on screen** (defect 3). A turn that failed outside the loop left no
+  record, and the page dropped the live error when it re-read the history. The runtime
+  writes the error as a part of an assistant message; the page keeps an error the catalog
+  never got (`settled`), and settles only once its own request is over.
+- **The end of an answer is on screen** (defect 4). The chat scrolled on new messages only;
+  when the persisted copy replaced the live one, `content-visibility` gave it a 120 px
+  placeholder and the chat lost its end. The newest messages are always laid out and the chat
+  follows its content's size while it is at the end.
+- **The engine's errors reach whoever asked** (defect 5). Three causes. The generated client
+  decoded every error body into the contract's `Error` and failed when the unit answered
+  Dropwizard's numeric code, so every refusal became `502 … cannot unmarshal`: the client now
+  reads the status and the body itself and the catalog keeps their class and words
+  (`UnitFailed`). The unit answers in the contract's shape (`UnitErrorMapper`). And a Python
+  operator that raised paused its worker for a console nobody attends, so the run waited for
+  ever: the unit fails the run with the exception as its error. A port the plan names answers
+  an empty page until its table is written, instead of an error at the start of every run.
+- **Smaller.** An attachment travels as AG-UI binary content, is kept as a resource part of
+  the person's message and stays a card (it turned into a line of text with a URI after the
+  turn, and never reached the chat's resources); a resource shows once per message; a failed
+  tool shows the error's own message.
+- `k8s.sh up` works on a local cluster that is not kind (`TEXERA2_KUBE_CONTEXT=orbstack`):
+  the gateway is made a LoadBalancer there, which such a cluster publishes on localhost.
+
+Verified, on OrbStack's cluster from a deleted namespace, deployed by `k8s.sh up` alone:
+- Unit: catalog `go vet` and `go test` (with the new suites for the engine client, the MCP
+  bridge and split, the one agent, built-ins, the chat's unit, the unit's errors); runtime
+  65 tests, types, lint; frontend 79 tests, types, lint; engine module 1389 tests and
+  `scalafmtCheck`. The other sbt modules were not rerun (untouched).
+- `k8s.sh check`: 22 scenarios (7 new: engine errors, the chat's unit, the runtime reaching
+  its servers) and 7 Playwright tests (new: a failed turn across a reload, a long first
+  answer on screen).
+- With the model (Haiku 5.5), by hand since no script runs them on a cluster: 4 scenarios
+  (`pytest -m model`) and 2 Playwright scenarios, among them a run going to the chat's unit
+  with no unit in the agent's call, and one agent researching, analyzing and sharing.
+- A walk through the app in a browser, checked against numbers computed from the CSV, the
+  catalog and the engines' logs: an attached CSV answered correctly with the answer's end on
+  screen; a unit created from the library page, ready in 4 s; a chat on it whose run went
+  there (the agent passed no unit; that unit's engine log names the run, the static unit's
+  does not); a Python operator raising `"boom pid " + str(os.getpid())` failed the run and
+  the agent reported the pid, which only the engine knew.
+
+Not verified:
+- **PubMed.** NCBI's `esearch` with `retmode=json` answered HTTP 500 all day, also from this
+  machine, so every literature search failed and no citation could be checked. The agent
+  said so and cited nothing from memory.
+- **The Compose stack.** Only the cluster was run: the `local` scenarios (the lake, the
+  unit's doors, the unit restart) and `test.sh gate` were not. The doors were probed by hand
+  from a pod (nobody 401, a person 403).
+
+Next: run `test.sh gate` on the Compose stack; a `cancel_execution` tool (the dataflow
+server pauses and resumes but cannot cancel); smaller tool results and a summary of long
+chats (one question still replays every tool result of the chat at every step); approval
+before a tool that shares or deletes; `PLAN.md` still describes two agents.
+
 ## 2026-11-04 (session 6, close): both gates green; the model scenarios own their data
 
 Asked to make sure the branch works end to end in both modes before stopping: the Compose

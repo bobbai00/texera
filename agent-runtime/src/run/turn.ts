@@ -10,10 +10,11 @@
  */
 import type { Message as AGUIMessage, RunAgentInput } from "@ag-ui/core";
 import type { BuildInput, BuiltAgent } from "../agent/build.ts";
+import type { ChatFacts } from "../agent/chat-context.ts";
 import { HANDOFF_TOOL, handoffTarget } from "../agent/handoff.ts";
 import { TurnContext } from "../agent/turn-context.ts";
 import { type CatalogClient, CatalogError } from "../catalog/client.ts";
-import { baseUri, type CatalogAuth, type Conversation, type Turn } from "../catalog/types.ts";
+import { baseUri, type CatalogAuth, type Conversation, type MessagePart, type Turn } from "../catalog/types.ts";
 import type { Logger } from "../log.ts";
 import { type AGUIEvent, events, StreamMapper } from "./ag-ui-events.ts";
 import { assistantParts, toModelMessages } from "./messages.ts";
@@ -59,6 +60,33 @@ export function newestUserText(messages: AGUIMessage[]): string | undefined {
   return undefined;
 }
 
+/** A resource a person attached to a message: by URI, with the name they know it by. */
+export interface Attachment {
+  uri: string;
+  name?: string;
+}
+
+/**
+ * What the newest user message attaches: AG-UI binary content whose URL is a catalog URI. The file
+ * itself is already a dataset version; only the reference travels.
+ */
+export function newestUserAttachments(messages: AGUIMessage[]): Attachment[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== "user") continue;
+    const content = (m as { content?: unknown }).content;
+    if (!Array.isArray(content)) return [];
+    return content.flatMap((p): Attachment[] => {
+      const part = (p ?? {}) as { type?: unknown; url?: unknown; filename?: unknown };
+      if (part.type !== "binary" || typeof part.url !== "string" || !part.url.startsWith("texera://")) return [];
+      return [
+        { uri: part.url, ...(typeof part.filename === "string" && part.filename ? { name: part.filename } : {}) },
+      ];
+    });
+  }
+  return [];
+}
+
 const MODE = /^\/mode\s+(.+)$/s;
 
 /** Runs a turn, yielding AG-UI events in order. Never throws; errors become RUN_ERROR. */
@@ -69,13 +97,14 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
   yield events.runStarted(input.threadId, input.runId);
 
   const text = newestUserText(input.messages);
-  if (!text) {
+  const attachments = newestUserAttachments(input.messages);
+  if (!text && attachments.length === 0) {
     yield events.runError("the run has no user message", "bad_request");
     return;
   }
   const plain: CatalogAuth = { userToken: req.userToken, serviceToken: req.serviceToken };
 
-  const mode = MODE.exec(text.trim());
+  const mode = MODE.exec((text ?? "").trim());
   if (mode?.[1]) {
     yield* switchMode(deps, rid, mode[1].trim(), plain, newId, input);
     return;
@@ -101,9 +130,15 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
   const names = new Map<string, string>();
   let errored = false;
   let conversation: Conversation | undefined;
+  let current = turn.template;
   try {
-    await deps.catalog.appendMessage(rid, { turn: turn.turn, role: "user", parts: [{ type: "text", text }] }, auth());
-    let current = turn.template;
+    const said: MessagePart[] = text ? [{ type: "text", text }] : [];
+    const attached = attachments.map(
+      (a): MessagePart => ({ type: "resource", resource: a.uri, ...(a.name ? { text: a.name } : {}) }),
+    );
+    await deps.catalog.appendMessage(rid, { turn: turn.turn, role: "user", parts: [...said, ...attached] }, auth());
+    conversation = await deps.catalog.getConversation(rid, auth());
+    const chat = await chatFacts(deps.catalog, conversation, auth());
     for (let hop = 0; ; hop++) {
       const template = await deps.catalog.getTemplate(current, auth());
       names.set(template.uri, template.name);
@@ -112,6 +147,7 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
         auth: auth(),
         turn: context,
         purpose: `texera://conversations/${rid}`,
+        chat,
       });
       let outcome: Awaited<ReturnType<BuiltAgent["run"]>["return"]> extends never
         ? never
@@ -199,7 +235,6 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
         break;
       }
       const next = await deps.catalog.getTemplate(target, auth());
-      conversation = conversation ?? (await deps.catalog.getConversation(rid, auth()));
       await deps.catalog.updateConversationSpec(rid, { ...conversation.spec, template: baseUri(next.uri) }, auth());
       log.info("handoff", { from: template.name, to: next.name });
       // The record of the handoff: a system note written by the template that handed off, naming the one that takes over.
@@ -225,6 +260,17 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
     log.error("turn failed", { error: message });
     if (!errored) {
       errored = true;
+      // The turn failed outside the loop (an agent that could not be built, say), where no
+      // assistant message records it. Whoever opens the chat, now or later, reads why.
+      try {
+        await deps.catalog.appendMessage(
+          rid,
+          { turn: turn.turn, role: "assistant", template: current, parts: [{ type: "error", text: message }] },
+          auth(),
+        );
+      } catch (recordErr) {
+        log.error("could not record the failure", { error: (recordErr as Error).message });
+      }
       yield events.runError(message, "turn_failed");
     }
   } finally {
@@ -235,6 +281,22 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
     }
   }
   if (!errored) yield events.runFinished(input.threadId, input.runId, { type: "success" });
+}
+
+/**
+ * The settings of a chat an agent is told: the computing unit it names, with the name and state
+ * the person knows it by. A unit that cannot be read is still named by its URI.
+ */
+async function chatFacts(catalog: CatalogClient, conversation: Conversation, auth: CatalogAuth): Promise<ChatFacts> {
+  const uri = conversation.spec.computingUnit;
+  if (!uri) return {};
+  try {
+    const { resource } = await catalog.resolve(uri, auth);
+    const phase = (resource.status as { phase?: unknown } | undefined)?.phase;
+    return { computingUnit: { uri, name: resource.metadata.name, ...(typeof phase === "string" ? { phase } : {}) } };
+  } catch {
+    return { computingUnit: { uri, name: "a unit that cannot be read" } };
+  }
 }
 
 /** `/mode <name or uri>`: the host switches the conversation's template without a model call. */

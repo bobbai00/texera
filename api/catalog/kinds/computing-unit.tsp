@@ -86,9 +86,9 @@ namespace Routes {
     @route("/available")
     @extension("x-texera-permission", "list")
     @extension("x-mcp", #{
-      server: "dataflow",
+      server: "catalog",
       tool: "list_computing_units",
-      description: "List the computing units the caller can run workflows on, with status.",
+      description: "List the computing units the caller can run workflows on, with status. A run in a chat uses the chat's unit unless the call names another.",
       readOnlyHint: true,
     })
     available(): ComputingUnit[] | Error;

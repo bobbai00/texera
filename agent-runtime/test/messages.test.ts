@@ -129,3 +129,43 @@ describe("assistantParts", () => {
     expect(parts[4]).toEqual({ type: "text", text: "Done." });
   });
 });
+
+describe("what the model is not shown", () => {
+  test("an error part is the person's record, not something the model said", () => {
+    const failed = {
+      ...base,
+      seq: 2,
+      role: "assistant" as const,
+      parts: [{ type: "error", text: "Unable to connect." }] as MessagePart[],
+    };
+    expect(toModelMessages([failed])).toEqual([]);
+  });
+});
+
+describe("what a person attached", () => {
+  const user = (parts: MessagePart[]) => ({ ...base, seq: 1, role: "user" as const, parts });
+
+  test("reaches the model as a line that names it and its URI", () => {
+    const messages = toModelMessages([
+      user([
+        { type: "text", text: "What is in this file?" },
+        { type: "resource", resource: "texera://datasets/d1@1", text: "iris.csv" },
+      ]),
+    ]);
+    expect(messages).toEqual([
+      { role: "user", content: 'What is in this file?\nAttached dataset "iris.csv" (texera://datasets/d1@1)' },
+    ]);
+  });
+
+  test("is a message of its own when there is no text", () => {
+    expect(toModelMessages([user([{ type: "resource", resource: "texera://datasets/d1@1" }])])).toEqual([
+      { role: "user", content: "Attached dataset (texera://datasets/d1@1)" },
+    ]);
+  });
+
+  test("names the kind from the URI, for any kind", () => {
+    expect(toModelMessages([user([{ type: "resource", resource: "texera://computing-units/u1" }])])).toEqual([
+      { role: "user", content: "Attached computing-unit (texera://computing-units/u1)" },
+    ]);
+  });
+});

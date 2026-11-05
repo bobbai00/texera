@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, type APIRequestContext, type Page, test } from "@playwright/test";
 
-// The core loop against the real stack: sign in through Keycloak as alice, start a chat with an
-// agent template, attach a CSV (which becomes a dataset version) and see it as a card; switch
-// agents through the switcher and /mode (the host handles both without a model); create and edit
-// an agent template from its page; and read a saved result's lineage. The real-model scenarios
-// run when the agent runtime has a key (TEXERA_E2E_SKIP_MODEL unset).
+// The pages against the real stack: sign in through Keycloak, start a chat with the deployment's
+// one agent, attach a CSV (which becomes a dataset version) and see it as a card; a turn that
+// fails and says why; a long answer that ends up on screen; custom operators; a run's lineage;
+// two people in one chat; a run that is paused and resumed. The real-model scenarios run when
+// the agent runtime has a key (TEXERA_E2E_SKIP_MODEL unset).
 
 const USER = process.env.TEXERA_E2E_USER ?? "alice";
 const PASSWORD = process.env.TEXERA_E2E_PASSWORD ?? "alice";
@@ -31,12 +31,18 @@ async function signIn(page: Page, user = USER, password = PASSWORD) {
   await expect(page.locator("[data-new-chat]")).toBeVisible();
 }
 
-async function startChat(page: Page, template: string) {
-  await page.locator(`[data-template="${template}"]`).click();
+const AGENT = "Texera Agent";
+
+/** Starts a chat from the home page: there is one agent, so the only choice is the computing unit. */
+async function startChat(page: Page, unit?: string) {
+  if (unit) {
+    await page.getByLabel("Computing unit").click();
+    await page.getByRole("option", { name: unit, exact: true }).click();
+  }
   await page.locator("[data-start-chat]").click();
   await expect(page).toHaveURL(/\/conversations\//);
   await expect(page.locator("[data-composer]")).toBeVisible();
-  await expect(page.locator("[data-current-template]")).toHaveText(template);
+  await expect(page.locator("[data-current-template]")).toHaveText(AGENT);
 }
 
 async function say(page: Page, text: string) {
@@ -90,7 +96,7 @@ async function withIris(as: Caller, label: string) {
     if (phase && !["completed", "failed", "cancelled"].includes(phase)) await as.attempt("POST", `/workflows/${workflow}/executions/${eid}/cancel`, {});
     await as.attempt("DELETE", `/workflows/${workflow}/executions/${eid}`);
   };
-  const clear = async (conversation?: string) => {
+  const clear = async (conversation?: string, others: string[] = []) => {
     const made: Made[] = conversation ? await as("GET", `/conversations/${conversation}/resources`) : [];
     for (const r of made) if (r.kind === "execution" && r.metadata.parent) await removeRun(r.metadata.parent, r.metadata.rid, r.status?.phase);
     for (const r of made) {
@@ -100,15 +106,20 @@ async function withIris(as: Caller, label: string) {
     }
     for (const kind of ["workflow", "dataset"]) for (const r of made) if (r.kind === kind) await as.attempt("DELETE", `/resources/${r.metadata.rid}`);
     if (conversation) await as.attempt("DELETE", `/resources/${conversation}`);
+    for (const rid of others) await as.attempt("DELETE", `/resources/${rid}`);
     await as.attempt("DELETE", `/resources/${dataset}`);
     await as.attempt("DELETE", `/projects/${project}`);
   };
   return { project, dataset, clear };
 }
 
-test("signs in, starts a chat with an agent template and attaches a CSV that becomes a dataset", async ({ page }) => {
+test("signs in, starts a chat and attaches a CSV that becomes a dataset", async ({ page }) => {
   await signIn(page);
-  await startChat(page, "Data Analyst");
+  // One agent is the entry to every chat: nothing to pick, no agents to manage.
+  await expect(page.locator("[data-template-picker]")).toHaveCount(0);
+  await expect(page.locator('[data-library-link="agent-template"]')).toHaveCount(0);
+  await startChat(page);
+  await expect(page.locator("[data-template-switcher]")).toHaveCount(0);
 
   // Attach a CSV and send: the upload makes a dataset version before the agent is asked.
   await page.locator("[data-attach-input]").setInputFiles({
@@ -130,55 +141,89 @@ test("signs in, starts a chat with an agent template and attaches a CSV that bec
   await page.reload();
   await expect(page.locator('[data-side-panel] [data-resource-view="dataset"]')).toBeVisible();
   await expect(page.locator('[data-side-panel] [data-file="penguins.csv"]')).toBeVisible();
+  // What was attached stays a card of the person's message and a resource of the chat, with no URI among their words.
+  const mine = page.locator('[data-message-role="user"]').first();
+  await expect(mine.locator('[data-resource-card="dataset"]')).toBeVisible();
+  await expect(mine).toContainText("What is in this file?");
+  await expect(mine.getByText("texera://")).toHaveCount(0);
+  await expect(page.locator('[data-rail-item="dataset"]').first()).toBeVisible();
   await page.screenshot({ path: "test-results/chat-with-dataset.png", fullPage: true });
 });
 
-test("switches agents through the switcher and through /mode, without a model", async ({ page }) => {
+// A turn that cannot start, for real: the agent's model endpoint names a credential that holds no
+// key, so the agent cannot be built and no model is called. The person must see why, and keep
+// seeing it. (Custom agents have no page for now; the API still makes one.)
+test("a turn that fails says why, and the chat keeps saying it", async ({ page, request }) => {
+  const call = await api(request);
+  const stamp = Date.now();
+  const credential = await call("POST", "/credentials", { name: `no key ${stamp}`, spec: { kind: "api_key", scope: "nowhere" } });
+  const endpoint = await call("POST", "/model-endpoints", { name: `no key ${stamp}`, spec: { provider: "anthropic", model: "claude-haiku-5-5", credential: credential.metadata.uri } });
+  const name = `Keyless ${stamp}`;
+  const template = await call("POST", "/agent-templates", {
+    name,
+    spec: { card: { name, description: "Its model has no key" }, model: endpoint.metadata.uri, prompt: "Answer.", catalogTools: false },
+  });
+  const conversation = await call("POST", "/conversations", { name: `keyless chat ${stamp}`, spec: { template: template.metadata.uri } });
+  cleanups.push(async () => {
+    for (const r of [conversation, template, endpoint, credential]) await call.attempt("DELETE", `/resources/${r.metadata.rid}`);
+  });
+
   await signIn(page);
-  await startChat(page, "Data Analyst");
-
-  await page.locator("[data-template-switcher]").click();
-  await page.locator('[data-switch-to="Bio Researcher"]').click();
-  await expect(page.locator("[data-current-template]")).toHaveText("Bio Researcher", { timeout: 30_000 });
-  await expect(page.locator('[data-part="handoff"][data-handoff-by="person"]').first()).toBeVisible();
-
-  await say(page, "/mode Data Analyst");
-  await expect(page.locator("[data-current-template]")).toHaveText("Data Analyst", { timeout: 30_000 });
-  await expect(page.locator('[data-part="handoff"]')).toHaveCount(2);
-  await page.screenshot({ path: "test-results/switcher.png", fullPage: true });
+  await page.goto(`/conversations/${conversation.metadata.rid}`);
+  await expect(page.locator("[data-composer]")).toBeVisible();
+  await say(page, "Hello?");
+  const error = page.locator('[data-part="error"]');
+  await expect(error).toBeVisible({ timeout: 30_000 });
+  const reason = await error.innerText();
+  expect(reason.trim()).not.toBe("");
+  await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible();
+  // It is still there once the catalog's copy of the turn has replaced the live one, and after a reload.
+  await page.waitForTimeout(1500);
+  await expect(error).toHaveCount(1);
+  await expect(error).toHaveText(reason);
+  await page.reload();
+  await expect(page.locator('[data-message-role="user"]', { hasText: "Hello?" })).toBeVisible();
+  await expect(page.locator('[data-part="error"]')).toHaveText(reason);
+  await page.screenshot({ path: "test-results/failed-turn.png", fullPage: true });
 });
 
-test("lists the library, creates an agent template from its page, edits it into a second version and offers it to a new chat", async ({ page }) => {
+// The runtime's part of a turn, without a model: the messages in the catalog, then the stream.
+test("a long first answer ends up on screen", async ({ page, request }) => {
   await signIn(page);
-  await page.locator('[data-library-link="agent-template"]').click();
-  await expect(page.locator('[data-library="agent-template"]')).toBeVisible();
-  await expect(page.locator('[data-resource-row="agent-template"]').filter({ hasText: "Bio Researcher" })).toBeVisible();
-
-  await page.locator('[data-new="agent-template"]').click();
-  const name = `E2E template ${Date.now()}`;
-  await page.locator('[data-new-resource="agent-template"] input').first().fill(name);
-  await page.getByRole("button", { name: "Create" }).click();
-  await expect(page).toHaveURL(/\/agent-templates\//);
-  const form = page.locator("[data-template-form]");
-  await expect(form).toBeVisible();
-  await expect(form.locator('[data-field="model"]')).not.toHaveValue("");
-
-  await form.locator('[data-field="prompt"]').fill("You are a careful analyst. Answer briefly.");
-  await form.locator("[data-save-template]").click();
-  await expect(form.locator("[data-save-template]")).toBeDisabled();
-  await page.getByRole("tab", { name: "Versions" }).click();
-  await expect(page.locator("[data-versions] li")).toHaveCount(2);
-  await page.getByRole("tab", { name: "Access" }).click();
-  await expect(page.locator("[data-grants]")).toBeVisible();
-  // Sharing finds people in the directory whether or not they have logged in.
-  await page.getByLabel("Principal").fill("bob");
-  await page.locator('[data-principal="Bob Builder"]').click();
-  await page.locator("[data-grant-button]").click();
-  await expect(page.locator('[data-grant="viewer"]').filter({ hasText: "Bob Builder" })).toBeVisible();
-  await page.screenshot({ path: "test-results/template-page.png", fullPage: true });
-
-  await page.locator("[data-new-chat-link]").click();
-  await expect(page.locator(`[data-template="${name}"]`)).toBeVisible();
+  await startChat(page);
+  const rid = conversationOf(page);
+  const call = await api(request);
+  cleanups.push(() => call.attempt("DELETE", `/resources/${rid}`));
+  const answer = `${Array.from({ length: 90 }, (_, i) => `Paragraph ${i} of a long answer.`).join("\n\n")}\n\nThe end of the answer.`;
+  await page.route(`**/agents/conversations/${rid}/ag-ui`, async route => {
+    const events = [
+      { type: "RUN_STARTED", threadId: rid, runId: "r" },
+      { type: "TEXT_MESSAGE_START", messageId: "m", role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "m", delta: answer },
+      { type: "TEXT_MESSAGE_END", messageId: "m" },
+      { type: "RUN_FINISHED", threadId: rid, runId: "r" },
+    ];
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: events.map(e => `data: ${JSON.stringify(e)}\n\n`).join("") });
+    // The catalog gets the turn while the page shows the stream, as from the runtime.
+    const turn = await call("POST", `/conversations/${rid}/turns`, {});
+    await call("POST", `/conversations/${rid}/messages`, { turn: turn.turn, role: "user", parts: [{ type: "text", text: "Tell me everything." }] });
+    await call("POST", `/conversations/${rid}/messages`, { turn: turn.turn, role: "assistant", template: turn.template, parts: [{ type: "text", text: answer }] });
+    await call("DELETE", `/conversations/${rid}/turns/${turn.turn}`);
+  });
+  await say(page, "Tell me everything.");
+  await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible();
+  // One copy: the catalog's has replaced the live one.
+  const end = page.getByText("The end of the answer.");
+  await expect(end).toHaveCount(1);
+  await expect(end).toBeInViewport();
+  // Someone who scrolled up to read is left where they are.
+  const scroller = page.locator('[data-message-role="assistant"]').first().locator("xpath=ancestor::*[contains(@class,'overflow-y-auto')][1]");
+  await scroller.evaluate(el => {
+    el.scrollTop = 0;
+  });
+  await expect(page.getByText("Paragraph 0 of a long answer.")).toBeInViewport();
+  await page.waitForTimeout(500);
+  await expect(page.getByText("Paragraph 0 of a long answer.")).toBeInViewport();
 });
 
 test("creates a custom operator from its page and finds it in a workflow's palette", async ({ page }) => {
@@ -199,6 +244,16 @@ test("creates a custom operator from its page and finds it in a workflow's palet
     .fill(JSON.stringify({ type: "object", properties: { apiKey: { type: "string", format: "credential", description: "The service key" } } }));
   await form.locator("[data-save-spec]").click();
   await expect(form.locator("[data-save-spec]")).toBeDisabled();
+  // Every save is a version, and the page shares the resource with someone found in the
+  // directory, whether or not they have logged in.
+  await page.getByRole("tab", { name: "Versions" }).click();
+  await expect(page.locator("[data-versions] li")).toHaveCount(2);
+  await page.getByRole("tab", { name: "Access" }).click();
+  await expect(page.locator("[data-grants]")).toBeVisible();
+  await page.getByLabel("Principal").fill("bob");
+  await page.locator('[data-principal="Bob Builder"]').click();
+  await page.locator("[data-grant-button]").click();
+  await expect(page.locator('[data-grant="viewer"]').filter({ hasText: "Bob Builder" })).toBeVisible();
 
   // The operator is in the palette of a new workflow, typed by its URI.
   await page.locator('[data-library-link="workflow"]').click();
@@ -266,7 +321,7 @@ test("two people in one chat: a shared conversation shows the other's messages a
   const alicePid = (await alice("GET", "/me")).principal.pid as string;
 
   await signIn(page);
-  await startChat(page, "Data Analyst");
+  await startChat(page);
   const rid = page.url().split("/conversations/")[1]?.split(/[/?#]/)[0] as string;
   expect(rid).toBeTruthy();
   // Sharing is membership: bob, an editor, opens the same chat in his own browser.
@@ -336,17 +391,27 @@ test("a run page follows the run as it goes, and pauses and resumes it", async (
   await expect(execution.locator("[data-port-rows]")).toBeVisible();
 });
 
-// The core loop with the real model: bob asks the Data Analyst about his iris dataset; the agent
-// builds and runs a workflow through the dataflow MCP server; the answer arrives, and the
-// workflow it built is listed as a resource of this chat and opens beside it.
-test("a Data Analyst chat answers from a workflow it built and the chat tracks it", async ({ page, request }) => {
+// The core loop with the real model: bob picks a computing unit of his own for the chat and asks
+// about his iris dataset; the agent builds and runs a workflow through the dataflow server; the
+// answer arrives on screen, the run went to the unit he picked without a word about it, and the
+// workflow is listed as a resource of this chat and opens beside it.
+test("the agent answers from a workflow it built, on the unit the chat names", async ({ page, request }) => {
   test.skip(!!process.env.TEXERA_E2E_SKIP_MODEL, "needs the real model");
   test.setTimeout(300_000);
-  const iris = await withIris(await api(request, "bob", "bob"), "core loop e2e");
+  const asBob = await api(request, "bob", "bob");
+  const iris = await withIris(asBob, "core loop e2e");
+  // A second unit at the deployment's engine, so the run's unit tells where the chat sent it.
+  const units: Array<{ metadata: { uri: string }; spec: { provider: string; endpoint?: string; clientId?: string } }> = await asBob("GET", "/computing-units/available");
+  const base = units.find(u => u.spec.provider === "static");
+  expect(base, "the deployment's own unit").toBeDefined();
+  const unitName = `bob's unit ${Date.now()}`;
+  const unit = await asBob("POST", "/computing-units", { name: unitName, parent: iris.project, spec: { provider: "static", endpoint: base?.spec.endpoint, ...(base?.spec.clientId ? { clientId: base.spec.clientId } : {}) } });
   let conversation: string | undefined;
-  cleanups.push(() => iris.clear(conversation));
+  cleanups.push(async () => {
+    await iris.clear(conversation, [unit.metadata.rid]);
+  });
   await signIn(page, "bob", "bob");
-  await startChat(page, "Data Analyst");
+  await startChat(page, unitName);
   conversation = conversationOf(page);
   await say(page, IRIS_QUESTION);
 
@@ -354,7 +419,16 @@ test("a Data Analyst chat answers from a workflow it built and the chat tracks i
   // The averages, as the model may round them: 1.462, 4.260 and 5.552.
   await expect(answer).toContainText(/1\.46/, { timeout: 240_000 });
   await expect(answer).toContainText(/5\.55/);
-  await expect(page.locator('[data-message-template="Data Analyst"]').first()).toBeVisible();
+  await expect(page.locator(`[data-message-template="${AGENT}"]`).first()).toBeVisible();
+  // The turn is over and the end of the answer is where the person is looking.
+  await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible({ timeout: 60_000 });
+  await expect(answer.getByText(/5\.55/).last()).toBeInViewport();
+
+  // Where it ran: the unit bob picked for the chat, though neither he nor the agent named it.
+  const made: Made[] = await asBob("GET", `/conversations/${conversation}/resources`);
+  const runs = made.filter(r => r.kind === "execution");
+  expect(runs.length).toBeGreaterThan(0);
+  for (const run of runs) expect((run as unknown as { spec: { computingUnit: string } }).spec.computingUnit).toBe(unit.metadata.uri);
 
   const built = page.locator('[data-rail-item="workflow"]').first();
   await expect(built).toBeVisible({ timeout: 30_000 });
@@ -369,36 +443,39 @@ test("a Data Analyst chat answers from a workflow it built and the chat tracks i
   await page.screenshot({ path: "test-results/core-loop.png", fullPage: true });
 });
 
-// The M1 scenario: alice starts with the Bio Researcher, gets cited research ideas, then asks for
-// an analysis; the Bio Researcher hands the chat to the Data Analyst, which answers from a run.
-test("the Bio Researcher hands the chat to the Data Analyst for the analysis, which then shares the data", async ({ page, request }) => {
+// One agent for everything: alice asks for research ideas, which the agent grounds with the bio
+// tools; then for an analysis of her data, which the same agent answers from a run, with no
+// handoff; then to share the data, which it does through the catalog server.
+test("one agent researches, analyzes and shares in one chat", async ({ page, request }) => {
   test.skip(!!process.env.TEXERA_E2E_SKIP_MODEL, "needs the real model");
   test.setTimeout(420_000);
-  const iris = await withIris(await api(request), "handoff e2e");
+  const iris = await withIris(await api(request), "one agent e2e");
   let conversation: string | undefined;
   cleanups.push(() => iris.clear(conversation));
   await signIn(page);
-  await startChat(page, "Bio Researcher");
+  await startChat(page);
   conversation = conversationOf(page);
+  const turnOver = () => expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible({ timeout: 240_000 });
+
   await say(page, "I study CRISPR off-target effects. Give me three research ideas grounded in recent literature, with citations.");
-  const ideas = page.locator('[data-message-role="assistant"]').last();
-  await expect(ideas).toContainText(/off-target/i, { timeout: 180_000 });
-  await expect(page.locator('[data-message-template="Bio Researcher"]').first()).toBeVisible();
-  await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible({ timeout: 60_000 });
+  // It consults the literature tools before it answers, whatever they return today.
+  await expect(page.locator('[data-tool="search_pubmed"]').first()).toBeVisible({ timeout: 180_000 });
+  await turnOver();
+  await expect(page.locator('[data-message-role="assistant"]').last()).toContainText(/off-target/i);
 
   await say(page, "Now analyze the iris dataset in my catalog: what is the average petal length per species? Build and run a workflow and report the numbers.");
-  await expect(page.locator('[data-part="handoff"][data-handoff-to="Data Analyst"]')).toBeVisible({ timeout: 240_000 });
   const answer = page.locator('[data-message-role="assistant"]').last();
   await expect(answer).toContainText(/1\.46/, { timeout: 240_000 });
-  await expect(page.locator("[data-current-template]")).toHaveText("Data Analyst");
-  await expect(page.locator('[data-message-template="Data Analyst"]').first()).toBeVisible();
-  await page.screenshot({ path: "test-results/handoff.png", fullPage: true });
+  await turnOver();
+  // The same agent did both: the chat never changed hands.
+  await expect(page.locator('[data-part="handoff"]')).toHaveCount(0);
+  await expect(page.locator("[data-current-template]")).toHaveText(AGENT);
+  await page.screenshot({ path: "test-results/one-agent.png", fullPage: true });
 
-  // The active agent shares through the catalog server: afterwards bob can read alice's iris.
-  await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible({ timeout: 60_000 });
+  // It shares through the catalog server: afterwards bob can read alice's iris.
   await say(page, "Share my iris dataset with Bob so he can read it.");
   await expect(page.locator('[data-tool="grant_access"][data-tool-state="done"]').first()).toBeVisible({ timeout: 180_000 });
-  await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible({ timeout: 60_000 });
+  await turnOver();
   const asBob = await api(request, "bob", "bob");
   const bob = await asBob("GET", "/me");
   const visible = await asBob("GET", "/datasets?q=iris");

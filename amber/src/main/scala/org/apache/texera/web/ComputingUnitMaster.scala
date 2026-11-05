@@ -33,7 +33,12 @@ import org.apache.texera.amber.engine.common.{AmberRuntime, Utils}
 import org.apache.texera.amber.util.{JSONUtils, ObjectMapperUtils}
 import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.web.auth.{UnitJwtAuth, UnitPrincipal}
-import org.apache.texera.web.execution.{ExecutionRegistry, ExecutionStorage, UnitApiResource}
+import org.apache.texera.web.execution.{
+  ExecutionRegistry,
+  ExecutionStorage,
+  UnitApiResource,
+  UnitErrorMapper
+}
 import org.apache.texera.web.resource.{
   SyncExecutionResource,
   WebsocketPayloadSizeTuner,
@@ -145,6 +150,7 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
     }
 
     environment.jersey.register(classOf[UnitApiResource])
+    environment.jersey.register(classOf[UnitErrorMapper])
     environment.jersey.register(classOf[SyncExecutionResource])
 
     val requestLogger = org.slf4j.LoggerFactory.getLogger("org.eclipse.jetty.server.RequestLog")

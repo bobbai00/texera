@@ -23,7 +23,7 @@ part of the answer that matters, so this file doubles as the API's quick referen
 
     bin/texera-2-0/examples/walkthrough.py                  # against http://localhost:8088
     bin/texera-2-0/examples/walkthrough.py --gw http://localhost:28088   # the cluster
-    bin/texera-2-0/examples/walkthrough.py --chat           # also one turn with the Data Analyst (needs the model key)
+    bin/texera-2-0/examples/walkthrough.py --chat           # also one turn with the Texera Agent (needs the model key)
 
 Only the standard library is used; the same calls as curl would make them.
 """
@@ -84,7 +84,7 @@ def show(method: str, path: str, note: str = "") -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--gw", default="http://localhost:8088", help="the gateway")
-    ap.add_argument("--chat", action="store_true", help="also run one turn with the Data Analyst (needs the model key)")
+    ap.add_argument("--chat", action="store_true", help="also run one turn with the Texera Agent (needs the model key)")
     ap.add_argument("--keep", action="store_true", help="leave what the tour made in place")
     args = ap.parse_args()
     gw = args.gw.rstrip("/")
@@ -203,11 +203,11 @@ def main() -> None:
     print(f"   {len(names)} dataflow tools, e.g. {names[:6]}; the catalog server is at /mcp/catalog")
 
     if args.chat:
-        step("a chat turn: the Data Analyst answers from a workflow it builds (AG-UI stream)")
-        templates = alice.must("GET", "/agent-templates")["items"]
-        analyst = next(t for t in templates if t["metadata"]["name"] == "Data Analyst")["metadata"]["uri"]
-        conv = alice.must("POST", "/conversations", {"name": f"tour chat {stamp}", "spec": {"template": analyst, "computingUnit": unit}, "parent": project})
-        show("POST", "/conversations", '{"name": ..., "spec": {"template": "<Data Analyst uri>", "computingUnit": "<unit uri>"}, "parent": "<project rid>"}')
+        step("a chat turn: the Texera Agent answers from a workflow it builds (AG-UI stream)")
+        agent = alice.must("GET", "/settings")["spec"]["defaults"]["agentTemplate"]
+        show("GET", "/settings", "spec.defaults.agentTemplate is the agent every chat runs")
+        conv = alice.must("POST", "/conversations", {"name": f"tour chat {stamp}", "spec": {"template": agent, "computingUnit": unit}, "parent": project})
+        show("POST", "/conversations", '{"name": ..., "spec": {"template": "<the agent\'s uri>", "computingUnit": "<unit uri>"}, "parent": "<project rid>"}')
         crid = conv["metadata"]["rid"]
         prompt = f"Using the dataset {ds['metadata']['uri']}, what is the average petal length per species? Build and run a workflow, then report the numbers."
         body = {"threadId": crid, "runId": str(uuid.uuid4()), "state": {}, "tools": [], "context": [], "forwardedProps": {},

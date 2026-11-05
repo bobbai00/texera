@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import type { AgentTemplateSpec, ConversationSpec, ConversationStatus, Resource } from "@texera/catalog-client/types";
-import { baseUri, createDatasetVersion, KindIcon, meQuery, PrincipalName, resourceQuery, searchQuery, useOpenResource } from "@texera/kinds";
-import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger, ErrorNote, Skeleton, cn } from "@texera/ui";
-import { ChevronDown, Loader2, PanelRight } from "lucide-react";
+import type { ConversationSpec, ConversationStatus, Resource } from "@texera/catalog-client/types";
+import { baseUri, createDatasetVersion, KindIcon, meQuery, PrincipalName, resourceQuery, useOpenResource } from "@texera/kinds";
+import { Button, ErrorNote, Skeleton, cn } from "@texera/ui";
+import { Loader2, PanelRight } from "lucide-react";
 import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "./Composer";
 import { MessageItem } from "./MessageItem";
@@ -39,6 +39,7 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
   const { beside } = useOpenResource();
 
   const scroller = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const last = chat.messages.at(-1);
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run whenever the streaming message grows
@@ -46,6 +47,18 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
     const el = scroller.current;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, [last, chat.messages.length]);
+  // A message settles into its height after it renders: the persisted copy replaces the live one,
+  // a card loads its data. A chat at its end stays there while that happens.
+  useEffect(() => {
+    const el = scroller.current;
+    const inner = content.current;
+    if (!el || !inner) return;
+    const follow = new ResizeObserver(() => {
+      if (pinned.current) el.scrollTop = el.scrollHeight;
+    });
+    follow.observe(inner);
+    return () => follow.disconnect();
+  }, []);
 
   const send = async ({ text, files: attached }: { text: string; files: File[] }) => {
     const attachments: Attachment[] = [];
@@ -99,7 +112,6 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
             with <span data-current-template>{current?.name ?? "…"}</span>
           </div>
         </div>
-        <TemplateSwitcher current={spec.template} disabled={busy || othersTurn !== undefined} onPick={uri => void chat.send(`/mode ${uri}`)} />
         <Button variant="ghost" size="icon-sm" aria-label="Open the chat's details beside" onClick={() => beside({ kind: "conversation", rid })}>
           <PanelRight />
         </Button>
@@ -113,14 +125,16 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
               pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
             }}
             className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-8">
+            <div ref={content} className="mx-auto w-full max-w-3xl space-y-6 px-4 py-8">
               {chat.loading && <Skeleton className="h-24" />}
               {chat.historyError && <ErrorNote error={chat.historyError} prefix="Could not load the history" />}
               {!chat.loading && chat.messages.length === 0 && (
-                <p className="py-10 text-center text-sm text-muted-foreground">Say what you want to do, or drop a CSV here. Type /mode and an agent's name to switch agents.</p>
+                <p className="py-10 text-center text-sm text-muted-foreground">Say what you want to do, or drop a CSV here.</p>
               )}
               {items.map(({ message, showLabel }, i) => (
-                <div key={message.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_120px]">
+                // Older messages skip layout until scrolled to; the newest ones must have their real
+                // height, or the chat cannot find its end when the persisted copy replaces the live one.
+                <div key={message.id} className={cn(i < items.length - NEWEST_LAID_OUT && "[content-visibility:auto] [contain-intrinsic-size:auto_120px]")}>
                   <MessageItem message={message} streaming={chat.running && i === items.length - 1} labels={labels} showLabel={showLabel} showAuthor={message.author !== undefined && message.author !== myPid} />
                 </div>
               ))}
@@ -148,27 +162,5 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
   );
 }
 
-/** Picks the agent the next turn runs. Switching goes through the host's `/mode`, like typing it. */
-function TemplateSwitcher({ current, disabled, onPick }: { current: string; disabled: boolean; onPick: (uri: string) => void }) {
-  const { data } = useQuery({ ...searchQuery({ kind: "agent-template" }), staleTime: 60_000 });
-  const name = (t: Resource) => (t.spec as unknown as AgentTemplateSpec).card?.name || t.metadata.name;
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger>
-        <Button variant="outline" size="sm" disabled={disabled} data-template-switcher>
-          <KindIcon kind="agent-template" className="size-5 rounded-md [&_svg]:size-3" />
-          {data?.items.find(t => t.metadata.uri === baseUri(current)) ? name(data.items.find(t => t.metadata.uri === baseUri(current)) as Resource) : "Agent"}
-          <ChevronDown />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="bottom" className="w-64">
-        <DropdownMenuLabel>Switch agent</DropdownMenuLabel>
-        {data?.items.map(t => (
-          <DropdownMenuItem key={t.metadata.rid} onClick={() => t.metadata.uri !== baseUri(current) && onPick(t.metadata.uri)} data-switch-to={name(t)}>
-            <span className={cn("min-w-0 flex-1 truncate", t.metadata.uri === baseUri(current) && "font-semibold")}>{name(t)}</span>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
+/** How many messages at the end of a chat are always laid out: a whole turn, a handoff included. */
+const NEWEST_LAID_OUT = 6;

@@ -106,6 +106,92 @@ describe("mountMcpBindings", () => {
     await mount.close();
   });
 
+  /** A transport whose connection fails at once, or never comes up. */
+  const dead = (hang = false) =>
+    ({
+      start: () => (hang ? new Promise<void>(() => {}) : Promise.reject(new Error("connect ECONNREFUSED"))),
+      send: async () => {},
+      close: async () => {},
+    }) as never;
+  const bio: McpServerRecord = {
+    uri: "texera://mcp-servers/b",
+    rid: "b",
+    name: "biomcp",
+    spec: { url: "http://bio/mcp" },
+  };
+  const both = {
+    bindings: [{ server: bio.uri }, { server: dataflow.uri }],
+    resolveServer: async (ref: string) => (ref === bio.uri ? bio : dataflow),
+    leaseCredential,
+    userToken: "tok",
+    publicUrl: "http://g",
+    turn,
+  };
+
+  test("an add-on that cannot be reached is skipped and named, and the rest still mounts", async () => {
+    const { clientSide } = await inProcessServer("dataflow");
+    const mount = await mountMcpBindings({
+      ...both,
+      transportFactory: (server) => (server.rid === "b" ? dead() : clientSide),
+    });
+    expect(Object.keys(mount.tools).sort()).toEqual(["list_operators", "run_workflow"]);
+    expect(mount.servers.map((s) => s.name)).toEqual(["dataflow"]);
+    expect(mount.unavailable).toEqual([
+      { name: "biomcp", uri: bio.uri, reason: expect.stringContaining("ECONNREFUSED") },
+    ]);
+    await mount.close();
+  });
+
+  test("an add-on that does not answer in time is skipped", async () => {
+    const { clientSide } = await inProcessServer("dataflow");
+    const started = Date.now();
+    const mount = await mountMcpBindings({
+      ...both,
+      addOnTimeoutMs: 40,
+      transportFactory: (server) => (server.rid === "b" ? dead(true) : clientSide),
+    });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(mount.servers.map((s) => s.name)).toEqual(["dataflow"]);
+    expect(mount.unavailable).toEqual([{ name: "biomcp", uri: bio.uri, reason: "no answer within 40 ms" }]);
+    await mount.close();
+  });
+
+  test("an add-on whose credential cannot be leased is skipped", async () => {
+    const { clientSide } = await inProcessServer("dataflow");
+    const keyed: McpServerRecord = {
+      ...bio,
+      spec: { url: "http://bio/mcp", headers: { "X-API-Key": `credential:${CRED}` } },
+    };
+    const mount = await mountMcpBindings({
+      ...both,
+      resolveServer: async (ref: string) => (ref === bio.uri ? keyed : dataflow),
+      leaseCredential: async () => {
+        throw new Error("409: no_secret");
+      },
+      transportFactory: () => clientSide,
+    });
+    expect(mount.servers.map((s) => s.name)).toEqual(["dataflow"]);
+    expect(mount.unavailable).toEqual([{ name: "biomcp", uri: bio.uri, reason: "409: no_secret" }]);
+    await mount.close();
+  });
+
+  test("a platform server that cannot be reached fails the mount: an agent cannot work without it", async () => {
+    await expect(
+      mountMcpBindings({ ...both, bindings: [{ server: dataflow.uri }], transportFactory: () => dead() }),
+    ).rejects.toThrow("ECONNREFUSED");
+  });
+
+  test("everything mounted leaves nothing unavailable", async () => {
+    const { clientSide } = await inProcessServer("dataflow");
+    const mount = await mountMcpBindings({
+      ...both,
+      bindings: [{ server: dataflow.uri }],
+      transportFactory: () => clientSide,
+    });
+    expect(mount.unavailable).toEqual([]);
+    await mount.close();
+  });
+
   test("prefixes a colliding tool name with the server name", async () => {
     const a = await inProcessServer("alpha");
     const b = await inProcessServer("beta");

@@ -51,16 +51,16 @@ packages/
   ui/                 tokens (oklch, light/dark), Base UI primitives, Shell, panel stack,
                       ResourceHeader, DataTable, SandboxedFrame
   kinds/              the URI grammar, the kind registry, the generic page, one module per kind
-  chat/               AG-UI client, conversation reducer, message parts, composer, template picker
+  chat/               AG-UI client, conversation reducer, message parts, composer, new chat
 ```
 
 Routes are the catalog's paths: a resource's page is its URI without the scheme.
 
 | Path | Page |
 |---|---|
-| `/` | new chat: pick an agent template and a unit |
-| `/conversations/$rid` | a chat: its messages, the agent switcher, the resources it produced in a rail |
-| `/{plural}` | the library of one kind: `/workflows`, `/datasets`, `/agent-templates`, … |
+| `/` | new chat: pick the computing unit its runs use; every chat runs the deployment's agent |
+| `/conversations/$rid` | a chat: its messages and the resources it produced in a rail |
+| `/{plural}` | the library of one kind: `/workflows`, `/datasets`, `/operators`, … |
 | `/{plural}/$rid` | the page of one resource (`?vno=` pins a version) |
 | `/workflows/$rid/executions/$eid` | a run, nested under its workflow as its URI is |
 | `/settings` | the deployment's settings (administrators) |
@@ -130,11 +130,11 @@ The registry test checks that every kind of the contract is registered with its 
 A conversation's spec names the agent template its next turn runs. The chat posts each turn to
 the agent runtime's AG-UI endpoint (`/agents/conversations/{rid}/ag-ui`) and reduces the event
 stream into messages of parts (`packages/chat/src/model.ts`); when the turn ends, the catalog's
-persisted messages replace the live ones. Every assistant message carries the template version
-that wrote it, shown as a label where the agent changes. Switching agents goes through the
-host's `/mode` command, whether typed or picked from the switcher; a handoff by an agent and a
-switch by the person both arrive as `texera.handoff` events and are kept as system notes that
-name the new template, rendered as dividers.
+persisted messages replace the live ones, except an error the catalog never got, which stays
+on screen. Every assistant message carries the template version that wrote it, shown as a
+label. Every chat runs the deployment's one agent, so the app offers no picker and no switcher;
+a `texera.handoff` event or a system note naming another template (from a chat of an older
+release) still renders as a divider.
 
 ## Rules
 

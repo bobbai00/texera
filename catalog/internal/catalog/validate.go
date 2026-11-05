@@ -32,7 +32,7 @@ func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID
 	}
 	project := s.projectSpec(ctx, wf.ProjectRID)
 	settings := s.settingsSpec(ctx)
-	unitName = firstNonEmpty(unitName, uriString(spec.DefaultComputingUnit), uriString(project.DefaultComputingUnit), uriString(settings.Defaults.ComputingUnit))
+	unitName = firstNonEmpty(unitName, s.chatUnit(ctx, caller), uriString(spec.DefaultComputingUnit), uriString(project.DefaultComputingUnit), uriString(settings.Defaults.ComputingUnit))
 	if unitName == "" {
 		return nil, Conflict("no_unit", "no computing unit to compile on", nil)
 	}
@@ -62,7 +62,7 @@ func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID
 	}
 	result, err := client.Compile(ctx, bound)
 	if err != nil {
-		return nil, Unavailable("unit", err)
+		return nil, UnitFailed(err)
 	}
 	var out api.WorkflowValidation
 	if err := json.Unmarshal(mustJSON(result), &out); err != nil {

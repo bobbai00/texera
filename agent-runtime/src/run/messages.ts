@@ -2,7 +2,7 @@
  * Conversions between the catalog's message model (the source of truth for history) and the
  * AI SDK's model messages, plus the parts of a finished assistant turn. An assistant message
  * another template wrote is rendered with that agent's name in front, so the model knows
- * which words were its own.
+ * which words were its own. What a person attached reaches the model as a line that names it.
  */
 import type { ModelMessage } from "ai";
 import type { Message, MessagePart } from "../catalog/types.ts";
@@ -25,11 +25,12 @@ export function toModelMessages(history: Message[], options: HistoryOptions = {}
       continue;
     }
     if (m.role === "user") {
-      const text = m.parts
-        .filter((p) => p.type === "text" && p.text)
-        .map((p) => p.text as string)
-        .join("\n");
-      if (text) out.push({ role: m.role, content: text });
+      const lines = m.parts.flatMap((p) => {
+        if (p.type === "text" && p.text) return [p.text];
+        if (p.type === "resource" && p.resource) return [attachedLine(p.resource, p.text)];
+        return [];
+      });
+      if (lines.length > 0) out.push({ role: m.role, content: lines.join("\n") });
       continue;
     }
     if (m.role === "assistant") {
@@ -54,6 +55,12 @@ export function toModelMessages(history: Message[], options: HistoryOptions = {}
     }
   }
   return out;
+}
+
+/** A person's attachment as the model reads it: its kind, the name they gave it, its URI. */
+function attachedLine(uri: string, name?: string): string {
+  const kind = /^texera:\/\/([a-z-]+?)s?\//.exec(uri)?.[1] ?? "resource";
+  return `Attached ${kind}${name ? ` ${JSON.stringify(name)}` : ""} (${uri})`;
 }
 
 type AssistantContent =

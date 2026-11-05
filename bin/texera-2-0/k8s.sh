@@ -27,7 +27,8 @@
 #
 # On Linux the cluster is kind (Kubernetes in Docker), created here with node port 30088 mapped
 # to localhost:28088, the stack's public URL. Another local cluster works with
-# TEXERA2_KUBE_CONTEXT set (OrbStack: `orbstack`); then reach the gateway's node port yourself.
+# TEXERA2_KUBE_CONTEXT set (OrbStack: `orbstack`, Docker Desktop: `docker-desktop`): such a
+# cluster publishes a LoadBalancer's port on localhost, so the gateway is made one there.
 # The model key goes from ANTHROPIC_API_KEY or TEXERA_ENV_FILE into a Secret and from there
 # into OpenBao; it is never written into a manifest. Remote clusters are refused.
 set -euo pipefail
@@ -123,6 +124,16 @@ configure() {
   fi
 }
 
+# expose makes the gateway reachable at the public URL. kind maps the Service's node port to
+# localhost:28088; a local cluster of another kind has no such mapping but publishes a
+# LoadBalancer's port on localhost, so there the Service is made one. Every apply resets the
+# type, so this runs after the last one.
+expose() {
+  if [ "$CONTEXT" = "kind-$CLUSTER" ]; then return 0; fi
+  k patch svc gateway -p '{"spec":{"type":"LoadBalancer"}}' >/dev/null
+  echo "gateway: a LoadBalancer on $PUBLIC"
+}
+
 wait_ready() {
   k wait --for=condition=complete job/rustfs-buckets job/openbao-init --timeout=900s >/dev/null
   for app in postgres rustfs; do k rollout status "statefulset/$app" --timeout=900s >/dev/null; done
@@ -150,6 +161,7 @@ case "${1:-}" in
     kubectl --context "$CONTEXT" apply -k "$ROOT/deploy/kubernetes" >/dev/null
     # Same tags, new images or config: restart what already runs so it picks them up.
     for app in "${APPS[@]}"; do k rollout restart "deploy/$app" >/dev/null 2>&1 || true; done
+    expose
     wait_ready
     echo "== up: $PUBLIC (alice/alice, bob/bob)"
     ;;

@@ -27,6 +27,12 @@ def held_for(rid: str) -> list[str]:
     return out.split() if out else []
 
 
+def fetch_from(deployment: str, url: str) -> str:
+    """What a pod of a deployment with Bun gets from a URL: an HTTP status, or why it got none."""
+    script = "try{const r=await fetch(process.argv[1],{signal:AbortSignal.timeout(5000)});console.log(r.status)}catch(e){console.log(e.code||e.message)}"
+    return _run(["exec", f"deploy/{deployment}", "-c", deployment, "--", "bun", "-e", script, url])
+
+
 def memory_request(rid: str) -> str:
     return _run(["get", "deploy", f"unit-{rid}", "-o", "jsonpath={.spec.template.spec.containers[0].resources.requests.memory}"])
 
