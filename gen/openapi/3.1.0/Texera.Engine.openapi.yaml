@@ -150,7 +150,7 @@ paths:
   /api/executions/{eid}/pause:
     post:
       operationId: Executions_pause
-      description: Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.
+      description: Pause the execution; the status turns `paused` once the engine confirms, and the unit reports it.
       parameters:
         - name: eid
           in: path
@@ -173,7 +173,7 @@ paths:
   /api/executions/{eid}/results/{opid}/{port}:
     get:
       operationId: Executions_result
-      description: A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+      description: A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
       parameters:
         - name: eid
           in: path
@@ -232,7 +232,7 @@ paths:
   /api/executions/{eid}/resume:
     post:
       operationId: Executions_resume
-      description: Resume a paused run.
+      description: Resume a paused execution.
       parameters:
         - name: eid
           in: path
@@ -533,7 +533,7 @@ components:
           type: string
         table:
           type: string
-      description: The table the catalog named for an output port, inside the run's namespace.
+      description: The table the catalog named for an output port, inside the execution's namespace.
     PortResult:
       type: object
       required:
@@ -586,7 +586,7 @@ components:
         sizeBytes:
           type: integer
           format: int64
-      description: 'A dataset file the catalog resolved for this run: the operator property value and the URL the engine reads.'
+      description: 'A dataset file the catalog resolved for this execution: the operator property value and the URL the engine reads.'
     ResultStore:
       type: object
       required:
@@ -601,7 +601,7 @@ components:
           type: string
         namespace:
           type: string
-          description: "The namespace the catalog made for this execution: every table of the run goes there, and the unit's identity was granted write access to it."
+          description: "The namespace the catalog made for this execution: every table of the execution goes there, and the unit's identity was granted write access to it."
         tables:
           type: array
           items:

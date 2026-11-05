@@ -17,8 +17,8 @@
 # under the License.
 
 """A tour of Texera 2.0 through its API, as alice, against a running stack: sign in, make a
-dataset, build a workflow, see the plan a run would use, run it, read the rows and the
-lineage, keep the run, share with bob, and clean up. Every step prints the request and the
+dataset, build a workflow, see the plan an execution would use, run it, read the rows and the
+lineage, keep the execution, share with bob, and clean up. Every step prints the request and the
 part of the answer that matters, so this file doubles as the API's quick reference.
 
     bin/texera-2-0/examples/walkthrough.py                  # against http://localhost:8088
@@ -139,11 +139,11 @@ def main() -> None:
     unit = ready[0]["metadata"]["uri"]
     print(f"   {ready[0]['metadata']['name']}: {unit}")
 
-    step("validate: the engine compiles the version on the unit, and the catalog shows the plan a run would use")
+    step("validate: the engine compiles the version on the unit, and the catalog shows the plan an execution would use")
     validation = alice.must("POST", f"/workflows/{wrid}/validate", {"computingUnit": unit})
     show("POST", f"/workflows/{wrid}/validate", '{"computingUnit": "<unit uri>"}')
     print(f"   ok={validation['ok']}; output columns of avg: {[a['attributeName'] for a in validation['operatorOutputSchemas']['avg']['output-0']]}")
-    print(f"   the plan names the tables a run writes: {[(o['operatorID'], o['table']) for o in validation['plan']['outputs']]}")
+    print(f"   the plan names the tables an execution writes: {[(o['operatorID'], o['table']) for o in validation['plan']['outputs']]}")
 
     step("run: authorized, compiled and materialized by the catalog; waitSeconds waits for the end")
     run = alice.must("POST", f"/workflows/{wrid}/run", {"name": "tour run", "computingUnit": unit, "waitSeconds": 240})
@@ -151,7 +151,7 @@ def main() -> None:
     eid = run["metadata"]["rid"]
     print(f"   execution {eid}: {run['status']['phase']}")
     if run["status"]["phase"] != "completed":
-        sys.exit(f"the run did not complete: {json.dumps(run['status'].get('error'))[:400]}")
+        sys.exit(f"the execution did not complete: {json.dumps(run['status'].get('error'))[:400]}")
     print(f"   its plan is stored with it: namespace {run['spec']['plan']['namespace']}, outputs {[o['table'] for o in run['spec']['plan']['outputs']]}")
     ports = run["status"]["ports"]
     print(f"   ports: {[(p['operatorID'], p['portID'], p.get('rows'), p.get('table')) for p in ports]}")
@@ -163,7 +163,7 @@ def main() -> None:
     for row in page["rows"]:
         print(f"   {row}")
 
-    step("lineage: the run used the file and produced its table; the dataset leads to the run")
+    step("lineage: the execution used the file and produced its table; the dataset leads to the execution")
     down = alice.must("GET", f"/resources/{eid}/lineage?direction=downstream")
     show("GET", f"/resources/{eid}/lineage?direction=downstream")
     for e in down["edges"]:
@@ -173,7 +173,7 @@ def main() -> None:
     for e in up["edges"]:
         print(f"   {e['from']} --{e['relation']}--> {e['to']}")
 
-    step("keep the run: the label the retention sweep honours")
+    step("keep the execution: the label the retention sweep honours")
     kept = alice.must("PATCH", f"/resources/{eid}", {"labels": {"texera.keep": "true"}})
     show("PATCH", f"/resources/{eid}", '{"labels": {"texera.keep": "true"}}')
     print(f"   labels now {kept['metadata'].get('labels')}")
@@ -188,9 +188,9 @@ def main() -> None:
     status, _ = bob.call("POST", f"/workflows/{wrid}/edit", {"patch": [{"op": "replace", "path": "/operators/1/operatorProperties/groupByKeys", "value": ["Species"]}]})
     print(f"   bob edits the workflow -> {status} (a viewer may not)")
 
-    step("the MCP servers: the same operations as tools, for any agent with a person's token")
+    step("the MCP server: the same operations as tools, for any agent with a person's token")
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
-    req = urllib.request.Request(f"{gw}/mcp/dataflow", method="POST", data=json.dumps(body).encode(),
+    req = urllib.request.Request(f"{gw}/mcp/catalog", method="POST", data=json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {alice.token}", "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
     with urllib.request.urlopen(req, timeout=60) as r:
         names = []
@@ -199,16 +199,18 @@ def main() -> None:
             if text.startswith("data:") or text.startswith("{"):
                 names = [t["name"] for t in json.loads(text.removeprefix("data:").strip())["result"]["tools"]]
                 break
-    show("POST", f"{gw}/mcp/dataflow", '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"} with Accept: application/json, text/event-stream')
-    print(f"   {len(names)} dataflow tools, e.g. {names[:6]}; the catalog server is at /mcp/catalog")
+    show("POST", f"{gw}/mcp/catalog", '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"} with Accept: application/json, text/event-stream')
+    print(f"   {len(names)} tools, e.g. {names[:6]}")
 
     if args.chat:
         step("a chat turn: the Texera Agent answers from a workflow it builds (AG-UI stream)")
-        agent = alice.must("GET", "/settings")["spec"]["defaults"]["agentTemplate"]
-        show("GET", "/settings", "spec.defaults.agentTemplate is the agent every chat runs")
-        conv = alice.must("POST", "/conversations", {"name": f"tour chat {stamp}", "spec": {"template": agent, "computingUnit": unit}, "parent": project})
-        show("POST", "/conversations", '{"name": ..., "spec": {"template": "<the agent\'s uri>", "computingUnit": "<unit uri>"}, "parent": "<project rid>"}')
+        conv = alice.must("POST", "/conversations", {"name": f"tour chat {stamp}", "spec": {}, "parent": project})
+        show("POST", "/conversations", '{"name": ..., "spec": {}, "parent": "<project rid>"}: a chat stores only what was chosen for it')
         crid = conv["metadata"]["rid"]
+        runs_with = alice.must("GET", f"/conversations/{crid}/settings")
+        show("GET", f"/conversations/{crid}/settings", "what a turn runs with, and which level chose each")
+        print(f"   agent {runs_with['agent']['name']} ({runs_with['agent']['from']}), model {runs_with['modelEndpoint']['name']} ({runs_with['modelEndpoint']['from']}), "
+              f"servers {[m['name'] for m in runs_with['mcpServers']]}")
         prompt = f"Using the dataset {ds['metadata']['uri']}, what is the average petal length per species? Build and run a workflow, then report the numbers."
         body = {"threadId": crid, "runId": str(uuid.uuid4()), "state": {}, "tools": [], "context": [], "forwardedProps": {},
                 "messages": [{"id": str(uuid.uuid4()), "role": "user", "content": prompt}]}
@@ -234,7 +236,7 @@ def main() -> None:
     if args.keep:
         print(f"\nleft in place: project {project}")
         return
-    step("clean up: the run, then the resources in reference order, then the project")
+    step("clean up: the execution, then the resources in reference order, then the project")
     alice.must("DELETE", f"/workflows/{wrid}/executions/{eid}")
     show("DELETE", f"/workflows/{wrid}/executions/{eid}", "its tables go with it")
     if args.chat:

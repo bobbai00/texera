@@ -41,7 +41,7 @@ export async function unwrap<T>(call: Promise<Result<T>>): Promise<T> {
 type Create = (options: { body: never }) => Promise<Result<Resource>>;
 type Update = (options: { path: { rid: string }; body: never; headers?: { "If-Match"?: string } }) => Promise<Result<Resource>>;
 
-// The typed kind routes, by kind. Executions are created by a run; settings is a singleton.
+// The typed kind routes, by kind. An execution is created by running a workflow; settings is a singleton.
 const CREATE: Partial<Record<KindId, Create>> = {
   "agent-template": sdk.agentTemplatesCreate as Create,
   "computing-unit": sdk.computingUnitsCreate as Create,

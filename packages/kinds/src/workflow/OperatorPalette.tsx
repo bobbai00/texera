@@ -4,6 +4,7 @@ import { type OperatorSchema, operatorImage } from "@texera/workflow-model";
 import { Search } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 import { operatorSchemasQuery } from "../queries";
+import { useScope } from "../scope";
 
 export const OPERATOR_DRAG_TYPE = "application/x-texera-operator";
 
@@ -12,7 +13,7 @@ const HIDDEN = new Set(["PythonUDF", "Dummy", "Sleep"]);
 
 /** Searchable, grouped list of every operator type the caller may use; click one, or drag it onto the canvas, to add it. */
 export function OperatorPalette({ onAdd }: { onAdd?: (operatorType: string) => void }) {
-  const { data } = useQuery(operatorSchemasQuery());
+  const { data } = useQuery(operatorSchemasQuery(useScope()));
   const [query, setQuery] = useState("");
   const q = useDeferredValue(query.trim().toLowerCase());
 

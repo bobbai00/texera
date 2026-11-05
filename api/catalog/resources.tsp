@@ -39,12 +39,12 @@ namespace Routes {
     @get
     @extension("x-texera-permission", "list")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "search_resources",
-      description: "Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, environments, operators, conversations. Filter by kind, project or text.",
+      description: "Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, environments, operators, conversations. Filter by kind or text. In a chat a search covers the chat's project and the built-ins; pass scope to look in another project (kind project lists them all).",
       readOnlyHint: true,
     })
     search(
+      ...Scoped,
       @query q?: string,
       @query kind?: ResourceKind,
       @query parent?: Rid,
@@ -59,7 +59,6 @@ namespace Routes {
     @route("/resolve")
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "resolve_uri",
       description: "Resolve a texera:// URI (optionally with @vno and a subresource path) to the resource it names, with its metadata and spec.",
       readOnlyHint: true,
@@ -70,7 +69,6 @@ namespace Routes {
     @route("/{rid}")
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "get_resource",
       description: "Get one resource by rid: its kind, metadata, head version number, spec and status.",
       readOnlyHint: true,
@@ -97,7 +95,6 @@ namespace Routes {
     @route("/{rid}/versions")
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "list_versions",
       description: "List the versions of a resource, newest first, with their digests and messages.",
       readOnlyHint: true,
@@ -108,7 +105,6 @@ namespace Routes {
     @route("/{rid}/versions/{vno}")
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "get_version",
       description: "Get one version of a resource with its full content.",
       readOnlyHint: true,
@@ -120,7 +116,6 @@ namespace Routes {
     @route("/{rid}/lineage")
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "get_lineage",
       description: "Get the lineage of a resource or version: what it was derived from, which executions used or produced it, upstream and downstream.",
       readOnlyHint: true,
@@ -147,7 +142,6 @@ namespace Routes {
     @route("/{rid}/grants/{pid}")
     @extension("x-texera-permission", "share")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "grant_access",
       description: "Share a resource with a principal: give a user or group a relation (viewer, editor, owner; user for a computing unit). Find principals with search_principals.",
       readOnlyHint: false,

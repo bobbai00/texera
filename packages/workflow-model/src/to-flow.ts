@@ -9,15 +9,15 @@ export interface OperatorNodeData extends Record<string, unknown> {
   inputs: { id: string; label?: string }[];
   outputs: { id: string; label?: string }[];
   disabled?: boolean;
-  /** Execution state from the latest run, if any. */
+  /** The operator's state in the latest execution, if any. */
   status?: OperatorStatus;
-  /** Rows the operator output in the latest run. */
+  /** Rows the operator output in the latest execution. */
   rows?: number;
   /** A compile error (bad property, missing input), shown on the node. */
   error?: string;
 }
 
-/** Per-operator facts the canvas shows on nodes: run state, output rows, compile errors. */
+/** Per-operator facts the canvas shows on nodes: execution state, output rows, compile errors. */
 export interface OperatorOverlay {
   status?: OperatorStatus;
   rows?: number;

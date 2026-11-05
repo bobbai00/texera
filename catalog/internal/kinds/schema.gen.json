@@ -76,10 +76,6 @@
         "card": {
           "$ref": "#/$defs/AgentCard"
         },
-        "catalogTools": {
-          "description": "Mount the catalog MCP server; default true.",
-          "type": "boolean"
-        },
         "handoffs": {
           "description": "Templates this agent may hand the conversation to.",
           "items": {
@@ -91,7 +87,7 @@
           "$ref": "#/$defs/LoopSpec"
         },
         "mcpServers": {
-          "description": "MCP servers the agent mounts, besides the catalog server every template mounts unless `catalogTools` is false.",
+          "description": "The MCP servers the agent mounts. The platform's own server, the catalog, holds its basic tools and is listed like any other; the rest are add-ons.",
           "items": {
             "$ref": "#/$defs/McpBinding"
           },
@@ -99,7 +95,7 @@
         },
         "model": {
           "$ref": "#/$defs/Uri",
-          "description": "The model endpoint resource URI."
+          "description": "The model endpoint the agent uses unless a chat or its project names another."
         },
         "prompt": {
           "description": "The system prompt, Markdown.",
@@ -194,6 +190,15 @@
     },
     "AppendMessage": {
       "properties": {
+        "mcpServers": {
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        },
+        "modelEndpoint": {
+          "$ref": "#/$defs/Uri"
+        },
         "parts": {
           "items": {
             "$ref": "#/$defs/MessagePart"
@@ -357,13 +362,69 @@
       "properties": {
         "computingUnit": {
           "$ref": "#/$defs/Uri",
-          "description": "The unit to build on; defaults to the run resolution order."
+          "description": "The unit to build on; defaults to the one an execution would resolve to."
         },
         "vno": {
           "$ref": "#/$defs/Vno",
           "description": "The version to build; defaults to the head version."
         }
       },
+      "type": "object"
+    },
+    "ChatProject": {
+      "description": "The project a chat is in.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        }
+      },
+      "required": [
+        "rid",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ChatSettings": {
+      "description": "What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default.",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/Setting",
+          "description": "The agent, at the version a turn runs."
+        },
+        "computingUnit": {
+          "$ref": "#/$defs/Setting",
+          "description": "The unit a compile or an execution uses when the call names none; absent when nothing names one."
+        },
+        "mcpServers": {
+          "description": "The platform's own server first, then the add-ons.",
+          "items": {
+            "$ref": "#/$defs/ServerSetting"
+          },
+          "type": "array"
+        },
+        "modelEndpoint": {
+          "$ref": "#/$defs/Setting"
+        },
+        "project": {
+          "$ref": "#/$defs/ChatProject",
+          "description": "Where the chat is: what a turn makes goes into this project, and a list made in a turn is scoped to it."
+        },
+        "skipped": {
+          "items": {
+            "$ref": "#/$defs/SkippedSetting"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "project",
+        "agent",
+        "modelEndpoint",
+        "mcpServers"
+      ],
       "type": "object"
     },
     "CommitFiles": {
@@ -621,19 +682,27 @@
       "properties": {
         "computingUnit": {
           "$ref": "#/$defs/Uri",
-          "description": "The computing unit runs in this chat use; defaults to the project's."
+          "description": "The computing unit a compile or an execution started in this chat uses when the call names none; absent: the workflow's, the project's or the platform's default. A preference, not a binding: a call can always name another unit."
         },
         "environment": {
           "$ref": "#/$defs/Uri"
         },
+        "mcpServers": {
+          "description": "The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        },
+        "modelEndpoint": {
+          "$ref": "#/$defs/Uri",
+          "description": "The model endpoint the agent uses in this chat; absent: the project's default, else the agent's own."
+        },
         "template": {
           "$ref": "#/$defs/Uri",
-          "description": "The agent template the next turn runs; set at the start, by the person, or by a handoff."
+          "description": "The agent template the next turn runs, chosen by the person or by a handoff; absent: the project's default, else the platform's."
         }
       },
-      "required": [
-        "template"
-      ],
       "type": "object"
     },
     "ConversationStatus": {
@@ -1783,10 +1852,10 @@
       "type": "string"
     },
     "ExecutionPlan": {
-      "description": "What the catalog compiled for a run, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the run starts and never stored.",
+      "description": "What the catalog compiled for an execution, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the execution starts and never stored.",
       "properties": {
         "credentials": {
-          "description": "The credentials the operators name; leased for the run at start, their values never stored.",
+          "description": "The credentials the operators name; leased for the execution at start, their values never stored.",
           "items": {
             "$ref": "#/$defs/Uri"
           },
@@ -1796,7 +1865,7 @@
           "description": "The engine's logical plan, with dataset files and credentials still named by URI."
         },
         "namespace": {
-          "description": "The namespace in the lake the run writes to; absent for a dry run.",
+          "description": "The namespace in the lake the execution writes to; absent for a dry run.",
           "type": "string"
         },
         "operators": {
@@ -1866,7 +1935,7 @@
           "description": "The environment version, with `@vno`."
         },
         "inputs": {
-          "description": "The dataset file versions the run reads, resolved at start.",
+          "description": "The dataset file versions the execution reads, resolved at start.",
           "items": {
             "$ref": "#/$defs/Uri"
           },
@@ -1878,7 +1947,7 @@
         },
         "plan": {
           "$ref": "#/$defs/ExecutionPlan",
-          "description": "The compiled plan the run was started with."
+          "description": "The compiled plan the execution was started with."
         },
         "workflow": {
           "$ref": "#/$defs/Uri",
@@ -1914,7 +1983,7 @@
           "type": "array"
         },
         "resultsExpiredAt": {
-          "description": "When the retention policy dropped the run's result tables: the summaries stay, the rows are gone.",
+          "description": "When the retention policy dropped the execution's result tables: the summaries stay, the rows are gone.",
           "format": "date-time",
           "type": "string"
         },
@@ -2297,10 +2366,6 @@
     },
     "McpServerSpec": {
       "properties": {
-        "builtin": {
-          "description": "Set for a server the platform provides: catalog, dataflow or scholar. The runtime sends the person's token to a built-in server.",
-          "type": "string"
-        },
         "headers": {
           "additionalProperties": {
             "type": "string"
@@ -2449,6 +2514,17 @@
         "createdAt": {
           "format": "date-time",
           "type": "string"
+        },
+        "mcpServers": {
+          "description": "For an assistant message: the MCP servers its turn mounted.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        },
+        "modelEndpoint": {
+          "$ref": "#/$defs/Uri",
+          "description": "For an assistant message: the model endpoint that wrote it."
         },
         "parts": {
           "items": {
@@ -2960,12 +3036,8 @@
     },
     "OperatorStatus": {
       "properties": {
-        "builtin": {
-          "description": "True for an operator the engine image provides.",
-          "type": "boolean"
-        },
         "engine": {
-          "description": "The engine image digest the head version was read from.",
+          "description": "For an operator the engine image provides: the digest of the image its head version was read from.",
           "type": "string"
         }
       },
@@ -3171,7 +3243,7 @@
       "type": "object"
     },
     "PortTable": {
-      "description": "One output port's table in the lake, named by the catalog before the run starts.",
+      "description": "One output port's table in the lake, named by the catalog before the execution starts.",
       "properties": {
         "operatorID": {
           "type": "string"
@@ -3180,7 +3252,7 @@
           "type": "string"
         },
         "table": {
-          "description": "The table's name inside the run's namespace.",
+          "description": "The table's name inside the execution's namespace.",
           "type": "string"
         }
       },
@@ -3305,15 +3377,26 @@
       "properties": {
         "defaultAgentTemplate": {
           "$ref": "#/$defs/Uri",
-          "description": "The agent template a new chat in this project starts with."
+          "description": "The agent template a chat in this project runs when the chat names none."
         },
         "defaultComputingUnit": {
           "$ref": "#/$defs/Uri",
-          "description": "The computing unit a run in this project uses when the request and the workflow name none."
+          "description": "The computing unit an execution in this project uses when the request and the workflow name none."
         },
         "defaultEnvironment": {
           "$ref": "#/$defs/Uri",
-          "description": "The environment a run in this project uses when the workflow names none."
+          "description": "The environment an execution in this project uses when the workflow names none."
+        },
+        "defaultModelEndpoint": {
+          "$ref": "#/$defs/Uri",
+          "description": "The model endpoint the agent uses in a chat of this project when the chat names none; absent: the agent's own."
+        },
+        "mcpServers": {
+          "description": "Add-on MCP servers every chat in this project mounts besides the agent's, unless the chat lists its own.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -3371,7 +3454,7 @@
         },
         "environment": {
           "$ref": "#/$defs/Uri",
-          "description": "The environment its packages come from; absent means the run's environment."
+          "description": "The environment its packages come from; absent means the execution's environment."
         },
         "outputColumns": {
           "description": "The columns the code adds to each tuple, declared so the engine can type the output; input columns pass through.",
@@ -3577,7 +3660,7 @@
       "type": "object"
     },
     "Retention": {
-      "description": "How long the catalog keeps what runs and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).",
+      "description": "How long the catalog keeps what executions and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).",
       "properties": {
         "blobs": {
           "description": "An uploaded file that no version and no staging names is removed this long after its upload; absent: one day.",
@@ -3585,7 +3668,7 @@
           "type": "string"
         },
         "results": {
-          "description": "Finished runs keep their result tables this long; absent: forever. The run's record and its summaries stay.",
+          "description": "Finished executions keep their result tables this long; absent: forever. An execution's record and its summaries stay.",
           "format": "duration",
           "type": "string"
         }
@@ -3662,7 +3745,7 @@
         },
         "parameters": {
           "additionalProperties": {},
-          "description": "Per-run inputs; the version itself stays as authored.",
+          "description": "Inputs of this execution alone; the version itself stays as authored.",
           "type": "object"
         },
         "vno": {
@@ -3670,7 +3753,7 @@
           "description": "The workflow version to run; defaults to the head version."
         },
         "waitSeconds": {
-          "description": "Wait up to this many seconds for the run to finish before returning.",
+          "description": "Wait up to this many seconds for the execution to finish before returning.",
           "format": "int32",
           "type": "integer"
         }
@@ -3693,6 +3776,38 @@
       },
       "type": "object"
     },
+    "ServerSetting": {
+      "description": "An MCP server a turn mounts.",
+      "properties": {
+        "allow": {
+          "description": "The tool names the agent may call; absent: every tool the server exposes.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "from": {
+          "$ref": "#/$defs/SettingSource"
+        },
+        "name": {
+          "type": "string"
+        },
+        "platform": {
+          "description": "True for the platform's own server, the catalog: the agent's basic tools, called as the person. Every other server is an add-on a turn can go without.",
+          "type": "boolean"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri",
+        "name",
+        "from",
+        "platform"
+      ],
+      "type": "object"
+    },
     "SetSecret": {
       "description": "The secret's fields, e.g. {value} for an API key, {username, password} for basic.",
       "properties": {
@@ -3707,6 +3822,36 @@
         "fields"
       ],
       "type": "object"
+    },
+    "Setting": {
+      "description": "One setting of a chat as a turn uses it.",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/SettingSource"
+        },
+        "name": {
+          "type": "string"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri",
+        "name",
+        "from"
+      ],
+      "type": "object"
+    },
+    "SettingSource": {
+      "description": "The level a setting of a chat comes from.",
+      "enum": [
+        "chat",
+        "project",
+        "agent",
+        "platform"
+      ],
+      "type": "string"
     },
     "Settings": {
       "description": "The typed envelope, served by the kind routes.",
@@ -3918,6 +4063,37 @@
       },
       "required": [
         "items"
+      ],
+      "type": "object"
+    },
+    "SkippedSetting": {
+      "description": "A choice that was passed over: what it names is gone, or is not the caller's to use.",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/SettingSource"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "setting": {
+          "description": "The field of the spec the choice is in.",
+          "enum": [
+            "template",
+            "modelEndpoint",
+            "computingUnit",
+            "mcpServers"
+          ],
+          "type": "string"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "setting",
+        "uri",
+        "from",
+        "reason"
       ],
       "type": "object"
     },
@@ -4275,7 +4451,7 @@
       "properties": {
         "computingUnit": {
           "$ref": "#/$defs/Uri",
-          "description": "The unit whose compiler answers; defaults to the run resolution order."
+          "description": "The unit whose compiler answers; defaults to the one an execution would resolve to."
         },
         "spec": {
           "$ref": "#/$defs/WorkflowSpec",
@@ -4532,7 +4708,7 @@
           "type": "array"
         },
         "viewResult": {
-          "description": "Store this operator's output so it can be read after the run.",
+          "description": "Store this operator's output so it can be read after the execution.",
           "type": "boolean"
         }
       },
@@ -4587,11 +4763,11 @@
       "properties": {
         "defaultComputingUnit": {
           "$ref": "#/$defs/Uri",
-          "description": "The computing unit a run uses when the request names none."
+          "description": "The computing unit an execution uses when the request names none."
         },
         "defaultEnvironment": {
           "$ref": "#/$defs/Uri",
-          "description": "The environment a run uses when the request names none."
+          "description": "The environment an execution uses when the request names none."
         },
         "links": {
           "items": {
@@ -4625,7 +4801,7 @@
       "type": "object"
     },
     "WorkflowValidation": {
-      "description": "A dry run: the engine's compile result and the plan the catalog would start a run with.",
+      "description": "A dry run: the engine's compile result and the plan the catalog would start an execution with.",
       "properties": {
         "ok": {
           "type": "boolean"

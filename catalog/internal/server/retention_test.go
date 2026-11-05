@@ -10,8 +10,8 @@ import (
 	"github.com/apache/texera/catalog/internal/api"
 )
 
-// A finished run can be deleted, and goes with its tables; a run still going cannot. The
-// retention policy expires the results of old runs (the record stays, the rows are gone) and
+// A finished execution can be deleted, and goes with its tables; an execution still going cannot. The
+// retention policy expires the results of old executions (the record stays, the rows are gone) and
 // removes blobs nothing names.
 func TestRetention(t *testing.T) {
 	h := newHarness(t)
@@ -31,30 +31,30 @@ func TestRetention(t *testing.T) {
 	namespace := func(e envelope) string { return "e_" + strings.ReplaceAll(rid(e), "-", "") }
 	execPath := func(e envelope) string { return p + "/workflows/" + rid(wf) + "/executions/" + rid(e) }
 
-	// Deleting: refused while the run goes, done once it is cancelled; the namespace goes too.
+	// Deleting: refused while the execution goes, done once it is cancelled; the namespace goes too.
 	first := run("first")
 	if status, body := h.do("alice", "DELETE", execPath(first), nil); status != http.StatusConflict {
-		t.Fatalf("a run still going: %d %s", status, body)
+		t.Fatalf("an execution still going: %d %s", status, body)
 	}
 	h.mustJSON("alice", "POST", execPath(first)+"/cancel", map[string]any{}, nil)
 	if status, body := h.do("bob", "DELETE", execPath(first), nil); status != http.StatusForbidden {
-		t.Fatalf("bob may not delete alice's run: %d %s", status, body)
+		t.Fatalf("bob may not delete alice's execution: %d %s", status, body)
 	}
 	if status, body := h.do("alice", "DELETE", execPath(first), nil); status != http.StatusNoContent {
 		t.Fatalf("delete: %d %s", status, body)
 	}
 	if status, _ := h.do("alice", "GET", execPath(first), nil); status != http.StatusNotFound {
-		t.Fatalf("the run is gone: %d", status)
+		t.Fatalf("the execution is gone: %d", status)
 	}
 	dropped := false
 	for _, ns := range h.lake.Dropped {
 		dropped = dropped || ns == namespace(first)
 	}
 	if !dropped {
-		t.Fatalf("the namespace is dropped with the run: %v", h.lake.Dropped)
+		t.Fatalf("the namespace is dropped with the execution: %v", h.lake.Dropped)
 	}
 
-	// Expiry: a finished run older than the policy loses its tables and keeps its record.
+	// Expiry: a finished execution older than the policy loses its tables and keeps its record.
 	second := run("second")
 	h.mustJSON("alice", "POST", execPath(second)+"/cancel", map[string]any{}, nil)
 	var settings envelope
@@ -88,10 +88,10 @@ func TestRetention(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	h.mustJSON("admin", "POST", p+"/settings/retention/sweep", nil, &sweep)
 	if sweep.ExecutionsExpired != 1 {
-		t.Fatalf("the finished run expires: %+v", sweep)
+		t.Fatalf("the finished execution expires: %+v", sweep)
 	}
 	if h.lake.OpenedFor(namespace(second)) != "" {
-		t.Fatal("the expired run's namespace is dropped")
+		t.Fatal("the expired execution's namespace is dropped")
 	}
 	var after envelope
 	h.mustJSON("alice", "GET", execPath(second), nil, &after)
@@ -105,7 +105,7 @@ func TestRetention(t *testing.T) {
 	}
 	h.mustJSON("admin", "POST", p+"/settings/retention/sweep", nil, &sweep)
 	if sweep.ExecutionsExpired != 0 {
-		t.Fatalf("an expired run is not expired again: %+v", sweep)
+		t.Fatalf("an expired execution is not expired again: %+v", sweep)
 	}
 
 	// Blobs: a file uploaded and taken back again is nobody's; the policy removes it.

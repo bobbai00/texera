@@ -31,7 +31,7 @@ describe("toFlow", () => {
     expect(edges).toEqual([{ id: "l1", source: "a", sourceHandle: "output-0", target: "b", targetHandle: "input-1" }]);
   });
 
-  it("labels nodes with the custom display name, falling back to the operator type, and overlays run state", () => {
+  it("labels nodes with the custom display name, falling back to the operator type, and overlays the execution's state", () => {
     const { nodes } = toFlow(
       spec([op("a", "Filter", 1, 1, { customDisplayName: "Orders in 2026" }), op("b", "texera://operators/x@1", 1, 1)]),
       {},

@@ -137,13 +137,13 @@ func (u *Unit) Cancel(ctx context.Context, eid string) (*ExecutionState, error) 
 	return decode[ExecutionState](resp, err)
 }
 
-// Pause asks the unit to pause a run; the state follows when the engine confirms.
+// Pause asks the unit to pause an execution; the state follows when the engine confirms.
 func (u *Unit) Pause(ctx context.Context, eid string) (*ExecutionState, error) {
 	resp, err := u.client.ExecutionsPause(ctx, eid)
 	return decode[ExecutionState](resp, err)
 }
 
-// Resume continues a paused run.
+// Resume continues a paused execution.
 func (u *Unit) Resume(ctx context.Context, eid string) (*ExecutionState, error) {
 	resp, err := u.client.ExecutionsResume(ctx, eid)
 	return decode[ExecutionState](resp, err)
@@ -152,7 +152,7 @@ func (u *Unit) Resume(ctx context.Context, eid string) (*ExecutionState, error) 
 // Result reads a page of a port result. Cells keep their exact numbers (json.Number), so a long
 // column passes through without the float64 rounding a plain decode would apply. table is where
 // the result was recorded (empty when unknown) and namespace the execution's namespace: a unit
-// that no longer holds the run reads it there.
+// that no longer holds the execution reads it there.
 func (u *Unit) Result(ctx context.Context, eid, opid, port, table, namespace string, offset int64, limit int32) (*RowPage, error) {
 	params := &ExecutionsResultParams{Offset: &offset, Limit: &limit}
 	if table != "" {

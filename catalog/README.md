@@ -2,7 +2,7 @@
 
 The control plane of Texera 2.0: one Go binary that serves the catalog API (`/catalog/v1`),
 decides every call through the authorizer, runs workflows on computing units, records
-lineage, and exposes the two generated MCP servers (`/mcp/catalog`, `/mcp/dataflow`). It is
+lineage, and exposes every tool of the platform as one generated MCP server (`/mcp/catalog`). It is
 generated from the TypeSpec contract under `api/catalog/`; nothing about a kind is written by
 hand twice.
 
@@ -32,7 +32,7 @@ go test -tags integration ./internal/adapters/...   # the port contract suites a
 | `cmd/catalogen` | reads the OpenAPI document and emits `kinds.gen.go`, `schema.gen.json`, `tools.gen.go`, `permissions.gen.go`, `0002_indexes.gen.sql` and the TypeScript kind table |
 | `internal/api` | the Go types `oapi-codegen` generates from the contract |
 | `internal/kinds` | the generated kind table and JSON Schema validation of specs and statuses |
-| `internal/uri` | the one grammar of names: `texera://{plural}/{rid}[@vno][/subresource]`, runs nested under workflows, and the reference extractor |
+| `internal/uri` | the one grammar of names: `texera://{plural}/{rid}[@vno][/subresource]`, executions nested under workflows, and the reference extractor |
 | `internal/store` | Postgres: eleven tables, generic over kinds (resources, versions, grants and the access index, the outbox, blobs and staging, edges and lineage events, messages, leases) |
 | `internal/ports` | the eight ports: Identity, Workloads (unit identities), Authorizer, SecretStore, BlobStore, UnitProvider, Lake (the table catalog over the warehouse), LineageSink |
 | `internal/adapters` | one adapter per port (keycloak for Identity and Workloads, openfga, openbao, s3cas, staticunit, kube, lakekeeper, noop), `unitmux` to offer static and Kubernetes units side by side, and the memory adapters tests use |

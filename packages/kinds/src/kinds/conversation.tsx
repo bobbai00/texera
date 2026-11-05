@@ -1,13 +1,13 @@
-// A chat seen from outside: the template it runs, its last messages and the resources it
+// A chat seen from outside: what it runs with, its last messages and the resources it
 // produced. The chat page itself is the app's.
 
 import { useQuery } from "@tanstack/react-query";
 import { conversationsListMessagesOptions, conversationsResourcesOptions } from "@texera/catalog-client/query";
-import type { ConversationSpec, ConversationStatus } from "@texera/catalog-client/types";
+import type { ConversationStatus, Setting } from "@texera/catalog-client/types";
 import { Button, EmptyState, ErrorNote, SectionTitle, Skeleton, cn, timeAgo } from "@texera/ui";
 import { ArrowUpRight, MessagesSquare } from "lucide-react";
 import { lazy } from "react";
-import { resourceQuery } from "../queries";
+import { chatSettingsQuery, resourceQuery, SOURCE_LABEL } from "../queries";
 import { ResourceCard } from "../ResourceView";
 import { UriChip } from "../shell/Chips";
 import { KindHeader } from "../shell/KindHeader";
@@ -20,10 +20,10 @@ function ConversationView({ ref, mode }: KindViewProps) {
   const { data, error } = useQuery(resourceQuery(ref.rid));
   const { data: messages } = useQuery(conversationsListMessagesOptions({ path: { rid: ref.rid }, query: { limit: 20 } }));
   const { data: resources } = useQuery(conversationsResourcesOptions({ path: { rid: ref.rid } }));
+  const { data: settings } = useQuery(chatSettingsQuery(ref.rid));
   const { expand } = useOpenResource();
   if (error) return <ErrorNote error={error} prefix="Could not open this chat" className="m-4" />;
   if (!data) return <Skeleton className="m-4 h-64" />;
-  const spec = data.spec as ConversationSpec;
   return (
     <div className="flex h-full min-h-0 flex-col" data-conversation-view={ref.rid}>
       <KindHeader
@@ -38,9 +38,19 @@ function ConversationView({ ref, mode }: KindViewProps) {
         }
       />
       <div className="scrollbar-thin flex-1 space-y-4 overflow-y-auto p-4">
-        <section className="space-y-2">
-          <SectionTitle>Agent template</SectionTitle>
-          <UriChip uri={spec.template} emphasis />
+        <section className="space-y-2" data-chat-settings>
+          <SectionTitle>Runs with</SectionTitle>
+          {!settings && <Skeleton className="h-16" />}
+          {settings && (
+            <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1.5 text-xs">
+              <Chosen label="Agent" setting={settings.agent} emphasis />
+              <Chosen label="Model" setting={settings.modelEndpoint} />
+              {settings.computingUnit && <Chosen label="Computing unit" setting={settings.computingUnit} />}
+              {settings.mcpServers.map(server => (
+                <Chosen key={server.uri} label={server.platform ? "Tools" : "Add-on"} setting={server} />
+              ))}
+            </dl>
+          )}
         </section>
         <section className="space-y-2">
           <SectionTitle>Resources from this chat</SectionTitle>
@@ -63,6 +73,19 @@ function ConversationView({ ref, mode }: KindViewProps) {
         </section>
       </div>
     </div>
+  );
+}
+
+/** One setting of the chat: what it is and which level chose it. */
+function Chosen({ label, setting, emphasis }: { label: string; setting: Setting; emphasis?: boolean }) {
+  return (
+    <>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="flex min-w-0 items-center gap-2">
+        <UriChip uri={setting.uri} emphasis={emphasis} />
+        <span className="truncate text-muted-foreground">{SOURCE_LABEL[setting.from]}</span>
+      </dd>
+    </>
   );
 }
 

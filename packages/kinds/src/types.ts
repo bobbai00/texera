@@ -71,10 +71,15 @@ export interface KindSpec {
   Editor?: ComponentType<{ resource: Resource; readonly?: boolean }>;
   /** Tabs the generic page shows before the shared ones (spec, versions, access, lineage). */
   tabs?: KindTab[];
-  /** Header actions of the generic page. */
-  Actions?: ComponentType<{ resource: Resource }>;
-  /** The spec a new resource starts with; absent for kinds made elsewhere (runs, chats). */
+  /** Header actions of the generic page; `readonly` when the resource is not the caller's to change. */
+  Actions?: ComponentType<{ resource: Resource; readonly?: boolean }>;
+  /** The spec a new resource starts with; absent for kinds made elsewhere (executions, chats). */
   defaultSpec?: (input: CreateInput, defaults: Defaults) => unknown;
+  /**
+   * What the "New" dialog asks for besides a name, for a kind whose first spec depends on a
+   * choice (the size of a unit). It is given the starting spec and reports the one to create.
+   */
+  CreateFields?: ComponentType<{ spec: unknown; onChange: (spec: unknown) => void }>;
   /** Short facts for lists and cards, from the envelope. */
   facts?: (resource: Resource) => string[];
   /** Spec fields the schema form shows as multi-line text, by property name. */

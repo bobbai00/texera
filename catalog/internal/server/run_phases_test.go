@@ -9,9 +9,9 @@ import (
 	"github.com/apache/texera/catalog/internal/api"
 )
 
-// A run is authorized before anything is written, compiled once (the same plan a dry run
-// returns) and stored with its plan; a custom operator's pinned environment is honoured; a
-// kept run survives the retention policy.
+// Running a workflow authorizes before anything is written, compiles once (the same plan a
+// dry run returns) and stores the execution with its plan; a custom operator's pinned
+// environment is honoured; a kept execution survives the retention policy.
 func TestRunInThreePhases(t *testing.T) {
 	h := newHarness(t)
 	ds := h.create("alice", "datasets", "iris", map[string]any{"format": "csv"})
@@ -42,13 +42,13 @@ func TestRunInThreePhases(t *testing.T) {
 	if status, body := h.do("bob", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{"name": "bob's try"}); status != http.StatusForbidden {
 		t.Fatalf("bob may not use the credential: %d %s", status, body)
 	}
-	var runs api.ExecutionPage
-	h.mustJSON("alice", "GET", p+"/workflows/"+rid(wf)+"/executions", nil, &runs)
-	if len(runs.Items) != 0 {
-		t.Fatalf("a refused run leaves no execution behind: %d", len(runs.Items))
+	var executions api.ExecutionPage
+	h.mustJSON("alice", "GET", p+"/workflows/"+rid(wf)+"/executions", nil, &executions)
+	if len(executions.Items) != 0 {
+		t.Fatalf("a refused run leaves no execution behind: %d", len(executions.Items))
 	}
 
-	// A dry run and a run share the plan; the run stores it, without the secret.
+	// A dry run and an execution share the plan; the execution stores it, without the secret.
 	var validation api.WorkflowValidation
 	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/validate", map[string]any{}, &validation)
 	// scan feeds tag and shows no result: the plan names tag's table alone.
@@ -60,7 +60,7 @@ func TestRunInThreePhases(t *testing.T) {
 	var execSpec api.ExecutionSpec
 	mustDecode(t, exec.Spec, &execSpec)
 	if execSpec.Plan == nil || execSpec.Plan.Namespace == nil || *execSpec.Plan.Namespace != "e_"+strings.ReplaceAll(rid(exec), "-", "") {
-		t.Fatalf("the run stores its plan with its namespace: %+v", execSpec.Plan)
+		t.Fatalf("the execution stores its plan with its namespace: %+v", execSpec.Plan)
 	}
 	if string(mustJSONBytes(execSpec.Plan.LogicalPlan)) != string(mustJSONBytes(validation.Plan.LogicalPlan)) || string(mustJSONBytes(execSpec.Plan.Outputs)) != string(mustJSONBytes(validation.Plan.Outputs)) {
 		t.Fatal("validate and run produce the same plan")
@@ -87,7 +87,7 @@ func TestRunInThreePhases(t *testing.T) {
 		t.Fatalf("the catalog names the output tables: %+v", execSpec.Plan.Outputs)
 	}
 
-	// A custom operator pins an environment: a run without one takes it, a run with another is refused.
+	// A custom operator pins an environment: an execution that names none takes it, one that names another is refused.
 	env := h.create("alice", "environments", "pinned", map[string]any{"python": map[string]any{"packages": []string{"humanize"}}})
 	other := h.create("alice", "environments", "other", map[string]any{"python": map[string]any{"packages": []string{"numpy"}}})
 	pinned := h.create("alice", "operators", "pinned op", map[string]any{
@@ -106,14 +106,14 @@ func TestRunInThreePhases(t *testing.T) {
 	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf2)+"/run", map[string]any{"name": "takes the pin"}, &run2)
 	mustDecode(t, run2.Spec, &execSpec)
 	if execSpec.Environment == nil || string(*execSpec.Environment) != string(env.Metadata.Uri)+"@1" {
-		t.Fatalf("the run takes the operator's environment: %v", execSpec.Environment)
+		t.Fatalf("the execution takes the operator's environment: %v", execSpec.Environment)
 	}
 	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf2)+"/executions/"+rid(run2)+"/cancel", map[string]any{}, nil)
 	if status, body := h.do("alice", "POST", p+"/workflows/"+rid(wf2)+"/run", map[string]any{"name": "wrong env", "environment": string(other.Metadata.Uri)}); status != http.StatusConflict {
-		t.Fatalf("a run with another environment is refused: %d %s", status, body)
+		t.Fatalf("an execution with another environment is refused: %d %s", status, body)
 	}
 
-	// A kept run survives the retention policy.
+	// A kept execution survives the retention policy.
 	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/executions/"+rid(exec)+"/cancel", map[string]any{}, nil)
 	h.mustJSON("alice", "PATCH", p+"/resources/"+rid(exec), map[string]any{"labels": map[string]any{"texera.keep": "true"}}, nil)
 	var settings envelope
@@ -129,7 +129,7 @@ func TestRunInThreePhases(t *testing.T) {
 	var st api.ExecutionStatus
 	mustDecode(t, kept.Status, &st)
 	if st.ResultsExpiredAt != nil {
-		t.Fatal("a kept run is not expired")
+		t.Fatal("a kept execution is not expired")
 	}
 	delete(s, "retention")
 	h.mustJSON("admin", "PUT", p+"/settings", map[string]any{"spec": s}, nil)

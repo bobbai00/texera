@@ -9,7 +9,7 @@ import (
 	"github.com/apache/texera/catalog/internal/api"
 )
 
-// A property holding a credential URI reaches the engine as the secret, leased for the run,
+// A property holding a credential URI reaches the engine as the secret, leased for the execution,
 // while every stored document keeps the URI; a custom operator reads its properties as PROPS;
 // and someone who may run the workflow but not use the credential is refused.
 func TestCredentialsInOperatorProperties(t *testing.T) {
@@ -60,7 +60,7 @@ func TestCredentialsInOperatorProperties(t *testing.T) {
 		t.Fatalf("a custom operator's properties must not reach the engine as properties: %v", rank)
 	}
 	// The stored documents keep the URI and never the secret: the version names the credential,
-	// the execution names the run's inputs, and the lease records the use.
+	// the execution names its inputs, and the lease records the use.
 	_, version := h.do("alice", "GET", p+"/workflows/"+rid(wf)+"/versions/1", nil)
 	if strings.Contains(string(version), "s3cret-token") || !strings.Contains(string(version), string(cred.Metadata.Uri)) {
 		t.Fatalf("the version must hold the credential URI, never the secret: %s", version)
@@ -69,7 +69,7 @@ func TestCredentialsInOperatorProperties(t *testing.T) {
 		t.Fatalf("the execution must not hold the secret: %s", body)
 	}
 
-	// Alice's run must be over before another may start on the unit.
+	// Alice's execution must be over before another may start on the unit.
 	execPath := p + "/workflows/" + rid(wf) + "/executions/" + rid(exec)
 	for time.Now().Before(deadline) {
 		var current envelope

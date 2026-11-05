@@ -1,7 +1,7 @@
 import type { Message } from "@texera/catalog-client/types";
 import { describe, expect, it } from "vitest";
 import type { AgUiEvent } from "./agui/types";
-import { applyEvent, applyPatch, type ChatState, EMPTY_STATE, extractResourceRefs, fromHistory, messageContent, resourcesOf, settled, toolFailure, visibleParts, templatesOf } from "./model";
+import { applyEvent, applyPatch, type ChatState, EMPTY_STATE, extractResourceRefs, fromHistory, messageContent, resourcesOf, settled, toolFailure, visibleParts, writersOf } from "./model";
 
 const W = "0b7a1c2d-0000-4000-8000-000000000001";
 const E = "0b7a1c2d-0000-4000-8000-000000000002";
@@ -57,7 +57,7 @@ describe("applyEvent", () => {
     expect(state.messages[1]?.parts[0]).toEqual({ type: "handoff", from: T, to: next, name: "Data Analyst", by: "agent" });
     expect(state.messages[0]?.template).toBe(T);
     expect(state.messages[2]?.template).toBe(next);
-    expect(templatesOf(state.messages)).toEqual([T, next]);
+    expect(writersOf(state.messages)).toEqual([T, next]);
   });
 
   it("marks a failed tool and a run error", () => {

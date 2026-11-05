@@ -1,4 +1,4 @@
-// environment: the Python packages a run needs. Versioned; builds are status, per unit.
+// environment: the Python packages an execution needs. Versioned; builds are status, per unit.
 import "@typespec/http";
 import "@typespec/rest";
 import "@typespec/openapi";
@@ -40,7 +40,7 @@ model EnvironmentStatus {
 model BuildEnvironment {
   @doc("The version to build; defaults to the head version.")
   vno?: Vno;
-  @doc("The unit to build on; defaults to the run resolution order.")
+  @doc("The unit to build on; defaults to the one an execution would resolve to.")
   computingUnit?: Uri;
 }
 

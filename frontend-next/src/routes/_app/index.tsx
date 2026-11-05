@@ -9,7 +9,7 @@ function greeting() {
   return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }
 
-/** "/" starts a chat: pick an agent template, and the conversation is created. */
+/** "/" starts a chat: the first message creates the conversation, in the project the person works in. */
 function NewChatPage() {
   const user = useSession();
   const navigate = useNavigate();

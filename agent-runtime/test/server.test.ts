@@ -22,6 +22,9 @@ import {
   type FakeCatalogOptions,
   fakeCatalog,
   MCP_RID,
+  MODEL_URI,
+  OTHER_MODEL_URI,
+  PROJECT_RID,
   TEMPLATE_RID,
   UNIT_URI,
 } from "./helpers/fake-catalog.ts";
@@ -44,12 +47,14 @@ const config: RuntimeConfig = {
   maxHandoffs: 2,
 };
 
-/** An app whose agents run a scripted model with local tools; no MCP servers are mounted. */
+/** An app whose agents run a scripted model with local tools; the agents list no MCP server unless a test gives one. */
 function makeApp(responses: ScriptedResponse[], tools: ToolSet = {}, options: FakeCatalogOptions = {}) {
-  const fake = fakeCatalog({ ...options, template: { catalogTools: false, ...options.template } });
+  const fake = fakeCatalog(options);
   const catalog = new CatalogClient({ baseUrl: "http://catalog", fetch: fake.fetch });
   const model = scriptedModel(responses);
   const builds: string[] = [];
+  /** The model endpoint each agent was built with. */
+  const endpoints: string[] = [];
   const app = createApp({
     config,
     log: silentLogger,
@@ -62,7 +67,10 @@ function makeApp(responses: ScriptedResponse[], tools: ToolSet = {}, options: Fa
           publicUrl: config.publicUrl,
           maxSteps: config.maxSteps,
           log: silentLogger,
-          modelFactory: () => model,
+          modelFactory: (endpoint) => {
+            endpoints.push(endpoint.uri);
+            return model;
+          },
           extraTools: tools,
           now: () => new Date("2026-11-05T12:00:00Z"),
         },
@@ -76,7 +84,7 @@ function makeApp(responses: ScriptedResponse[], tools: ToolSet = {}, options: Fa
     serviceTokens: { get: async () => "service-token", invalidate() {} },
     newId: () => "fixed-id",
   });
-  return { app, fake, builds, model };
+  return { app, fake, builds, model, endpoints };
 }
 
 async function readSse(res: Response) {
@@ -300,26 +308,41 @@ describe("POST /agents/conversations/:rid/ag-ui", () => {
     expect(events.some((e) => e.type === EventType.RUN_ERROR)).toBe(false);
     expect(fake.messages.at(-1)?.parts.at(-1)?.text).toBe("The bio tools are down right now.");
     expect(turnState(model)).toContain("Not available in this turn: the texera tools");
+    // The answer records the servers its turn mounted: not the one that was left out.
+    expect(fake.messages.at(-1)?.mcpServers).toEqual([]);
   });
 
-  test("the agent is told the date and the computing unit this chat's runs use", async () => {
-    const { app, model } = makeApp(
-      [{ text: "On alice's unit." }],
-      {},
-      { conversationUnit: { name: "alice's unit", phase: "ready" } },
-    );
+  test("the agent is told the date and the computing unit the chat's settings resolve to", async () => {
+    const { app, model } = makeApp([{ text: "On alice's unit." }], {}, { conversationUnit: { name: "alice's unit" } });
     await readSse(await post(app, runInput("Where will this run?")));
     const state = turnState(model);
     expect(state).toContain("## Turn state");
     expect(state).toContain("Today is 2026-11-05.");
-    expect(state).toContain(`Computing unit: alice's unit (${UNIT_URI}), ready.`);
+    expect(state).toContain(`Project: alice's home (${PROJECT_RID}).`);
+    expect(state).toContain(`Computing unit: alice's unit (${UNIT_URI}).`);
   });
 
-  test("a chat without a unit says nothing about one", async () => {
+  test("with no unit to fall back on, the agent is told a call has to name one", async () => {
     const { app, model } = makeApp([{ text: "Hello." }]);
     await readSse(await post(app, runInput("Hi")));
     expect(turnState(model)).toContain("Today is 2026-11-05.");
-    expect(turnState(model)).not.toContain("Computing unit");
+    expect(turnState(model)).toContain("No computing unit is set");
+  });
+
+  test("a turn runs with what the chat's settings resolve to, and the answer records it", async () => {
+    // The agent's own model, with nothing chosen.
+    const plain = makeApp([{ text: "Hi." }]);
+    await readSse(await post(plain.app, runInput("Hi")));
+    expect(plain.endpoints).toEqual([MODEL_URI]);
+    expect(plain.fake.messages.at(-1)).toMatchObject({ template: `${ANALYST_URI}@1`, modelEndpoint: MODEL_URI });
+    // The chat's choice of a model, in place of the agent's.
+    const chosen = makeApp([{ text: "Hi." }], {}, { conversationModel: OTHER_MODEL_URI });
+    await readSse(await post(chosen.app, runInput("Hi")));
+    expect(chosen.endpoints).toEqual([OTHER_MODEL_URI]);
+    expect(chosen.fake.messages.at(-1)).toMatchObject({ template: `${ANALYST_URI}@1`, modelEndpoint: OTHER_MODEL_URI });
+    // What a person says records neither.
+    expect(chosen.fake.messages[0]?.modelEndpoint).toBeUndefined();
+    expect(chosen.fake.messages[0]?.mcpServers).toBeUndefined();
   });
 
   const withAttachment = (content: unknown[]) => ({

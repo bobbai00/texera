@@ -3,6 +3,7 @@ package server_test
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -10,8 +11,8 @@ import (
 	"github.com/apache/texera/catalog/internal/api"
 )
 
-// aRun starts a run over a small file and returns the path of its execution once it is running.
-func aRun(t *testing.T, h *harness) (execPath string, exec envelope) {
+// anExecution starts one over a small file and returns it with its path once it is running.
+func anExecution(t *testing.T, h *harness) (execPath string, exec envelope) {
 	t.Helper()
 	ds := h.create("alice", "datasets", "iris", map[string]any{"format": "csv"})
 	h.mustJSON("alice", "PUT", p+"/datasets/"+rid(ds)+"/files/iris.csv", "Species,PetalLengthCm\nsetosa,1.4\n", nil)
@@ -24,7 +25,7 @@ func aRun(t *testing.T, h *harness) (execPath string, exec envelope) {
 		"links": []any{map[string]any{"linkID": "l1", "source": map[string]any{"operatorID": "scan", "portID": "output-0"}, "target": map[string]any{"operatorID": "avg", "portID": "input-0"}}},
 	}
 	wf := h.create("alice", "workflows", "errors", spec)
-	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{"name": "errors run"}, &exec)
+	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{}, &exec)
 	execPath = p + "/workflows/" + rid(wf) + "/executions/" + rid(exec)
 	deadline := time.Now().Add(10 * time.Second)
 	for field(exec, "phase") != "running" && time.Now().Before(deadline) {
@@ -37,7 +38,7 @@ func aRun(t *testing.T, h *harness) (execPath string, exec envelope) {
 	return execPath, exec
 }
 
-// finish reports the run's end, as the unit does.
+// finish reports the execution's end, as the unit does.
 func finish(t *testing.T, h *harness, exec envelope, status string) {
 	t.Helper()
 	event := map[string]any{"eventType": "COMPLETE", "eventTime": time.Now().UTC().Format(time.RFC3339), "producer": "test", "schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json",
@@ -64,17 +65,26 @@ func wantError(t *testing.T, h *harness, method, path string, body any, status i
 	}
 }
 
-func TestRowsOfAFinishedRunKeepTheEnginesRefusal(t *testing.T) {
+// An execution nobody named says what it is and when it started.
+func TestAnExecutionNobodyNamedSaysWhatItIs(t *testing.T) {
 	h := newHarness(t)
-	execPath, exec := aRun(t, h)
+	_, exec := anExecution(t, h)
+	if !regexp.MustCompile(`^execution \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`).MatchString(exec.Metadata.Name) {
+		t.Fatalf("its name: %q", exec.Metadata.Name)
+	}
+}
+
+func TestRowsOfAFinishedExecutionKeepTheEnginesRefusal(t *testing.T) {
+	h := newHarness(t)
+	execPath, exec := anExecution(t, h)
 	finish(t, h, exec, "completed")
 	h.unit.refusing("/results/avg/output-0", http.StatusNotFound, "no table e_1.avg_output_0")
 	wantError(t, h, "GET", execPath+"/operators/avg/ports/output-0/rows?limit=5", nil, http.StatusNotFound, "not_found", "no table e_1.avg_output_0")
 }
 
-func TestRowsOfALiveRunAreEmptyUntilItsTableIsWritten(t *testing.T) {
+func TestRowsOfALiveExecutionAreEmptyUntilItsTableIsWritten(t *testing.T) {
 	h := newHarness(t)
-	execPath, _ := aRun(t, h)
+	execPath, _ := anExecution(t, h)
 	h.unit.refusing("/results/avg/output-0", http.StatusNotFound, "no table e_1.avg_output_0")
 	var page api.RowPage
 	h.mustJSON("alice", "GET", execPath+"/operators/avg/ports/output-0/rows?offset=0&limit=5", nil, &page)
@@ -88,30 +98,30 @@ func TestRowsOfALiveRunAreEmptyUntilItsTableIsWritten(t *testing.T) {
 	}
 }
 
-func TestAPortThePlanDoesNotNameIsNotFoundEvenWhileTheRunGoes(t *testing.T) {
+func TestAPortThePlanDoesNotNameIsNotFoundEvenWhileTheExecutionGoes(t *testing.T) {
 	h := newHarness(t)
-	execPath, _ := aRun(t, h)
+	execPath, _ := anExecution(t, h)
 	h.unit.refusing("/results/nosuch/output-0", http.StatusNotFound, "no result for nosuch/output-0")
 	wantError(t, h, "GET", execPath+"/operators/nosuch/ports/output-0/rows", nil, http.StatusNotFound, "not_found", "no result for nosuch/output-0")
 }
 
-func TestAnEngineFailureWhileARunGoesIsNotHiddenAsEmpty(t *testing.T) {
+func TestAnEngineFailureWhileAnExecutionGoesIsNotHiddenAsEmpty(t *testing.T) {
 	h := newHarness(t)
-	execPath, _ := aRun(t, h)
+	execPath, _ := anExecution(t, h)
 	h.unit.refusing("/results/avg/output-0", http.StatusInternalServerError, "the table is corrupt")
 	wantError(t, h, "GET", execPath+"/operators/avg/ports/output-0/rows", nil, http.StatusBadGateway, "unit_error", "the table is corrupt")
 }
 
 func TestTheEnginesRefusalOfAControlKeepsItsWords(t *testing.T) {
 	h := newHarness(t)
-	execPath, _ := aRun(t, h)
-	h.unit.refusing("/pause", http.StatusConflict, "the run is already pausing")
-	wantError(t, h, "POST", execPath+"/pause", map[string]any{}, http.StatusConflict, "conflict", "the run is already pausing")
+	execPath, _ := anExecution(t, h)
+	h.unit.refusing("/pause", http.StatusConflict, "the execution is already pausing")
+	wantError(t, h, "POST", execPath+"/pause", map[string]any{}, http.StatusConflict, "conflict", "the execution is already pausing")
 }
 
 func TestACompileTheEngineRefusesKeepsItsWords(t *testing.T) {
 	h := newHarness(t)
-	execPath, exec := aRun(t, h)
+	execPath, exec := anExecution(t, h)
 	_ = execPath
 	wf := *exec.Metadata.Parent
 	h.unit.refusing("/compile", http.StatusBadRequest, "the plan is not valid: no operator scan2")

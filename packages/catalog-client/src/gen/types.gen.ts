@@ -34,7 +34,7 @@ export type AgentTemplatePage = {
 export type AgentTemplateSpec = {
     card: AgentCard;
     /**
-     * The model endpoint resource URI.
+     * The model endpoint the agent uses unless a chat or its project names another.
      */
     model: Uri;
     /**
@@ -46,17 +46,13 @@ export type AgentTemplateSpec = {
      */
     skills?: Array<Uri>;
     /**
-     * MCP servers the agent mounts, besides the catalog server every template mounts unless `catalogTools` is false.
+     * The MCP servers the agent mounts. The platform's own server, the catalog, holds its basic tools and is listed like any other; the rest are add-ons.
      */
     mcpServers?: Array<McpBinding>;
     /**
      * Templates this agent may hand the conversation to.
      */
     handoffs?: Array<Uri>;
-    /**
-     * Mount the catalog MCP server; default true.
-     */
-    catalogTools?: boolean;
     loop?: LoopSpec;
 };
 
@@ -93,6 +89,8 @@ export type AppendMessage = {
     turn?: string;
     role: 'user' | 'assistant' | 'system' | 'tool';
     template?: Uri;
+    modelEndpoint?: Uri;
+    mcpServers?: Array<Uri>;
     parts: Array<MessagePart>;
 };
 
@@ -153,9 +151,41 @@ export type BuildEnvironment = {
      */
     vno?: Vno;
     /**
-     * The unit to build on; defaults to the run resolution order.
+     * The unit to build on; defaults to the one an execution would resolve to.
      */
     computingUnit?: Uri;
+};
+
+/**
+ * The project a chat is in.
+ */
+export type ChatProject = {
+    rid: Rid;
+    name: string;
+};
+
+/**
+ * What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default.
+ */
+export type ChatSettings = {
+    /**
+     * Where the chat is: what a turn makes goes into this project, and a list made in a turn is scoped to it.
+     */
+    project: ChatProject;
+    /**
+     * The agent, at the version a turn runs.
+     */
+    agent: Setting;
+    modelEndpoint: Setting;
+    /**
+     * The unit a compile or an execution uses when the call names none; absent when nothing names one.
+     */
+    computingUnit?: Setting;
+    /**
+     * The platform's own server first, then the add-ons.
+     */
+    mcpServers: Array<ServerSetting>;
+    skipped?: Array<SkippedSetting>;
 };
 
 export type CommitFiles = {
@@ -248,14 +278,22 @@ export type ConversationPage = {
 
 export type ConversationSpec = {
     /**
-     * The agent template the next turn runs; set at the start, by the person, or by a handoff.
+     * The agent template the next turn runs, chosen by the person or by a handoff; absent: the project's default, else the platform's.
      */
-    template: Uri;
+    template?: Uri;
     /**
-     * The computing unit runs in this chat use; defaults to the project's.
+     * The model endpoint the agent uses in this chat; absent: the project's default, else the agent's own.
+     */
+    modelEndpoint?: Uri;
+    /**
+     * The computing unit a compile or an execution started in this chat uses when the call names none; absent: the workflow's, the project's or the platform's default. A preference, not a binding: a call can always name another unit.
      */
     computingUnit?: Uri;
     environment?: Uri;
+    /**
+     * The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.
+     */
+    mcpServers?: Array<Uri>;
 };
 
 export type ConversationStatus = {
@@ -786,11 +824,11 @@ export type ExecutionPage = {
 export type ExecutionPhase = 'pending' | 'provisioning' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 
 /**
- * What the catalog compiled for a run, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the run starts and never stored.
+ * What the catalog compiled for an execution, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the execution starts and never stored.
  */
 export type ExecutionPlan = {
     /**
-     * The namespace in the lake the run writes to; absent for a dry run.
+     * The namespace in the lake the execution writes to; absent for a dry run.
      */
     namespace?: string;
     /**
@@ -802,7 +840,7 @@ export type ExecutionPlan = {
      */
     operators?: Array<Uri>;
     /**
-     * The credentials the operators name; leased for the run at start, their values never stored.
+     * The credentials the operators name; leased for the execution at start, their values never stored.
      */
     credentials?: Array<Uri>;
     /**
@@ -840,14 +878,14 @@ export type ExecutionSpec = {
     environment?: Uri;
     computingUnit: Uri;
     /**
-     * The dataset file versions the run reads, resolved at start.
+     * The dataset file versions the execution reads, resolved at start.
      */
     inputs?: Array<Uri>;
     parameters?: {
         [key: string]: unknown;
     };
     /**
-     * The compiled plan the run was started with.
+     * The compiled plan the execution was started with.
      */
     plan?: ExecutionPlan;
 };
@@ -862,7 +900,7 @@ export type ExecutionStatus = {
     startedAt?: string;
     finishedAt?: string;
     /**
-     * When the retention policy dropped the run's result tables: the summaries stay, the rows are gone.
+     * When the retention policy dropped the execution's result tables: the summaries stay, the rows are gone.
      */
     resultsExpiredAt?: string;
 };
@@ -1028,10 +1066,6 @@ export type McpServerSpec = {
     headers?: {
         [key: string]: string;
     };
-    /**
-     * Set for a server the platform provides: catalog, dataflow or scholar. The runtime sends the person's token to a built-in server.
-     */
-    builtin?: string;
 };
 
 export type McpServerStatus = {
@@ -1103,6 +1137,14 @@ export type Message = {
      * For an assistant message: the template version that wrote it.
      */
     template?: Uri;
+    /**
+     * For an assistant message: the model endpoint that wrote it.
+     */
+    modelEndpoint?: Uri;
+    /**
+     * For an assistant message: the MCP servers its turn mounted.
+     */
+    mcpServers?: Array<Uri>;
     parts: Array<MessagePart>;
     createdAt: string;
     updatedAt?: string;
@@ -1313,11 +1355,7 @@ export type OperatorSpec = {
 
 export type OperatorStatus = {
     /**
-     * True for an operator the engine image provides.
-     */
-    builtin?: boolean;
-    /**
-     * The engine image digest the head version was read from.
+     * For an operator the engine image provides: the digest of the image its head version was read from.
      */
     engine?: string;
 };
@@ -1417,13 +1455,13 @@ export type PortSummary = {
 };
 
 /**
- * One output port's table in the lake, named by the catalog before the run starts.
+ * One output port's table in the lake, named by the catalog before the execution starts.
  */
 export type PortTable = {
     operatorID: string;
     portID: string;
     /**
-     * The table's name inside the run's namespace.
+     * The table's name inside the execution's namespace.
      */
     table: string;
 };
@@ -1471,17 +1509,25 @@ export type ProjectPage = {
 
 export type ProjectSpec = {
     /**
-     * The environment a run in this project uses when the workflow names none.
+     * The environment an execution in this project uses when the workflow names none.
      */
     defaultEnvironment?: Uri;
     /**
-     * The computing unit a run in this project uses when the request and the workflow name none.
+     * The computing unit an execution in this project uses when the request and the workflow name none.
      */
     defaultComputingUnit?: Uri;
     /**
-     * The agent template a new chat in this project starts with.
+     * The agent template a chat in this project runs when the chat names none.
      */
     defaultAgentTemplate?: Uri;
+    /**
+     * The model endpoint the agent uses in a chat of this project when the chat names none; absent: the agent's own.
+     */
+    defaultModelEndpoint?: Uri;
+    /**
+     * Add-on MCP servers every chat in this project mounts besides the agent's, unless the chat lists its own.
+     */
+    mcpServers?: Array<Uri>;
 };
 
 export type ProjectStatus = {
@@ -1516,7 +1562,7 @@ export type PythonOperator = {
      */
     code: string;
     /**
-     * The environment its packages come from; absent means the run's environment.
+     * The environment its packages come from; absent means the execution's environment.
      */
     environment?: Uri;
     /**
@@ -1611,11 +1657,11 @@ export type ResourcePage = {
 };
 
 /**
- * How long the catalog keeps what runs and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).
+ * How long the catalog keeps what executions and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).
  */
 export type Retention = {
     /**
-     * Finished runs keep their result tables this long; absent: forever. The run's record and its summaries stay.
+     * Finished executions keep their result tables this long; absent: forever. An execution's record and its summaries stay.
      */
     results?: string;
     /**
@@ -1664,13 +1710,13 @@ export type RunWorkflow = {
      */
     environment?: Uri;
     /**
-     * Per-run inputs; the version itself stays as authored.
+     * Inputs of this execution alone; the version itself stays as authored.
      */
     parameters?: {
         [key: string]: unknown;
     };
     /**
-     * Wait up to this many seconds for the run to finish before returning.
+     * Wait up to this many seconds for the execution to finish before returning.
      */
     waitSeconds?: number;
     name?: string;
@@ -1687,6 +1733,23 @@ export type RuntimeSpec = {
 };
 
 /**
+ * An MCP server a turn mounts.
+ */
+export type ServerSetting = {
+    uri: Uri;
+    name: string;
+    from: SettingSource;
+    /**
+     * True for the platform's own server, the catalog: the agent's basic tools, called as the person. Every other server is an add-on a turn can go without.
+     */
+    platform: boolean;
+    /**
+     * The tool names the agent may call; absent: every tool the server exposes.
+     */
+    allow?: Array<string>;
+};
+
+/**
  * The secret's fields, e.g. {value} for an API key, {username, password} for basic.
  */
 export type SetSecret = {
@@ -1694,6 +1757,20 @@ export type SetSecret = {
         [key: string]: string;
     };
 };
+
+/**
+ * One setting of a chat as a turn uses it.
+ */
+export type Setting = {
+    uri: Uri;
+    name: string;
+    from: SettingSource;
+};
+
+/**
+ * The level a setting of a chat comes from.
+ */
+export type SettingSource = 'chat' | 'project' | 'agent' | 'platform';
 
 /**
  * The typed envelope, served by the kind routes.
@@ -1780,6 +1857,19 @@ export type SkillVersionPage = {
      * Opaque cursor for the next page; absent on the last page.
      */
     nextCursor?: string;
+};
+
+/**
+ * A choice that was passed over: what it names is gone, or is not the caller's to use.
+ */
+export type SkippedSetting = {
+    /**
+     * The field of the spec the choice is in.
+     */
+    setting: 'template' | 'modelEndpoint' | 'computingUnit' | 'mcpServers';
+    uri: Uri;
+    from: SettingSource;
+    reason: string;
 };
 
 export type StartTurn = {
@@ -2010,7 +2100,7 @@ export type ValidateWorkflow = {
      */
     spec?: WorkflowSpec;
     /**
-     * The unit whose compiler answers; defaults to the run resolution order.
+     * The unit whose compiler answers; defaults to the one an execution would resolve to.
      */
     computingUnit?: Uri;
 };
@@ -2125,7 +2215,7 @@ export type WorkflowOperator = {
      */
     outputPorts?: Array<WorkflowPort>;
     /**
-     * Store this operator's output so it can be read after the run.
+     * Store this operator's output so it can be read after the execution.
      */
     viewResult?: boolean;
     markedForReuse?: boolean;
@@ -2158,11 +2248,11 @@ export type WorkflowSpec = {
     operators: Array<WorkflowOperator>;
     links: Array<WorkflowLink>;
     /**
-     * The environment a run uses when the request names none.
+     * The environment an execution uses when the request names none.
      */
     defaultEnvironment?: Uri;
     /**
-     * The computing unit a run uses when the request names none.
+     * The computing unit an execution uses when the request names none.
      */
     defaultComputingUnit?: Uri;
 };
@@ -2173,7 +2263,7 @@ export type WorkflowStatus = {
 };
 
 /**
- * A dry run: the engine's compile result and the plan the catalog would start a run with.
+ * A dry run: the engine's compile result and the plan the catalog would start an execution with.
  */
 export type WorkflowValidation = {
     ok: boolean;
@@ -2220,6 +2310,11 @@ export type WorkflowVersionPage = {
     nextCursor?: string;
 };
 
+/**
+ * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+ */
+export type Scoped = Rid;
+
 export type EvaluationEvaluateData = {
     body: AuthzRequest;
     path?: never;
@@ -2249,6 +2344,10 @@ export type AgentTemplatesListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;
@@ -2447,6 +2546,10 @@ export type ComputingUnitsListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;
@@ -2502,7 +2605,12 @@ export type ComputingUnitsCreateResponse = ComputingUnitsCreateResponses[keyof C
 export type ComputingUnitsAvailableData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
+    };
     url: '/catalog/v1/computing-units/available';
 };
 
@@ -2724,6 +2832,10 @@ export type ConversationsListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;
@@ -2972,6 +3084,33 @@ export type ConversationsResourcesResponses = {
 
 export type ConversationsResourcesResponse = ConversationsResourcesResponses[keyof ConversationsResourcesResponses];
 
+export type ConversationsSettingsData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/conversations/{rid}/settings';
+};
+
+export type ConversationsSettingsErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ConversationsSettingsError = ConversationsSettingsErrors[keyof ConversationsSettingsErrors];
+
+export type ConversationsSettingsResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: ChatSettings;
+};
+
+export type ConversationsSettingsResponse = ConversationsSettingsResponses[keyof ConversationsSettingsResponses];
+
 export type ConversationsStartTurnData = {
     body: StartTurn;
     path: {
@@ -3031,6 +3170,10 @@ export type CredentialsListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;
@@ -3225,6 +3368,10 @@ export type DatasetsListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;
@@ -3628,6 +3775,10 @@ export type EnvironmentsListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;
@@ -3885,6 +4036,10 @@ export type McpServersListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;
@@ -4137,6 +4292,10 @@ export type ModelEndpointsListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;
@@ -4277,6 +4436,10 @@ export type ModelsListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;
@@ -4680,6 +4843,10 @@ export type OperatorsListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         q?: string;
         group?: string;
         parent?: Rid;
@@ -4936,6 +5103,10 @@ export type ProjectsListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;
@@ -5072,10 +5243,41 @@ export type ProjectsUpdateResponses = {
 
 export type ProjectsUpdateResponse = ProjectsUpdateResponses[keyof ProjectsUpdateResponses];
 
+export type ProjectsChatSettingsData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/projects/{rid}/chat-settings';
+};
+
+export type ProjectsChatSettingsErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ProjectsChatSettingsError = ProjectsChatSettingsErrors[keyof ProjectsChatSettingsErrors];
+
+export type ProjectsChatSettingsResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: ChatSettings;
+};
+
+export type ProjectsChatSettingsResponse = ProjectsChatSettingsResponses[keyof ProjectsChatSettingsResponses];
+
 export type ResourcesSearchData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         q?: string;
         kind?: ResourceKind;
         parent?: Rid;
@@ -5524,6 +5726,10 @@ export type SkillsListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;
@@ -5722,6 +5928,10 @@ export type WorkflowsListData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
         parent?: Rid;
         project?: Rid;
         q?: string;

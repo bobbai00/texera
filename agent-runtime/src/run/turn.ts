@@ -1,20 +1,20 @@
 /**
  * One turn of a conversation, run statelessly: take the conversation's turn lock, append the
- * person's message, build the agent of the conversation's template version, run the loop
- * with the history as context, stream AG-UI events, persist the assistant message after every
- * step, and release the lock. A handoff sets the conversation's template and the target
- * finishes the same turn on the same stream. The catalog is the only state.
+ * person's message, ask the catalog what the chat runs with (its agent, model, servers and
+ * unit), build that agent, run the loop with the history as context, stream AG-UI events,
+ * persist the assistant message after every step, and release the lock. A handoff sets the
+ * conversation's template and the target finishes the same turn on the same stream. The
+ * catalog is the only state.
  *
  * The host's native commands are handled here without a model: `/mode <name or uri>` switches
  * the conversation's template.
  */
 import type { Message as AGUIMessage, RunAgentInput } from "@ag-ui/core";
 import type { BuildInput, BuiltAgent } from "../agent/build.ts";
-import type { ChatFacts } from "../agent/chat-context.ts";
 import { HANDOFF_TOOL, handoffTarget } from "../agent/handoff.ts";
 import { TurnContext } from "../agent/turn-context.ts";
 import { type CatalogClient, CatalogError } from "../catalog/client.ts";
-import { baseUri, type CatalogAuth, type Conversation, type MessagePart, type Turn } from "../catalog/types.ts";
+import { baseUri, type CatalogAuth, type MessagePart, type Turn } from "../catalog/types.ts";
 import type { Logger } from "../log.ts";
 import { type AGUIEvent, events, StreamMapper } from "./ag-ui-events.ts";
 import { assistantParts, toModelMessages } from "./messages.ts";
@@ -129,7 +129,7 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
   });
   const names = new Map<string, string>();
   let errored = false;
-  let conversation: Conversation | undefined;
+  // The agent version the turn is running, for the record of a failure.
   let current = turn.template;
   try {
     const said: MessagePart[] = text ? [{ type: "text", text }] : [];
@@ -137,17 +137,23 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
       (a): MessagePart => ({ type: "resource", resource: a.uri, ...(a.name ? { text: a.name } : {}) }),
     );
     await deps.catalog.appendMessage(rid, { turn: turn.turn, role: "user", parts: [...said, ...attached] }, auth());
-    conversation = await deps.catalog.getConversation(rid, auth());
-    const chat = await chatFacts(deps.catalog, conversation, auth());
     for (let hop = 0; ; hop++) {
-      const template = await deps.catalog.getTemplate(current, auth());
+      // What this chat runs with, as the catalog resolves it for the person; after a handoff,
+      // for the agent that took over.
+      const settings = await deps.catalog.chatSettings(rid, auth());
+      for (const passed of settings.skipped ?? []) {
+        log.info("a setting was passed over", { setting: passed.setting, uri: passed.uri, reason: passed.reason });
+      }
+      const template = await deps.catalog.getTemplate(settings.agent.uri, auth());
+      current = template.uri;
+      context.setTemplate(template.uri);
       names.set(template.uri, template.name);
       const built = await deps.build({
+        settings,
         template,
         auth: auth(),
         turn: context,
         purpose: `texera://conversations/${rid}`,
-        chat,
       });
       let outcome: Awaited<ReturnType<BuiltAgent["run"]>["return"]> extends never
         ? never
@@ -165,9 +171,17 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
             );
           }
         }
+        // The answer records what writes it: the agent's version, the model, the servers mounted.
         const assistant = await deps.catalog.appendMessage(
           rid,
-          { turn: turn.turn, role: "assistant", template: template.uri, parts: [] },
+          {
+            turn: turn.turn,
+            role: "assistant",
+            template: template.uri,
+            modelEndpoint: settings.modelEndpoint.uri,
+            mcpServers: built.servers.map((server) => server.uri),
+            parts: [],
+          },
           auth(),
         );
         const mapper = new StreamMapper({ newId });
@@ -234,7 +248,9 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
         log.warn("handoff not followed", { target, hop });
         break;
       }
+      // The handoff is the chat's new choice of agent; the next hop runs what it resolves to.
       const next = await deps.catalog.getTemplate(target, auth());
+      const conversation = await deps.catalog.getConversation(rid, auth());
       await deps.catalog.updateConversationSpec(rid, { ...conversation.spec, template: baseUri(next.uri) }, auth());
       log.info("handoff", { from: template.name, to: next.name });
       // The record of the handoff: a system note written by the template that handed off, naming the one that takes over.
@@ -252,8 +268,6 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
         auth(),
       );
       yield events.handoff({ from: template.uri, to: next.uri, name: next.name, by: "agent" });
-      context.setTemplate(next.uri);
-      current = next.uri;
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -281,22 +295,6 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
     }
   }
   if (!errored) yield events.runFinished(input.threadId, input.runId, { type: "success" });
-}
-
-/**
- * The settings of a chat an agent is told: the computing unit it names, with the name and state
- * the person knows it by. A unit that cannot be read is still named by its URI.
- */
-async function chatFacts(catalog: CatalogClient, conversation: Conversation, auth: CatalogAuth): Promise<ChatFacts> {
-  const uri = conversation.spec.computingUnit;
-  if (!uri) return {};
-  try {
-    const { resource } = await catalog.resolve(uri, auth);
-    const phase = (resource.status as { phase?: unknown } | undefined)?.phase;
-    return { computingUnit: { uri, name: resource.metadata.name, ...(typeof phase === "string" ? { phase } : {}) } };
-  } catch {
-    return { computingUnit: { uri, name: "a unit that cannot be read" } };
-  }
 }
 
 /** `/mode <name or uri>`: the host switches the conversation's template without a model call. */

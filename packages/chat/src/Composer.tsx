@@ -1,6 +1,6 @@
 import { Button, formatBytes } from "@texera/ui";
 import { ArrowUp, Paperclip, Square, X } from "lucide-react";
-import { type FormEvent, type KeyboardEvent, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 
 interface Props {
   /** This person's own turn is streaming: the send button becomes a stop button. */
@@ -15,9 +15,11 @@ interface Props {
   autoFocus?: boolean;
   placeholder?: string;
   status?: string;
+  /** What the chat runs with, shown in the box's foot: its agent, model, unit and add-ons. */
+  controls?: ReactNode;
 }
 
-export function Composer({ busy, disabled = false, onSend, onStop, files, onFilesChange, autoFocus, placeholder, status }: Props) {
+export function Composer({ busy, disabled = false, onSend, onStop, files, onFilesChange, autoFocus, placeholder, status, controls }: Props) {
   const [text, setText] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -77,6 +79,7 @@ export function Composer({ busy, disabled = false, onSend, onStop, files, onFile
         <Button variant="ghost" size="icon-sm" onClick={() => fileInput.current?.click()} aria-label="Attach files">
           <Paperclip />
         </Button>
+        {controls}
         {status && <span className="truncate text-xs text-muted-foreground">{status}</span>}
         <div className="flex-1" />
         {busy ? (

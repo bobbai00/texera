@@ -20,15 +20,18 @@ origin of everything it creates.
    the conversation's template for this turn and the ones after.
 2. A native command runs without a model: `/mode <name or uri>` switches the template.
 3. The turn lock is taken (`409 turn_active` while another turn runs), the person's message
-   is appended, the template version is resolved, and the agent is built: the model from the
-   template's model endpoint with the key leased from the endpoint's credential; the skills;
-   the MCP servers (the catalog server for every template unless `catalogTools` is false,
-   the platform's servers with the person's token and the turn's origin, any other server
-   with its own headers, `credential:<uri>#<field>` values leased); the `handoff` tool when
-   the template lists handoffs. The platform's servers are the agent's basic tools and a
-   turn fails without them; any other server is an add-on, left out of the turn and named
-   to the agent when it cannot be reached. The agent is also told the date and the chat's
-   computing unit, at the end of every step's prompt (`src/agent/chat-context.ts`).
+   is appended, and the runtime asks the catalog what the chat runs with (`GET
+   /conversations/{rid}/settings`, as the person): the agent version, the model endpoint, the
+   MCP servers and the computing unit, each the chat's choice or the default it falls back
+   to. The runtime decides none of it. It builds that agent: the model from the endpoint with
+   the key leased from the endpoint's credential; the skills; the servers, the platform's own
+   (the catalog) with the person's token and the turn's origin, any other with its own
+   headers, `credential:<uri>#<field>` values leased; the `handoff` tool when the agent lists
+   handoffs. The catalog server holds the agent's basic tools and a turn fails without it;
+   any other server is an add-on, left out of the turn and named to the agent when it cannot
+   be reached. The agent is also told the date, the chat's project and the computing unit an
+   execution falls back to, at the end of every step's prompt (`src/agent/chat-context.ts`).
+   Each answer records the agent version, the model endpoint and the servers mounted.
 4. The loop streams: one model call per step, the step's tool calls run, until the model
    replies without a tool call, the step budget is spent, the run is aborted, or a handoff is
    called. The answer policy (`free` or `after_result`) decides whether a reply without a
@@ -61,7 +64,7 @@ platform's model endpoint names a credential whose value `up.sh` loads into the 
 | Variable | Default | Meaning |
 |---|---|---|
 | `TEXERA_AGENT_PORT` | `3002` | listen port |
-| `TEXERA_PUBLIC_URL` | `http://localhost:8088` | the gateway; the platform's MCP servers are `${TEXERA_PUBLIC_URL}/mcp/{catalog,dataflow}` |
+| `TEXERA_PUBLIC_URL` | `http://localhost:8088` | the gateway; the platform's MCP server is `${TEXERA_PUBLIC_URL}/mcp/catalog` |
 | `TEXERA_CATALOG_URL` | `http://localhost:8088` | base URL for catalog calls |
 | `TEXERA_OIDC_ISSUER` | `http://localhost:8088/auth/realms/texera` | issuer user tokens must carry |
 | `TEXERA_OIDC_AUDIENCE` | `texera` | audience user tokens must carry |

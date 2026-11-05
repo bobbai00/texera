@@ -14,7 +14,10 @@ describe("kind registry", () => {
       expect(kindEntry(id).plural).toBe(pluralOf(id));
       expect(spec.label.length).toBeGreaterThan(0);
     }
-    expect(KIND_IDS.filter(k => k !== "settings" && k !== "execution" && k !== "conversation").every(k => KINDS[k].defaultSpec)).toBe(true);
+    // What the app makes from a "New" button: every kind but the ones made elsewhere (an
+    // execution, a chat, the settings) and the agent, which the platform ships.
+    const madeElsewhere = ["settings", "execution", "conversation", "agent-template"];
+    expect(KIND_IDS.filter(k => !KINDS[k].defaultSpec).sort()).toEqual(madeElsewhere.sort());
     expect(LIBRARY_GROUPS.flatMap(g => g.kinds).every(k => isKindId(k))).toBe(true);
   });
 

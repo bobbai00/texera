@@ -23,7 +23,7 @@ model OperatorPortSpec {
 model PythonOperator {
   @doc("The operator's Python source: a class with the engine's UDF interface.")
   code: string;
-  @doc("The environment its packages come from; absent means the run's environment.")
+  @doc("The environment its packages come from; absent means the execution's environment.")
   environment?: Uri;
   @doc("The columns the code adds to each tuple, declared so the engine can type the output; input columns pass through.")
   outputColumns?: Attribute[];
@@ -49,9 +49,7 @@ model OperatorSpec {
 }
 
 model OperatorStatus {
-  @doc("True for an operator the engine image provides.")
-  builtin?: boolean;
-  @doc("The engine image digest the head version was read from.")
+  @doc("For an operator the engine image provides: the digest of the image its head version was read from.")
   engine?: string;
 }
 
@@ -71,12 +69,12 @@ namespace Routes {
     @get
     @extension("x-texera-permission", "list")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "list_operators",
       description: "List the operator types available: without q or group, a compact list of types, names, groups and descriptions; with q (an operator name or part of it) or group, the matching operators with their property JSON Schema and ports. Use the exact operatorType values when building a workflow.",
       readOnlyHint: true,
     })
     list(
+      ...Scoped,
       @query q?: string,
       @query group?: string,
       @query parent?: Rid,

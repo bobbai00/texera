@@ -1,30 +1,24 @@
-import type { AgentTemplateSpec, Defaults } from "@texera/catalog-client/types";
+import type { AgentTemplateSpec } from "@texera/catalog-client/types";
 import { Bot } from "lucide-react";
 import { lazy } from "react";
 import { resourceQuery } from "../queries";
-import type { CreateInput, KindSpec } from "../types";
+import type { KindSpec } from "../types";
 import { TemplateForm } from "./Form";
 
-export const templateQuery = resourceQuery;
-
-/** A fresh template: a card, the platform's model, the catalog tools, no skills yet. */
-export const defaultTemplateSpec = ({ name, description }: CreateInput, defaults: Defaults): AgentTemplateSpec => ({
-  card: { name, description: description ?? "" },
-  model: defaults.modelEndpoint ?? "",
-  prompt: `You are ${name}. Help the person with their work on Texera; find what they need in the catalog before answering.`,
-  catalogTools: true,
-});
-
+/**
+ * An agent: its card, prompt, model, skills and MCP servers, as a versioned resource. The
+ * platform ships the one every chat runs, so the app shows agents and makes none (no
+ * `defaultSpec`); the API still does.
+ */
 export const agentTemplateKind: KindSpec = {
   kind: "agent-template",
-  label: "Agent template",
-  plural: "Agent templates",
+  label: "Agent",
+  plural: "Agents",
   icon: Bot,
   accent: "bg-kind-agent-template/12 text-kind-agent-template",
   Card: lazy(() => import("./Card")),
   Editor: TemplateForm,
-  prefetch: (qc, ref) => qc.prefetchQuery(templateQuery(ref.rid)),
-  defaultSpec: defaultTemplateSpec,
+  prefetch: (qc, ref) => qc.prefetchQuery(resourceQuery(ref.rid)),
   facts: r => {
     const spec = r.spec as Partial<AgentTemplateSpec>;
     const servers = spec.mcpServers?.length ?? 0;

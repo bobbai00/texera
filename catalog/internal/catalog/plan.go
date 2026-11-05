@@ -204,10 +204,10 @@ func deref(s *string) string {
 
 func derefBool(b *bool) bool { return b != nil && *b }
 
-// compiled is a workflow version turned into what a run needs, as data: the engine's logical
+// compiled is a workflow version turned into what an execution needs, as data: the engine's logical
 // plan with dataset files and credentials still named by URI, the custom operators compiled in,
-// and what the run reads, writes and needs. Nothing in it is a secret or a URL that expires;
-// those are bound when the run materializes, into a copy, and never stored.
+// and what the execution reads, writes and needs. Nothing in it is a secret or a URL that expires;
+// those are bound when the execution materializes, into a copy, and never stored.
 type compiled struct {
 	Plan logicalPlan
 	// Inputs are the dataset files the plan reads, each at a JSON pointer of its operator.
@@ -221,7 +221,7 @@ type compiled struct {
 	Operators []string
 	// Pins are the environments the custom operators pin, as URIs with @vno.
 	Pins []string
-	// Outputs are the run's tables, one per output port, named by the catalog.
+	// Outputs are the execution's tables, one per output port, named by the catalog.
 	Outputs []api.PortTable
 }
 
@@ -345,7 +345,7 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 	return out, nil
 }
 
-// tableName is the table an output port writes, inside the run's namespace: the operator and
+// tableName is the table an output port writes, inside the execution's namespace: the operator and
 // the port, in the characters a table name may carry.
 func tableName(operatorID, portID string) string {
 	clean := func(s string) string {
@@ -466,7 +466,7 @@ func (s *Service) versionURI(ctx context.Context, name, kind string) (string, er
 	return URI(r).WithVersion(vno).String(), nil
 }
 
-// authorizePlan is the one authorization pass of a run or a dry run, before anything is
+// authorizePlan is the one authorization pass of an execution or a dry run, before anything is
 // written: running on the unit, reading the environment, every dataset and every custom
 // operator the plan names, using every credential.
 func (s *Service) authorizePlan(ctx context.Context, caller *auth.Caller, c *compiled, unit *store.Resource, env *store.Resource) error {
@@ -510,7 +510,7 @@ func (s *Service) authorizePlan(ctx context.Context, caller *auth.Caller, c *com
 	return nil
 }
 
-// resolveEnvironment settles the run's environment, which is one: the one the request names;
+// resolveEnvironment settles the execution's environment, which is one: the one the request names;
 // else the one the custom operators pin, when they agree; else the defaults of the workflow,
 // the project and the settings. A pin that disagrees with the request or with another pin
 // is refused.
@@ -531,7 +531,7 @@ func (s *Service) resolveEnvironment(ctx context.Context, requested, fallback st
 	}
 	for _, pin := range pins {
 		if pin != pinned {
-			return nil, 0, Conflict("environment", fmt.Sprintf("the run's environment %s differs from %s, which a custom operator pins", pinned, pin), nil)
+			return nil, 0, Conflict("environment", fmt.Sprintf("the execution's environment %s differs from %s, which a custom operator pins", pinned, pin), nil)
 		}
 	}
 	ref, _ := uri.Parse(pinned)

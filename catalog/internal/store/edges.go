@@ -11,9 +11,16 @@ import (
 
 const edgeColumns = `e.from_uri, e.relation, e.to_uri, e.from_rid, e.to_rid, e.field, e.execution_rid, e.attrs, e.at`
 
-// replaceReferences replaces the `references` edges of every from_uri present in edges.
-func replaceReferences(ctx context.Context, tx pgx.Tx, edges []Edge) error {
+// replaceReferences replaces the `references` edges recorded under the given names and under
+// every from_uri present in edges. Naming the source matters when the new content references
+// nothing: its old references go, and what it named is free again.
+func replaceReferences(ctx context.Context, tx pgx.Tx, edges []Edge, sources ...string) error {
 	froms := map[string]bool{}
+	for _, from := range sources {
+		if from != "" {
+			froms[from] = true
+		}
+	}
 	for _, e := range edges {
 		if e.Relation == "references" {
 			froms[e.From] = true

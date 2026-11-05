@@ -2,14 +2,15 @@ import { useQuery } from "@tanstack/react-query";
 import type { CredentialSpec, CredentialStatus } from "@texera/catalog-client/types";
 import { NativeSelect } from "@texera/ui";
 import { searchQuery } from "../queries";
+import { useScope } from "../scope";
 
 /**
  * A property that takes a credential: the person picks one of theirs and the spec holds its
- * URI (`texera://credentials/{rid}`); the catalog leases the secret for each run and puts it
+ * URI (`texera://credentials/{rid}`); the catalog leases the secret for each execution and puts it
  * in the plan, so no version ever holds a value.
  */
 export function CredentialPicker({ id, value, onChange, disabled }: { id: string; value: string; onChange: (uri: string) => void; disabled: boolean }) {
-  const { data } = useQuery(searchQuery({ kind: "credential" }));
+  const { data } = useQuery(searchQuery({ kind: "credential", scope: useScope() }));
   const items = data?.items ?? [];
   const known = items.some(c => c.metadata.uri === value);
   return (

@@ -118,10 +118,14 @@ type Message struct {
 	Turn            *string
 	Role            string
 	AuthorPID       uuid.UUID
-	Template        *string
-	Parts           json.RawMessage
-	CreatedAt       time.Time
-	UpdatedAt       *time.Time
+	// For an assistant message, what wrote it: the template version, the model endpoint, and
+	// the MCP servers its turn mounted.
+	Template      *string
+	ModelEndpoint *string
+	McpServers    []string
+	Parts         json.RawMessage
+	CreatedAt     time.Time
+	UpdatedAt     *time.Time
 }
 
 // Lease records that a credential's secret was handed out.

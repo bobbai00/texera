@@ -5,7 +5,7 @@ import { CardShell, useCardSummary } from "../shell/CardShell";
 import type { KindCardProps } from "../types";
 import { executionQuery } from "./queries";
 
-/** A run inside a chat message: how it ended, then what it produced. */
+/** An execution inside a chat message: how it ended, then what it produced. */
 export default function ExecutionCard({ ref, resource }: KindCardProps) {
   const { summary } = useCardSummary(ref, resource);
   const { data: x } = useQuery(executionQuery(ref.rid));

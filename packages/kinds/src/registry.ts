@@ -37,12 +37,15 @@ export const KINDS: Record<KindId, KindSpec> = {
 };
 
 /**
- * The library's sections, in sidebar order. Agent templates are not among them: every chat runs
- * the deployment's one agent, so there is nothing to pick or make; the kind and its page stay.
+ * The sidebar's sections, in order. Each entry is a view, not a place: what a person makes and
+ * keeps (Work), what happened (Activity: an execution lives under its workflow, and is listed
+ * here because people look for one across workflows), what the agent is made of (Agent), and
+ * the projects themselves.
  */
 export const LIBRARY_GROUPS: { title: string; kinds: KindId[] }[] = [
-  { title: "Work", kinds: ["workflow", "execution", "dataset", "model", "operator", "environment", "computing-unit"] },
-  { title: "Agent", kinds: ["skill", "mcp-server", "model-endpoint", "credential"] },
+  { title: "Work", kinds: ["workflow", "dataset", "model", "operator", "environment", "computing-unit"] },
+  { title: "Activity", kinds: ["execution"] },
+  { title: "Agent", kinds: ["agent-template", "skill", "mcp-server", "model-endpoint", "credential"] },
   { title: "Projects", kinds: ["project"] },
 ];
 

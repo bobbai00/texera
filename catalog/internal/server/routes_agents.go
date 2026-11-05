@@ -10,9 +10,33 @@ import (
 )
 
 // routeAgents registers the conversation subresources (messages, turns, what the chat
-// produced) and the credential actions (secret, lease).
+// produced, what it runs with) and the credential actions (secret, lease).
 func (s *Server) routeAgents() {
 	conv := Prefix + "/conversations/{rid}"
+	s.handle("GET "+conv+"/settings", func(w http.ResponseWriter, r *http.Request) error {
+		rid, err := ridParam(r, "rid")
+		if err != nil {
+			return err
+		}
+		settings, err := s.svc.ChatSettings(ctxOf(r), callerOf(r), rid)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, settings)
+		return nil
+	})
+	s.handle("GET "+Prefix+"/projects/{rid}/chat-settings", func(w http.ResponseWriter, r *http.Request) error {
+		rid, err := ridParam(r, "rid")
+		if err != nil {
+			return err
+		}
+		settings, err := s.svc.NewChatSettings(ctxOf(r), callerOf(r), rid)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, settings)
+		return nil
+	})
 	s.handle("GET "+conv+"/messages", func(w http.ResponseWriter, r *http.Request) error {
 		rid, err := ridParam(r, "rid")
 		if err != nil {

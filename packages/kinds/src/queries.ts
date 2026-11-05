@@ -5,9 +5,11 @@ import { queryOptions } from "@tanstack/react-query";
 import { resourcesRead, resourcesResolve } from "@texera/catalog-client";
 import {
   computingUnitsAvailableOptions,
+  conversationsSettingsOptions,
   meGetOptions,
   operatorsListOptions,
   principalsListOptions,
+  projectsChatSettingsOptions,
   resourcesDependentsOptions,
   resourcesLineageOptions,
   resourcesListGrantsOptions,
@@ -15,7 +17,7 @@ import {
   resourcesSearchOptions,
   settingsRoutesReadOptions,
 } from "@texera/catalog-client/query";
-import type { LineageDirection, Resource, ResourceKind } from "@texera/catalog-client/types";
+import type { LineageDirection, Resource, ResourceKind, SettingSource } from "@texera/catalog-client/types";
 import { schemaMap } from "@texera/workflow-model";
 import type { ResourceRef } from "./types";
 import { baseUri } from "./uri";
@@ -55,7 +57,10 @@ export const principalsQuery = (q?: string) => ({ ...principalsListOptions({ que
 
 export interface SearchFilter {
   kind?: ResourceKind;
+  /** A project and what it inherits, the platform's built-ins; absent narrows nothing. */
+  scope?: string;
   parent?: string;
+  /** Exactly a project's own resources. */
   project?: string;
   q?: string;
   origin?: string;
@@ -64,14 +69,41 @@ export interface SearchFilter {
 
 export const searchQuery = (filter: SearchFilter) => resourcesSearchOptions({ query: { limit: 100, ...filter } });
 
-export const unitsQuery = () => ({ ...computingUnitsAvailableOptions(), staleTime: 30_000 });
+/** The units the caller may run on, in a scope. */
+export const unitsQuery = (scope?: string) => ({ ...computingUnitsAvailableOptions({ query: { scope } }), staleTime: 30_000 });
 
-/** Every operator type the caller can use, with its properties schema, as the editor's schemas. */
-export const operatorSchemasQuery = () => ({
-  ...operatorsListOptions({ query: { view: "full", limit: 500 } }),
+/**
+ * What a turn of a chat runs with: its agent, model, computing unit and MCP servers, each the
+ * chat's choice or the default it falls back to. The catalog resolves it; the app only shows it.
+ */
+export const chatSettingsQuery = (rid: string) => ({ ...conversationsSettingsOptions({ path: { rid } }), staleTime: 30_000 });
+
+/** Which level chose a setting of a chat, in words. */
+export const SOURCE_LABEL: Record<SettingSource, string> = {
+  chat: "chosen for this chat",
+  project: "the project's default",
+  agent: "the agent's own",
+  platform: "the platform's default",
+};
+
+/** The same for a chat that is not started yet, in a project. */
+export const newChatSettingsQuery = (project: string) => ({ ...projectsChatSettingsOptions({ path: { rid: project } }), staleTime: 30_000 });
+
+/** Every operator type usable in a scope, with its properties schema, as the editor's schemas. */
+export const operatorSchemasQuery = (scope?: string) => ({
+  ...operatorsListOptions({ query: { view: "full", limit: 500, scope } }),
   select: (page: { items: Parameters<typeof schemaMap>[0] }) => schemaMap(page.items),
   staleTime: 10 * 60_000,
 });
 
-/** The query keys a write to a resource invalidates: its envelope, every kind list, its versions. */
-export const keysOf = (rid: string) => [["resource", rid], [{ _id: "resourcesSearch" }], [{ _id: "resourcesListVersions", path: { rid } }]];
+/**
+ * The query keys a write to a resource invalidates: its envelope, every kind list, its
+ * versions, and what chats resolve their settings to (a default or a choice may have changed).
+ */
+export const keysOf = (rid: string) => [
+  ["resource", rid],
+  [{ _id: "resourcesSearch" }],
+  [{ _id: "resourcesListVersions", path: { rid } }],
+  [{ _id: "conversationsSettings" }],
+  [{ _id: "projectsChatSettings" }],
+];

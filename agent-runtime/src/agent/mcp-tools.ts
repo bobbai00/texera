@@ -1,30 +1,32 @@
 /**
- * Mounts MCP servers as AI SDK tools. The platform's own servers (catalog, dataflow) are
- * reached through the gateway with the person's token and the turn's origin headers, so the
- * catalog's PDP applies the person's permissions and records the turn on what the tools
- * create. Any other server gets the headers its resource configures, with `credential:<uri>`
- * values replaced by the leased secret, and nothing else.
+ * Mounts the MCP servers of a turn as AI SDK tools. Which servers, and which of them is the
+ * platform's own, is the catalog's answer (the chat's settings); nothing is mounted that it
+ * does not list.
  *
- * The platform's servers are an agent's basic tools: without them it cannot work, so a failure to
- * mount one fails the turn. Every other server is an add-on: one that cannot be reached, does not
- * answer in time or whose credential cannot be leased is left out and named, and the turn goes on
- * with the rest.
+ * The platform's own server, the catalog, holds an agent's basic tools. It is reached at the
+ * gateway with the person's token and the turn's origin headers, so the catalog applies the
+ * person's permissions and records the turn on what the tools create; without it an agent
+ * cannot work, so a failure to mount it fails the turn. Every other server is an add-on: it
+ * gets the headers its resource configures, with `credential:<uri>` values replaced by the
+ * leased secret, and nothing else; one that cannot be reached, does not answer in time or
+ * whose credential cannot be leased is left out and named, and the turn goes on with the rest.
  */
 import { createMCPClient, type MCPClient, type MCPTransport } from "@ai-sdk/mcp";
 import type { ToolSet } from "ai";
-import type { McpBinding, McpServerRecord } from "../catalog/types.ts";
+import type { McpServerRecord, ServerSetting } from "../catalog/types.ts";
 import type { TurnContext } from "./turn-context.ts";
 
 export interface McpMountOptions {
-  bindings: McpBinding[];
+  /** The servers of the turn, as the chat's settings list them. */
+  servers: ServerSetting[];
   resolveServer: (uri: string) => Promise<McpServerRecord>;
   /** Leases a credential and returns its fields. */
   leaseCredential: (uri: string) => Promise<Record<string, string>>;
-  /** The person's bearer token, sent to the platform's servers only. */
+  /** The person's bearer token, sent to the platform's own server only. */
   userToken: string;
-  /** The gateway URL; the platform's servers live under `${publicUrl}/mcp`. */
+  /** The gateway URL, where the runtime reaches the platform's own server. */
   publicUrl: string;
-  /** The turn's origin headers, sent to the platform's servers only. */
+  /** The turn's origin headers, sent to the platform's own server only. */
   turn: TurnContext;
   /** Supplies a transport instead of Streamable HTTP; tests use an in-memory one. */
   transportFactory?: (
@@ -105,46 +107,49 @@ export async function resolveHeaders(
   return headers;
 }
 
-/** The URL and headers for a server. */
+/**
+ * The URL and headers for a server. The platform's own server is named by its public URL, which
+ * need not be reachable from where the runtime runs: the runtime goes to the gateway, on the
+ * same path, as the person. An add-on is called at its own URL with its own headers.
+ */
 export async function connectionFor(
   server: McpServerRecord,
+  platform: boolean,
   options: Pick<McpMountOptions, "userToken" | "publicUrl" | "turn" | "leaseCredential">,
-): Promise<{ url: string; headers: Record<string, string>; builtin: boolean }> {
-  const spec = server.spec;
-  const builtin = !!spec.builtin;
-  const url = builtin ? `${options.publicUrl.replace(/\/$/, "")}/mcp/${spec.builtin}` : spec.url;
-  if (!url) throw new Error(`MCP server ${server.name} has no url`);
-  const headers = await resolveHeaders(spec, options.leaseCredential);
-  if (builtin) {
-    headers.Authorization = `Bearer ${options.userToken}`;
-    Object.assign(headers, options.turn.headers());
+): Promise<{ url: string; headers: Record<string, string> }> {
+  if (!server.spec.url) throw new Error(`MCP server ${server.name} has no url`);
+  if (!platform) {
+    return { url: server.spec.url, headers: await resolveHeaders(server.spec, options.leaseCredential) };
   }
-  return { url, headers, builtin };
+  return {
+    url: `${options.publicUrl.replace(/\/$/, "")}${new URL(server.spec.url).pathname}`,
+    headers: { Authorization: `Bearer ${options.userToken}`, ...options.turn.headers() },
+  };
 }
 
 function sanitize(name: string): string {
   return name.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "server";
 }
 
-export async function mountMcpBindings(options: McpMountOptions): Promise<McpMount> {
+export async function mountMcpServers(options: McpMountOptions): Promise<McpMount> {
   const clients: MCPClient[] = [];
   const tools: ToolSet = {};
   const servers: MountedServer[] = [];
   const unavailable: UnavailableServer[] = [];
   const timeout = options.addOnTimeoutMs ?? DEFAULT_ADD_ON_TIMEOUT_MS;
   try {
-    for (const binding of options.bindings) {
-      const server = await options.resolveServer(binding.server);
-      const addOn = !server.spec.builtin;
+    for (const listed of options.servers) {
+      const server = await options.resolveServer(listed.uri);
+      const addOn = !listed.platform;
       // An add-on gets a bounded wait; a client that connects after it is closed again.
       const bounded = <T>(work: Promise<T>, late?: (value: T) => void) => (addOn ? within(work, timeout, late) : work);
       try {
-        const { url, headers } = await connectionFor(server, options);
+        const { url, headers } = await connectionFor(server, listed.platform, options);
         const transport = options.transportFactory?.(server, url, headers) ?? { type: "http" as const, url, headers };
         const client = await bounded(createMCPClient({ transport }), (late) => void late.close().catch(() => {}));
         clients.push(client);
         const all = await bounded(client.tools());
-        const allow = binding.allow ? new Set(binding.allow) : undefined;
+        const allow = listed.allow ? new Set(listed.allow) : undefined;
         const mounted: string[] = [];
         for (const [name, t] of Object.entries(all)) {
           if (allow && !allow.has(name)) continue;
@@ -174,16 +179,4 @@ export async function mountMcpBindings(options: McpMountOptions): Promise<McpMou
       await Promise.allSettled(clients.map((c) => c.close()));
     },
   };
-}
-
-/** The binding of a platform server, for templates that do not list it (the catalog server). */
-export function builtinBinding(name: string, publicUrl: string): { record: McpServerRecord; binding: McpBinding } {
-  const uri = `builtin://${name}`;
-  const record: McpServerRecord = {
-    uri,
-    rid: "",
-    name,
-    spec: { url: `${publicUrl.replace(/\/$/, "")}/mcp/${name}`, builtin: name },
-  };
-  return { record, binding: { server: uri } };
 }

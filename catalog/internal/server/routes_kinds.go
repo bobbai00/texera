@@ -86,6 +86,9 @@ func listFilter(r *http.Request) (catalog.ListFilter, error) {
 	q := r.URL.Query()
 	f := catalog.ListFilter{Query: q.Get("q"), Limit: queryInt(r, "limit", 50), Cursor: q.Get("cursor")}
 	var err error
+	if f.Scope, err = queryRid(r, "scope"); err != nil {
+		return f, err
+	}
 	if f.Parent, err = queryRid(r, "parent"); err != nil {
 		return f, err
 	}

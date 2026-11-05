@@ -256,8 +256,7 @@ export const zManifest = z.object({
 
 export const zMcpServerSpec = z.object({
     url: z.string(),
-    headers: z.record(z.string(), z.string()).optional(),
-    builtin: z.string().optional()
+    headers: z.record(z.string(), z.string()).optional()
 });
 
 export const zMcpServerStatus = z.object({
@@ -291,7 +290,6 @@ export const zOperatorRunStatus = z.object({
 });
 
 export const zOperatorStatus = z.object({
-    builtin: z.boolean().optional(),
     engine: z.string().optional()
 });
 
@@ -325,7 +323,7 @@ export const zExecutionStatus = z.object({
 });
 
 /**
- * One output port's table in the lake, named by the catalog before the run starts.
+ * One output port's table in the lake, named by the catalog before the execution starts.
  */
 export const zPortTable = z.object({
     operatorID: z.string(),
@@ -407,7 +405,7 @@ export const zResourceKind = z.enum([
 ]);
 
 /**
- * How long the catalog keeps what runs and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).
+ * How long the catalog keeps what executions and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).
  */
 export const zRetention = z.object({
     results: z.string().optional(),
@@ -426,6 +424,14 @@ export const zRetentionSweep = z.object({
  * Resource id, a UUID.
  */
 export const zRid = z.string();
+
+/**
+ * The project a chat is in.
+ */
+export const zChatProject = z.object({
+    rid: zRid,
+    name: z.string()
+});
 
 export const zGrant = z.object({
     rid: zRid,
@@ -482,6 +488,16 @@ export const zSetSecret = z.object({
     fields: z.record(z.string(), z.string())
 });
 
+/**
+ * The level a setting of a chat comes from.
+ */
+export const zSettingSource = z.enum([
+    'chat',
+    'project',
+    'agent',
+    'platform'
+]);
+
 export const zSettingsStatus = z.record(z.string(), z.unknown());
 
 export const zSkillSpec = z.object({
@@ -534,9 +550,11 @@ export const zComputingUnitStatus = z.object({
 });
 
 export const zConversationSpec = z.object({
-    template: zUri,
+    template: zUri.optional(),
+    modelEndpoint: zUri.optional(),
     computingUnit: zUri.optional(),
-    environment: zUri.optional()
+    environment: zUri.optional(),
+    mcpServers: z.array(zUri).optional()
 });
 
 export const zConversationStatus = z.object({
@@ -565,7 +583,7 @@ export const zEdge = z.object({
 });
 
 /**
- * What the catalog compiled for a run, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the run starts and never stored.
+ * What the catalog compiled for an execution, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the execution starts and never stored.
  */
 export const zExecutionPlan = z.object({
     namespace: z.string().optional(),
@@ -617,7 +635,6 @@ export const zAgentTemplateSpec = z.object({
     skills: z.array(zUri).optional(),
     mcpServers: z.array(zMcpBinding).optional(),
     handoffs: z.array(zUri).optional(),
-    catalogTools: z.boolean().optional(),
     loop: zLoopSpec.optional()
 });
 
@@ -652,6 +669,8 @@ export const zAppendMessage = z.object({
         'tool'
     ]),
     template: zUri.optional(),
+    modelEndpoint: zUri.optional(),
+    mcpServers: z.array(zUri).optional(),
     parts: z.array(zMessagePart)
 });
 
@@ -667,6 +686,8 @@ export const zMessage = z.object({
     ]),
     author: zPid,
     template: zUri.optional(),
+    modelEndpoint: zUri.optional(),
+    mcpServers: z.array(zUri).optional(),
     parts: z.array(zMessagePart),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime().optional()
@@ -705,7 +726,9 @@ export const zOrigin = z.object({
 export const zProjectSpec = z.object({
     defaultEnvironment: zUri.optional(),
     defaultComputingUnit: zUri.optional(),
-    defaultAgentTemplate: zUri.optional()
+    defaultAgentTemplate: zUri.optional(),
+    defaultModelEndpoint: zUri.optional(),
+    mcpServers: z.array(zUri).optional()
 });
 
 export const zPythonOperator = z.object({
@@ -735,11 +758,58 @@ export const zReplaceMessage = z.object({
     template: zUri.optional()
 });
 
+/**
+ * An MCP server a turn mounts.
+ */
+export const zServerSetting = z.object({
+    uri: zUri,
+    name: z.string(),
+    from: zSettingSource,
+    platform: z.boolean(),
+    allow: z.array(z.string()).optional()
+});
+
+/**
+ * One setting of a chat as a turn uses it.
+ */
+export const zSetting = z.object({
+    uri: zUri,
+    name: z.string(),
+    from: zSettingSource
+});
+
 export const zSettingsSpec = z.object({
     branding: zBranding,
     defaults: zDefaults,
     features: z.record(z.string(), z.boolean()).optional(),
     retention: zRetention.optional()
+});
+
+/**
+ * A choice that was passed over: what it names is gone, or is not the caller's to use.
+ */
+export const zSkippedSetting = z.object({
+    setting: z.enum([
+        'template',
+        'modelEndpoint',
+        'computingUnit',
+        'mcpServers'
+    ]),
+    uri: zUri,
+    from: zSettingSource,
+    reason: z.string()
+});
+
+/**
+ * What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default.
+ */
+export const zChatSettings = z.object({
+    project: zChatProject,
+    agent: zSetting,
+    modelEndpoint: zSetting,
+    computingUnit: zSetting.optional(),
+    mcpServers: z.array(zServerSetting),
+    skipped: z.array(zSkippedSetting).optional()
 });
 
 export const zStartTurn = z.object({
@@ -1553,7 +1623,7 @@ export const zWorkflowPage = z.object({
 });
 
 /**
- * A dry run: the engine's compile result and the plan the catalog would start a run with.
+ * A dry run: the engine's compile result and the plan the catalog would start an execution with.
  */
 export const zWorkflowValidation = z.object({
     ok: z.boolean(),
@@ -1585,6 +1655,11 @@ export const zWorkflowVersionPage = z.object({
     nextCursor: z.string().optional()
 });
 
+/**
+ * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+ */
+export const zScoped = zRid;
+
 export const zEvaluationEvaluateBody = zAuthzRequest;
 
 /**
@@ -1593,6 +1668,7 @@ export const zEvaluationEvaluateBody = zAuthzRequest;
 export const zEvaluationEvaluateResponse = zAuthzResponse;
 
 export const zAgentTemplatesListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
@@ -1670,6 +1746,7 @@ export const zAgentTemplatesReadVersionPath = z.object({
 export const zAgentTemplatesReadVersionResponse = zAgentTemplateVersion;
 
 export const zComputingUnitsListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
@@ -1688,6 +1765,10 @@ export const zComputingUnitsCreateBody = zCreateComputingUnit;
  * The request has succeeded and a new resource has been created as a result.
  */
 export const zComputingUnitsCreateResponse = zComputingUnit;
+
+export const zComputingUnitsAvailableQuery = z.object({
+    scope: zRid.optional()
+});
 
 /**
  * The request has succeeded.
@@ -1770,6 +1851,7 @@ export const zComputingUnitsTerminatePath = z.object({
 export const zComputingUnitsTerminateResponse = zComputingUnit;
 
 export const zConversationsListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
@@ -1868,6 +1950,15 @@ export const zConversationsResourcesPath = z.object({
  */
 export const zConversationsResourcesResponse = z.array(zResource);
 
+export const zConversationsSettingsPath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zConversationsSettingsResponse = zChatSettings;
+
 export const zConversationsStartTurnBody = zStartTurn;
 
 export const zConversationsStartTurnPath = z.object({
@@ -1890,6 +1981,7 @@ export const zConversationsEndTurnPath = z.object({
 export const zConversationsEndTurnResponse = z.void();
 
 export const zCredentialsListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
@@ -1965,6 +2057,7 @@ export const zCredentialsSetSecretPath = z.object({
 export const zCredentialsSetSecretResponse = z.void();
 
 export const zDatasetsListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
@@ -2124,6 +2217,7 @@ export const zDatasetsLinkPath = z.object({
 export const zDatasetsLinkResponse = zFileLink;
 
 export const zEnvironmentsListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
@@ -2226,6 +2320,7 @@ export const zExecutionsListQuery = z.object({
 export const zExecutionsListResponse = zExecutionPage;
 
 export const zMcpServersListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
@@ -2315,6 +2410,7 @@ export const zMeUpdatePreferencesBody = z.record(z.string(), z.unknown());
 export const zMeUpdatePreferencesResponse = z.record(z.string(), z.unknown());
 
 export const zModelEndpointsListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
@@ -2368,6 +2464,7 @@ export const zModelEndpointsUpdatePath = z.object({
 export const zModelEndpointsUpdateResponse = zModelEndpoint;
 
 export const zModelsListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
@@ -2527,6 +2624,7 @@ export const zModelsLinkPath = z.object({
 export const zModelsLinkResponse = zFileLink;
 
 export const zOperatorsListQuery = z.object({
+    scope: zRid.optional(),
     q: z.string().optional(),
     group: z.string().optional(),
     parent: zRid.optional(),
@@ -2626,6 +2724,7 @@ export const zPrincipalsReadPath = z.object({
 export const zPrincipalsReadResponse = zPrincipal;
 
 export const zProjectsListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
@@ -2678,7 +2777,17 @@ export const zProjectsUpdatePath = z.object({
  */
 export const zProjectsUpdateResponse = zProject;
 
+export const zProjectsChatSettingsPath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zProjectsChatSettingsResponse = zChatSettings;
+
 export const zResourcesSearchQuery = z.object({
+    scope: zRid.optional(),
     q: z.string().optional(),
     kind: zResourceKind.optional(),
     parent: zRid.optional(),
@@ -2845,6 +2954,7 @@ export const zSettingsRoutesPublicResponse = zPublicSettings;
 export const zSettingsRoutesSweepResponse = zRetentionSweep;
 
 export const zSkillsListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),
@@ -2922,6 +3032,7 @@ export const zSkillsReadVersionPath = z.object({
 export const zSkillsReadVersionResponse = zSkillVersion;
 
 export const zWorkflowsListQuery = z.object({
+    scope: zRid.optional(),
     parent: zRid.optional(),
     project: zRid.optional(),
     q: z.string().optional(),

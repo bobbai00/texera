@@ -44,7 +44,7 @@ func TestUnitUseWithoutRead(t *testing.T) {
 }
 
 // Updating a unit: a changed spec is taken and reconciled, the provider cannot change, and a
-// unit with a run on it waits until the run is over.
+// unit with an execution on it waits until it is over.
 func TestUnitUpdate(t *testing.T) {
 	h := newHarness(t)
 	cluster := h.create("alice", "computing-units", "alice's cluster unit", map[string]any{"provider": "kubernetes", "computingNodes": []any{map[string]any{"name": "master", "role": "master", "memory": "2Gi"}}})
@@ -77,7 +77,7 @@ func TestUnitUpdate(t *testing.T) {
 	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{"name": "busy", "computingUnit": string(engine.Metadata.Uri)}, &exec)
 	described := map[string]any{"provider": "static", "endpoint": h.unit.URL, "computingNodes": []any{map[string]any{"name": "master", "role": "master", "memory": "8Gi"}}}
 	if code, body := h.do("alice", "PUT", p+"/computing-units/"+rid(engine), map[string]any{"spec": described}); code != http.StatusConflict {
-		t.Fatalf("a unit with a run on it waits: %d %s", code, body)
+		t.Fatalf("a unit with an execution on it waits: %d %s", code, body)
 	}
 	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/executions/"+rid(exec)+"/cancel", map[string]any{}, nil)
 	h.mustJSON("alice", "PUT", p+"/computing-units/"+rid(engine), map[string]any{"spec": described}, &updated)

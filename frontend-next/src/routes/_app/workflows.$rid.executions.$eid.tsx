@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ResourceView } from "@texera/kinds";
 
-/** A run, nested under its workflow as its URI is. */
+/** An execution, nested under its workflow as its URI is. */
 export const Route = createFileRoute("/_app/workflows/$rid/executions/$eid")({ component: ExecutionPage });
 
 function ExecutionPage() {

@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useStore } from "zustand";
 import { unwrap } from "../api";
 import { keysOf, meQuery, operatorSchemasQuery, unitsQuery } from "../queries";
+import { ProjectScope, useScope } from "../scope";
 import { Access } from "../shell/Access";
 import { EditableName, KindHeader } from "../shell/KindHeader";
 import { Lineage } from "../shell/Lineage";
@@ -36,19 +37,23 @@ export default function WorkflowView({ ref, mode }: KindViewProps) {
   if (!workflow || (pinned && !version.data)) return <Skeleton className="m-4 h-[calc(100%-2rem)]" />;
   const spec = pinned ? (version.data as WorkflowSpec) : normalizeSpec(workflow.spec);
   return (
-    <Editor
-      key={`${ref.rid}:${pinned ? vno : "head"}`}
-      rid={ref.rid}
-      mode={mode}
-      name={workflow.metadata.name}
-      meta={metaLine("workflow", workflow.metadata)}
-      headVno={workflow.metadata.head}
-      spec={spec}
-      specVno={pinned ? (vno as number) : workflow.metadata.head}
-      pinned={pinned}
-      onPin={setVno}
-      defaultUnit={spec.defaultComputingUnit}
-    />
+    // What the editor lists (operators, datasets, credentials, units) is what the workflow's own
+    // project can use, wherever the person is working.
+    <ProjectScope project={workflow.metadata.project}>
+      <Editor
+        key={`${ref.rid}:${pinned ? vno : "head"}`}
+        rid={ref.rid}
+        mode={mode}
+        name={workflow.metadata.name}
+        meta={metaLine("workflow", workflow.metadata)}
+        headVno={workflow.metadata.head}
+        spec={spec}
+        specVno={pinned ? (vno as number) : workflow.metadata.head}
+        pinned={pinned}
+        onPin={setVno}
+        defaultUnit={spec.defaultComputingUnit}
+      />
+    </ProjectScope>
   );
 }
 
@@ -105,10 +110,10 @@ function Editor({
   );
 }
 
-function overlayFor(spec: WorkflowSpec, compilation: Compilation | undefined, run: ExecutionStatus | undefined) {
+function overlayFor(spec: WorkflowSpec, compilation: Compilation | undefined, execution: ExecutionStatus | undefined) {
   const overlay: Record<string, OperatorOverlay> = {};
   for (const op of spec.operators) {
-    const progress = run?.operators?.[op.operatorID];
+    const progress = execution?.operators?.[op.operatorID];
     const error = compilation?.errors[op.operatorID];
     overlay[op.operatorID] = {
       ...(progress ? { status: statusOf(progress.state), rows: progress.tuples } : {}),
@@ -150,16 +155,17 @@ function EditorLayout({
   const readonly = useStore(store, s => s.readonly);
   const vno = useStore(store, s => s.headVno);
   const queryClient = useQueryClient();
-  const { data: schemas } = useQuery(operatorSchemasQuery());
-  const { data: units } = useQuery(unitsQuery());
+  const scope = useScope();
+  const { data: schemas } = useQuery(operatorSchemasQuery(scope));
+  const { data: units } = useQuery(unitsQuery(scope));
   const [unitPick, setUnitPick] = useState<string | undefined>(() => defaultUnit ?? rememberedUnit());
   const unit = units?.find(u => u.metadata.uri === unitPick) ?? units?.find(u => u.status?.phase === "ready") ?? units?.[0];
   const { data: compilation } = useQuery(compilationQuery(rid, spec, unit?.metadata.uri));
-  const runs = useQuery({
+  const executions = useQuery({
     ...executionsQuery(rid),
     refetchInterval: q => (q.state.data?.items.some(x => LIVE.has(x.status?.phase ?? "pending")) ? 2000 : false),
   });
-  const latest = runs.data?.items[0];
+  const latest = executions.data?.items[0];
   const [paletteOpen, setPaletteOpen] = useState(mode === "page" && !readonly);
   const [tab, setTab] = useState("canvas");
   const overlay = useMemo(() => overlayFor(spec, compilation, latest?.status), [spec, compilation, latest?.status]);
@@ -254,14 +260,14 @@ function EditorLayout({
           </>
         }
       />
-      {run.error && <ErrorNote error={run.error} prefix="Could not start the run" className="m-3" />}
+      {run.error && <ErrorNote error={run.error} prefix="Could not start the execution" className="m-3" />}
       <Tabs value={tab} onValueChange={v => setTab(String(v))} className="flex min-h-0 flex-1 flex-col">
         <TabsList>
           <Tab value="canvas">
             <Workflow /> Canvas
           </Tab>
-          <Tab value="runs">
-            <Play /> Runs{runs.data ? ` (${runs.data.items.length})` : ""}
+          <Tab value="executions">
+            <Play /> Executions{executions.data ? ` (${executions.data.items.length})` : ""}
           </Tab>
           <Tab value="versions">
             <History /> Versions
@@ -293,8 +299,8 @@ function EditorLayout({
             )}
           </div>
         </TabPanel>
-        <TabPanel value="runs" className="scrollbar-thin overflow-y-auto">
-          <Runs rid={rid} onOpen={eid => beside({ kind: "execution", rid: eid, parent: rid })} />
+        <TabPanel value="executions" className="scrollbar-thin overflow-y-auto">
+          <Executions rid={rid} onOpen={eid => beside({ kind: "execution", rid: eid, parent: rid })} />
         </TabPanel>
         <TabPanel value="versions" className="scrollbar-thin overflow-y-auto">
           <Versions rid={rid} head={headVno} selected={pinned ? vno : undefined} onSelect={onPin} />
@@ -315,18 +321,18 @@ function AccessOf({ rid }: { rid: string }) {
   return data ? <Access resource={data} /> : <Skeleton className="m-3 h-24" />;
 }
 
-function Runs({ rid, onOpen }: { rid: string; onOpen: (eid: string) => void }) {
+function Executions({ rid, onOpen }: { rid: string; onOpen: (eid: string) => void }) {
   const { data, isPending, error } = useQuery(executionsQuery(rid));
-  if (error) return <ErrorNote error={error} prefix="Could not load runs" className="m-3" />;
+  if (error) return <ErrorNote error={error} prefix="Could not load executions" className="m-3" />;
   if (isPending) return <Skeleton className="m-3 h-24" />;
-  if (!data.items.length) return <EmptyState>No runs yet.</EmptyState>;
+  if (!data.items.length) return <EmptyState>No executions yet.</EmptyState>;
   return (
-    <ul className="divide-y" data-runs>
+    <ul className="divide-y" data-executions>
       {data.items.map(x => {
         const phase = x.status?.phase ?? "pending";
         return (
           <li key={x.metadata.rid}>
-            <button type="button" onClick={() => onOpen(x.metadata.rid)} className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-accent/60" data-run-row={phase}>
+            <button type="button" onClick={() => onOpen(x.metadata.rid)} className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-accent/60" data-execution-row={phase}>
               <Badge tone={phase === "completed" ? "success" : phase === "failed" || phase === "cancelled" ? "danger" : "warning"}>{phase}</Badge>
               <span className="min-w-0 flex-1 truncate">{x.metadata.name}</span>
               <span className="text-xs text-muted-foreground">{x.spec.workflow.split("@")[1] ? `v${x.spec.workflow.split("@")[1]}` : ""}</span>

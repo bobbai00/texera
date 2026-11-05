@@ -101,7 +101,7 @@ func Authorizer(t *testing.T, a ports.Authorizer) {
 	ctx := context.Background()
 	suffix := uuid.NewString()
 	alice, bob, carol := "user:alice-"+suffix, "user:bob-"+suffix, "user:carol-"+suffix
-	project, workflow, run := "resource:project-"+suffix, "resource:workflow-"+suffix, "resource:run-"+suffix
+	project, workflow, execution := "resource:project-"+suffix, "resource:workflow-"+suffix, "resource:execution-"+suffix
 	group := "group:admins-" + suffix
 	must := func(err error) {
 		t.Helper()
@@ -120,22 +120,22 @@ func Authorizer(t *testing.T, a ports.Authorizer) {
 	must(a.Write(ctx, []ports.Tuple{
 		{Object: project, Relation: "owner", Subject: alice},
 		{Object: workflow, Relation: "parent", Subject: project},
-		{Object: run, Relation: "parent", Subject: workflow},
+		{Object: execution, Relation: "parent", Subject: workflow},
 		{Object: workflow, Relation: "viewer", Subject: bob},
 		{Object: group, Relation: "member", Subject: carol},
 	}, nil))
 	// Let the store settle (OpenFGA is consistent after a write, the suite waits a little anyway).
 	time.Sleep(50 * time.Millisecond)
-	if !check(alice, "can_read", run) || !check(alice, "can_write", run) || !check(alice, "can_share", workflow) || !check(alice, "can_delete", project) {
+	if !check(alice, "can_read", execution) || !check(alice, "can_write", execution) || !check(alice, "can_share", workflow) || !check(alice, "can_delete", project) {
 		t.Fatal("the owner of the project should own what is under it")
 	}
-	if !check(bob, "can_read", workflow) || !check(bob, "can_execute", workflow) || !check(bob, "can_read", run) {
-		t.Fatal("a viewer reads and executes the workflow and reads its runs")
+	if !check(bob, "can_read", workflow) || !check(bob, "can_execute", workflow) || !check(bob, "can_read", execution) {
+		t.Fatal("a viewer reads and executes the workflow and reads its executions")
 	}
 	if check(bob, "can_write", workflow) || check(bob, "can_read", project) || check(bob, "can_share", workflow) {
 		t.Fatal("a viewer neither writes nor shares, and sees nothing above")
 	}
-	if check(bob, "can_use", workflow) || check(bob, "can_run_on", run) {
+	if check(bob, "can_use", workflow) || check(bob, "can_run_on", execution) {
 		t.Fatal("viewing never implies using")
 	}
 	if check(carol, "can_read", workflow) {
@@ -153,7 +153,7 @@ func Authorizer(t *testing.T, a ports.Authorizer) {
 	}
 	must(a.Write(ctx, []ports.Tuple{{Object: project, Relation: "user", Subject: "user:*"}}, nil))
 	time.Sleep(50 * time.Millisecond)
-	if !check("user:stranger-"+suffix, "can_use", run) || !check(bob, "can_run_on", workflow) || !check(alice, "can_use", project) {
+	if !check("user:stranger-"+suffix, "can_use", execution) || !check(bob, "can_run_on", workflow) || !check(alice, "can_use", project) {
 		t.Fatal("usable by everyone through the parent; owners use what they own")
 	}
 	must(a.Write(ctx, nil, []ports.Tuple{{Object: workflow, Relation: "viewer", Subject: "user:*"}, {Object: workflow, Relation: "viewer", Subject: bob}, {Object: project, Relation: "user", Subject: "user:*"}}))

@@ -12,19 +12,19 @@ import (
 	"github.com/apache/texera/catalog/internal/store"
 )
 
-// Retention: what a run and an upload leave behind is kept as the settings say. A finished
-// run's result tables are dropped from the lake once older than the policy, and the execution
-// keeps its record and summaries with resultsExpiredAt set; a blob no version and no staging
+// Retention: what an execution and an upload leave behind is kept as the settings say. A
+// finished execution's result tables are dropped from the lake once older than the policy, and
+// it keeps its record and summaries with resultsExpiredAt set; a blob no version and no staging
 // names is removed from the blob store a day (or the policy) after its upload.
 
 // defaultBlobAge is how long an unreferenced blob lives when the settings name no policy: long
 // enough for an upload to be committed.
 const defaultBlobAge = 24 * time.Hour
 
-// KeepLabel marks a run whose results the policy leaves alone.
+// KeepLabel marks an execution whose results the policy leaves alone.
 const KeepLabel = "texera.keep"
 
-// Sweep runs one retention pass as the janitor does; administrators may ask for one.
+// Sweep executions one retention pass as the janitor does; administrators may ask for one.
 func (s *Service) Sweep(ctx context.Context, caller *auth.Caller) (*api.RetentionSweep, error) {
 	if !caller.Admin() && !caller.Service {
 		return nil, Forbidden()
@@ -61,11 +61,11 @@ func (s *Service) sweep(ctx context.Context) api.RetentionSweep {
 	return out
 }
 
-// expireResults drops the tables of finished runs last changed before the instant.
+// expireResults drops the tables of finished executions last changed before the instant.
 func (s *Service) expireResults(ctx context.Context, before time.Time) int {
 	n := 0
 	for _, phase := range []api.ExecutionPhase{api.ExecutionPhaseCompleted, api.ExecutionPhaseFailed, api.ExecutionPhaseCancelled} {
-		runs, err := s.Store.ListResources(ctx, store.ResourceFilter{
+		executions, err := s.Store.ListResources(ctx, store.ResourceFilter{
 			Kind: "execution", Fields: map[string]string{"/status/phase": string(phase)},
 			Absent: []string{"/status/resultsExpiredAt"}, WithoutLabel: KeepLabel, UpdatedBefore: &before, Limit: 500,
 		})
@@ -73,14 +73,14 @@ func (s *Service) expireResults(ctx context.Context, before time.Time) int {
 			s.Log.Warn("retention: list executions", "err", err)
 			continue
 		}
-		for i := range runs {
-			if err := s.Lake.DropNamespace(ctx, executionNamespace(runs[i].RID)); err != nil {
-				s.Log.Warn("retention: drop namespace", "execution", runs[i].RID, "err", err)
+		for i := range executions {
+			if err := s.Lake.DropNamespace(ctx, executionNamespace(executions[i].RID)); err != nil {
+				s.Log.Warn("retention: drop namespace", "execution", executions[i].RID, "err", err)
 				continue
 			}
 			now := time.Now().UTC()
-			if _, err := s.Store.MergeStatus(ctx, runs[i].RID, mustJSON(map[string]any{"resultsExpiredAt": now})); err != nil {
-				s.Log.Warn("retention: mark expired", "execution", runs[i].RID, "err", err)
+			if _, err := s.Store.MergeStatus(ctx, executions[i].RID, mustJSON(map[string]any{"resultsExpiredAt": now})); err != nil {
+				s.Log.Warn("retention: mark expired", "execution", executions[i].RID, "err", err)
 				continue
 			}
 			n++

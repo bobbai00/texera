@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const messageColumns = `m.conversation_rid, m.seq, m.turn, m.role, m.author_pid, m.template_uri, m.parts, m.created_at, m.updated_at`
+const messageColumns = `m.conversation_rid, m.seq, m.turn, m.role, m.author_pid, m.template_uri, m.model_endpoint_uri, m.mcp_server_uris, m.parts, m.created_at, m.updated_at`
 
 // NewMessage is what AppendMessage needs.
 type NewMessage struct {
@@ -17,6 +17,8 @@ type NewMessage struct {
 	Role            string
 	AuthorPID       uuid.UUID
 	Template        *string
+	ModelEndpoint   *string
+	McpServers      []string
 	Parts           json.RawMessage
 }
 
@@ -39,10 +41,10 @@ func (s *Store) AppendMessage(ctx context.Context, in NewMessage) (*Message, err
 			}
 			turn = &t
 		}
-		row := tx.QueryRow(ctx, `INSERT INTO message (conversation_rid, seq, turn, role, author_pid, template_uri, parts)
-			SELECT $1, coalesce(max(seq), 0) + 1, $2, $3, $4, $5, $6 FROM message WHERE conversation_rid = $1
-			RETURNING conversation_rid, seq, turn, role, author_pid, template_uri, parts, created_at, updated_at`,
-			in.ConversationRID, turn, in.Role, in.AuthorPID, in.Template, in.Parts)
+		row := tx.QueryRow(ctx, `INSERT INTO message AS m (conversation_rid, seq, turn, role, author_pid, template_uri, model_endpoint_uri, mcp_server_uris, parts)
+			SELECT $1, coalesce(max(seq), 0) + 1, $2, $3, $4, $5, $6, $7, $8 FROM message WHERE conversation_rid = $1
+			RETURNING `+messageColumns,
+			in.ConversationRID, turn, in.Role, in.AuthorPID, in.Template, in.ModelEndpoint, in.McpServers, in.Parts)
 		var err error
 		m, err = scanMessage(row)
 		if err != nil {
@@ -124,7 +126,7 @@ func (s *Store) EndTurn(ctx context.Context, conversation uuid.UUID, turn string
 func scanMessage(row scanner) (*Message, error) {
 	var m Message
 	var turn *uuid.UUID
-	if err := row.Scan(&m.ConversationRID, &m.Seq, &turn, &m.Role, &m.AuthorPID, &m.Template, &m.Parts, &m.CreatedAt, &m.UpdatedAt); err != nil {
+	if err := row.Scan(&m.ConversationRID, &m.Seq, &turn, &m.Role, &m.AuthorPID, &m.Template, &m.ModelEndpoint, &m.McpServers, &m.Parts, &m.CreatedAt, &m.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if turn != nil {

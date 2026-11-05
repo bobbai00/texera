@@ -34,6 +34,7 @@ paths:
       operationId: AgentTemplates_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -247,6 +248,7 @@ paths:
       operationId: ComputingUnits_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -319,7 +321,8 @@ paths:
     get:
       operationId: ComputingUnits_available
       description: The units the caller may run on, with live status.
-      parameters: []
+      parameters:
+        - $ref: '#/components/parameters/Scoped'
       responses:
         '200':
           description: The request has succeeded.
@@ -336,9 +339,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: list_computing_units
-        description: List the computing units the caller can run workflows on, with status. A run in a chat uses the chat's unit unless the call names another.
+        description: List the computing units the caller can run workflows on, with status. An execution that names no unit runs on the chat's, else the workflow's, the project's or the platform's default.
         readOnlyHint: true
       x-texera-permission: list
   /catalog/v1/computing-units/{rid}:
@@ -534,6 +536,7 @@ paths:
       operationId: Conversations_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -806,6 +809,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-texera-permission: read
+  /catalog/v1/conversations/{rid}/settings:
+    get:
+      operationId: Conversations_settings
+      description: What a turn of this chat runs with, for the caller.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSettings'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: read
   /catalog/v1/conversations/{rid}/turns:
     post:
       operationId: Conversations_startTurn
@@ -866,6 +893,7 @@ paths:
       operationId: Credentials_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -1013,7 +1041,7 @@ paths:
   /catalog/v1/credentials/{rid}/lease:
     post:
       operationId: Credentials_lease
-      description: Lease the secret for a run or a turn; the use is logged.
+      description: Lease the secret for an execution or a turn; the use is logged.
       parameters:
         - name: rid
           in: path
@@ -1071,6 +1099,7 @@ paths:
       operationId: Datasets_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -1245,7 +1274,6 @@ paths:
             schema:
               $ref: '#/components/schemas/CommitFiles'
       x-mcp:
-        server: catalog
         tool: commit_dataset_version
         description: Commit a dataset's staged files as a new immutable version.
         readOnlyHint: false
@@ -1424,7 +1452,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: list_dataset_files
         description: List the files of a dataset version with sizes and digests.
         readOnlyHint: true
@@ -1486,7 +1513,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: read_dataset_file
         description: Read the beginning of a dataset file (bounded bytes), e.g. to inspect a CSV header.
         readOnlyHint: true
@@ -1530,6 +1556,7 @@ paths:
       operationId: Environments_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -1829,6 +1856,7 @@ paths:
       operationId: McpServers_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -2056,7 +2084,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: whoami
         description: 'Who am I: the calling principal, the home project and the system project.'
         readOnlyHint: true
@@ -2093,6 +2120,7 @@ paths:
       operationId: ModelEndpoints_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -2242,6 +2270,7 @@ paths:
       operationId: Models_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -2685,6 +2714,7 @@ paths:
       operationId: Operators_list
       description: List the operators the caller may use, built-ins and custom. The summary view carries the type, name, group and description; the full view adds the property schema and ports.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: q
           in: query
           required: false
@@ -2742,7 +2772,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: list_operators
         description: 'List the operator types available: without q or group, a compact list of types, names, groups and descriptions; with q (an operator name or part of it) or group, the matching operators with their property JSON Schema and ports. Use the exact operatorType values when building a workflow.'
         readOnlyHint: true
@@ -2948,7 +2977,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: search_principals
         description: Find users and groups by name or email, to share resources with.
         readOnlyHint: true
@@ -2981,6 +3009,7 @@ paths:
       operationId: Projects_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -3125,11 +3154,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-texera-permission: delete
+  /catalog/v1/projects/{rid}/chat-settings:
+    get:
+      operationId: Projects_chatSettings
+      description: What a turn of a new chat in this project runs with, for the caller.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSettings'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: read
   /catalog/v1/resources:
     get:
       operationId: Resources_search
       description: Search the resources the caller may read, across kinds.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: q
           in: query
           required: false
@@ -3187,9 +3241,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: search_resources
-        description: 'Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, environments, operators, conversations. Filter by kind, project or text.'
+        description: "Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, environments, operators, conversations. Filter by kind or text. In a chat a search covers the chat's project and the built-ins; pass scope to look in another project (kind project lists them all)."
         readOnlyHint: true
       x-texera-permission: list
   /catalog/v1/resources/resolve:
@@ -3217,7 +3270,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: resolve_uri
         description: Resolve a texera:// URI (optionally with @vno and a subresource path) to the resource it names, with its metadata and spec.
         readOnlyHint: true
@@ -3245,7 +3297,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: get_resource
         description: 'Get one resource by rid: its kind, metadata, head version number, spec and status.'
         readOnlyHint: true
@@ -3423,7 +3474,6 @@ paths:
             schema:
               $ref: '#/components/schemas/GrantRequest'
       x-mcp:
-        server: catalog
         tool: grant_access
         description: 'Share a resource with a principal: give a user or group a relation (viewer, editor, owner; user for a computing unit). Find principals with search_principals.'
         readOnlyHint: false
@@ -3496,7 +3546,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: get_lineage
         description: 'Get the lineage of a resource or version: what it was derived from, which executions used or produced it, upstream and downstream.'
         readOnlyHint: true
@@ -3537,7 +3586,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: list_versions
         description: List the versions of a resource, newest first, with their digests and messages.
         readOnlyHint: true
@@ -3570,7 +3618,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: catalog
         tool: get_version
         description: Get one version of a resource with its full content.
         readOnlyHint: true
@@ -3664,6 +3711,7 @@ paths:
       operationId: Skills_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -3877,6 +3925,7 @@ paths:
       operationId: Workflows_list
       description: List the resources of this kind the caller may read.
       parameters:
+        - $ref: '#/components/parameters/Scoped'
         - name: parent
           in: query
           required: false
@@ -3945,7 +3994,6 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateWorkflow'
       x-mcp:
-        server: dataflow
         tool: create_workflow
         description: Create a workflow from a spec {operators, links}; returns the workflow with its version 1. Every later edit_workflow makes a new version of the same workflow.
         readOnlyHint: false
@@ -3974,7 +4022,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: dataflow
         tool: get_workflow
         description: 'Get a workflow: its metadata, head version number and spec (operators, links, defaults). Use get_version for an older version.'
         readOnlyHint: true
@@ -4062,7 +4109,6 @@ paths:
             schema:
               $ref: '#/components/schemas/EditWorkflow'
       x-mcp:
-        server: dataflow
         tool: edit_workflow
         description: Edit a workflow by applying an RFC 6902 JSON Patch to its head spec (paths like /operators/- or /links/-), or by giving a full new spec; creates a new version and returns it. Validate afterwards with validate_workflow.
         readOnlyHint: false
@@ -4138,14 +4184,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: dataflow
         tool: get_execution
         description: 'Get an execution of a workflow: phase, per-operator states, errors and port results.'
         readOnlyHint: true
       x-texera-permission: read
     delete:
       operationId: Workflows_deleteExecution
-      description: Delete a finished run with its result tables; refused with 409 while it runs or while a dataset version derives from it.
+      description: Delete a finished execution with its result tables; refused with 409 while it runs or while a dataset version derives from it.
       parameters:
         - name: rid
           in: path
@@ -4287,7 +4332,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: dataflow
         tool: get_port_result
         description: Read a bounded page of rows from an operator's output port in an execution (schema and rows).
         readOnlyHint: true
@@ -4321,7 +4365,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: dataflow
         tool: pause_execution
         description: Pause a running execution of a workflow; it keeps its state and resume_execution continues it.
         readOnlyHint: false
@@ -4357,7 +4400,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-mcp:
-        server: dataflow
         tool: resume_execution
         description: Resume a paused execution of a workflow.
         readOnlyHint: false
@@ -4394,7 +4436,6 @@ paths:
             schema:
               $ref: '#/components/schemas/RunWorkflow'
       x-mcp:
-        server: dataflow
         tool: run_workflow
         description: Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the chat's unit; name one only when the person asks for another.
         readOnlyHint: false
@@ -4431,7 +4472,6 @@ paths:
             schema:
               $ref: '#/components/schemas/ValidateWorkflow'
       x-mcp:
-        server: dataflow
         tool: validate_workflow
         description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator. Leave computingUnit out to use the chat's unit."
         readOnlyHint: true
@@ -4524,6 +4564,15 @@ paths:
 security:
   - BearerAuth: []
 components:
+  parameters:
+    Scoped:
+      name: scope
+      in: query
+      required: false
+      description: "A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed."
+      schema:
+        $ref: '#/components/schemas/Rid'
+      explode: false
   schemas:
     AgentCard:
       type: object
@@ -4586,7 +4635,7 @@ components:
           $ref: '#/components/schemas/AgentCard'
         model:
           $ref: '#/components/schemas/Uri'
-          description: The model endpoint resource URI.
+          description: The model endpoint the agent uses unless a chat or its project names another.
         prompt:
           type: string
           description: The system prompt, Markdown.
@@ -4599,15 +4648,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/McpBinding'
-          description: MCP servers the agent mounts, besides the catalog server every template mounts unless `catalogTools` is false.
+          description: The MCP servers the agent mounts. The platform's own server, the catalog, holds its basic tools and is listed like any other; the rest are add-ons.
         handoffs:
           type: array
           items:
             $ref: '#/components/schemas/Uri'
           description: Templates this agent may hand the conversation to.
-        catalogTools:
-          type: boolean
-          description: Mount the catalog MCP server; default true.
         loop:
           $ref: '#/components/schemas/LoopSpec'
     AgentTemplateStatus:
@@ -4678,6 +4724,12 @@ components:
             - tool
         template:
           $ref: '#/components/schemas/Uri'
+        modelEndpoint:
+          $ref: '#/components/schemas/Uri'
+        mcpServers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uri'
         parts:
           type: array
           items:
@@ -4778,7 +4830,47 @@ components:
           description: The version to build; defaults to the head version.
         computingUnit:
           $ref: '#/components/schemas/Uri'
-          description: The unit to build on; defaults to the run resolution order.
+          description: The unit to build on; defaults to the one an execution would resolve to.
+    ChatProject:
+      type: object
+      required:
+        - rid
+        - name
+      properties:
+        rid:
+          $ref: '#/components/schemas/Rid'
+        name:
+          type: string
+      description: The project a chat is in.
+    ChatSettings:
+      type: object
+      required:
+        - project
+        - agent
+        - modelEndpoint
+        - mcpServers
+      properties:
+        project:
+          $ref: '#/components/schemas/ChatProject'
+          description: 'Where the chat is: what a turn makes goes into this project, and a list made in a turn is scoped to it.'
+        agent:
+          $ref: '#/components/schemas/Setting'
+          description: The agent, at the version a turn runs.
+        modelEndpoint:
+          $ref: '#/components/schemas/Setting'
+        computingUnit:
+          $ref: '#/components/schemas/Setting'
+          description: The unit a compile or an execution uses when the call names none; absent when nothing names one.
+        mcpServers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServerSetting'
+          description: The platform's own server first, then the add-ons.
+        skipped:
+          type: array
+          items:
+            $ref: '#/components/schemas/SkippedSetting'
+      description: "What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default."
     CommitFiles:
       type: object
       properties:
@@ -4957,17 +5049,23 @@ components:
           description: Opaque cursor for the next page; absent on the last page.
     ConversationSpec:
       type: object
-      required:
-        - template
       properties:
         template:
           $ref: '#/components/schemas/Uri'
-          description: The agent template the next turn runs; set at the start, by the person, or by a handoff.
+          description: "The agent template the next turn runs, chosen by the person or by a handoff; absent: the project's default, else the platform's."
+        modelEndpoint:
+          $ref: '#/components/schemas/Uri'
+          description: "The model endpoint the agent uses in this chat; absent: the project's default, else the agent's own."
         computingUnit:
           $ref: '#/components/schemas/Uri'
-          description: The computing unit runs in this chat use; defaults to the project's.
+          description: "The computing unit a compile or an execution started in this chat uses when the call names none; absent: the workflow's, the project's or the platform's default. A preference, not a binding: a call can always name another unit."
         environment:
           $ref: '#/components/schemas/Uri'
+        mcpServers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uri'
+          description: "The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here."
     ConversationStatus:
       type: object
       required:
@@ -5779,7 +5877,7 @@ components:
       properties:
         namespace:
           type: string
-          description: The namespace in the lake the run writes to; absent for a dry run.
+          description: The namespace in the lake the execution writes to; absent for a dry run.
         outputs:
           type: array
           items:
@@ -5794,10 +5892,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Uri'
-          description: The credentials the operators name; leased for the run at start, their values never stored.
+          description: The credentials the operators name; leased for the execution at start, their values never stored.
         logicalPlan:
           description: The engine's logical plan, with dataset files and credentials still named by URI.
-      description: 'What the catalog compiled for a run, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the run starts and never stored.'
+      description: 'What the catalog compiled for an execution, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the execution starts and never stored.'
     ExecutionPort:
       type: object
       required:
@@ -5842,13 +5940,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Uri'
-          description: The dataset file versions the run reads, resolved at start.
+          description: The dataset file versions the execution reads, resolved at start.
         parameters:
           type: object
           additionalProperties: {}
         plan:
           $ref: '#/components/schemas/ExecutionPlan'
-          description: The compiled plan the run was started with.
+          description: The compiled plan the execution was started with.
     ExecutionStatus:
       type: object
       required:
@@ -5874,7 +5972,7 @@ components:
         resultsExpiredAt:
           type: string
           format: date-time
-          description: "When the retention policy dropped the run's result tables: the summaries stay, the rows are gone."
+          description: "When the retention policy dropped the execution's result tables: the summaries stay, the rows are gone."
     FileLink:
       type: object
       required:
@@ -6147,9 +6245,6 @@ components:
           additionalProperties:
             type: string
           description: Headers sent on every request. A value `credential:<uri>` is replaced by that credential's leased secret; a value `credential:<uri>#<field>` by one field of it.
-        builtin:
-          type: string
-          description: "Set for a server the platform provides: catalog, dataflow or scholar. The runtime sends the person's token to a built-in server."
     McpServerStatus:
       type: object
       properties:
@@ -6266,6 +6361,14 @@ components:
         template:
           $ref: '#/components/schemas/Uri'
           description: 'For an assistant message: the template version that wrote it.'
+        modelEndpoint:
+          $ref: '#/components/schemas/Uri'
+          description: 'For an assistant message: the model endpoint that wrote it.'
+        mcpServers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uri'
+          description: 'For an assistant message: the MCP servers its turn mounted.'
         parts:
           type: array
           items:
@@ -6607,12 +6710,9 @@ components:
     OperatorStatus:
       type: object
       properties:
-        builtin:
-          type: boolean
-          description: True for an operator the engine image provides.
         engine:
           type: string
-          description: The engine image digest the head version was read from.
+          description: 'For an operator the engine image provides: the digest of the image its head version was read from.'
     OperatorType:
       type: object
       required:
@@ -6768,8 +6868,8 @@ components:
           type: string
         table:
           type: string
-          description: The table's name inside the run's namespace.
-      description: One output port's table in the lake, named by the catalog before the run starts.
+          description: The table's name inside the execution's namespace.
+      description: One output port's table in the lake, named by the catalog before the execution starts.
     Principal:
       type: object
       required:
@@ -6852,13 +6952,21 @@ components:
       properties:
         defaultEnvironment:
           $ref: '#/components/schemas/Uri'
-          description: The environment a run in this project uses when the workflow names none.
+          description: The environment an execution in this project uses when the workflow names none.
         defaultComputingUnit:
           $ref: '#/components/schemas/Uri'
-          description: The computing unit a run in this project uses when the request and the workflow name none.
+          description: The computing unit an execution in this project uses when the request and the workflow name none.
         defaultAgentTemplate:
           $ref: '#/components/schemas/Uri'
-          description: The agent template a new chat in this project starts with.
+          description: The agent template a chat in this project runs when the chat names none.
+        defaultModelEndpoint:
+          $ref: '#/components/schemas/Uri'
+          description: "The model endpoint the agent uses in a chat of this project when the chat names none; absent: the agent's own."
+        mcpServers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uri'
+          description: Add-on MCP servers every chat in this project mounts besides the agent's, unless the chat lists its own.
     ProjectStatus:
       type: object
       properties:
@@ -6900,7 +7008,7 @@ components:
           description: "The operator's Python source: a class with the engine's UDF interface."
         environment:
           $ref: '#/components/schemas/Uri'
-          description: The environment its packages come from; absent means the run's environment.
+          description: The environment its packages come from; absent means the execution's environment.
         outputColumns:
           type: array
           items:
@@ -7052,12 +7160,12 @@ components:
         results:
           type: string
           format: duration
-          description: "Finished runs keep their result tables this long; absent: forever. The run's record and its summaries stay."
+          description: "Finished executions keep their result tables this long; absent: forever. An execution's record and its summaries stay."
         blobs:
           type: string
           format: duration
           description: 'An uploaded file that no version and no staging names is removed this long after its upload; absent: one day.'
-      description: How long the catalog keeps what runs and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).
+      description: How long the catalog keeps what executions and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).
     RetentionSweep:
       type: object
       required:
@@ -7113,11 +7221,11 @@ components:
         parameters:
           type: object
           additionalProperties: {}
-          description: Per-run inputs; the version itself stays as authored.
+          description: Inputs of this execution alone; the version itself stays as authored.
         waitSeconds:
           type: integer
           format: int32
-          description: Wait up to this many seconds for the run to finish before returning.
+          description: Wait up to this many seconds for the execution to finish before returning.
         name:
           type: string
     RuntimeSpec:
@@ -7131,6 +7239,29 @@ components:
         resources:
           type: object
           additionalProperties: {}
+    ServerSetting:
+      type: object
+      required:
+        - uri
+        - name
+        - from
+        - platform
+      properties:
+        uri:
+          $ref: '#/components/schemas/Uri'
+        name:
+          type: string
+        from:
+          $ref: '#/components/schemas/SettingSource'
+        platform:
+          type: boolean
+          description: "True for the platform's own server, the catalog: the agent's basic tools, called as the person. Every other server is an add-on a turn can go without."
+        allow:
+          type: array
+          items:
+            type: string
+          description: 'The tool names the agent may call; absent: every tool the server exposes.'
+      description: An MCP server a turn mounts.
     SetSecret:
       type: object
       required:
@@ -7141,6 +7272,28 @@ components:
           additionalProperties:
             type: string
       description: The secret's fields, e.g. {value} for an API key, {username, password} for basic.
+    Setting:
+      type: object
+      required:
+        - uri
+        - name
+        - from
+      properties:
+        uri:
+          $ref: '#/components/schemas/Uri'
+        name:
+          type: string
+        from:
+          $ref: '#/components/schemas/SettingSource'
+      description: One setting of a chat as a turn uses it.
+    SettingSource:
+      type: string
+      enum:
+        - chat
+        - project
+        - agent
+        - platform
+      description: The level a setting of a chat comes from.
     Settings:
       type: object
       required:
@@ -7292,6 +7445,29 @@ components:
         nextCursor:
           type: string
           description: Opaque cursor for the next page; absent on the last page.
+    SkippedSetting:
+      type: object
+      required:
+        - setting
+        - uri
+        - from
+        - reason
+      properties:
+        setting:
+          type: string
+          enum:
+            - template
+            - modelEndpoint
+            - computingUnit
+            - mcpServers
+          description: The field of the spec the choice is in.
+        uri:
+          $ref: '#/components/schemas/Uri'
+        from:
+          $ref: '#/components/schemas/SettingSource'
+        reason:
+          type: string
+      description: "A choice that was passed over: what it names is gone, or is not the caller's to use."
     StartTurn:
       type: object
       properties:
@@ -7544,7 +7720,7 @@ components:
           description: Compile this draft spec instead of a stored version.
         computingUnit:
           $ref: '#/components/schemas/Uri'
-          description: The unit whose compiler answers; defaults to the run resolution order.
+          description: The unit whose compiler answers; defaults to the one an execution would resolve to.
     Version:
       type: object
       required:
@@ -7721,7 +7897,7 @@ components:
           description: Defaults to one output port output-0.
         viewResult:
           type: boolean
-          description: Store this operator's output so it can be read after the run.
+          description: Store this operator's output so it can be read after the execution.
         markedForReuse:
           type: boolean
         isDisabled:
@@ -7772,10 +7948,10 @@ components:
             $ref: '#/components/schemas/WorkflowLink'
         defaultEnvironment:
           $ref: '#/components/schemas/Uri'
-          description: The environment a run uses when the request names none.
+          description: The environment an execution uses when the request names none.
         defaultComputingUnit:
           $ref: '#/components/schemas/Uri'
-          description: The computing unit a run uses when the request names none.
+          description: The computing unit an execution uses when the request names none.
     WorkflowStatus:
       type: object
       properties:
@@ -7811,7 +7987,7 @@ components:
         physicalPlan: {}
         plan:
           $ref: '#/components/schemas/ExecutionPlan'
-      description: "A dry run: the engine's compile result and the plan the catalog would start a run with."
+      description: "A dry run: the engine's compile result and the plan the catalog would start an execution with."
     WorkflowVersion:
       type: object
       required:

@@ -9,8 +9,8 @@ export const LIVE = new Set<ExecutionStatus["phase"]>(["pending", "provisioning"
 export const isLive = (x: Resource | undefined) => x !== undefined && LIVE.has((x.status as ExecutionStatus | undefined)?.phase ?? "pending");
 
 /**
- * An execution. The generic read serves it and its parent is the workflow; the run page watches
- * it (useWatch), so the poll while it runs is only a fallback for a dropped stream.
+ * An execution. The generic read serves it and its parent is the workflow; its page watches it
+ * (useWatch), so the poll while it runs is only a fallback for a dropped stream.
  */
 export const executionQuery = (eid: string) => ({
   ...resourceQuery(eid),

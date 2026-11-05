@@ -9,13 +9,19 @@ from .client import Api
 
 
 def agent_uri(api: Api) -> str:
-    """The deployment's agent: the template every new chat runs."""
+    """The deployment's agent: the template a chat runs unless it or its project chooses another."""
     return api.get("/settings")["spec"]["defaults"]["agentTemplate"]
 
 
-def tool(api: Api, server: str, name: str, headers: dict | None = None, **arguments) -> tuple[bool, str]:
-    """Calls an MCP tool as an agent does: whether it failed, and the text it answered."""
-    status, body = api.mcp(server, "tools/call", {"name": name, "arguments": arguments}, headers=headers)
+def settings(api: Api, conversation: str) -> dict:
+    """What a turn of the chat runs with for this person, as the catalog resolves it."""
+    return api.get(f"/conversations/{conversation}/settings")
+
+
+def tool(api: Api, name: str, /, headers: dict | None = None, **arguments) -> tuple[bool, str]:
+    """Calls an MCP tool as an agent does: whether it failed, and the text it answered. The
+    tool's own arguments are the keywords, `name` among them."""
+    status, body = api.mcp("tools/call", {"name": name, "arguments": arguments}, headers=headers)
     assert status == 200, (status, body)
     result = body["result"]
     return bool(result.get("isError")), "\n".join(c.get("text", "") for c in result["content"])
@@ -30,9 +36,10 @@ def in_turn(api: Api, conversation: str, service_token: str) -> tuple[str, dict]
 
 
 def second_unit(api: Api, project: str, name: str = "a second unit") -> str:
-    """Another computing unit resource at the deployment's engine, so a test can tell where a
-    run went on any stack; returns its URI."""
-    base = next(u for u in api.get("/computing-units/available") if u["spec"]["provider"] == "static")
+    """Another computing unit resource at the deployment's engine, so a test can tell where an
+    execution went on any stack; returns its URI."""
+    platform = api.me()["systemProject"]
+    base = next(u for u in api.get(f"/computing-units/available?scope={platform}") if u["spec"]["provider"] == "static")
     spec = {"provider": "static", "endpoint": base["spec"]["endpoint"]}
     if base["spec"].get("clientId"):
         spec["clientId"] = base["spec"]["clientId"]
@@ -85,11 +92,10 @@ def say(api: Api, conversation: str, prompt: str, template: str | None = None, t
     return turn
 
 
-def conversation(api: Api, name: str, template: str, unit: str | None = None, project: str | None = None) -> str:
-    spec = {"template": template}
-    if unit:
-        spec["computingUnit"] = unit
-    body = {"name": name, "spec": spec}
+def conversation(api: Api, name: str, project: str | None = None, **choices) -> str:
+    """A chat in a project. It stores only the choices given (modelEndpoint, computingUnit,
+    mcpServers, template); with none it runs with the project's and the platform's defaults."""
+    body = {"name": name, "spec": choices}
     if project:
         body["parent"] = project
     return api.post("/conversations", body)["metadata"]["rid"]

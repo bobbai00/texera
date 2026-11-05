@@ -18,7 +18,7 @@ def test_a_custom_operator_runs_and_is_referenced(alice, project, iris, unit):
     }, project=project, description="Adds an ordinal rank column from Id")
     op_uri = f"{op['metadata']['uri']}@{op['metadata']['head']}"
     listed = alice.get("/operators?q=Ordinal+rank")["items"]
-    assert any(o["metadata"]["rid"] == op["metadata"]["rid"] and not (o.get("status") or {}).get("builtin") for o in listed)
+    assert any(o["metadata"]["rid"] == op["metadata"]["rid"] and o["metadata"]["project"] == project for o in listed)
 
     wf = alice.create("workflows", "ranked iris", w.with_operator(iris.file, op_uri, opid="rank"), project=project)
     rid = wf["metadata"]["rid"]

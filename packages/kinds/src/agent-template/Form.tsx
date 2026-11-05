@@ -54,7 +54,7 @@ export function TemplateForm({ resource, readonly = false }: { resource: Resourc
       data-template-form>
       <fieldset disabled={readonly} className="space-y-5">
         <section className="space-y-3">
-          <Field label="Name" required htmlFor={ids.name} help="How the chat's template picker and other agents name it.">
+          <Field label="Name" required htmlFor={ids.name} help="How a chat and other agents name it.">
             <Input id={ids.name} value={draft.card.name} onChange={e => set(s => { s.card.name = e.target.value; })} data-field="card.name" />
           </Field>
           <Field label="Description" required htmlFor={ids.description} help="What this agent is for; what other agents read before handing off to it.">
@@ -88,7 +88,7 @@ export function TemplateForm({ resource, readonly = false }: { resource: Resourc
           />
         </section>
         <section className="space-y-2">
-          <Field label="MCP servers" help="Servers the agent mounts, each with the tools it may use (every tool when empty). The catalog server is mounted unless turned off below.">
+          <Field label="MCP servers" help="The servers the agent mounts, each with the tools it may use (every tool when empty). The catalog server holds the platform's own tools; the others are add-ons a chat can do without.">
             <div className="space-y-2">
               {bindings.map((b, i) => (
                 <div key={`${b.server}-${i}`} className="flex flex-wrap items-start gap-2 rounded-lg border p-2" data-mcp-binding>
@@ -115,10 +115,6 @@ export function TemplateForm({ resource, readonly = false }: { resource: Resourc
               </Button>
             </div>
           </Field>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" className="size-4 accent-primary" checked={draft.catalogTools !== false} onChange={e => set(s => { s.catalogTools = e.target.checked ? undefined : false; })} data-field="catalogTools" />
-            Mount the catalog MCP server (search, read, share, create templates)
-          </label>
         </section>
         <section className="space-y-2">
           <UriPicker

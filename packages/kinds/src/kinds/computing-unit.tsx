@@ -1,12 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { computingUnitsTerminate } from "@texera/catalog-client";
 import type { ComputingUnitSpec, ComputingUnitStatus, Resource } from "@texera/catalog-client/types";
-import { Badge, Button, DataTable, EmptyState, SectionTitle } from "@texera/ui";
+import { Badge, Button, DataTable, EmptyState, Field, NativeSelect, SectionTitle } from "@texera/ui";
 import { Cpu, Loader2, Power, Server } from "lucide-react";
+import { useId } from "react";
 import { unwrap } from "../api";
 import { keysOf } from "../queries";
 import { UriChip } from "../shell/Chips";
 import type { KindSpec } from "../types";
+import { CPU_CHOICES, MEMORY_CHOICES, sized, sizeOf } from "./unit-size";
 
 export const phaseTone = (phase: ComputingUnitStatus["phase"] | undefined) =>
   phase === "ready" ? "success" : phase === "failed" ? "danger" : phase === "pending" ? "warning" : "neutral";
@@ -51,7 +53,7 @@ function Nodes({ resource }: { resource: Resource }) {
   );
 }
 
-function Actions({ resource }: { resource: Resource }) {
+function Actions({ resource, readonly }: { resource: Resource; readonly?: boolean }) {
   const queryClient = useQueryClient();
   const status = resource.status as ComputingUnitStatus | undefined;
   const terminate = useMutation({
@@ -63,12 +65,41 @@ function Actions({ resource }: { resource: Resource }) {
   return (
     <>
       {status && <Badge tone={phaseTone(status.phase)}>{status.phase}</Badge>}
-      {status?.phase !== "terminated" && (
+      {!readonly && status?.phase !== "terminated" && (
         <Button variant="outline" size="sm" onClick={() => confirm("Terminate this unit?") && terminate.mutate()} disabled={terminate.isPending}>
           {terminate.isPending ? <Loader2 className="animate-spin" /> : <Power />} Terminate
         </Button>
       )}
     </>
+  );
+}
+
+/** What a new unit reserves on the cluster: asked when it is made, changed later in its settings. */
+function Size({ spec, onChange }: { spec: unknown; onChange: (spec: unknown) => void }) {
+  const unit = spec as ComputingUnitSpec;
+  const size = sizeOf(unit);
+  const ids = { memory: useId(), cpu: useId() };
+  return (
+    <div className="grid grid-cols-2 gap-3" data-unit-size>
+      <Field label="Memory" htmlFor={ids.memory}>
+        <NativeSelect id={ids.memory} value={size.memory} onChange={e => onChange(sized(unit, { memory: e.target.value }))} className="w-full" data-field="memory">
+          {MEMORY_CHOICES.map(c => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </NativeSelect>
+      </Field>
+      <Field label="CPU" htmlFor={ids.cpu} help="Shared reserves no core of its own.">
+        <NativeSelect id={ids.cpu} value={size.cpu} onChange={e => onChange(sized(unit, { cpu: e.target.value }))} className="w-full" data-field="cpu">
+          {CPU_CHOICES.map(c => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </NativeSelect>
+      </Field>
+    </div>
   );
 }
 
@@ -82,6 +113,7 @@ export const computingUnitKind: KindSpec = {
   Actions,
   // A new unit is one the platform runs: on Kubernetes a Deployment the catalog reconciles.
   defaultSpec: () => ({ provider: "kubernetes", computingNodes: [{ name: "master", role: "master", memory: "2Gi" }] }) satisfies ComputingUnitSpec,
+  CreateFields: Size,
   facts: r => {
     const spec = r.spec as Partial<ComputingUnitSpec>;
     const status = r.status as Partial<ComputingUnitStatus> | undefined;

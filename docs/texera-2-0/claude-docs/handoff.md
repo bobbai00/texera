@@ -1,6 +1,6 @@
 # Texera 2.0 handoff
 
-Nov 4, 2026 · JB
+Nov 4, 2026 · JB (design statements brought up to date on Nov 5)
 
 ## Where things stand
 
@@ -10,12 +10,12 @@ worktree `~/Desktop/texera-2-0` on this Linux box. For development every piece r
 process over a Compose stack; the same stack also deploys to a local Kubernetes cluster in one
 command, where computing units are created as resources. The lake (Lakekeeper) authenticates
 every caller and authorizes with OpenFGA: each unit runs as a client of its own and reaches only
-the namespaces of the runs it executed, which the catalog opens for it. A run goes through the
+the namespaces of the executions it ran, which the catalog opens for it. Running a workflow goes through the
 catalog in three phases: authorize (everything the plan names, before anything is written),
 compile (one plan, as data, the same a dry run returns), materialize (the execution with its
 plan, its namespace, a bound copy with presigned inputs and leased secrets to the engine, which
 writes the tables the catalog named). A unit answers the catalog alone and reports as itself,
-and while a run goes it reports progress; a run is paused and resumed through the catalog.
+and while an execution goes it reports progress; it is paused and resumed through the catalog.
 Every resource can be watched (an event stream the frontend follows), which makes a shared
 conversation a group chat. All eleven acceptance items of the plan are demonstrated by
 automated checks, and the close gate (`down.sh --wipe && up.sh && test.sh`) is green.
@@ -23,7 +23,7 @@ automated checks, and the close gate (`down.sh --wipe && up.sh && test.sh`) is g
 | Piece | Where | How to reach it |
 | --- | --- | --- |
 | Gateway (Envoy) | http://localhost:8088 | the only entry point; sign in as alice/alice or bob/bob |
-| Catalog (Go) | :8090 | `/catalog/v1`, the MCP servers at `/mcp/catalog` and `/mcp/dataflow` |
+| Catalog (Go) | :8090 | `/catalog/v1`, and its one MCP server at `/mcp/catalog` (every tool: resources, files, operators, units, and the workflow verbs) |
 | Computing unit (Amber) | :28085 | reached by the catalog only |
 | Agent runtime (Bun) | :23002 | `/agents/conversations/{rid}/ag-ui` |
 | Bio MCP server | :23010 | `/bio-mcp`, its key a seeded credential |
@@ -34,32 +34,45 @@ automated checks, and the close gate (`down.sh --wipe && up.sh && test.sh`) is g
 ## What is done
 
 - One contract (`api/catalog/`, TypeSpec) for fifteen kinds behind one envelope, with `texera://`
-  URIs equal to REST paths, immutable versions with digests, runs nested under workflows with
+  URIs equal to REST paths, immutable versions with digests, executions nested under workflows with
   ports, grants, lineage, search, AuthZEN and OpenLineage routes. `cmd/catalogen` generates the
   kind table, the JSON Schema bundle, the MCP tool tables, the permission table and the indexes.
 - The catalog: an eleven-table store, six ports (Identity, Authorizer, SecretStore, BlobStore,
   UnitProvider, LineageSink) with one adapter each and contract suites, a generic service and
   server, the generated MCP bridge. OpenFGA decides every call; viewing never implies using.
-  A run is authorized, compiled and materialized in the catalog; the execution stores its
+  Running a workflow is authorized, compiled and materialized in the catalog; the execution stores its
   plan (`spec.plan`, URIs only) and the engine gets one bound copy. Every resource has an
   event stream (`GET /resources/{rid}/events`, server-sent events through the gateway) fed by
-  an in-process broker on the store's writes; a run has pause and resume, forwarded to the
+  an in-process broker on the store's writes; an execution has pause and resume, forwarded to the
   unit, whose lineage reports (progress once a second, paused, running) drive the phase.
 - The agent runtime as a stateless turn runner: a template version runs one turn of a
   conversation as the person; the platform key leased from OpenBao per turn. One seeded
   agent since Nov 5, the Texera Agent, the entry to every chat (it replaced the Data Analyst
-  and the Bio Researcher): the catalog and dataflow servers are its basic tools, the bio
-  server an add-on a turn can go without, and it is told the chat's computing unit. Handoffs
-  between templates and `/mode` remain in the runtime, unused by the shipped agent.
+  and the Bio Researcher). What a turn runs with is resolved by the catalog, in one place
+  (`GET /conversations/{rid}/settings`): the chat's own choice, else its project's default,
+  else the agent's own or the platform's. A chat stores choices only (agent, model, computing
+  unit, add-on servers; a new chat stores `{}`) and is bound to no unit. The catalog's server
+  holds the basic tools and always stays; the bio server is an add-on a chat can switch off and
+  a turn can go without. Handoffs between templates and `/mode` remain in the runtime, unused
+  by the shipped agent.
+- Built in means "in the platform's project" (named Built-in, public, usable by everyone):
+  the agent, the skills, the two MCP servers, the model endpoint, the unit, the operators.
+  Nothing on a resource marks it; nobody but the platform changes one or adds to the project
+  (`409 builtin`, administrators included), and each start makes the project what the release
+  ships. Lists are scoped to a project plus the platform's (`?scope=`); a call made in a chat
+  defaults to the chat's project, for lists and for where new resources go.
 - The frontend: a generic page for every kind from its JSON Schema (spec, versions, access,
-  lineage), the workflow editor, the run page with the port view, the chat with labelled
-  messages (no agent picker or switcher since Nov 5; the agent template form stays, unlinked);
-  the run page and the chat follow their
+  lineage), the workflow editor, the execution page with the port view, and the chat. The
+  sidebar picks the project a person works in (Personal by default); a chat starts by typing,
+  and its box shows the agent and picks the model, the computing unit (Automatic by default)
+  and the add-ons; the Agents page shows the built-in agent, read-only. The execution page and
+  the chat follow their
   resource's event stream, so a shared chat is a group chat (authors named, the other's turn
-  shown and waited for) and a run shows its progress and its pause and resume buttons.
+  shown and waited for) and an execution shows its progress and its pause and resume buttons.
 - Checks in four layers (`docs/texera-2-0/TESTING.md`): unit (Go, sbt, Bun, vitest), contract
-  (adapters and the engine against the stack's peers), scenario (fifteen pytest scenarios in
-  `tests/e2e/`, one per use case, each in a project of its own), ui (Playwright, nine tests);
+  (adapters and the engine against the stack's peers), scenario (39 pytest scenarios in
+  `tests/e2e/`, twenty modules, one per use case, each in a project of its own), ui
+  (Playwright, thirteen tests);
   plus evals (the real agents through the real model) and the same against the cluster.
 
 ## Run and test
@@ -85,10 +98,10 @@ Done since the close: viewing never implies using, sharing with people who have 
 in, typed operator output columns, kept canvas positions, credentials in operator properties,
 images and the one-command Kubernetes deployment, the Kubernetes unit provider, Lakekeeper on
 OpenFGA with one identity per unit, retention (an execution delete route, a results expiry
-policy with an hourly sweep, unreferenced blobs), the run in three phases with the unit's
+policy with an hourly sweep, unreferenced blobs), running a workflow in three phases with the unit's
 doors closed and the output tables named by the catalog (steps 1 to 3 of the note "Texera
-2.0: Authorize, Compile, Materialize"; results live with the run, `texera.keep` keeps them),
-the resource event stream with the group chat and the run controls built on it.
+2.0: Authorize, Compile, Materialize"; results live with the execution, `texera.keep` keeps them),
+the resource event stream with the group chat and the execution controls built on it.
 Nearest gaps: steps 4 and 5 of that note; token-level streaming of a reply to the other
 members of a chat (today they see it step by step, as the runtime rewrites the message);
 the canvas as a shared document (Yjs, as the 1.0 frontend had, with a sync service beside
@@ -107,21 +120,21 @@ reaches the warehouse's files; a key scoped to the objects prefix closes that.
   `down.sh --wipe` (`k8s.sh down` on the cluster). After a re-import, restart Envoy (it caches
   the key set) and the agent runtime (its service token). A person exists in the catalog once
   they have logged in.
-- **Units talk to the catalog only, and only about their own runs.** A unit's API answers the
+- **Units talk to the catalog only, and only about their own executions.** A unit's API answers the
   catalog's client alone; the gateway has no route to units; a unit reports lineage as itself
   and the catalog refuses events from anyone but the execution's unit. A unit with no client
   configured reports nothing the catalog accepts.
-- **Results live with the run.** Save-as-dataset left the MVP (acceptance item 4 now reads as
-  the run's own lineage); a run's `texera.keep` label keeps its results past the retention
-  policy. Every run stores the plan it was started with in `spec.plan`.
+- **Results live with the execution.** Save-as-dataset left the MVP (acceptance item 4 now reads as
+  the execution's own lineage); an execution's `texera.keep` label keeps its results past the retention
+  policy. Every execution stores the plan it was started with in `spec.plan`.
 - **Watch, do not poll.** `GET /resources/{rid}/events` streams a resource's changes to whoever
   may read it; the frontend's `useWatch` and the scenarios' `events.Watch` use it. The broker
   is in-process (one catalog); replicas need Postgres LISTEN/NOTIFY behind the same type.
-- **A paused run is live.** `paused` is a phase between `running` and the end: not terminal,
+- **A paused execution is live.** `paused` is a phase between `running` and the end: not terminal,
   so no sweep, no delete; cancel works on it. The catalog never sets it itself; the unit's
   lineage report does.
 - **The lake takes a token.** `curl` against Lakekeeper answers 401 without one; the catalog's
-  client `texera-services` is the operator and sees everything, a unit's client only its runs.
+  client `texera-services` is the operator and sees everything, a unit's client only its executions.
   Keycloak's discovery document names the public issuer, which Lakekeeper reaches through a
   `socat` forward in its own network namespace (`lakekeeper-net` in Compose, the `auth`
   sidecar in the pod).

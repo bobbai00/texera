@@ -7,7 +7,7 @@ import type { KindSpec } from "../types";
 /** Where each version of the environment has been built, and how it went. */
 function Builds({ resource }: { resource: Resource }) {
   const builds = (resource.status as EnvironmentStatus | undefined)?.builds ?? [];
-  if (!builds.length) return <EmptyState>Not built anywhere yet; the first run that needs it builds it.</EmptyState>;
+  if (!builds.length) return <EmptyState>Not built anywhere yet; the first execution that needs it builds it.</EmptyState>;
   return (
     <ul className="divide-y" data-builds>
       {builds.map(b => (

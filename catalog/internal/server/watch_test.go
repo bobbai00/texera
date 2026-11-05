@@ -33,8 +33,8 @@ import (
 
 // A watch is the live side of sharing: whoever may read a resource sees it change, as
 // server-sent events. A conversation shared with an editor is thereby a group chat, with no
-// model of its own: the messages carry their authors and the turn lock names its holder. A
-// run shows its progress and answers to pause and resume through the catalog alone.
+// model of its own: the messages carry their authors and the turn lock names its holder. An
+// execution shows its progress and answers to pause and resume through the catalog alone.
 
 type sseEvent struct {
 	Event string
@@ -235,7 +235,7 @@ func TestWatchMakesASharedChatAGroupChat(t *testing.T) {
 	}
 }
 
-func TestWatchFollowsARunAndItsControls(t *testing.T) {
+func TestWatchFollowsAnExecutionAndItsControls(t *testing.T) {
 	h := newHarness(t)
 	ds := h.create("alice", "datasets", "iris", map[string]any{"format": "csv"})
 	h.mustJSON("alice", "PUT", p+"/datasets/"+rid(ds)+"/files/iris.csv", "Species,PetalLengthCm\nsetosa,1.4\n", nil)
@@ -249,7 +249,7 @@ func TestWatchFollowsARunAndItsControls(t *testing.T) {
 	}
 	wf := h.create("alice", "workflows", "watched", spec)
 	var exec envelope
-	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{"name": "watched run"}, &exec)
+	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{"name": "watched execution"}, &exec)
 	execPath := p + "/workflows/" + rid(wf) + "/executions/" + rid(exec)
 	deadline := time.Now().Add(10 * time.Second)
 	for field(exec, "phase") != "running" && time.Now().Before(deadline) {
@@ -308,7 +308,7 @@ func TestWatchFollowsARunAndItsControls(t *testing.T) {
 		t.Fatalf("pause while paused: %d %s", status, body)
 	}
 	if status, _ := h.do("bob", "POST", execPath+"/resume", nil); status != http.StatusForbidden && status != http.StatusNotFound {
-		t.Fatalf("bob may not control alice's run: %d", status)
+		t.Fatalf("bob may not control alice's execution: %d", status)
 	}
 	h.mustJSON("alice", "POST", execPath+"/resume", nil, &answer)
 	if got := h.unit.controls(); len(got) != 2 || got[1] != "resume "+rid(exec) {

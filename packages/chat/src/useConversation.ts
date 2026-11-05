@@ -60,11 +60,14 @@ export function useConversation({ rid, template, getToken, onRunEnd }: Conversat
   const persisted = useMemo(() => fromHistory(history.data?.items ?? []), [history.data]);
   const maxSeq = history.data?.items.at(-1)?.seq ?? 0;
 
+  // This person's own turn is under way from the moment they send until its request is over and
+  // the history re-read, not only while events stream: the box is busy for all of it.
+  const running = live.running || inFlight;
   // The others in the chat: their messages and turns arrive through the conversation's event
-  // stream. While this person's own turn streams, what is on screen is the live reply; the
+  // stream. While this person's own turn is under way, what is on screen is the live reply; the
   // catalog's copy of it takes over when the turn ends (the refetch below).
-  const seen = useRef({ maxSeq, running: live.running });
-  seen.current = { maxSeq, running: live.running };
+  const seen = useRef({ maxSeq, running });
+  seen.current = { maxSeq, running };
   useWatch(rid, {
     after: () => seen.current.maxSeq,
     onMessage: m => {
@@ -133,7 +136,7 @@ export function useConversation({ rid, template, getToken, onRunEnd }: Conversat
   return {
     messages,
     resources,
-    running: live.running,
+    running,
     steps: live.steps,
     state: live.state,
     error: live.error,

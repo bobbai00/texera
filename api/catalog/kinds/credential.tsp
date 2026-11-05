@@ -1,5 +1,5 @@
 // credential: metadata about a secret whose value lives in the secret store. The value is
-// written through `secret` and never read back; a lease hands it to a run or a turn.
+// written through `secret` and never read back; a lease hands it to an execution or a turn.
 import "@typespec/http";
 import "@typespec/rest";
 import "@typespec/openapi";
@@ -65,7 +65,7 @@ namespace Routes {
     @extension("x-texera-permission", "rotate")
     setSecret(@path rid: Rid, @body body: SetSecret): void | Error;
 
-    @doc("Lease the secret for a run or a turn; the use is logged.")
+    @doc("Lease the secret for an execution or a turn; the use is logged.")
     @post
     @route("/{rid}/lease")
     @extension("x-texera-permission", "use")

@@ -15,7 +15,7 @@ describe("spec schemas", () => {
     expect(fieldType(tpl?.properties?.skills ?? {})).toBe("strings");
     expect(fieldType(tpl?.properties?.mcpServers ?? {})).toBe("json");
     expect(fieldType(specSchema("model-endpoint")?.properties?.maxOutputTokens ?? {})).toBe("number");
-    expect(fieldType(specSchema("agent-template")?.properties?.catalogTools ?? {})).toBe("boolean");
+    expect(fieldType({ type: "boolean" })).toBe("boolean");
   });
 
   it("lists required properties first and builds an empty value for them", () => {

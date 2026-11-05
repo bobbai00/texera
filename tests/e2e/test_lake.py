@@ -1,4 +1,4 @@
-"""The lake enforces the catalog's decision: a run's tables live in a namespace of their own
+"""The lake enforces the catalog's decision: an execution's tables live in a namespace of their own
 that the unit which ran it reads with vended credentials; anonymous callers, a person's own
 token and another unit's identity get nothing; deleting a provisioned unit deletes its
 identity and credential. Needs the Compose stack's ports (Lakekeeper, Keycloak, OpenBao)."""
@@ -10,7 +10,7 @@ from texera_e2e.client import client_token
 
 
 @pytest.mark.local
-def test_a_unit_reaches_only_its_own_runs(alice, project, iris, unit):
+def test_a_unit_reaches_only_its_own_executions(alice, project, iris, unit):
     wf = alice.create("workflows", "lake petal widths", w.average_by_species(iris.file, "PetalWidthCm"), project=project)
     rid = wf["metadata"]["rid"]
     run = w.run(alice, rid, "run", computingUnit=unit)
@@ -27,7 +27,7 @@ def test_a_unit_reaches_only_its_own_runs(alice, project, iris, unit):
     pfx = lake.prefix(unit_tok)
     status, names = lake.namespaces(unit_tok, pfx)
     assert status == 200 and namespace in names
-    assert not [n for n in names if not n.startswith("e_")], "the unit sees no namespace but runs"
+    assert not [n for n in names if not n.startswith("e_")], "the unit sees no namespace but those of executions"
     status, table_names = lake.tables(unit_tok, pfx, namespace)
     assert status == 200 and "avg_output_0" in table_names, table_names
     assert lake.load_table(unit_tok, pfx, namespace, table_names[0]) == 200, "vended credentials"
@@ -40,7 +40,7 @@ def test_a_unit_reaches_only_its_own_runs(alice, project, iris, unit):
     assert status == 200 and other_secret, "its credential is in the secret store"
     status, other_tok = client_token(lake.token_url(), f"unit-{orid}", other_secret)
     assert status == 200
-    assert lake.lake_get("/catalog/v1/config?warehouse=texera", other_tok)[0] in (403, 404), "no run of its own, nothing from the lake"
+    assert lake.lake_get("/catalog/v1/config?warehouse=texera", other_tok)[0] in (403, 404), "no execution of its own, nothing from the lake"
     assert lake.tables(other_tok, pfx, namespace)[0] in (403, 404)
     assert lake.load_table(other_tok, pfx, namespace, table_names[0]) in (403, 404)
 

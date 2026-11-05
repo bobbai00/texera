@@ -1,6 +1,7 @@
 import type {
   AgentTemplateSpec,
   AppendMessage,
+  ChatSettings,
   Conversation,
   Lease,
   LoopSpec,
@@ -12,6 +13,8 @@ import type {
   ReplaceMessage,
   Resolved,
   Resource,
+  ServerSetting,
+  Setting,
   SkillSpec,
   Turn,
   Version,
@@ -20,6 +23,7 @@ import type {
 export type {
   AgentTemplateSpec,
   AppendMessage,
+  ChatSettings,
   Conversation,
   Lease,
   LoopSpec,
@@ -31,6 +35,8 @@ export type {
   ReplaceMessage,
   Resolved,
   Resource,
+  ServerSetting,
+  Setting,
   SkillSpec,
   Turn,
   Version,

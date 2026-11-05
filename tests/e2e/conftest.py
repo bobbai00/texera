@@ -80,10 +80,10 @@ def service(gw) -> str:
 
 
 # Kinds a project may hold, in the order their references allow deleting them.
-KINDS = ["conversations", "workflows", "operators", "credentials", "environments", "datasets", "mcp-servers", "model-endpoints", "agent-templates", "computing-units"]
+KINDS = ["conversations", "workflows", "operators", "credentials", "environments", "datasets", "mcp-servers", "model-endpoints", "agent-templates", "skills", "computing-units"]
 
 
-def _delete_run(api: Api, workflow: str, eid: str, phase: str) -> None:
+def _delete_execution(api: Api, workflow: str, eid: str, phase: str) -> None:
     path = f"/workflows/{workflow}/executions/{eid}"
     if phase in ("pending", "provisioning", "running"):
         api.call("POST", f"{path}/cancel", {})
@@ -92,18 +92,20 @@ def _delete_run(api: Api, workflow: str, eid: str, phase: str) -> None:
 
 def _clear(api: Api, project: str) -> None:
     """Best effort: what the project's chats made, wherever it landed (an agent's workflow goes
-    to the person's home project unless the tool names a parent), then the project's runs,
+    to the person's home project unless the tool names a parent), then the project's executions,
     then the resources in reference order, twice."""
+    # The project's own defaults may name what is in it; a resource still named cannot go.
+    api.call("PUT", f"/projects/{project}", {"spec": {}})
     made: list = []
     for c in api.get(f"/conversations?project={project}&limit=500")["items"]:
         made += api.get(f"/conversations/{c['metadata']['rid']}/resources")
     for r in made:
         if r["kind"] == "execution":
-            _delete_run(api, r["metadata"]["parent"], r["metadata"]["rid"], r["status"]["phase"])
+            _delete_execution(api, r["metadata"]["parent"], r["metadata"]["rid"], r["status"]["phase"])
     workflows = [r for r in made if r["kind"] == "workflow"] + api.get(f"/workflows?project={project}&limit=500")["items"]
     for wf in workflows:
         for ex in api.get(f"/workflows/{wf['metadata']['rid']}/executions?limit=500")["items"]:
-            _delete_run(api, wf["metadata"]["rid"], ex["metadata"]["rid"], ex["status"]["phase"])
+            _delete_execution(api, wf["metadata"]["rid"], ex["metadata"]["rid"], ex["status"]["phase"])
     for _ in range(2):
         for plural in KINDS:
             kind = plural[:-1]
@@ -160,9 +162,11 @@ def iris(alice, project) -> Iris:
 
 @pytest.fixture(scope="session")
 def unit(alice) -> str:
-    """The URI of a ready unit the person may run on."""
+    """The URI of a ready unit everyone may run on: one of the platform's own, whatever units
+    of their own the people of a long-lived stack have made."""
+    platform = alice.me()["systemProject"]
     for _ in range(60):
-        ready = [u for u in alice.get("/computing-units/available") if u["status"]["phase"] == "ready"]
+        ready = [u for u in alice.get(f"/computing-units/available?scope={platform}") if u["status"]["phase"] == "ready"]
         if ready:
             return ready[0]["metadata"]["uri"]
         time.sleep(5)

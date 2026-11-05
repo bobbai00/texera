@@ -2,6 +2,108 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-05 (session 8, on the Mac): built-ins by project, chats that store choices, one MCP server
+
+Asked, after five rounds of design discussion with no code, to implement what was agreed:
+built-in components that every project inherits, a chat that is bound to no computing unit,
+the dataflow MCP server merged into the catalog's, and the noun "execution" instead of "run";
+with one principle, a strictly clean design. Session 7's split of the tools into two servers
+and its `texera.builtin` label are replaced by this entry.
+
+Done:
+- **One MCP server.** `/mcp/catalog` holds all 23 tools: a workflow is a resource and running
+  it is a verb. `/mcp/dataflow`, the `server` tag of `x-mcp` in the contract and the seeded
+  `dataflow` server are gone. A test pins the tool list, and another that the server's
+  instructions name every tool and no word shaped like a tool that is not one.
+- **Built in means "in the platform's project".** The system project is named Built-in, is
+  public and usable by everyone, and is the only mark: the `texera.builtin` label, the public
+  visibility of each built-in, `spec.builtin` of an MCP server, `status.builtin` of an
+  operator and `catalogTools` of an agent template are removed (migration 0004 clears them on
+  an existing stack). One rule in `Service.require`: a permission that changes something, on a
+  resource of that project, is `409 builtin` for everyone but the platform, administrators
+  included, and nothing is added to the project or moved into it. The seed makes the project
+  what the release ships: a changed spec is a new version, a changed description is taken,
+  and what an older release shipped is removed (`retire`), the settings' defaults moving off
+  it. A list shows what can be opened: a public project makes its resources everyone's to
+  list.
+- **A chat stores choices and is bound to nothing.** A conversation's spec is optional
+  choices (`template`, `modelEndpoint`, `computingUnit`, `environment`, `mcpServers`); a new
+  chat stores `{}`. `catalog/internal/catalog/chat_settings.go` is the one place that says
+  what a turn runs with: the chat's choice, else the project's default
+  (`defaultModelEndpoint` and `mcpServers` are new on a project), else the agent's own or the
+  platform's. Add-ons a chat lists replace the agent's and the project's; the catalog's own
+  server always stays; a choice the caller may not use is passed over and reported
+  (`skipped`). `GET /conversations/{rid}/settings` answers for a chat,
+  `GET /projects/{rid}/chat-settings` for one not started yet. The runtime reads the answer
+  at each hop and builds the agent from it; an answer records its model endpoint and servers
+  (migration 0003). A chat's unit is a preference: "Automatic" stores none, a call can name
+  another, and one the caller may not run on is passed over.
+- **Scope.** A list takes `?scope=<project>`: that project and the platform's. A call made in
+  a chat defaults to the chat's project, for lists and for where a new resource goes (it went
+  to the person's home project).
+- **The app.** The sidebar picks the project a person works in (Personal by default, kept in
+  the preferences, or all projects) and groups the kinds: Work, Activity (Executions), Agent
+  (Agents first), Projects. A chat starts by typing; its box shows the agent and picks the
+  model, the unit and the add-ons, and each pick says what its kind says about it (the model
+  an endpoint serves, a unit's state). A built-in has a badge in lists and a read-only page.
+  "New computing unit" asks for memory and CPU. A chat's details say what it runs with and
+  which level chose each.
+- **Naming.** The noun is "execution" wherever a person or an agent reads it: the contract's
+  descriptions, the app, the prompt and the skills, the API's messages ("the execution is not
+  running"), the default name (`execution <UTC time>`), the docs, the tests. The verb stays
+  "run": `run_workflow`, `POST /workflows/{rid}/run`, the Run button.
+- **Found on the way and fixed.** A resource without versions whose new spec named nothing
+  kept its old reference edges, so a unit or a model endpoint that a project or a chat once
+  named could never be deleted (`SpecUpdate.From`, `replaceReferences`). The chat box looked
+  idle between sending and the first event of the stream. The browser tests left their
+  datasets, workflows and operators in Alice's Personal project on every run, and the
+  scenarios' cleanup skipped skills and a project's defaults; both clean up now.
+
+Verified, on OrbStack's cluster, upgraded in place four times from the stack session 7 left
+(no wipe; the data in it was kept):
+- Unit: `make generate` reproduces the tree; catalog `gofmt`, `go vet`, `go test` (new suites:
+  built-ins, chat settings, scope, released references, the built-ins' migration, the seed's
+  description and removal); runtime 64 tests, types, lint; frontend 102 tests and types.
+- `k8s.sh check` on the final images: 30 scenarios (new: `test_builtin.py`, `test_scope.py`,
+  `test_chat_settings.py`) and 11 Playwright tests (new: the agent's page, the project scope,
+  the chat's settings, the unit's size).
+- With the model (Haiku 5.5), by hand since no script runs them on a cluster: 4 scenarios
+  (`pytest -m model`) and 2 Playwright scenarios, one of them an execution that went to the
+  unit the chat prefers with no unit in the agent's call.
+- A walk through the app in a browser as Alice, in a project made for it and removed at the
+  end, with 15 checks made outside the page: the averages the agent reported against the CSV
+  (5.006, 5.936, 6.588); the chat storing `{}`; the workflow the agent made being in the
+  chat's project; the execution on the unit the settings fall back to, under the name
+  `execution <time>`; every answer recording its agent version, its model endpoint and two
+  servers; the model picker naming the model each endpoint serves; and, in the same chat, a
+  literature question answered with three papers, each returned by a PubMed tool call of that
+  turn. PubMed, which answered HTTP 500 all through session 7, answered. The one problem the
+  browser logged is a Content Security Policy warning about an inline style, there before
+  this session.
+
+Not verified:
+- **The Compose stack and a deployment from nothing.** `test.sh gate` and the `local`
+  scenarios (the lake, the unit's doors, the unit restart) were not run, and the cluster was
+  only upgraded in place. A seed into an empty database is covered by the Go tests alone.
+- **The engine's sbt modules** were not rerun (untouched).
+- **The frontend's lint does not reach `packages/`.** `bun run lint` passes, but biome skips
+  paths outside its config's root, so it checks the app's 19 files and none of the 128 under
+  `packages/*/src`, where most of the frontend is; this has been so since the first commit.
+  Run over the packages with a config of their own, biome reports 133 findings: 87 files to
+  format, 26 with unsorted imports, and 20 from lint rules (13 accessibility findings in
+  `ui/src/data-table.tsx`, `ui/src/primitives.tsx` and `kinds/src/shell/Access.tsx`, 6 from
+  one suppression comment placed where it does not apply in `kinds/src/workflow/View.tsx`, and
+  an index used as a key in the agent's form). None is a behaviour bug. Fixing it is a
+  mechanical change of about 3,900 lines in 94 files, left out of this entry on purpose.
+
+Left for later, by decision: approvals and a Manual or Auto mode; the agent creating units;
+sub-agents and background runs; duplicating a built-in to customise it; the Keycloak theme and
+Google sign-in; a size limit and GPUs for units.
+
+Next: make the lint cover the packages (its own commit); `test.sh gate` on the Compose stack;
+a `cancel_execution` tool; smaller tool results and a summary of long chats; a grant to a
+group is not expanded when a list is filtered.
+
 ## 2026-11-05 (session 7, on the Mac): one agent, a clean tool split, errors that say why
 
 Asked, after an end-to-end run of the cluster deployment through the browser with the real

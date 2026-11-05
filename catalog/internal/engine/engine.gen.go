@@ -188,7 +188,7 @@ type OperatorTypeList struct {
 	Operators []OperatorType `json:"operators"`
 }
 
-// OutputTable The table the catalog named for an output port, inside the run's namespace.
+// OutputTable The table the catalog named for an output port, inside the execution's namespace.
 type OutputTable struct {
 	Opid  string `json:"opid"`
 	Port  string `json:"port"`
@@ -212,7 +212,7 @@ type Reporting struct {
 	LineageUrl string `json:"lineageUrl"`
 }
 
-// ResolvedInput A dataset file the catalog resolved for this run: the operator property value and the URL the engine reads.
+// ResolvedInput A dataset file the catalog resolved for this execution: the operator property value and the URL the engine reads.
 type ResolvedInput struct {
 	// Dataset The dataset version this file belongs to.
 	Dataset   string `json:"dataset"`
@@ -229,7 +229,7 @@ type ResultStore struct {
 	// CatalogUri Iceberg REST catalog URI the unit writes results to.
 	CatalogUri string `json:"catalogUri"`
 
-	// Namespace The namespace the catalog made for this execution: every table of the run goes there, and the unit's identity was granted write access to it.
+	// Namespace The namespace the catalog made for this execution: every table of the execution goes there, and the unit's identity was granted write access to it.
 	Namespace string `json:"namespace"`
 
 	// Tables One table per output port, named by the catalog; the engine writes each port's result under its name and reports it as `namespace.table`.
@@ -400,17 +400,17 @@ type ClientInterface interface {
 
 	// ExecutionsPause performs a POST /api/executions/{eid}/pause (the `ExecutionsPause` operationId) request.
 	//
-	// Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.
+	// Pause the execution; the status turns `paused` once the engine confirms, and the unit reports it.
 	ExecutionsPause(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecutionsResult performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 	//
-	// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+	// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
 	ExecutionsResult(ctx context.Context, eid string, opid string, port string, params *ExecutionsResultParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecutionsResume performs a POST /api/executions/{eid}/resume (the `ExecutionsResume` operationId) request.
 	//
-	// Resume a paused run.
+	// Resume a paused execution.
 	ExecutionsResume(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// HealthCheck performs a GET /api/health (the `HealthCheck` operationId) request.
@@ -553,7 +553,7 @@ func (c *Client) ExecutionsCancel(ctx context.Context, eid string, reqEditors ..
 
 // ExecutionsPause performs a POST /api/executions/{eid}/pause (the `ExecutionsPause` operationId) request.
 //
-// Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.
+// Pause the execution; the status turns `paused` once the engine confirms, and the unit reports it.
 func (c *Client) ExecutionsPause(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExecutionsPauseRequest(c.Server, eid)
 	if err != nil {
@@ -568,7 +568,7 @@ func (c *Client) ExecutionsPause(ctx context.Context, eid string, reqEditors ...
 
 // ExecutionsResult performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 //
-// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
 func (c *Client) ExecutionsResult(ctx context.Context, eid string, opid string, port string, params *ExecutionsResultParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExecutionsResultRequest(c.Server, eid, opid, port, params)
 	if err != nil {
@@ -583,7 +583,7 @@ func (c *Client) ExecutionsResult(ctx context.Context, eid string, opid string, 
 
 // ExecutionsResume performs a POST /api/executions/{eid}/resume (the `ExecutionsResume` operationId) request.
 //
-// Resume a paused run.
+// Resume a paused execution.
 func (c *Client) ExecutionsResume(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExecutionsResumeRequest(c.Server, eid)
 	if err != nil {
@@ -1183,21 +1183,21 @@ type ClientWithResponsesInterface interface {
 
 	// ExecutionsPauseWithResponse performs a POST /api/executions/{eid}/pause (the `ExecutionsPause` operationId) request.
 	//
-	// Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.
+	// Pause the execution; the status turns `paused` once the engine confirms, and the unit reports it.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ExecutionsPauseWithResponse(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*ExecutionsPauseResponse, error)
 
 	// ExecutionsResultWithResponse performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 	//
-	// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+	// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ExecutionsResultWithResponse(ctx context.Context, eid string, opid string, port string, params *ExecutionsResultParams, reqEditors ...RequestEditorFn) (*ExecutionsResultResponse, error)
 
 	// ExecutionsResumeWithResponse performs a POST /api/executions/{eid}/resume (the `ExecutionsResume` operationId) request.
 	//
-	// Resume a paused run.
+	// Resume a paused execution.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ExecutionsResumeWithResponse(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*ExecutionsResumeResponse, error)
@@ -1843,7 +1843,7 @@ func (c *ClientWithResponses) ExecutionsCancelWithResponse(ctx context.Context, 
 
 // ExecutionsPauseWithResponse performs a POST /api/executions/{eid}/pause (the `ExecutionsPause` operationId) request.
 //
-// Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.
+// Pause the execution; the status turns `paused` once the engine confirms, and the unit reports it.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ExecutionsPauseWithResponse(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*ExecutionsPauseResponse, error) {
@@ -1856,7 +1856,7 @@ func (c *ClientWithResponses) ExecutionsPauseWithResponse(ctx context.Context, e
 
 // ExecutionsResultWithResponse performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 //
-// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ExecutionsResultWithResponse(ctx context.Context, eid string, opid string, port string, params *ExecutionsResultParams, reqEditors ...RequestEditorFn) (*ExecutionsResultResponse, error) {
@@ -1869,7 +1869,7 @@ func (c *ClientWithResponses) ExecutionsResultWithResponse(ctx context.Context, 
 
 // ExecutionsResumeWithResponse performs a POST /api/executions/{eid}/resume (the `ExecutionsResume` operationId) request.
 //
-// Resume a paused run.
+// Resume a paused execution.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ExecutionsResumeWithResponse(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*ExecutionsResumeResponse, error) {

@@ -162,8 +162,7 @@ func run(log *slog.Logger) error {
 	resolver := auth.NewResolver(identity, st, isUnit)
 	srv := server.New(svc, resolver, pdp, cfg.PublicURL, log)
 	api := srv.API()
-	srv.Mount("/mcp/catalog", mcp.Handler("catalog", api, resolver, cfg.PublicURL, log))
-	srv.Mount("/mcp/dataflow", mcp.Handler("dataflow", api, resolver, cfg.PublicURL, log))
+	srv.Mount(catalog.McpPath, mcp.Handler(api, resolver, cfg.PublicURL, log))
 
 	httpSrv := &http.Server{Addr: cfg.HTTPAddr, Handler: srv.Handler(), ReadHeaderTimeout: 30 * time.Second}
 	go func() {

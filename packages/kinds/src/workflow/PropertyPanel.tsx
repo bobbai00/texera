@@ -4,6 +4,7 @@ import { type Compilation, deleteOperators, operatorImage, updateOperator } from
 import { AlertTriangle, Eye, EyeOff, Table2, Trash2, X } from "lucide-react";
 import { useStore } from "zustand";
 import { operatorSchemasQuery } from "../queries";
+import { useScope } from "../scope";
 import type { EditorStore } from "./editor";
 import { PropertyForm } from "./PropertyForm";
 
@@ -12,7 +13,7 @@ export function PropertyPanel({ store, compilation }: { store: EditorStore; comp
   const selected = useStore(store, s => s.selected);
   const operator = useStore(store, s => s.spec.operators.find(o => o.operatorID === selected));
   const readonly = useStore(store, s => s.readonly);
-  const { data: schemas } = useQuery(operatorSchemasQuery());
+  const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
   if (!operator) return null;
   const schema = schemas?.get(operator.operatorType);
   const { edit, select } = store.getState();
@@ -36,7 +37,7 @@ export function PropertyPanel({ store, compilation }: { store: EditorStore; comp
         </div>
         {!readonly && (
           <>
-            <Tooltip content={operator.viewResult ? "Result kept: readable after the run" : "Keep this operator's result after the run"}>
+            <Tooltip content={operator.viewResult ? "Result kept: readable after the execution" : "Keep this operator's result after the execution"}>
               <Button
                 variant={operator.viewResult ? "secondary" : "ghost"}
                 size="icon-sm"
@@ -45,7 +46,7 @@ export function PropertyPanel({ store, compilation }: { store: EditorStore; comp
                 <Table2 />
               </Button>
             </Tooltip>
-            <Tooltip content={operator.isDisabled ? "Enable: include it in runs" : "Disable: leave it out of runs"}>
+            <Tooltip content={operator.isDisabled ? "Enable: include it in executions" : "Disable: leave it out of executions"}>
               <Button
                 variant="ghost"
                 size="icon-sm"

@@ -8,21 +8,23 @@ import (
 	"github.com/apache/texera/catalog/internal/api"
 )
 
-// A chat names the computing unit its runs use. An agent's tool call arrives with the chat as its
-// origin, vouched for by the runtime, and the catalog applies the chat's unit itself: where a
-// person's data runs is their choice, not something a model has to remember.
-func TestARunInAChatUsesTheChatsUnit(t *testing.T) {
+// A chat can name the computing unit its executions prefer. An agent's tool call arrives with the chat
+// as its origin, vouched for by the runtime, and the catalog applies the chat's unit itself:
+// where a person's data runs is their choice, not something a model has to remember. It is a
+// preference, not a binding: a call can name another unit, and a chat that names none runs on
+// the default.
+func TestAnExecutionInAChatUsesTheChatsUnit(t *testing.T) {
 	h := newHarness(t)
 	other := newFakeUnit(t)
 	mine := h.create("alice", "computing-units", "alice's unit", map[string]any{"provider": "static", "endpoint": other.URL})
 	theirs := h.create("alice", "computing-units", "a third unit", map[string]any{"provider": "static", "endpoint": other.URL})
 	agent := theAgent(t, h)
 
-	workflow := func(name string) string {
+	workflowOf := func(who, name string) string {
 		t.Helper()
-		ds := h.create("alice", "datasets", name, map[string]any{"format": "csv"})
-		h.mustJSON("alice", "PUT", p+"/datasets/"+rid(ds)+"/files/iris.csv", "Species,PetalLengthCm\nsetosa,1.4\n", nil)
-		h.mustJSON("alice", "POST", p+"/datasets/"+rid(ds)+"/commit", map[string]any{}, nil)
+		ds := h.create(who, "datasets", name, map[string]any{"format": "csv"})
+		h.mustJSON(who, "PUT", p+"/datasets/"+rid(ds)+"/files/iris.csv", "Species,PetalLengthCm\nsetosa,1.4\n", nil)
+		h.mustJSON(who, "POST", p+"/datasets/"+rid(ds)+"/commit", map[string]any{}, nil)
 		spec := map[string]any{
 			"operators": []any{
 				map[string]any{"operatorID": "scan", "operatorType": "CSVFileScan", "operatorProperties": map[string]any{"fileName": string(ds.Metadata.Uri) + "@1/files/iris.csv"}},
@@ -30,8 +32,9 @@ func TestARunInAChatUsesTheChatsUnit(t *testing.T) {
 			},
 			"links": []any{map[string]any{"linkID": "l1", "source": map[string]any{"operatorID": "scan", "portID": "output-0"}, "target": map[string]any{"operatorID": "avg", "portID": "input-0"}}},
 		}
-		return rid(h.create("alice", "workflows", name, spec))
+		return rid(h.create(who, "workflows", name, spec))
 	}
+	workflow := func(name string) string { return workflowOf("alice", name) }
 	// chat makes a conversation and returns the headers of a tool call made in one of its turns.
 	chat := func(name string, spec map[string]any) []string {
 		t.Helper()
@@ -56,7 +59,7 @@ func TestARunInAChatUsesTheChatsUnit(t *testing.T) {
 	}
 	inMyChat := chat("on my unit", map[string]any{"computingUnit": string(mine.Metadata.Uri)})
 
-	// The chat's unit, with nothing said about units: the run is there, and that engine got it.
+	// The chat's unit, with nothing said about units: the execution is there, and that engine got it.
 	if got := unitOf(workflow("in the chat"), map[string]any{}, inMyChat...); got != string(mine.Metadata.Uri) {
 		t.Fatalf("a run in the chat went to %s", got)
 	}
@@ -76,7 +79,7 @@ func TestARunInAChatUsesTheChatsUnit(t *testing.T) {
 	if got := unitOf(workflow("named"), map[string]any{"computingUnit": string(theirs.Metadata.Uri)}, inMyChat...); got != string(theirs.Metadata.Uri) {
 		t.Fatalf("a named unit: %s", got)
 	}
-	// The same run outside any chat, and in a chat that names no unit, falls back as before.
+	// The same execution outside any chat, and in a chat that names no unit, falls back as before.
 	if got := unitOf(workflow("outside"), map[string]any{}); got != platform {
 		t.Fatalf("outside a chat: %s", got)
 	}
@@ -84,12 +87,8 @@ func TestARunInAChatUsesTheChatsUnit(t *testing.T) {
 		t.Fatalf("a chat without a unit: %s", got)
 	}
 
-	// The chat's unit gives no right to use it: bob may run the workflow, but not on alice's unit.
-	var bob api.Me
-	h.mustJSON("bob", "GET", p+"/me", nil, &bob)
-	shared := workflow("shared")
-	h.mustJSON("alice", "PUT", p+"/resources/"+shared+"/grants/"+string(bob.Principal.Pid), map[string]any{"relation": "viewer"}, nil)
-	if status, data := h.do("bob", "POST", p+"/workflows/"+shared+"/run", map[string]any{}, inMyChat...); status != http.StatusForbidden {
-		t.Fatalf("bob on alice's unit: %d %s", status, data)
+	// Naming a unit gives no right to it: a unit asked for by name must be the caller's to use.
+	if status, data := h.do("bob", "POST", p+"/workflows/"+workflowOf("bob", "bob's")+"/run", map[string]any{"computingUnit": string(mine.Metadata.Uri)}); status != http.StatusForbidden {
+		t.Fatalf("bob names alice's unit: %d %s", status, data)
 	}
 }

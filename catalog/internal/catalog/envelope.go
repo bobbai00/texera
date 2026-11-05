@@ -163,6 +163,17 @@ func MessageOf(m *store.Message) api.Message {
 		t := api.Uri(*m.Template)
 		out.Template = &t
 	}
+	if m.ModelEndpoint != nil {
+		e := api.Uri(*m.ModelEndpoint)
+		out.ModelEndpoint = &e
+	}
+	if m.McpServers != nil {
+		servers := make([]api.Uri, len(m.McpServers))
+		for i, uri := range m.McpServers {
+			servers[i] = api.Uri(uri)
+		}
+		out.McpServers = &servers
+	}
 	_ = json.Unmarshal(m.Parts, &out.Parts)
 	if out.Parts == nil {
 		out.Parts = []api.MessagePart{}

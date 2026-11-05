@@ -39,18 +39,16 @@ model LoopSpec {
 
 model AgentTemplateSpec {
   card: AgentCard;
-  @doc("The model endpoint resource URI.")
+  @doc("The model endpoint the agent uses unless a chat or its project names another.")
   `model`: Uri;
   @doc("The system prompt, Markdown.")
   prompt: string;
   @doc("Skill resource URIs, loaded on demand.")
   skills?: Uri[];
-  @doc("MCP servers the agent mounts, besides the catalog server every template mounts unless `catalogTools` is false.")
+  @doc("The MCP servers the agent mounts. The platform's own server, the catalog, holds its basic tools and is listed like any other; the rest are add-ons.")
   mcpServers?: McpBinding[];
   @doc("Templates this agent may hand the conversation to.")
   handoffs?: Uri[];
-  @doc("Mount the catalog MCP server; default true.")
-  catalogTools?: boolean;
   loop?: LoopSpec;
 }
 

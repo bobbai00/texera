@@ -1,5 +1,7 @@
 // mcp-server: an MCP server an agent can mount, over streamable HTTP. The platform's own
-// servers (catalog, dataflow, scholar) are rows in the system project like any other.
+// server (the catalog) and the add-ons it ships are rows in the system project like any other.
+// The platform's own is the one whose URL is the catalog's MCP address: a turn reaches it
+// inside the deployment and calls it as the person.
 import "@typespec/http";
 import "@typespec/rest";
 import "@typespec/openapi";
@@ -17,8 +19,6 @@ model McpServerSpec {
   url: string;
   @doc("Headers sent on every request. A value `credential:<uri>` is replaced by that credential's leased secret; a value `credential:<uri>#<field>` by one field of it.")
   headers?: Record<string>;
-  @doc("Set for a server the platform provides: catalog, dataflow or scholar. The runtime sends the person's token to a built-in server.")
-  builtin?: string;
 }
 
 model McpServerStatus {

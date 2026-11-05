@@ -45,7 +45,7 @@ var (
 // passes. Compile: the version becomes a plan that is data, the same one a dry run returns.
 // Materialize: the execution is stored with its plan, its namespace is opened in the lake,
 // the inputs are presigned and the credentials leased into a copy of the plan that goes to the
-// engine, and never into the store. With WaitSeconds the call waits for the run to end.
+// engine, and never into the store. With WaitSeconds the call waits for the execution to end.
 func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid.UUID, in RunInput) (*store.Resource, error) {
 	wf, err := s.Get(ctx, caller, &workflowKind, workflowRID)
 	if err != nil {
@@ -108,7 +108,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	// Materialize: the execution with its plan, its namespace, the bound copy, the start.
 	name := in.Name
 	if name == "" {
-		name = fmt.Sprintf("run %s", time.Now().UTC().Format("2006-01-02 15:04:05"))
+		name = fmt.Sprintf("execution %s", time.Now().UTC().Format("2006-01-02 15:04:05"))
 	}
 	rid := uuid.New()
 	namespace := executionNamespace(rid)
@@ -128,7 +128,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	if len(in.Parameters) > 0 {
 		execSpec.Parameters = &in.Parameters
 	}
-	// The ports are known from the plan: their tables exist in the status before the run writes
+	// The ports are known from the plan: their tables exist in the status before the execution writes
 	// a row, and the unit may only ever report those.
 	ports := make([]api.PortSummary, 0, len(c.Outputs))
 	tables := make([]engine.OutputTable, 0, len(c.Outputs))
@@ -150,7 +150,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 		s.setPhase(ctx, exec.RID, api.ExecutionPhaseFailed, map[string]any{"message": what + ": " + err.Error()})
 		return nil, err
 	}
-	// The run's tables go into a namespace of their own, which the unit's identity may write.
+	// The execution's tables go into a namespace of their own, which the unit's identity may write.
 	subject := ""
 	if identity := unitIdentity(unit); identity != nil {
 		subject = identity.Subject
@@ -158,7 +158,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 		s.Log.Warn("the unit has no identity; the lake will take its writes only if it is open", "unit", unit.RID)
 	}
 	if err := s.Lake.OpenNamespace(ctx, namespace, subject, unit.Name); err != nil {
-		return fail("the lake refused the run's namespace", Unavailable("lake", err))
+		return fail("the lake refused the execution's namespace", Unavailable("lake", err))
 	}
 	bound, resolved, err := s.bindInputs(ctx, caller, c)
 	if err != nil {
@@ -222,7 +222,7 @@ func environmentRequest(ctx context.Context, s *Service, env *store.Resource, vn
 	return req
 }
 
-// drive builds the environment and starts the run; failures become the execution's status.
+// drive builds the environment and starts the execution; failures become its status.
 func (s *Service) drive(execRID uuid.UUID, client *engine.Unit, req engine.ExecutionStartRequest, env *store.Resource, envVno int, unit *store.Resource) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -347,7 +347,7 @@ func (s *Service) setPhase(ctx context.Context, rid uuid.UUID, phase api.Executi
 	})
 }
 
-// waitForExecution polls until the run ends or the time is up.
+// waitForExecution polls until the execution ends or the time is up.
 func (s *Service) waitForExecution(ctx context.Context, rid uuid.UUID, timeout time.Duration) (*store.Resource, error) {
 	deadline := time.Now().Add(timeout)
 	for {
@@ -380,7 +380,7 @@ func (s *Service) Execution(ctx context.Context, caller *auth.Caller, workflowRI
 	return r, nil
 }
 
-// Cancel stops a run.
+// Cancel stops an execution.
 func (s *Service) Cancel(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID) (*store.Resource, error) {
 	r, err := s.Execution(ctx, caller, workflowRID, eid)
 	if err != nil {
@@ -409,15 +409,15 @@ func (s *Service) Cancel(ctx context.Context, caller *auth.Caller, workflowRID, 
 // Pause asks the unit to pause a running execution. The phase turns paused when the unit
 // reports it, so the caller watches the execution rather than trusting the answer.
 func (s *Service) Pause(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID) (*store.Resource, error) {
-	return s.control(ctx, caller, workflowRID, eid, api.ExecutionPhaseRunning, "not_running", "the run is not running", (*engine.Unit).Pause)
+	return s.control(ctx, caller, workflowRID, eid, api.ExecutionPhaseRunning, "not_running", "the execution is not running", (*engine.Unit).Pause)
 }
 
 // Resume continues a paused execution; the phase turns running when the unit reports it.
 func (s *Service) Resume(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID) (*store.Resource, error) {
-	return s.control(ctx, caller, workflowRID, eid, api.ExecutionPhasePaused, "not_paused", "the run is not paused", (*engine.Unit).Resume)
+	return s.control(ctx, caller, workflowRID, eid, api.ExecutionPhasePaused, "not_paused", "the execution is not paused", (*engine.Unit).Resume)
 }
 
-// control forwards a verb to the execution's unit when the run is in the phase the verb needs.
+// control forwards a verb to the execution's unit when it is in the phase the verb needs.
 func (s *Service) control(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID, want api.ExecutionPhase, code, msg string,
 	do func(*engine.Unit, context.Context, string) (*engine.ExecutionState, error)) (*store.Resource, error) {
 	r, err := s.Execution(ctx, caller, workflowRID, eid)
@@ -443,8 +443,8 @@ func (s *Service) control(ctx context.Context, caller *auth.Caller, workflowRID,
 	return r, wrap(err, "execution")
 }
 
-// DeleteExecution removes a finished run with its tables. A run still going must be cancelled
-// first; a run a dataset version derives from stays, as its lineage says.
+// DeleteExecution removes a finished execution with its tables. One still going must be
+// cancelled first; one a dataset version derives from stays, as its lineage says.
 func (s *Service) DeleteExecution(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID) error {
 	r, err := s.Execution(ctx, caller, workflowRID, eid)
 	if err != nil {
@@ -456,7 +456,7 @@ func (s *Service) DeleteExecution(ctx context.Context, caller *auth.Caller, work
 	var st api.ExecutionStatus
 	_ = json.Unmarshal(r.Status, &st)
 	if !isTerminal(st.Phase) {
-		return Conflict("running", "the run is still going; cancel it first", nil)
+		return Conflict("running", "the execution is still going; cancel it first", nil)
 	}
 	deps, err := s.Store.Dependents(ctx, r.RID, 0)
 	if err != nil {
@@ -494,7 +494,7 @@ func plannedTable(exec *store.Resource, operatorID, portID string) string {
 }
 
 // executionNamespace is the namespace an execution's tables live in: the catalog makes it in
-// the lake before the run and drops it with the execution.
+// the lake before the execution starts and drops it with the execution.
 func executionNamespace(rid uuid.UUID) string {
 	return "e_" + strings.ReplaceAll(rid.String(), "-", "")
 }
@@ -575,7 +575,7 @@ func (s *Service) Rows(ctx context.Context, caller *auth.Caller, workflowRID, ei
 		limit = 100
 	}
 	if at := resultsExpired(r); at != nil {
-		return nil, Gone("the run's results", *at)
+		return nil, Gone("the execution's results", *at)
 	}
 	client, err := s.executionUnit(ctx, caller, r)
 	if err != nil {
@@ -584,7 +584,7 @@ func (s *Service) Rows(ctx context.Context, caller *auth.Caller, workflowRID, ei
 	table := plannedTable(r, operatorID, portID)
 	page, err := client.Result(ctx, eid.String(), operatorID, portID, table, executionNamespace(eid), offset, limit)
 	if err != nil {
-		// A port the plan names has no table until the run writes it: nothing to read yet.
+		// A port the plan names has no table until the execution writes it: nothing to read yet.
 		var refused *engine.UnitError
 		if table != "" && errors.As(err, &refused) && refused.Status == http.StatusNotFound && !finished(r) {
 			return &engine.RowPage{Offset: offset, Rows: [][]any{}, Schema: []engine.Attribute{}}, nil
@@ -599,24 +599,6 @@ func finished(r *store.Resource) bool {
 	var st api.ExecutionStatus
 	_ = json.Unmarshal(r.Status, &st)
 	return isTerminal(st.Phase)
-}
-
-// chatUnit is the computing unit of the chat a call acts in, when the runtime vouches for one:
-// a person picks where the runs of a chat go, and an agent's run goes there without having to be
-// told. It gives no right to the unit; the caller is authorized on it like on any other.
-func (s *Service) chatUnit(ctx context.Context, caller *auth.Caller) string {
-	if caller.Origin == nil {
-		return ""
-	}
-	conversation, err := s.Store.GetResource(ctx, caller.Origin.Conversation)
-	if err != nil || conversation.Kind != "conversation" {
-		return ""
-	}
-	var spec api.ConversationSpec
-	if err := json.Unmarshal(conversation.Spec, &spec); err != nil {
-		return ""
-	}
-	return uriString(spec.ComputingUnit)
 }
 
 // unitByURI loads a computing unit without the read check: running on a unit, compiling or

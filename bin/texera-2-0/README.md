@@ -84,8 +84,8 @@ and Lakekeeper fetches its signing keys from there). Lakekeeper's own base URI i
 Lakekeeper authenticates every caller against Keycloak and authorizes with OpenFGA (a store of
 its own, `lakekeeper`, on the stack's OpenFGA server). The catalog bootstraps it as its operator
 at startup and creates the `texera` warehouse with credential vending on, so a unit never holds
-a key to the whole store. A run gets a namespace of its own (`e_<execution rid>`), which the
-catalog opens for the identity of the unit that runs it: every table of the run goes there, and
+a key to the whole store. An execution gets a namespace of its own (`e_<execution rid>`), which the
+catalog opens for the identity of the unit that runs it: every table of the execution goes there, and
 nobody else, not even a person with their own token, gets anything from the lake directly;
 people read results through the catalog, which decides. The dev stack's unit presents the
 realm's `texera-unit` client (`run-unit.sh`); a unit the catalog provisions on Kubernetes gets a
@@ -94,11 +94,11 @@ Changing the realm (`keycloak/texera-realm.json`) needs `down.sh --wipe` (`k8s.s
 cluster): Keycloak imports a realm only once.
 
 Retention is a setting (`spec.retention`, ISO 8601 durations): `results` is how long a finished
-run keeps its result tables (absent: forever; the run's record and summaries stay, its rows
+execution keeps its result tables (absent: forever; its record and summaries stay, its rows
 answer 410), `blobs` how long an uploaded file nobody committed is kept (absent: a day). The
-catalog sweeps hourly; `POST /settings/retention/sweep` runs one now, for administrators. A run
+catalog sweeps hourly; `POST /settings/retention/sweep` runs one now, for administrators. An execution
 can also be deleted outright (`DELETE /workflows/{rid}/executions/{eid}`, the Delete button of
-its page), which takes its tables with it; a run a dataset version derives from is refused.
+its page), which takes its tables with it; one a dataset version derives from is refused.
 
 ## Ports
 
@@ -157,8 +157,8 @@ from `.env` into a Secret and from there into OpenBao by the `openbao-init` job.
 Computing units are resources there like everywhere else: a unit created with
 `provider: kubernetes` (`POST /computing-units`, or the library's "New computing unit")
 becomes a Deployment and a Service in the namespace, named after its rid, that the catalog
-reconciles on every status probe; it reports pending until the engine answers, runs take
+reconciles on every status probe; it reports pending until the engine answers, an execution takes
 `computingUnit: <its URI>`, a changed spec (image, memory, cpu) rolls the Deployment at once
-(the provider is fixed, and a unit with a run on it answers 409 until the run is over),
+(the provider is fixed, and a unit with an execution on it answers 409 until it is over),
 `terminate` removes the workloads, and the catalog's service account may do nothing else in
 the cluster (`deploy/kubernetes/rbac.yaml`).

@@ -1,6 +1,7 @@
 import type { Resource } from "@texera/catalog-client/types";
-import { EmptyState, Skeleton, timeAgo } from "@texera/ui";
+import { Badge, EmptyState, Skeleton, timeAgo } from "@texera/ui";
 import { KINDS, isKindId } from "../registry";
+import { useIsBuiltIn } from "../shell/builtin";
 import { OriginChip, PrincipalName } from "../shell/Chips";
 import { KindIcon } from "../shell/KindIcon";
 import { useOpenResource } from "../shell/navigation";
@@ -8,6 +9,7 @@ import { useOpenResource } from "../shell/navigation";
 /** The library list. Identical for every kind: the point of one envelope. */
 export function ResourceTable({ resources, loading }: { resources: Resource[] | undefined; loading: boolean }) {
   const { expand } = useOpenResource();
+  const isBuiltIn = useIsBuiltIn();
   if (loading) {
     return (
       <div className="space-y-2">
@@ -37,7 +39,13 @@ export function ResourceTable({ resources, loading }: { resources: Resource[] | 
               </div>
             </div>
             {r.metadata.origin && <OriginChip origin={r.metadata.origin} className="hidden md:inline-flex" />}
-            <PrincipalName pid={r.metadata.owner} className="hidden w-24 truncate text-right text-xs text-muted-foreground sm:block" />
+            {isBuiltIn(r) ? (
+              <Badge className="hidden sm:inline-flex" data-built-in>
+                Built-in
+              </Badge>
+            ) : (
+              <PrincipalName pid={r.metadata.owner} className="hidden w-24 truncate text-right text-xs text-muted-foreground sm:block" />
+            )}
             <span className="w-28 text-right text-xs text-muted-foreground">{timeAgo(r.metadata.updatedAt)}</span>
           </div>
         );

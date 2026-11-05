@@ -7,6 +7,7 @@ import {
   type AgentTemplateSpec,
   type AppendMessage,
   type CatalogAuth,
+  type ChatSettings,
   type Conversation,
   formatOrigin,
   type Lease,
@@ -104,6 +105,15 @@ export class CatalogClient {
 
   createConversation(name: string, template: string, auth: CatalogAuth): Promise<Conversation> {
     return this.request("POST", `${API}/conversations`, auth, { name, spec: { template } });
+  }
+
+  /**
+   * What a turn of the conversation runs with, for the person: the agent, its model, the unit
+   * and the servers, each the chat's choice or the default it falls back to. The catalog
+   * decides; the runtime builds what it says.
+   */
+  chatSettings(rid: string, auth: CatalogAuth): Promise<ChatSettings> {
+    return this.request("GET", `${API}/conversations/${encodeURIComponent(rid)}/settings`, auth);
   }
 
   /** Replaces the conversation's spec (its current template among it). */

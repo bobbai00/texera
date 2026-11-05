@@ -1,10 +1,16 @@
 /**
  * An in-memory stand-in for the catalog, served through a `fetch` function, so the runtime's
  * catalog client and the HTTP handlers can be tested without a server. It speaks the v2
- * contract: conversations with turns and messages, resolve by URI, templates, skills, MCP
- * servers, model endpoints, credential leases.
+ * contract: conversations with turns, messages and settings, resolve by URI, templates, skills,
+ * MCP servers, model endpoints, credential leases.
  */
-import type { AgentTemplateSpec, McpServerSpec, Message, SkillSpec } from "@texera/catalog-client/types";
+import type {
+  AgentTemplateSpec,
+  ChatSettings,
+  McpServerSpec,
+  Message,
+  SkillSpec,
+} from "@texera/catalog-client/types";
 
 export const CONVERSATION_RID = "33333333-3333-4333-8333-333333333333";
 export const TEMPLATE_RID = "22222222-2222-4222-8222-222222222222";
@@ -13,13 +19,16 @@ export const MCP_RID = "44444444-4444-4444-8444-444444444444";
 export const SKILL_RID = "55555555-5555-4555-8555-555555555555";
 export const USER_PID = "66666666-6666-4666-8666-666666666666";
 export const MODEL_RID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+export const OTHER_MODEL_RID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 export const CREDENTIAL_RID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 export const UNIT_RID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+export const PROJECT_RID = "00000000-0000-4000-8000-000000000000";
 export const UNIT_URI = `texera://computing-units/${UNIT_RID}`;
 
 export const ANALYST_URI = `texera://agent-templates/${TEMPLATE_RID}`;
 export const BIO_URI = `texera://agent-templates/${BIO_TEMPLATE_RID}`;
 export const MODEL_URI = `texera://model-endpoints/${MODEL_RID}`;
+export const OTHER_MODEL_URI = `texera://model-endpoints/${OTHER_MODEL_RID}`;
 export const CREDENTIAL_URI = `texera://credentials/${CREDENTIAL_RID}`;
 
 export interface RecordedCall {
@@ -34,12 +43,16 @@ export interface FakeCatalogOptions {
   template?: Partial<AgentTemplateSpec>;
   /** Older versions of the Data Analyst, by vno. */
   templateVersions?: Record<number, AgentTemplateSpec>;
+  /** An MCP server resource the Data Analyst can list; `platform` makes it the catalog's own. */
   mcpServer?: McpServerSpec;
+  platformServer?: boolean;
   skill?: SkillSpec;
   /** The conversation's template at the start; default the Data Analyst. */
   conversationTemplate?: string;
-  /** The computing unit the conversation names, with its state. */
-  conversationUnit?: { name: string; phase: string };
+  /** The computing unit the chat's settings resolve to. */
+  conversationUnit?: { name: string };
+  /** The model endpoint the chat chooses, in place of its agent's. */
+  conversationModel?: string;
 }
 
 function envelope(kind: string, rid: string, name: string, spec: unknown, head = 1, status?: unknown) {
@@ -51,7 +64,7 @@ function envelope(kind: string, rid: string, name: string, spec: unknown, head =
       rid,
       uri: `texera://${plural}/${rid}`,
       name,
-      project: "00000000-0000-4000-8000-000000000000",
+      project: PROJECT_RID,
       owner: USER_PID,
       visibility: "public",
       head,
@@ -79,14 +92,13 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
     model: MODEL_URI,
     prompt: "You research biology.",
     handoffs: [ANALYST_URI],
-    // Tests mount no MCP servers.
-    catalogTools: false,
   };
   const analystHead = Math.max(1, ...Object.keys(options.templateVersions ?? {}).map(Number));
   const conversation = {
     spec: {
       template: options.conversationTemplate ?? ANALYST_URI,
       ...(options.conversationUnit ? { computingUnit: UNIT_URI } : {}),
+      ...(options.conversationModel ? { modelEndpoint: options.conversationModel } : {}),
     } as Record<string, unknown>,
     status: { messages: 0 } as Record<string, unknown>,
   };
@@ -132,6 +144,13 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       spec: { provider: "anthropic", model: "scripted", credential: CREDENTIAL_URI },
       head: 0,
     },
+    [`model-endpoints/${OTHER_MODEL_RID}`]: {
+      kind: "model-endpoint",
+      rid: OTHER_MODEL_RID,
+      name: "another",
+      spec: { provider: "anthropic", model: "another" },
+      head: 0,
+    },
     [`credentials/${CREDENTIAL_RID}`]: {
       kind: "credential",
       rid: CREDENTIAL_RID,
@@ -155,7 +174,6 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       name: options.conversationUnit.name,
       spec: { provider: "static" },
       head: 0,
-      status: { phase: options.conversationUnit.phase },
     };
   if (options.skill)
     resources[`skills/${SKILL_RID}`] = {
@@ -165,6 +183,31 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       spec: options.skill,
       head: 1,
     };
+
+  /** What the catalog resolves the chat's settings to: the chat's choices, else its agent's own. */
+  const settings = (): ChatSettings => {
+    const chosen = /^texera:\/\/(agent-templates\/[0-9a-f-]{36})(?:@(\d+))?/i.exec(String(conversation.spec.template));
+    const agent = chosen?.[1] ? resources[chosen[1]] : undefined;
+    if (!chosen || !agent) throw new Error("the fake conversation names no template");
+    const spec = (chosen[2] ? (agent.versions?.[Number(chosen[2])] ?? agent.spec) : agent.spec) as AgentTemplateSpec;
+    const named = (uri: string) => resources[uri.replace("texera://", "").replace(/@\d+$/, "")]?.name ?? uri;
+    const model = options.conversationModel ?? spec.model;
+    return {
+      project: { rid: PROJECT_RID, name: "alice's home" },
+      agent: { uri: `texera://${chosen[1]}@${chosen[2] ?? agent.head}`, name: agent.name, from: "chat" },
+      modelEndpoint: { uri: model, name: named(model), from: options.conversationModel ? "chat" : "agent" },
+      ...(options.conversationUnit
+        ? { computingUnit: { uri: UNIT_URI, name: options.conversationUnit.name, from: "chat" as const } }
+        : {}),
+      mcpServers: (spec.mcpServers ?? []).map((b) => ({
+        uri: b.server,
+        name: named(b.server),
+        from: "agent" as const,
+        platform: options.platformServer === true,
+        ...(b.allow ? { allow: b.allow } : {}),
+      })),
+    };
+  };
 
   const fetchImpl = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
@@ -221,6 +264,7 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       }
       return json(200, conversationEnvelope());
     }
+    if (p === `/catalog/v1/conversations/${CONVERSATION_RID}/settings` && method === "GET") return json(200, settings());
     if (p === "/catalog/v1/conversations" && method === "POST") {
       const b = body as { name: string; spec: Record<string, unknown> };
       return json(201, { ...envelope("conversation", CONVERSATION_RID, b.name, b.spec, 0), status: {} });
@@ -248,7 +292,7 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
         const after = url.searchParams.get("after");
         return json(200, { items: after ? messages.filter((m) => m.seq > Number(after)) : messages });
       }
-      const post = body as { turn?: string; role: Message["role"]; template?: string; parts: Message["parts"] };
+      const post = body as Pick<Message, "turn" | "role" | "template" | "modelEndpoint" | "mcpServers" | "parts">;
       const message: Message = {
         conversation: CONVERSATION_RID,
         seq: messages.length + 1,
@@ -256,6 +300,8 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
         role: post.role,
         author: USER_PID,
         template: post.template,
+        modelEndpoint: post.modelEndpoint,
+        mcpServers: post.mcpServers,
         parts: post.parts ?? [],
         createdAt: new Date().toISOString(),
       };

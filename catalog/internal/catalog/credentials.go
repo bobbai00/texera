@@ -47,7 +47,7 @@ func (s *Service) SetSecret(ctx context.Context, caller *auth.Caller, rid uuid.U
 	return wrap(err, "credential")
 }
 
-// Lease hands a credential's value to a run or a turn and logs it.
+// Lease hands a credential's value to an execution or a turn and logs it.
 func (s *Service) Lease(ctx context.Context, caller *auth.Caller, rid uuid.UUID, purpose string) (*api.Lease, error) {
 	k, _ := kinds.ByName("credential")
 	r, err := s.Get(ctx, caller, &k, rid)

@@ -31,6 +31,8 @@ export interface ChatMessage {
   parts: Part[];
   /** For an assistant message: the template version (a URI with `@vno`) that wrote it. */
   template?: string;
+  /** For an assistant message the catalog holds: the model endpoint that wrote it. */
+  model?: string;
   /** The person whose message this is, or whose turn an assistant message answered. */
   author?: string;
   seq?: number;
@@ -385,7 +387,16 @@ export function fromHistory(messages: CatalogMessage[]): ChatMessage[] {
         continue;
       }
     }
-    out.push({ id: `seq-${m.seq}`, role: m.role, parts, seq: m.seq, createdAt: m.createdAt, author: m.author, ...(m.template ? { template: m.template } : {}) });
+    out.push({
+      id: `seq-${m.seq}`,
+      role: m.role,
+      parts,
+      seq: m.seq,
+      createdAt: m.createdAt,
+      author: m.author,
+      ...(m.template ? { template: m.template } : {}),
+      ...(m.modelEndpoint ? { model: m.modelEndpoint } : {}),
+    });
   }
   return out;
 }
@@ -395,12 +406,12 @@ export function resourcesOf(messages: ChatMessage[]): ResourceRef[] {
   return dedupe(messages.flatMap(m => m.parts.flatMap(p => (p.type === "tool" ? p.resources : p.type === "resource" ? [p.ref] : []))));
 }
 
-/** The template versions the messages were written by, in order of first appearance. */
-export function templatesOf(messages: ChatMessage[]): string[] {
+/** What the messages were written by, in order of first appearance: agent versions, and the models they used. */
+export function writersOf(messages: ChatMessage[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const m of messages) {
-    for (const uri of [m.template, ...m.parts.flatMap(p => (p.type === "handoff" ? [p.to, p.from] : []))]) {
+    for (const uri of [m.template, m.model, ...m.parts.flatMap(p => (p.type === "handoff" ? [p.to, p.from] : []))]) {
       if (uri && !seen.has(uri)) {
         seen.add(uri);
         out.push(uri);

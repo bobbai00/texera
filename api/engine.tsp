@@ -17,7 +17,7 @@ using OpenAPI;
 @useAuth(BearerAuth)
 namespace Texera.Engine;
 
-@doc("A dataset file the catalog resolved for this run: the operator property value and the URL the engine reads.")
+@doc("A dataset file the catalog resolved for this execution: the operator property value and the URL the engine reads.")
 model ResolvedInput {
   @doc("The dataset version this file belongs to.")
   dataset: string;
@@ -37,7 +37,7 @@ model EnvironmentRequest {
   };
 }
 
-@doc("The table the catalog named for an output port, inside the run's namespace.")
+@doc("The table the catalog named for an output port, inside the execution's namespace.")
 model OutputTable {
   opid: string;
   port: string;
@@ -48,7 +48,7 @@ model ResultStore {
   @doc("Iceberg REST catalog URI the unit writes results to.")
   catalogUri: string;
   warehouse: string;
-  @doc("The namespace the catalog made for this execution: every table of the run goes there, and the unit's identity was granted write access to it.")
+  @doc("The namespace the catalog made for this execution: every table of the execution goes there, and the unit's identity was granted write access to it.")
   `namespace`: string;
   @doc("One table per output port, named by the catalog; the engine writes each port's result under its name and reports it as `namespace.table`.")
   tables?: OutputTable[];
@@ -129,11 +129,11 @@ namespace Routes {
     @post start(@body body: ExecutionStartRequest): ExecutionAck | Error;
     @get @route("/{eid}") status(@path eid: string): ExecutionState | Error;
     @post @route("/{eid}/cancel") cancel(@path eid: string): ExecutionState | Error;
-    @doc("Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.")
+    @doc("Pause the execution; the status turns `paused` once the engine confirms, and the unit reports it.")
     @post @route("/{eid}/pause") pause(@path eid: string): ExecutionState | Error;
-    @doc("Resume a paused run.")
+    @doc("Resume a paused execution.")
     @post @route("/{eid}/resume") resume(@path eid: string): ExecutionState | Error;
-    @doc("A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.")
+    @doc("A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.")
     @get @route("/{eid}/results/{opid}/{port}") result(@path eid: string, @path opid: string, @path port: string, @query offset?: int64, @query limit?: int32, @query table?: string, @query `namespace`?: string): RowPage | Error;
   }
 

@@ -7,8 +7,8 @@ import { executionQuery } from "./queries";
 
 export const executionKind: KindSpec = {
   kind: "execution",
-  label: "Run",
-  plural: "Runs",
+  label: "Execution",
+  plural: "Executions",
   icon: PlayCircle,
   accent: "bg-kind-execution/15 text-kind-execution",
   Card: lazy(() => import("./Card")),

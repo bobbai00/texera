@@ -99,7 +99,7 @@ func (s *Service) applyRunEvent(ctx context.Context, exec *store.Resource, ev ap
 }
 
 func (s *Service) applyOperatorEvent(ctx context.Context, exec *store.Resource, ev api.LineageEvent, facets map[string]any) error {
-	// Progress reported while the run was going but arriving after its end changes nothing:
+	// Progress reported while the execution was going but arriving after its end changes nothing:
 	// the terminal report is the last word on every operator.
 	if ev.EventType == api.LineageEventEventTypeRUNNING {
 		var st api.ExecutionStatus

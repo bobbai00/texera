@@ -7,7 +7,10 @@ import { KINDS } from "../registry";
 import type { KindId, ResourceRef } from "../types";
 import { useOpenResource } from "./navigation";
 
-/** Creates a resource of a kind with the kind's starting spec, then opens it. */
+/**
+ * Creates a resource of a kind, then opens it. The spec is the kind's starting one, as the
+ * kind's own fields changed it when it has some.
+ */
 export function NewResourceDialog({
   kind,
   open,
@@ -27,10 +30,14 @@ export function NewResourceDialog({
   const [description, setDescription] = useState("");
   const [error, setError] = useState<unknown>();
   const [busy, setBusy] = useState(false);
+  // The spec as the kind's own fields made it; undefined until one is changed.
+  const [chosen, setChosen] = useState<unknown>();
   const nameId = useId();
   const descriptionId = useId();
   if (!spec.defaultSpec) return null;
   const defaultSpec = spec.defaultSpec;
+  const CreateFields = spec.CreateFields;
+  const starting = (input: { name: string; description?: string; parent?: string }) => chosen ?? defaultSpec(input, settings?.spec.defaults ?? {});
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -39,11 +46,12 @@ export function NewResourceDialog({
     setError(undefined);
     try {
       const input = { name: name.trim(), description: description.trim() || undefined, parent };
-      const created = await createResource(kind, { ...input, spec: defaultSpec(input, settings?.spec.defaults ?? {}) });
+      const created = await createResource(kind, { ...input, spec: starting(input) });
       await queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
       onOpenChange(false);
       setName("");
       setDescription("");
+      setChosen(undefined);
       const ref: ResourceRef = { kind, rid: created.metadata.rid, parent: created.metadata.parent };
       expand(ref);
     } catch (err) {
@@ -74,6 +82,7 @@ export function NewResourceDialog({
           <Field label="Description" htmlFor={descriptionId}>
             <Textarea id={descriptionId} value={description} onChange={e => setDescription(e.target.value)} rows={3} />
           </Field>
+          {CreateFields && <CreateFields spec={starting({ name, description, parent })} onChange={setChosen} />}
           {error !== undefined && <ErrorNote error={error} prefix="Could not create" />}
         </form>
       </DialogContent>

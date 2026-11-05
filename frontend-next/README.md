@@ -1,10 +1,10 @@
 # Texera frontend
 
 The one React app of Texera 2.0: a chat-first workspace where every kind of the catalog
-(workflows, runs, datasets, models, operators, environments, computing units, agent templates,
+(workflows, executions, datasets, models, operators, environments, computing units, agents,
 skills, MCP servers, model endpoints, credentials, projects, settings) is a card, a side panel
 and a page. It talks to the catalog through the generated client and to agents through AG-UI;
-runs are the catalog's, so the app never talks to an engine directly.
+executions are the catalog's, so the app never talks to an engine directly.
 
 ## Run it
 
@@ -34,7 +34,7 @@ to them. Test users: `alice`/`alice`, `bob`/`bob`.
 | `bun run typecheck` | `tsc` over the app and, through imports, every package |
 | `bun run test` | vitest: the app's tests and `packages/*/src/**/*.test.*` |
 | `bun run e2e` | Playwright against the live stack (`e2e/texera2.spec.ts`); `TEXERA_E2E_SKIP_MODEL=1` leaves out the real-model scenarios |
-| `bun run lint` | biome over the app and the packages |
+| `bun run lint` | biome over the app's `src`. The packages are named in the script and the config but lie outside the config's root, so biome skips them: they are not linted or formatted yet (see `PROGRESS.md`, Nov 5) |
 
 ## Layout
 
@@ -58,11 +58,11 @@ Routes are the catalog's paths: a resource's page is its URI without the scheme.
 
 | Path | Page |
 |---|---|
-| `/` | new chat: pick the computing unit its runs use; every chat runs the deployment's agent |
+| `/` | a new chat: type to start. The box shows the agent and picks the model, the computing unit (Automatic by default) and the add-on servers |
 | `/conversations/$rid` | a chat: its messages and the resources it produced in a rail |
 | `/{plural}` | the library of one kind: `/workflows`, `/datasets`, `/operators`, … |
 | `/{plural}/$rid` | the page of one resource (`?vno=` pins a version) |
-| `/workflows/$rid/executions/$eid` | a run, nested under its workflow as its URI is |
+| `/workflows/$rid/executions/$eid` | an execution, nested under its workflow as its URI is |
 | `/settings` | the deployment's settings (administrators) |
 | `/login`, `/callback` | Keycloak sign-in |
 
@@ -71,7 +71,7 @@ Routes are the catalog's paths: a resource's page is its URI without the scheme.
 ## Names
 
 `packages/kinds/src/uri.ts` is the one grammar of names, the same as the catalog's
-`internal/uri`: `texera://{plural}/{rid}[@vno][/subresource]`, with runs nested as
+`internal/uri`: `texera://{plural}/{rid}[@vno][/subresource]`, with executions nested as
 `texera://workflows/{rid}/executions/{eid}`. Every reference the app handles (a message part, a
 lineage edge, a template's skills, a conversation's template, a file an operator reads) is one
 of these, parsed into a `ResourceRef {kind, rid, vno?, parent?}` and written back with `uriOf`.
@@ -95,7 +95,8 @@ interface KindSpec {
   tabs?: KindTab[];             // tabs the generic page shows before the shared ones
   Actions?: component;          // header actions
   defaultSpec?: (input, defaults) => spec;   // the library's "New …" dialog
-  facts?: (resource) => string[];            // short facts for lists and cards
+  CreateFields?: component;                  // what that dialog asks besides a name (a unit's memory and CPU)
+  facts?: (resource) => string[];            // short facts for lists, cards and the chat box's pickers
   long?: string[]; hidden?: string[];        // hints for the schema form
 }
 ```
@@ -125,16 +126,32 @@ carries a resource (an envelope, a ref, a URI) renders that kind's card, never a
 
 The registry test checks that every kind of the contract is registered with its accent.
 
+## Projects and built-ins
+
+The sidebar picks the project a person works in (`packages/kinds/src/scope.tsx`): Personal by
+default, kept in their preferences, or "All projects". A library lists that project's resources
+and the platform's (`?scope=`), new resources go into it, and so do the chats listed below the
+picker. A resource of the platform's project is built in: its row carries a badge, its page is
+read-only and has no delete, and its access tab says why (`shell/builtin.ts`). The workflow
+editor lists what the workflow's own project can use, wherever the person is working.
+
 ## The chat
 
-A conversation's spec names the agent template its next turn runs. The chat posts each turn to
-the agent runtime's AG-UI endpoint (`/agents/conversations/{rid}/ag-ui`) and reduces the event
-stream into messages of parts (`packages/chat/src/model.ts`); when the turn ends, the catalog's
-persisted messages replace the live ones, except an error the catalog never got, which stays
-on screen. Every assistant message carries the template version that wrote it, shown as a
-label. Every chat runs the deployment's one agent, so the app offers no picker and no switcher;
-a `texera.handoff` event or a system note naming another template (from a chat of an older
-release) still renders as a divider.
+A conversation's spec holds the chat's own choices and nothing else: the agent, the model
+endpoint, the computing unit and the add-on MCP servers, each optional, none in a new chat.
+What a turn runs with is the catalog's answer (`GET /conversations/{rid}/settings`, or
+`/projects/{rid}/chat-settings` before the chat exists): the chat's choice, else the project's
+default, else the agent's own or the platform's. The chat box (`ChatSettingsBar.tsx`) shows
+that answer and writes a choice only when the person makes one; "Automatic" stores no unit, so
+a chat is bound to none. A chat is created by its first message (`NewChat.tsx`).
+
+The chat posts each turn to the agent runtime's AG-UI endpoint
+(`/agents/conversations/{rid}/ag-ui`) and reduces the event stream into messages of parts
+(`packages/chat/src/model.ts`); when the turn ends, the catalog's persisted messages replace
+the live ones, except an error the catalog never got, which stays on screen. Every assistant
+message carries the agent version and the model endpoint that wrote it, shown as a label. The
+platform ships one agent, shown read-only under Agents; a `texera.handoff` event or a system
+note naming another template (from a chat of an older release) still renders as a divider.
 
 ## Rules
 

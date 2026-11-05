@@ -18,14 +18,14 @@ def test_a_viewer_reads_and_runs_but_no_more(alice, bob, project, iris, unit, gr
 
     grants_guard(project, bob_pid, "viewer")
     found = {r["metadata"]["rid"] for r in bob.get(f"/resources?project={project}&limit=500")["items"]}
-    assert {rid, eid, iris.rid} <= found, "bob finds the workflow, the run and the dataset"
+    assert {rid, eid, iris.rid} <= found, "bob finds the workflow, the execution and the dataset"
     assert bob.get(f"/workflows/{rid}")["metadata"]["name"] == wf["metadata"]["name"]
     assert bob.status("GET", f"/workflows/{rid}/executions/{eid}/operators/avg/ports/output-0/rows?limit=5") == 200
     assert any(f["path"] == "iris.csv" for f in bob.get(f"/datasets/{iris.rid}/versions/1/files")["files"])
 
     status, bobs = bob.call("POST", f"/workflows/{rid}/run", {"waitSeconds": 180, "name": "bob's run", "computingUnit": unit})
     assert status == 201 and bobs["status"]["phase"] == "completed", (status, bobs)
-    assert bobs["metadata"]["owner"] == bob_pid, "bob's run is his own"
+    assert bobs["metadata"]["owner"] == bob_pid, "bob's execution is his own"
 
     assert bob.status("POST", f"/workflows/{rid}/edit", {"patch": [{"op": "replace", "path": "/operators/1/operatorProperties/aggregations/0/attribute", "value": "SepalWidthCm"}]}) == 403
     assert bob.status("DELETE", f"/workflows/{rid}") == 403

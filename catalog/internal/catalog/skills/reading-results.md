@@ -28,9 +28,9 @@ description: Read, check and report computed results - what run_workflow and get
 - A page is not the table. A count, a sum, a mean, a top-k: compute it in an operator (Aggregate; Sort then Limit) and read that result. Never derive it from a sample of rows, and never from memory.
 - Every final quantity, ratios and differences included, is computed by an operator and read back. Do not calculate it mentally from retrieved inputs. Keep the engine's precision and round only when presenting.
 - Check what could mislead: rows lost by an inner join, duplicate keys, null denominators, numbers stored as text (cast with TypeCasting before arithmetic), header cells with spaces, literal values such as `None` or `NA` that are not nulls, a population that changed between operators.
-- A failed run names the failing operator and its error. Fix the plan (a new version) and rerun. If the same error repeats, read the failing operator's input before changing the code again.
+- A failed execution names the failing operator and its error. Fix the plan (a new version) and rerun. If the same error repeats, read the failing operator's input before changing the code again.
 - When the question allows more than one reading, choose the conventional one, apply it, and answer that reading only.
 
 ## Answering
 
-A reply without a tool call is your final answer, so send it only after the results it rests on have been shown in this turn. Lead with the answer in the person's requested format, units and precision; then one or two sentences on how it was computed, naming the workflow and the run, which the person can open beside the chat. State the filters and assumptions that shaped the population. Keep it short: the tables are on the run page.
+A reply without a tool call is your final answer, so send it only after the results it rests on have been shown in this turn. Lead with the answer in the person's requested format, units and precision; then one or two sentences on how it was computed, naming the workflow and the execution, which the person can open beside the chat. State the filters and assumptions that shaped the population. Keep it short: the tables are on the execution's page.

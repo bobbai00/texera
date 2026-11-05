@@ -236,7 +236,7 @@ func TestDatasetFilesReferencesAndDelete(t *testing.T) {
 	}
 }
 
-func TestRunResultsAndLineage(t *testing.T) {
+func TestExecutionResultsAndLineage(t *testing.T) {
 	h := newHarness(t)
 	ds := h.create("alice", "datasets", "iris", map[string]any{"format": "csv"})
 	h.mustJSON("alice", "PUT", p+"/datasets/"+rid(ds)+"/files/iris.csv", "Species,PetalLengthCm\nsetosa,1.4\n", nil)
@@ -259,7 +259,7 @@ func TestRunResultsAndLineage(t *testing.T) {
 	}
 
 	var exec envelope
-	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{"name": "first run"}, &exec)
+	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{"name": "first execution"}, &exec)
 	if exec.Kind != "execution" || exec.Metadata.Parent == nil || string(*exec.Metadata.Parent) != rid(wf) {
 		t.Fatalf("execution: %+v", exec.Metadata)
 	}
@@ -298,7 +298,7 @@ func TestRunResultsAndLineage(t *testing.T) {
 	if !hasEdge(up.Edges, "used", "", fileURI) {
 		t.Fatalf("used edge: %+v", up.Edges)
 	}
-	// The unit reports: an operator event with the port result, then the run's completion.
+	// The unit reports: an operator event with the port result, then the execution's completion.
 	event := func(job string, eventType string, runFacets, outputFacets map[string]any, outputs []string) {
 		t.Helper()
 		ev := map[string]any{"eventType": eventType, "eventTime": time.Now().UTC().Format(time.RFC3339), "producer": "test", "schemaURL": "https://openlineage.io/spec/1-0-5/OpenLineage.json",
@@ -319,7 +319,7 @@ func TestRunResultsAndLineage(t *testing.T) {
 	start := map[string]any{"eventType": "START", "eventTime": time.Now().UTC().Format(time.RFC3339), "producer": "x", "schemaURL": "x", "run": map[string]any{"runId": rid(exec)}, "job": map[string]any{"namespace": "t", "name": rid(exec)}}
 	for _, who := range []string{"alice", "admin", "service", "unit:unit-" + uuid.NewString()} {
 		if status, _ := h.do(who, "POST", "/lineage/v1/events", start); status != http.StatusForbidden {
-			t.Fatalf("%s may not report on the run: %d", who, status)
+			t.Fatalf("%s may not report on the execution: %d", who, status)
 		}
 	}
 	// The ports and their tables are known from the start; a report of another table is refused.
@@ -365,11 +365,11 @@ func TestRunResultsAndLineage(t *testing.T) {
 	if len(rows.Rows) != 3 || len(rows.Schema) != 2 {
 		t.Fatalf("rows: %+v", rows)
 	}
-	// The run's own lineage: it produced its table and used the file; the file leads to the run.
+	// The execution's own lineage: it produced its table and used the file; the file leads to the execution.
 	var down api.LineageGraph
 	h.mustJSON("alice", "GET", p+"/resources/"+rid(exec)+"/lineage?direction=downstream", nil, &down)
 	if !hasEdge(down.Edges, "produced", "", "iceberg://"+namespace+".agg_output_0@5566") {
-		t.Fatalf("downstream of the run: %+v", names(down.Edges))
+		t.Fatalf("downstream of the execution: %+v", names(down.Edges))
 	}
 	h.mustJSON("alice", "GET", p+"/resources/"+rid(ds)+"/lineage?direction=downstream", nil, &down)
 	if !hasEdge(down.Edges, "used", "", fileURI) {
@@ -404,13 +404,9 @@ func TestRunResultsAndLineage(t *testing.T) {
 func TestConversationsCredentialsAndUnits(t *testing.T) {
 	h := newHarness(t)
 	conv := h.create("alice", "conversations", "chat", map[string]any{})
-	tpl, _ := conv.Spec["template"].(string)
-	if !strings.HasPrefix(tpl, "texera://agent-templates/") {
-		t.Fatalf("default template: %+v", conv.Spec)
-	}
 	var turn api.Turn
 	h.mustJSON("alice", "POST", p+"/conversations/"+rid(conv)+"/turns", map[string]any{}, &turn)
-	if turn.Turn == "" || !strings.HasSuffix(string(turn.Template), "@1") {
+	if turn.Turn == "" || !strings.HasPrefix(string(turn.Template), "texera://agent-templates/") || !strings.HasSuffix(string(turn.Template), "@1") {
 		t.Fatalf("turn: %+v", turn)
 	}
 	if status, _ := h.do("alice", "POST", p+"/conversations/"+rid(conv)+"/turns", map[string]any{}); status != http.StatusConflict {

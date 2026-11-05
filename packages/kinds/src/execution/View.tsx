@@ -24,11 +24,11 @@ const TONE: Record<ExecutionStatus["phase"], "neutral" | "success" | "danger" | 
   cancelled: "danger",
 };
 
-/** A run: when and how it ended, each operator's state, its port results, and what it read. */
+/** An execution: when and how it ended, each operator's state, its port results, and what it read. */
 export default function ExecutionView({ ref, mode }: KindViewProps) {
   const queryClient = useQueryClient();
   const { data: x, error } = useQuery(executionQuery(ref.rid));
-  // The run's state as the unit reports it, as it arrives: phase, operators, ports.
+  // The execution's state as the unit reports it, as it arrives: phase, operators, ports.
   useWatch(ref.rid);
   const workflow = x?.metadata.parent ?? ref.parent ?? "";
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["resource", ref.rid] });
@@ -46,7 +46,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
     onSuccess: refresh,
   });
   const { expand } = useOpenResource();
-  // A finished run can be deleted with its result tables; the workflow stays open.
+  // A finished execution can be deleted with its result tables; the workflow stays open.
   const remove = useMutation({
     mutationFn: () => unwrap(workflowsDeleteExecution({ path: { rid: workflow, eid: ref.rid } })),
     onSuccess: () => {
@@ -54,7 +54,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
       expand({ kind: "workflow", rid: workflow });
     },
   });
-  // A kept run's results stay under the retention policy: the label the hourly sweep honours.
+  // A kept execution's results stay under the retention policy: the label the hourly sweep honours.
   const keep = useMutation({
     mutationFn: (kept: boolean) => {
       const labels = { ...(x?.metadata.labels ?? {}) };
@@ -65,7 +65,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["resource", ref.rid] }),
   });
   const [tab, setTab] = useState("results");
-  if (error) return <ErrorNote error={error} prefix="Could not open this run" className="m-4" />;
+  if (error) return <ErrorNote error={error} prefix="Could not open this execution" className="m-4" />;
   if (!x) return <Skeleton className="m-4 h-64" />;
   const status = x.status ?? { phase: "pending" as const };
   const kept = x.metadata.labels?.["texera.keep"] === "true";
@@ -97,39 +97,39 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
               {status.phase}
             </Badge>
             {status.phase === "running" && (
-              <Button variant="secondary" size="sm" onClick={() => pause.mutate()} disabled={pause.isPending} data-pause-run title="Pause the run; it keeps its state">
+              <Button variant="secondary" size="sm" onClick={() => pause.mutate()} disabled={pause.isPending} data-pause-execution title="Pause the execution; it keeps its state">
                 <Pause className="fill-current" /> Pause
               </Button>
             )}
             {status.phase === "paused" && (
-              <Button variant="secondary" size="sm" onClick={() => resume.mutate()} disabled={resume.isPending} data-resume-run title="Continue the run">
+              <Button variant="secondary" size="sm" onClick={() => resume.mutate()} disabled={resume.isPending} data-resume-execution title="Continue the execution">
                 <Play className="fill-current" /> Resume
               </Button>
             )}
             {live && (
-              <Button variant="secondary" size="sm" onClick={() => cancel.mutate()} disabled={cancel.isPending} data-stop-run>
+              <Button variant="secondary" size="sm" onClick={() => cancel.mutate()} disabled={cancel.isPending} data-stop-execution>
                 <Square className="fill-current" /> Stop
               </Button>
             )}
             {!live && (
-              <Button variant="ghost" size="sm" onClick={() => keep.mutate(!kept)} disabled={keep.isPending} data-keep-run={kept ? "kept" : "free"} title={kept ? "Let the retention policy expire these results" : "Keep these results past the retention policy"}>
+              <Button variant="ghost" size="sm" onClick={() => keep.mutate(!kept)} disabled={keep.isPending} data-keep-execution={kept ? "kept" : "free"} title={kept ? "Let the retention policy expire these results" : "Keep these results past the retention policy"}>
                 {kept ? <BookmarkCheck /> : <Bookmark />} {kept ? "Kept" : "Keep"}
               </Button>
             )}
             {!live && (
-              <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending} data-delete-run title="Delete this run and its result tables">
+              <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending} data-delete-execution title="Delete this execution and its result tables">
                 <Trash2 /> Delete
               </Button>
             )}
           </>
         }
       />
-      {status.error !== undefined && status.error !== null && <ErrorNote error={status.error} prefix="The run failed" className="m-3" />}
-      {cancel.error && <ErrorNote error={cancel.error} prefix="Could not stop the run" className="m-3" />}
-      {pause.error && <ErrorNote error={pause.error} prefix="Could not pause the run" className="m-3" />}
-      {resume.error && <ErrorNote error={resume.error} prefix="Could not resume the run" className="m-3" />}
-      {remove.error && <ErrorNote error={remove.error} prefix="Could not delete the run" className="m-3" />}
-      {keep.error && <ErrorNote error={keep.error} prefix="Could not change the run's keep mark" className="m-3" />}
+      {status.error !== undefined && status.error !== null && <ErrorNote error={status.error} prefix="The execution failed" className="m-3" />}
+      {cancel.error && <ErrorNote error={cancel.error} prefix="Could not stop the execution" className="m-3" />}
+      {pause.error && <ErrorNote error={pause.error} prefix="Could not pause the execution" className="m-3" />}
+      {resume.error && <ErrorNote error={resume.error} prefix="Could not resume the execution" className="m-3" />}
+      {remove.error && <ErrorNote error={remove.error} prefix="Could not delete the execution" className="m-3" />}
+      {keep.error && <ErrorNote error={keep.error} prefix="Could not change the execution's keep mark" className="m-3" />}
       {status.resultsExpiredAt && (
         <p className="mx-3 mt-3 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground" data-results-expired>
           The result tables expired {timeAgo(status.resultsExpiredAt)} under the retention policy; the summaries below stay.
@@ -173,7 +173,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
           )}
         </TabPanel>
         <TabPanel value="inputs" className="scrollbar-thin space-y-2 overflow-y-auto p-3">
-          {inputs.length === 0 ? <EmptyState>This run read no dataset files.</EmptyState> : inputs.map(uri => <UriChip key={uri} uri={uri} emphasis />)}
+          {inputs.length === 0 ? <EmptyState>This execution read no dataset files.</EmptyState> : inputs.map(uri => <UriChip key={uri} uri={uri} emphasis />)}
         </TabPanel>
         <TabPanel value="errors" className="scrollbar-thin space-y-2 overflow-y-auto p-3">
           {errors.map(([opid, o]) => (

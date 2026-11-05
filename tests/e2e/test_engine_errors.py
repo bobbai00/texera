@@ -1,6 +1,6 @@
-"""What the engine says reaches whoever asked, through the REST API and through the dataflow MCP
-tools an agent uses: an operator's own exception, a compile error, a port with no result. A port
-the plan names whose table is not written yet is an empty page while the run goes, not an error."""
+"""What the engine says reaches whoever asked, through the REST API and through the MCP tools an
+agent uses: an operator's own exception, a compile error, a port with no result. A port
+the plan names whose table is not written yet is an empty page while the execution goes, not an error."""
 import json
 import time
 
@@ -20,7 +20,7 @@ class ProcessTupleOperator(UDFOperatorV2):
 
 
 def tool(api, name: str, **arguments) -> tuple[bool, str]:
-    return chat.tool(api, "dataflow", name, **arguments)
+    return chat.tool(api, name, **arguments)
 
 
 def udf(file_uri: str, code: str) -> dict:
@@ -29,15 +29,15 @@ def udf(file_uri: str, code: str) -> dict:
 
 def test_a_failing_operator_says_why_through_run_workflow(alice, project, iris):
     wf = alice.create("workflows", "cursed", udf(iris.file, UDF_BOOM), project=project)
-    failed, text = chat.tool(alice, "dataflow", "run_workflow", rid=wf["metadata"]["rid"], waitSeconds=120)
-    assert not failed, "the call worked; the run failed, and the execution says so"
+    failed, text = chat.tool(alice, "run_workflow", rid=wf["metadata"]["rid"], waitSeconds=120)
+    assert not failed, "the call worked; the execution failed, and says so"
     execution = json.loads(text)
     assert execution["status"]["phase"] == "failed", text[:800]
     # Built at run time, so these words are the engine's and not the operator's source in the plan.
     words = "the flower count is cursed 7431"
     assert words in json.dumps(execution["status"]), json.dumps(execution["status"])[:1500]
     assert execution["status"]["operators"]["op"].get("error"), execution["status"]["operators"]
-    # So does reading the run afterwards.
+    # So does reading the execution afterwards.
     failed, again = tool(alice, "get_execution", rid=wf["metadata"]["rid"], eid=execution["metadata"]["rid"])
     assert not failed and words in json.dumps(json.loads(again)["status"]), again[:1500]
     # And the workflow can be fixed and run again on the same unit.
@@ -84,7 +84,7 @@ def test_a_port_is_empty_until_its_table_is_written(alice, project, iris):
         if phase == "completed" and len(body["rows"]) == 3:
             return
         assert phase in ("pending", "provisioning", "running", "completed"), phase
-    pytest.fail(f"the run did not finish: {answers[-5:]}")
+    pytest.fail(f"the execution did not finish: {answers[-5:]}")
 
 
 def test_an_unknown_run_is_not_found(alice, project, iris):

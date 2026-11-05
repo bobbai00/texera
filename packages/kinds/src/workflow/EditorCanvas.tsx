@@ -27,6 +27,7 @@ import {
 import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { operatorSchemasQuery } from "../queries";
+import { useScope } from "../scope";
 import type { EditorStore } from "./editor";
 import { nodeTypes } from "./OperatorNode";
 import { OPERATOR_DRAG_TYPE } from "./OperatorPalette";
@@ -71,7 +72,7 @@ export function EditorCanvas({
   const flow = useMemo(() => toFlow(spec, positions, overlay), [spec, positions, overlay]);
   const [nodes, setNodes, onNodesChange] = useNodesState<OperatorNode>(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(flow.edges);
-  const { data: schemas } = useQuery(operatorSchemasQuery());
+  const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
 
   // The store is the truth; React Flow keeps what it measured and what is being dragged.
   useEffect(() => {

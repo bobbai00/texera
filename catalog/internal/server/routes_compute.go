@@ -11,7 +11,11 @@ import (
 func (s *Server) routeCompute() {
 	units := Prefix + "/computing-units"
 	s.handle("GET "+units+"/available", func(w http.ResponseWriter, r *http.Request) error {
-		rs, err := s.svc.Available(ctxOf(r), callerOf(r))
+		scope, err := queryRid(r, "scope")
+		if err != nil {
+			return err
+		}
+		rs, err := s.svc.Available(ctxOf(r), callerOf(r), scope)
 		if err != nil {
 			return err
 		}

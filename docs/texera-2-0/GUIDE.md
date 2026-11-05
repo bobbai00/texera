@@ -1,10 +1,10 @@
 # Using Texera 2.0
 
 Texera 2.0 is a chat-first data analysis platform. A person asks an agent; the agent builds and
-runs workflows through the Texera MCP server; every dataset, workflow, run, operator and
-template is a resource of one catalog, versioned, shareable, and linked by lineage. Everything
+runs workflows through the Texera MCP server; every dataset, workflow, execution, operator and
+agent is a resource of one catalog, versioned, shareable, and linked by lineage. Everything
 below runs on one machine with the dev stack, or on a local Kubernetes cluster with one
-command. This guide goes from the first sign-in to runs, agents, the API by hand and your own
+command. This guide goes from the first sign-in to executions, agents, the API by hand and your own
 agents; the deeper documents are listed at the end.
 
 ## 1. Bring it up
@@ -32,7 +32,7 @@ The same stack on Kubernetes: `bin/texera-2-0/k8s.sh up`, then http://localhost:
 | Piece | Where | Role |
 | --- | --- | --- |
 | Gateway (Envoy) | :8088 | the only entry point: the app, `/catalog/v1`, `/mcp/*`, `/agents/*`, `/auth` |
-| Catalog (Go) | :8090 | the control plane: resources, versions, grants, runs, lineage, the MCP servers |
+| Catalog (Go) | :8090 | the control plane: resources, versions, grants, executions, lineage, the MCP server |
 | Computing unit (Amber) | :28085 | runs workflows; reached by the catalog only |
 | Agent runtime (Bun) | :23002 | runs one chat turn at a time |
 | Frontend (vite) | :5174 | the workspace, served through the gateway |
@@ -40,44 +40,68 @@ The same stack on Kubernetes: `bin/texera-2-0/k8s.sh up`, then http://localhost:
 
 ## 2. The workspace
 
-**A chat.** The home page starts a conversation with the Texera Agent, the one agent of the
-deployment: it answers data questions by building and running workflows, and grounds research
-questions in the biomedical literature. Pick the computing unit the chat's runs use, then ask.
-Attach a CSV from the composer and it becomes a dataset of yours, shown as a card of your
-message. Every resource the agent makes or touches shows as a card in the message and in the
-rail beside the chat. Each assistant message is labelled with the version of the agent that
-wrote it. A turn that fails says why in the chat, and still does after a reload.
+**A chat.** The home page is where a chat starts: say what you want, and your first message
+makes the chat, in the project you work in. Every chat runs the Texera Agent: it answers data
+questions by building and running workflows, and grounds research questions in the biomedical
+literature. The foot of the box shows what the chat runs with: the agent, its model, the
+computing unit and the add-on tools. Change one and the chat stores your choice; a chat you
+never touch stores nothing and follows its project's and the platform's defaults. The unit is a
+preference, not a binding: "Automatic" lets each execution take the workflow's, the project's
+or the platform's default, and a call can always name another unit. Attach a CSV from the box
+and it becomes a dataset of the chat's project, shown as a card of your message. Every resource
+the agent makes or touches shows as a card in the message and in the rail beside the chat.
+Each answer is labelled with the version of the agent and the model that wrote it. A turn that
+fails says why in the chat, and still does after a reload.
 
 **A chat with others.** Share a conversation like any resource and it is a group chat: an
 editor posts and takes turns, a viewer reads along. Their messages arrive as they are sent,
 under their names; one person talks to the agent at a time, and while Bob's turn runs Alice
-sees "Bob is talking to the Data Analyst" and waits. The agent's answer to Bob's question is
-Bob's turn, so the history says who asked what. The same works from the API: a grant on the
-conversation is the membership, every message carries its author, and the turn lock names
-its holder.
+sees "Bob is talking to the Texera Agent" and waits. The agent's answer to Bob's question is
+Bob's turn, so the history says who asked what. A choice of the chat that someone in it may
+not use (the owner's own model or unit) is passed over for them: their turn runs with the next
+default, and the chat says so. The same works from the API: a grant on the conversation is the
+membership, every message carries its author, and the turn lock names its holder.
 
-**The library.** Every kind has a page under its plural: `/workflows`, `/datasets`, `/operators`, `/environments`, `/computing-units`, `/credentials`,
-`/mcp-servers`, `/model-endpoints`, `/skills`, `/projects`, and `/settings` for
-administrators. "New …" opens a form generated from the kind's schema. A resource's page has
-its spec (a form, the JSON a click away), its versions, who can access it, its lineage and the
-raw envelope; `?panel=` opens a second resource beside the first.
+**Projects.** Everything lives in a project, and you work in one at a time, picked at the top
+of the sidebar: "Personal", your home project, until you pick another, or "All projects". The
+lists show the project you work in and what it inherits, the built-ins; what you make goes
+into it, and so does what the agent makes in a chat of that project. Names are unique per
+project and kind (a duplicate is refused with 409). Share a project and everything in it is
+shared the same way; make it public and everyone can read what is in it. A project can name
+its own defaults: the agent, the model, the computing unit, the environment, and add-on tools
+for all its chats.
 
-**Projects.** Everything lives in a project; you start with a home project. Names are unique
-per project and kind (a duplicate is refused with 409). Share a project and everything in it
-is shared the same way.
+**Built-in.** What the platform ships (the agent, its skills and MCP servers, the model
+endpoint, the default unit and environment, the engine's operators) lives in one project,
+"Built-in", and that is all that makes a resource built in. Everyone can view and use what is
+in it; nobody changes it through the app or the API, an administrator included (`409
+builtin`): it changes with a release. An administrator changes which agent, unit, environment
+or model is the default in the settings, and a project in its own.
 
-**Workflows.** The editor is a canvas over the spec: operators (the engine's built-ins and your
-custom operators, by URI), links, properties from each operator's JSON Schema. A file property
-takes a dataset file URI, `texera://datasets/{rid}@{vno}/files/{path}`. "Validate" compiles
-the version on a unit and shows the output columns per port and any errors; "Run" starts an
-execution and opens its page. Every save is a version; a run pins the version it used.
+**The library.** Every kind has a page under its plural, linked from the sidebar: what you
+make and keep (`/workflows`, `/datasets`, `/models`, `/operators`, `/environments`,
+`/computing-units`), what happened (`/executions`, across workflows), what the agent is made
+of (`/agent-templates`, `/skills`, `/mcp-servers`, `/model-endpoints`, `/credentials`),
+`/projects`, and `/settings` for administrators. "New …" opens a form generated from the
+kind's schema; a new computing unit asks for its memory and CPU. A resource's page has its
+spec (a form, the JSON a click away), its versions, who can access it, its lineage and the raw
+envelope; `?panel=` opens a second resource beside the first.
 
-**Runs.** A run's page shows its phase, the operators with their states and counts as the unit
-reports them (about once a second while it runs), the results of each output port (paged
-rows), its inputs and its lineage. "Pause" holds a running run where it is and "Resume"
-continues it; "Stop" cancels a live one; "Keep" marks a finished run so the retention policy
-leaves its results alone; "Delete" removes it with its tables. The page follows the run
-without reloading. Results live with the run: to use them again, rerun or read the rows.
+**Workflows.** The editor is a canvas over the spec: operators (the engine's built-ins and the
+custom operators of the workflow's project, by URI), links, properties from each operator's
+JSON Schema. A file property takes a dataset file URI,
+`texera://datasets/{rid}@{vno}/files/{path}`. The editor compiles as you edit, on a unit, and
+shows the output columns per port and any errors; "Run" starts an execution and opens its
+page. Every save is a version; an execution pins the version it ran.
+
+**Executions.** An execution's page shows its phase, the operators with their states and
+counts as the unit reports them (about once a second while it runs), the results of each
+output port (paged rows), its inputs and its lineage. "Pause" holds a running one where it is
+and "Resume" continues it; "Stop" cancels a live one; "Keep" marks a finished one so the
+retention policy leaves its results alone; "Delete" removes it with its tables. The page
+follows the execution without reloading. Results live with the execution: to use them again,
+run again or read the rows. An execution lives under its workflow; the sidebar lists them
+across workflows because that is how people look for one.
 
 **Datasets.** Upload files (they stay staged), then commit a version; download or presign any
 file of any version. Uploading the same bytes twice stores them once.
@@ -87,8 +111,8 @@ file of any version. Uploading the same bytes twice stores them once.
 computing unit, a credential or a model endpoint, and viewing never implies using. The access
 tab finds people by name or email, logged in or not.
 
-**Settings** (administrators): branding, the defaults a run or a chat falls back to (template,
-environment, unit, model endpoint) and retention (section 5).
+**Settings** (administrators): branding, the defaults an execution or a chat falls back to
+(agent, environment, unit, model endpoint) and retention (section 5).
 
 ## 3. Agents
 
@@ -97,47 +121,62 @@ conversation at a time, on the person's behalf and with the person's own permiss
 
 **What it is made of.** A system prompt, tools, and skills.
 
-- **Basic tools**, always there: the catalog server and the dataflow server, the platform's own
-  MCP servers, plus `load_skill`. The two servers share no tool. The dataflow server holds the
-  verbs of a workflow and its runs (`create_workflow`, `edit_workflow`, `validate_workflow`,
-  `run_workflow`, `get_port_result`, …); everything that exists is the catalog server's:
-  resources and their versions, lineage and sharing, dataset files, operators, computing units.
+- **Basic tools**: the platform's own MCP server, the catalog, plus `load_skill`. The catalog
+  server holds every tool of the platform, because a workflow is a resource and running it is
+  one of its verbs: resources with their versions, lineage and sharing, dataset files,
+  operators, computing units, and `create_workflow`, `edit_workflow`, `validate_workflow`,
+  `run_workflow`, `get_execution`, `get_port_result`, pause and resume. The agent lists it like
+  any other server; nothing is mounted behind its back.
 - **Add-ons**: any other MCP server; the platform ships the bio server (PubMed, genes,
   variants, proteins). An add-on that cannot be reached is left out of the turn and the agent
   is told, so it says so instead of answering from memory; the turn goes on with the rest.
 - **Skills** are Markdown the agent loads by name when it needs them (building workflows,
   Python operators, reading results, the literature review), so the prompt stays short.
-- The agent is told, at every step, today's date and the computing unit of the chat.
+- The agent is told, at every step, today's date, the project the chat is in and the computing
+  unit an execution falls back to. It works where the chat is: its searches cover the chat's
+  project and the built-ins unless it names another scope, and what it makes goes there.
+
+**What a chat runs with.** A chat stores choices and nothing else: its agent, the model, the
+computing unit its executions prefer, its add-on servers. A turn runs with the chat's choice,
+else the project's, else the agent's own or the platform's default. The add-ons a chat lists
+take the place of the agent's and the project's; the catalog server is not an add-on and
+stays. The catalog decides, in one place: `GET /conversations/{rid}/settings` says what a turn
+would run with and which level chose each, `GET /projects/{rid}/chat-settings` the same for a
+chat not started yet. The runtime builds what it says, and each answer records the agent
+version, the model and the servers that wrote it.
 
 **Where it is defined.** The agent is a file in the repository,
 `catalog/internal/catalog/agents/texera-agent.md` (its card and its system prompt), next to the
 skills in `skills/*.md`; the model endpoint, the skills and the MCP servers it uses are a few
-lines of `seed.go`. The catalog seeds it at start as a built-in agent template, the settings'
+lines of `seed.go`. The catalog seeds it at start into the Built-in project, as the settings'
 default. A changed file is a new version at the next start; a turn runs the newest version,
 and every message records the version that wrote it, so a change is traceable and is undone by
-reverting the file. What the platform ships changes only this way: the API refuses to edit or
-delete a built-in resource (`409 builtin`), also for an administrator, because the next start
-would silently undo it. The model, its key and the bio server's address come from the
-deployment (`TEXERA_MODEL_NAME`, the key in `.env`, `TEXERA_BIOMCP_URL`).
+reverting the file. The Built-in project holds what the release ships and nothing else: what
+an older release shipped is removed at the next start, and a chat that named it falls back to
+the platform's. The model, its key and the bio server's address come from the deployment
+(`TEXERA_MODEL_NAME`, the key in `.env`, `TEXERA_BIOMCP_URL`).
 
 - **Model endpoints** name a provider and a model (`anthropic`, or `openai_compatible` with a
   base URL) and the **credential** whose secret is the key. The runtime holds no key: it
-  leases the credential for the turn.
+  leases the credential for the turn, as the person. Register your own and pick it in a chat's
+  box.
 - **MCP servers** are any streamable-HTTP server; a header value `credential:<uri>` or
-  `credential:<uri>#<field>` is replaced by the leased secret.
+  `credential:<uri>#<field>` is replaced by the leased secret. Register your own and switch it
+  on in a chat's add-ons, or list it in a project for all its chats.
 - The conversation keeps the history; the runtime is stateless, so one turn runs at a time
   (`409 turn_active` otherwise) and a crash loses nothing.
 
-Not offered for now: agents of your own, switching agents in a chat, and handing a chat from
-one agent to another. The agent template kind, `/mode` and the handoff tool remain in the code
-for when they return; chats started with an agent of an older release keep working with it.
+Not offered for now: making agents of your own in the app (the API makes them, and a chat can
+name one), switching agents in a chat, handing a chat from one agent to another, and asking
+before the agent acts. The `/mode` command and the handoff tool remain in the code for when
+they return.
 
-## 4. Workflows and runs, by the API
+## 4. Workflows and executions, by the API
 
 `bin/texera-2-0/examples/walkthrough.py` is the tour, runnable as is, and prints every
-request it makes: sign in, a project, a dataset with a committed file, a workflow, the plan a
-run would use, the run, its rows and lineage, the keep mark, sharing with Bob, the MCP tools,
-cleanup (`--chat` adds one turn with the Data Analyst; `--gw http://localhost:28088` runs it
+request it makes: sign in, a project, a dataset with a committed file, a workflow, the plan
+an execution would use, the execution, its rows and lineage, the keep mark, sharing with Bob,
+the MCP tools, cleanup (`--chat` adds one turn with the Texera Agent; `--gw http://localhost:28088` runs it
 against the cluster). The pieces, as curl:
 
 ```
@@ -154,9 +193,9 @@ api -X POST $GW/catalog/v1/datasets/$DS/commit -d '{"message":"first upload"}'  
 api -X POST $GW/catalog/v1/workflows -d @workflow.json                                    # {"name":..., "spec":{"operators":[...],"links":[...]}}
 api $GW/catalog/v1/computing-units/available                                              # a unit with status.phase ready
 api -X POST $GW/catalog/v1/workflows/$WF/validate -d '{}'                                 # compile: schemas, errors, and the plan
-api -X POST $GW/catalog/v1/workflows/$WF/run -d '{"name":"first run","waitSeconds":240}'  # -> the execution, completed
+api -X POST $GW/catalog/v1/workflows/$WF/run -d '{"name":"first execution","waitSeconds":240}'  # -> the execution, completed
 api "$GW/catalog/v1/workflows/$WF/executions/$EID/operators/avg/ports/output-0/rows?limit=10"
-api "$GW/catalog/v1/resources/$EID/lineage?direction=upstream"                            # the run used the file
+api "$GW/catalog/v1/resources/$EID/lineage?direction=upstream"                            # the execution used the file
 api -X PATCH $GW/catalog/v1/resources/$EID -d '{"labels":{"texera.keep":"true"}}'         # keep its results
 api -X PUT $GW/catalog/v1/resources/$PROJECT/grants/$BOB -d '{"relation":"viewer"}'       # share
 ```
@@ -167,14 +206,14 @@ URI, and links ports `output-0` to `input-0`. The spec in the walkthrough is a c
 example. `viewResult: true` on an operator stores its output so the rows can be read; an
 operator nothing reads is stored anyway.
 
-**How a run works.** `POST /workflows/{rid}/run` goes through three phases in the catalog.
+**How an execution starts.** `POST /workflows/{rid}/run` goes through three phases in the catalog.
 It authorizes everything the compiled plan names before anything is written: execute on the
 workflow, run on the unit, read on the environment, every dataset file and custom operator,
 use on every credential; a refusal leaves nothing behind. It compiles the version into a plan
 that is data: the engine's logical plan with files and credentials still named by URI, the
 custom operators compiled in, and one table per output port the engine writes, named
-`<operator>_<port>` inside the run's own namespace `e_<rid>` in the lake. `validate` returns
-the same plan, so a dry run shows what a run would do. Then it materializes: the execution is
+`<operator>_<port>` inside the execution's own namespace `e_<rid>` in the lake. `validate`
+returns the same plan, so a dry run shows what an execution would do. Then it materializes: the execution is
 stored with its plan (`spec.plan`, no secret, no URL that expires), its namespace is opened
 for the unit's identity, and the engine receives a bound copy with presigned inputs and
 leased secrets. The unit reports back as itself through OpenLineage events, and only the unit
@@ -184,7 +223,7 @@ so a restarted unit, or another unit, serves them from the lake.
 
 With `waitSeconds` the call returns the finished execution; without it, watch it. Every
 resource has an event stream, `GET /resources/{rid}/events`, server-sent events for as long
-as the connection stays open: `resource` with the envelope after each change (for a run:
+as the connection stays open: `resource` with the envelope after each change (for an execution:
 `status.phase`, the operators' states and counts, the ports as they fill), `message` for a
 conversation's messages, `deleted` when it goes.
 
@@ -194,16 +233,17 @@ curl -sN -H "Authorization: Bearer $TOKEN" $GW/catalog/v1/resources/$EID/events
 # data: {"kind":"execution",...,"status":{"phase":"running","operators":{"scan":{"state":"Running","tuples":80}}}}
 ```
 
-A run's phases are pending, provisioning, running, paused, completed, failed and cancelled.
-`POST .../executions/{eid}/pause` holds a running run (the phase turns `paused` when the unit
-confirms), `.../resume` continues it, `.../cancel` ends it; a verb that does not fit the phase
-answers 409. A workflow with a run still going on the same unit answers 409 to another run.
+An execution's phases are pending, provisioning, running, paused, completed, failed and
+cancelled. `POST .../executions/{eid}/pause` holds a running one (the phase turns `paused`
+when the unit confirms), `.../resume` continues it, `.../cancel` ends it; a verb that does not
+fit the phase answers 409. A workflow with an execution still going on the same unit answers
+409 to another.
 
 **Environments, custom operators, credentials.**
 
 - An **environment** is a Python package list (PEP 508 lines, an optional version range),
   versioned; a unit builds it on first use (`POST /environments/{rid}/build` builds ahead).
-  A run takes the request's environment, else the one its custom operators pin, else the
+  An execution takes the request's environment, else the one its custom operators pin, else the
   workflow's, the project's and the settings' defaults, in that order; a pin that disagrees
   with the request is refused with 409.
 - A **custom operator** is a Python class with the engine's UDF interface, with its ports, its
@@ -213,55 +253,58 @@ answers 409. A workflow with a run still going on the same unit answers 409 to a
   operator a workflow version uses is refused, the dependents listed.
 - A **credential** holds a secret written once (`PUT /credentials/{rid}/secret`) and never
   read back. A property whose schema says `format: credential` takes a credential URI; the
-  catalog leases the secret for the run and puts it in the plan the engine receives, never in
+  catalog leases the secret for the execution and puts it in the plan the engine receives, never in
   a version or an execution. The caller must be allowed to use the credential.
 
 ## 5. Keeping and losing results
 
-Results are Iceberg tables in the lake, in the run's namespace, written by the unit's own
+Results are Iceberg tables in the lake, in the execution's namespace, written by the unit's own
 identity and readable through the catalog alone. The settings' `retention.results` (an ISO
-8601 duration, `P30D`) is how long a finished run keeps its tables; absent, forever. The
+8601 duration, `P30D`) is how long a finished execution keeps its tables; absent, forever. The
 catalog sweeps hourly (`POST /settings/retention/sweep` runs one now, for administrators);
-an expired run keeps its record and summaries and answers 410 to its rows. The label
+an expired execution keeps its record and summaries and answers 410 to its rows. The label
 `texera.keep` on an execution (the Keep button) exempts it. `DELETE /workflows/{rid}/
-executions/{eid}` removes a finished run with its tables; `retention.blobs` (default a day)
+executions/{eid}` removes a finished execution with its tables; `retention.blobs` (default a day)
 removes uploaded files nobody committed.
 
 ## 6. Computing units
 
-A computing unit is the engine deployment a run goes to, and a resource: `provider: static`
-is a unit already running at an `endpoint` (the dev stack's "local unit", started by
+A computing unit is the engine deployment an execution goes to, and a resource: `provider:
+static` is a unit already running at an `endpoint` (the dev stack's "local unit", started by
 `run-unit.sh`, which presents the realm's `texera-unit` client to the lake), `provider:
-kubernetes` is one the catalog starts and reconciles on the cluster (section 8). A unit
-answers the catalog's client alone: there is no route to it through the gateway and no
-person's token opens it; people and agents run through the catalog, which authorizes and
-compiles first. Toward the lake and the catalog a unit has an identity of its own, and
-reaches only the namespaces of the runs it executed. Grant `user` on a unit to let someone
-run on it; `GET /computing-units/available` lists the ones you may use.
+kubernetes` is one the catalog starts and reconciles on the cluster (section 8): one pod of
+the engine, with the memory and CPU its master node asks for (the "New computing unit" dialog
+asks for both; changing them rolls the pod). A unit answers the catalog's client alone: there
+is no route to it through the gateway and no person's token opens it; people and agents run
+through the catalog, which authorizes and compiles first. Toward the lake and the catalog a
+unit has an identity of its own, and reaches only the namespaces of the executions it ran.
+Grant `user` on a unit to let someone run on it; `GET /computing-units/available` lists the
+ones you may use.
 
-A run goes to the unit the request names, else the chat's, else the workflow's, the project's
-or the platform's default. The chat's unit is the one picked when the chat started: the catalog
-applies it to every compile and run the agent makes in that chat, so the agent need not be
-told, and names a unit itself only when you ask for another. It gives no right to the unit:
-the person is authorized on it like on any other.
+An execution goes to the unit the request names, else the one its chat prefers, else the
+workflow's, the project's or the platform's default. A chat is not bound to a unit: it has a
+preference only when someone picked one in its box, and "Automatic" removes it. The catalog
+applies the preference to every compile and execution the agent starts in that chat, so the
+agent need not be told, and names a unit itself only when you ask for another. A preference
+gives no right to the unit: it is passed over for someone in the chat who may not run on it.
 
 ## 7. Your own agents and tools
 
 Anything that holds a person's token can do what the person can:
 
-- **The MCP servers.** `POST {gw}/mcp/catalog` and `POST {gw}/mcp/dataflow` are streamable
-  HTTP MCP servers (`Accept: application/json, text/event-stream`), one tool per operation of
-  the contract, and no tool on both: the dataflow server has the verbs of a workflow and its
-  runs (`create_workflow`, `get_workflow`, `edit_workflow`, `validate_workflow`,
-  `run_workflow`, `get_execution`, `pause_execution`, `resume_execution`,
-  `get_port_result`); the catalog server everything else (`whoami`, `search_resources`,
-  `resolve_uri`, `get_resource`, `list_versions`, `get_version`, `get_lineage`,
-  `grant_access`, `search_principals`, the dataset file tools, `list_operators`,
-  `list_computing_units`). A tool that fails answers with the status and the words of the
-  error, the engine's own when the engine refused. Point Claude Code, an SDK agent or any MCP client at them with a
-  bearer token. The walkthrough shows one call.
+- **The MCP server.** `POST {gw}/mcp/catalog` is a streamable HTTP MCP server (`Accept:
+  application/json, text/event-stream`) with one tool per operation of the contract: what
+  exists (`whoami`, `search_resources`, `resolve_uri`, `get_resource`, `list_versions`,
+  `get_version`, `get_lineage`, `grant_access`, `search_principals`, the dataset file tools,
+  `list_operators`, `list_computing_units`) and the verbs of a workflow and its executions
+  (`create_workflow`, `get_workflow`, `edit_workflow`, `validate_workflow`, `run_workflow`,
+  `get_execution`, `pause_execution`, `resume_execution`, `get_port_result`). A list takes a
+  `scope`, a project: it then holds that project and the built-ins. A tool that fails answers
+  with the status and the words of the error, the engine's own when the engine refused. Point
+  Claude Code, an SDK agent or any MCP client at it with a bearer token. The walkthrough shows
+  one call.
 - **The chat protocol.** `POST {gw}/agents/conversations/{rid}/ag-ui` runs one turn of the
-  conversation's template with an AG-UI `RunAgentInput` (only the new user message; the
+  conversation's agent with an AG-UI `RunAgentInput` (only the new user message; the
   history is the catalog's) and streams AG-UI events back: text, tool calls and results,
   `texera.resource` cards, `texera.handoff`. `GET {gw}/agents/templates/{rid}/.well-known/
   agent-card.json` and `POST .../a2a` expose a template to A2A clients.
@@ -300,14 +343,16 @@ rolls it; `terminate` removes it. Details, the images and the manifests:
 - **401 from the gateway.** The token is missing, expired or for another issuer; a realm
   change (`bin/texera-2-0/keycloak/texera-realm.json`) needs `down.sh --wipe`, Keycloak
   imports a realm once.
-- **409.** An edit or delete of a built-in resource (`builtin`); a duplicate name in the project; a delete of something still referenced or still
-  holding children (the response lists them); a run on a unit that already runs one of this
-  workflow; a unit with a run on it being changed.
-- **410** on a run's rows: its results expired under the retention policy; keep runs you need.
+- **409.** A change to a built-in resource, or to the Built-in project (`builtin`); a
+  duplicate name in the project; a delete of something still referenced or still holding
+  children (the response lists them); an execution on a unit that already runs one of this
+  workflow; a unit with an execution on it being changed.
+- **410** on an execution's rows: its results expired under the retention policy; keep the
+  ones you need.
 - **403** where you expected to be allowed: viewing never implies using; ask for `user` on the
   unit, credential or model endpoint, or `editor` to write.
-- **A run failed.** Its page and `get_execution` give the reason: an operator's own exception
-  (a Python operator that raises fails the run, with its traceback, instead of waiting), a
+- **An execution failed.** Its page and `get_execution` give the reason: an operator's own
+  exception (a Python operator that raises fails it, with its traceback, instead of waiting), a
   compile error per operator, or what the engine refused.
 - **The unit is not ready.** `logs/texera-2-0/unit.log`; the engine compiles with sbt on the
   first start and the catalog shows the unit as pending until its health answers.
@@ -320,7 +365,7 @@ rolls it; `terminate` removes it. Details, the images and the manifests:
 | --- | --- |
 | `bin/texera-2-0/README.md` | the dev stack: prerequisites, ports, the lake, Kubernetes |
 | `docs/texera-2-0/TESTING.md` | the test layers, the scenario catalog, the rules, adding a scenario |
-| `docs/texera-2-0/API-REQUESTS.md` | the conventions between the parts beyond the contract, including how a run works |
+| `docs/texera-2-0/API-REQUESTS.md` | the conventions between the parts beyond the contract, including how an execution works |
 | `docs/texera-2-0/PLAN.md`, `PROGRESS.md` | the milestone with its decisions and acceptance list; what was done, verified and comes next |
 | `docs/texera-2-0/claude-docs/handoff.md` | where things stand, the gotchas, the next steps |
 | `catalog/README.md`, `agent-runtime/README.md`, `frontend-next/README.md` | each part's run instructions, layout and rules |

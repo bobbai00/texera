@@ -102,9 +102,10 @@ func nodesOf(spec api.ComputingUnitSpec, ready bool) *[]api.ComputingNodeStatus 
 	return &nodes
 }
 
-// Available lists the units the caller may run on, with live status.
-func (s *Service) Available(ctx context.Context, caller *auth.Caller) ([]store.Resource, error) {
-	page, err := s.List(ctx, caller, &unitKind, ListFilter{Limit: 200})
+// Available lists the units the caller may run on, with live status, in a scope when one is
+// given or the call is made in a chat.
+func (s *Service) Available(ctx context.Context, caller *auth.Caller, scope *uuid.UUID) ([]store.Resource, error) {
+	page, err := s.List(ctx, caller, &unitKind, ListFilter{Scope: scope, Limit: 200})
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +312,7 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 		if op.Requires != nil {
 			spec.Requires = &api.RuntimeSpec{Environment: op.Requires.Environment, Isolation: op.Requires.Isolation, Resources: op.Requires.Resources}
 		}
-		status := mustJSON(api.OperatorStatus{Builtin: boolPtr(true), Engine: &engineID})
+		status := mustJSON(api.OperatorStatus{Engine: &engineID})
 		existing, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "operator", ParentRID: &project.RID, Name: op.OperatorType, Limit: 1})
 		if err != nil {
 			return err
@@ -319,7 +320,7 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 		specJSON := mustJSON(spec)
 		if len(existing) == 0 {
 			desc := op.OperatorDescription
-			if _, _, err := s.Create(ctx, caller, CreateInput{Kind: k, Name: op.OperatorType, Description: desc, Parent: &project.RID, Visibility: "public", Labels: map[string]string{"texera.builtin": "true"}, Spec: specJSON, Status: status, Owner: &sys.PID}); err != nil {
+			if _, _, err := s.Create(ctx, caller, CreateInput{Kind: k, Name: op.OperatorType, Description: desc, Parent: &project.RID, Spec: specJSON, Status: status, Owner: &sys.PID}); err != nil {
 				s.Log.Warn("seed operator", "type", op.OperatorType, "err", err)
 				continue
 			}
@@ -372,8 +373,6 @@ func portSpecs(ports []any) []api.OperatorPortSpec {
 	}
 	return out
 }
-
-func boolPtr(b bool) *bool { return &b }
 
 // RunOperatorSync keeps the built-in operators in step with the units, until the context ends.
 func (s *Service) RunOperatorSync(ctx context.Context, every time.Duration) {

@@ -10,6 +10,13 @@ the codegen pipeline, the service map with adapters, the roadmap and the open de
 the two docs differ, the second wins. This file is the newer word on sequencing only, and
 `PROGRESS.md` beside it records what is done and verified.
 
+The text below is the plan of milestone M1 as it was written. Decisions of Nov 5 replaced
+parts of it: one agent (the Texera Agent) instead of the Data Analyst and the Bio Researcher,
+one MCP server at `/mcp/catalog` instead of a catalog and a dataflow server, built-ins defined
+by the platform's project instead of a label, and chats that store choices and are bound to no
+computing unit. `GUIDE.md` describes the system as it is; the Nov 5 entries of `PROGRESS.md`
+say what changed and why.
+
 Settled after the doc, in the same conversation: executions are resources nested under
 workflows; versions, files, operators and ports, computing nodes and messages are subresources
 with their parent's permissions; one `edge` table holds references and lineage as a rebuildable

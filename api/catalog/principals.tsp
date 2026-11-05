@@ -31,7 +31,6 @@ namespace Routes {
     @get
     @extension("x-texera-permission", "self")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "whoami",
       description: "Who am I: the calling principal, the home project and the system project.",
       readOnlyHint: true,
@@ -51,7 +50,6 @@ namespace Routes {
     @get
     @extension("x-texera-permission", "self")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "search_principals",
       description: "Find users and groups by name or email, to share resources with.",
       readOnlyHint: true,

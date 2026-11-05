@@ -1,10 +1,8 @@
-// Package mcp serves the catalog's MCP servers. Every operation the contract tags x-mcp is a
+// Package mcp serves the catalog's MCP server. Every operation the contract tags x-mcp is a
 // tool (tools.gen.go); a tool call is turned into the HTTP request of its operation and
 // answered by the catalog's own handler in process, so the REST API and the tools cannot
-// disagree. Two servers share one table and no tool: `dataflow` holds the verbs of a workflow and
-// its runs (build, edit, compile, run, control, read results), `catalog` everything else (any
-// resource with its versions, grants and lineage, dataset files, operators, computing units,
-// people). The rule is the operation's path: under /workflows it is a dataflow tool.
+// disagree. There is one server because there is one catalog: a workflow is a resource and
+// running it is one of its verbs.
 package mcp
 
 // Param is a path or query parameter of a tool's operation.
@@ -16,8 +14,6 @@ type Param struct {
 
 // Tool is one x-mcp operation.
 type Tool struct {
-	// Server is the MCP server the tool belongs to: catalog or dataflow.
-	Server      string
 	Name        string
 	Description string
 	ReadOnly    bool
@@ -36,14 +32,3 @@ type Tool struct {
 }
 
 func boolPtr(b bool) *bool { return &b }
-
-// ForServer returns the tools of one server.
-func ForServer(server string) []Tool {
-	var out []Tool
-	for _, t := range Tools {
-		if t.Server == server {
-			out = append(out, t)
-		}
-	}
-	return out
-}

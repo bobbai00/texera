@@ -64,4 +64,4 @@ class ProcessTableOperator(UDFTableOperator):
 
 A source without input (`operatorType` `PythonUDFSourceV2`, no input port): `class GenerateOperator(UDFSourceOperator)` with `def produce(self) -> Iterator[Optional[Union[TupleLike, TableLike]]]`.
 
-Rules: keep the class names above; no top-level code besides imports and the class; yield nothing to drop a row; `logger.info(...)` writes to the operator's console. An exception fails the run with a traceback that points at your line: fix the code (a new workflow version) and rerun.
+Rules: keep the class names above; no top-level code besides imports and the class; yield nothing to drop a row; `logger.info(...)` writes to the operator's console. An exception fails the execution with a traceback that points at your line: fix the code (a new workflow version) and rerun.

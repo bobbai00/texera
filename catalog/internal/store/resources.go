@@ -115,7 +115,10 @@ type ResourceFilter struct {
 	Kind       string
 	ParentRID  *uuid.UUID
 	ProjectRID *uuid.UUID
-	OwnerPID   *uuid.UUID
+	// Scope keeps what lives in one of these projects. Projects are the scopes themselves and
+	// are never narrowed by one.
+	Scope    []uuid.UUID
+	OwnerPID *uuid.UUID
 	// Name matches exactly, case-insensitively.
 	Name string
 	// Query is a full-text or substring search over name and description.
@@ -132,9 +135,9 @@ type ResourceFilter struct {
 	WithoutLabel string
 	// UpdatedBefore keeps resources last changed before the instant.
 	UpdatedBefore *time.Time
-	// ReadableBy restricts to what the principal may read: public, owned, or granted directly
-	// or through the parent or the project. Nil means no restriction (an administrator or a
-	// service).
+	// ReadableBy restricts to what the principal may read: what is public, owned or granted,
+	// itself or through its parent or its project, as the authorization model carries the
+	// relations down the tree. Nil means no restriction (an administrator or a service).
 	ReadableBy *uuid.UUID
 	Limit      int
 	Offset     int
@@ -157,6 +160,9 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 	}
 	if f.ProjectRID != nil {
 		add("r.project_rid = $%d", *f.ProjectRID)
+	}
+	if len(f.Scope) > 0 {
+		add("(r.kind = 'project' OR r.project_rid = ANY($%d))", f.Scope)
 	}
 	if f.OwnerPID != nil {
 		add("r.owner_pid = $%d", *f.OwnerPID)
@@ -195,7 +201,8 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 	}
 	if f.ReadableBy != nil {
 		add(`(r.visibility = 'public' OR r.owner_pid = $%d OR EXISTS (
-			SELECT 1 FROM access_index a WHERE a.pid = $%[1]d AND (a.rid = r.rid OR a.rid = r.parent_rid OR a.rid = r.project_rid)))`, *f.ReadableBy)
+			SELECT 1 FROM resource up WHERE up.rid IN (r.parent_rid, r.project_rid) AND up.visibility = 'public') OR EXISTS (
+			SELECT 1 FROM access_index a WHERE a.pid = $%[1]d AND a.rid IN (r.rid, r.parent_rid, r.project_rid)))`, *f.ReadableBy)
 	}
 	limit := f.Limit
 	if limit <= 0 || limit > 500 {
@@ -256,8 +263,10 @@ type SpecUpdate struct {
 	Message      *string
 	CreatedByPID uuid.UUID
 	Origin       *Origin
-	// References are the edges extracted from the new content; they replace the previous
-	// version's references when the kind is unversioned.
+	// From is the name the new content's references are recorded under: the resource for an
+	// unversioned kind, its new version for a versioned one. References are the edges extracted
+	// from the new content; they replace what From referenced before, also when there are none.
+	From       string
 	References []Edge
 }
 
@@ -291,7 +300,7 @@ func (s *Store) UpdateSpec(ctx context.Context, in SpecUpdate) (*Resource, *Vers
 		if err != nil {
 			return translate(err)
 		}
-		return replaceReferences(ctx, tx, in.References)
+		return replaceReferences(ctx, tx, in.References, in.From)
 	})
 	if err != nil {
 		return nil, nil, err

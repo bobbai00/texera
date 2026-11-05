@@ -158,9 +158,31 @@ func wrap(err error, what string) error {
 	return err
 }
 
-// require checks a permission on a resource.
+// changing are the permissions that change a resource or add to it.
+var changing = map[string]bool{authz.Write: true, authz.Share: true, authz.Delete: true, authz.Rotate: true, authz.Execute: true}
+
+// require checks a permission on a resource. What the platform ships is the platform's alone
+// to change: a permission that changes a built-in resource, or adds to it, is refused for
+// everyone else, an administrator included, since the next start puts back what ships.
 func (s *Service) require(ctx context.Context, caller *auth.Caller, permission string, rid uuid.UUID) error {
+	if changing[permission] && !caller.Service {
+		if r, err := s.Store.GetResource(ctx, rid); err == nil && s.builtIn(r) {
+			return Conflict("builtin", fmt.Sprintf("%s is built in: it changes with the platform, not through the API", r.Name), nil)
+		}
+	}
+	return s.decide(ctx, caller, permission, rid)
+}
+
+// decide asks the decision point alone, for a permission that gates a read.
+func (s *Service) decide(ctx context.Context, caller *auth.Caller, permission string, rid uuid.UUID) error {
 	return wrap(s.PDP.Require(ctx, caller, permission, rid), "")
+}
+
+// builtIn reports whether the platform ships a resource: it lives in the platform's project,
+// or is that project.
+func (s *Service) builtIn(r *store.Resource) bool {
+	system := s.SystemProject()
+	return system != nil && r.ProjectRID != nil && *r.ProjectRID == system.RID
 }
 
 // readableBy returns the principal a list is filtered for: nil for administrators and

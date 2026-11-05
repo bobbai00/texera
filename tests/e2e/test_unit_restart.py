@@ -1,4 +1,4 @@
-"""A completed run's rows stay readable after the unit restarts: the catalog recorded the
+"""A completed execution's rows stay readable after the unit restarts: the catalog recorded the
 result's table and the unit serves it from the warehouse. Restarts the Compose stack's unit."""
 import pytest
 

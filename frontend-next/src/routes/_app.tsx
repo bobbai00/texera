@@ -1,4 +1,5 @@
 import { createFileRoute, Navigate, redirect } from "@tanstack/react-router";
+import { meQuery, projectsQuery } from "@texera/kinds";
 import { AppShell } from "@/app/AppShell";
 import { currentUser, useSession } from "@/auth/session";
 
@@ -11,6 +12,10 @@ export const Route = createFileRoute("/_app")({
   beforeLoad: ({ location }) => {
     if (!currentUser()) throw redirect({ to: "/login", search: { redirect: location.href } });
   },
+  // Who the person is and the projects they can work in are known before a page renders, so
+  // every list is scoped from its first request.
+  loader: ({ context: { queryClient } }) =>
+    Promise.all([queryClient.ensureQueryData(meQuery()), queryClient.ensureQueryData(projectsQuery())]),
   component: SignedIn,
 });
 

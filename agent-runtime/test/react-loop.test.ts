@@ -23,7 +23,7 @@ const EXECUTION_EID = "99999999-9999-4999-8999-999999999999";
 /** MCP-shaped tool outputs, as the built-in server returns them. */
 const mcpText = (value: unknown) => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
 
-function dataflowTools(runStatus: "completed" | "failed" = "completed"): ToolSet {
+function workflowTools(runStatus: "completed" | "failed" = "completed"): ToolSet {
   return {
     create_workflow: tool({
       description: "create",
@@ -82,7 +82,7 @@ describe("runReactLoop", () => {
     ];
     const model = scriptedModel(script);
     const { events, outcome } = await collect(
-      runReactLoop({ model, system: "You analyze.", tools: dataflowTools(), messages: user("build it"), maxSteps: 5 }),
+      runReactLoop({ model, system: "You analyze.", tools: workflowTools(), messages: user("build it"), maxSteps: 5 }),
     );
     expect(outcome.reason).toBe("answered");
     expect(outcome.state.steps.map((s) => s.toolCalls.map((c) => c.toolName))).toEqual([["create_workflow"], []]);
@@ -118,7 +118,7 @@ describe("runReactLoop", () => {
       runReactLoop({
         model,
         system: "s",
-        tools: dataflowTools(),
+        tools: workflowTools(),
         messages: user("what is the average?"),
         maxSteps: 6,
         policy: { answer: "after_result" },
@@ -142,7 +142,7 @@ describe("runReactLoop", () => {
       runReactLoop({
         model,
         system: "s",
-        tools: dataflowTools(),
+        tools: workflowTools(),
         messages: user("hello?"),
         maxSteps: 6,
         policy: { answer: "after_result", maxCorrections: 1 },
@@ -154,7 +154,7 @@ describe("runReactLoop", () => {
     expect(model.doStreamCalls).toHaveLength(2);
   });
 
-  test("after_result: a failed run shows no result, a completed one does", async () => {
+  test("after_result: a failed execution shows no result, a completed one does", async () => {
     const failed = {
       toolCallId: "c",
       toolName: "run_workflow",
@@ -179,7 +179,7 @@ describe("runReactLoop", () => {
   test("free: the first reply is the answer even without a result", async () => {
     const model = scriptedModel([{ text: "Hello!" }]);
     const { events, outcome } = await collect(
-      runReactLoop({ model, system: "s", tools: dataflowTools(), messages: user("hi"), maxSteps: 3 }),
+      runReactLoop({ model, system: "s", tools: workflowTools(), messages: user("hi"), maxSteps: 3 }),
     );
     expect(outcome.reason).toBe("answered");
     expect(events.filter((e) => e.type === "correction")).toHaveLength(0);
@@ -193,7 +193,7 @@ describe("runReactLoop", () => {
       { text: "never reached" },
     ]);
     const { outcome } = await collect(
-      runReactLoop({ model, system: "s", tools: dataflowTools(), messages: user("find"), maxSteps: 2 }),
+      runReactLoop({ model, system: "s", tools: workflowTools(), messages: user("find"), maxSteps: 2 }),
     );
     expect(outcome.reason).toBe("step_limit");
     expect(outcome.state.steps).toHaveLength(2);

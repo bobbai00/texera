@@ -56,7 +56,7 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    columns and needs the ones the code adds declared up front: `implementation.python.
    outputColumns` on the operator's spec, which the catalog copies into the compiled plan.
 3. **Credentials in properties.** A property whose schema has `format: credential` holds a
-   credential URI, `texera://credentials/{rid}` or `...#field`; when a run starts the catalog
+   credential URI, `texera://credentials/{rid}` or `...#field`; when an execution starts the catalog
    leases the credential for that execution (the caller must be allowed to use it) and puts
    the secret where the URI was, in the plan the engine receives. Versions and executions
    keep the URI. A compile (`validate`) leaves the URI in place.
@@ -66,16 +66,16 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 5. **A unit's identity and the lake.** A computing unit runs as an OAuth client of its own:
    minted by the catalog for a unit it provisions (`status.identity` names the client and its
    subject; the secret lives in the secret store and the unit's Kubernetes Secret), or the
-   operator's client for a static unit (`spec.clientId`). A run's tables live in the namespace
+   operator's client for a static unit (`spec.clientId`). An execution's tables live in the namespace
    `e_<execution rid>`, which the catalog creates in the lake and opens for that identity
    before the engine starts (`ResultStore.namespace`); reads name it again. The lake
    authenticates every caller and authorizes with the catalog's grants, so a person reads
    results through the catalog only. Deleting an execution drops its namespace; deleting a
    provisioned unit deletes its client and credential.
-6. **Retention.** `DELETE /workflows/{rid}/executions/{eid}` removes a finished run with its
+6. **Retention.** `DELETE /workflows/{rid}/executions/{eid}` removes a finished execution with its
    tables (409 while it runs or while a dataset version derives from it; `can_delete`, so the
    runner and the owners above). The settings' `retention.results` (ISO 8601 duration) expires
-   the result tables of older finished runs: the record keeps its summaries, gets
+   the result tables of older finished executions: the record keeps its summaries, gets
    `status.resultsExpiredAt`, and its rows, ports and saves answer 410 `expired`.
    `retention.blobs` (default a day) removes uploaded files that no version and no staging
    names. The catalog sweeps hourly; administrators run one with
@@ -83,7 +83,7 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 7. **Updating a unit.** `PUT /computing-units/{rid}` takes a new spec like any kind; a
    Kubernetes unit rolls its Deployment to it at once (image, memory, cpu), and the next
    status probes say pending until the new pod answers. The provider cannot change, and a
-   unit with a run on it (pending, provisioning or running) answers 409 until the run is over.
+   unit with an execution on it (pending, provisioning or running) answers 409 until it is over.
    A static unit's identity follows its `clientId`.
 8. **The unit's doors.** A unit's API answers the catalog's own client alone (start, cancel,
    compile, build, results, environments); people and agents reach a unit through the
@@ -91,19 +91,19 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    way back a unit reports as itself, with the client it was given for the lake, and
    `POST /lineage/v1/events` takes an execution's events from the unit that runs it alone: a
    unit's token is neither a person nor the service, and it may do nothing else.
-9. **A run in three phases.** `POST /workflows/{rid}/run` authorizes first (execute on the
-   workflow, then, on the compiled plan, run on the unit, read on every dataset, operator and
+9. **Running a workflow, in three phases.** `POST /workflows/{rid}/run` authorizes first
+   (execute on the workflow, then, on the compiled plan, run on the unit, read on every dataset, operator and
    environment it names, use on every credential; a refusal leaves nothing behind), compiles
    once (`validate` returns the same plan as `plan`), and materializes: the execution is
    stored with `spec.plan` (URIs only, one table per output port named by the catalog, no
    secret, no URL), its namespace is opened, and a bound copy with presigned inputs and
-   leased secrets goes to the engine. A custom operator's pinned environment is the run's
-   when the run names none, and a different one is refused with 409. Results live with the
-   run: there is no save-as-dataset; the label `texera.keep` on an execution keeps its
-   results past the retention policy.
+   leased secrets goes to the engine. A custom operator's pinned environment is the
+   execution's when the request names none, and a different one is refused with 409. Results
+   live with the execution: there is no save-as-dataset; the label `texera.keep` on an
+   execution keeps its results past the retention policy.
 10. **The catalog names the output tables.** The plan holds one table per output port the
    engine writes (the ports of operators marked `viewResult` and of operators nothing reads,
-   the engine's own rule), `<operator>_<port>` in lower case inside the run's namespace; a
+   the engine's own rule), `<operator>_<port>` in lower case inside the execution's namespace; a
    port that only feeds another operator has no table. The start request carries
    them (`resultStore.tables`), the engine writes each external output port's result under
    its name and reports it as `namespace.table`, and `status.ports[]` lists the tables from
@@ -120,7 +120,7 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    client that listed first misses nothing; a comment line every fifteen seconds keeps the
    connection alive, and the gateway puts no timeout on this route. Each change is re-read
    through the watcher's permissions, so a revoked grant ends the stream. The frontend uses
-   it for the run page and the chat (`useWatch`); the generated TypeScript client leaves this
+   it for the execution page and the chat (`useWatch`); the generated TypeScript client leaves this
    one route out (its query plugin cannot type a stream) and `packages/kinds/src/watch.ts`
    reads it by hand. The broker is in-process; replicas would carry the same changes over
    Postgres LISTEN/NOTIFY.
@@ -130,53 +130,86 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    (`status.activeTurn`, `status.activeTurnBy`), cleared together when the turn ends. The
    assistant message of a turn is the turn-taker's too. The chat page shows the others'
    messages under their names as they arrive and waits while someone else's turn runs.
-13. **Run controls.** `POST /workflows/{rid}/executions/{eid}/pause` and `.../resume` take
-   `execute` like cancel, 409 `not_running` or `not_paused` when the run is not in the phase
-   the verb needs, and forward to the unit, whose answer is not trusted: the phase turns
-   `paused` (a phase of its own, live but not terminal, so the retention sweep leaves it) or
-   back to `running` when the unit reports it through lineage. While a run goes the unit
-   also reports every operator's state and count about once a second (OpenLineage
+13. **Execution controls.** `POST /workflows/{rid}/executions/{eid}/pause` and `.../resume`
+   take `execute` like cancel, 409 `not_running` or `not_paused` when the execution is not in
+   the phase the verb needs, and forward to the unit, whose answer is not trusted: the phase
+   turns `paused` (a phase of its own, live but not terminal, so the retention sweep leaves
+   it) or back to `running` when the unit reports it through lineage. While an execution goes
+   the unit also reports every operator's state and count about once a second (OpenLineage
    `RUNNING` events), which land in `status.operators`; progress that arrives after the
-   terminal report is ignored. Both verbs are MCP tools of the dataflow server.
+   terminal report is ignored. Both verbs are MCP tools.
 
 ## catalog and its tools
 
-1. **The chat's unit.** A compile or a run takes its computing unit from the request, else
-   from the chat it was made in, else from the workflow, the project and the settings. The
-   chat is the call's origin (`X-Texera-Origin`), which the catalog honors only with the
-   runtime's service token; the conversation's `spec.computingUnit` is applied by the catalog
-   itself, so no agent has to pass it. The caller is authorized on that unit as on any other.
-2. **A unit's errors.** A unit answers an error in the contract's shape, `{code, message}`
+1. **What a chat runs with.** A conversation stores choices only, each optional:
+   `spec.template`, `modelEndpoint`, `computingUnit`, `mcpServers`. `GET
+   /conversations/{rid}/settings` resolves them for the caller: the chat's choice, else its
+   project's default (`defaultAgentTemplate`, `defaultModelEndpoint`, `defaultComputingUnit`,
+   `mcpServers`), else the agent's own model and servers or the settings' defaults. Each
+   setting says which level chose it (`from`: `chat`, `project`, `agent`, `platform`). The
+   add-ons a chat lists replace the agent's and the project's; the platform's own server, the
+   one whose URL is the catalog's MCP address, is `platform: true` and stays. A choice that
+   names something gone, or not the caller's to use (no read; no `use` on a model endpoint's
+   credential; no `run_on` on a unit), is passed over and listed in `skipped`. `POST
+   …/turns` pins the agent version the settings resolve to. `GET
+   /projects/{rid}/chat-settings` is the same for a chat not started yet.
+2. **A call made in a chat.** The chat is the call's origin (`X-Texera-Origin`), which the
+   catalog honors only with the runtime's service token. The catalog applies the chat's
+   context itself, so no agent has to pass it. A compile or an execution takes its unit from
+   the request, else the chat's preference when the caller may run on it, else the workflow,
+   the project and the settings. A list that names no `scope`, `project`, `parent` or `origin`
+   is scoped to the chat's project. A resource made with no `parent` goes into the chat's
+   project when the caller may write there, else into their home project.
+3. **Scope.** `scope=<project rid>` on a list (`GET /resources`, every kind's list, `GET
+   /computing-units/available`) keeps what is in that project and in the platform's, whose
+   built-ins every project inherits. Projects themselves are never narrowed, `project=` stays
+   exact, and a scope that does not name a project is `400 invalid`.
+4. **Built-ins.** A resource is built in when its project is the platform's
+   (`Me.systemProject`: named "Built-in", public, `user` for everyone). Nothing on the
+   resource marks it. A permission that changes one or adds to the project (write, share,
+   delete, rotate, execute) answers `409 builtin` for everyone but the platform's own
+   identity, an administrator included; reads go by the usual checks. At every start the seed
+   makes the project what the release ships: a new version for what changed, and removal of
+   what the platform made there and no longer ships; the settings' defaults move off a
+   removed one, and a chat that named it falls back.
+5. **Lists and checks.** A check is the authorizer's (`viewer from parent`, to any depth). A
+   list is filtered in the store by the same rule for the three levels there are: public,
+   owned or granted, on the resource, its parent or its project. Grants to a group are not
+   expanded in lists.
+6. **A unit's errors.** A unit answers an error in the contract's shape, `{code, message}`
    with a string code and the engine's own words. The catalog keeps the class and the words:
    a 400 or 422 of the unit is `400 invalid`, a 404 `404 not_found`, a 409 `409 conflict`,
    anything else `502 unit_error`; `502 unavailable` is left for a unit that did not answer.
    It reads the message from any JSON body that has one, whatever the code's type, so a unit
    of another version still says what went wrong. A tool call answers `<status>: <body>`
    with `isError`, so an agent reads the same words.
-3. **A port before its table is written.** While a run goes, reading the rows of an output
-   port the plan names answers an empty page, not an error; once the run is over, a missing
+7. **A port before its table is written.** While an execution goes, reading the rows of an
+   output port the plan names answers an empty page, not an error; once it is over, a missing
    table is `404`.
-4. **An operator that raises.** A Python operator's exception fails the run: the unit reports
-   `failed` with the exception as the run's error and as the operator's, instead of leaving
-   the worker paused for an interactive console nobody attends.
-5. **Built-ins.** A resource labelled `texera.builtin` is written by the platform alone: an
-   edit or a delete through the API answers `409 builtin`, also for an administrator.
-6. **The two MCP servers share no tool.** An operation under `/workflows` is a dataflow tool;
-   every other `x-mcp` operation is a catalog tool.
+8. **An operator that raises.** A Python operator's exception fails the execution: the unit
+   reports `failed` with the exception as the execution's error and as the operator's,
+   instead of leaving the worker paused for an interactive console nobody attends.
+9. **One MCP server.** Every `x-mcp` operation of the contract is a tool of `/mcp/catalog`.
+10. **What an answer records.** An assistant message carries the agent version (`template`),
+   the model endpoint (`modelEndpoint`) and the servers its turn mounted (`mcpServers`).
 
 ## agent runtime
 
 1. **Turn headers.** Every catalog call made during a turn carries the person's token and the
    origin header (`X-Texera-Origin: conversation=…;turn=…;template=…`) the catalog records as
    the origin of what the turn creates, with `X-Texera-Service-Token` to vouch for it.
-2. **Basic tools and add-ons.** A server resource with `spec.builtin` set (`catalog`,
-   `dataflow`) is the platform's own: it is reached through the gateway with the person's
-   token, and a turn fails without it. Any other server is an add-on, reached at its own URL
-   with the headers its spec lists, `credential:<uri>[#field]` values replaced by a lease
-   taken for the turn; one that cannot be reached within ten seconds, or whose credential
-   cannot be leased, is left out of the turn and named to the agent.
+2. **What a turn mounts.** The runtime decides nothing: at the start of a turn, and after a
+   handoff, it asks the catalog what the chat runs with (`GET /conversations/{rid}/settings`,
+   as the person) and builds that agent version, model endpoint and list of servers. A server
+   marked `platform` is the catalog's own: it is reached at the gateway, on the path of its
+   URL, with the person's token and the turn headers, and a turn fails without it. Any other
+   server is an add-on, reached at its own URL with the headers its spec lists,
+   `credential:<uri>[#field]` values replaced by a lease taken for the turn; one that cannot
+   be reached within ten seconds, or whose credential cannot be leased, is left out of the
+   turn and named to the agent.
 3. **What the agent is told about the chat.** Every step's prompt ends with the turn state
-   and the chat's facts: today's date, the computing unit the chat names (name, URI, state),
-   and the add-ons left out. The instructions before it are the same text for every chat.
+   and the chat's facts: today's date, the project the chat is in, the computing unit an
+   execution falls back to (or that none is set), and the add-ons left out. The instructions
+   before it are the same text for every chat.
 4. **A turn that fails.** Whatever ends a turn in error is written to the conversation as an
    `error` part of an assistant message, so the reason outlives the stream.

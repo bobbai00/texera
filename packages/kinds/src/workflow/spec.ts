@@ -18,7 +18,7 @@ export const workflowKind: KindSpec = {
   facts: r => {
     const spec = r.spec as Partial<WorkflowSpec>;
     const n = spec.operators?.length ?? 0;
-    const runs = (r.status as WorkflowStatus | undefined)?.executions;
-    return [`v${r.metadata.head}`, `${n} operator${n === 1 ? "" : "s"}`, ...(runs ? [`${runs} run${runs === 1 ? "" : "s"}`] : [])];
+    const executions = (r.status as WorkflowStatus | undefined)?.executions;
+    return [`v${r.metadata.head}`, `${n} operator${n === 1 ? "" : "s"}`, ...(executions ? [`${executions} execution${executions === 1 ? "" : "s"}`] : [])];
   },
 };

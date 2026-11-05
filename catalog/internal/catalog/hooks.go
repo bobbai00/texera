@@ -36,14 +36,6 @@ func (s *Service) prepareSpec(ctx context.Context, caller *auth.Caller, k kinds.
 		if _, ok := doc["links"]; !ok {
 			doc["links"] = []any{}
 		}
-	case "conversation":
-		if t, _ := doc["template"].(string); strings.TrimSpace(t) == "" {
-			tpl, err := s.defaultTemplate(ctx, caller)
-			if err != nil {
-				return nil, err
-			}
-			doc["template"] = tpl
-		}
 	}
 	normalized := mustJSON(doc)
 	if err := k.ValidateSpec(normalized); err != nil {
@@ -199,7 +191,7 @@ func (s *Service) beforeDelete(ctx context.Context, r *store.Resource) error {
 			}
 		}
 	case "execution":
-		// The run's tables go with it.
+		// The execution's tables go with it.
 		if err := s.Lake.DropNamespace(ctx, executionNamespace(r.RID)); err != nil {
 			return Unavailable("lake", err)
 		}

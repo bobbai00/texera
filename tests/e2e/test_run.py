@@ -1,6 +1,6 @@
-"""A run through the unit in three phases: a dry run returns the plan the run is started
-with, the run stores it (URIs, no secret), the execution has its ports and rows and its
-lineage, and a kept run stays past the retention policy. Acceptance items 3 and 4 at the API
+"""Running a workflow on the unit, in three phases: a dry run returns the plan the execution
+is started with, the execution stores it (URIs, no secret) and has its ports, its rows and its
+lineage, and a kept execution stays past the retention policy. Acceptance items 3 and 4 at the API
 level (the chat drives the same in test_agents)."""
 from texera_e2e import workflows as w
 from texera_e2e.client import uri_rid
@@ -22,7 +22,7 @@ def test_validate_run_results_and_lineage(alice, project, iris, unit):
     assert run["status"]["phase"] == "completed", w.error_text(run)
     assert run["spec"]["workflow"] == f"{wf['metadata']['uri']}@1"
     stored = run["spec"]["plan"]
-    assert stored["namespace"] == "e_" + eid.replace("-", "") and stored["outputs"] == plan["outputs"] and stored["logicalPlan"] == plan["logicalPlan"], "the run stores the plan the dry run returned"
+    assert stored["namespace"] == "e_" + eid.replace("-", "") and stored["outputs"] == plan["outputs"] and stored["logicalPlan"] == plan["logicalPlan"], "the execution stores the plan the dry run returned"
     assert any(p["operatorID"] == "avg" and p.get("rows") == 3 and p.get("table") == f"{stored['namespace']}.avg_output_0" for p in run["status"]["ports"]), run["status"]["ports"]
 
     path = f"/workflows/{rid}/executions/{eid}"
@@ -43,7 +43,7 @@ def test_validate_run_results_and_lineage(alice, project, iris, unit):
     assert alice.get("/executions?phase=completed&limit=3")["items"]
 
     produced = alice.get(f"/resources/{eid}/lineage?direction=downstream")["edges"]
-    assert any(e["relation"] == "produced" and e["to"].startswith("iceberg://") for e in produced), "the run produced its tables"
+    assert any(e["relation"] == "produced" and e["to"].startswith("iceberg://") for e in produced), "the execution produced its tables"
 
     # Kept: the mark the retention sweep honours.
     kept = alice.call("PATCH", f"/resources/{eid}", {"labels": {"texera.keep": "true"}})

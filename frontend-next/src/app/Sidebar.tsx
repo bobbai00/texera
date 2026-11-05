@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { KINDS, LIBRARY_GROUPS, meQuery, pluralOf, searchQuery } from "@texera/kinds";
+import { ALL_PROJECTS, KINDS, LIBRARY_GROUPS, meQuery, pluralOf, searchQuery, useWorkingProject } from "@texera/kinds";
 import {
   Avatar,
   Button,
@@ -11,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   Kbd,
+  Select,
   Skeleton,
   toggleTheme,
 } from "@texera/ui";
@@ -21,8 +22,14 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
   const user = useSession();
   const navigate = useNavigate();
   const { data: me } = useQuery(meQuery());
+  // The project the person works in: the lists show it, and what is made goes into it.
+  const working = useWorkingProject();
   const { data: chats, isPending } = useQuery({
-    ...searchQuery({ kind: "conversation", limit: 50 }),
+    ...searchQuery({
+      kind: "conversation",
+      limit: 50,
+      ...(working.current === ALL_PROJECTS ? {} : { project: working.current }),
+    }),
     staleTime: 15_000,
   });
 
@@ -37,6 +44,17 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
         <Button variant="ghost" size="icon-sm" onClick={onCollapse} aria-label="Collapse sidebar">
           <PanelLeftClose />
         </Button>
+      </div>
+
+      <div className="px-3 pb-2">
+        <Select
+          aria-label="Project"
+          value={working.current ?? null}
+          onChange={working.pick}
+          options={working.choices}
+          placeholder="Project"
+          className="w-full"
+        />
       </div>
 
       <div className="space-y-0.5 px-2">

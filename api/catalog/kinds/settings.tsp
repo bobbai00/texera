@@ -25,9 +25,9 @@ model Defaults {
   modelEndpoint?: Uri;
 }
 
-@doc("How long the catalog keeps what runs and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).")
+@doc("How long the catalog keeps what executions and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).")
 model Retention {
-  @doc("Finished runs keep their result tables this long; absent: forever. The run's record and its summaries stay.")
+  @doc("Finished executions keep their result tables this long; absent: forever. An execution's record and its summaries stay.")
   results?: duration;
   @doc("An uploaded file that no version and no staging names is removed this long after its upload; absent: one day.")
   blobs?: duration;

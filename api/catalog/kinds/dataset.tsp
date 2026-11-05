@@ -133,7 +133,6 @@ namespace Routes {
     @route("/{rid}/commit")
     @extension("x-texera-permission", "write")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "commit_dataset_version",
       description: "Commit a dataset's staged files as a new immutable version.",
       readOnlyHint: false,
@@ -145,7 +144,6 @@ namespace Routes {
     @route("/{rid}/versions/{vno}/files")
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "list_dataset_files",
       description: "List the files of a dataset version with sizes and digests.",
       readOnlyHint: true,
@@ -157,7 +155,6 @@ namespace Routes {
     @route("/{rid}/versions/{vno}/files/{path}")
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
-      server: "catalog",
       tool: "read_dataset_file",
       description: "Read the beginning of a dataset file (bounded bytes), e.g. to inspect a CSV header.",
       readOnlyHint: true,

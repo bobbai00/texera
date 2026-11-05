@@ -14,7 +14,19 @@ import { PrincipalName } from "./Chips";
 
 const RELATIONS: Relation[] = ["viewer", "editor", "owner", "user"];
 
-export function Access({ resource }: { resource: Resource }) {
+export function Access({ resource, builtIn = false }: { resource: Resource; builtIn?: boolean }) {
+  if (builtIn) {
+    return (
+      <div className="p-4" data-access="built-in">
+        <SectionTitle>Access</SectionTitle>
+        <p className="mt-2 text-sm text-muted-foreground">Built in: everyone can view and use it. It changes with a release of the platform, not from here.</p>
+      </div>
+    );
+  }
+  return <Grants resource={resource} />;
+}
+
+function Grants({ resource }: { resource: Resource }) {
   const rid = resource.metadata.rid;
   const queryClient = useQueryClient();
   const grants = useQuery(grantsQuery(rid));

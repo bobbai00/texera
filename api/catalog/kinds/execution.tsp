@@ -1,4 +1,4 @@
-// execution: one run of one workflow version, nested under its workflow. The spec is the
+// execution: one workflow version run once, nested under its workflow. The spec is the
 // resolved request (every reference pinned with @vno); the status is the phase, the operators
 // and the ports. Operators and ports are subresources.
 import "@typespec/http";
@@ -23,23 +23,23 @@ enum ExecutionPhase {
   cancelled,
 }
 
-@doc("One output port's table in the lake, named by the catalog before the run starts.")
+@doc("One output port's table in the lake, named by the catalog before the execution starts.")
 model PortTable {
   operatorID: string;
   portID: string;
-  @doc("The table's name inside the run's namespace.")
+  @doc("The table's name inside the execution's namespace.")
   table: string;
 }
 
-@doc("What the catalog compiled for a run, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the run starts and never stored.")
+@doc("What the catalog compiled for an execution, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the execution starts and never stored.")
 model ExecutionPlan {
-  @doc("The namespace in the lake the run writes to; absent for a dry run.")
+  @doc("The namespace in the lake the execution writes to; absent for a dry run.")
   `namespace`?: string;
   @doc("One table per output port the engine writes, inside the namespace: the ports of operators marked viewResult and of operators nothing reads.")
   outputs: PortTable[];
   @doc("The custom operator versions compiled in, with `@vno`.")
   operators?: Uri[];
-  @doc("The credentials the operators name; leased for the run at start, their values never stored.")
+  @doc("The credentials the operators name; leased for the execution at start, their values never stored.")
   credentials?: Uri[];
   @doc("The engine's logical plan, with dataset files and credentials still named by URI.")
   logicalPlan: unknown;
@@ -51,10 +51,10 @@ model ExecutionSpec {
   @doc("The environment version, with `@vno`.")
   environment?: Uri;
   computingUnit: Uri;
-  @doc("The dataset file versions the run reads, resolved at start.")
+  @doc("The dataset file versions the execution reads, resolved at start.")
   inputs?: Uri[];
   parameters?: Record<unknown>;
-  @doc("The compiled plan the run was started with.")
+  @doc("The compiled plan the execution was started with.")
   plan?: ExecutionPlan;
 }
 
@@ -87,7 +87,7 @@ model ExecutionStatus {
   ports?: PortSummary[];
   startedAt?: utcDateTime;
   finishedAt?: utcDateTime;
-  @doc("When the retention policy dropped the run's result tables: the summaries stay, the rows are gone.")
+  @doc("When the retention policy dropped the execution's result tables: the summaries stay, the rows are gone.")
   resultsExpiredAt?: utcDateTime;
 }
 

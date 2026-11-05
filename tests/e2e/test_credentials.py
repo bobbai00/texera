@@ -1,5 +1,5 @@
 """Credentials in operator properties: a property with format credential holds a credential
-URI; the run gets the secret through a lease and the code sees it; the version keeps the URI;
+URI; the execution gets the secret through a lease and the code sees it; the version keeps the URI;
 a project viewer who may not use the credential is refused until granted use."""
 import json
 

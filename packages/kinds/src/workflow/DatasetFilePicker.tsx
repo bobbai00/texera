@@ -5,6 +5,7 @@ import { ChevronLeft, Database, FileText, FolderOpen, GitCommitVertical } from "
 import { useDeferredValue, useState } from "react";
 import { filesQuery } from "../files/api";
 import { searchQuery, versionsQuery } from "../queries";
+import { useScope } from "../scope";
 import { fileUri, uriOf } from "../uri";
 
 /**
@@ -61,7 +62,7 @@ export function DatasetFilePicker({
 }
 
 function Browser({ mode, onPick }: { mode: "file" | "version"; onPick: (path: string) => void }) {
-  const { data } = useQuery(searchQuery({ kind: "dataset", limit: 100 }));
+  const { data } = useQuery(searchQuery({ kind: "dataset", scope: useScope(), limit: 100 }));
   const [picked, setPicked] = useState<Resource>();
   const [query, setQuery] = useState("");
   const q = useDeferredValue(query.trim().toLowerCase());

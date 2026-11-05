@@ -1,4 +1,4 @@
-// workflow: a dataflow graph. The spec is the whole plan plus the run defaults; every spec
+// workflow: a dataflow graph. The spec is the whole plan plus the defaults of its executions; every spec
 // write is a version. Executions are nested under it (kinds/execution.tsp).
 import "@typespec/http";
 import "@typespec/rest";
@@ -35,7 +35,7 @@ model WorkflowOperator {
   inputPorts?: WorkflowPort[];
   @doc("Defaults to one output port output-0.")
   outputPorts?: WorkflowPort[];
-  @doc("Store this operator's output so it can be read after the run.")
+  @doc("Store this operator's output so it can be read after the execution.")
   viewResult?: boolean;
   markedForReuse?: boolean;
   isDisabled?: boolean;
@@ -57,9 +57,9 @@ model WorkflowLink {
 model WorkflowSpec {
   operators: WorkflowOperator[];
   links: WorkflowLink[];
-  @doc("The environment a run uses when the request names none.")
+  @doc("The environment an execution uses when the request names none.")
   defaultEnvironment?: Uri;
-  @doc("The computing unit a run uses when the request names none.")
+  @doc("The computing unit an execution uses when the request names none.")
   defaultComputingUnit?: Uri;
 }
 
@@ -95,7 +95,7 @@ model EditWorkflow {
   message?: string;
 }
 
-@doc("A dry run: the engine's compile result and the plan the catalog would start a run with.")
+@doc("A dry run: the engine's compile result and the plan the catalog would start an execution with.")
 model WorkflowValidation {
   ...CompileResult;
   plan?: ExecutionPlan;
@@ -106,7 +106,7 @@ model ValidateWorkflow {
   vno?: Vno;
   @doc("Compile this draft spec instead of a stored version.")
   spec?: WorkflowSpec;
-  @doc("The unit whose compiler answers; defaults to the run resolution order.")
+  @doc("The unit whose compiler answers; defaults to the one an execution would resolve to.")
   computingUnit?: Uri;
 }
 
@@ -117,9 +117,9 @@ model RunWorkflow {
   computingUnit?: Uri;
   @doc("Overrides the workflow's and the project's default environment; `@vno` pins a version, else the head.")
   environment?: Uri;
-  @doc("Per-run inputs; the version itself stays as authored.")
+  @doc("Inputs of this execution alone; the version itself stays as authored.")
   parameters?: Record<unknown>;
-  @doc("Wait up to this many seconds for the run to finish before returning.")
+  @doc("Wait up to this many seconds for the execution to finish before returning.")
   waitSeconds?: int32;
   name?: string;
 }
@@ -131,7 +131,6 @@ namespace Routes {
     @post
     @extension("x-texera-permission", "create")
     @extension("x-mcp", #{
-      server: "dataflow",
       tool: "create_workflow",
       description: "Create a workflow from a spec {operators, links}; returns the workflow with its version 1. Every later edit_workflow makes a new version of the same workflow.",
       readOnlyHint: false,
@@ -143,7 +142,6 @@ namespace Routes {
     @route("/{rid}")
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
-      server: "dataflow",
       tool: "get_workflow",
       description: "Get a workflow: its metadata, head version number and spec (operators, links, defaults). Use get_version for an older version.",
       readOnlyHint: true,
@@ -155,7 +153,6 @@ namespace Routes {
     @route("/{rid}/edit")
     @extension("x-texera-permission", "write")
     @extension("x-mcp", #{
-      server: "dataflow",
       tool: "edit_workflow",
       description: "Edit a workflow by applying an RFC 6902 JSON Patch to its head spec (paths like /operators/- or /links/-), or by giving a full new spec; creates a new version and returns it. Validate afterwards with validate_workflow.",
       readOnlyHint: false,
@@ -168,7 +165,6 @@ namespace Routes {
     @route("/{rid}/validate")
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
-      server: "dataflow",
       tool: "validate_workflow",
       description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator. Leave computingUnit out to use the chat's unit.",
       readOnlyHint: true,
@@ -180,7 +176,6 @@ namespace Routes {
     @route("/{rid}/run")
     @extension("x-texera-permission", "execute")
     @extension("x-mcp", #{
-      server: "dataflow",
       tool: "run_workflow",
       description: "Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the chat's unit; name one only when the person asks for another.",
       readOnlyHint: false,
@@ -203,7 +198,6 @@ namespace Routes {
     @route("/{rid}/executions/{eid}")
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
-      server: "dataflow",
       tool: "get_execution",
       description: "Get an execution of a workflow: phase, per-operator states, errors and port results.",
       readOnlyHint: true,
@@ -220,7 +214,6 @@ namespace Routes {
     @route("/{rid}/executions/{eid}/pause")
     @extension("x-texera-permission", "execute")
     @extension("x-mcp", #{
-      server: "dataflow",
       tool: "pause_execution",
       description: "Pause a running execution of a workflow; it keeps its state and resume_execution continues it.",
       readOnlyHint: false,
@@ -234,7 +227,6 @@ namespace Routes {
     @route("/{rid}/executions/{eid}/resume")
     @extension("x-texera-permission", "execute")
     @extension("x-mcp", #{
-      server: "dataflow",
       tool: "resume_execution",
       description: "Resume a paused execution of a workflow.",
       readOnlyHint: false,
@@ -243,7 +235,7 @@ namespace Routes {
     })
     resumeExecution(@path rid: Rid, @path eid: Rid): Execution | Error;
 
-    @doc("Delete a finished run with its result tables; refused with 409 while it runs or while a dataset version derives from it.")
+    @doc("Delete a finished execution with its result tables; refused with 409 while it runs or while a dataset version derives from it.")
     @delete
     @route("/{rid}/executions/{eid}")
     @extension("x-texera-permission", "delete")
@@ -260,7 +252,6 @@ namespace Routes {
     @route("/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}/rows")
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
-      server: "dataflow",
       tool: "get_port_result",
       description: "Read a bounded page of rows from an operator's output port in an execution (schema and rows).",
       readOnlyHint: true,

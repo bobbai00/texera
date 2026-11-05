@@ -74,14 +74,14 @@ export function updateOperator(
   return { ...spec, operators: spec.operators.map(o => (o.operatorID === id ? change(o) : o)) };
 }
 
-/** The operators a run executes and the links between them: everything enabled. */
+/** The operators an execution runs and the links between them: everything enabled. */
 export function enabledGraph(spec: WorkflowSpec): { operators: WorkflowOperator[]; links: WorkflowLink[] } {
   const operators = spec.operators.filter(o => !o.isDisabled);
   const ids = new Set(operators.map(o => o.operatorID));
   return { operators, links: spec.links.filter(l => ids.has(l.source.operatorID) && ids.has(l.target.operatorID)) };
 }
 
-/** Operators with no outgoing link: the ones whose results a run shows. */
+/** Operators with no outgoing link: the ones whose results an execution shows. */
 export function terminalOperators(spec: WorkflowSpec): WorkflowOperator[] {
   const { operators, links } = enabledGraph(spec);
   return operators.filter(o => !links.some(l => l.source.operatorID === o.operatorID));

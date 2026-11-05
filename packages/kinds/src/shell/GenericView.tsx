@@ -12,6 +12,7 @@ import { keysOf, resourceQuery } from "../queries";
 import { KINDS } from "../registry";
 import { kindEntry, type KindViewProps, type ResourceRef } from "../types";
 import { Access } from "./Access";
+import { useIsBuiltIn } from "./builtin";
 import { OriginChip } from "./Chips";
 import { JsonBlock } from "./JsonBlock";
 import { EditableName, KindHeader } from "./KindHeader";
@@ -40,6 +41,8 @@ export function ResourcePage({
   /** Shows the spec without letting it be saved, for callers who know the caller may not write. */
   readonly?: boolean;
 }) {
+  const builtIn = useIsBuiltIn()(resource);
+  const fixed = readonly || builtIn;
   const kind = resource.kind;
   const spec = KINDS[kind];
   const entry = kindEntry(kind);
@@ -69,7 +72,7 @@ export function ResourcePage({
       <KindHeader
         ref={ref}
         mode={mode}
-        name={<EditableName value={resource.metadata.name} onChange={name => rename.mutate(name)} label={`${spec.label} name`} />}
+        name={<EditableName value={resource.metadata.name} onChange={name => rename.mutate(name)} disabled={fixed} label={`${spec.label} name`} />}
         meta={
           <span className="flex items-center gap-1.5">
             {pinned && (
@@ -80,14 +83,14 @@ export function ResourcePage({
                 </button>
               </Badge>
             )}
-            <span className="truncate">{metaLine(kind, resource.metadata, resource.metadata.description ? [resource.metadata.description] : [])}</span>
+            <span className="truncate">{metaLine(kind, resource.metadata, resource.metadata.description ? [resource.metadata.description] : [], builtIn)}</span>
             {resource.metadata.origin && <OriginChip origin={resource.metadata.origin} />}
           </span>
         }
         actions={
           <>
-            {Actions && <Actions resource={resource} />}
-            {!entry.singleton && (
+            {Actions && <Actions resource={resource} readonly={fixed} />}
+            {!entry.singleton && !builtIn && (
               <Button variant="ghost" size="icon-sm" aria-label={`Delete ${spec.label.toLowerCase()}`} onClick={() => confirm(`Delete "${resource.metadata.name}"?`) && remove.mutate()} disabled={remove.isPending} data-delete>
                 <Trash2 />
               </Button>
@@ -132,7 +135,7 @@ export function ResourcePage({
           </TabPanel>
         ))}
         <TabPanel value="spec" className="scrollbar-thin overflow-y-auto">
-          <Editor key={`${resource.metadata.etag}:${pinned}`} resource={resource} readonly={pinned || readonly} />
+          <Editor key={`${resource.metadata.etag}:${pinned}`} resource={resource} readonly={pinned || fixed} />
         </TabPanel>
         {entry.versioned && (
           <TabPanel value="versions" className="scrollbar-thin overflow-y-auto">
@@ -141,7 +144,7 @@ export function ResourcePage({
         )}
         {!entry.singleton && (
           <TabPanel value="access" className="scrollbar-thin overflow-y-auto">
-            <Access resource={resource} />
+            <Access resource={resource} builtIn={builtIn} />
           </TabPanel>
         )}
         {!entry.singleton && (

@@ -1,15 +1,17 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConversationSpec, ConversationStatus, Resource } from "@texera/catalog-client/types";
-import { baseUri, createDatasetVersion, KindIcon, meQuery, PrincipalName, resourceQuery, useOpenResource } from "@texera/kinds";
+import { baseUri, chatSettingsQuery, createDatasetVersion, keysOf, KindIcon, meQuery, PrincipalName, ProjectScope, resourceQuery, updateSpec, useOpenResource } from "@texera/kinds";
 import { Button, ErrorNote, Skeleton, cn } from "@texera/ui";
 import { Loader2, PanelRight } from "lucide-react";
 import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChatSettingsBar, PassedOver } from "./ChatSettingsBar";
 import { Composer } from "./Composer";
+import { useResourceLabels } from "./labels";
 import { MessageItem } from "./MessageItem";
-import { templatesOf } from "./model";
+import { writersOf } from "./model";
 import { StatePart } from "./parts";
+import { takeFirstMessage } from "./pending";
 import { ResourcesRail } from "./ResourcesRail";
-import { useTemplateLabels } from "./templates";
 import { type Attachment, useConversation } from "./useConversation";
 
 /** A conversation: its messages, the composer, the agent it runs, and the resources it produced beside it. */
@@ -21,9 +23,20 @@ export function ChatView({ rid, getToken }: { rid: string; getToken: () => strin
 }
 
 function Conversation({ rid, conversation, getToken }: { rid: string; conversation: Resource; getToken: () => string | undefined }) {
-  const spec = conversation.spec as unknown as ConversationSpec;
   const status = conversation.status as ConversationStatus | undefined;
-  const chat = useConversation({ rid, template: spec.template, getToken });
+  // The chat stores only its choices; what it runs with is the catalog's to resolve.
+  const choices = conversation.spec as ConversationSpec;
+  const project = conversation.metadata.project;
+  const queryClient = useQueryClient();
+  const { data: settings } = useQuery(chatSettingsQuery(rid));
+  const agent = settings?.agent;
+  const choose = useMutation({
+    mutationFn: (next: ConversationSpec) => updateSpec("conversation", rid, { spec: next }),
+    onSuccess: () => {
+      for (const key of keysOf(rid)) queryClient.invalidateQueries({ queryKey: key });
+    },
+  });
+  const chat = useConversation({ rid, template: agent?.uri, getToken });
   const { data: me } = useQuery(meQuery());
   const myPid = me?.principal.pid;
   // A shared chat is a group chat: one turn at a time, and the others see whose it is.
@@ -33,9 +46,8 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
   const [upload, setUpload] = useState<{ status?: string; error?: string }>({});
   const uploading = upload.status !== undefined;
   const busy = chat.running || uploading;
-  const uris = useMemo(() => [spec.template, ...templatesOf(chat.messages)], [spec.template, chat.messages]);
-  const labels = useTemplateLabels(uris);
-  const current = labels.get(spec.template);
+  const uris = useMemo(() => writersOf(chat.messages), [chat.messages]);
+  const labels = useResourceLabels(uris);
   const { beside } = useOpenResource();
 
   const scroller = useRef<HTMLDivElement>(null);
@@ -65,7 +77,8 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
     if (attached.length) {
       try {
         setUpload({ status: "Preparing upload" });
-        const { ref } = await createDatasetVersion(attached, { onStatus: s => setUpload({ status: s }) });
+        // An attachment becomes a dataset of the chat's project.
+        const { ref } = await createDatasetVersion(attached, { parent: project, onStatus: s => setUpload({ status: s }) });
         attachments.push({ ref, name: attached.map(f => f.name).join(", ") });
       } catch (e) {
         setUpload({ error: e instanceof Error ? e.message : String(e) });
@@ -78,6 +91,14 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
     return true;
   };
 
+  // A chat is created by its first message: the page that started it left the message here.
+  const sendFirst = useRef(send);
+  sendFirst.current = send;
+  useEffect(() => {
+    const first = takeFirstMessage(rid);
+    if (first) void sendFirst.current(first);
+  }, [rid]);
+
   // Which assistant messages open a run of the same template: those get the label.
   let previousTemplate: string | undefined;
   const items = chat.messages.map(m => {
@@ -88,7 +109,9 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
   });
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: a file drop zone; the attach button is the keyboard path
+    // What the chat lists (models, units, add-ons) and makes is its own project's.
+    <ProjectScope project={project}>
+    {/* biome-ignore lint/a11y/noStaticElementInteractions: a file drop zone; the attach button is the keyboard path */}
     <div
       className="relative flex h-full min-h-0 flex-col"
       data-chat={rid}
@@ -109,7 +132,7 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold">{conversation.metadata.name}</div>
           <div className="truncate text-xs text-muted-foreground">
-            with <span data-current-template>{current?.name ?? "…"}</span>
+            with <span data-current-template>{agent?.name ?? "…"}</span>
           </div>
         </div>
         <Button variant="ghost" size="icon-sm" aria-label="Open the chat's details beside" onClick={() => beside({ kind: "conversation", rid })}>
@@ -144,13 +167,25 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
           </div>
           <div className="mx-auto w-full max-w-3xl space-y-2 px-4 pb-4">
             {upload.error && <p className="text-xs text-destructive">Upload failed: {upload.error}</p>}
+            {choose.error && <ErrorNote error={choose.error} prefix="Could not change what this chat runs with" />}
+            <PassedOver settings={settings} />
             {othersTurn && (
               <p className="flex items-center gap-1.5 text-xs text-muted-foreground" data-turn-of={othersTurn}>
                 <Loader2 className="size-3 animate-spin" />
-                <PrincipalName pid={othersTurn} /> is talking to {current?.name ?? "the agent"}…
+                <PrincipalName pid={othersTurn} /> is talking to {agent?.name ?? "the agent"}…
               </p>
             )}
-            <Composer busy={busy} disabled={othersTurn !== undefined} onSend={send} onStop={chat.stop} files={files} onFilesChange={setFiles} autoFocus status={uploading ? `${upload.status}…` : chat.steps.at(-1)} />
+            <Composer
+              busy={busy}
+              disabled={othersTurn !== undefined}
+              onSend={send}
+              onStop={chat.stop}
+              files={files}
+              onFilesChange={setFiles}
+              autoFocus
+              status={uploading ? `${upload.status}…` : chat.steps.at(-1)}
+              controls={<ChatSettingsBar settings={settings} choices={choices} onChange={next => choose.mutate(next)} disabled={busy || choose.isPending || othersTurn !== undefined} />}
+            />
           </div>
         </div>
         <ResourcesRail rid={rid} live={chat.resources} className="hidden w-60 shrink-0 border-l p-3 xl:block" />
@@ -159,6 +194,7 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
         Drop files to add them as a dataset
       </div>
     </div>
+    </ProjectScope>
   );
 }
 

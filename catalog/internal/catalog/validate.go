@@ -40,7 +40,7 @@ func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID
 	if err != nil {
 		return nil, err
 	}
-	// The same compile and the same authorization as a run; the engine then compiles the
+	// The same compile and the same authorization as an execution; the engine then compiles the
 	// bound copy, with the credentials left as URIs.
 	c, err := s.compile(ctx, spec)
 	if err != nil {

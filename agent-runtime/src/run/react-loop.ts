@@ -39,7 +39,7 @@ export interface LoopPolicy {
   maxCorrections: number;
 }
 
-/** The dataflow tools that show computed results: a completed run, a page of rows. */
+/** The tools that show computed results: a finished execution, a page of rows. */
 export const DEFAULT_RESULT_TOOLS = ["run_workflow", "get_port_result"];
 
 export const DEFAULT_POLICY: LoopPolicy = { answer: "free", resultTools: DEFAULT_RESULT_TOOLS, maxCorrections: 1 };
@@ -119,7 +119,7 @@ export interface ReactLoopOptions {
   abortSignal?: AbortSignal;
   /** System text rendered before each model call from the turn's state; default `renderTurnState`. */
   renderContext?: (state: LoopState, stepNumber: number) => string;
-  /** Provider-side parallel tool calls; off by default so stateful dataflow tools run in order. */
+  /** Provider-side parallel tool calls; off by default so stateful workflow tools run in order. */
   parallelToolCalls?: boolean;
   /** Tools whose successful call ends the loop with `interrupted` (a handoff): the caller takes over. */
   interruptTools?: string[];

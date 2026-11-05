@@ -12,12 +12,16 @@ using OpenAPI;
 namespace Texera.Catalog;
 
 model ProjectSpec {
-  @doc("The environment a run in this project uses when the workflow names none.")
+  @doc("The environment an execution in this project uses when the workflow names none.")
   defaultEnvironment?: Uri;
-  @doc("The computing unit a run in this project uses when the request and the workflow name none.")
+  @doc("The computing unit an execution in this project uses when the request and the workflow name none.")
   defaultComputingUnit?: Uri;
-  @doc("The agent template a new chat in this project starts with.")
+  @doc("The agent template a chat in this project runs when the chat names none.")
   defaultAgentTemplate?: Uri;
+  @doc("The model endpoint the agent uses in a chat of this project when the chat names none; absent: the agent's own.")
+  defaultModelEndpoint?: Uri;
+  @doc("Add-on MCP servers every chat in this project mounts besides the agent's, unless the chat lists its own.")
+  mcpServers?: Uri[];
 }
 
 model ProjectStatus {
@@ -33,5 +37,11 @@ model UpdateProject is UpdateSpec<ProjectSpec>;
 
 namespace Routes {
   @route("/projects")
-  interface Projects extends KindRoutes<Project, ProjectPage, CreateProject, UpdateProject> {}
+  interface Projects extends KindRoutes<Project, ProjectPage, CreateProject, UpdateProject> {
+    @doc("What a turn of a new chat in this project runs with, for the caller.")
+    @get
+    @route("/{rid}/chat-settings")
+    @extension("x-texera-permission", "read")
+    chatSettings(@path rid: Rid): ChatSettings | Error;
+  }
 }

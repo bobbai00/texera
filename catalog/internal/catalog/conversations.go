@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -48,15 +49,34 @@ func (s *Service) Append(ctx context.Context, caller *auth.Caller, rid uuid.UUID
 	if err := s.require(ctx, caller, authz.Write, rid); err != nil {
 		return nil, err
 	}
-	var template *string
+	// What wrote the message, each a URI of its kind.
+	var template, modelEndpoint *string
 	if in.Template != nil && *in.Template != "" {
 		t := string(*in.Template)
-		if ref, err := uri.Parse(t); err != nil || ref.Kind.Name != "agent-template" {
-			return nil, Invalid("template must be an agent template URI", nil)
+		if err := kindOf(t, templateKind); err != nil {
+			return nil, err
 		}
 		template = &t
 	}
-	m, err := s.Store.AppendMessage(ctx, store.NewMessage{ConversationRID: rid, Turn: in.Turn, Role: string(in.Role), AuthorPID: caller.PID(), Template: template, Parts: mustJSON(in.Parts)})
+	if in.ModelEndpoint != nil && *in.ModelEndpoint != "" {
+		e := string(*in.ModelEndpoint)
+		if err := kindOf(e, modelEndpointKind); err != nil {
+			return nil, err
+		}
+		modelEndpoint = &e
+	}
+	var servers []string
+	if in.McpServers != nil {
+		servers = make([]string, 0, len(*in.McpServers))
+		for _, name := range *in.McpServers {
+			if err := kindOf(string(name), mcpServerKind); err != nil {
+				return nil, err
+			}
+			servers = append(servers, string(name))
+		}
+	}
+	m, err := s.Store.AppendMessage(ctx, store.NewMessage{ConversationRID: rid, Turn: in.Turn, Role: string(in.Role), AuthorPID: caller.PID(),
+		Template: template, ModelEndpoint: modelEndpoint, McpServers: servers, Parts: mustJSON(in.Parts)})
 	if err != nil {
 		return nil, wrap(err, "conversation")
 	}
@@ -64,6 +84,18 @@ func (s *Service) Append(ctx context.Context, caller *auth.Caller, rid uuid.UUID
 		s.recordTemplate(ctx, rid, *template)
 	}
 	return m, nil
+}
+
+// kindOf checks that a URI names a resource of a kind.
+func kindOf(name string, kind kinds.Kind) error {
+	ref, err := uri.Parse(name)
+	if err != nil {
+		return Invalid(err.Error(), nil)
+	}
+	if ref.Kind.Name != kind.Name {
+		return Invalid(fmt.Sprintf("%s is not a %s", name, kind.Name), nil)
+	}
+	return nil
 }
 
 // recordTemplate adds a template version to the conversation's participants.
@@ -109,7 +141,8 @@ func (s *Service) Replace(ctx context.Context, caller *auth.Caller, rid uuid.UUI
 	return m, nil
 }
 
-// StartTurn takes the conversation's turn lock and pins the template version the turn runs.
+// StartTurn takes the conversation's turn lock and pins the agent version the turn runs: the
+// one the chat's settings resolve to. A template given here becomes the chat's choice first.
 func (s *Service) StartTurn(ctx context.Context, caller *auth.Caller, rid uuid.UUID, template string) (*api.Turn, error) {
 	conv, err := s.Get(ctx, caller, &conversationKind, rid)
 	if err != nil {
@@ -118,22 +151,20 @@ func (s *Service) StartTurn(ctx context.Context, caller *auth.Caller, rid uuid.U
 	if err := s.require(ctx, caller, authz.Write, rid); err != nil {
 		return nil, err
 	}
-	var spec api.ConversationSpec
-	_ = json.Unmarshal(conv.Spec, &spec)
-	if template != "" && template != string(spec.Template) {
-		spec.Template = api.Uri(template)
-		if _, _, err := s.UpdateSpec(ctx, caller, conversationKind, UpdateSpecInput{RID: rid, Spec: mustJSON(spec)}); err != nil {
-			return nil, err
+	if template != "" {
+		var spec api.ConversationSpec
+		_ = json.Unmarshal(conv.Spec, &spec)
+		if template != uriString(spec.Template) {
+			chosen := api.Uri(template)
+			spec.Template = &chosen
+			if conv, _, err = s.UpdateSpec(ctx, caller, conversationKind, UpdateSpecInput{RID: rid, Spec: mustJSON(spec)}); err != nil {
+				return nil, err
+			}
 		}
 	}
-	tpl, err := s.resourceByURI(ctx, caller, string(spec.Template), &templateKind)
+	settings, err := s.chatSettings(ctx, caller, conv)
 	if err != nil {
 		return nil, err
-	}
-	ref, _ := uri.Parse(string(spec.Template))
-	vno := ref.Vno
-	if vno == 0 {
-		vno = tpl.HeadVno
 	}
 	turn := uuid.NewString()
 	var by *uuid.UUID
@@ -146,7 +177,7 @@ func (s *Service) StartTurn(ctx context.Context, caller *auth.Caller, rid uuid.U
 		}
 		return nil, wrap(err, "conversation")
 	}
-	return &api.Turn{Turn: turn, Template: api.Uri(URI(tpl).WithVersion(vno).String()), StartedAt: time.Now().UTC()}, nil
+	return &api.Turn{Turn: turn, Template: settings.Agent.Uri, StartedAt: time.Now().UTC()}, nil
 }
 
 // EndTurn releases the turn lock.

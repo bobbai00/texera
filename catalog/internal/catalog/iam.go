@@ -158,19 +158,3 @@ func (s *Service) projectSpec(ctx context.Context, project *uuid.UUID) api.Proje
 	}
 	return spec
 }
-
-// defaultTemplate is the template a new chat starts with: the caller's home project's
-// default, then the deployment's.
-func (s *Service) defaultTemplate(ctx context.Context, caller *auth.Caller) (string, error) {
-	home, err := s.HomeProject(ctx, caller)
-	if err != nil {
-		return "", err
-	}
-	if spec := s.projectSpec(ctx, &home.RID); spec.DefaultAgentTemplate != nil && *spec.DefaultAgentTemplate != "" {
-		return string(*spec.DefaultAgentTemplate), nil
-	}
-	if spec := s.settingsSpec(ctx); spec.Defaults.AgentTemplate != nil && *spec.Defaults.AgentTemplate != "" {
-		return string(*spec.Defaults.AgentTemplate), nil
-	}
-	return "", Invalid("no default agent template: name one in the conversation's spec", nil)
-}

@@ -226,12 +226,20 @@ model Principal {
   createdAt: utcDateTime;
 }
 
+@doc("The scope of a list.")
+model Scoped {
+  @doc("A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.")
+  @query
+  scope?: Rid;
+}
+
 @doc("The standard methods of a kind.")
 interface KindRoutes<T, TPage, TCreate, TUpdate> {
   @doc("List the resources of this kind the caller may read.")
   @get
   @extension("x-texera-permission", "list")
   list(
+    ...Scoped,
     @query parent?: Rid,
     @query project?: Rid,
     @query q?: string,

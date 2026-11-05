@@ -178,7 +178,7 @@ func TestEdgesAndWalk(t *testing.T) {
 		return r
 	}
 	ds, wf, out := mk("dataset", "iris"), mk("workflow", "analysis"), mk("dataset", "result")
-	ex, _, err := st.CreateResource(ctx, store.NewResource{Kind: "execution", Name: "run 1", ParentRID: &wf.RID, ProjectRID: &lab.RID, OwnerPID: alice.PID, CreatedByPID: alice.PID})
+	ex, _, err := st.CreateResource(ctx, store.NewResource{Kind: "execution", Name: "execution 1", ParentRID: &wf.RID, ProjectRID: &lab.RID, OwnerPID: alice.PID, CreatedByPID: alice.PID})
 	if err != nil {
 		t.Fatal(err)
 	}

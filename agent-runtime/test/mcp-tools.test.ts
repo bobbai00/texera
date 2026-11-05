@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { builtinBinding, connectionFor, mountMcpBindings, resolveHeaders } from "../src/agent/mcp-tools.ts";
+import { connectionFor, mountMcpServers, resolveHeaders } from "../src/agent/mcp-tools.ts";
 import { TurnContext } from "../src/agent/turn-context.ts";
-import type { McpServerRecord } from "../src/catalog/types.ts";
+import type { McpServerRecord, ServerSetting } from "../src/catalog/types.ts";
 
 /** An in-process MCP server with two tools, linked to a client transport. */
 async function inProcessServer(name: string) {
@@ -30,23 +30,30 @@ const turn = new TurnContext("service-token", {
 });
 const leaseCredential = async (uri: string): Promise<Record<string, string>> =>
   uri === CRED ? { value: "secret-key", user: "u" } : {};
-const dataflow: McpServerRecord = {
+const catalog: McpServerRecord = {
   uri: "texera://mcp-servers/d",
   rid: "d",
-  name: "dataflow",
-  spec: { url: "http://localhost:8090/mcp/dataflow", builtin: "dataflow" },
+  name: "catalog",
+  spec: { url: "https://texera.example.org/mcp/catalog" },
 };
+/** A server as the chat's settings list it: the platform's own, or an add-on. */
+const listed = (server: McpServerRecord, platform: boolean, allow?: string[]): ServerSetting => ({
+  uri: server.uri,
+  name: server.name,
+  from: "agent",
+  platform,
+  ...(allow ? { allow } : {}),
+});
 
 describe("connectionFor", () => {
-  test("a platform server is the gateway's /mcp/<name> with the person's token and the turn's headers", async () => {
-    const { url, headers, builtin } = await connectionFor(dataflow, {
+  test("the platform's own server is reached at the gateway, on its path, with the person's token and the turn's headers", async () => {
+    const { url, headers } = await connectionFor(catalog, true, {
       userToken: "tok",
       publicUrl: "http://localhost:8088/",
       turn,
       leaseCredential,
     });
-    expect(builtin).toBe(true);
-    expect(url).toBe("http://localhost:8088/mcp/dataflow");
+    expect(url).toBe("http://localhost:8088/mcp/catalog");
     expect(headers.Authorization).toBe("Bearer tok");
     expect(headers["X-Texera-Service-Token"]).toBe("service-token");
     expect(headers["X-Texera-Origin"]).toBe("conversation=c;turn=t;template=texera://agent-templates/x@1");
@@ -62,13 +69,12 @@ describe("connectionFor", () => {
         headers: { "X-API-Key": `credential:${CRED}#value`, "X-Static": "yes" },
       },
     };
-    const { url, headers, builtin } = await connectionFor(bio, {
+    const { url, headers } = await connectionFor(bio, false, {
       userToken: "tok",
       publicUrl: "http://localhost:8088",
       turn,
       leaseCredential,
     });
-    expect(builtin).toBe(false);
     expect(url).toBe("http://localhost:8088/bio-mcp");
     expect(headers).toEqual({ "X-API-Key": "secret-key", "X-Static": "yes" });
   });
@@ -78,20 +84,14 @@ describe("connectionFor", () => {
       resolveHeaders({ url: "x", headers: { A: `credential:${CRED}#nope` } }, leaseCredential),
     ).rejects.toThrow(/no field nope/);
   });
-
-  test("the catalog server binding every template mounts", () => {
-    const { record, binding } = builtinBinding("catalog", "http://g/");
-    expect(binding.server).toBe(record.uri);
-    expect(record.spec).toEqual({ url: "http://g/mcp/catalog", builtin: "catalog" });
-  });
 });
 
-describe("mountMcpBindings", () => {
-  test("mounts the tools of a bound server and applies the allow list", async () => {
-    const { clientSide } = await inProcessServer("dataflow");
-    const mount = await mountMcpBindings({
-      bindings: [{ server: dataflow.uri, allow: ["list_operators"] }],
-      resolveServer: async () => dataflow,
+describe("mountMcpServers", () => {
+  test("mounts the tools of a listed server and applies the allow list", async () => {
+    const { clientSide } = await inProcessServer("catalog");
+    const mount = await mountMcpServers({
+      servers: [listed(catalog, true, ["list_operators"])],
+      resolveServer: async () => catalog,
       leaseCredential,
       userToken: "tok",
       publicUrl: "http://localhost:8088",
@@ -99,7 +99,7 @@ describe("mountMcpBindings", () => {
       transportFactory: () => clientSide,
     });
     expect(Object.keys(mount.tools)).toEqual(["list_operators"]);
-    expect(mount.servers).toEqual([{ name: "dataflow", uri: dataflow.uri, toolNames: ["list_operators"] }]);
+    expect(mount.servers).toEqual([{ name: "catalog", uri: catalog.uri, toolNames: ["list_operators"] }]);
     const tool = mount.tools.list_operators;
     const result = await tool?.execute?.({ group: "source" }, { toolCallId: "t", messages: [] } as never);
     expect(JSON.stringify(result)).toContain("CSVFileScan");
@@ -120,8 +120,8 @@ describe("mountMcpBindings", () => {
     spec: { url: "http://bio/mcp" },
   };
   const both = {
-    bindings: [{ server: bio.uri }, { server: dataflow.uri }],
-    resolveServer: async (ref: string) => (ref === bio.uri ? bio : dataflow),
+    servers: [listed(bio, false), listed(catalog, true)],
+    resolveServer: async (ref: string) => (ref === bio.uri ? bio : catalog),
     leaseCredential,
     userToken: "tok",
     publicUrl: "http://g",
@@ -129,13 +129,13 @@ describe("mountMcpBindings", () => {
   };
 
   test("an add-on that cannot be reached is skipped and named, and the rest still mounts", async () => {
-    const { clientSide } = await inProcessServer("dataflow");
-    const mount = await mountMcpBindings({
+    const { clientSide } = await inProcessServer("catalog");
+    const mount = await mountMcpServers({
       ...both,
       transportFactory: (server) => (server.rid === "b" ? dead() : clientSide),
     });
     expect(Object.keys(mount.tools).sort()).toEqual(["list_operators", "run_workflow"]);
-    expect(mount.servers.map((s) => s.name)).toEqual(["dataflow"]);
+    expect(mount.servers.map((s) => s.name)).toEqual(["catalog"]);
     expect(mount.unavailable).toEqual([
       { name: "biomcp", uri: bio.uri, reason: expect.stringContaining("ECONNREFUSED") },
     ]);
@@ -143,49 +143,49 @@ describe("mountMcpBindings", () => {
   });
 
   test("an add-on that does not answer in time is skipped", async () => {
-    const { clientSide } = await inProcessServer("dataflow");
+    const { clientSide } = await inProcessServer("catalog");
     const started = Date.now();
-    const mount = await mountMcpBindings({
+    const mount = await mountMcpServers({
       ...both,
       addOnTimeoutMs: 40,
       transportFactory: (server) => (server.rid === "b" ? dead(true) : clientSide),
     });
     expect(Date.now() - started).toBeLessThan(2000);
-    expect(mount.servers.map((s) => s.name)).toEqual(["dataflow"]);
+    expect(mount.servers.map((s) => s.name)).toEqual(["catalog"]);
     expect(mount.unavailable).toEqual([{ name: "biomcp", uri: bio.uri, reason: "no answer within 40 ms" }]);
     await mount.close();
   });
 
   test("an add-on whose credential cannot be leased is skipped", async () => {
-    const { clientSide } = await inProcessServer("dataflow");
+    const { clientSide } = await inProcessServer("catalog");
     const keyed: McpServerRecord = {
       ...bio,
       spec: { url: "http://bio/mcp", headers: { "X-API-Key": `credential:${CRED}` } },
     };
-    const mount = await mountMcpBindings({
+    const mount = await mountMcpServers({
       ...both,
-      resolveServer: async (ref: string) => (ref === bio.uri ? keyed : dataflow),
+      resolveServer: async (ref: string) => (ref === bio.uri ? keyed : catalog),
       leaseCredential: async () => {
         throw new Error("409: no_secret");
       },
       transportFactory: () => clientSide,
     });
-    expect(mount.servers.map((s) => s.name)).toEqual(["dataflow"]);
+    expect(mount.servers.map((s) => s.name)).toEqual(["catalog"]);
     expect(mount.unavailable).toEqual([{ name: "biomcp", uri: bio.uri, reason: "409: no_secret" }]);
     await mount.close();
   });
 
-  test("a platform server that cannot be reached fails the mount: an agent cannot work without it", async () => {
+  test("the platform's server that cannot be reached fails the mount: an agent cannot work without it", async () => {
     await expect(
-      mountMcpBindings({ ...both, bindings: [{ server: dataflow.uri }], transportFactory: () => dead() }),
+      mountMcpServers({ ...both, servers: [listed(catalog, true)], transportFactory: () => dead() }),
     ).rejects.toThrow("ECONNREFUSED");
   });
 
   test("everything mounted leaves nothing unavailable", async () => {
-    const { clientSide } = await inProcessServer("dataflow");
-    const mount = await mountMcpBindings({
+    const { clientSide } = await inProcessServer("catalog");
+    const mount = await mountMcpServers({
       ...both,
-      bindings: [{ server: dataflow.uri }],
+      servers: [listed(catalog, true)],
       transportFactory: () => clientSide,
     });
     expect(mount.unavailable).toEqual([]);
@@ -199,8 +199,11 @@ describe("mountMcpBindings", () => {
       a: { uri: "a", rid: "a", name: "alpha", spec: { url: "http://a/mcp" } },
       b: { uri: "b", rid: "b", name: "beta", spec: { url: "http://b/mcp" } },
     };
-    const mount = await mountMcpBindings({
-      bindings: [{ server: "a" }, { server: "b", allow: ["run_workflow"] }],
+    const mount = await mountMcpServers({
+      servers: [
+        listed(servers.a as McpServerRecord, false),
+        listed(servers.b as McpServerRecord, false, ["run_workflow"]),
+      ],
       resolveServer: async (ref) => servers[ref] as McpServerRecord,
       leaseCredential,
       userToken: "tok",

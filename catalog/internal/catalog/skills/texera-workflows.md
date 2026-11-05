@@ -18,7 +18,7 @@
 -->
 ---
 name: texera-workflows
-description: Build, validate, run and edit Texera workflows with the dataflow tools - the spec JSON, dataset file URIs, the common operators with their exact properties, and JSON Patch edits.
+description: Build, validate, run and edit Texera workflows - the spec JSON, dataset file URIs, the common operators with their exact properties, and JSON Patch edits.
 ---
 
 # Texera workflows
@@ -46,10 +46,10 @@ A scan reads a dataset file through its URI `texera://datasets/<dataset rid>@<ve
 
 1. `create_workflow` with the whole plan as `spec` (plus a `name`), or `edit_workflow` on an existing workflow.
 2. `validate_workflow`: it compiles the plan on the unit and returns each operator's output schema per port and the errors per operator. Fix every error, then validate again. The schemas give the exact column names and types the next operator sees.
-3. `run_workflow` with `waitSeconds` (120 for small data) so the execution comes back with `status.phase`, the operators' states and the port results it kept (`status.ports`). A failed run names the operator and the error: fix the plan (a new version) and run again.
+3. `run_workflow` with `waitSeconds` (120 for small data) so the execution comes back with `status.phase`, the operators' states and the port results it kept (`status.ports`). A failed execution names the operator and the error: fix the plan (a new version) and run again.
 4. `get_port_result` with the workflow rid, the execution rid (`eid`), the `operatorID` and the `portID` for the rows you need, paged; only operators with `viewResult` keep rows.
 
-Every `create_workflow` and `edit_workflow` makes a new version; a run names the version it ran. Reuse the workflow rid from the turn state; never invent ids.
+Every `create_workflow` and `edit_workflow` makes a new version; an execution names the version it ran. Reuse the workflow rid from the turn state; never invent ids.
 
 ## Common operators (exact types and properties)
 
@@ -72,7 +72,7 @@ Every `create_workflow` and `edit_workflow` makes a new version; a run names the
 | `Difference`, `Intersect`, `SymmetricDifference` | 2 -> 1 | none |
 | `PythonUDFV2` | 1 -> 1 | the `python-udf` skill |
 
-Charts (`BarChart`: `fields`, `value`; `LineChart`: `lines: [{"x": "col", "y": "col", "mode": "line"}]`; `Scatterplot`: `xColumn`, `yColumn`; `Histogram`: `value`; `PieChart`: `name`, `value`) render on the run page; compute the numbers you report with table operators.
+Charts (`BarChart`: `fields`, `value`; `LineChart`: `lines: [{"x": "col", "y": "col", "mode": "line"}]`; `Scatterplot`: `xColumn`, `yColumn`; `Histogram`: `value`; `PieChart`: `name`, `value`) render on the execution's page; compute the numbers you report with table operators.
 
 For any other operator, `list_operators` with `q` set to its name returns its JSON Schema. Never call it without `q`: the whole registry is far too large to read.
 

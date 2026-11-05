@@ -23,19 +23,16 @@ const resource = (over: Partial<Operator["spec"]>, extra: Partial<Operator> = {}
 });
 
 describe("operator resources", () => {
-  it("maps a built-in operator onto an editor schema by its type name", () => {
+  it("maps an operator the engine provides onto an editor schema by its type name", () => {
     const schema = fromOperatorResource(
-      resource(
-        {
-          displayName: "CSV File Scan",
-          group: "Data Input",
-          description: "Reads a CSV file",
-          propertiesSchema: { properties: { fileName: { type: "string" } }, required: ["fileName"] },
-          inputPorts: [],
-          outputPorts: [{ portID: "output-0" }],
-        },
-        { status: { builtin: true } }
-      )
+      resource({
+        displayName: "CSV File Scan",
+        group: "Data Input",
+        description: "Reads a CSV file",
+        propertiesSchema: { properties: { fileName: { type: "string" } }, required: ["fileName"] },
+        inputPorts: [],
+        outputPorts: [{ portID: "output-0" }],
+      })
     );
     expect(schema.operatorType).toBe("CSVFileScan");
     expect(schema.userFriendlyName).toBe("CSV File Scan");

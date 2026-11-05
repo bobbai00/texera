@@ -2,11 +2,12 @@ import { KindIcon, PrincipalName, ResourceCard } from "@texera/kinds";
 import { memo } from "react";
 import { type ChatMessage, visibleParts } from "./model";
 import { ErrorPart, HandoffPart, ReasoningPart, TextPart, ToolCallPart } from "./parts";
-import type { TemplateLabel } from "./templates";
+import type { ResourceLabel } from "./labels";
 
 /**
  * One message. Memoized on the message object so earlier messages never re-render while a
- * reply streams. An assistant message is labelled with the template version that wrote it.
+ * reply streams. An assistant message is labelled with the agent version and the model that
+ * wrote it.
  */
 export const MessageItem = memo(function MessageItem({
   message,
@@ -17,7 +18,7 @@ export const MessageItem = memo(function MessageItem({
 }: {
   message: ChatMessage;
   streaming: boolean;
-  labels: Map<string, TemplateLabel>;
+  labels: Map<string, ResourceLabel>;
   /** Whether to show the template label: the first message of a run of the same template. */
   showLabel: boolean;
   /** Whether to name the person who wrote a user message: someone else in a shared chat. */
@@ -64,6 +65,7 @@ export const MessageItem = memo(function MessageItem({
     );
   }
   const label = message.template ? labels.get(message.template) : undefined;
+  const model = message.model ? labels.get(message.model) : undefined;
   const parts = visibleParts(message.parts);
   return (
     <div className="space-y-3 text-sm leading-relaxed" data-message-role={message.role} data-template={label?.name}>
@@ -72,6 +74,11 @@ export const MessageItem = memo(function MessageItem({
           <KindIcon kind="agent-template" className="size-5 rounded-md [&_svg]:size-3" />
           {label.name}
           {label.vno !== undefined && <span className="normal-case opacity-70">v{label.vno}</span>}
+          {model && (
+            <span className="normal-case opacity-70" data-message-model={model.name}>
+              · {model.name}
+            </span>
+          )}
         </div>
       )}
       {parts.map((part, i) => {

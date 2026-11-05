@@ -41,7 +41,7 @@ export function UriChip({ uri, emphasis, className }: { uri: string; emphasis?: 
   );
 }
 
-/** A name outside the catalog, such as an Iceberg table a run produced: its scheme as the label, the whole name on hover. */
+/** A name outside the catalog, such as an Iceberg table an execution produced: its scheme as the label, the whole name on hover. */
 function ForeignChip({ uri, className }: { uri: string; className?: string }) {
   const scheme = uri.split(":")[0] ?? "";
   const tail = uri.split("/").filter(Boolean).at(-1) ?? uri;

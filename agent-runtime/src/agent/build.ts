@@ -1,13 +1,13 @@
 /**
- * Builds the agent of a template version for one turn: the model from its endpoint and the
- * leased credential, the system prompt, the skills, the MCP servers (the catalog server for
- * every template unless it opts out), the handoff tool, and the loop that runs them. The chat's
- * own facts (the date, its computing unit, add-ons that could not be mounted) go into every
- * step's turn state. Nothing survives the turn: `close` drops the MCP sessions.
+ * Builds the agent of one turn from what the chat's settings resolve to: the agent's version
+ * gives the system prompt, the skills, the handoffs and the loop's rules; the settings give the
+ * model endpoint (leased as the person) and the MCP servers. The runtime decides none of it.
+ * The chat's own facts (the date, its computing unit, add-ons that could not be mounted) go
+ * into every step's turn state. Nothing survives the turn: `close` drops the MCP sessions.
  */
 import type { LanguageModel, ModelMessage, ToolSet } from "ai";
 import type { CatalogClient } from "../catalog/client.ts";
-import type { CatalogAuth, LoopSpec, McpBinding, SkillRecord, TemplateRecord } from "../catalog/types.ts";
+import type { CatalogAuth, ChatSettings, LoopSpec, SkillRecord, TemplateRecord } from "../catalog/types.ts";
 import type { Logger } from "../log.ts";
 import {
   DEFAULT_POLICY,
@@ -17,13 +17,13 @@ import {
   renderTurnState,
   runReactLoop,
 } from "../run/react-loop.ts";
-import { type ChatFacts, chatContext } from "./chat-context.ts";
+import { chatContext } from "./chat-context.ts";
 import { candidatesOf, HANDOFF_TOOL, type HandoffCandidate, handoffTool } from "./handoff.ts";
 import {
-  builtinBinding,
   type McpMount,
   type McpMountOptions,
-  mountMcpBindings,
+  type MountedServer,
+  mountMcpServers,
   type UnavailableServer,
 } from "./mcp-tools.ts";
 import { defaultModelFactory, type ModelFactory } from "./model.ts";
@@ -49,13 +49,14 @@ export interface BuildDeps {
 }
 
 export interface BuildInput {
+  /** What the chat's settings resolve to for this turn. */
+  settings: ChatSettings;
+  /** The agent the settings name, at its version. */
   template: TemplateRecord;
   auth: CatalogAuth;
   turn: TurnContext;
   /** What a lease is for: the conversation URI. */
   purpose: string;
-  /** The chat's settings the agent is told. */
-  chat?: ChatFacts;
 }
 
 export interface RunInput {
@@ -68,6 +69,8 @@ export interface BuiltAgent {
   tools: ToolSet;
   instructions: string;
   handoffs: HandoffCandidate[];
+  /** The servers this turn mounted. */
+  servers: MountedServer[];
   /** The add-on servers left out of this turn. */
   unavailable: UnavailableServer[];
   policy: LoopPolicy;
@@ -93,10 +96,10 @@ export function resolveLoop(
   };
 }
 
-/** Loads everything a template version needs and builds its agent. */
+/** Loads everything the turn's settings name and builds its agent. */
 export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<BuiltAgent> {
   const { catalog } = deps;
-  const { template, auth } = input;
+  const { settings, template, auth } = input;
   const spec = template.spec;
   const leases = new Map<string, Promise<Record<string, string>>>();
   const leaseCredential = (uri: string) => {
@@ -108,7 +111,7 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
     return pending;
   };
 
-  const endpoint = await catalog.getModelEndpoint(spec.model, auth);
+  const endpoint = await catalog.getModelEndpoint(settings.modelEndpoint.uri, auth);
   const secret = endpoint.spec.credential ? await leaseCredential(endpoint.spec.credential) : undefined;
   const model: LanguageModel = (deps.modelFactory ?? defaultModelFactory)(endpoint, secret);
 
@@ -116,16 +119,9 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
   const handoffTemplates = await Promise.all((spec.handoffs ?? []).map((uri) => catalog.getTemplate(uri, auth)));
   const handoffs = candidatesOf(handoffTemplates);
 
-  const bindings: McpBinding[] = [...(spec.mcpServers ?? [])];
-  const builtins = new Map<string, ReturnType<typeof builtinBinding>["record"]>();
-  if (spec.catalogTools !== false) {
-    const { record, binding } = builtinBinding("catalog", deps.publicUrl);
-    builtins.set(record.uri, record);
-    bindings.unshift(binding);
-  }
-  const mcp: McpMount = await mountMcpBindings({
-    bindings,
-    resolveServer: async (uri) => builtins.get(uri) ?? catalog.getMcpServer(uri, auth),
+  const mcp: McpMount = await mountMcpServers({
+    servers: settings.mcpServers,
+    resolveServer: (uri) => catalog.getMcpServer(uri, auth),
     leaseCredential,
     userToken: auth.userToken,
     publicUrl: deps.publicUrl,
@@ -144,7 +140,8 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
   }
   const chat = chatContext({
     today: (deps.now ?? (() => new Date()))(),
-    chat: input.chat,
+    project: settings.project,
+    computingUnit: settings.computingUnit,
     unavailable: mcp.unavailable,
   });
   deps.log.info("agent built", {
@@ -160,6 +157,7 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
     tools,
     instructions,
     handoffs,
+    servers: mcp.servers,
     unavailable: mcp.unavailable,
     policy,
     maxSteps,

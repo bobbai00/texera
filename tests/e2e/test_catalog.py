@@ -1,8 +1,11 @@
 """The catalog through the gateway: who I am and the seeds, a workflow's versions and edits,
-sharing, dataset files and references, a conversation with a turn and an origin, and the two
-MCP servers. Acceptance items 1 and 2, and the surface every other scenario stands on."""
+sharing, dataset files and references, a conversation with a turn and an origin, and the MCP
+server. Acceptance items 1 and 2, and the surface every other scenario stands on."""
 import time
+import urllib.error
+import urllib.request
 
+import pytest
 
 from texera_e2e.client import uri_rid
 
@@ -18,13 +21,18 @@ def test_me_and_the_public_settings(alice, anon):
 
 
 def test_the_seeds(alice):
-    # One agent is the entry to every chat: the platform ships it, and it is the default.
-    agents = [t for t in alice.get("/agent-templates")["items"] if t["metadata"].get("labels", {}).get("texera.builtin") == "true"]
+    # One agent is the entry to every chat: the platform ships it, and it is the default. What
+    # the platform ships is what lives in its project, which is public; nothing else marks it.
+    platform = alice.me()["systemProject"]
+    assert alice.get(f"/projects/{platform}")["metadata"]["name"] == "Built-in"
+    agents = [t for t in alice.get("/agent-templates")["items"] if t["metadata"]["project"] == platform]
+    assert all("texera.builtin" not in t["metadata"].get("labels", {}) and t["metadata"]["visibility"] == "private" for t in agents)
     assert [t["metadata"]["name"] for t in agents] == ["Texera Agent"]
     assert alice.get("/settings")["spec"]["defaults"]["agentTemplate"] == agents[0]["metadata"]["uri"]
     assert any(u["status"]["phase"] == "ready" for u in alice.get("/computing-units/available")), "a ready unit"
+    # One MCP server is the platform's own, the catalog; whatever else it ships is an add-on.
     servers = {s["metadata"]["name"] for s in alice.get("/mcp-servers")["items"]}
-    assert {"catalog", "dataflow"} <= servers
+    assert "catalog" in servers and "dataflow" not in servers
     endpoints = alice.get("/model-endpoints")["items"]
     assert endpoints and endpoints[0]["spec"]["model"]
     for _ in range(30):
@@ -32,7 +40,8 @@ def test_the_seeds(alice):
             break
         time.sleep(3)
     scan = [o for o in alice.get("/operators?q=CSVFileScan")["items"] if o["spec"]["operatorType"] == "CSVFileScan"]
-    assert scan and "propertiesSchema" in scan[0]["spec"] and scan[0]["status"].get("builtin")
+    # The engine's operators are built in like the rest: they live in the platform's project.
+    assert scan and "propertiesSchema" in scan[0]["spec"] and scan[0]["metadata"]["project"] == platform
 
 
 def test_workflow_versions_edits_and_sharing(alice, bob, project):
@@ -85,9 +94,16 @@ def test_dataset_files_and_references(alice, project):
 def test_conversation_turn_and_origin(alice, service, project):
     conv = alice.create("conversations", "smoke chat", {}, project=project)
     crid = conv["metadata"]["rid"]
-    assert conv["spec"]["template"].startswith("texera://agent-templates/"), "the default template"
+    # A chat stores its choices and a new one has none: what it runs with is resolved when asked,
+    # and a turn pins the agent's version.
+    assert conv["spec"] == {}
+    settings = alice.get(f"/conversations/{crid}/settings")
+    assert settings["agent"]["from"] == "platform" and settings["modelEndpoint"]["from"] == "agent"
+    assert [(m["name"], m["platform"]) for m in settings["mcpServers"]] == [("catalog", True), ("biomcp", False)]
+    assert settings == alice.get(f"/projects/{project}/chat-settings"), "a chat not started yet runs with the same"
     turn = alice.post(f"/conversations/{crid}/turns", {})
     tid, tpl = turn["turn"], turn["template"]
+    assert tpl == settings["agent"]["uri"]
     assert alice.status("POST", f"/conversations/{crid}/turns", {}) == 409, "one turn at a time"
     assert alice.post(f"/conversations/{crid}/messages", {"turn": tid, "role": "user", "parts": [{"type": "text", "text": "hello"}]})["seq"] >= 1
     made = alice._ok("POST", "/workflows", {"name": "from chat", "spec": {"operators": [], "links": []}, "parent": project},
@@ -99,28 +115,30 @@ def test_conversation_turn_and_origin(alice, service, project):
     assert status.get("activeTurn") is None and status["messages"] >= 1
 
 
-def test_the_mcp_servers(alice, anon, project):
+def test_the_mcp_server(alice, anon, project):
     wf = alice.create("workflows", "for mcp", {"operators": [], "links": []}, project=project)
-    status, init = alice.mcp("catalog", "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "e2e", "version": "0"}})
-    assert status == 200 and init["result"]["serverInfo"]["name"]
-    _, catalog_tools = alice.mcp("catalog", "tools/list")
-    _, dataflow_tools = alice.mcp("dataflow", "tools/list")
-    catalog = {t["name"] for t in catalog_tools["result"]["tools"]}
-    dataflow = {t["name"] for t in dataflow_tools["result"]["tools"]}
-    # The two servers share nothing. Dataflow holds the verbs of a workflow and its runs; what
-    # exists (resources, dataset files, operators, units, people, sharing) is the catalog's.
-    assert not catalog & dataflow, catalog & dataflow
-    assert dataflow == {"create_workflow", "get_workflow", "edit_workflow", "validate_workflow", "run_workflow",
-                        "get_execution", "pause_execution", "resume_execution", "get_port_result"}
-    assert {"search_resources", "resolve_uri", "get_resource", "list_versions", "get_version", "get_lineage", "grant_access",
-            "search_principals", "whoami", "list_dataset_files", "read_dataset_file", "commit_dataset_version",
-            "list_operators", "list_computing_units"} == catalog
-    _, units = alice.mcp("catalog", "tools/call", {"name": "list_computing_units", "arguments": {}})
+    status, init = alice.mcp("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "e2e", "version": "0"}})
+    assert status == 200 and init["result"]["serverInfo"]["name"] == "texera-catalog"
+    # One server holds every tool: what exists (resources, dataset files, operators, units,
+    # people, sharing) and the verbs of a workflow and its executions.
+    _, listed = alice.mcp("tools/list")
+    assert {t["name"] for t in listed["result"]["tools"]} == {
+        "search_resources", "resolve_uri", "get_resource", "list_versions", "get_version", "get_lineage", "grant_access",
+        "search_principals", "whoami", "list_dataset_files", "read_dataset_file", "commit_dataset_version",
+        "list_operators", "list_computing_units",
+        "create_workflow", "get_workflow", "edit_workflow", "validate_workflow", "run_workflow",
+        "get_execution", "pause_execution", "resume_execution", "get_port_result"}
+    # There is no second server: the address the dataflow server had answers nothing.
+    gone = urllib.request.Request(f"{alice.gw}/mcp/dataflow", method="POST", data=b"{}", headers={"Authorization": f"Bearer {alice.token}"})
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        urllib.request.urlopen(gone, timeout=30)
+    assert refused.value.code == 404
+    _, units = alice.mcp("tools/call", {"name": "list_computing_units", "arguments": {}})
     assert any(u["status"]["phase"] == "ready" for u in units["result"]["structuredContent"]["items"]), units
-    _, scan = alice.mcp("catalog", "tools/call", {"name": "list_operators", "arguments": {"q": "CSVFileScan"}})
+    _, scan = alice.mcp("tools/call", {"name": "list_operators", "arguments": {"q": "CSVFileScan"}})
     assert not scan["result"].get("isError") and "CSVFileScan" in scan["result"]["content"][0]["text"]
-    _, got = alice.mcp("dataflow", "tools/call", {"name": "get_workflow", "arguments": {"rid": wf["metadata"]["rid"]}})
+    _, got = alice.mcp("tools/call", {"name": "get_workflow", "arguments": {"rid": wf["metadata"]["rid"]}})
     assert got["result"]["structuredContent"]["metadata"]["head"] == 1
-    _, resolved = alice.mcp("catalog", "tools/call", {"name": "resolve_uri", "arguments": {"uri": wf["metadata"]["uri"] + "@1"}})
+    _, resolved = alice.mcp("tools/call", {"name": "resolve_uri", "arguments": {"uri": wf["metadata"]["uri"] + "@1"}})
     assert resolved["result"]["structuredContent"]["version"]["vno"] == 1
-    assert anon.mcp("catalog", "tools/list")[0] == 401
+    assert anon.mcp("tools/list")[0] == 401

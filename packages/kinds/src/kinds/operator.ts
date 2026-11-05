@@ -1,4 +1,4 @@
-import type { OperatorSpec, OperatorStatus } from "@texera/catalog-client/types";
+import type { OperatorSpec } from "@texera/catalog-client/types";
 import { Blocks } from "lucide-react";
 import type { KindSpec } from "../types";
 
@@ -31,7 +31,6 @@ export const operatorKind: KindSpec = {
     }) satisfies OperatorSpec,
   facts: r => {
     const spec = r.spec as Partial<OperatorSpec>;
-    const builtin = (r.status as OperatorStatus | undefined)?.builtin;
-    return [builtin ? "built-in" : "custom", spec.group ?? ""].filter(Boolean);
+    return [spec.implementation ? "custom" : "engine", spec.group ?? ""].filter(Boolean);
   },
 };

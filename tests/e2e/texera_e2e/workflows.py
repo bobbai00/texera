@@ -50,7 +50,7 @@ class ProcessTupleOperator(UDFOperatorV2):
 
 
 def run(api: Api, rid: str, name: str = "run", wait: int = 240, **more) -> dict:
-    """Starts a run and waits for it; returns the execution envelope."""
+    """Starts an execution and waits for it; returns the execution envelope."""
     return api.post(f"/workflows/{rid}/run", {"waitSeconds": wait, "name": name, **more})
 
 
@@ -73,7 +73,7 @@ def error_text(execution: dict) -> str:
 
 
 def missing_module(execution: dict, module: str) -> bool:
-    """Whether a failed run says a Python module is missing: by name, or as a bare
+    """Whether a failed execution says a Python module is missing: by name, or as a bare
     ModuleNotFoundError where the unit's Python cannot carry the name."""
     err = error_text(execution)
     return module in err or "ModuleNotFoundError" in err

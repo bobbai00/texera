@@ -96,9 +96,13 @@ func (s *Service) Create(ctx context.Context, caller *auth.Caller, in CreateInpu
 }
 
 // parentProject resolves the project a new resource goes into: the given one, checked for
-// write, or the caller's home project.
+// write; else, for a call made in a chat, the chat's project when the caller may write to it,
+// so what an agent makes is where the chat is; else the caller's home project.
 func (s *Service) parentProject(ctx context.Context, caller *auth.Caller, parent *uuid.UUID) (*store.Resource, error) {
 	if parent == nil {
+		if chat := s.chatProject(ctx, caller); chat != nil && s.require(ctx, caller, authz.Write, chat.RID) == nil {
+			return chat, nil
+		}
 		return s.HomeProject(ctx, caller)
 	}
 	p, err := s.Store.GetResource(ctx, *parent)
@@ -153,6 +157,10 @@ func (s *Service) Get(ctx context.Context, caller *auth.Caller, kind *kinds.Kind
 
 // ListFilter selects resources for a list.
 type ListFilter struct {
+	// Scope is a project: the list holds what is in it and what it inherits, the platform's
+	// built-ins. Absent, a call made in a chat is scoped to the chat's project, unless the
+	// filter names its own place (a project, a parent, an origin).
+	Scope   *uuid.UUID
 	Parent  *uuid.UUID
 	Project *uuid.UUID
 	Origin  *uuid.UUID
@@ -176,7 +184,11 @@ func (s *Service) List(ctx context.Context, caller *auth.Caller, kind *kinds.Kin
 		limit = 50
 	}
 	offset := decodeCursor(f.Cursor)
-	filter := store.ResourceFilter{ParentRID: f.Parent, ProjectRID: f.Project, OriginConversation: f.Origin, Query: f.Query, Fields: f.Fields, Labels: f.Labels, ReadableBy: readableBy(caller), Limit: limit + 1, Offset: offset}
+	scope, err := s.scope(ctx, caller, f)
+	if err != nil {
+		return nil, err
+	}
+	filter := store.ResourceFilter{Scope: scope, ParentRID: f.Parent, ProjectRID: f.Project, OriginConversation: f.Origin, Query: f.Query, Fields: f.Fields, Labels: f.Labels, ReadableBy: readableBy(caller), Limit: limit + 1, Offset: offset}
 	if kind != nil {
 		filter.Kind = kind.Name
 	}
@@ -190,6 +202,46 @@ func (s *Service) List(ctx context.Context, caller *auth.Caller, kind *kinds.Kin
 		page.NextCursor = encodeCursor(offset + limit)
 	}
 	return page, nil
+}
+
+// scope is the projects a list is narrowed to: the one the filter names, or the chat's for a
+// call made in a chat, each with the platform's project, whose built-ins every project
+// inherits. Nil narrows nothing.
+func (s *Service) scope(ctx context.Context, caller *auth.Caller, f ListFilter) ([]uuid.UUID, error) {
+	project := f.Scope
+	if project != nil {
+		if p, err := s.Store.GetResource(ctx, *project); err != nil || p.Kind != projectKind.Name {
+			return nil, Invalid("scope must name a project", nil)
+		}
+	} else if f.Project == nil && f.Parent == nil && f.Origin == nil {
+		if chat := s.chatProject(ctx, caller); chat != nil {
+			project = &chat.RID
+		}
+	}
+	if project == nil {
+		return nil, nil
+	}
+	scope := []uuid.UUID{*project}
+	if system := s.SystemProject(); system != nil && system.RID != *project {
+		scope = append(scope, system.RID)
+	}
+	return scope, nil
+}
+
+// chatProject is the project of the chat a call acts in, when the runtime vouches for one.
+func (s *Service) chatProject(ctx context.Context, caller *auth.Caller) *store.Resource {
+	if caller.Origin == nil {
+		return nil
+	}
+	conversation, err := s.Store.GetResource(ctx, caller.Origin.Conversation)
+	if err != nil || conversation.Kind != conversationKind.Name || conversation.ProjectRID == nil {
+		return nil
+	}
+	project, err := s.Store.GetResource(ctx, *conversation.ProjectRID)
+	if err != nil {
+		return nil
+	}
+	return project
 }
 
 func encodeCursor(offset int) string {
@@ -221,26 +273,12 @@ type UpdateSpecInput struct {
 }
 
 // UpdateSpec replaces a spec; a kind that snapshots its spec gets a new version.
-// platformOnly refuses a change to a built-in resource by anyone but the platform. What the
-// platform ships is defined in its repository and its deployment's configuration, and the seed
-// puts it back at every start: a change through the API would be silently undone, so it is
-// refused, also for an administrator.
-func platformOnly(caller *auth.Caller, r *store.Resource) error {
-	if caller.Service || r.Labels["texera.builtin"] != "true" {
-		return nil
-	}
-	return Conflict("builtin", fmt.Sprintf("%s is built in: it changes with the platform, not through the API", r.Name), nil)
-}
-
 func (s *Service) UpdateSpec(ctx context.Context, caller *auth.Caller, k kinds.Kind, in UpdateSpecInput) (*store.Resource, *store.Version, error) {
 	r, err := s.Get(ctx, caller, &k, in.RID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if err := s.require(ctx, caller, authz.Write, r.RID); err != nil {
-		return nil, nil, err
-	}
-	if err := platformOnly(caller, r); err != nil {
 		return nil, nil, err
 	}
 	spec, err := s.prepareSpec(ctx, caller, k, r.Name, in.Spec)
@@ -266,7 +304,7 @@ func (s *Service) UpdateSpec(ctx context.Context, caller *auth.Caller, k kinds.K
 	}
 	updated, v, err := s.Store.UpdateSpec(ctx, store.SpecUpdate{
 		RID: r.RID, Spec: spec, ExpectedHead: expected, IfMatch: in.IfMatch, Versioned: versioned, ContentKind: k.Content, Content: spec,
-		Message: in.Message, CreatedByPID: caller.PID(), Origin: caller.Origin, References: references,
+		Message: in.Message, CreatedByPID: caller.PID(), Origin: caller.Origin, From: from.String(), References: references,
 	})
 	if err != nil {
 		return nil, nil, wrap(err, k.Name)
@@ -338,9 +376,6 @@ func (s *Service) Delete(ctx context.Context, caller *auth.Caller, kind *kinds.K
 	if err := s.require(ctx, caller, authz.Delete, r.RID); err != nil {
 		return err
 	}
-	if err := platformOnly(caller, r); err != nil {
-		return err
-	}
 	if r.Kind == "settings" {
 		return Invalid("settings cannot be deleted", nil)
 	}
@@ -405,12 +440,13 @@ func (s *Service) Version(ctx context.Context, caller *auth.Caller, kind *kinds.
 	return r, v, nil
 }
 
-// Grants lists a resource's direct grants.
+// Grants lists a resource's direct grants, for whoever may share it. Reading them changes
+// nothing, so a built-in's can be read.
 func (s *Service) Grants(ctx context.Context, caller *auth.Caller, rid uuid.UUID) ([]store.Grant, error) {
 	if _, err := s.Get(ctx, caller, nil, rid); err != nil {
 		return nil, err
 	}
-	if err := s.require(ctx, caller, authz.Share, rid); err != nil {
+	if err := s.decide(ctx, caller, authz.Share, rid); err != nil {
 		return nil, err
 	}
 	return s.Store.ListGrants(ctx, rid)

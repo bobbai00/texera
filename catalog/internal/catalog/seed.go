@@ -101,9 +101,10 @@ func shippedAgent() (shipped, error) {
 }
 
 // Seed creates the platform principal, the system project, the settings, and the built-in
-// resources: the dev stack's unit, the default environment, the platform's MCP servers,
-// credentials and model endpoint, the shipped skills and the two templates. It is idempotent:
-// a built-in whose shipped spec changed gets a new version authored by the platform.
+// resources: the dev stack's unit, the default environment, the catalog's MCP server and the
+// bio add-on, the credentials and the model endpoint, the shipped skills and the agent. It
+// makes the platform's project what this release ships: a built-in whose shipped spec changed
+// gets a new version authored by the platform, and one an older release shipped is removed.
 func (s *Service) Seed(ctx context.Context) error {
 	sys, _, err := s.Store.EnsureUser(ctx, "system:texera", "Texera", "", true)
 	if err != nil {
@@ -123,8 +124,14 @@ func (s *Service) Seed(ctx context.Context) error {
 	s.system, s.systemProject = sys, project
 	s.mu.Unlock()
 
-	ensure := func(kind, name, desc string, spec any, status any, labels map[string]string) (*store.Resource, error) {
-		return s.ensureBuiltin(ctx, caller, project, kind, name, desc, spec, status, labels)
+	// What this start ships, by rid, and the kinds it ships.
+	shipped, seeded := map[uuid.UUID]bool{}, map[string]bool{}
+	ensure := func(kind, name, desc string, spec any, status any) (*store.Resource, error) {
+		r, err := s.ensureBuiltin(ctx, caller, project, kind, name, desc, spec, status)
+		if err == nil {
+			shipped[r.RID], seeded[kind] = true, true
+		}
+		return r, err
 	}
 
 	var unitURI, envURI string
@@ -133,7 +140,7 @@ func (s *Service) Seed(ctx context.Context) error {
 		if s.Config.StaticUnitClientID != "" {
 			spec.ClientId = &s.Config.StaticUnitClientID
 		}
-		unit, err := ensure("computing-unit", s.Config.StaticUnitName, "The computing unit of this deployment", spec, nil, nil)
+		unit, err := ensure("computing-unit", s.Config.StaticUnitName, "The computing unit of this deployment", spec, nil)
 		if err != nil {
 			return err
 		}
@@ -151,26 +158,20 @@ func (s *Service) Seed(ctx context.Context) error {
 		unitURI = URI(unit).String()
 	}
 	env, err := ensure("environment", "python-default", "Python with pandas, numpy and scikit-learn",
-		api.EnvironmentSpec{Python: &api.PythonEnvironment{Packages: []string{"pandas", "numpy", "scikit-learn"}}}, nil, nil)
+		api.EnvironmentSpec{Python: &api.PythonEnvironment{Packages: []string{"pandas", "numpy", "scikit-learn"}}}, nil)
 	if err != nil {
 		return err
 	}
 	envURI = URI(env).String()
 
-	catalogMcp, err := ensure("mcp-server", "catalog", "The Texera catalog MCP server: search, read and share resources, versions and lineage; create agent templates",
-		api.McpServerSpec{Url: s.Config.PublicURL + "/mcp/catalog", Builtin: strPtrOf("catalog")}, nil, nil)
+	catalogMcp, err := ensure("mcp-server", "catalog", "The Texera MCP server: every resource with its versions, lineage and sharing, dataset files, operators, computing units, and building and running workflows",
+		api.McpServerSpec{Url: s.ownMcpURL()}, nil)
 	if err != nil {
 		return err
 	}
-	dataflowMcp, err := ensure("mcp-server", "dataflow", "The Texera dataflow MCP server: operators, workflows, compilation, runs, results and dataset files",
-		api.McpServerSpec{Url: s.Config.PublicURL + "/mcp/dataflow", Builtin: strPtrOf("dataflow")}, nil, nil)
-	if err != nil {
-		return err
-	}
-	_ = catalogMcp
 
 	modelCred, err := ensure("credential", "anthropic-platform", "The platform's Anthropic API key, loaded into the secret store by the deployment",
-		api.CredentialSpec{Kind: api.CredentialKindApiKey, Scope: strPtrOf("api.anthropic.com")}, api.CredentialStatus{SecretPath: &s.Config.ModelSecretPath}, nil)
+		api.CredentialSpec{Kind: api.CredentialKindApiKey, Scope: strPtrOf("api.anthropic.com")}, api.CredentialStatus{SecretPath: &s.Config.ModelSecretPath})
 	if err != nil {
 		return err
 	}
@@ -178,7 +179,7 @@ func (s *Service) Seed(ctx context.Context) error {
 
 	bioKeyPath := "platform/biomcp"
 	bioCred, err := ensure("credential", "biomcp-key", "The API key of the platform's bio MCP server",
-		api.CredentialSpec{Kind: api.CredentialKindApiKey, Scope: strPtrOf("bio-mcp")}, api.CredentialStatus{SecretPath: &bioKeyPath}, nil)
+		api.CredentialSpec{Kind: api.CredentialKindApiKey, Scope: strPtrOf("bio-mcp")}, api.CredentialStatus{SecretPath: &bioKeyPath})
 	if err != nil {
 		return err
 	}
@@ -191,13 +192,13 @@ func (s *Service) Seed(ctx context.Context) error {
 	}
 	s.refreshSecretStatus(ctx, bioCred)
 	bioMcp, err := ensure("mcp-server", "biomcp", "The bio MCP server: PubMed, citation networks, genes, variants, proteins and clinical significance",
-		api.McpServerSpec{Url: s.Config.BioMcpURL, Headers: &map[string]string{"X-API-Key": "credential:" + URI(bioCred).String() + "#value"}}, nil, nil)
+		api.McpServerSpec{Url: s.Config.BioMcpURL, Headers: &map[string]string{"X-API-Key": "credential:" + URI(bioCred).String() + "#value"}}, nil)
 	if err != nil {
 		return err
 	}
 
 	model, err := ensure("model-endpoint", "anthropic-platform", "The platform's model: "+s.Config.ModelName,
-		api.ModelEndpointSpec{Provider: api.ModelProviderAnthropic, Model: s.Config.ModelName, Credential: uriPtr(URI(modelCred).String()), MaxOutputTokens: int32Ptr(8192)}, nil, nil)
+		api.ModelEndpointSpec{Provider: api.ModelProviderAnthropic, Model: s.Config.ModelName, Credential: uriPtr(URI(modelCred).String()), MaxOutputTokens: int32Ptr(8192)}, nil)
 	if err != nil {
 		return err
 	}
@@ -208,16 +209,16 @@ func (s *Service) Seed(ctx context.Context) error {
 	}
 	skillURIs := map[string]string{}
 	for _, sk := range skills {
-		r, err := ensure("skill", sk.Name, sk.Description, api.SkillSpec{Name: sk.Name, Description: sk.Description, Body: sk.Body}, nil, nil)
+		r, err := ensure("skill", sk.Name, sk.Description, api.SkillSpec{Name: sk.Name, Description: sk.Description, Body: sk.Body}, nil)
 		if err != nil {
 			return err
 		}
 		skillURIs[sk.Name] = URI(r).String()
 	}
 
-	// One agent is the entry to every chat. It mounts the platform's dataflow server and the bio
-	// add-on (the catalog server is every agent's), and loads every shipped skill on demand. It
-	// answers every kind of question, so a reply without a tool call is its answer.
+	// One agent is the entry to every chat. It mounts the catalog's own server, its basic
+	// tools, and the bio add-on, and loads every shipped skill on demand. It answers every kind
+	// of question, so a reply without a tool call is its answer.
 	card, err := shippedAgent()
 	if err != nil {
 		return err
@@ -233,15 +234,13 @@ func (s *Service) Seed(ctx context.Context) error {
 			Model:      api.Uri(URI(model).String()),
 			Prompt:     card.Body,
 			Skills:     uris(allSkills...),
-			McpServers: &[]api.McpBinding{{Server: api.Uri(URI(dataflowMcp).String())}, {Server: api.Uri(URI(bioMcp).String())}},
+			McpServers: &[]api.McpBinding{{Server: api.Uri(URI(catalogMcp).String())}, {Server: api.Uri(URI(bioMcp).String())}},
 			Loop:       &api.LoopSpec{Answer: &free},
-		}, nil, nil)
+		}, nil)
 	if err != nil {
 		return err
 	}
-	// Agents an older release shipped stay, so the chats that use them keep working; they are no
-	// longer anybody's default.
-	retired, err := s.retiredAgents(ctx, project, agent)
+	retired, err := s.retire(ctx, project, sys.PID, shipped, seeded)
 	if err != nil {
 		return err
 	}
@@ -257,49 +256,71 @@ func (s *Service) Seed(ctx context.Context) error {
 	return nil
 }
 
-// retiredAgents lists, by URI, the built-in agent templates the platform no longer ships.
-func (s *Service) retiredAgents(ctx context.Context, project *store.Resource, shippedAgent *store.Resource) (map[string]bool, error) {
-	builtins, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "agent-template", ParentRID: &project.RID, Labels: map[string]string{"texera.builtin": "true"}, Limit: 200})
-	if err != nil {
-		return nil, err
-	}
+// retire removes from the platform's project what the platform made there and this release no
+// longer ships, and returns their URIs. What named one falls back: a chat to the platform's
+// agent, the settings' default to the shipped one. Only the kinds the seed ships are looked at:
+// the engine's operators are kept by the sync that reads them from a unit, and what someone
+// else made there before the project was closed to them is theirs.
+func (s *Service) retire(ctx context.Context, project *store.Resource, platform uuid.UUID, shipped map[uuid.UUID]bool, seeded map[string]bool) (map[string]bool, error) {
 	retired := map[string]bool{}
-	for i := range builtins {
-		if builtins[i].RID != shippedAgent.RID {
-			retired[URI(&builtins[i]).String()] = true
+	for kind := range seeded {
+		made, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: kind, ParentRID: &project.RID, OwnerPID: &platform, Limit: 500})
+		if err != nil {
+			return nil, err
+		}
+		for i := range made {
+			old := &made[i]
+			if shipped[old.RID] {
+				continue
+			}
+			if err := s.Store.DeleteResource(ctx, old.RID); err != nil {
+				return nil, fmt.Errorf("retire %s %s: %w", kind, old.Name, err)
+			}
+			retired[URI(old).String()] = true
+			s.Log.Info("built-in retired", "kind", kind, "name", old.Name, "rid", old.RID)
 		}
 	}
 	return retired, nil
 }
 
+// The platform's project: what it is called and what it says it holds.
+const (
+	systemProjectName        = "Built-in"
+	systemProjectDescription = "What the platform ships: the agent, its skills and MCP servers, the model endpoint, the default computing unit and environment, and the engine's operators. Everyone can use them; they change with a release."
+)
+
+// ensureSystemProject returns the platform's project, creating it at the first start. It is
+// the one place that says what is built in: a resource is built in when it lives here. The
+// project is public and usable by everyone, and what is in it is theirs through it.
 func (s *Service) ensureSystemProject(ctx context.Context, caller *auth.Caller) (*store.Resource, error) {
 	pid := caller.PID()
 	rs, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "project", OwnerPID: &pid, Labels: map[string]string{"texera.system": "true"}, Limit: 1})
 	if err != nil {
 		return nil, err
 	}
-	if len(rs) > 0 {
-		return &rs[0], nil
+	name, desc := systemProjectName, systemProjectDescription
+	if len(rs) == 0 {
+		r, _, err := s.Store.CreateResource(ctx, store.NewResource{Kind: "project", Name: name, Description: &desc, OwnerPID: pid, CreatedByPID: pid, Visibility: "public", Labels: map[string]string{"texera.system": "true"}})
+		if err != nil {
+			return nil, err
+		}
+		s.Log.Info("seeded the system project", "rid", r.RID)
+		return r, nil
 	}
-	desc := "The platform's built-in resources: operators, templates, skills, MCP servers, the model endpoint"
-	r, _, err := s.Store.CreateResource(ctx, store.NewResource{Kind: "project", Name: s.Config.BrandName, Description: &desc, OwnerPID: pid, CreatedByPID: pid, Visibility: "public", Labels: map[string]string{"texera.system": "true"}})
-	if err != nil {
-		return nil, err
+	r := &rs[0]
+	if r.Name != name || r.Description == nil || *r.Description != desc {
+		return s.Store.UpdateMetadata(ctx, store.MetadataUpdate{RID: r.RID, Name: &name, Description: &desc})
 	}
-	s.Log.Info("seeded the system project", "rid", r.RID)
 	return r, nil
 }
 
-// ensureBuiltin creates a public built-in or updates its spec when the shipped one changed.
-func (s *Service) ensureBuiltin(ctx context.Context, caller *auth.Caller, project *store.Resource, kind, name, desc string, spec any, status any, labels map[string]string) (*store.Resource, error) {
+// ensureBuiltin creates a built-in in the platform's project, or makes the one that is there
+// what the release ships: its description, and a new version when the shipped spec changed.
+func (s *Service) ensureBuiltin(ctx context.Context, caller *auth.Caller, project *store.Resource, kind, name, desc string, spec any, status any) (*store.Resource, error) {
 	k, ok := kinds.ByName(kind)
 	if !ok {
 		return nil, fmt.Errorf("unknown kind %s", kind)
 	}
-	if labels == nil {
-		labels = map[string]string{}
-	}
-	labels["texera.builtin"] = "true"
 	specJSON := mustJSON(spec)
 	var statusJSON json.RawMessage
 	if status != nil {
@@ -311,7 +332,7 @@ func (s *Service) ensureBuiltin(ctx context.Context, caller *auth.Caller, projec
 	}
 	if len(existing) == 0 {
 		owner := caller.PID()
-		r, _, err := s.Create(ctx, caller, CreateInput{Kind: k, Name: name, Description: &desc, Parent: &project.RID, Visibility: "public", Labels: labels, Spec: specJSON, Status: statusJSON, Owner: &owner})
+		r, _, err := s.Create(ctx, caller, CreateInput{Kind: k, Name: name, Description: &desc, Parent: &project.RID, Spec: specJSON, Status: statusJSON, Owner: &owner})
 		if err != nil {
 			return nil, fmt.Errorf("seed %s %s: %w", kind, name, err)
 		}
@@ -319,6 +340,11 @@ func (s *Service) ensureBuiltin(ctx context.Context, caller *auth.Caller, projec
 		return r, nil
 	}
 	r := &existing[0]
+	if r.Description == nil || *r.Description != desc {
+		if r, err = s.Store.UpdateMetadata(ctx, store.MetadataUpdate{RID: r.RID, Description: &desc}); err != nil {
+			return nil, fmt.Errorf("describe %s %s: %w", kind, name, err)
+		}
+	}
 	cur, _ := store.Canonical(r.Spec)
 	next, _ := store.Canonical(specJSON)
 	if string(cur) != string(next) {
@@ -338,9 +364,9 @@ func (s *Service) ensureBuiltin(ctx context.Context, caller *auth.Caller, projec
 	return r, nil
 }
 
-// ensureSettings creates the settings, or fills what the deployment has not set. retiredAgents
-// are agent templates that may no longer be the default: the shipped one takes their place.
-func (s *Service) ensureSettings(ctx context.Context, caller *auth.Caller, spec api.SettingsSpec, retiredAgents map[string]bool) error {
+// ensureSettings creates the settings, or fills what the deployment has not set. A default
+// that names a retired built-in gives way to the shipped one; an administrator's own choice stays.
+func (s *Service) ensureSettings(ctx context.Context, caller *auth.Caller, spec api.SettingsSpec, retired map[string]bool) error {
 	k, _ := kinds.ByName("settings")
 	r, err := s.Store.GetResource(ctx, SettingsRID)
 	if err != nil {
@@ -368,14 +394,10 @@ func (s *Service) ensureSettings(ctx context.Context, caller *auth.Caller, spec 
 			changed = true
 		}
 		fill := func(dst **api.Uri, src *api.Uri) {
-			if (*dst == nil || **dst == "") && src != nil {
+			if (*dst == nil || **dst == "" || retired[string(**dst)]) && src != nil {
 				*dst = src
 				changed = true
 			}
-		}
-		if current.Defaults.AgentTemplate != nil && retiredAgents[string(*current.Defaults.AgentTemplate)] {
-			current.Defaults.AgentTemplate = spec.Defaults.AgentTemplate
-			changed = true
 		}
 		fill(&current.Defaults.AgentTemplate, spec.Defaults.AgentTemplate)
 		fill(&current.Defaults.Environment, spec.Defaults.Environment)

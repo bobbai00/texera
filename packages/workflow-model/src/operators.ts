@@ -12,18 +12,21 @@ const toPort = (p: OperatorPortSpec): PortSchema => ({
   ...(p.allowMultiInputs !== undefined ? { allowMultiLinks: p.allowMultiInputs } : {}),
 });
 
-/** One operator resource as the editor's schema. A custom operator is typed by its URI with `@vno`. */
+/**
+ * One operator resource as the editor's schema. An operator the engine provides has no
+ * implementation of its own and is typed by its name; a custom one is typed by its URI with `@vno`.
+ */
 export function fromOperatorResource(op: Operator): OperatorSchema {
-  const builtin = op.status?.builtin === true || !op.spec.implementation;
+  const custom = !!op.spec.implementation;
   return {
-    operatorType: builtin ? op.spec.operatorType : `${op.metadata.uri}@${op.metadata.head}`,
+    operatorType: custom ? `${op.metadata.uri}@${op.metadata.head}` : op.spec.operatorType,
     userFriendlyName: op.spec.displayName || op.spec.operatorType,
     operatorDescription: op.spec.description,
-    operatorGroupName: op.spec.group || (builtin ? "Other" : "Custom"),
+    operatorGroupName: op.spec.group || (custom ? "Custom" : "Other"),
     jsonSchema: isRecord(op.spec.propertiesSchema) ? (op.spec.propertiesSchema as JsonSchema) : {},
     inputPorts: (op.spec.inputPorts ?? []).map(toPort),
     outputPorts: (op.spec.outputPorts ?? []).map(toPort),
-    ...(builtin ? {} : { custom: { rid: op.metadata.rid, vno: op.metadata.head } }),
+    ...(custom ? { custom: { rid: op.metadata.rid, vno: op.metadata.head } } : {}),
   };
 }
 

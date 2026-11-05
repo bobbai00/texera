@@ -2,6 +2,7 @@
 // maintained library rather than this codebase.
 
 import { Menu } from "@base-ui/react/menu";
+import { Check } from "lucide-react";
 import type { ComponentProps, ReactElement, ReactNode } from "react";
 import { cn } from "./utils";
 
@@ -55,4 +56,24 @@ export function DropdownMenuLabel({ className, children }: { className?: string;
 
 export function DropdownMenuSeparator() {
   return <Menu.Separator className="-mx-1 my-1 h-px bg-border" />;
+}
+
+/** An item that is on or off; the menu stays open while items are switched. */
+export function DropdownMenuCheckboxItem({ className, children, ...props }: ComponentProps<typeof Menu.CheckboxItem>) {
+  return (
+    <Menu.CheckboxItem
+      closeOnClick={false}
+      className={cn(
+        "flex cursor-default select-none items-center gap-2 rounded-lg px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-50",
+        className
+      )}
+      {...props}>
+      <span className="flex size-4 items-center justify-center rounded border">
+        <Menu.CheckboxItemIndicator>
+          <Check className="size-3" />
+        </Menu.CheckboxItemIndicator>
+      </span>
+      {children}
+    </Menu.CheckboxItem>
+  );
 }
