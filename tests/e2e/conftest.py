@@ -184,7 +184,8 @@ def grants_guard(alice):
 
     def grant(rid: str, pid: str, relation: str) -> None:
         alice.grant(rid, pid, relation)
-        given.append((rid, pid))
+        if (rid, pid) not in given:
+            given.append((rid, pid))
 
     yield grant
     for rid, pid in given:

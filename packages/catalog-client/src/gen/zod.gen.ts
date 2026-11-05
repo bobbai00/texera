@@ -163,6 +163,7 @@ export const zExecutionPhase = z.enum([
     'pending',
     'provisioning',
     'running',
+    'paused',
     'completed',
     'failed',
     'cancelled'
@@ -540,6 +541,7 @@ export const zConversationSpec = z.object({
 
 export const zConversationStatus = z.object({
     activeTurn: z.string().optional(),
+    activeTurnBy: zPid.optional(),
     messages: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }),
     lastMessageAt: z.iso.datetime().optional(),
     templates: z.array(zUri).optional()
@@ -3056,6 +3058,26 @@ export const zWorkflowsReadRowsQuery = z.object({
  * The request has succeeded.
  */
 export const zWorkflowsReadRowsResponse = zRowPage;
+
+export const zWorkflowsPauseExecutionPath = z.object({
+    rid: zRid,
+    eid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zWorkflowsPauseExecutionResponse = zExecution;
+
+export const zWorkflowsResumeExecutionPath = z.object({
+    rid: zRid,
+    eid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zWorkflowsResumeExecutionResponse = zExecution;
 
 export const zWorkflowsRunBody = zRunWorkflow;
 

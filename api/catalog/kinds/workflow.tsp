@@ -215,13 +215,41 @@ namespace Routes {
     @extension("x-texera-permission", "execute")
     cancelExecution(@path rid: Rid, @path eid: Rid): Execution | Error;
 
-    @doc("What a port of an execution holds: for an output port its result, for an input port its binding.")
+    @doc("Pause a running execution; refused with 409 unless it runs. The phase turns `paused` when the unit confirms.")
+    @post
+    @route("/{rid}/executions/{eid}/pause")
+    @extension("x-texera-permission", "execute")
+    @extension("x-mcp", #{
+      server: "dataflow",
+      tool: "pause_execution",
+      description: "Pause a running execution of a workflow; it keeps its state and resume_execution continues it.",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    })
+    pauseExecution(@path rid: Rid, @path eid: Rid): Execution | Error;
+
+    @doc("Resume a paused execution; refused with 409 unless it is paused.")
+    @post
+    @route("/{rid}/executions/{eid}/resume")
+    @extension("x-texera-permission", "execute")
+    @extension("x-mcp", #{
+      server: "dataflow",
+      tool: "resume_execution",
+      description: "Resume a paused execution of a workflow.",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    })
+    resumeExecution(@path rid: Rid, @path eid: Rid): Execution | Error;
+
     @doc("Delete a finished run with its result tables; refused with 409 while it runs or while a dataset version derives from it.")
     @delete
     @route("/{rid}/executions/{eid}")
     @extension("x-texera-permission", "delete")
     deleteExecution(@path rid: Rid, @path eid: Rid): void | Error;
 
+    @doc("What a port of an execution holds: for an output port its result, for an input port its binding.")
     @get
     @route("/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}")
     @extension("x-texera-permission", "read")

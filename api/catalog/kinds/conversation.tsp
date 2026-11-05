@@ -23,6 +23,8 @@ model ConversationSpec {
 model ConversationStatus {
   @doc("The turn in progress, when one is.")
   activeTurn?: string;
+  @doc("The person whose turn is in progress.")
+  activeTurnBy?: Pid;
   messages: int64;
   lastMessageAt?: utcDateTime;
   @doc("Every template version that has written in this conversation.")

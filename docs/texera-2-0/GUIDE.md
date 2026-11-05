@@ -48,6 +48,14 @@ agent makes or touches shows as a card in the message and in the rail beside the
 assistant message is labelled with the template version that wrote it; switch agents with the
 switcher or by typing `/mode <template>`, and a handoff by an agent shows as a divider.
 
+**A chat with others.** Share a conversation like any resource and it is a group chat: an
+editor posts and takes turns, a viewer reads along. Their messages arrive as they are sent,
+under their names; one person talks to the agent at a time, and while Bob's turn runs Alice
+sees "Bob is talking to the Data Analyst" and waits. The agent's answer to Bob's question is
+Bob's turn, so the history says who asked what. The same works from the API: a grant on the
+conversation is the membership, every message carries its author, and the turn lock names
+its holder.
+
 **The library.** Every kind has a page under its plural: `/workflows`, `/datasets`,
 `/agent-templates`, `/operators`, `/environments`, `/computing-units`, `/credentials`,
 `/mcp-servers`, `/model-endpoints`, `/skills`, `/projects`, and `/settings` for
@@ -65,10 +73,12 @@ takes a dataset file URI, `texera://datasets/{rid}@{vno}/files/{path}`. "Validat
 the version on a unit and shows the output columns per port and any errors; "Run" starts an
 execution and opens its page. Every save is a version; a run pins the version it used.
 
-**Runs.** A run's page shows its phase, the operators with their states and errors, the results
-of each output port (paged rows), its inputs and its lineage. "Keep" marks the run so the
-retention policy leaves its results alone; "Delete" removes the run with its tables; "Stop"
-cancels a live one. Results live with the run: to use them again, rerun or read the rows.
+**Runs.** A run's page shows its phase, the operators with their states and counts as the unit
+reports them (about once a second while it runs), the results of each output port (paged
+rows), its inputs and its lineage. "Pause" holds a running run where it is and "Resume"
+continues it; "Stop" cancels a live one; "Keep" marks a finished run so the retention policy
+leaves its results alone; "Delete" removes it with its tables. The page follows the run
+without reloading. Results live with the run: to use them again, rerun or read the rows.
 
 **Datasets.** Upload files (they stay staged), then commit a version; download or presign any
 file of any version. Uploading the same bytes twice stores them once.
@@ -152,10 +162,22 @@ running an execution may report on it. `status.ports[]` lists the tables from th
 fills in rows and snapshots as they are reported; the rows are read by namespace and table,
 so a restarted unit, or another unit, serves them from the lake.
 
-With `waitSeconds` the call returns the finished execution; without it, poll
-`GET /workflows/{rid}/executions/{eid}` (`status.phase`: pending, provisioning, running,
-completed, failed, cancelled) or cancel with `POST .../cancel`. A workflow with a run still
-going on the same unit answers 409 to another run.
+With `waitSeconds` the call returns the finished execution; without it, watch it. Every
+resource has an event stream, `GET /resources/{rid}/events`, server-sent events for as long
+as the connection stays open: `resource` with the envelope after each change (for a run:
+`status.phase`, the operators' states and counts, the ports as they fill), `message` for a
+conversation's messages, `deleted` when it goes.
+
+```sh
+curl -sN -H "Authorization: Bearer $TOKEN" $GW/catalog/v1/resources/$EID/events
+# event: resource
+# data: {"kind":"execution",...,"status":{"phase":"running","operators":{"scan":{"state":"Running","tuples":80}}}}
+```
+
+A run's phases are pending, provisioning, running, paused, completed, failed and cancelled.
+`POST .../executions/{eid}/pause` holds a running run (the phase turns `paused` when the unit
+confirms), `.../resume` continues it, `.../cancel` ends it; a verb that does not fit the phase
+answers 409. A workflow with a run still going on the same unit answers 409 to another run.
 
 **Environments, custom operators, credentials.**
 

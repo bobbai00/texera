@@ -42,6 +42,7 @@ const (
 	ExecutionStatusCancelled ExecutionStatus = "cancelled"
 	ExecutionStatusCompleted ExecutionStatus = "completed"
 	ExecutionStatusFailed    ExecutionStatus = "failed"
+	ExecutionStatusPaused    ExecutionStatus = "paused"
 	ExecutionStatusPending   ExecutionStatus = "pending"
 	ExecutionStatusRunning   ExecutionStatus = "running"
 )
@@ -54,6 +55,8 @@ func (e ExecutionStatus) Valid() bool {
 	case ExecutionStatusCompleted:
 		return true
 	case ExecutionStatusFailed:
+		return true
+	case ExecutionStatusPaused:
 		return true
 	case ExecutionStatusPending:
 		return true
@@ -395,10 +398,20 @@ type ClientInterface interface {
 	// ExecutionsCancel performs a POST /api/executions/{eid}/cancel (the `ExecutionsCancel` operationId) request.
 	ExecutionsCancel(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ExecutionsPause performs a POST /api/executions/{eid}/pause (the `ExecutionsPause` operationId) request.
+	//
+	// Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.
+	ExecutionsPause(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ExecutionsResult performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 	//
 	// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
 	ExecutionsResult(ctx context.Context, eid string, opid string, port string, params *ExecutionsResultParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecutionsResume performs a POST /api/executions/{eid}/resume (the `ExecutionsResume` operationId) request.
+	//
+	// Resume a paused run.
+	ExecutionsResume(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// HealthCheck performs a GET /api/health (the `HealthCheck` operationId) request.
 	HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -538,11 +551,41 @@ func (c *Client) ExecutionsCancel(ctx context.Context, eid string, reqEditors ..
 	return c.Client.Do(req)
 }
 
+// ExecutionsPause performs a POST /api/executions/{eid}/pause (the `ExecutionsPause` operationId) request.
+//
+// Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.
+func (c *Client) ExecutionsPause(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecutionsPauseRequest(c.Server, eid)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ExecutionsResult performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 //
 // A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
 func (c *Client) ExecutionsResult(ctx context.Context, eid string, opid string, port string, params *ExecutionsResultParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExecutionsResultRequest(c.Server, eid, opid, port, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecutionsResume performs a POST /api/executions/{eid}/resume (the `ExecutionsResume` operationId) request.
+//
+// Resume a paused run.
+func (c *Client) ExecutionsResume(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecutionsResumeRequest(c.Server, eid)
 	if err != nil {
 		return nil, err
 	}
@@ -808,6 +851,40 @@ func NewExecutionsCancelRequest(server string, eid string) (*http.Request, error
 	return req, nil
 }
 
+// NewExecutionsPauseRequest constructs an http.Request for the ExecutionsPause method
+func NewExecutionsPauseRequest(server string, eid string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "eid", eid, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/executions/%s/pause", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewExecutionsResultRequest constructs an http.Request for the ExecutionsResult method
 func NewExecutionsResultRequest(server string, eid string, opid string, port string, params *ExecutionsResultParams) (*http.Request, error) {
 	var err error
@@ -912,6 +989,40 @@ func NewExecutionsResultRequest(server string, eid string, opid string, port str
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewExecutionsResumeRequest constructs an http.Request for the ExecutionsResume method
+func NewExecutionsResumeRequest(server string, eid string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "eid", eid, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/executions/%s/resume", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1070,12 +1181,26 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	ExecutionsCancelWithResponse(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*ExecutionsCancelResponse, error)
 
+	// ExecutionsPauseWithResponse performs a POST /api/executions/{eid}/pause (the `ExecutionsPause` operationId) request.
+	//
+	// Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ExecutionsPauseWithResponse(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*ExecutionsPauseResponse, error)
+
 	// ExecutionsResultWithResponse performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 	//
 	// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ExecutionsResultWithResponse(ctx context.Context, eid string, opid string, port string, params *ExecutionsResultParams, reqEditors ...RequestEditorFn) (*ExecutionsResultResponse, error)
+
+	// ExecutionsResumeWithResponse performs a POST /api/executions/{eid}/resume (the `ExecutionsResume` operationId) request.
+	//
+	// Resume a paused run.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ExecutionsResumeWithResponse(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*ExecutionsResumeResponse, error)
 
 	// HealthCheckWithResponse performs a GET /api/health (the `HealthCheck` operationId) request.
 	//
@@ -1376,6 +1501,54 @@ func (r ExecutionsCancelResponse) ContentType() string {
 	return ""
 }
 
+type ExecutionsPauseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ExecutionState
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExecutionsPauseResponse) GetJSON200() *ExecutionState {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r ExecutionsPauseResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExecutionsPauseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExecutionsPauseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExecutionsPauseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExecutionsPauseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ExecutionsResultResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1418,6 +1591,54 @@ func (r ExecutionsResultResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ExecutionsResultResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExecutionsResumeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ExecutionState
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExecutionsResumeResponse) GetJSON200() *ExecutionState {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r ExecutionsResumeResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExecutionsResumeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExecutionsResumeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExecutionsResumeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExecutionsResumeResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1620,6 +1841,19 @@ func (c *ClientWithResponses) ExecutionsCancelWithResponse(ctx context.Context, 
 	return ParseExecutionsCancelResponse(rsp)
 }
 
+// ExecutionsPauseWithResponse performs a POST /api/executions/{eid}/pause (the `ExecutionsPause` operationId) request.
+//
+// Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ExecutionsPauseWithResponse(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*ExecutionsPauseResponse, error) {
+	rsp, err := c.ExecutionsPause(ctx, eid, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecutionsPauseResponse(rsp)
+}
+
 // ExecutionsResultWithResponse performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 //
 // A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
@@ -1631,6 +1865,19 @@ func (c *ClientWithResponses) ExecutionsResultWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseExecutionsResultResponse(rsp)
+}
+
+// ExecutionsResumeWithResponse performs a POST /api/executions/{eid}/resume (the `ExecutionsResume` operationId) request.
+//
+// Resume a paused run.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ExecutionsResumeWithResponse(ctx context.Context, eid string, reqEditors ...RequestEditorFn) (*ExecutionsResumeResponse, error) {
+	rsp, err := c.ExecutionsResume(ctx, eid, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecutionsResumeResponse(rsp)
 }
 
 // HealthCheckWithResponse performs a GET /api/health (the `HealthCheck` operationId) request.
@@ -1853,6 +2100,39 @@ func ParseExecutionsCancelResponse(rsp *http.Response) (*ExecutionsCancelRespons
 	return response, nil
 }
 
+// ParseExecutionsPauseResponse parses an HTTP response from a ExecutionsPauseWithResponse call
+func ParseExecutionsPauseResponse(rsp *http.Response) (*ExecutionsPauseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExecutionsPauseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ExecutionState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseExecutionsResultResponse parses an HTTP response from a ExecutionsResultWithResponse call
 func ParseExecutionsResultResponse(rsp *http.Response) (*ExecutionsResultResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -1869,6 +2149,39 @@ func ParseExecutionsResultResponse(rsp *http.Response) (*ExecutionsResultRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest RowPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExecutionsResumeResponse parses an HTTP response from a ExecutionsResumeWithResponse call
+func ParseExecutionsResumeResponse(rsp *http.Response) (*ExecutionsResumeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExecutionsResumeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ExecutionState
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

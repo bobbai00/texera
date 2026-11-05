@@ -108,6 +108,32 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    internal ports, state, console and statistics tables keep the engine's own keys inside
    the namespace. Rows are read by namespace and table, so a unit that did not run the
    execution, or restarted since, serves them from the lake.
+11. **Watching a resource.** `GET /resources/{rid}/events` streams server-sent events to
+   whoever may read the resource, for as long as the connection stays open: `resource` with
+   the envelope after each change (status included), `message` with a conversation's message
+   as it is appended or rewritten, `deleted` when the resource goes, after which the stream
+   ends. The stream opens with the messages after `after` and the resource as it stands, so a
+   client that listed first misses nothing; a comment line every fifteen seconds keeps the
+   connection alive, and the gateway puts no timeout on this route. Each change is re-read
+   through the watcher's permissions, so a revoked grant ends the stream. The frontend uses
+   it for the run page and the chat (`useWatch`); the generated TypeScript client leaves this
+   one route out (its query plugin cannot type a stream) and `packages/kinds/src/watch.ts`
+   reads it by hand. The broker is in-process; replicas would carry the same changes over
+   Postgres LISTEN/NOTIFY.
+12. **A shared chat is a group chat.** Nothing is added to the model: a grant on the
+   conversation is the membership (viewers read and watch, editors post and take turns),
+   every message records its `author`, and the turn lock records whose it is
+   (`status.activeTurn`, `status.activeTurnBy`), cleared together when the turn ends. The
+   assistant message of a turn is the turn-taker's too. The chat page shows the others'
+   messages under their names as they arrive and waits while someone else's turn runs.
+13. **Run controls.** `POST /workflows/{rid}/executions/{eid}/pause` and `.../resume` take
+   `execute` like cancel, 409 `not_running` or `not_paused` when the run is not in the phase
+   the verb needs, and forward to the unit, whose answer is not trusted: the phase turns
+   `paused` (a phase of its own, live but not terminal, so the retention sweep leaves it) or
+   back to `running` when the unit reports it through lineage. While a run goes the unit
+   also reports every operator's state and count about once a second (OpenLineage
+   `RUNNING` events), which land in `status.operators`; progress that arrives after the
+   terminal report is ignored. Both verbs are MCP tools of the dataflow server.
 
 ## agent runtime
 

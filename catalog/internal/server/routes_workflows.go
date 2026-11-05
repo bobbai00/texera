@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -8,8 +9,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/apache/texera/catalog/internal/api"
+	"github.com/apache/texera/catalog/internal/auth"
 	"github.com/apache/texera/catalog/internal/catalog"
 	"github.com/apache/texera/catalog/internal/kinds"
+	"github.com/apache/texera/catalog/internal/store"
 )
 
 // routeWorkflows registers the workflow actions and the executions nested under a workflow.
@@ -177,6 +180,24 @@ func (s *Server) routeWorkflows() {
 		writeJSON(w, http.StatusOK, catalog.Envelope(exec))
 		return nil
 	})
+
+	for _, control := range []struct {
+		verb string
+		do   func(ctx context.Context, caller *auth.Caller, rid, eid uuid.UUID) (*store.Resource, error)
+	}{{"pause", s.svc.Pause}, {"resume", s.svc.Resume}} {
+		s.handle("POST "+base+"/executions/{eid}/"+control.verb, func(w http.ResponseWriter, r *http.Request) error {
+			rid, eid, err := workflowAndExecution(r)
+			if err != nil {
+				return err
+			}
+			exec, err := control.do(ctxOf(r), callerOf(r), rid, eid)
+			if err != nil {
+				return err
+			}
+			writeJSON(w, http.StatusOK, catalog.Envelope(exec))
+			return nil
+		})
+	}
 
 	port := base + "/executions/{eid}/operators/{operatorID}/ports/{portID}"
 	s.handle("GET "+port, func(w http.ResponseWriter, r *http.Request) error {

@@ -1,4 +1,4 @@
-import { KindIcon, ResourceCard } from "@texera/kinds";
+import { KindIcon, PrincipalName, ResourceCard } from "@texera/kinds";
 import { memo } from "react";
 import type { ChatMessage } from "./model";
 import { ErrorPart, HandoffPart, ReasoningPart, TextPart, ToolCallPart } from "./parts";
@@ -13,18 +13,26 @@ export const MessageItem = memo(function MessageItem({
   streaming,
   labels,
   showLabel,
+  showAuthor = false,
 }: {
   message: ChatMessage;
   streaming: boolean;
   labels: Map<string, TemplateLabel>;
   /** Whether to show the template label: the first message of a run of the same template. */
   showLabel: boolean;
+  /** Whether to name the person who wrote a user message: someone else in a shared chat. */
+  showAuthor?: boolean;
 }) {
   if (message.role === "user") {
     const texts = message.parts.filter(p => p.type === "text");
     const resources = message.parts.filter(p => p.type === "resource");
     return (
       <div className="space-y-2" data-message-role="user">
+        {showAuthor && message.author && (
+          <div className="flex justify-end text-2xs font-medium tracking-wide text-muted-foreground uppercase" data-message-author={message.author}>
+            <PrincipalName pid={message.author} />
+          </div>
+        )}
         {texts.length > 0 && (
           <div className="flex justify-end">
             <div className="max-w-[85%] space-y-2 rounded-2xl bg-secondary px-4 py-2.5 text-sm whitespace-pre-wrap">

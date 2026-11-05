@@ -33,6 +33,8 @@ Bob) goes through a guard fixture that puts it back.
 | A Python UDF fails without its environment and completes with it | `test_environment.py` | slow | 2 min |
 | A custom operator as a resource, used by URI, pinned environment, deletion refused while referenced (acceptance 5) | `test_operator.py` | slow | 2 min |
 | A project shared with a viewer: reads, runs, nothing more; revoked (acceptance 6) | `test_sharing.py` | | 20 s |
+| A shared chat is a group chat: a viewer reads and watches, an editor posts and takes the turn under his name, the watch delivers messages, rewrites and the lock to the others | `test_collaboration.py` | | 10 s |
+| A run watched through its event stream: operator progress, pause and resume through the catalog, the phase following the unit's word, every row at the end | `test_controls.py` | slow | 1 min |
 | A credential in an operator property, leased for the run; a viewer refused before any run exists, until granted use (acceptance 7) | `test_credentials.py` | | 30 s |
 | The lake enforces the catalog's decision: namespaces per run, identities per unit, nothing for anyone else | `test_lake.py` | local | 20 s |
 | The unit's doors: its API answers the catalog alone, the gateway has no route to it, only the running unit reports on a run | `test_doors.py` | local | 20 s |
@@ -40,6 +42,7 @@ Bob) goes through a guard fixture that puts it back.
 | A computing unit as a resource on Kubernetes: ready, run, spec change rolls it, use granted, terminate, delete | `test_cluster_unit.py` | cluster, slow | 2 min |
 | The Data Analyst builds, runs, edits and reruns through a chat (acceptance 3, 9) | `test_agents.py` | model, slow | 2 min, about 30 model calls |
 | The Bio Researcher answers with cited ideas, hands off to the analyst, which runs and shares with Bob (acceptance 10, 11) | `test_agents.py` | model, slow | 3 min, about 40 model calls |
+| Bob, an editor of Alice's chat, asks the analyst; the question and the answer are his turn, and Alice reads them | `test_agents.py` | model, slow | 30 s, a few model calls |
 
 Markers gate what runs: `model`, `cluster`, `local` and `destructive` tests are skipped unless
 the matching flag is given (`--model`, `--cluster`, `--local`, `--destructive`); `test.sh`
@@ -49,7 +52,9 @@ Keycloak, OpenBao, the unit process); `destructive` means other tests may see th
 
 Playwright covers the pages: sign-in, a chat with an upload that becomes a dataset, the
 agent switcher and `/mode`, the template page, the operator page, a run's lineage and its
-keep mark, and with the model the two chat scenarios (`frontend-next/e2e/texera2.spec.ts`).
+keep mark, two people in one chat (the other's messages and turn arrive live, under their
+name), a run page that follows a slow run and pauses and resumes it, and with the model the
+two chat scenarios (`frontend-next/e2e/texera2.spec.ts`).
 
 ## Rules
 
@@ -63,6 +68,10 @@ keep mark, and with the model the two chat scenarios (`frontend-next/e2e/texera2
   model is unique across the run's tests as well (`my_iris`), so search finds one.
 - **Platform-wide changes are guarded.** `settings_guard` restores the settings,
   `grants_guard` revokes what the test granted.
+- **Live state is read from the stream, not polled.** `texera_e2e.events.Watch` reads a
+  resource's event stream on a thread; a test acts, then waits for the event its action
+  caused (`until`, `next`). A test that would poll the catalog for a phase is testing the
+  wrong thing.
 - **Model tests assert outcomes**, never wording: resources made in the chat, runs completed,
   versions bumped, grants given. One rerun of a model test is a flake, two are a bug.
 - **Secrets stay out of the repo.** The dev stack's credentials are the realm's; the model key

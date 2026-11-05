@@ -70,6 +70,9 @@ type Service struct {
 	system        *store.Principal
 	systemProject *store.Resource
 	settings      *store.Resource
+
+	eventsOnce sync.Once
+	broker     *Broker
 }
 
 // Error is a failure the API renders: a status, a code and a message.

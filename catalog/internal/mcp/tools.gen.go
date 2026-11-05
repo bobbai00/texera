@@ -157,12 +157,28 @@ var Tools = []Tool{
 		Input: "{\"properties\":{\"cursor\":{\"type\":\"string\"},\"group\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},\"parent\":{\"type\":\"string\"},\"project\":{\"type\":\"string\"},\"q\":{\"type\":\"string\"},\"view\":{\"enum\":[\"summary\",\"full\"],\"type\":\"string\"}},\"type\":\"object\"}",
 	},
 	{
+		Server: "dataflow", Name: "pause_execution",
+		Description: "Pause a running execution of a workflow; it keeps its state and resume_execution continues it.",
+		ReadOnly:    false, Idempotent: true, Destructive: boolPtr(false),
+		Method: "POST", Path: "/catalog/v1/workflows/{rid}/executions/{eid}/pause",
+		PathParams: []Param{{Name: "rid", Type: "string", Required: true}, {Name: "eid", Type: "string", Required: true}}, QueryParams: nil, Body: false,
+		Input: "{\"properties\":{\"eid\":{\"type\":\"string\"},\"rid\":{\"type\":\"string\"}},\"required\":[\"eid\",\"rid\"],\"type\":\"object\"}",
+	},
+	{
 		Server: "dataflow", Name: "read_dataset_file",
 		Description: "Read the beginning of a dataset file (bounded bytes), e.g. to inspect a CSV header.",
 		ReadOnly:    true, Idempotent: false, Destructive: nil,
 		Method: "GET", Path: "/catalog/v1/datasets/{rid}/versions/{vno}/files/{path}",
 		PathParams: []Param{{Name: "rid", Type: "string", Required: true}, {Name: "vno", Type: "integer", Required: true}, {Name: "path", Type: "string", Required: true}}, QueryParams: []Param{{Name: "maxBytes", Type: "integer", Required: false}}, Body: false,
 		Input: "{\"properties\":{\"maxBytes\":{\"type\":\"integer\"},\"path\":{\"type\":\"string\"},\"rid\":{\"type\":\"string\"},\"vno\":{\"type\":\"integer\"}},\"required\":[\"path\",\"rid\",\"vno\"],\"type\":\"object\"}",
+	},
+	{
+		Server: "dataflow", Name: "resume_execution",
+		Description: "Resume a paused execution of a workflow.",
+		ReadOnly:    false, Idempotent: true, Destructive: boolPtr(false),
+		Method: "POST", Path: "/catalog/v1/workflows/{rid}/executions/{eid}/resume",
+		PathParams: []Param{{Name: "rid", Type: "string", Required: true}, {Name: "eid", Type: "string", Required: true}}, QueryParams: nil, Body: false,
+		Input: "{\"properties\":{\"eid\":{\"type\":\"string\"},\"rid\":{\"type\":\"string\"}},\"required\":[\"eid\",\"rid\"],\"type\":\"object\"}",
 	},
 	{
 		Server: "dataflow", Name: "run_workflow",

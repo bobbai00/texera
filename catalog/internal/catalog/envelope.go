@@ -155,3 +155,17 @@ func EdgeOf(e store.Edge) api.Edge {
 	}
 	return out
 }
+
+// MessageOf renders a stored message in the contract's shape.
+func MessageOf(m *store.Message) api.Message {
+	out := api.Message{Conversation: api.Rid(m.ConversationRID.String()), Seq: m.Seq, Turn: m.Turn, Role: api.MessageRole(m.Role), Author: api.Pid(m.AuthorPID.String()), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
+	if m.Template != nil {
+		t := api.Uri(*m.Template)
+		out.Template = &t
+	}
+	_ = json.Unmarshal(m.Parts, &out.Parts)
+	if out.Parts == nil {
+		out.Parts = []api.MessagePart{}
+	}
+	return out
+}

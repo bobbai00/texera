@@ -56,7 +56,8 @@ flow: list_dataset_files and read_dataset_file to see the data, list_operators w
 operator's property schema, create_workflow with a spec {operators, links} where a scan's
 fileName is texera://datasets/<rid>@<vno>/files/<path>, validate_workflow until it reports ok,
 run_workflow with waitSeconds, then get_port_result for rows; results live with the run.
-edit_workflow applies an RFC 6902 patch and makes a new version.`,
+edit_workflow applies an RFC 6902 patch and makes a new version. get_execution follows a run
+that is still going; pause_execution and resume_execution hold and continue it.`,
 }
 
 // maxToolTextBytes bounds what a tool returns to a model.

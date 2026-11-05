@@ -42,6 +42,7 @@ type Server struct {
 // New builds the server and registers every route.
 func New(svc *catalog.Service, resolver *auth.Resolver, pdp *authz.PDP, publicURL string, log *slog.Logger) *Server {
 	s := &Server{svc: svc, resolver: resolver, pdp: pdp, public: strings.TrimSuffix(publicURL, "/"), log: log, api: http.NewServeMux(), extra: map[string]http.Handler{}}
+	svc.Events() // the watch broker listens to the store from before the first request
 	s.routeKinds()
 	s.routeResources()
 	s.routeWorkflows()

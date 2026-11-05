@@ -296,6 +296,7 @@ func (s *Store) UpdateSpec(ctx context.Context, in SpecUpdate) (*Resource, *Vers
 	if err != nil {
 		return nil, nil, err
 	}
+	s.changed(Change{RID: r.RID})
 	return r, v, nil
 }
 
@@ -366,6 +367,7 @@ func (s *Store) UpdateMetadata(ctx context.Context, in MetadataUpdate) (*Resourc
 	if err != nil {
 		return nil, err
 	}
+	s.changed(Change{RID: r.RID})
 	return r, nil
 }
 
@@ -374,6 +376,9 @@ func (s *Store) UpdateStatus(ctx context.Context, rid uuid.UUID, status json.Raw
 	row := s.pool.QueryRow(ctx, `UPDATE resource r SET status = $2, etag = $3, updated_at = now() WHERE r.rid = $1 AND r.deleted_at IS NULL RETURNING `+resourceColumns,
 		rid, nullableJSON(status), newEtag())
 	r, err := scanResource(row)
+	if err == nil {
+		s.changed(Change{RID: rid})
+	}
 	return r, translate(err)
 }
 
@@ -382,12 +387,23 @@ func (s *Store) MergeStatus(ctx context.Context, rid uuid.UUID, fields json.RawM
 	row := s.pool.QueryRow(ctx, `UPDATE resource r SET status = coalesce(r.status, '{}'::jsonb) || $2::jsonb, etag = $3, updated_at = now()
 		WHERE r.rid = $1 AND r.deleted_at IS NULL RETURNING `+resourceColumns, rid, fields, newEtag())
 	r, err := scanResource(row)
+	if err == nil {
+		s.changed(Change{RID: rid})
+	}
 	return r, translate(err)
 }
 
 // DeleteResource marks the resource deleted, drops its direct grants and reference edges, and
 // enqueues the tuple deletes.
 func (s *Store) DeleteResource(ctx context.Context, rid uuid.UUID) error {
+	err := s.deleteResource(ctx, rid)
+	if err == nil {
+		s.changed(Change{RID: rid, Deleted: true})
+	}
+	return err
+}
+
+func (s *Store) deleteResource(ctx context.Context, rid uuid.UUID) error {
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		cur, err := lockResource(ctx, tx, rid)
 		if err != nil {

@@ -17,6 +17,7 @@ enum ExecutionPhase {
   pending,
   @doc("The environment is being built on the unit.") provisioning,
   running,
+  @doc("Paused on the unit; resume continues it.") paused,
   completed,
   failed,
   cancelled,

@@ -92,13 +92,22 @@ func (s *Service) applyRunEvent(ctx context.Context, exec *store.Resource, ev ap
 		}
 	}
 	switch phase {
-	case "running", "completed", "failed", "cancelled":
+	case "running", "paused", "completed", "failed", "cancelled":
 		s.setPhase(ctx, exec.RID, api.ExecutionPhase(phase), errBody)
 	}
 	return nil
 }
 
 func (s *Service) applyOperatorEvent(ctx context.Context, exec *store.Resource, ev api.LineageEvent, facets map[string]any) error {
+	// Progress reported while the run was going but arriving after its end changes nothing:
+	// the terminal report is the last word on every operator.
+	if ev.EventType == api.LineageEventEventTypeRUNNING {
+		var st api.ExecutionStatus
+		_ = json.Unmarshal(exec.Status, &st)
+		if isTerminal(st.Phase) {
+			return nil
+		}
+	}
 	parts := strings.SplitN(ev.Job.Name, "/", 2)
 	operatorID := parts[len(parts)-1]
 	var opState *api.OperatorRunStatus

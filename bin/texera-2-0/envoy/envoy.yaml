@@ -44,6 +44,10 @@ static_resources:
                             envoy.filters.http.ext_authz:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
                               disabled: true
+                        # A watch streams for as long as the page stays open; keepalive comments
+                        # every few seconds hold the connection.
+                        - match: { safe_regex: { regex: "^/catalog/v1/resources/[^/]+/events$" } }
+                          route: { cluster: catalog, timeout: 0s }
                         - match: { prefix: "/catalog/" }
                           route: { cluster: catalog, timeout: 600s }
                         # The bio MCP server checks its own API key; agents reach it through the gateway.

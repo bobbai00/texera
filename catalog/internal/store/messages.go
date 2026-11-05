@@ -55,6 +55,7 @@ func (s *Store) AppendMessage(ctx context.Context, in NewMessage) (*Message, err
 	if err != nil {
 		return nil, err
 	}
+	s.changed(Change{RID: in.ConversationRID, Message: m})
 	return m, nil
 }
 
@@ -66,6 +67,9 @@ func (s *Store) ReplaceMessage(ctx context.Context, conversation uuid.UUID, seq 
 	row := s.pool.QueryRow(ctx, `UPDATE message m SET parts = $3, template_uri = coalesce($4, m.template_uri), updated_at = now()
 		WHERE m.conversation_rid = $1 AND m.seq = $2 RETURNING `+messageColumns, conversation, seq, parts, template)
 	m, err := scanMessage(row)
+	if err == nil {
+		s.changed(Change{RID: conversation, Message: m})
+	}
 	return m, translate(err)
 }
 
@@ -90,10 +94,10 @@ func (s *Store) ListMessages(ctx context.Context, conversation uuid.UUID, after 
 	return out, rows.Err()
 }
 
-// StartTurn takes the conversation's turn lock; ErrConflict when a turn is active.
-func (s *Store) StartTurn(ctx context.Context, conversation uuid.UUID, turn string) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE resource SET status = coalesce(status, '{}'::jsonb) || jsonb_build_object('activeTurn', $2::text), etag = $3, updated_at = now()
-		WHERE rid = $1 AND deleted_at IS NULL AND kind = 'conversation' AND (status ->> 'activeTurn') IS NULL`, conversation, turn, newEtag())
+// StartTurn takes the conversation's turn lock for a person; ErrConflict when a turn is active.
+func (s *Store) StartTurn(ctx context.Context, conversation uuid.UUID, turn string, by *uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE resource SET status = coalesce(status, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object('activeTurn', $2::text, 'activeTurnBy', $4::text)), etag = $3, updated_at = now()
+		WHERE rid = $1 AND deleted_at IS NULL AND kind = 'conversation' AND (status ->> 'activeTurn') IS NULL`, conversation, turn, newEtag(), by)
 	if err != nil {
 		return err
 	}
@@ -103,13 +107,17 @@ func (s *Store) StartTurn(ctx context.Context, conversation uuid.UUID, turn stri
 		}
 		return ErrConflict
 	}
+	s.changed(Change{RID: conversation})
 	return nil
 }
 
 // EndTurn releases the turn lock when the given turn holds it.
 func (s *Store) EndTurn(ctx context.Context, conversation uuid.UUID, turn string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE resource SET status = status - 'activeTurn', etag = $3, updated_at = now()
+	tag, err := s.pool.Exec(ctx, `UPDATE resource SET status = status - 'activeTurn' - 'activeTurnBy', etag = $3, updated_at = now()
 		WHERE rid = $1 AND (status ->> 'activeTurn') = $2`, conversation, turn, newEtag())
+	if err == nil && tag.RowsAffected() > 0 {
+		s.changed(Change{RID: conversation})
+	}
 	return err
 }
 

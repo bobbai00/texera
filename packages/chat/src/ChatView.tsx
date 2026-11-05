@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import type { AgentTemplateSpec, ConversationSpec, Resource } from "@texera/catalog-client/types";
-import { baseUri, createDatasetVersion, KindIcon, resourceQuery, searchQuery, useOpenResource } from "@texera/kinds";
+import type { AgentTemplateSpec, ConversationSpec, ConversationStatus, Resource } from "@texera/catalog-client/types";
+import { baseUri, createDatasetVersion, KindIcon, meQuery, PrincipalName, resourceQuery, searchQuery, useOpenResource } from "@texera/kinds";
 import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger, ErrorNote, Skeleton, cn } from "@texera/ui";
 import { ChevronDown, Loader2, PanelRight } from "lucide-react";
 import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -22,7 +22,12 @@ export function ChatView({ rid, getToken }: { rid: string; getToken: () => strin
 
 function Conversation({ rid, conversation, getToken }: { rid: string; conversation: Resource; getToken: () => string | undefined }) {
   const spec = conversation.spec as unknown as ConversationSpec;
+  const status = conversation.status as ConversationStatus | undefined;
   const chat = useConversation({ rid, template: spec.template, getToken });
+  const { data: me } = useQuery(meQuery());
+  const myPid = me?.principal.pid;
+  // A shared chat is a group chat: one turn at a time, and the others see whose it is.
+  const othersTurn = status?.activeTurn && status.activeTurnBy && status.activeTurnBy !== myPid ? status.activeTurnBy : undefined;
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
   const [upload, setUpload] = useState<{ status?: string; error?: string }>({});
@@ -94,7 +99,7 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
             with <span data-current-template>{current?.name ?? "…"}</span>
           </div>
         </div>
-        <TemplateSwitcher current={spec.template} disabled={busy} onPick={uri => void chat.send(`/mode ${uri}`)} />
+        <TemplateSwitcher current={spec.template} disabled={busy || othersTurn !== undefined} onPick={uri => void chat.send(`/mode ${uri}`)} />
         <Button variant="ghost" size="icon-sm" aria-label="Open the chat's details beside" onClick={() => beside({ kind: "conversation", rid })}>
           <PanelRight />
         </Button>
@@ -116,7 +121,7 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
               )}
               {items.map(({ message, showLabel }, i) => (
                 <div key={message.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_120px]">
-                  <MessageItem message={message} streaming={chat.running && i === items.length - 1} labels={labels} showLabel={showLabel} />
+                  <MessageItem message={message} streaming={chat.running && i === items.length - 1} labels={labels} showLabel={showLabel} showAuthor={message.author !== undefined && message.author !== myPid} />
                 </div>
               ))}
               {chat.running && (!last || last.role === "user") && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
@@ -125,7 +130,13 @@ function Conversation({ rid, conversation, getToken }: { rid: string; conversati
           </div>
           <div className="mx-auto w-full max-w-3xl space-y-2 px-4 pb-4">
             {upload.error && <p className="text-xs text-destructive">Upload failed: {upload.error}</p>}
-            <Composer busy={busy} onSend={send} onStop={chat.stop} files={files} onFilesChange={setFiles} autoFocus status={uploading ? `${upload.status}…` : chat.steps.at(-1)} />
+            {othersTurn && (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground" data-turn-of={othersTurn}>
+                <Loader2 className="size-3 animate-spin" />
+                <PrincipalName pid={othersTurn} /> is talking to {current?.name ?? "the agent"}…
+              </p>
+            )}
+            <Composer busy={busy} disabled={othersTurn !== undefined} onSend={send} onStop={chat.stop} files={files} onFilesChange={setFiles} autoFocus status={uploading ? `${upload.status}…` : chat.steps.at(-1)} />
           </div>
         </div>
         <ResourcesRail rid={rid} live={chat.resources} className="hidden w-60 shrink-0 border-l p-3 xl:block" />

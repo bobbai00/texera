@@ -263,6 +263,10 @@ export type ConversationStatus = {
      * The turn in progress, when one is.
      */
     activeTurn?: string;
+    /**
+     * The person whose turn is in progress.
+     */
+    activeTurnBy?: Pid;
     messages: number;
     lastMessageAt?: string;
     /**
@@ -779,7 +783,7 @@ export type ExecutionPage = {
     nextCursor?: string;
 };
 
-export type ExecutionPhase = 'pending' | 'provisioning' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type ExecutionPhase = 'pending' | 'provisioning' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 
 /**
  * What the catalog compiled for a run, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the run starts and never stored.
@@ -6058,6 +6062,62 @@ export type WorkflowsReadRowsResponses = {
 };
 
 export type WorkflowsReadRowsResponse = WorkflowsReadRowsResponses[keyof WorkflowsReadRowsResponses];
+
+export type WorkflowsPauseExecutionData = {
+    body?: never;
+    path: {
+        rid: Rid;
+        eid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/workflows/{rid}/executions/{eid}/pause';
+};
+
+export type WorkflowsPauseExecutionErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type WorkflowsPauseExecutionError = WorkflowsPauseExecutionErrors[keyof WorkflowsPauseExecutionErrors];
+
+export type WorkflowsPauseExecutionResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: Execution;
+};
+
+export type WorkflowsPauseExecutionResponse = WorkflowsPauseExecutionResponses[keyof WorkflowsPauseExecutionResponses];
+
+export type WorkflowsResumeExecutionData = {
+    body?: never;
+    path: {
+        rid: Rid;
+        eid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/workflows/{rid}/executions/{eid}/resume';
+};
+
+export type WorkflowsResumeExecutionErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type WorkflowsResumeExecutionError = WorkflowsResumeExecutionErrors[keyof WorkflowsResumeExecutionErrors];
+
+export type WorkflowsResumeExecutionResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: Execution;
+};
+
+export type WorkflowsResumeExecutionResponse = WorkflowsResumeExecutionResponses[keyof WorkflowsResumeExecutionResponses];
 
 export type WorkflowsRunData = {
     body: RunWorkflow;

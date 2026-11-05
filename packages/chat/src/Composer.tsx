@@ -3,7 +3,10 @@ import { ArrowUp, Paperclip, Square, X } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, useRef, useState } from "react";
 
 interface Props {
+  /** This person's own turn is streaming: the send button becomes a stop button. */
   busy: boolean;
+  /** Nothing can be sent right now (someone else's turn runs); drafting stays possible. */
+  disabled?: boolean;
   /** Resolves false when the message could not be sent, so the draft stays in the box. */
   onSend: (message: { text: string; files: File[] }) => Promise<boolean>;
   onStop: () => void;
@@ -14,13 +17,13 @@ interface Props {
   status?: string;
 }
 
-export function Composer({ busy, onSend, onStop, files, onFilesChange, autoFocus, placeholder, status }: Props) {
+export function Composer({ busy, disabled = false, onSend, onStop, files, onFilesChange, autoFocus, placeholder, status }: Props) {
   const [text, setText] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
   const submit = async (e?: FormEvent) => {
     e?.preventDefault();
-    if (busy || (!text.trim() && files.length === 0)) return;
+    if (busy || disabled || (!text.trim() && files.length === 0)) return;
     const draft = text;
     setText("");
     if (!(await onSend({ text: draft.trim(), files }))) setText(draft);
@@ -81,7 +84,7 @@ export function Composer({ busy, onSend, onStop, files, onFilesChange, autoFocus
             <Square className="size-3.5 fill-current" />
           </Button>
         ) : (
-          <Button type="submit" size="icon-sm" disabled={!text.trim() && files.length === 0} aria-label="Send message">
+          <Button type="submit" size="icon-sm" disabled={disabled || (!text.trim() && files.length === 0)} aria-label="Send message">
             <ArrowUp />
           </Button>
         )}

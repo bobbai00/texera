@@ -201,6 +201,83 @@ test("a run shows the file it read in its lineage, and can be kept past the rete
   await expect(workflow.locator('[data-run-row="completed"]').first()).toBeVisible();
 });
 
+test("two people in one chat: a shared conversation shows the other's messages and turn as they happen", async ({ browser, page, request }) => {
+  const alice = await api(request);
+  const bob = await api(request, "bob", "bob");
+  const bobPid = (await bob("GET", "/me")).principal.pid as string;
+  const alicePid = (await alice("GET", "/me")).principal.pid as string;
+
+  await signIn(page);
+  await startChat(page, "Data Analyst");
+  const rid = page.url().split("/conversations/")[1]?.split(/[/?#]/)[0] as string;
+  expect(rid).toBeTruthy();
+  // Sharing is membership: bob, an editor, opens the same chat in his own browser.
+  await alice("PUT", `/resources/${rid}/grants/${bobPid}`, { relation: "editor" });
+  const bobsBrowser = await browser.newContext();
+  const bobsPage = await bobsBrowser.newPage();
+  await signIn(bobsPage, "bob", "bob");
+  await bobsPage.goto(`/conversations/${rid}`);
+  await expect(bobsPage.locator("[data-composer]")).toBeVisible();
+
+  // Bob's message lands on alice's page without a reload, under his name.
+  await bob("POST", `/conversations/${rid}/messages`, { role: "user", parts: [{ type: "text", text: "Hello from Bob" }] });
+  const fromBob = page.locator('[data-message-role="user"]', { hasText: "Hello from Bob" });
+  await expect(fromBob).toBeVisible();
+  await expect(fromBob.locator(`[data-message-author="${bobPid}"]`)).not.toBeEmpty();
+  // And alice's on bob's, under hers; one's own messages carry no label.
+  await alice("POST", `/conversations/${rid}/messages`, { role: "user", parts: [{ type: "text", text: "Hi Bob, welcome" }] });
+  const fromAlice = bobsPage.locator('[data-message-role="user"]', { hasText: "Hi Bob, welcome" });
+  await expect(fromAlice).toBeVisible();
+  await expect(fromAlice.locator(`[data-message-author="${alicePid}"]`)).not.toBeEmpty();
+  await expect(page.locator(`[data-message-author="${alicePid}"]`)).toHaveCount(0);
+
+  // While bob's turn runs, alice sees whose turn it is and waits; when it ends she may speak.
+  const turn = await bob("POST", `/conversations/${rid}/turns`, {});
+  await expect(page.locator(`[data-turn-of="${bobPid}"]`)).toBeVisible();
+  await expect(page.getByLabel("Send message")).toBeDisabled();
+  await page.screenshot({ path: "test-results/group-chat.png", fullPage: true });
+  await bob("DELETE", `/conversations/${rid}/turns/${turn.turn}`);
+  await expect(page.locator(`[data-turn-of="${bobPid}"]`)).toHaveCount(0);
+  await bobsBrowser.close();
+});
+
+test("a run page follows the run as it goes, and pauses and resumes it", async ({ page, request }) => {
+  const call = await api(request);
+  const stamp = Date.now();
+  const ds = await call("POST", "/datasets", { name: `slow e2e ${stamp}`, spec: { format: "csv" } });
+  const dsRid = ds.metadata.rid as string;
+  const rows = Array.from({ length: 150 }, (_, i) => `${i},${(i % 7) * 1.5}`).join("\n");
+  await call("PUT", `/datasets/${dsRid}/files/numbers.csv`, `id,value\n${rows}\n`, "application/octet-stream");
+  await call("POST", `/datasets/${dsRid}/commit`, { message: "numbers" });
+  const code = "from pytexera import *\nimport time\n\n\nclass ProcessTupleOperator(UDFOperatorV2):\n    @overrides\n    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:\n        time.sleep(0.2)\n        yield tuple_\n";
+  const spec = {
+    operators: [
+      { operatorID: "scan", operatorType: "CSVFileScan", operatorProperties: { fileName: `texera://datasets/${dsRid}@1/files/numbers.csv`, fileEncoding: "UTF_8", hasHeader: true } },
+      { operatorID: "slow", operatorType: "PythonUDFV2", viewResult: true, operatorProperties: { code, workers: 1, retainInputColumns: true, outputColumns: [] } },
+    ],
+    links: [{ linkID: "l1", source: { operatorID: "scan", portID: "output-0" }, target: { operatorID: "slow", portID: "input-0" } }],
+  };
+  const wf = await call("POST", "/workflows", { name: `slow numbers ${stamp}`, spec });
+  const wfRid = wf.metadata.rid as string;
+
+  await signIn(page);
+  const run = await call("POST", `/workflows/${wfRid}/run`, { name: `slow run ${stamp}` });
+  await page.goto(`/workflows/${wfRid}/executions/${run.metadata.rid}`);
+  const execution = page.locator("[data-execution-view]");
+  await expect(execution.locator("[data-phase]")).toHaveText("running", { timeout: 90_000 });
+  // The operators tab fills in as the unit reports progress, with no reload.
+  await execution.getByRole("tab", { name: "Operators" }).click();
+  await expect(execution.getByRole("cell", { name: "slow" })).toBeVisible({ timeout: 30_000 });
+  await execution.locator("[data-pause-run]").click();
+  await expect(execution.locator("[data-phase]")).toHaveText("paused", { timeout: 30_000 });
+  await page.screenshot({ path: "test-results/paused-run.png", fullPage: true });
+  await execution.locator("[data-resume-run]").click();
+  await expect(execution.locator("[data-phase]")).toHaveText("running", { timeout: 30_000 });
+  await expect(execution.locator("[data-phase]")).toHaveText("completed", { timeout: 90_000 });
+  await execution.getByRole("tab", { name: /^Results/ }).click();
+  await expect(execution.locator("[data-port-rows]")).toBeVisible();
+});
+
 // The core loop with the real model: bob asks the Data Analyst about his iris dataset; the agent
 // builds and runs a workflow through the dataflow MCP server; the answer arrives, and the
 // workflow it built is listed as a resource of this chat and opens beside it.

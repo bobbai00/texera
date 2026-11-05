@@ -136,7 +136,11 @@ func (s *Service) StartTurn(ctx context.Context, caller *auth.Caller, rid uuid.U
 		vno = tpl.HeadVno
 	}
 	turn := uuid.NewString()
-	if err := s.Store.StartTurn(ctx, rid, turn); err != nil {
+	var by *uuid.UUID
+	if pid := caller.PID(); pid != uuid.Nil {
+		by = &pid
+	}
+	if err := s.Store.StartTurn(ctx, rid, turn, by); err != nil {
 		if store.IsConflict(err) {
 			return nil, Conflict("turn_active", "a turn is already running in this conversation", nil)
 		}

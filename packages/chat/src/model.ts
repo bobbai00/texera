@@ -31,6 +31,8 @@ export interface ChatMessage {
   parts: Part[];
   /** For an assistant message: the template version (a URI with `@vno`) that wrote it. */
   template?: string;
+  /** The person whose message this is, or whose turn an assistant message answered. */
+  author?: string;
   seq?: number;
   createdAt?: string;
 }
@@ -337,7 +339,7 @@ export function fromHistory(messages: CatalogMessage[]): ChatMessage[] {
         continue;
       }
     }
-    out.push({ id: `seq-${m.seq}`, role: m.role, parts, seq: m.seq, createdAt: m.createdAt, ...(m.template ? { template: m.template } : {}) });
+    out.push({ id: `seq-${m.seq}`, role: m.role, parts, seq: m.seq, createdAt: m.createdAt, author: m.author, ...(m.template ? { template: m.template } : {}) });
   }
   return out;
 }

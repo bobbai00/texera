@@ -131,6 +131,30 @@ func (u *Unit) Cancel(ctx context.Context, eid string) (*ExecutionState, error) 
 	return resp.JSON200, nil
 }
 
+// Pause asks the unit to pause a run; the state follows when the engine confirms.
+func (u *Unit) Pause(ctx context.Context, eid string) (*ExecutionState, error) {
+	resp, err := u.client.ExecutionsPauseWithResponse(ctx, eid)
+	if err != nil {
+		return nil, err
+	}
+	if err := check(resp.StatusCode(), resp.Body); err != nil {
+		return nil, err
+	}
+	return resp.JSON200, nil
+}
+
+// Resume continues a paused run.
+func (u *Unit) Resume(ctx context.Context, eid string) (*ExecutionState, error) {
+	resp, err := u.client.ExecutionsResumeWithResponse(ctx, eid)
+	if err != nil {
+		return nil, err
+	}
+	if err := check(resp.StatusCode(), resp.Body); err != nil {
+		return nil, err
+	}
+	return resp.JSON200, nil
+}
+
 // Result reads a page of a port result. Cells keep their exact numbers (json.Number), so a long
 // column passes through without the float64 rounding a plain decode would apply. table is where
 // the result was recorded (empty when unknown) and namespace the execution's namespace: a unit

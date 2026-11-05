@@ -147,6 +147,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/executions/{eid}/pause:
+    post:
+      operationId: Executions_pause
+      description: Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.
+      parameters:
+        - name: eid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionState'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/executions/{eid}/results/{opid}/{port}:
     get:
       operationId: Executions_result
@@ -200,6 +223,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RowPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/executions/{eid}/resume:
+    post:
+      operationId: Executions_resume
+      description: Resume a paused run.
+      parameters:
+        - name: eid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionState'
         default:
           description: An unexpected error response.
           content:
@@ -412,6 +458,7 @@ components:
       enum:
         - pending
         - running
+        - paused
         - completed
         - failed
         - cancelled

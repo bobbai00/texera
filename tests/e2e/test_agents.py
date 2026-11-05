@@ -83,3 +83,19 @@ def test_the_bio_researcher_hands_off_and_the_analyst_shares(alice, bob, project
     granted = [g["relation"] for g in alice.get(f"/resources/{my_iris.rid}/grants") if g["principal"] == bob_pid]
     assert granted, "the turn granted bob the dataset"
     assert bob.status("GET", f"/datasets/{my_iris.rid}") == 200
+
+
+@pytest.mark.model
+@pytest.mark.slow
+def test_bob_asks_in_alices_chat(alice, bob, project, unit, grants_guard):
+    """A shared chat with the agent in it: bob, an editor of alice's conversation, asks and gets
+    an answer; both his question and the answer are recorded as his turn, and alice reads them
+    in the same chat."""
+    crid = chat.conversation(alice, "shared chat", chat.template_uri(alice, "Data Analyst"), unit, project)
+    grants_guard(crid, bob.pid(), "editor")
+    turn = chat.say(bob, crid, "In one sentence, what can you help me with here? Answer without using any tool.")
+    assert turn.outcome == "success" and turn.text
+    messages = alice.get(f"/conversations/{crid}/messages")["items"]
+    assert [(m["role"], m["author"]) for m in messages][:2] == [("user", bob.pid()), ("assistant", bob.pid())]
+    assert alice.get(f"/conversations/{crid}")["status"].get("activeTurn") is None
+

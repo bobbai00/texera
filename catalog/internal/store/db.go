@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"sort"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,6 +37,25 @@ var (
 // Store wraps a connection pool.
 type Store struct {
 	pool *pgxpool.Pool
+	// OnChange, when set, is called after every committed write to a resource row or to a
+	// conversation's messages (grants and edges excepted), on the writer's goroutine; it must
+	// not block. The catalog's broker hands the change to the resource's watchers.
+	OnChange func(Change)
+}
+
+// Change is one write to a resource, for whoever watches it: the resource itself changed
+// (spec, status or metadata), a message of a conversation was appended or rewritten, or the
+// resource was deleted.
+type Change struct {
+	RID     uuid.UUID
+	Message *Message
+	Deleted bool
+}
+
+func (s *Store) changed(c Change) {
+	if s.OnChange != nil {
+		s.OnChange(c)
+	}
 }
 
 // Open connects to Postgres.

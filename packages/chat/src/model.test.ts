@@ -86,6 +86,14 @@ describe("applyEvent", () => {
 });
 
 describe("fromHistory", () => {
+  it("keeps each message's author, so a shared chat can name who said what", () => {
+    const [mine, theirs] = fromHistory([
+      { conversation: "c", seq: 1, role: "user", author: "p-alice", parts: [{ type: "text", text: "hi" }], createdAt: "2026-11-04T00:00:00Z" },
+      { conversation: "c", seq: 2, role: "user", author: "p-bob", parts: [{ type: "text", text: "hello" }], createdAt: "2026-11-04T00:00:01Z" },
+    ]);
+    expect([mine?.author, theirs?.author]).toEqual(["p-alice", "p-bob"]);
+  });
+
   it("rebuilds messages from the catalog, attaching results to calls and keeping the template", () => {
     const base: Omit<Message, "seq" | "role" | "parts"> = { conversation: "c", author: "p", createdAt: "2026-11-04T00:00:00Z" };
     const history: Message[] = [

@@ -2,7 +2,8 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { conversationsListMessagesOptions } from "@texera/catalog-client/query";
-import { type ResourceRef, uriOf } from "@texera/kinds";
+import type { Message, MessagePage } from "@texera/catalog-client/types";
+import { type ResourceRef, uriOf, useWatch } from "@texera/kinds";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { newRunId, runAgent } from "./agui/client";
 import type { AgUiEvent, RunAgentInput } from "./agui/types";
@@ -37,6 +38,13 @@ function liveReducer(state: ChatState, action: LiveAction): ChatState {
   }
 }
 
+/** A page of messages with one appended or rewritten, in seq order. */
+export function upsertMessage(items: Message[], m: Message): Message[] {
+  const i = items.findIndex(x => x.seq === m.seq);
+  if (i >= 0) return items.map((x, j) => (j === i ? m : x));
+  return [...items, m].sort((a, b) => a.seq - b.seq);
+}
+
 /** The AG-UI endpoint of a conversation on the agent runtime, behind the gateway. */
 export const agUiUrl = (rid: string) => `/agents/conversations/${encodeURIComponent(rid)}/ag-ui`;
 
@@ -49,6 +57,19 @@ export function useConversation({ rid, template, getToken, onRunEnd }: Conversat
 
   const persisted = useMemo(() => fromHistory(history.data?.items ?? []), [history.data]);
   const maxSeq = history.data?.items.at(-1)?.seq ?? 0;
+
+  // The others in the chat: their messages and turns arrive through the conversation's event
+  // stream. While this person's own turn streams, what is on screen is the live reply; the
+  // catalog's copy of it takes over when the turn ends (the refetch below).
+  const seen = useRef({ maxSeq, running: live.running });
+  seen.current = { maxSeq, running: live.running };
+  useWatch(rid, {
+    after: () => seen.current.maxSeq,
+    onMessage: m => {
+      if (seen.current.running) return;
+      queryClient.setQueriesData<MessagePage>({ queryKey: [{ _id: "conversationsListMessages", path: { rid } }] }, page => (page ? { ...page, items: upsertMessage(page.items, m) } : page));
+    },
+  });
 
   // Once the catalog has the turn the stream showed, the persisted copy replaces the live one.
   useEffect(() => {

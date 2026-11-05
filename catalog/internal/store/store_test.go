@@ -263,11 +263,18 @@ func TestMessagesAndTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	turn := uuid.NewString()
-	if err := st.StartTurn(ctx, conv.RID, turn); err != nil {
+	if err := st.StartTurn(ctx, conv.RID, turn, &alice.PID); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.StartTurn(ctx, conv.RID, uuid.NewString()); !store.IsConflict(err) {
+	if err := st.StartTurn(ctx, conv.RID, uuid.NewString(), nil); !store.IsConflict(err) {
 		t.Fatalf("second turn: %v", err)
+	}
+	// The lock names its holder, for the others in the chat.
+	locked, _ := st.GetResource(ctx, conv.RID)
+	var lockedStatus map[string]any
+	_ = json.Unmarshal(locked.Status, &lockedStatus)
+	if lockedStatus["activeTurn"] != turn || lockedStatus["activeTurnBy"] != alice.PID.String() {
+		t.Fatalf("turn lock: %v", lockedStatus)
 	}
 	m1, err := st.AppendMessage(ctx, store.NewMessage{ConversationRID: conv.RID, Turn: &turn, Role: "user", AuthorPID: alice.PID, Parts: json.RawMessage(`[{"type":"text","text":"hi"}]`)})
 	if err != nil || m1.Seq != 1 {
@@ -291,10 +298,10 @@ func TestMessagesAndTurns(t *testing.T) {
 	c, _ := st.GetResource(ctx, conv.RID)
 	var status map[string]any
 	_ = json.Unmarshal(c.Status, &status)
-	if status["activeTurn"] != nil || status["messages"] != float64(2) {
+	if status["activeTurn"] != nil || status["activeTurnBy"] != nil || status["messages"] != float64(2) {
 		t.Fatalf("status: %v", status)
 	}
-	if err := st.StartTurn(ctx, conv.RID, uuid.NewString()); err != nil {
+	if err := st.StartTurn(ctx, conv.RID, uuid.NewString(), nil); err != nil {
 		t.Fatalf("after end: %v", err)
 	}
 }

@@ -77,6 +77,10 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
     UnitApiResource.statusOf(WorkflowAggregatedState.KILLED) shouldBe "cancelled"
     UnitApiResource.statusOf(WorkflowAggregatedState.RUNNING) shouldBe "running"
     UnitApiResource.statusOf(WorkflowAggregatedState.READY) shouldBe "pending"
+    UnitApiResource.statusOf(WorkflowAggregatedState.PAUSED) shouldBe "paused"
+    UnitApiResource.statusOf(WorkflowAggregatedState.PAUSING) shouldBe "running"
+    UnitApiResource.statusOf(WorkflowAggregatedState.RESUMING) shouldBe "running"
+    UnitApiResource.isTerminal(WorkflowAggregatedState.PAUSED) shouldBe false
     UnitApiResource.isTerminal(WorkflowAggregatedState.COMPLETED) shouldBe true
     UnitApiResource.isTerminal(WorkflowAggregatedState.RUNNING) shouldBe false
   }

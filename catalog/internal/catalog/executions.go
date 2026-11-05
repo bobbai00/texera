@@ -404,6 +404,43 @@ func (s *Service) Cancel(ctx context.Context, caller *auth.Caller, workflowRID, 
 	return r, wrap(err, "execution")
 }
 
+// Pause asks the unit to pause a running execution. The phase turns paused when the unit
+// reports it, so the caller watches the execution rather than trusting the answer.
+func (s *Service) Pause(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID) (*store.Resource, error) {
+	return s.control(ctx, caller, workflowRID, eid, api.ExecutionPhaseRunning, "not_running", "the run is not running", (*engine.Unit).Pause)
+}
+
+// Resume continues a paused execution; the phase turns running when the unit reports it.
+func (s *Service) Resume(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID) (*store.Resource, error) {
+	return s.control(ctx, caller, workflowRID, eid, api.ExecutionPhasePaused, "not_paused", "the run is not paused", (*engine.Unit).Resume)
+}
+
+// control forwards a verb to the execution's unit when the run is in the phase the verb needs.
+func (s *Service) control(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID, want api.ExecutionPhase, code, msg string,
+	do func(*engine.Unit, context.Context, string) (*engine.ExecutionState, error)) (*store.Resource, error) {
+	r, err := s.Execution(ctx, caller, workflowRID, eid)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.require(ctx, caller, authz.Execute, workflowRID); err != nil {
+		return nil, err
+	}
+	var st api.ExecutionStatus
+	_ = json.Unmarshal(r.Status, &st)
+	if st.Phase != want {
+		return nil, Conflict(code, msg, map[string]any{"phase": st.Phase})
+	}
+	client, err := s.executionUnit(ctx, caller, r)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := do(client, ctx, eid.String()); err != nil {
+		return nil, Unavailable("the computing unit", err)
+	}
+	r, err = s.Store.GetResource(ctx, eid)
+	return r, wrap(err, "execution")
+}
+
 // DeleteExecution removes a finished run with its tables. A run still going must be cancelled
 // first; a run a dataset version derives from stays, as its lineage says.
 func (s *Service) DeleteExecution(ctx context.Context, caller *auth.Caller, workflowRID, eid uuid.UUID) error {

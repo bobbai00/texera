@@ -3,6 +3,7 @@ export * from "./uri";
 export * from "./registry";
 export * from "./api";
 export * from "./queries";
+export { useWatch, watchOnce, type WatchHandlers, type WatchOutcome } from "./watch";
 export { ResourceView, ResourceCard } from "./ResourceView";
 export { KindIcon } from "./shell/KindIcon";
 export { CardShell, GenericCard, useCardSummary } from "./shell/CardShell";

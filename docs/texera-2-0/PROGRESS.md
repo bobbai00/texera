@@ -2,6 +2,49 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-04 (session 6, later still): watch, group chat, run controls
+
+The question was how people and agents collaborate: several people in one chat, and the
+engine's interactivity (pause, status, results while a run goes), which 2.0 had routed out
+when it closed the unit's doors. Both land on one primitive, "watch a resource", with the
+catalog as the one entry for every verb.
+
+Done (one commit on `texera-2-0`):
+- `GET /resources/{rid}/events`: server-sent events for whoever may read the resource, fed by
+  an in-process broker on the store's writes (`store.Change`, `catalog.Broker`): `resource`
+  after each change, `message` for a conversation's messages, `deleted`. Opens with the
+  messages after `after` and the resource itself; a keepalive every fifteen seconds; each
+  change re-read through the watcher's permissions. Envoy routes it without a timeout.
+- A shared chat is a group chat with no new model: a grant is the membership, every message
+  has its author, the turn lock records its holder (`status.activeTurnBy`). The chat page
+  follows the stream, names the others' messages, shows "Bob is talking to the Data Analyst"
+  and disables sending (not stopping) while his turn runs.
+- Run controls through the catalog: `pause` and `resume` (contract, MCP tools, unit routes
+  that feed the engine's input bus, a `paused` phase), 409 when the phase does not fit; the
+  unit reports progress once a second (operator states and counts as OpenLineage RUNNING
+  events) and its pause/resume transitions, and the catalog ignores progress that arrives
+  after the terminal report. The run page watches instead of polling (a slow poll stays as a
+  fallback) and has Pause and Resume.
+- The generated TypeScript client leaves the streaming route out (hey-api's query plugin
+  cannot type it); `packages/kinds/src/watch.ts` reads it by hand, `useWatch` keeps the
+  resource's query fresh. `openapi-ts` now runs under Bun to pre-process the document.
+
+Verified: catalog `go vet` and the whole suite (new `watch_test.go`: the group chat over the
+stream, the run watched with progress, pause/resume forwarded and the phase following the
+unit, late progress ignored; the route coverage test); the unit's `UnitApiResourceSpec`
+(paused mapping) and the web specs; frontend typecheck, lint and vitest (watch reader, the
+author in the history); scenarios: fourteen pass against the stack including the new
+`test_collaboration.py` and `test_controls.py` (a real Python run paused and resumed, every
+row at the end); Playwright: the run page follows a slow run and pauses and resumes it, two
+browsers in one chat; the evals scenario "Bob asks in Alice's chat" with the model.
+
+Next: token-level streaming of a reply to the other members (today step by step, as the
+runtime rewrites the message); the canvas as a shared document (Yjs with a sync service, as
+the 1.0 frontend had); the rest of the engine's interactive protocol as catalog verbs
+(retry, skip, reconfigure, the Python console); Postgres LISTEN/NOTIFY behind the broker when
+the catalog runs as replicas. Steps 4 and 5 of the authorize/compile/materialize note stay
+deferred.
+
 ## 2026-11-04 (session 6, on Linux): M1 steps S1 to S10
 
 Done and verified (branch `texera-2-0`, each step a pushed commit):

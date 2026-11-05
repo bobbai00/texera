@@ -642,6 +642,10 @@
           "description": "The turn in progress, when one is.",
           "type": "string"
         },
+        "activeTurnBy": {
+          "$ref": "#/$defs/Pid",
+          "description": "The person whose turn is in progress."
+        },
         "lastMessageAt": {
           "format": "date-time",
           "type": "string"
@@ -1771,6 +1775,7 @@
         "pending",
         "provisioning",
         "running",
+        "paused",
         "completed",
         "failed",
         "cancelled"

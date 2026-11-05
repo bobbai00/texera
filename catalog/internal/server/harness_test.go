@@ -75,6 +75,7 @@ type fakeUnit struct {
 	*httptest.Server
 	mu              sync.Mutex
 	started         []map[string]any
+	controlled      []string
 	resultNamespace string
 }
 
@@ -110,6 +111,15 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 	mux.HandleFunc("POST /api/executions/{eid}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"eid": r.PathValue("eid"), "status": "cancelled", "operators": map[string]any{}, "results": []any{}})
 	})
+	// Pause and resume are acknowledged; the state follows through lineage events, as on a real unit.
+	for _, verb := range []string{"pause", "resume"} {
+		mux.HandleFunc("POST /api/executions/{eid}/"+verb, func(w http.ResponseWriter, r *http.Request) {
+			u.mu.Lock()
+			u.controlled = append(u.controlled, verb+" "+r.PathValue("eid"))
+			u.mu.Unlock()
+			writeJSON(w, map[string]any{"eid": r.PathValue("eid"), "status": "running", "operators": map[string]any{}, "results": []any{}})
+		})
+	}
 	mux.HandleFunc("GET /api/executions/{eid}/results/{opid}/{port}", func(w http.ResponseWriter, r *http.Request) {
 		u.mu.Lock()
 		u.resultNamespace = r.URL.Query().Get("namespace")
@@ -135,6 +145,13 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 	u.Server = httptest.NewServer(mux)
 	t.Cleanup(u.Close)
 	return u
+}
+
+// controls lists the pause and resume calls the unit received, in order.
+func (u *fakeUnit) controls() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]string(nil), u.controlled...)
 }
 
 // lastResultNamespace is the namespace the last rows request named.

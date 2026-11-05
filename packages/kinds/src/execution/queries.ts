@@ -4,15 +4,18 @@ import type { Execution, ExecutionStatus, Resource } from "@texera/catalog-clien
 import { unwrap } from "../api";
 import { resourceQuery } from "../queries";
 
-export const LIVE = new Set<ExecutionStatus["phase"]>(["pending", "provisioning", "running"]);
+export const LIVE = new Set<ExecutionStatus["phase"]>(["pending", "provisioning", "running", "paused"]);
 
 export const isLive = (x: Resource | undefined) => x !== undefined && LIVE.has((x.status as ExecutionStatus | undefined)?.phase ?? "pending");
 
-/** An execution, polled while it runs. The generic read serves it; its parent is the workflow. */
+/**
+ * An execution. The generic read serves it and its parent is the workflow; the run page watches
+ * it (useWatch), so the poll while it runs is only a fallback for a dropped stream.
+ */
 export const executionQuery = (eid: string) => ({
   ...resourceQuery(eid),
   select: (r: Resource) => r as unknown as Execution,
-  refetchInterval: (query: { state: { data?: Resource } }) => (isLive(query.state.data) ? 2000 : false),
+  refetchInterval: (query: { state: { data?: Resource } }) => (isLive(query.state.data) ? 10_000 : false),
 });
 
 export const PAGE_SIZE = 50;

@@ -142,15 +142,4 @@ func (s *Server) routeAgents() {
 	})
 }
 
-func messageOf(m *store.Message) api.Message {
-	out := api.Message{Conversation: api.Rid(m.ConversationRID.String()), Seq: m.Seq, Turn: m.Turn, Role: api.MessageRole(m.Role), Author: api.Pid(m.AuthorPID.String()), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
-	if m.Template != nil {
-		t := api.Uri(*m.Template)
-		out.Template = &t
-	}
-	_ = jsonUnmarshal(m.Parts, &out.Parts)
-	if out.Parts == nil {
-		out.Parts = []api.MessagePart{}
-	}
-	return out
-}
+func messageOf(m *store.Message) api.Message { return catalog.MessageOf(m) }

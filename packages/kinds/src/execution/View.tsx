@@ -1,8 +1,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { resourcesUpdateMetadata, workflowsCancelExecution, workflowsDeleteExecution } from "@texera/catalog-client";
+import { resourcesUpdateMetadata, workflowsCancelExecution, workflowsDeleteExecution, workflowsPauseExecution, workflowsResumeExecution } from "@texera/catalog-client";
 import type { Execution, ExecutionStatus, PortSummary } from "@texera/catalog-client/types";
 import { Badge, Button, DataTable, EmptyState, ErrorNote, Skeleton, Tab, TabPanel, Tabs, TabsList, cn, formatDuration, formatNumber, timeAgo } from "@texera/ui";
-import { AlertTriangle, Bookmark, BookmarkCheck, Braces, ChevronLeft, ChevronRight, Database, GitBranch, Loader2, Square, Table2, Trash2, Workflow } from "lucide-react";
+import { AlertTriangle, Bookmark, BookmarkCheck, Braces, ChevronLeft, ChevronRight, Database, GitBranch, Loader2, Pause, Play, Square, Table2, Trash2, Workflow } from "lucide-react";
 import { useState } from "react";
 import { unwrap } from "../api";
 import { UriChip } from "../shell/Chips";
@@ -11,12 +11,14 @@ import { KindHeader } from "../shell/KindHeader";
 import { Lineage } from "../shell/Lineage";
 import { useOpenResource } from "../shell/navigation";
 import type { KindViewProps } from "../types";
+import { useWatch } from "../watch";
 import { executionQuery, isLive, PAGE_SIZE, rowsQuery } from "./queries";
 
 const TONE: Record<ExecutionStatus["phase"], "neutral" | "success" | "danger" | "warning"> = {
   pending: "neutral",
   provisioning: "warning",
   running: "warning",
+  paused: "warning",
   completed: "success",
   failed: "danger",
   cancelled: "danger",
@@ -26,10 +28,22 @@ const TONE: Record<ExecutionStatus["phase"], "neutral" | "success" | "danger" | 
 export default function ExecutionView({ ref, mode }: KindViewProps) {
   const queryClient = useQueryClient();
   const { data: x, error } = useQuery(executionQuery(ref.rid));
+  // The run's state as the unit reports it, as it arrives: phase, operators, ports.
+  useWatch(ref.rid);
   const workflow = x?.metadata.parent ?? ref.parent ?? "";
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["resource", ref.rid] });
   const cancel = useMutation({
     mutationFn: () => unwrap(workflowsCancelExecution({ path: { rid: workflow, eid: ref.rid } })),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["resource", ref.rid] }),
+    onSuccess: refresh,
+  });
+  // Pause and resume go through the catalog to the unit; the phase follows the unit's report.
+  const pause = useMutation({
+    mutationFn: () => unwrap(workflowsPauseExecution({ path: { rid: workflow, eid: ref.rid } })),
+    onSuccess: refresh,
+  });
+  const resume = useMutation({
+    mutationFn: () => unwrap(workflowsResumeExecution({ path: { rid: workflow, eid: ref.rid } })),
+    onSuccess: refresh,
   });
   const { expand } = useOpenResource();
   // A finished run can be deleted with its result tables; the workflow stays open.
@@ -82,8 +96,18 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
               {live && <Loader2 className="size-3 animate-spin" />}
               {status.phase}
             </Badge>
+            {status.phase === "running" && (
+              <Button variant="secondary" size="sm" onClick={() => pause.mutate()} disabled={pause.isPending} data-pause-run title="Pause the run; it keeps its state">
+                <Pause className="fill-current" /> Pause
+              </Button>
+            )}
+            {status.phase === "paused" && (
+              <Button variant="secondary" size="sm" onClick={() => resume.mutate()} disabled={resume.isPending} data-resume-run title="Continue the run">
+                <Play className="fill-current" /> Resume
+              </Button>
+            )}
             {live && (
-              <Button variant="secondary" size="sm" onClick={() => cancel.mutate()} disabled={cancel.isPending}>
+              <Button variant="secondary" size="sm" onClick={() => cancel.mutate()} disabled={cancel.isPending} data-stop-run>
                 <Square className="fill-current" /> Stop
               </Button>
             )}
@@ -102,6 +126,8 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
       />
       {status.error !== undefined && status.error !== null && <ErrorNote error={status.error} prefix="The run failed" className="m-3" />}
       {cancel.error && <ErrorNote error={cancel.error} prefix="Could not stop the run" className="m-3" />}
+      {pause.error && <ErrorNote error={pause.error} prefix="Could not pause the run" className="m-3" />}
+      {resume.error && <ErrorNote error={resume.error} prefix="Could not resume the run" className="m-3" />}
       {remove.error && <ErrorNote error={remove.error} prefix="Could not delete the run" className="m-3" />}
       {keep.error && <ErrorNote error={keep.error} prefix="Could not change the run's keep mark" className="m-3" />}
       {status.resultsExpiredAt && (

@@ -14,6 +14,13 @@ using OpenAPI;
 namespace Texera.Catalog;
 
 model ResourcePage is Page<Resource>;
+
+@doc("A stream of server-sent events; each `data:` line is JSON: a Resource for `resource`, a Message for `message`, `{rid}` for `deleted`.")
+model WatchStream {
+  @statusCode statusCode: 200;
+  @header contentType: "text/event-stream";
+  @body body: string;
+}
 model VersionSummaryPage is Page<VersionSummary>;
 
 @doc("A URI resolved to what it names.")
@@ -69,6 +76,12 @@ namespace Routes {
       readOnlyHint: true,
     })
     read(@path rid: Rid): Resource | Error;
+
+    @doc("Watch a resource: server-sent events for as long as the connection stays open. `resource` carries the resource after each change (its status included), `message` a message of a conversation as it is appended or rewritten, `deleted` ends the stream. It opens with the resource as it stands and, for a conversation, the messages after `after`, so a client that listed first misses nothing. A comment line every few seconds keeps the connection alive.")
+    @get
+    @route("/{rid}/events")
+    @extension("x-texera-permission", "read")
+    watch(@path rid: Rid, @query after?: int64): WatchStream | Error;
 
     @patch
     @route("/{rid}")

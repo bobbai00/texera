@@ -129,6 +129,10 @@ namespace Routes {
     @post start(@body body: ExecutionStartRequest): ExecutionAck | Error;
     @get @route("/{eid}") status(@path eid: string): ExecutionState | Error;
     @post @route("/{eid}/cancel") cancel(@path eid: string): ExecutionState | Error;
+    @doc("Pause the run; the status turns `paused` once the engine confirms, and the unit reports it.")
+    @post @route("/{eid}/pause") pause(@path eid: string): ExecutionState | Error;
+    @doc("Resume a paused run.")
+    @post @route("/{eid}/resume") resume(@path eid: string): ExecutionState | Error;
     @doc("A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the run (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.")
     @get @route("/{eid}/results/{opid}/{port}") result(@path eid: string, @path opid: string, @path port: string, @query offset?: int64, @query limit?: int32, @query table?: string, @query `namespace`?: string): RowPage | Error;
   }

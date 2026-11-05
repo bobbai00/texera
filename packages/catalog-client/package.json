@@ -13,7 +13,7 @@
     "./types": "./src/gen/types.gen.ts"
   },
   "scripts": {
-    "generate": "openapi-ts",
+    "generate": "bun --bun openapi-ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

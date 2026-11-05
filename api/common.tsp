@@ -76,6 +76,7 @@ model CompileResult {
 enum ExecutionStatus {
   pending,
   running,
+  paused,
   completed,
   failed,
   cancelled,

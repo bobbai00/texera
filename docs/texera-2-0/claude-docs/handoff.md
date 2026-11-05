@@ -14,9 +14,11 @@ the namespaces of the runs it executed, which the catalog opens for it. A run go
 catalog in three phases: authorize (everything the plan names, before anything is written),
 compile (one plan, as data, the same a dry run returns), materialize (the execution with its
 plan, its namespace, a bound copy with presigned inputs and leased secrets to the engine, which
-writes the tables the catalog named). A unit answers the catalog alone and reports as itself.
-All eleven acceptance items of the plan are demonstrated by automated checks, and the close
-gate (`down.sh --wipe && up.sh && test.sh`) is green.
+writes the tables the catalog named). A unit answers the catalog alone and reports as itself,
+and while a run goes it reports progress; a run is paused and resumed through the catalog.
+Every resource can be watched (an event stream the frontend follows), which makes a shared
+conversation a group chat. All eleven acceptance items of the plan are demonstrated by
+automated checks, and the close gate (`down.sh --wipe && up.sh && test.sh`) is green.
 
 | Piece | Where | How to reach it |
 | --- | --- | --- |
@@ -39,16 +41,21 @@ gate (`down.sh --wipe && up.sh && test.sh`) is green.
   UnitProvider, LineageSink) with one adapter each and contract suites, a generic service and
   server, the generated MCP bridge. OpenFGA decides every call; viewing never implies using.
   A run is authorized, compiled and materialized in the catalog; the execution stores its
-  plan (`spec.plan`, URIs only) and the engine gets one bound copy.
+  plan (`spec.plan`, URIs only) and the engine gets one bound copy. Every resource has an
+  event stream (`GET /resources/{rid}/events`, server-sent events through the gateway) fed by
+  an in-process broker on the store's writes; a run has pause and resume, forwarded to the
+  unit, whose lineage reports (progress once a second, paused, running) drive the phase.
 - The agent runtime as a stateless turn runner: a template version runs one turn of a
   conversation as the person; handoffs between templates; `/mode`; the platform key leased
   from OpenBao per turn. Two seeded templates, Data Analyst and Bio Researcher.
 - The frontend: a generic page for every kind from its JSON Schema (spec, versions, access,
   lineage), the workflow editor, the run page with the port view, the agent template form, the
-  chat with the agent switcher and labelled messages.
+  chat with the agent switcher and labelled messages; the run page and the chat follow their
+  resource's event stream, so a shared chat is a group chat (authors named, the other's turn
+  shown and waited for) and a run shows its progress and its pause and resume buttons.
 - Checks in four layers (`docs/texera-2-0/TESTING.md`): unit (Go, sbt, Bun, vitest), contract
-  (adapters and the engine against the stack's peers), scenario (thirteen pytest scenarios in
-  `tests/e2e/`, one per use case, each in a project of its own), ui (Playwright, seven tests);
+  (adapters and the engine against the stack's peers), scenario (fifteen pytest scenarios in
+  `tests/e2e/`, one per use case, each in a project of its own), ui (Playwright, nine tests);
   plus evals (the real agents through the real model) and the same against the cluster.
 
 ## Run and test
@@ -76,9 +83,14 @@ images and the one-command Kubernetes deployment, the Kubernetes unit provider, 
 OpenFGA with one identity per unit, retention (an execution delete route, a results expiry
 policy with an hourly sweep, unreferenced blobs), the run in three phases with the unit's
 doors closed and the output tables named by the catalog (steps 1 to 3 of the note "Texera
-2.0: Authorize, Compile, Materialize"; results live with the run, `texera.keep` keeps them).
-Nearest gaps: steps 4 and 5 of that note, quotas and metering, groups
-beyond admins, a purge of soft-deleted resources. Known limit: the
+2.0: Authorize, Compile, Materialize"; results live with the run, `texera.keep` keeps them),
+the resource event stream with the group chat and the run controls built on it.
+Nearest gaps: steps 4 and 5 of that note; token-level streaming of a reply to the other
+members of a chat (today they see it step by step, as the runtime rewrites the message);
+the canvas as a shared document (Yjs, as the 1.0 frontend had, with a sync service beside
+the runtime); the rest of the engine's interactive protocol (retry, skip, reconfigure, the
+Python console) as catalog verbs; quotas and metering, groups beyond admins, a purge of
+soft-deleted resources. Known limit: the
 units still hold the store's static S3 key for large binaries (`STORAGE_S3_AUTH_*`), which also
 reaches the warehouse's files; a key scoped to the objects prefix closes that.
 
@@ -98,6 +110,12 @@ reaches the warehouse's files; a key scoped to the objects prefix closes that.
 - **Results live with the run.** Save-as-dataset left the MVP (acceptance item 4 now reads as
   the run's own lineage); a run's `texera.keep` label keeps its results past the retention
   policy. Every run stores the plan it was started with in `spec.plan`.
+- **Watch, do not poll.** `GET /resources/{rid}/events` streams a resource's changes to whoever
+  may read it; the frontend's `useWatch` and the scenarios' `events.Watch` use it. The broker
+  is in-process (one catalog); replicas need Postgres LISTEN/NOTIFY behind the same type.
+- **A paused run is live.** `paused` is a phase between `running` and the end: not terminal,
+  so no sweep, no delete; cancel works on it. The catalog never sets it itself; the unit's
+  lineage report does.
 - **The lake takes a token.** `curl` against Lakekeeper answers 401 without one; the catalog's
   client `texera-services` is the operator and sees everything, a unit's client only its runs.
   Keycloak's discovery document names the public issuer, which Lakekeeper reaches through a

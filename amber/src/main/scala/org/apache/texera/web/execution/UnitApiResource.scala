@@ -46,18 +46,27 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
   TERMINATED
 }
 import org.apache.texera.amber.engine.common.Utils
-import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
+import org.apache.texera.amber.engine.common.executionruntimestate.{
+  ExecutionMetadataStore,
+  ExecutionStatsStore
+}
 import org.apache.texera.amber.operator.metadata.{AllOperatorMetadata, OperatorMetadataGenerator}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.web.auth.{UnitIdentity, UnitPrincipal}
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.common.compiler.{CompilationErrorHandling, WorkflowCompiler}
 import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
+import org.apache.texera.web.model.websocket.request.{
+  TexeraWebSocketRequest,
+  WorkflowExecuteRequest,
+  WorkflowPauseRequest,
+  WorkflowResumeRequest
+}
 import org.apache.texera.web.service.{ExecutionResultService, WorkflowService}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
 import java.net.URI
+import java.util.concurrent.TimeUnit
 import javax.annotation.security.RolesAllowed
 import javax.ws.rs._
 import javax.ws.rs.core.{MediaType, Response}
@@ -222,6 +231,7 @@ object UnitApiResource {
       case FAILED                                                                => "failed"
       case KILLED | TERMINATED                                                   => "cancelled"
       case WorkflowAggregatedState.UNINITIALIZED | WorkflowAggregatedState.READY => "pending"
+      case WorkflowAggregatedState.PAUSED                                        => "paused"
       case _                                                                     => "running"
     }
 
@@ -411,10 +421,45 @@ class UnitApiResource extends LazyLogging {
     runs.put(request.eid, handle)
 
     @volatile var reported = false
+    // Progress while the run goes, for the catalog's watchers: every operator's state and
+    // count about once a second, and the run's own state when it pauses or resumes. The
+    // terminal report below is the last word, so nothing is reported past it.
+    def reportProgress(stats: ExecutionStatsStore): Unit =
+      synchronized {
+        if (reported) return
+        stats.operatorInfo.foreach {
+          case (opid, m) =>
+            reporter.operator(
+              opid,
+              Utils.aggregatedStateToString(m.operatorState),
+              Some(m.operatorStatistics.outputMetrics.map(_.tupleMetrics.count).sum),
+              None,
+              Seq.empty,
+              Seq.empty,
+              terminal = false
+            )
+        }
+      }
+    var lastStatus = "running"
+    def reportTransition(state: ExecutionMetadataStore): Unit =
+      synchronized {
+        val status = statusOf(state.state)
+        if (!reported && status != lastStatus && (status == "running" || status == "paused")) {
+          lastStatus = status
+          reporter.runStatus(status, None)
+        }
+      }
+    val progress = executionService.executionStateStore.statsStore.getStateObservable
+      .sample(1, TimeUnit.SECONDS)
+      .subscribe((stats: ExecutionStatsStore) => reportProgress(stats))
+    val transitions = executionService.executionStateStore.metadataStore.getStateObservable
+      .subscribe((state: ExecutionMetadataStore) => reportTransition(state))
     def reportTerminal(state: ExecutionMetadataStore): Unit =
       synchronized {
         if (reported) return
         reported = true
+        progress.dispose()
+        transitions.dispose()
         val stats = executionService.executionStateStore.statsStore.getState
         val record = ExecutionRegistry.get(handle.internalEid)
         plan.operators.foreach { op =>
@@ -544,6 +589,34 @@ class UnitApiResource extends LazyLogging {
     } catch {
       case e: Exception => logger.warn(s"cancel $eid: ${e.getMessage}")
     }
+    status(eid)
+  }
+
+  @POST
+  @Path("/executions/{eid}/pause")
+  @RolesAllowed(Array("SERVICE"))
+  def pause(@PathParam("eid") eid: String, @Auth user: UnitPrincipal): ExecutionState =
+    control(eid, WorkflowPauseRequest(), user)
+
+  @POST
+  @Path("/executions/{eid}/resume")
+  @RolesAllowed(Array("SERVICE"))
+  def resume(@PathParam("eid") eid: String, @Auth user: UnitPrincipal): ExecutionState =
+    control(eid, WorkflowResumeRequest(), user)
+
+  /**
+    * Hands a control request to the run's input bus, where the websocket used to put it, and
+    * answers with the state as it stands. The engine confirms through its state store, which
+    * the run's reporter relays to the catalog.
+    */
+  private def control(
+      eid: String,
+      request: TexeraWebSocketRequest,
+      user: UnitPrincipal
+  ): ExecutionState = {
+    val handle = handleOf(eid)
+    val executionService = handle.workflowService.executionService.getValue
+    executionService.wsInput.onNext(request, Some(user.subject))
     status(eid)
   }
 

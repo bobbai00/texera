@@ -1,6 +1,10 @@
 package server
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -73,6 +77,7 @@ func (s *Server) routeResources() {
 		writeJSON(w, http.StatusOK, catalog.Envelope(res))
 		return nil
 	})
+	s.handle("GET "+base+"/{rid}/events", s.watch)
 	s.handle("PATCH "+base+"/{rid}", func(w http.ResponseWriter, r *http.Request) error {
 		rid, err := ridParam(r, "rid")
 		if err != nil {
@@ -279,4 +284,47 @@ func (s *Server) routeResources() {
 		writeJSON(w, http.StatusOK, api.AuthzResponse{Decision: allowed})
 		return nil
 	})
+}
+
+// watch streams a resource's changes as server-sent events. Whether the caller may read it is
+// settled before the first byte, so a refusal is an ordinary JSON error; after that the
+// stream runs until the client goes away, the resource is deleted or the right to read it is.
+func (s *Server) watch(w http.ResponseWriter, r *http.Request) error {
+	rid, err := ridParam(r, "rid")
+	if err != nil {
+		return err
+	}
+	if _, err := s.svc.Get(ctxOf(r), callerOf(r), nil, rid); err != nil {
+		return err
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return errors.New("the response cannot stream")
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+	send := func(event string, data any) error {
+		if event == "" {
+			_, err := io.WriteString(w, ": keepalive\n\n")
+			flusher.Flush()
+			return err
+		}
+		raw, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, raw); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+	if err := s.svc.Watch(ctxOf(r), callerOf(r), rid, int64(queryInt(r, "after", 0)), send); err != nil {
+		s.log.Debug("watch ended", "rid", rid, "err", err)
+	}
+	return nil
 }

@@ -3339,6 +3339,37 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-texera-permission: read
+  /catalog/v1/resources/{rid}/events:
+    get:
+      operationId: Resources_watch
+      description: 'Watch a resource: server-sent events for as long as the connection stays open. `resource` carries the resource after each change (its status included), `message` a message of a conversation as it is appended or rewritten, `deleted` ends the stream. It opens with the resource as it stands and, for a conversation, the messages after `after`, so a client that listed first misses nothing. A comment line every few seconds keeps the connection alive.'
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          explode: false
+      responses:
+        '200':
+          description: 'A stream of server-sent events; each `data:` line is JSON: a Resource for `resource`, a Message for `message`, `{rid}` for `deleted`.'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: read
   /catalog/v1/resources/{rid}/grants:
     get:
       operationId: Resources_listGrants
@@ -4120,7 +4151,7 @@ paths:
       x-texera-permission: read
     delete:
       operationId: Workflows_deleteExecution
-      description: 'What a port of an execution holds: for an output port its result, for an input port its binding.'
+      description: Delete a finished run with its result tables; refused with 409 while it runs or while a dataset version derives from it.
       parameters:
         - name: rid
           in: path
@@ -4173,6 +4204,7 @@ paths:
   /catalog/v1/workflows/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}:
     get:
       operationId: Workflows_readPort
+      description: 'What a port of an execution holds: for an output port its result, for an input port its binding.'
       parameters:
         - name: rid
           in: path
@@ -4266,6 +4298,78 @@ paths:
         description: Read a bounded page of rows from an operator's output port in an execution (schema and rows).
         readOnlyHint: true
       x-texera-permission: read
+  /catalog/v1/workflows/{rid}/executions/{eid}/pause:
+    post:
+      operationId: Workflows_pauseExecution
+      description: Pause a running execution; refused with 409 unless it runs. The phase turns `paused` when the unit confirms.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: eid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Execution'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        server: dataflow
+        tool: pause_execution
+        description: Pause a running execution of a workflow; it keeps its state and resume_execution continues it.
+        readOnlyHint: false
+        destructiveHint: false
+        idempotentHint: true
+      x-texera-permission: execute
+  /catalog/v1/workflows/{rid}/executions/{eid}/resume:
+    post:
+      operationId: Workflows_resumeExecution
+      description: Resume a paused execution; refused with 409 unless it is paused.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: eid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Execution'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mcp:
+        server: dataflow
+        tool: resume_execution
+        description: Resume a paused execution of a workflow.
+        readOnlyHint: false
+        destructiveHint: false
+        idempotentHint: true
+      x-texera-permission: execute
   /catalog/v1/workflows/{rid}/run:
     post:
       operationId: Workflows_run
@@ -4878,6 +4982,9 @@ components:
         activeTurn:
           type: string
           description: The turn in progress, when one is.
+        activeTurnBy:
+          $ref: '#/components/schemas/Pid'
+          description: The person whose turn is in progress.
         messages:
           type: integer
           format: int64
@@ -5666,6 +5773,7 @@ components:
         - pending
         - provisioning
         - running
+        - paused
         - completed
         - failed
         - cancelled
