@@ -2,6 +2,32 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-04 (session 6, close): both gates green; the model scenarios own their data
+
+Asked to make sure the branch works end to end in both modes before stopping: the Compose
+stack with host processes (`test.sh gate`: wipe, up, every layer) and the kind cluster with
+units made as resources (`k8s.sh up && k8s.sh check`). Also asked whether both modes put the
+gateway in front: they do, the one `envoy.yaml` (JWT against the realm's keys, then the
+catalog's `ext-authz` decision, the catalog verifying the token itself as well); `k8s.sh`
+derives the cluster's copy from it and only the gateway is exposed there.
+
+Done (one commit): the two Playwright scenarios that drive the real model asked about "my
+dataset named iris" without making one; nothing seeds it (the pytest scenarios make theirs in
+a per-test project and delete it), so on a wiped stack the Data Analyst found no iris and,
+rightly, built nothing. Each now makes the dataset in a project of its own and removes it
+after the test with what the chat made (runs, workflows, the conversation), passing or not.
+
+Verified: the local gate from a wiped stack: catalog, runtime, frontend and engine unit
+tests; the adapter and engine contract suites; the scenarios (14, then the 5 local and
+destructive ones); Playwright without the model (7); the real-agent scenarios (3). The model
+Playwright step failed on the iris gap and passed on rerun after the fix (2 of 2, nothing
+left behind for alice or bob); the model-free suite passed again with the cleanup hook in
+place. The cluster gate after `k8s.sh up` rolled the branch's images: 15 scenarios including
+the unit made as a resource beside the static one (gone again at the end), 7 Playwright tests.
+
+Next: unchanged from the entry below. The model-free Playwright tests still leave their
+uniquely named workflows and datasets in alice's home project; the model scenarios no longer do.
+
 ## 2026-11-04 (session 6, later still): watch, group chat, run controls
 
 The question was how people and agents collaborate: several people in one chat, and the
