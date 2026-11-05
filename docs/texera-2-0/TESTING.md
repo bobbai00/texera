@@ -54,7 +54,9 @@ Playwright covers the pages: sign-in, a chat with an upload that becomes a datas
 agent switcher and `/mode`, the template page, the operator page, a run's lineage and its
 keep mark, two people in one chat (the other's messages and turn arrive live, under their
 name), a run page that follows a slow run and pauses and resumes it, and with the model the
-two chat scenarios (`frontend-next/e2e/texera2.spec.ts`).
+two chat scenarios (`frontend-next/e2e/texera2.spec.ts`). The two model scenarios make the
+iris dataset they ask about in a project of their own and remove it at the end with what the
+chat made, as the pytest scenarios do; a wiped stack has no iris to find otherwise.
 
 ## Rules
 

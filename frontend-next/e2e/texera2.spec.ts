@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { expect, type APIRequestContext, type Page, test } from "@playwright/test";
 
 // The core loop against the real stack: sign in through Keycloak as alice, start a chat with an
@@ -10,6 +12,14 @@ const USER = process.env.TEXERA_E2E_USER ?? "alice";
 const PASSWORD = process.env.TEXERA_E2E_PASSWORD ?? "alice";
 const IRIS_QUESTION =
   "Using my dataset named iris, what is the average petal length for each species? Build and run a Texera workflow to compute it, then report the numbers.";
+// The flowers the model scenarios ask about. Each scenario makes its own copy and removes it.
+const IRIS_CSV = readFileSync(fileURLToPath(new URL("../../bin/texera-2-0/examples/iris.csv", import.meta.url)));
+
+// What a scenario must put back, run after it whether it passed or not.
+const cleanups: Array<() => Promise<void>> = [];
+test.afterEach(async () => {
+  for (const clean of cleanups.splice(0)) await clean();
+});
 
 async function signIn(page: Page, user = USER, password = PASSWORD) {
   await page.goto("/");
@@ -40,12 +50,60 @@ async function api(request: APIRequestContext, user = USER, password = PASSWORD)
   const tokenResponse = await request.post("/auth/realms/texera/protocol/openid-connect/token", { form });
   expect(tokenResponse.ok()).toBeTruthy();
   const token = (await tokenResponse.json()).access_token as string;
-  return async (method: string, path: string, data?: unknown, contentType = "application/json") => {
-    const r = await request.fetch(`/catalog/v1${path}`, { method, data, headers: { Authorization: `Bearer ${token}`, "Content-Type": contentType } });
+  const send = (method: string, path: string, data?: unknown, contentType = "application/json") =>
+    request.fetch(`/catalog/v1${path}`, { method, data, headers: { Authorization: `Bearer ${token}`, "Content-Type": contentType } });
+  const call = async (method: string, path: string, data?: unknown, contentType = "application/json") => {
+    const r = await send(method, path, data, contentType);
     expect(r.ok(), `${method} ${path}: ${await r.text()}`).toBeTruthy();
     const text = await r.text();
     return text ? JSON.parse(text) : undefined;
   };
+  /** Best effort, for tidying up: a refusal is reported, not fatal. */
+  const attempt = async (method: string, path: string, data?: unknown) => {
+    const r = await send(method, path, data);
+    if (!r.ok()) console.warn(`${method} ${path}: ${r.status()} ${await r.text()}`);
+  };
+  return Object.assign(call, { attempt });
+}
+type Caller = Awaited<ReturnType<typeof api>>;
+
+/** The conversation the page shows, from its URL. */
+function conversationOf(page: Page): string {
+  const rid = /\/conversations\/([0-9a-f-]{36})/.exec(page.url())?.[1];
+  expect(rid, `a conversation in ${page.url()}`).toBeDefined();
+  return rid as string;
+}
+
+type Made = { kind: string; metadata: { rid: string; parent?: string }; status?: { phase?: string } };
+
+/**
+ * A project of the person's for one scenario, with their iris dataset in it, as the pytest
+ * scenarios have. `clear` removes what the chat made (an agent's workflow lands in the person's
+ * home project unless the tool names a parent), then the project with the dataset.
+ */
+async function withIris(as: Caller, label: string) {
+  const project = (await as("POST", "/projects", { name: `${label} ${Date.now()}`, spec: {} })).metadata.rid as string;
+  const dataset = (await as("POST", "/datasets", { name: "iris", spec: { format: "csv" }, parent: project })).metadata.rid as string;
+  await as("PUT", `/datasets/${dataset}/files/iris.csv`, IRIS_CSV, "text/csv");
+  await as("POST", `/datasets/${dataset}/commit`, { message: "Fisher's iris flowers" });
+  const removeRun = async (workflow: string, eid: string, phase?: string) => {
+    if (phase && !["completed", "failed", "cancelled"].includes(phase)) await as.attempt("POST", `/workflows/${workflow}/executions/${eid}/cancel`, {});
+    await as.attempt("DELETE", `/workflows/${workflow}/executions/${eid}`);
+  };
+  const clear = async (conversation?: string) => {
+    const made: Made[] = conversation ? await as("GET", `/conversations/${conversation}/resources`) : [];
+    for (const r of made) if (r.kind === "execution" && r.metadata.parent) await removeRun(r.metadata.parent, r.metadata.rid, r.status?.phase);
+    for (const r of made) {
+      if (r.kind !== "workflow") continue;
+      const runs: { items: Made[] } = await as("GET", `/workflows/${r.metadata.rid}/executions?limit=500`);
+      for (const ex of runs.items) await removeRun(r.metadata.rid, ex.metadata.rid, ex.status?.phase);
+    }
+    for (const kind of ["workflow", "dataset"]) for (const r of made) if (r.kind === kind) await as.attempt("DELETE", `/resources/${r.metadata.rid}`);
+    if (conversation) await as.attempt("DELETE", `/resources/${conversation}`);
+    await as.attempt("DELETE", `/resources/${dataset}`);
+    await as.attempt("DELETE", `/projects/${project}`);
+  };
+  return { project, dataset, clear };
 }
 
 test("signs in, starts a chat with an agent template and attaches a CSV that becomes a dataset", async ({ page }) => {
@@ -281,11 +339,15 @@ test("a run page follows the run as it goes, and pauses and resumes it", async (
 // The core loop with the real model: bob asks the Data Analyst about his iris dataset; the agent
 // builds and runs a workflow through the dataflow MCP server; the answer arrives, and the
 // workflow it built is listed as a resource of this chat and opens beside it.
-test("a Data Analyst chat answers from a workflow it built and the chat tracks it", async ({ page }) => {
+test("a Data Analyst chat answers from a workflow it built and the chat tracks it", async ({ page, request }) => {
   test.skip(!!process.env.TEXERA_E2E_SKIP_MODEL, "needs the real model");
   test.setTimeout(300_000);
+  const iris = await withIris(await api(request, "bob", "bob"), "core loop e2e");
+  let conversation: string | undefined;
+  cleanups.push(() => iris.clear(conversation));
   await signIn(page, "bob", "bob");
   await startChat(page, "Data Analyst");
+  conversation = conversationOf(page);
   await say(page, IRIS_QUESTION);
 
   const answer = page.locator('[data-message-role="assistant"]').last();
@@ -312,8 +374,12 @@ test("a Data Analyst chat answers from a workflow it built and the chat tracks i
 test("the Bio Researcher hands the chat to the Data Analyst for the analysis, which then shares the data", async ({ page, request }) => {
   test.skip(!!process.env.TEXERA_E2E_SKIP_MODEL, "needs the real model");
   test.setTimeout(420_000);
+  const iris = await withIris(await api(request), "handoff e2e");
+  let conversation: string | undefined;
+  cleanups.push(() => iris.clear(conversation));
   await signIn(page);
   await startChat(page, "Bio Researcher");
+  conversation = conversationOf(page);
   await say(page, "I study CRISPR off-target effects. Give me three research ideas grounded in recent literature, with citations.");
   const ideas = page.locator('[data-message-role="assistant"]').last();
   await expect(ideas).toContainText(/off-target/i, { timeout: 180_000 });
