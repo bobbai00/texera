@@ -2,6 +2,41 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-05 (session 11, later): a workflow can be run again
+
+Reported after the polish was pushed: "Could not start the execution: conflict:
+resource_name_idx", sometimes; then, more exactly, that a version run once could not be run
+again, on the same unit or another.
+
+The cause: the "Run" button named every execution `<workflow's name> v<version>` (since
+session 9), and a name is the only one of its kind under its parent, so the second run of a
+version was refused, in the name of the index. An execution nobody named had the same flaw
+within one second (session 10's note).
+
+Done:
+- **The catalog names an execution nobody named, and the name is free**: `execution <UTC
+  time>`, numbered when two of one workflow start within a second (`createNumbered` in
+  `executions.go`). The app's "Run" names nothing any more. The rule is in the contract
+  (`RunWorkflow.name`), so the agent's `run_workflow` reads it too.
+- **A taken name is refused in words**: 409 `name_taken`, "another execution here already has
+  this name", for anything made or renamed under a name another has (`store.ErrNameTaken`,
+  `wrap`). It said `conflict: resource_name_idx`.
+
+Verified: the catalog's suites with two new tests (six executions of one workflow within
+seconds, each with its own name and at least one numbered; a name the caller chose refused in
+words, for an execution and for a workflow); `make generate` reproduces the tree; the browser
+scenario of an execution on the canvas now runs the same version a second time from the page;
+the catalog and frontend images rebuilt and rolled out on OrbStack's cluster.
+
+Also said by the user after trying the polish, and answered with an opinion, not yet with
+code (their decisions are awaited): no line from a result to its port, the port lit instead
+and a click on an operator showing its result; the icons in an open card are unclear (the eye
+means "view result" in Texera, and was used for on and off); a button on an operator to run
+up to it; results that were there and later "not available" (ports nobody marked, stored as a
+side effect of scheduling and readable only through the unit that ran them); an open card
+grows over its neighbours and the arrows; no cursors of other people; places are not part of
+a version; and where what the agent adds is placed.
+
 ## 2026-11-05 (session 11, on the Mac): the canvas, executions on it, lineage as a graph, and where new things go
 
 Asked to put everything else aside and polish the front end. The list: the icon at the top

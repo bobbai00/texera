@@ -28,8 +28,11 @@ var (
 	// ErrNotFound is returned when a row does not exist or is deleted.
 	ErrNotFound = errors.New("not found")
 	// ErrConflict is returned when an optimistic check fails: the head moved, a turn is
-	// active, or a name is taken.
+	// active, or something that must be the only one of its kind is not.
 	ErrConflict = errors.New("conflict")
+	// ErrNameTaken is the conflict of a name: another resource of the kind has it in the same
+	// place.
+	ErrNameTaken = fmt.Errorf("%w: the name is taken", ErrConflict)
 	// ErrPrecondition is returned when If-Match does not match the current etag.
 	ErrPrecondition = errors.New("precondition failed")
 )
@@ -137,6 +140,9 @@ func (s *Store) tx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 	return tx.Commit(ctx)
 }
 
+// nameIndex is the index that keeps a name the only one of its kind in its place.
+const nameIndex = "resource_name_idx"
+
 // translate maps driver errors to the store's errors.
 func translate(err error) error {
 	if err == nil {
@@ -147,6 +153,9 @@ func translate(err error) error {
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
+		if pgErr.ConstraintName == nameIndex {
+			return ErrNameTaken
+		}
 		return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 	}
 	return err

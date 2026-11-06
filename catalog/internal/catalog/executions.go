@@ -116,10 +116,6 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 
 	// Materialize: the execution with its plan, its namespace, the bound copy, the start.
-	name := in.Name
-	if name == "" {
-		name = fmt.Sprintf("execution %s", time.Now().UTC().Format("2006-01-02 15:04:05"))
-	}
 	rid := uuid.New()
 	namespace := executionNamespace(rid)
 	plan := c.apiPlan(namespace)
@@ -147,10 +143,23 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 		ports = append(ports, api.PortSummary{OperatorID: o.OperatorID, PortID: o.PortID, Table: &identifier})
 		tables = append(tables, engine.OutputTable{Opid: o.OperatorID, Port: o.PortID, Table: o.Table})
 	}
-	exec, _, err := s.Store.CreateResource(ctx, store.NewResource{
-		RID: &rid, Kind: "execution", Name: name, ParentRID: &wf.RID, ProjectRID: wf.ProjectRID, OwnerPID: caller.PID(), CreatedByPID: caller.PID(),
-		Spec: mustJSON(execSpec), Status: mustJSON(api.ExecutionStatus{Phase: api.ExecutionPhasePending, Ports: &ports}), Origin: caller.Origin,
-	})
+	create := func(name string) (*store.Resource, error) {
+		exec, _, err := s.Store.CreateResource(ctx, store.NewResource{
+			RID: &rid, Kind: "execution", Name: name, ParentRID: &wf.RID, ProjectRID: wf.ProjectRID, OwnerPID: caller.PID(), CreatedByPID: caller.PID(),
+			Spec: mustJSON(execSpec), Status: mustJSON(api.ExecutionStatus{Phase: api.ExecutionPhasePending, Ports: &ports}), Origin: caller.Origin,
+		})
+		return exec, err
+	}
+	// A name the caller chose is the caller's to keep free. An execution nobody named says what
+	// it is and when it started; two of one workflow can start within a second, and the later
+	// one takes a number.
+	name := in.Name
+	var exec *store.Resource
+	if name != "" {
+		exec, err = create(name)
+	} else {
+		name, exec, err = createNumbered("execution "+time.Now().UTC().Format("2006-01-02 15:04:05"), create)
+	}
 	if err != nil {
 		return nil, wrap(err, "execution")
 	}
@@ -214,6 +223,24 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 	r, err := s.Store.GetResource(ctx, exec.RID)
 	return r, wrap(err, "execution")
+}
+
+// numberedNames is how many names are tried for something the catalog names itself.
+const numberedNames = 20
+
+// createNumbered makes something under a name the catalog chose, numbering the name while
+// another has it: "x", then "x (2)", "x (3)". It returns the name it was made under.
+func createNumbered(base string, create func(name string) (*store.Resource, error)) (string, *store.Resource, error) {
+	for n := 1; ; n++ {
+		name := base
+		if n > 1 {
+			name = fmt.Sprintf("%s (%d)", base, n)
+		}
+		r, err := create(name)
+		if !errors.Is(err, store.ErrNameTaken) || n == numberedNames {
+			return name, r, err
+		}
+	}
 }
 
 func environmentRequest(ctx context.Context, s *Service, env *store.Resource, vno int) *engine.EnvironmentRequest {

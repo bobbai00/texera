@@ -91,7 +91,8 @@ line or each on its own for the canvas or for one card, and is edited in place w
 beside it; the arrows are curves; a workflow too large to see at once offers a map, which
 lies over the canvas only once the viewer opens it and stays as they left it; a run stays on
 the workflow's page, where each card says how its operator did and each result has a tab that
-a line joins to the output port it came out of, also after the canvas is moved; an execution's
+a line joins to the output port it came out of, also after the canvas is moved, and the same
+version is run again from the page, as an execution with a name of its own; an execution's
 page is the workflow as it ran, and a visualization's result is the chart it drew, whole, not
 a table of its HTML.
 

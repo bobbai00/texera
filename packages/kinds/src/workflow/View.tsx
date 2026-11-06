@@ -260,7 +260,8 @@ function EditorLayout({
       if (!unit) throw new Error("No computing unit is available.");
       // What runs is the version the session has just saved: exactly what is on screen.
       const vno = (await store.getState().flush()) ?? store.getState().headVno;
-      return unwrap(workflowsRun({ path: { rid }, body: { vno, computingUnit: unit.metadata.uri, name: `${store.getState().name} v${vno}` } }));
+      // The catalog names the execution: a name of its own, however often a version is run.
+      return unwrap(workflowsRun({ path: { rid }, body: { vno, computingUnit: unit.metadata.uri } }));
     },
     onSuccess: () => {
       // The execution shows where it runs: on the cards of this canvas, its results under it.

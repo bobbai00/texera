@@ -156,6 +156,8 @@ func wrap(err error, what string) error {
 		return NotFound(what)
 	case errors.Is(err, store.ErrPrecondition):
 		return Precondition()
+	case errors.Is(err, store.ErrNameTaken):
+		return Conflict("name_taken", "another "+what+" here already has this name", nil)
 	case errors.Is(err, store.ErrConflict):
 		return Conflict("conflict", err.Error(), nil)
 	case errors.Is(err, authz.ErrForbidden):

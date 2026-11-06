@@ -1777,6 +1777,9 @@ export type RunWorkflow = {
      * Wait up to this many seconds for the execution to finish before returning.
      */
     waitSeconds?: number;
+    /**
+     * The execution's name, which no other execution of the workflow has. Without one the catalog names it by its start, `execution <UTC time>`, and numbers the name when two start within a second.
+     */
     name?: string;
 };
 

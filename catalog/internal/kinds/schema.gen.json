@@ -3851,6 +3851,7 @@
           "description": "Overrides the workflow's and the project's default environment; `@vno` pins a version, else the head."
         },
         "name": {
+          "description": "The execution's name, which no other execution of the workflow has. Without one the catalog names it by its start, `execution \u003cUTC time\u003e`, and numbers the name when two start within a second.",
           "type": "string"
         },
         "parameters": {

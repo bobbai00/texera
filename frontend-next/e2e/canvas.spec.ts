@@ -238,6 +238,17 @@ test("an execution shows on the workflow's canvas, and each result is joined to 
   await expect(page.locator("[data-result-connector]")).toHaveCount(0);
   await page.locator("[data-show-results]").click();
   await expect(results.locator("[data-port-rows]")).toBeVisible();
+
+  // Run again, the same version on the same unit: a second execution starts, takes over the
+  // cards and the results, and has a name of its own.
+  const first = await results.getAttribute("data-results");
+  await page.locator("[data-run]").click();
+  await expect.poll(() => page.locator("[data-results]").getAttribute("data-results"), { timeout: 30_000 }).not.toBe(first);
+  await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
+  await expect(avg.locator("[data-operator-rows]")).toContainText("3 rows");
+  const executions = (await alice("GET", `/workflows/${rid}/executions?limit=10`)).items as { metadata: { name: string } }[];
+  expect(executions).toHaveLength(2);
+  expect(new Set(executions.map(x => x.metadata.name)).size).toBe(2);
 });
 
 test("an execution's page is the workflow as it ran, and a visualization's result is the chart it drew", async ({ page, request }) => {
