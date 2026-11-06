@@ -130,35 +130,60 @@ func (id *Identity) adminJSON(ctx context.Context, path string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-// admin sends a request to the realm's admin API with the service token.
-func (id *Identity) admin(ctx context.Context, method, path string, _ url.Values, body any) (*http.Response, error) {
+// admin sends a request to the realm's admin API with the service token. A token Keycloak no
+// longer honors (it restarted, and the session behind the token went with it) is dropped, and
+// the request is sent once more with a new one.
+func (id *Identity) admin(ctx context.Context, method, path string, params url.Values, body any) (*http.Response, error) {
 	base := adminURL(id.tokenURL)
 	if base == "" {
 		return nil, fmt.Errorf("no admin API for token URL %s", id.tokenURL)
 	}
-	token, err := id.ServiceToken(ctx)
-	if err != nil {
-		return nil, err
+	target := base + "/" + path
+	if len(params) > 0 {
+		target += "?" + params.Encode()
 	}
-	var reader io.Reader
+	var raw []byte
 	if body != nil {
-		raw, err := json.Marshal(body)
+		var err error
+		if raw, err = json.Marshal(body); err != nil {
+			return nil, err
+		}
+	}
+	for attempt := 0; ; attempt++ {
+		token, err := id.ServiceToken(ctx)
 		if err != nil {
 			return nil, err
 		}
-		reader = bytes.NewReader(raw)
+		var reader io.Reader
+		if raw != nil {
+			reader = bytes.NewReader(raw)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, target, reader)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		if raw != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("admin %s %s: %w", method, path, err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 {
+			resp.Body.Close()
+			id.forget(token)
+			continue
+		}
+		return resp, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, method, base+"/"+path, reader)
-	if err != nil {
-		return nil, err
+}
+
+// forget drops the cached service token when it is the one given, so the next call asks for a new one.
+func (id *Identity) forget(token string) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	if id.token == token {
+		id.token = ""
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("admin %s %s: %w", method, path, err)
-	}
-	return resp, nil
 }

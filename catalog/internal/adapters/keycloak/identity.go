@@ -138,21 +138,11 @@ func (id *Identity) SearchUsers(ctx context.Context, q string, limit int) ([]por
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	token, err := id.ServiceToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-	base := adminURL(id.tokenURL)
-	if base == "" {
+	if adminURL(id.tokenURL) == "" {
 		return nil, nil
 	}
 	params := url.Values{"search": {q}, "max": {strconv.Itoa(limit)}, "briefRepresentation": {"true"}, "enabled": {"true"}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/users?"+params.Encode(), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := id.admin(ctx, http.MethodGet, "users", params, nil)
 	if err != nil {
 		return nil, fmt.Errorf("user search: %w", err)
 	}
