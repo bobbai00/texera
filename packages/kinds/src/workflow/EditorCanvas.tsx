@@ -8,6 +8,7 @@ import {
   deleteLinks,
   deleteOperators,
   freeSpot,
+  layoutPositions,
   linkProblem,
   newOperator,
   type OperatorNode,
@@ -30,17 +31,19 @@ import {
   useStoreApi,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, X } from "lucide-react";
+import { LayoutGrid, Plus, X } from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { operatorSchemasQuery } from "../queries";
 import { useScope } from "../scope";
 import { edgeOptions } from "../shell/canvas";
+import { useArrivals } from "./arrivals";
+import { Cursors, useCanvasPeople } from "./Cursors";
 import { CanvasContext, type CanvasView, portKey } from "./canvas-view";
 import { CanvasControls } from "./controls";
 import { DensityToggle, spread, unspread, useRowSpread } from "./density";
 import type { EditorStore } from "./editor";
-import { useFollow, useFrame, useReframe } from "./framing";
+import { useFollow, useFrame, useReframe, useShow } from "./framing";
 import { nodeTypes } from "./OperatorNode";
 import { OPERATOR_DRAG_TYPE, OperatorPalette } from "./OperatorPalette";
 import { roomFor } from "./room";
@@ -125,9 +128,16 @@ export function EditorCanvas({
   const [nodes, setNodes, onNodesChange] = useNodesState<OperatorNode>(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(flow.edges);
   const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
+  // What arrives from elsewhere (the agent, another person) is pointed out and brought into view.
+  const mine = useRef(new Set<string>()).current;
+  const show = useShow();
+  const onArrive = useCallback((ids: string[]) => setTimeout(() => ids[0] && show(ids[0]), 150), [show]);
+  const arrived = useArrivals(spec, mine, onArrive);
+  // The others here: where they point, and the cards they have open.
+  const { others, openBy, point } = useCanvasPeople(store.getState().rid, editing);
   const canvas = useMemo(
-    () => ({ view, schemas, editor: store, compilation, run: readonly ? undefined : onRunTo }),
-    [view, schemas, store, compilation, readonly, onRunTo]
+    () => ({ view, schemas, editor: store, compilation, run: readonly ? undefined : onRunTo, arrived, openBy }),
+    [view, schemas, store, compilation, readonly, onRunTo, arrived, openBy]
   );
 
   // The store is the truth of the workflow; React Flow keeps what it measured, what is being
@@ -187,6 +197,7 @@ export function EditorCanvas({
       const schema = schemas?.get(type);
       if (!schema || store.getState().readonly) return undefined;
       const op = newOperator(schema);
+      mine.add(op.operatorID);
       const spot = freeSpot(store.getState().positions, unspread(at, k));
       store.getState().move({ [op.operatorID]: spot });
       edit(cur => addOperator(cur, op));
@@ -195,7 +206,7 @@ export function EditorCanvas({
       view.getState().edit(op.operatorID);
       return spread({ at: spot }, k).at;
     },
-    [schemas, store, edit, view, k]
+    [schemas, store, edit, view, k, mine]
   );
 
   const onDrop = useCallback(
@@ -300,6 +311,9 @@ export function EditorCanvas({
             }}
             onDrop={onDrop}
             onDragOver={onDragOver}
+            // Where this person points, for the others here.
+            onPointerMove={e => point(screenToFlowPosition({ x: e.clientX, y: e.clientY }))}
+            onPointerLeave={() => point(null)}
             nodesDraggable={!readonly}
             nodesConnectable={!readonly}
             deleteKeyCode={readonly ? null : ["Backspace", "Delete"]}
@@ -320,7 +334,22 @@ export function EditorCanvas({
                 </Button>
               )}
               <DensityToggle view={view} />
+              {!readonly && spec.operators.length > 1 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="bg-background shadow-xs"
+                  title="Lay the workflow out again, left to right"
+                  onClick={() => {
+                    store.getState().move(layoutPositions(store.getState().spec));
+                    setTimeout(() => void frame(), 150);
+                  }}
+                  data-tidy>
+                  <LayoutGrid /> Tidy up
+                </Button>
+              )}
             </Panel>
+            <Cursors people={others} />
             <CanvasControls view={view} />
           </ReactFlow>
         </div>

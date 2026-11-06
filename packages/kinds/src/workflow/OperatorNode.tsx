@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { memo, type ReactElement, useMemo } from "react";
 import { useStore } from "zustand";
+import { toneOf } from "./Cursors";
 import { type Canvas, useCanvas } from "./canvas-view";
 import type { EditorStore } from "./editor";
 import { PropertyForm } from "./PropertyForm";
@@ -106,6 +107,10 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
         : (schema?.userFriendlyName ?? "")
       : summarize(lines);
   const ports = Math.max(data.inputs.length, data.outputs.length);
+  // Just arrived from elsewhere (the agent, another person): pointed out for a moment.
+  const arrived = canvas.arrived?.has(id) === true;
+  // Open on someone else's screen.
+  const openBy = canvas.openBy?.get(id);
 
   const card = (
     <div
@@ -118,14 +123,27 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
         data.error && !data.status && "border-destructive/60",
         selected && !shown && "border-primary ring-2 ring-primary/25",
         // The card whose result is on screen.
-        shown !== undefined && "border-primary ring-2 ring-primary/60"
+        shown !== undefined && "border-primary ring-2 ring-primary/60",
+        arrived && "ring-4 ring-primary/40 animate-pulse"
       )}
-      style={{ minHeight: HANDLE_TOP * 2 + Math.max(0, ports - 1) * HANDLE_STEP }}
+      style={{
+        minHeight: HANDLE_TOP * 2 + Math.max(0, ports - 1) * HANDLE_STEP,
+        ...(openBy ? { borderColor: toneOf(openBy.pid) } : {}),
+      }}
       data-selected={selected ? "true" : "false"}
       data-operator-type={data.operatorType}
       data-operator-status={data.status ?? ""}
       data-operator-view={editing ? "editing" : detailed ? "detailed" : "compact"}
-      data-result-shown={shown ?? ""}>
+      data-result-shown={shown ?? ""}
+      data-arrived={arrived ? "true" : undefined}>
+      {openBy && (
+        <span
+          className="absolute -top-2.5 right-3 rounded-md px-1.5 py-0.5 text-xs font-medium text-white shadow-xs"
+          style={{ background: toneOf(openBy.pid) }}
+          data-open-by={openBy.name}>
+          {openBy.name}
+        </span>
+      )}
       {editing && editor ? (
         <Editor id={id} editor={editor} canvas={canvas} data={data} />
       ) : (

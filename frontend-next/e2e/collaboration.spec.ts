@@ -1,4 +1,5 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
+import { COLUMN } from "@texera/workflow-model";
 import { aPageOfEveryKind, api, type Caller, cleanups, discard, editOperator, type Envelope, IRIS_CSV, openChat, operatorList, say, signIn, tidyUp } from "./support";
 
 // People on the same resource: who has a page open is shown at its top right, on every kind of
@@ -55,6 +56,12 @@ async function sharedWorkflow(alice: Caller, bob: Caller, relation: "viewer" | "
 }
 
 const node = (page: Page, id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
+/** Where an operator sits on the canvas itself, whatever the zoom and the part on screen. */
+const placeOf = async (page: Page, id: string) =>
+  node(page, id).evaluate(el => {
+    const [, x, y] = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec((el as HTMLElement).style.transform) ?? [];
+    return { x: Number(x), y: Number(y) };
+  });
 const versionsOf = async (as: Caller, rid: string) => ((await as("GET", `/workflows/${rid}/versions`)) as { items: { vno: number; createdBy: string; contributors?: string[] }[] }).items;
 const headOf = async (as: Caller, rid: string) => (await as("GET", `/workflows/${rid}`)) as { metadata: { head: number }; spec: { operators: { operatorID: string; operatorType: string; operatorProperties: Record<string, unknown> }[] } };
 
@@ -162,6 +169,99 @@ test("two people edit one workflow at the same moment, and what they made is sav
   await bobs.reload();
   await expect(bobs.locator('.react-flow__node [data-operator-type="Limit"]')).toHaveCount(1);
   await expect.poll(() => below(bobs)).toBeGreaterThan(40);
+});
+
+test("where operators sit goes into the next version: a move makes none, and an older version is drawn as it was laid out", async ({ page, request }) => {
+  const alice = await api(request);
+  const { rid } = await aWorkflow(alice, "places in versions");
+  await signIn(page);
+  await page.goto(`/workflows/${rid}`);
+  await expect(node(page, "avg")).toBeVisible();
+  const below = async () => ((await node(page, "scan").boundingBox())?.y ?? 0) - ((await node(page, "avg").boundingBox())?.y ?? 0);
+  expect(Math.abs(await below())).toBeLessThan(5);
+
+  // A move: shared and kept, no version.
+  const grip = await node(page, "scan").boundingBox();
+  await page.mouse.move((grip?.x ?? 0) + 20, (grip?.y ?? 0) + 20);
+  await page.mouse.down();
+  await page.mouse.move((grip?.x ?? 0) + 20, (grip?.y ?? 0) + 180, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(2500);
+  expect((await headOf(alice, rid)).metadata.head).toBe(1);
+
+  // An edit makes a version, and the version holds where every operator sits at that moment.
+  await (await editOperator(page, "avg")).getByLabel("Operator name").fill("mean petal");
+  await page.locator("[data-operator-done]").click();
+  await expect.poll(async () => (await headOf(alice, rid)).metadata.head, { timeout: 20_000 }).toBe(2);
+  const layout = ((await alice("GET", `/workflows/${rid}`)).spec as { layout?: Record<string, { x: number; y: number }> }).layout ?? {};
+  expect((layout.scan?.y ?? 0) - (layout.avg?.y ?? 0)).toBeGreaterThan(100);
+
+  // The first version is drawn as it was laid out then: both on one row.
+  await page.getByRole("tab", { name: /Versions/ }).click();
+  await page.locator("[data-versions] li").filter({ hasText: "v1" }).locator("button").first().click();
+  await page.getByRole("tab", { name: /Canvas/ }).click();
+  await expect(node(page, "avg")).toBeVisible();
+  await expect.poll(async () => Math.abs(await below())).toBeLessThan(5);
+  // And the head as it is now.
+  await page.getByRole("tab", { name: /Versions/ }).click();
+  await page.locator("[data-versions] li").filter({ hasText: "head" }).locator("button").first().click();
+  await page.getByRole("tab", { name: /Canvas/ }).click();
+  await expect.poll(async () => await below()).toBeGreaterThan(100);
+});
+
+test("what the agent adds to an open workflow arrives beside what it reads from, pointed out, and nothing else moves", async ({ page, request }) => {
+  const alice = await api(request);
+  const { rid } = await aWorkflow(alice, "the agent adds");
+  await signIn(page);
+  await page.goto(`/workflows/${rid}`);
+  await expect(node(page, "avg")).toBeVisible();
+  const [scan, avg] = [await placeOf(page, "scan"), await placeOf(page, "avg")];
+
+  // The agent's edit_workflow: a patch on the head, with a limit after the average, and no word
+  // of where anything sits.
+  await alice("POST", `/workflows/${rid}/edit`, {
+    patch: [
+      { op: "add", path: "/operators/-", value: { operatorID: "top", operatorType: "Limit", operatorProperties: { limit: 2 } } },
+      { op: "add", path: "/links/-", value: { linkID: "l2", source: { operatorID: "avg", portID: "output-0" }, target: { operatorID: "top", portID: "input-0" } } },
+    ],
+  });
+  await expect(node(page, "top")).toBeVisible({ timeout: 20_000 });
+  await expect(node(page, "top").locator("[data-arrived]")).toHaveAttribute("data-arrived", "true");
+  // Right of what it reads from, a column on, on its row; the others stay where they were. On
+  // the canvas itself: the canvas may still be moving to show the new card.
+  await expect.poll(() => placeOf(page, "top")).toEqual({ x: avg.x + COLUMN, y: avg.y });
+  expect(await placeOf(page, "scan")).toEqual(scan);
+  expect(await placeOf(page, "avg")).toEqual(avg);
+  await page.screenshot({ path: "test-results/agent-added.png" });
+  // Pointed out for a moment only.
+  await expect(node(page, "top").locator("[data-arrived]")).toHaveCount(0, { timeout: 10_000 });
+});
+
+test("people on one canvas see where the other points and the card the other has open", async ({ page, browser, request }) => {
+  const alice = await api(request);
+  const bob = await api(request, "bob", "bob");
+  const { rid } = await sharedWorkflow(alice, bob, "editor");
+  const aliceName = (await alice("GET", "/me")).principal.displayName as string;
+  await signIn(page);
+  await page.goto(`/workflows/${rid}`);
+  const bobs = await browserOf(browser, "bob");
+  await bobs.goto(`/workflows/${rid}`);
+  await expect(node(page, "avg")).toBeVisible();
+  await expect(node(bobs, "avg")).toBeVisible();
+
+  // Alice points at the canvas: bob sees her pointer, with her name.
+  const canvas = (await page.locator("[data-workflow-canvas]").boundingBox()) as { x: number; y: number; width: number; height: number };
+  await page.mouse.move(canvas.x + canvas.width / 2, canvas.y + canvas.height - 60, { steps: 5 });
+  await expect(bobs.locator(`[data-cursor="${aliceName}"]`)).toBeVisible({ timeout: 10_000 });
+  // She opens a card: bob sees on it that she has it open.
+  await editOperator(page, "avg");
+  await expect(node(bobs, "avg").locator("[data-open-by]")).toHaveText(aliceName, { timeout: 10_000 });
+  await bobs.screenshot({ path: "test-results/seen-by-bob.png" });
+  await page.locator("[data-operator-done]").click();
+  await expect(node(bobs, "avg").locator("[data-open-by]")).toHaveCount(0);
+  // Her pointer leaves the canvas, and goes from bob's.
+  await page.mouse.move(5, 5);
+  await expect(bobs.locator(`[data-cursor="${aliceName}"]`)).toHaveCount(0, { timeout: 10_000 });
 });
 
 test("someone who may only view a workflow watches it change and cannot change it", async ({ page, browser, request }) => {

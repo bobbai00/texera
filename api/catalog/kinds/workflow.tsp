@@ -54,9 +54,17 @@ model WorkflowLink {
   target: WorkflowLinkEnd;
 }
 
+@doc("A place on the canvas: the top left corner of an operator's card.")
+model CanvasPoint {
+  x: float64;
+  y: float64;
+}
+
 model WorkflowSpec {
   operators: WorkflowOperator[];
   links: WorkflowLink[];
+  @doc("Where each operator's card sits on the canvas, by operator. It is the app's: nothing that runs the workflow reads it, a move alone makes no version, a version keeps the places it was made with, and an operator with no place is placed beside what it connects to. A spec written without it keeps the places of the operators it kept.")
+  layout?: Record<CanvasPoint>;
   @doc("The environment an execution uses when the request names none.")
   defaultEnvironment?: Uri;
   @doc("The computing unit an execution uses when the request names none.")

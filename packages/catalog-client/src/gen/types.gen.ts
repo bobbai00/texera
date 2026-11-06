@@ -158,6 +158,14 @@ export type BuildEnvironment = {
 };
 
 /**
+ * A place on the canvas: the top left corner of an operator's card.
+ */
+export type CanvasPoint = {
+    x: number;
+    y: number;
+};
+
+/**
  * The project a chat is in.
  */
 export type ChatProject = {
@@ -2398,6 +2406,12 @@ export type WorkflowPort = {
 export type WorkflowSpec = {
     operators: Array<WorkflowOperator>;
     links: Array<WorkflowLink>;
+    /**
+     * Where each operator's card sits on the canvas, by operator. It is the app's: nothing that runs the workflow reads it, a move alone makes no version, a version keeps the places it was made with, and an operator with no place is placed beside what it connects to. A spec written without it keeps the places of the operators it kept.
+     */
+    layout?: {
+        [key: string]: CanvasPoint;
+    };
     /**
      * The environment an execution uses when the request names none.
      */

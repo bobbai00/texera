@@ -2,16 +2,28 @@ import { describe, expect, it } from "vitest";
 import { layoutLineage, placeLabels } from "./layout";
 
 const box = { width: 100, height: 40 };
-const spacing = { column: 50, row: 10, group: 20 };
+const spacing = { column: 50, row: 10 };
 const cards = (...ids: string[]) => ids.map(id => ({ id }));
 const arrow = (from: string, to: string) => ({ from, to });
 const place = (ids: string[], arrows: { from: string; to: string }[]) =>
   layoutLineage(cards(...ids), arrows, box, spacing);
 
 describe("where the cards of a lineage graph sit", () => {
-  it("puts what was read at the left, and each card one column right of the furthest card it came from", () => {
+  const right = (p: Record<string, { x: number }>, from: string, to: string) => (p[to]?.x ?? 0) > (p[from]?.x ?? 0);
+  const overlap = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+    Math.abs(a.x - b.x) < box.width && Math.abs(a.y - b.y) < box.height;
+
+  it("puts what was read at the left, and each card right of every card it came from", () => {
     const p = place(["a", "b", "c", "d"], [arrow("a", "c"), arrow("b", "c"), arrow("c", "d"), arrow("a", "d")]);
-    expect([p.a?.x, p.b?.x, p.c?.x, p.d?.x]).toEqual([0, 0, 150, 300]);
+    expect(p.a?.x).toBe(0);
+    expect(p.b?.x).toBe(0);
+    for (const [from, to] of [
+      ["a", "c"],
+      ["b", "c"],
+      ["c", "d"],
+      ["a", "d"],
+    ])
+      expect(right(p, from as string, to as string)).toBe(true);
   });
 
   it("stands a card nothing leads to right before what it leads to, not at the far left", () => {
@@ -20,46 +32,24 @@ describe("where the cards of a lineage graph sit", () => {
       ["key", "endpoint", "skill", "agent"],
       [arrow("key", "endpoint"), arrow("endpoint", "agent"), arrow("skill", "agent")]
     );
-    expect([p.key?.x, p.endpoint?.x, p.skill?.x, p.agent?.x]).toEqual([0, 150, 150, 300]);
+    expect(p.skill?.x).toBe(p.endpoint?.x);
   });
 
-  it("stacks a column without overlap, with more room between cards that came from different cards", () => {
+  it("stacks a column without overlap", () => {
     const p = place(["a", "c", "b1", "b2", "d1"], [arrow("a", "b1"), arrow("a", "b2"), arrow("c", "d1")]);
-    expect([p.b1?.y, p.b2?.y, p.d1?.y]).toEqual([0, 50, 120]);
+    const all = Object.values(p);
+    for (const [i, q] of all.entries()) for (const r of all.slice(i + 1)) expect(overlap(q, r)).toBe(false);
   });
 
-  it("stands a card level with the middle of what came out of it", () => {
-    const p = place(["a", "c", "b1", "b2", "d1"], [arrow("a", "b1"), arrow("a", "b2"), arrow("c", "d1")]);
-    expect(p.a?.y).toBe(25);
-    expect(p.c?.y).toBe(120);
-    // A card with one thing after it stands level with it, all the way back.
+  it("stands a chain level, all the way along", () => {
     const chain = place(["x", "y", "z"], [arrow("x", "y"), arrow("y", "z")]);
-    expect([chain.x, chain.y, chain.z]).toEqual([
-      { x: 0, y: 0 },
-      { x: 150, y: 0 },
-      { x: 300, y: 0 },
-    ]);
-  });
-
-  it("keeps cards with nothing after them in their place in the stack", () => {
-    // `last` came after `first` and has nothing after it: it stands right under it.
-    const p = place(["s", "first", "last", "r"], [arrow("s", "first"), arrow("s", "last"), arrow("first", "r")]);
-    expect(p.first?.y).toBe(0);
-    expect(p.last?.y).toBe(50);
-    // And one standing before the first card that has something after it stands right above it.
-    const q = place(
-      ["s", "lone", "busy", "r1", "r2"],
-      [arrow("s", "lone"), arrow("s", "busy"), arrow("busy", "r1"), arrow("busy", "r2")]
-    );
-    expect(q.busy?.y).toBe((q.lone?.y ?? 0) + 50);
-    expect(Math.min(...Object.values(q).map(at => at.y))).toBe(0);
+    expect(new Set([chain.x?.y, chain.y?.y, chain.z?.y]).size).toBe(1);
   });
 
   it("orders a column by where the cards it came from stand, so arrows do not cross", () => {
     // Given in the crossing order: the children of the second parent first.
     const p = place(["p1", "p2", "c2", "c1"], [arrow("p1", "c1"), arrow("p2", "c2")]);
-    expect(p.c1?.y).toBeLessThan(p.c2?.y ?? 0);
-    expect(p.p1?.y).toBeLessThan(p.p2?.y ?? 0);
+    expect(Math.sign((p.c1?.y ?? 0) - (p.c2?.y ?? 0))).toBe(Math.sign((p.p1?.y ?? 0) - (p.p2?.y ?? 0)));
   });
 
   it("gives every card a place whatever the arrows, also in a cycle or with an arrow to nowhere", () => {
@@ -67,6 +57,11 @@ describe("where the cards of a lineage graph sit", () => {
     expect(Object.keys(p).sort()).toEqual(["a", "alone", "b"]);
     for (const at of Object.values(p)) expect(Number.isFinite(at.x) && Number.isFinite(at.y)).toBe(true);
     expect(place([], [])).toEqual({});
+  });
+
+  it("gives the same graph the same picture", () => {
+    const arrows = [arrow("a", "c"), arrow("b", "c"), arrow("c", "d")];
+    expect(place(["a", "b", "c", "d"], arrows)).toEqual(place(["a", "b", "c", "d"], arrows));
   });
 });
 

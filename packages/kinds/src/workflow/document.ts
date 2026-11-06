@@ -107,11 +107,15 @@ export function liveDocument(room: Room): WorkflowDocument {
   };
 }
 
-/** One version of a workflow, to look at: it holds what it was given and takes no change. */
+/**
+ * One version of a workflow, to look at: it holds what it was given, its operators where they
+ * sat when it was made, and takes no change.
+ */
 export function fixedDocument(spec: WorkflowSpec): WorkflowDocument {
+  const { layout, ...run } = spec;
   return {
-    spec: () => spec,
-    positions: () => ({}),
+    spec: () => run,
+    positions: () => layout ?? {},
     change: () => undefined,
     move: () => undefined,
     watch: () => () => undefined,

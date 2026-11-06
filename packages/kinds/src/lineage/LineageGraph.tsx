@@ -49,9 +49,9 @@ const CARD: Record<Level, { width: number; height: number }> = {
   resources: { width: 248, height: 60 },
   flow: { width: 224, height: 60 },
 };
-const SPACING: Record<Level, { column: number; row: number; group: number }> = {
-  resources: { column: 200, row: 14, group: 14 },
-  flow: { column: 136, row: 14, group: 14 },
+const SPACING: Record<Level, { column: number; row: number }> = {
+  resources: { column: 200, row: 28 },
+  flow: { column: 136, row: 28 },
 };
 /** A graph is never shown smaller than this: when it does not fit, the page's own card and its neighbours are what is in view. */
 const SMALLEST = 0.8;

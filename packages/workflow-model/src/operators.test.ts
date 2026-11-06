@@ -71,4 +71,23 @@ describe("operator resources", () => {
     expect(spec.operators[1]?.inputPorts).toEqual([{ portID: "input-0" }]);
     expect(spec.defaultEnvironment).toBe("texera://environments/e");
   });
+
+  it("gives an operator that lists no ports the ones its links use, so no link is lost", () => {
+    // A join written as an agent may write it: no ports, two links in.
+    const link = (id: string, from: string, to: string, port: string) => ({
+      linkID: id,
+      source: { operatorID: from, portID: "output-0" },
+      target: { operatorID: to, portID: port },
+    });
+    const spec = normalizeSpec({
+      operators: [
+        { operatorID: "left", operatorType: "CSVFileScan" },
+        { operatorID: "right", operatorType: "CSVFileScan" },
+        { operatorID: "join", operatorType: "HashJoin" },
+      ],
+      links: [link("l1", "left", "join", "input-0"), link("l2", "right", "join", "input-1")],
+    });
+    expect(spec.operators[2]?.inputPorts).toEqual([{ portID: "input-0" }, { portID: "input-1" }]);
+    expect(spec.operators[2]?.outputPorts).toEqual([{ portID: "output-0" }]);
+  });
 });

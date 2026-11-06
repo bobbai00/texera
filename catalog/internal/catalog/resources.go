@@ -300,6 +300,9 @@ func (s *Service) UpdateSpec(ctx context.Context, caller *auth.Caller, k kinds.K
 	if err := s.require(ctx, caller, authz.Write, r.RID); err != nil {
 		return nil, nil, err
 	}
+	if k.Name == "workflow" {
+		in.Spec = keepLayout(in.Spec, r.Spec)
+	}
 	spec, err := s.prepareSpec(ctx, caller, k, r.Name, in.Spec)
 	if err != nil {
 		return nil, nil, err

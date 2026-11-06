@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { applyChange, applySpec, dropLeftovers, movePositions, placeOperators, positionsOf, readSaveAnswer, readSaveRequest, STANDING, saveAnswer, saveRequest, specOf, standingIn } from "./live";
+import { STANDING, applyChange, applySpec, dropLeftovers, movePositions, placeOperators, positionsOf, readSaveAnswer, readSaveRequest, runOf, saveAnswer, saveRequest, specOf, standingIn, versionSpecOf } from "./live";
 import type { WorkflowSpec } from "./types";
 
 const scan = { operatorID: "scan", operatorType: "CSVFileScan", operatorProperties: { fileName: "texera://datasets/d@1/files/iris.csv", hasHeader: true } };
@@ -148,6 +148,35 @@ describe("where the operators of a live document sit", () => {
     placeOperators(doc);
     applySpec(doc, { ...base, operators: [scan], links: [] });
     expect(Object.keys(positionsOf(doc))).toEqual(["scan"]);
+  });
+});
+
+describe("where the operators sit, in a version", () => {
+  it("is said beside the spec when a version is made: where each operator of the spec sits", () => {
+    const doc = docOf(base);
+    placeOperators(doc);
+    movePositions(doc, { avg: { x: 640, y: 80 } });
+    const version = versionSpecOf(doc);
+    expect(version.layout?.avg).toEqual({ x: 640, y: 80 });
+    expect(Object.keys(version.layout ?? {}).sort()).toEqual(["avg", "scan"]);
+    // What runs is the rest: the same whatever the layout.
+    expect(runOf(version)).toEqual(specOf(doc));
+  });
+
+  it("is put on the canvas when a version is taken in, and an operator a version gives no place keeps its own", () => {
+    const doc = docOf(base);
+    placeOperators(doc);
+    movePositions(doc, { scan: { x: 7, y: 9 } });
+    const before = versionSpecOf(doc);
+    // A version written elsewhere moved avg and said nothing of scan.
+    applyChange(doc, before, { ...base, layout: { avg: { x: 1000, y: 500 } } });
+    expect(positionsOf(doc).avg).toEqual({ x: 1000, y: 500 });
+    expect(positionsOf(doc).scan).toEqual({ x: 7, y: 9 });
+  });
+
+  it("is laid out from a version that has it when the document is opened", () => {
+    const doc = docOf({ ...base, layout: { scan: { x: 11, y: 22 }, avg: { x: 333, y: 22 } } });
+    expect(positionsOf(doc)).toEqual({ scan: { x: 11, y: 22 }, avg: { x: 333, y: 22 } });
   });
 });
 

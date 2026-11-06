@@ -4,7 +4,7 @@
 // back from it, the same way someone else's edit arrives. Saving is the session's work, so
 // the store only says whether what was written has got there and whether the catalog took it.
 
-import { normalizeSpec, type Point, type Positions, reconcilePositions, same, type WorkflowSpec } from "@texera/workflow-model";
+import { normalizeSpec, type Point, type Positions, placeMissing, same, type WorkflowSpec } from "@texera/workflow-model";
 import { createStore, type StoreApi } from "zustand";
 import { updateMetadata } from "../api";
 import type { SyncState, WorkflowDocument } from "./document";
@@ -70,7 +70,7 @@ export function createEditorStore(workflow: OpenWorkflow, document: WorkflowDocu
         // spec (a compile) is not redone for a move.
         const next = read(get().spec);
         const spec = same(next, get().spec) ? get().spec : next;
-        set({ spec, positions: reconcilePositions(spec, document.positions()) });
+        set({ spec, positions: placeMissing(spec, document.positions()) });
       }),
       document.watchState(() => set({ saveState: document.state(), refusal: document.refusal() })),
     ];
@@ -79,7 +79,7 @@ export function createEditorStore(workflow: OpenWorkflow, document: WorkflowDocu
       name: workflow.name,
       headVno: workflow.headVno,
       spec: first,
-      positions: reconcilePositions(first, document.positions()),
+      positions: placeMissing(first, document.positions()),
       readonly: workflow.readonly,
       selected: null,
       saveState: document.state(),

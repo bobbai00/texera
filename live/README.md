@@ -16,8 +16,9 @@ session's document between sessions. The service holds nothing of its own.
   change the workflow edit at once (`@texera/workflow-model/live`): operators and links are
   maps keyed by id, an operator's properties a map of their own, so two people changing
   different properties of one operator both keep their change; where the operators sit is in
-  the document too, one layout for everyone, and not in the spec. Someone who may only read
-  gets a read-only connection.
+  the document too, one layout for everyone. Someone who may only read gets a read-only
+  connection. The people in a session also say where they point on a canvas and which card
+  they have open, in its awareness, which is never saved.
 
 ## The rules of a workflow's document
 
@@ -30,13 +31,17 @@ The catalog's versions are the truth and the document is a working copy of them.
    (`TEXERA_LIVE_SAVE_AFTER_MS`, at the latest `TEXERA_LIVE_SAVE_WITHIN_MS` into a burst), as a
    new version through `POST /workflows/{rid}/edit` with `expectedHead` and `onBehalfOf`: the
    people whose edits it holds, the first recorded as its creator, all of them as its
-   contributors. Then the document itself is kept (`PUT /resources/{rid}/live`). Moving an
-   operator makes no version. Before a save, what the spec leaves out is taken out of the
+   contributors. Then the document itself is kept (`PUT /resources/{rid}/live`). A version is
+   made when what runs changes, and holds where every operator sits at that moment
+   (`spec.layout`); moving an operator alone makes no version, and the move is kept with the
+   document until the next one. Before a save, what the spec leaves out is taken out of the
    document (a link whose operator is gone).
 3. **A version written elsewhere is taken in**: the service follows the workflow's event
    stream, and applies the change a new head made onto the open document, so the people in the
-   session see an agent's edit arrive and keep the edits they have not saved yet. A save that
-   finds the head moved (409) takes the head in and saves on top of it.
+   session see an agent's edit arrive and keep the edits they have not saved yet. A place the
+   version moved is put on the canvas; an operator it gives no place keeps the one it has, and
+   one that has none goes beside what it connects to. A save that finds the head moved (409)
+   takes the head in and saves on top of it.
 4. **Everyone knows how the document stands with the catalog**: the session's own awareness
    state holds it (`catalog: {vno, refused?}`), so it reaches whoever joins, whenever. A
    version the catalog does not take (a file that does not exist, the catalog being away)

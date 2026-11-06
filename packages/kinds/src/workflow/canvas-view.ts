@@ -79,6 +79,10 @@ export interface Canvas {
   compilation?: Compilation;
   /** Runs the workflow up to an operator; absent where nothing can be run from the canvas. */
   run?: (operatorID: string) => void;
+  /** Operators that arrived from elsewhere a moment ago (the agent's, another person's). */
+  arrived?: ReadonlySet<string>;
+  /** Who else has a card open, by operator. */
+  openBy?: ReadonlyMap<string, { pid: string; name: string }>;
   /** A small picture of a workflow (the card of one in a chat): an operator is its icon with its name under it. */
   picture?: boolean;
 }

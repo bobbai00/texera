@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useDark } from "@texera/ui";
 import {
-  ICONS,
-  layoutPositions,
   type OperatorNode,
   type OperatorOverlay,
+  pictureOf,
+  placeMissing,
   toFlow,
   type WorkflowSpec,
 } from "@texera/workflow-model";
@@ -65,10 +65,11 @@ function Shown({ spec, overlay, view: shared, className }: Props) {
   const view = useMemo(() => shared ?? createCanvasView(), [shared]);
   const density = useStore(view, s => s.density);
   const k = useRowSpread(null);
-  // Without a view to share it is a picture: operators are icons, laid out closer together.
+  // Without a view to share it is a picture: operators are icons, closer together. Either way the
+  // operators sit where the version placed them.
   const picture = shared === undefined;
   const flow = useMemo(
-    () => toFlow(spec, picture ? layoutPositions(spec, ICONS) : spread(layoutPositions(spec), k), overlay),
+    () => toFlow(spec, picture ? pictureOf(spec) : spread(placeMissing(spec, spec.layout ?? {}), k), overlay),
     [spec, picture, k, overlay]
   );
   const [nodes, setNodes, onNodesChange] = useNodesState<OperatorNode>(flow.nodes);

@@ -130,19 +130,49 @@ func bridge(ctx context.Context, api http.Handler, t Tool, req *sdk.CallToolRequ
 	if rec.Code == http.StatusNoContent || len(bytes.TrimSpace(data)) == 0 {
 		return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: `{"ok":true}`}}, StructuredContent: map[string]any{"ok": true}}, nil
 	}
+	var structured any
+	isJSON := strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") && json.Unmarshal(data, &structured) == nil
+	if isJSON {
+		// Where a workflow's operators sit is the app's; the agent reads what runs.
+		if withoutPlaces(structured) {
+			data, _ = json.Marshal(structured)
+		}
+	}
 	text := truncate(data)
 	result := &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}}
-	if strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
-		var structured any
-		if err := json.Unmarshal(data, &structured); err == nil {
-			if obj, ok := structured.(map[string]any); ok {
-				result.StructuredContent = obj
-			} else {
-				result.StructuredContent = map[string]any{"items": structured}
-			}
+	if isJSON {
+		if obj, ok := structured.(map[string]any); ok {
+			result.StructuredContent = obj
+		} else {
+			result.StructuredContent = map[string]any{"items": structured}
 		}
 	}
 	return result, nil
+}
+
+// withoutPlaces takes out of a tool's answer where the operators of every workflow spec in it
+// sit (a spec is an object with operators and links); it says whether there was any.
+func withoutPlaces(v any) bool {
+	taken := false
+	switch t := v.(type) {
+	case map[string]any:
+		if _, ops := t["operators"]; ops {
+			if _, links := t["links"]; links {
+				if _, ok := t["layout"]; ok {
+					delete(t, "layout")
+					taken = true
+				}
+			}
+		}
+		for _, child := range t {
+			taken = withoutPlaces(child) || taken
+		}
+	case []any:
+		for _, child := range t {
+			taken = withoutPlaces(child) || taken
+		}
+	}
+	return taken
 }
 
 func toolError(msg string) *sdk.CallToolResult {

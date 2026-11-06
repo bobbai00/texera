@@ -1,7 +1,7 @@
 // What part of a canvas is on screen. A workflow is shown whole when it fits at a size its
 // words can be read at; a longer one is shown from its beginning at that size, and is moved
-// by hand from there. The operator whose result is on screen is kept in view, so the line
-// from the result ends on a card that can be seen.
+// by hand from there. The operator whose result is on screen is kept in view, so its lit port
+// can be seen, and so is an operator that just arrived from elsewhere.
 
 import { CARD } from "@texera/workflow-model";
 import { useNodesInitialized, useReactFlow, useStoreApi } from "@xyflow/react";
@@ -14,7 +14,7 @@ export const FIT = { padding: 0.18, minZoom: 0.85, maxZoom: 1 };
 const MARGIN = 48;
 
 /** Moves the canvas, only as far as needed, so an operator's card is in view. */
-function useShow(): (operatorID: string, animate?: boolean) => void {
+export function useShow(): (operatorID: string, animate?: boolean) => void {
   const flow = useReactFlow();
   const store = useStoreApi();
   return useCallback(

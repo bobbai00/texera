@@ -100,3 +100,27 @@ func TestAToolResultIsBounded(t *testing.T) {
 		t.Fatalf("%d bytes", len(got))
 	}
 }
+
+// Where a workflow's operators sit is the app's: the agent reads a workflow, a version or an
+// execution's plan without it, and so never writes places it cannot see.
+func TestAToolSaysNothingOfWhereOperatorsSit(t *testing.T) {
+	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"kind":"workflow","spec":{"operators":[{"operatorID":"scan"}],"links":[],"layout":{"scan":{"x":40,"y":40}}},` +
+			`"versions":[{"content":{"operators":[],"links":[],"layout":{}}}],"note":{"layout":"a word that is not a place"}}`))
+	})
+	getWorkflow := Tool{Name: "get_workflow", Method: "GET", Path: "/workflows/{rid}", PathParams: []Param{{Name: "rid", Type: "string", Required: true}}}
+	result := call(t, api, getWorkflow, map[string]any{"rid": "w1"})
+	said := text(t, result)
+	if result.IsError || strings.Contains(said, `"x":40`) || strings.Contains(said, `"layout":{}`) {
+		t.Fatalf("the agent was told where operators sit: %s", said)
+	}
+	spec := result.StructuredContent.(map[string]any)["spec"].(map[string]any)
+	if _, ok := spec["layout"]; ok || spec["operators"] == nil {
+		t.Fatalf("structured: %+v", spec)
+	}
+	// Only a workflow's places go: anything else of the same name stays.
+	if !strings.Contains(said, "a word that is not a place") {
+		t.Fatalf("more was taken out than places: %s", said)
+	}
+}

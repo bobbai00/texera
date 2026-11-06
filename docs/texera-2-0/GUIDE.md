@@ -123,7 +123,12 @@ the operator is renamed and set (properties from its JSON Schema; code a few lin
 and all of it in a larger editor); the open card stays within its column and the cards under
 it move down while it is open. A right click turns an operator off or on, or deletes it.
 Nothing opens beside the canvas. "Add operator" opens the list of operators; a workflow with
-none opens with it. A workflow of a dozen operators or more has a
+none opens with it. Where operators sit belongs to the workflow: a move is shared at once with
+everyone on the canvas and makes no version, and the next version holds the places of that
+moment, so an older version and an execution's page are drawn as they were laid out. "Tidy
+up" lays the workflow out again, left to right, a join between its branches and no card on an
+arrow. What the agent adds goes beside what it connects to and is pointed out for a moment.
+The people on a canvas see where each other points and which card each has open. A workflow of a dozen operators or more has a
 map button with the zoom buttons; the map opens over a corner of the canvas and stays open or
 closed as you left it. A file property takes a dataset file URI,
 `texera://datasets/{rid}@{vno}/files/{path}`. The editor compiles as you edit, on a unit, and

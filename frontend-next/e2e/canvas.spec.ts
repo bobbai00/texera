@@ -31,6 +31,8 @@ async function irisWorkflow(alice: Caller, label: string, { chart = false, keepS
       ...(beside ? [{ operatorID: "most", operatorType: "Aggregate", operatorProperties: { groupByKeys: ["Species"], aggregations: [{ aggFunction: "max", attribute: "PetalLengthCm", "result attribute": "most" }] } }] : []),
     ],
     links: [link("l1", "scan", "avg"), ...(chart ? [link("l2", "avg", "chart")] : []), ...(beside ? [link("l3", "scan", "most")] : [])],
+    // With another reader: placed so that most stands under avg in avg's column.
+    ...(beside ? { layout: { scan: { x: 40, y: 104 }, avg: { x: 360, y: 40 }, most: { x: 360, y: 168 } } } : {}),
   };
   const workflow: Envelope = await alice("POST", "/workflows", { name: `${label} ${stamp}`, parent: project.metadata.rid, spec });
   cleanups.push(async () => {
@@ -196,6 +198,57 @@ test("a workflow too large to see at once offers a map, which lies over the canv
   await expect(operatorCard(page, "avg")).toBeVisible();
   await expect(toggle).toHaveCount(0);
   await expect(map).toHaveCount(0);
+});
+
+test("Tidy up lays a workflow out left to right: a join stands between its branches, and no card lies on an arrow", async ({ page, request }) => {
+  const alice = await api(request);
+  const stamp = Date.now();
+  const project: Envelope = await alice("POST", "/projects", { name: `tidy ${stamp}`, spec: {} });
+  const op = (id: string, operatorType: string) => ({ operatorID: id, operatorType, operatorProperties: {} });
+  const link = (id: string, from: string, to: string, port = "input-0") => ({ linkID: id, source: { operatorID: from, portID: "output-0" }, target: { operatorID: to, portID: port } });
+  // Placed as the old layout placed them: the arrow from right to join runs over the filter.
+  const workflow: Envelope = await alice("POST", "/workflows", {
+    name: `tidy ${stamp}`,
+    parent: project.metadata.rid,
+    spec: {
+      operators: [op("left", "CSVFileScan"), op("right", "CSVFileScan"), op("filter", "Filter"), op("join", "HashJoin")],
+      links: [link("l1", "left", "filter"), link("l2", "filter", "join"), link("l3", "right", "join", "input-1")],
+      layout: { left: { x: 40, y: 40 }, right: { x: 40, y: 168 }, filter: { x: 360, y: 40 }, join: { x: 680, y: 40 } },
+    },
+  });
+  cleanups.push(async () => {
+    await discard(alice, [workflow.metadata.rid]);
+    await alice.attempt("DELETE", `/projects/${project.metadata.rid}`);
+  });
+  await signIn(page);
+  await page.goto(`/workflows/${workflow.metadata.rid}`);
+  await expect(operatorCard(page, "join")).toBeVisible();
+  // The join lists no ports: it has the two its links use, and every arrow is drawn.
+  await expect(page.locator(".react-flow__edge")).toHaveCount(3);
+
+  /** Whether the straight line from one card's output to another's input crosses a third card. */
+  const crosses = async (from: string, to: string, over: string) => {
+    const [a, b, c] = [await box(operatorCard(page, from)), await box(operatorCard(page, to)), await box(operatorCard(page, over))];
+    const [x0, y0, x1, y1] = [a.x + a.width, a.y + a.height / 2, b.x, b.y + b.height / 2];
+    for (let t = 0; t <= 1; t += 0.01) {
+      const [x, y] = [x0 + (x1 - x0) * t, y0 + (y1 - y0) * t];
+      if (x > c.x && x < c.x + c.width && y > c.y && y < c.y + c.height) return true;
+    }
+    return false;
+  };
+  expect(await crosses("right", "join", "filter")).toBe(true);
+
+  await page.locator("[data-tidy]").click();
+  await expect.poll(() => crosses("right", "join", "filter")).toBe(false);
+  // The join stands between its two branches, right of both.
+  const [filter, right, join] = [await box(operatorCard(page, "filter")), await box(operatorCard(page, "right")), await box(operatorCard(page, "join"))];
+  expect(join.y).toBeGreaterThanOrEqual(Math.min(filter.y, right.y) - 1);
+  expect(join.y).toBeLessThanOrEqual(Math.max(filter.y, right.y) + 1);
+  expect(join.x).toBeGreaterThan(filter.x + filter.width);
+  await page.screenshot({ path: "test-results/canvas-tidy.png" });
+  // A tidy-up is a move: no version.
+  await page.waitForTimeout(2500);
+  expect((await alice("GET", `/workflows/${workflow.metadata.rid}`)).metadata.head).toBe(1);
 });
 
 test("an execution shows on the workflow's canvas, a click on a card shows its result, and a run can go up to one operator", async ({ page, request }) => {

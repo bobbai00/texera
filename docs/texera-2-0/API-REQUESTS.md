@@ -31,15 +31,19 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 4. **Dataset file references in operator properties.** The app writes
    `texera://datasets/{rid}@{vno}/files/{path}` (and the version URI alone for version
    pickers), which the catalog resolves to presigned URLs when it builds the plan.
-5. **Canvas positions.** The workflow spec is the engine's plan and holds no positions.
-   Where operators sit is part of the document of the workflow's live session (item 10): one
-   layout for everyone, laid out once by the live service (sources left, one column per hop),
-   changed by whoever drags an operator, and kept with the document between sessions. A
-   place is where an operator's card sits while cards say their settings in one line; how
-   much the cards say is each viewer's own choice and is not in the document, so a canvas
-   whose cards say more draws its rows further apart without moving anything. A version of a
-   workflow records what runs, not how it is drawn, so an older version, and the workflow on
-   an execution's page, is laid out afresh when it is shown.
+5. **Canvas positions.** Where operators sit is `spec.layout`, by operator, beside what
+   runs; nothing that runs a workflow reads it. Live, it is part of the document of the
+   workflow's session (item 10): one layout for everyone, changed by whoever drags an operator
+   or tidies the canvas up, shared at once, and kept with the document between sessions. A
+   move alone makes no version; a version, made when what runs changes, takes the places as
+   they are at that moment, so an older version and an execution's page are drawn as they
+   were laid out. An operator with no place goes beside what it connects to (right of what it
+   reads from, else left of what it feeds, else under everything); a workflow with no places
+   at all is laid out as a dataflow graph read left to right (dagre). A spec written without
+   places (an agent's) keeps those of the operators it kept, and the agent's tools never show
+   places. A place is where an operator's card sits while cards say their settings in one
+   line; how much the cards say is each viewer's own choice and is not in the document, so a
+   canvas whose cards say more draws its rows further apart without moving anything.
 6. **Compile result port keys.** `CompileResult.operatorOutputSchemas[op]` keyed by
    `"<port>_false"` (the engine's serializer) or `"<port>"`; both are read.
 7. **Names.** Names are unique per project and kind (the catalog refuses a duplicate with

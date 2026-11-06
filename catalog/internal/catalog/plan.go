@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -47,13 +48,46 @@ func defaultPorts(spec *api.WorkflowSpec) {
 		if op.OperatorProperties == nil {
 			op.OperatorProperties = map[string]any{}
 		}
-		if (op.InputPorts == nil || len(*op.InputPorts) == 0) && !isSourceType(op.OperatorType) {
-			op.InputPorts = &[]api.WorkflowPort{{PortID: "input-0"}}
+		// An operator that lists no ports gets the ones its links use: no link is lost.
+		if op.InputPorts == nil || len(*op.InputPorts) == 0 {
+			if used := usedPorts(spec.Links, op.OperatorID, true); len(used) > 0 {
+				op.InputPorts = &used
+			} else if !isSourceType(op.OperatorType) {
+				op.InputPorts = &[]api.WorkflowPort{{PortID: "input-0"}}
+			}
 		}
 		if op.OutputPorts == nil || len(*op.OutputPorts) == 0 {
-			op.OutputPorts = &[]api.WorkflowPort{{PortID: "output-0"}}
+			if used := usedPorts(spec.Links, op.OperatorID, false); len(used) > 0 {
+				op.OutputPorts = &used
+			} else {
+				op.OutputPorts = &[]api.WorkflowPort{{PortID: "output-0"}}
+			}
 		}
 	}
+}
+
+// usedPorts is the ports an operator's links use, its inputs or its outputs, in port order.
+func usedPorts(links []api.WorkflowLink, operatorID string, inputs bool) []api.WorkflowPort {
+	seen := map[string]bool{}
+	var used []api.WorkflowPort
+	for _, l := range links {
+		end := l.Source
+		if inputs {
+			end = l.Target
+		}
+		if end.OperatorID == operatorID && !seen[end.PortID] {
+			seen[end.PortID] = true
+			used = append(used, api.WorkflowPort{PortID: end.PortID})
+		}
+	}
+	sort.Slice(used, func(i, j int) bool { return portNumber(used[i].PortID) < portNumber(used[j].PortID) })
+	return used
+}
+
+// portNumber is the number at the end of a port's id: 1 for "input-1".
+func portNumber(portID string) int {
+	n, _ := strconv.Atoi(portID[strings.LastIndex(portID, "-")+1:])
+	return n
 }
 
 func isSourceType(t string) bool {

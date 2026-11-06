@@ -156,9 +156,17 @@ A workflow, and an execution of one, are shown on one canvas (`packages/kinds/sr
   editor); every change goes into the workflow as it is made. The open card stays within its
   column and the cards under it are drawn lower while it is open (`room.ts`). There is no
   panel beside the canvas. The list of operators opens from "Add operator".
-- **Places are for cards that say one line** (`workflow-model/layout.ts`). Cards that say
-  more are taller, so while they do the rows are drawn further apart by one factor for the
-  canvas (`density.tsx`); nothing is moved in the workflow. The canvas opens at a size its
+- **Places are the workflow's** (`spec.layout`, `workflow-model/layout.ts`): kept in its
+  document, shared at once, and in each version, so an older version and an execution's page
+  are drawn as they were laid out. One layered layout (`layered`, on dagre) lays out every graph
+  of the app, the canvas, a workflow's picture in a chat and lineage; on the canvas only where
+  nobody placed anything, and on "Tidy up". An operator nobody placed (the agent's) goes beside
+  what it connects to, and is pointed out for a moment and brought into view (`arrivals.ts`).
+  Places are for cards that say one line: cards that say more are taller, so while they do the
+  rows are drawn further apart by one factor for the canvas (`density.tsx`); nothing is moved
+  in the workflow.
+- **The others on a canvas** (`Cursors.tsx`): where each points, with their name, and a mark
+  on a card someone else has open, in the colour that person has on every page. The canvas opens at a size its
   words can be read at and is moved by hand from there (`framing.ts`), and keeps in view the
   operator whose result is on screen and the card that is open.
 - **Nothing lies over the operators unasked** (`controls.tsx`). The zoom buttons sit in a

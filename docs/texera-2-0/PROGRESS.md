@@ -2,6 +2,56 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-06 (session 12, part B): where operators sit, in versions; one layout for every graph; people and the agent on one canvas
+
+Part B of the canvas work the user decided on Nov 6. Their words on the layout: "I am
+thinking the layout should be ... the CRDT event. but i don't know if we are gonna create new
+version or not? can we achieve it being affected by CRDT while not save as a version?"; on the
+layout engine, "go with minimum clean design"; and, before starting, that the agent and a
+person must work properly on one canvas.
+
+What was decided:
+- **Three layers, each with one home.** Presence (where someone points, the card they have
+  open) is the session's awareness, never stored. The document (what runs and where operators
+  sit) is shared and stored continuously. A version is a snapshot of the document, made only
+  when what runs changes; it holds the places of that moment. A move alone makes no version.
+- **The places are in the spec** (`spec.layout`, beside operators and links); nothing that
+  runs a workflow reads them, and the agent never sees them.
+- **One layered layout for every graph**: dagre (MIT), for the canvas, the pictures in chats
+  and lineage, replacing two hand-written layouts.
+
+Done:
+- **The contract**: `WorkflowSpec.layout`, a `CanvasPoint` by operator.
+- **The live service** (`rooms.ts`) makes a version when what runs changes (`runOf`) and saves
+  it with the places of that moment (`versionSpecOf`); a version written elsewhere puts the
+  places it moved on the canvas and leaves the others, and an operator it gives no place goes
+  beside what it connects to (`placeMissing`: right of what it reads from, else left of what
+  it feeds, else under everything, in the first free spot).
+- **The catalog** keeps a place only for an operator the spec has, and a spec written without
+  places (a whole spec, as the agent may write one) keeps the places its workflow had
+  (`layout.go`); a JSON Patch keeps them by itself. The MCP bridge takes the places out of
+  every workflow spec in a tool's answer.
+- **One layout** (`layered` in `workflow-model/layout.ts`, on `@dagrejs/dagre` 3.1.3): columns
+  by depth, a lane for an arrow that skips a column, columns ordered against crossings, a join
+  between its branches. Used where nothing is placed, by "Tidy up", for pictures (which keep a
+  workflow's own arrangement, drawn smaller, when it has one) and for lineage (its group spacing
+  went).
+- **Older versions and executions** are drawn with their own places (`fixedDocument`,
+  `WorkflowCanvas`).
+- **The agent on the canvas**: what arrives from elsewhere is pointed out for a moment and
+  brought into view (`arrivals.ts`).
+- **People on the canvas** (`Cursors.tsx`): each sees where the others point, with their
+  name, and a mark on the card another has open, in the colour that person has everywhere.
+
+Found on the way and fixed:
+- **An operator that lists no ports got one input**, in the app and in the catalog, so a join
+  written as an agent may write it (no ports, two links in) lost the arrow into its second
+  input on the canvas. Both now give such an operator the ports its links use
+  (`withPorts`, `defaultPorts`).
+- **The app dropped a workflow's default warehouse when it read a version** (`normalizeSpec`);
+  nothing was lost because the edits it made never touched the field, but a pinned version did
+  not say it. It now keeps it, and the places.
+
 ## 2026-11-06 (session 12, on the Mac): the canvas, part A: what a run keeps, a run up to an operator, a status that can be read
 
 After trying the polish of session 11, the user asked for changes, and decided them in

@@ -55,6 +55,14 @@ export const zBranding = z.object({
     logoUrl: z.string().optional()
 });
 
+/**
+ * A place on the canvas: the top left corner of an operator's card.
+ */
+export const zCanvasPoint = z.object({
+    x: z.number(),
+    y: z.number()
+});
+
 export const zCommitFiles = z.object({
     message: z.string().optional()
 });
@@ -1642,6 +1650,7 @@ export const zWorkflowOperator = z.object({
 export const zWorkflowSpec = z.object({
     operators: z.array(zWorkflowOperator),
     links: z.array(zWorkflowLink),
+    layout: z.record(z.string(), zCanvasPoint).optional(),
     defaultEnvironment: zUri.optional(),
     defaultComputingUnit: zUri.optional(),
     defaultWarehouse: zUri.optional()

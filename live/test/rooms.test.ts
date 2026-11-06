@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Forbidden } from "@hocuspocus/common";
 import type { HocuspocusProvider } from "@hocuspocus/provider";
 import type { WorkflowSpec } from "@texera/catalog-client/types";
+import { COLUMN } from "@texera/workflow-model";
 import {
   applySpec,
   movePositions,
@@ -142,7 +143,7 @@ describe("a workflow edited together", () => {
     await until(() => fake.kept.get(WORKFLOW)?.basedOn === head.vno);
   });
 
-  test("moving an operator is seen by everyone and makes no version", async () => {
+  test("moving an operator is seen by everyone and makes no version; the next version takes the place", async () => {
     const { live, fake } = start();
     const alice = await live.join("alice", WORKFLOW);
     const bob = await live.join("bob", WORKFLOW);
@@ -151,6 +152,32 @@ describe("a workflow edited together", () => {
     await until(() => fake.kept.has(WORKFLOW));
     expect(fake.saved).toEqual([]);
     expect(fake.head(WORKFLOW).vno).toBe(1);
+    // An edit makes a version, which holds where every operator sits at that moment.
+    edit(bob, (s) => {
+      op<{ customDisplayName?: string }>(s, "avg").customDisplayName = "mean";
+    });
+    await until(() => fake.saved.length === 1);
+    expect(fake.saved[0]?.spec.layout?.avg).toEqual({ x: 640, y: 80 });
+    expect(Object.keys(fake.saved[0]?.spec.layout ?? {}).sort()).toEqual(["avg", "scan"]);
+  });
+
+  test("a version written elsewhere keeps where the operators sit, and puts a new one beside what it reads from", async () => {
+    const { live, fake } = start();
+    const alice = await live.join("alice", WORKFLOW);
+    const bob = await live.join("bob", WORKFLOW);
+    movePositions(alice.document, { avg: { x: 640, y: 80 } });
+    // The session has the move once someone else sees it.
+    await until(() => positionsOf(bob.document).avg?.x === 640);
+    // An agent adds a limit after avg and says nothing of where anything sits.
+    const next = {
+      linkID: "l2",
+      source: { operatorID: "avg", portID: "output-0" },
+      target: { operatorID: "limit", portID: "input-0" },
+    };
+    fake.write(WORKFLOW, { operators: [scan, avg, limit], links: [link, next] });
+    await until(() => positionsOf(alice.document).limit !== undefined);
+    expect(positionsOf(alice.document).avg).toEqual({ x: 640, y: 80 });
+    expect(positionsOf(alice.document).limit).toEqual({ x: 640 + COLUMN, y: 80 });
   });
 
   test("someone who may only read watches the edits and cannot make one", async () => {

@@ -3,7 +3,7 @@
 // guards that fill in what a spec written by an agent may leave out.
 
 import type { Operator, OperatorPortSpec } from "@texera/catalog-client/types";
-import type { JsonSchema, OperatorSchema, PortSchema, WorkflowOperator, WorkflowPort, WorkflowSpec } from "./types";
+import type { JsonSchema, OperatorSchema, PortSchema, Positions, WorkflowOperator, WorkflowPort, WorkflowSpec } from "./types";
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
@@ -47,27 +47,49 @@ const DEFAULT_INPUTS: WorkflowPort[] = [{ portID: "input-0" }];
 const DEFAULT_OUTPUTS: WorkflowPort[] = [{ portID: "output-0" }];
 
 /** An operator with its ports made explicit, as the catalog does before compiling. */
-export function withPorts(op: WorkflowOperator): WorkflowOperator {
+/** The ports an operator's links use on one side, in port order. */
+function usedPorts(links: readonly WorkflowSpec["links"][number][], id: string, side: "source" | "target"): WorkflowPort[] {
+  const used = new Set(links.filter(l => l[side].operatorID === id).map(l => l[side].portID));
+  const index = (portID: string) => Number(portID.slice(portID.lastIndexOf("-") + 1));
+  return [...used].sort((a, b) => index(a) - index(b)).map(portID => ({ portID }));
+}
+
+/**
+ * An operator with its ports spelled out. One that lists none gets the ones its links use, at
+ * least one input unless it reads nothing and one output, as the catalog does: no link is lost.
+ */
+export function withPorts(op: WorkflowOperator, links: readonly WorkflowSpec["links"][number][] = []): WorkflowOperator {
+  const inputs = usedPorts(links, op.operatorID, "target");
+  const outputs = usedPorts(links, op.operatorID, "source");
   return {
     ...op,
     operatorProperties: isRecord(op.operatorProperties) ? op.operatorProperties : {},
-    inputPorts: op.inputPorts?.length ? op.inputPorts : isSourceType(op.operatorType) ? [] : DEFAULT_INPUTS,
-    outputPorts: op.outputPorts?.length ? op.outputPorts : DEFAULT_OUTPUTS,
+    inputPorts: op.inputPorts?.length
+      ? op.inputPorts
+      : inputs.length
+        ? inputs
+        : isSourceType(op.operatorType)
+          ? []
+          : DEFAULT_INPUTS,
+    outputPorts: op.outputPorts?.length ? op.outputPorts : outputs.length ? outputs : DEFAULT_OUTPUTS,
   };
 }
 
 /**
- * A version's content as a WorkflowSpec with explicit ports. Specs written by agents may
- * omit ports and properties; those get the catalog's defaults so the rest of the app never
- * checks for them.
+ * A version's content as a WorkflowSpec with explicit ports, and where its operators sat when
+ * it was made. Specs written by agents may omit ports and properties; those get the catalog's
+ * defaults so the rest of the app never checks for them.
  */
 export function normalizeSpec(content: unknown): WorkflowSpec {
   if (!isRecord(content)) return { ...EMPTY_SPEC };
   const operators = Array.isArray(content.operators) ? (content.operators as WorkflowOperator[]) : [];
+  const links = Array.isArray(content.links) ? (content.links as WorkflowSpec["links"]) : [];
   return {
-    operators: operators.map(withPorts),
-    links: Array.isArray(content.links) ? (content.links as WorkflowSpec["links"]) : [],
+    operators: operators.map(op => withPorts(op, links)),
+    links,
     ...(typeof content.defaultEnvironment === "string" ? { defaultEnvironment: content.defaultEnvironment } : {}),
     ...(typeof content.defaultComputingUnit === "string" ? { defaultComputingUnit: content.defaultComputingUnit } : {}),
+    ...(typeof content.defaultWarehouse === "string" ? { defaultWarehouse: content.defaultWarehouse } : {}),
+    ...(isRecord(content.layout) ? { layout: content.layout as Positions } : {}),
   };
 }

@@ -28,11 +28,12 @@ import {
   dropLeftovers,
   placeOperators,
   readSaveRequest,
+  runOf,
   STANDING,
   type Standing,
   same,
   saveAnswer,
-  specOf,
+  versionSpecOf,
 } from "@texera/workflow-model/live";
 import * as Y from "yjs";
 import { type Catalog, CatalogError, type Head } from "./catalog.ts";
@@ -102,12 +103,16 @@ export function rooms({ catalog, log }: { catalog: Catalog; log: Logger }): Room
     tell(document, session);
   };
 
-  /** Saves what the document holds beyond its version, then keeps the document itself. */
+  /**
+   * Saves what the document holds beyond its version, then keeps the document itself. A version
+   * is made when what runs changes, with the operators where they sit at that moment; a move
+   * alone is kept with the document and goes into the next version.
+   */
   const save = async (document: Document, rid: string, session: Session) => {
     dropLeftovers(document, OURS);
     for (let attempt = 1; ; attempt++) {
-      const spec = specOf(document, session.saved);
-      if (same(spec, session.saved)) break;
+      const spec = versionSpecOf(document, session.saved);
+      if (same(runOf(spec), runOf(session.saved))) break;
       // Edits that arrive while the save is under way belong to the next version.
       const authors = session.contributors;
       session.contributors = new Set();
@@ -230,7 +235,7 @@ export function rooms({ catalog, log }: { catalog: Catalog; log: Logger }): Room
     // if that fails, for whoever comes back and for the next retry.
     async beforeUnloadDocument({ document, documentName }) {
       const session = sessions.get(documentName);
-      if (!session || same(specOf(document, session.saved), session.saved)) return;
+      if (!session || same(versionSpecOf(document, session.saved), session.saved)) return;
       if (!(await document.saveMutex.runExclusive(() => store(document, documentName, session)))) {
         throw new Error(`${documentName} is not saved: ${session.refused}`);
       }

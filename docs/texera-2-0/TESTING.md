@@ -96,7 +96,8 @@ and put out, only kept results have tabs, a click on a card shows its result and
 port, the same version is run again from the page as an execution with a name of its own, and
 a run up to one operator runs only what leads to it and changes no version; an execution's
 page is the workflow as it ran, and a visualization's result is the chart it drew, whole, not
-a table of its HTML.
+a table of its HTML; "Tidy up" lays a workflow out so a join stands between its branches
+and no card lies on an arrow, and makes no version.
 
 `lineage.spec.ts`: a workflow's lineage as a graph at its two levels: the dataset, the
 workflow and its executions as cards with the arrows' words, then the file, the version that
@@ -121,8 +122,11 @@ the thing off their list.
 `collaboration.spec.ts`, people together: who has a page open is shown at its top right on
 every kind's page and in a chat; two people see each other come and go; two people edit one
 workflow at the same moment (an operator added, a property changed, an operator dragged) and
-the versions name them both, the layout being one for everyone and no version of its own; a
-viewer watches and cannot change; a version written through the API arrives on an open canvas
+the versions name them both, the layout being one for everyone and no version of its own;
+where operators sit goes into the next version, and an older version is drawn as it was laid
+out; what the agent adds through its patch arrives beside what it reads from, pointed out,
+and nothing else moves; the people on one canvas see where the other points and the card the
+other has open; a viewer watches and cannot change; a version written through the API arrives on an open canvas
 beside an edit not saved yet; a workflow the catalog does not take as a version says so on
 everyone's page, does not run, and is saved once put right; a note is posted from the chat
 box without asking the agent, also during someone else's turn; what a chat runs with changes

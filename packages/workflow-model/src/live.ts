@@ -14,7 +14,7 @@
 // unsaved edits of other fields in place.
 
 import * as Y from "yjs";
-import { reconcilePositions } from "./layout";
+import { placeMissing } from "./layout";
 import { same } from "./same";
 import type { Point, Positions, WorkflowLink, WorkflowOperator, WorkflowSpec } from "./types";
 
@@ -31,7 +31,7 @@ const FORMER_POSITIONS = "positions";
 const PROPERTIES = "operatorProperties";
 
 /** The spec's fields that are neither operators nor links. */
-type Setting = Exclude<keyof WorkflowSpec, "operators" | "links">;
+type Setting = Exclude<keyof WorkflowSpec, "operators" | "links" | "layout">;
 // Every one of them, or this does not compile: a field the document did not keep would be
 // dropped from the next version without a word.
 const SETTINGS_KEPT: Record<Setting, true> = { defaultEnvironment: true, defaultComputingUnit: true, defaultWarehouse: true };
@@ -66,6 +66,10 @@ export function applyChange(doc: Y.Doc, from: WorkflowSpec, to: WorkflowSpec, or
       operators.delete(id);
       positions.delete(id);
     }
+    // Where operators sit, as the version says: a place it moved is put on the canvas; an
+    // operator it gives no place keeps the one it has here.
+    for (const [id, at] of Object.entries(to.layout ?? {}))
+      if (after.has(id) && !same(from.layout?.[id], at)) positions.set(id, { x: at.x, y: at.y });
     for (const [id, now] of after) {
       const was = before.get(id);
       let live = operators.get(id);
@@ -88,13 +92,35 @@ export function applyChange(doc: Y.Doc, from: WorkflowSpec, to: WorkflowSpec, or
       if (!was || !same(was.source, ends.source) || !same(was.target, ends.target)) links.set(id, ends);
     }
 
-    writeDifference(doc.getMap<unknown>(SETTINGS), from as unknown as Json, to as unknown as Json, ["operators", "links"]);
+    writeDifference(doc.getMap<unknown>(SETTINGS), from as unknown as Json, to as unknown as Json, ["operators", "links", "layout"]);
   }, origin);
 }
 
-/** Makes the document say a spec: the change from what it holds now. */
+/** Makes the document say a spec, where its operators sit included: the change from what it holds now. */
 export function applySpec(doc: Y.Doc, to: WorkflowSpec, origin?: unknown): void {
-  applyChange(doc, specOf(doc), to, origin);
+  applyChange(doc, versionSpecOf(doc), to, origin);
+}
+
+/** What runs of a spec: everything but where its operators sit. */
+export function runOf(spec: WorkflowSpec): WorkflowSpec {
+  const { layout: _, ...run } = spec;
+  return run;
+}
+
+/**
+ * The spec a version of the document holds: what runs, and where each of its operators sits.
+ * A version is made when what runs changes; it takes the places as they are at that moment.
+ */
+export function versionSpecOf(doc: Y.Doc, previous?: WorkflowSpec): WorkflowSpec {
+  const spec = specOf(doc, previous);
+  const places = positionsOf(doc);
+  const layout = Object.fromEntries(
+    spec.operators.flatMap(op => {
+      const at = places[op.operatorID];
+      return at ? [[op.operatorID, { x: at.x, y: at.y }]] : [];
+    })
+  );
+  return Object.keys(layout).length ? { ...spec, layout } : spec;
 }
 
 /** Ids in the order a version had them, then the ones it did not have, by id: the same on every replica. */
@@ -143,13 +169,12 @@ export function movePositions(doc: Y.Doc, moves: Positions, origin?: unknown): v
 }
 
 /**
- * Gives every operator a place: the ones nobody placed are laid out, the others stay. One
- * writer does this (whoever holds the document for everyone), so two people opening a workflow
- * do not lay it out twice.
+ * Gives every operator a place: one nobody placed goes beside what it connects to (all of them
+ * are laid out when nothing is placed), the others stay. One writer does this (whoever holds
+ * the document for everyone), so two people opening a workflow do not place it twice.
  */
 export function placeOperators(doc: Y.Doc, origin?: unknown): void {
-  const known = positionsOf(doc);
-  movePositions(doc, reconcilePositions(specOf(doc), known), origin);
+  movePositions(doc, placeMissing(specOf(doc), positionsOf(doc)), origin);
 }
 
 /**
