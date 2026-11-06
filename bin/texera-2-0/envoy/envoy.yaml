@@ -61,10 +61,20 @@ static_resources:
                           route: { cluster: catalog, timeout: 15s }
                         - match: { prefix: "/lineage/" }
                           route: { cluster: catalog, timeout: 15s }
-                        - match: { prefix: "/mcp" }
+                        # The MCP endpoint, /mcp/catalog. The slash matters: /mcp-servers/{rid} is a page of the app.
+                        - match: { prefix: "/mcp/" }
                           route: { cluster: catalog, timeout: 600s }
                         - match: { prefix: "/agents/" }
                           route: { cluster: agent, timeout: 0s }
+                        # The live sessions: a WebSocket for as long as a page stays open. A browser
+                        # cannot put a token in a WebSocket's headers, so the person's token travels in
+                        # the protocol's first message and the live service asks the catalog who it is.
+                        - match: { prefix: "/live/" }
+                          route: { cluster: live, timeout: 0s }
+                          typed_per_filter_config:
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
                         - match: { prefix: "/" }
                           route: { cluster: frontend, timeout: 0s }
                           typed_per_filter_config:
@@ -95,7 +105,7 @@ static_resources:
                       rules:
                         - match: { prefix: "/auth/" }
                         - match: { prefix: "/.well-known/" }
-                        - match: { prefix: "/mcp" }
+                        - match: { prefix: "/mcp/" }
                           requires:
                             requires_any:
                               requirements:
@@ -169,6 +179,16 @@ static_resources:
               - endpoint:
                   address:
                     socket_address: { address: host.docker.internal, port_value: 23002 }
+    - name: live
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: live
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: host.docker.internal, port_value: 23003 }
     - name: biomcp
       type: STRICT_DNS
       connect_timeout: 5s

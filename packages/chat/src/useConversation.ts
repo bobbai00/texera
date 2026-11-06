@@ -1,13 +1,14 @@
 // One conversation: its persisted history plus the turn streaming right now.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { conversationsAppendMessage } from "@texera/catalog-client";
 import { conversationsListMessagesOptions } from "@texera/catalog-client/query";
 import type { Message, MessagePage } from "@texera/catalog-client/types";
-import { type ResourceRef, useWatch } from "@texera/kinds";
+import { type AppContext, type ResourceRef, unwrap, useWatch } from "@texera/kinds";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { newRunId, runAgent } from "./agui/client";
 import type { AgUiEvent, RunAgentInput } from "./agui/types";
-import { applyEvent, type ChatMessage, type ChatState, EMPTY_STATE, fromHistory, messageContent, resourcesOf, settled } from "./model";
+import { applyEvent, type ChatMessage, type ChatState, EMPTY_STATE, fromHistory, messageContent, messageParts, resourcesOf, settled } from "./model";
 
 export interface Attachment {
   ref: ResourceRef;
@@ -19,6 +20,8 @@ export interface ConversationOptions {
   /** The template the conversation runs now (its spec), so streamed replies are labelled before the catalog confirms them. */
   template: string | undefined;
   getToken: () => string | undefined;
+  /** What the app says the person is looking at, sent with each message as the run's context. */
+  context?: AppContext[];
   /** Called when a turn ends, so the page can refresh what it produced. */
   onRunEnd?: () => void;
 }
@@ -48,7 +51,7 @@ export function upsertMessage(items: Message[], m: Message): Message[] {
 /** The AG-UI endpoint of a conversation on the agent runtime, behind the gateway. */
 export const agUiUrl = (rid: string) => `/agents/conversations/${encodeURIComponent(rid)}/ag-ui`;
 
-export function useConversation({ rid, template, getToken, onRunEnd }: ConversationOptions) {
+export function useConversation({ rid, template, getToken, context, onRunEnd }: ConversationOptions) {
   const queryClient = useQueryClient();
   const history = useQuery({ ...conversationsListMessagesOptions({ path: { rid }, query: { limit: 500 } }), staleTime: 10_000 });
   const [live, dispatch] = useReducer(liveReducer, EMPTY_STATE);
@@ -68,11 +71,17 @@ export function useConversation({ rid, template, getToken, onRunEnd }: Conversat
   // catalog's copy of it takes over when the turn ends (the refetch below).
   const seen = useRef({ maxSeq, running });
   seen.current = { maxSeq, running };
+  // Where the person is when they send, not when the chat was opened.
+  const viewing = useRef(context);
+  viewing.current = context;
+  const take = useCallback(
+    (m: Message) => queryClient.setQueriesData<MessagePage>({ queryKey: [{ _id: "conversationsListMessages", path: { rid } }] }, page => (page ? { ...page, items: upsertMessage(page.items, m) } : page)),
+    [queryClient, rid]
+  );
   useWatch(rid, {
     after: () => seen.current.maxSeq,
     onMessage: m => {
-      if (seen.current.running) return;
-      queryClient.setQueriesData<MessagePage>({ queryKey: [{ _id: "conversationsListMessages", path: { rid } }] }, page => (page ? { ...page, items: upsertMessage(page.items, m) } : page));
+      if (!seen.current.running) take(m);
     },
   });
 
@@ -110,7 +119,7 @@ export function useConversation({ rid, template, getToken, onRunEnd }: Conversat
       setInFlight(true);
       const controller = new AbortController();
       abort.current = controller;
-      const input: RunAgentInput = { threadId: rid, runId: newRunId(), messages: [{ id: messageId, role: "user", content: messageContent(text, attachments) }], tools: [], context: [], forwardedProps: {} };
+      const input: RunAgentInput = { threadId: rid, runId: newRunId(), messages: [{ id: messageId, role: "user", content: messageContent(text, attachments) }], tools: [], context: viewing.current ?? [], forwardedProps: {} };
       try {
         await runAgent({ url: agUiUrl(rid), input, token: getToken(), signal: controller.signal, onEvent: event => dispatch({ type: "event", event }) });
       } catch (e) {
@@ -128,6 +137,17 @@ export function useConversation({ rid, template, getToken, onRunEnd }: Conversat
     [rid, template, maxSeq, getToken, queryClient, onRunEnd]
   );
 
+  /**
+   * Says something to the people in the chat without asking the agent: a message of no turn.
+   * The agent reads it, under the person's name, the next time someone asks.
+   */
+  const note = useCallback(
+    async (text: string, attachments: Attachment[] = []) => {
+      take(await unwrap(conversationsAppendMessage({ path: { rid }, body: { role: "user", parts: messageParts(text, attachments) } })));
+    },
+    [rid, take]
+  );
+
   const stop = useCallback(() => {
     abort.current?.abort();
     dispatch({ type: "event", event: { type: "RUN_FINISHED", threadId: rid, runId: live.runId ?? "" } });
@@ -143,6 +163,7 @@ export function useConversation({ rid, template, getToken, onRunEnd }: Conversat
     loading: history.isPending,
     historyError: history.error,
     send,
+    note,
     stop,
   };
 }

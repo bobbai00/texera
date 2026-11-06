@@ -31,9 +31,12 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 4. **Dataset file references in operator properties.** The app writes
    `texera://datasets/{rid}@{vno}/files/{path}` (and the version URI alone for version
    pickers), which the catalog resolves to presigned URLs when it builds the plan.
-5. **Canvas positions.** The workflow spec is the engine's plan and holds no positions; the
-   app lays the graph out (sources left, one column per hop) and keeps a person's moves in
-   their preferences under `canvas[rid]`, so a layout is theirs and survives a reload.
+5. **Canvas positions.** The workflow spec is the engine's plan and holds no positions.
+   Where operators sit is part of the document of the workflow's live session (item 10): one
+   layout for everyone, laid out once by the live service (sources left, one column per hop),
+   changed by whoever drags an operator, and kept with the document between sessions. A
+   version of a workflow records what runs, not how it is drawn, so an older version is laid
+   out afresh when it is shown.
 6. **Compile result port keys.** `CompileResult.operatorOutputSchemas[op]` keyed by
    `"<port>_false"` (the engine's serializer) or `"<port>"`; both are read.
 7. **Names.** Names are unique per project and kind (the catalog refuses a duplicate with
@@ -44,6 +47,29 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    and, through the Identity port's user search (Keycloak's admin API with the service
    client's `view-users` role), people in the directory who have not; the latter are recorded
    as principals when found, and their first login fills in the rest. Groups are catalog rows.
+9. **What the person is looking at.** A message sent from the chat beside a resource's page
+   carries AG-UI's `context` of the run: `{description: "The person is looking at", value:
+   '<Kind> "<name>" (<the resource's URI, with @vno when a version is open>)'}` and, when the
+   page adds something, `{description: "On that page", value: "the operator <id> is
+   selected"}`. The runtime passes on text only, one line each, bounded. Nothing is stored
+   with the chat; the app remembers the chat last used beside each page in the person's
+   preferences under `dock[rid]` (the fifty most recent pages).
+10. **A resource's live session.** `{gateway}/live/sessions` is a WebSocket speaking the
+   Hocuspocus protocol (Yjs sync and awareness); the document's name is the resource's rid and
+   the person's token goes in the protocol's first message. Whoever may read the resource
+   joins. Everyone says who they are in their awareness state, `user: {pid, name}`: that is
+   the presence shown on a page. A workflow's session also holds its document: maps
+   `operators` (a map per operator id, with `operatorProperties` a map of its own), `links`
+   (one value per link id), `settings` (the spec's other fields) and `positions`; code that
+   reads or writes it goes through `@texera/workflow-model/live`. Someone who may not write
+   gets a read-only connection. The session's own awareness state holds how the document
+   stands with the catalog, `catalog: {vno, refused?}`. `save:<id>` as a stateless message
+   asks for a save now and is answered to the asker with `saved:<id>:<vno>` or
+   `not-saved:<id>:<reason>`. A person who may no longer read is let go with the close reason
+   `Forbidden`; the app then asks the catalog and shows its answer.
+11. **A note.** A person's message of no turn (`POST /conversations/{rid}/messages` with
+   `role: "user"` and no `turn`) asks the agent nothing: the chat marks it as a note, and the
+   agent reads it, under its writer's name, the next time someone asks.
 
 ## catalog
 
@@ -119,8 +145,12 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    ends. The stream opens with the messages after `after` and the resource as it stands, so a
    client that listed first misses nothing; a comment line every fifteen seconds keeps the
    connection alive, and the gateway puts no timeout on this route. Each change is re-read
-   through the watcher's permissions, so a revoked grant ends the stream. The frontend uses
-   it for the execution page and the chat (`useWatch`); the generated TypeScript client leaves this
+   through the watcher's permissions, and the right to read is asked again with every
+   keepalive, so a grant taken back, on the resource or on the project it lives in, ends the
+   stream within fifteen seconds though nothing about the resource changed. The frontend uses
+   it for the workflow, the execution and the chat (`useWatch`), and a watch that was open
+   and is then refused makes the app ask the catalog again about the resource; the generated
+   TypeScript client leaves this
    one route out (its query plugin cannot type a stream) and `packages/kinds/src/watch.ts`
    reads it by hand. The broker is in-process; replicas would carry the same changes over
    Postgres LISTEN/NOTIFY.
@@ -129,7 +159,9 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    every message records its `author`, and the turn lock records whose it is
    (`status.activeTurn`, `status.activeTurnBy`), cleared together when the turn ends. The
    assistant message of a turn is the turn-taker's too. The chat page shows the others'
-   messages under their names as they arrive and waits while someone else's turn runs.
+   messages under their names as they arrive and waits while someone else's turn runs. The
+   runtime rewrites the assistant message while the answer streams, so the watch is also how
+   the others see it arrive.
 13. **Execution controls.** `POST /workflows/{rid}/executions/{eid}/pause` and `.../resume`
    take `execute` like cancel, 409 `not_running` or `not_paused` when the execution is not in
    the phase the verb needs, and forward to the unit, whose answer is not trusted: the phase
@@ -138,6 +170,21 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    the unit also reports every operator's state and count about once a second (OpenLineage
    `RUNNING` events), which land in `status.operators`; progress that arrives after the
    terminal report is ignored. Both verbs are MCP tools.
+14. **What others shared.** `GET /resources?shared=true` (and `search_resources` with
+   `shared`) lists what the caller holds a grant of their own on and does not own, whatever
+   its kind and project, with no scope applied. What lies inside a shared project is reached
+   through the project and is not on the list; a grant to a group the caller is in is not
+   expanded.
+15. **The live service's routes.** `GET` and `PUT /resources/{rid}/live` hold the document of
+   a workflow's live session between sessions (`{basedOn, state}`: the version it was last
+   level with, and the Yjs bytes). `POST /workflows/{rid}/edit` takes `onBehalfOf`, the people
+   whose edits a version holds: the first is recorded as its creator, all of them as its
+   `contributors` when there is more than one. Both are a service's alone; a person, the
+   owner included, is refused (403).
+16. **An edit names the head it was made on.** `expectedHead` on an edit is refused with 409
+   (`head is N, expected M`) when the head moved, before a patch is applied: a patch names
+   operators by their place in the spec its writer read. A patch that names no head is
+   applied to the head as it is and saved onto no other.
 
 ## catalog and its tools
 
@@ -209,7 +256,15 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    turn and named to the agent.
 3. **What the agent is told about the chat.** Every step's prompt ends with the turn state
    and the chat's facts: today's date, the project the chat is in, the computing unit an
-   execution falls back to (or that none is set), and the add-ons left out. The instructions
-   before it are the same text for every chat.
+   execution falls back to (or that none is set), what the app says the person is looking at
+   (frontend item 9), who is in a chat several people write in and whom the turn answers,
+   and the add-ons left out. The instructions before it are the same text for every chat.
+   In a chat with more than one writer, each person's message reaches the model with its
+   writer's name in front, `[Alice Liddell] ...`; the catalog keeps the words as they were
+   said.
 4. **A turn that fails.** Whatever ends a turn in error is written to the conversation as an
    `error` part of an assistant message, so the reason outlives the stream.
+5. **The answer in the catalog.** The assistant message of a turn is appended empty when the
+   answer starts and rewritten as it streams, at most every 400 ms and at the end of each
+   step, one write at a time. The person who asked reads the AG-UI stream; everyone else in
+   the chat reads the catalog's event stream.

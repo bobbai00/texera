@@ -53,6 +53,14 @@
   --kind-credential: oklch(0.6 0.14 55);
   --kind-model-endpoint: oklch(0.56 0.15 285);
   --kind-settings: oklch(0.5 0.03 240);
+
+  /* One colour per person in a live session: the ring of their icon, their cursor on a canvas. */
+  --presence-1: oklch(0.62 0.17 25);
+  --presence-2: oklch(0.62 0.14 155);
+  --presence-3: oklch(0.6 0.15 285);
+  --presence-4: oklch(0.7 0.15 70);
+  --presence-5: oklch(0.6 0.13 220);
+  --presence-6: oklch(0.6 0.16 330);
 }
 
 .dark {
@@ -122,6 +130,12 @@
   --color-kind-credential: var(--kind-credential);
   --color-kind-model-endpoint: var(--kind-model-endpoint);
   --color-kind-settings: var(--kind-settings);
+  --color-presence-1: var(--presence-1);
+  --color-presence-2: var(--presence-2);
+  --color-presence-3: var(--presence-3);
+  --color-presence-4: var(--presence-4);
+  --color-presence-5: var(--presence-5);
+  --color-presence-6: var(--presence-6);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

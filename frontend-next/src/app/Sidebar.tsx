@@ -15,7 +15,7 @@ import {
   Skeleton,
   toggleTheme,
 } from "@texera/ui";
-import { LogOut, MoonStar, PanelLeftClose, Search, Settings, SquarePen } from "lucide-react";
+import { LogOut, MoonStar, PanelLeftClose, Search, Settings, SquarePen, Users } from "lucide-react";
 import { signOut, useSession } from "@/auth/session";
 
 export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSearch: () => void }) {
@@ -64,6 +64,14 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
         <Button variant="ghost" className="w-full justify-start px-2 text-muted-foreground" onClick={onSearch}>
           <Search /> Search
           <Kbd className="ml-auto">⌘K</Kbd>
+        </Button>
+        {/* What others shared lives in their projects, not in the one the lists below show. */}
+        <Button
+          variant="ghost"
+          className="w-full justify-start px-2 text-muted-foreground data-[status=active]:bg-accent data-[status=active]:text-foreground"
+          render={<Link to="/shared" />}
+          data-shared-link>
+          <Users /> Shared with me
         </Button>
       </div>
 

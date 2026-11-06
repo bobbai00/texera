@@ -21,10 +21,11 @@ import { metaLine } from "./MetaLine";
 import { useOpenResource } from "./navigation";
 import { SpecEditor } from "./SpecEditor";
 import { Versions } from "./Versions";
+import { OpenError } from "./OpenError";
 
 export function GenericView({ ref, mode }: KindViewProps) {
   const { data, error } = useQuery(resourceQuery(ref.rid));
-  if (error) return <ErrorNote error={error} prefix={`Could not open this ${KINDS[ref.kind].label.toLowerCase()}`} className="m-4" />;
+  if (error) return <OpenError error={error} kind={ref.kind} />;
   if (!data) return <Skeleton className="m-4 h-64" />;
   return <ResourcePage resource={data} ref={{ ...ref, kind: data.kind, parent: data.metadata.parent }} mode={mode} />;
 }

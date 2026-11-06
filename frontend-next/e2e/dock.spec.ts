@@ -1,0 +1,225 @@
+import { expect, type Page, test } from "@playwright/test";
+import { aPageOfEveryKind, api, type Caller, cleanups, discard, type Envelope, type PageOf, signIn, tidyUp } from "./support";
+
+// The agent beside a page: on the page of any resource a chat opens over it, and what is asked
+// there reaches the agent with a line that says which resource the person is looking at. The
+// chat is an ordinary one; the app remembers the one last used beside each page.
+
+test.afterEach(tidyUp);
+
+/** The dock's box, once the dock is open. */
+const dock = (page: Page) => page.locator("[data-chat-dock]");
+
+async function openDock(page: Page) {
+  await page.locator("[data-chat-dock-button]").click();
+  await expect(dock(page)).toBeVisible();
+}
+
+/**
+ * Answers the next turn in place of the agent runtime: the page gets the stream, the catalog
+ * gets the turn as the runtime would write it. Hands back what the page sent: the run's input,
+ * with the context the dock adds, and the conversation it was sent to.
+ */
+async function answerAs(page: Page, as: Caller, answer: string) {
+  let recorded: () => void = () => undefined;
+  const sent: { input?: { context: { description: string; value: string }[]; messages: { content: string }[] }; conversation?: string; recorded: Promise<void> } = {
+    recorded: new Promise<void>(resolve => {
+      recorded = resolve;
+    }),
+  };
+  await page.route("**/agents/conversations/*/ag-ui", async route => {
+    sent.input = route.request().postDataJSON();
+    const rid = /conversations\/([0-9a-f-]{36})\//.exec(route.request().url())?.[1] as string;
+    sent.conversation = rid;
+    const events = [
+      { type: "RUN_STARTED", threadId: rid, runId: "r" },
+      { type: "TEXT_MESSAGE_START", messageId: "m", role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "m", delta: answer },
+      { type: "TEXT_MESSAGE_END", messageId: "m" },
+      { type: "RUN_FINISHED", threadId: rid, runId: "r" },
+    ];
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: events.map(e => `data: ${JSON.stringify(e)}\n\n`).join("") });
+    const turn = await as("POST", `/conversations/${rid}/turns`, {});
+    await as("POST", `/conversations/${rid}/messages`, { turn: turn.turn, role: "user", parts: [{ type: "text", text: sent.input?.messages.at(-1)?.content }] });
+    await as("POST", `/conversations/${rid}/messages`, { turn: turn.turn, role: "assistant", template: turn.template, parts: [{ type: "text", text: answer }] });
+    await as("DELETE", `/conversations/${rid}/turns/${turn.turn}`);
+    recorded();
+  });
+  return sent;
+}
+
+async function askInDock(page: Page, text: string) {
+  await dock(page).getByLabel("Message", { exact: true }).fill(text);
+  await dock(page).getByLabel("Send message").click();
+}
+
+/** Forgets the chats the docks of this scenario remembered, and removes them. */
+function forgetDocks(as: Caller, conversations: () => string[]) {
+  cleanups.push(async () => {
+    for (const rid of conversations()) await as.attempt("DELETE", `/resources/${rid}`);
+    const { dock: _, ...preferences } = (await as("GET", "/me")).preferences as Record<string, unknown>;
+    await as("PUT", "/me/preferences", preferences);
+  });
+}
+
+test("the agent can be asked from the page of every kind of resource, and is told which page", async ({ page, request }) => {
+  test.setTimeout(240_000);
+  const as = await api(request);
+  const { pages, project } = await aPageOfEveryKind(as);
+  const home = (await as("GET", "/me")).homeProject as string;
+  const chats: string[] = [];
+  forgetDocks(as, () => chats);
+  // Every kind the catalog has a page for, but the chat itself and the settings.
+  expect(pages.map(p => p.kind).sort()).toEqual(
+    ["agent-template", "computing-unit", "credential", "dataset", "environment", "execution", "mcp-server", "model", "model-endpoint", "operator", "project", "skill", "workflow"].sort()
+  );
+
+  await signIn(page);
+  for (const [i, at] of pages.entries()) {
+    await test.step(`${at.kind}: ${at.name}`, async () => {
+      await page.goto(at.path);
+      await openDock(page);
+      await expect(dock(page).locator("[data-dock-about]")).toContainText(at.name);
+      const answer = `Answer ${i} about ${at.kind}.`;
+      const sent = await answerAs(page, as, answer);
+      await askInDock(page, "What is this?");
+      await expect(dock(page).getByText(answer).first()).toBeVisible();
+      await sent.recorded;
+      await page.unroute("**/agents/conversations/*/ag-ui");
+
+      // The agent is told what the person is looking at: the resource by name and URI.
+      expect(sent.input?.context[0]?.description).toBe("The person is looking at");
+      expect(sent.input?.context[0]?.value).toContain(`"${at.name}"`);
+      expect(sent.input?.context[0]?.value).toContain(`(${at.uri})`);
+      // The chat is an ordinary one, beside the resource when the person may add there, else
+      // where they work.
+      expect(sent.conversation).toBeDefined();
+      chats.push(sent.conversation as string);
+      const chat = await as("GET", `/conversations/${sent.conversation}`);
+      expect(chat.metadata.project).toBe(at.mine ? project : home);
+      expect(chat.spec).toEqual({});
+    });
+  }
+  await page.screenshot({ path: "test-results/dock.png", fullPage: true });
+});
+
+test("a page's dock continues the chat last used there, and starts over when asked", async ({ page, request }) => {
+  const as = await api(request);
+  const workflow: Envelope = await as("POST", "/workflows", { name: `dock memory ${Date.now()}`, spec: { operators: [], links: [] } });
+  const other: Envelope = await as("POST", "/datasets", { name: `dock memory ${Date.now()}`, spec: { format: "csv" } });
+  cleanups.push(() => discard(as, [workflow.metadata.rid], [other.metadata.rid]));
+  const chats: string[] = [];
+  forgetDocks(as, () => chats);
+
+  await signIn(page);
+  await page.goto(`/workflows/${workflow.metadata.rid}`);
+  // Nothing in the way of the page until it is asked for.
+  await expect(dock(page)).toHaveCount(0);
+  await openDock(page);
+  await expect(dock(page)).toHaveAttribute("data-chat-dock", "new");
+  const sent = await answerAs(page, as, "It is empty.");
+  await askInDock(page, "What is in this workflow?");
+  await expect(dock(page).getByText("It is empty.").first()).toBeVisible();
+  await sent.recorded;
+  const first = sent.conversation as string;
+  chats.push(first);
+  await expect(dock(page)).toHaveAttribute("data-chat-dock", first);
+
+  // Another page has a dock of its own; back on the first, the chat is where it was left.
+  await page.goto(`/datasets/${other.metadata.rid}`);
+  await openDock(page);
+  await expect(dock(page)).toHaveAttribute("data-chat-dock", "new");
+  await page.goto(`/workflows/${workflow.metadata.rid}`);
+  await openDock(page);
+  await expect(dock(page)).toHaveAttribute("data-chat-dock", first);
+  await expect(dock(page).getByText("What is in this workflow?")).toBeVisible();
+
+  // It is a chat like any other: it opens as a page.
+  await dock(page).locator("[data-dock-open-page]").click();
+  await expect(page).toHaveURL(new RegExp(`/conversations/${first}`));
+  // A chat's own page has no dock: it is the chat.
+  await expect(page.locator("[data-chat-dock-button]")).toHaveCount(0);
+
+  // Starting over forgets it; the chat itself stays.
+  await page.goto(`/workflows/${workflow.metadata.rid}`);
+  await openDock(page);
+  await dock(page).locator("[data-dock-new]").click();
+  await expect(dock(page)).toHaveAttribute("data-chat-dock", "new");
+  expect((await as("GET", `/conversations/${first}`)).metadata.rid).toBe(first);
+  await dock(page).locator("[data-dock-close]").click();
+  await expect(dock(page)).toHaveCount(0);
+});
+
+test("on a workflow's canvas the agent is told which operator is selected", async ({ page, request }) => {
+  const as = await api(request);
+  const spec = { operators: [{ operatorID: "limit", operatorType: "Limit", operatorProperties: { limit: 5 } }], links: [] };
+  const workflow: Envelope = await as("POST", "/workflows", { name: `dock canvas ${Date.now()}`, spec });
+  cleanups.push(() => discard(as, [workflow.metadata.rid]));
+  const chats: string[] = [];
+  forgetDocks(as, () => chats);
+
+  await signIn(page);
+  await page.goto(`/workflows/${workflow.metadata.rid}`);
+  await page.locator('.react-flow__node[data-id="limit"]').click();
+  await openDock(page);
+  const sent = await answerAs(page, as, "It keeps five rows.");
+  await askInDock(page, "What does this one do?");
+  await expect(dock(page).getByText("It keeps five rows.").first()).toBeVisible();
+  await sent.recorded;
+  chats.push(sent.conversation as string);
+  expect(sent.input?.context).toEqual([
+    { description: "The person is looking at", value: `Workflow "${workflow.metadata.name}" (${workflow.metadata.uri})` },
+    { description: "On that page", value: "the operator limit is selected" },
+  ]);
+});
+
+test.describe("with the model", () => {
+  test.skip(!!process.env.TEXERA_E2E_SKIP_MODEL, "needs the agent runtime's model key");
+
+  test("asked about the page a person is on, the agent reads that resource and answers from it", async ({ page, request }) => {
+    test.setTimeout(300_000);
+    const as = await api(request);
+    const { pages } = await aPageOfEveryKind(as);
+    const chats: string[] = [];
+    forgetDocks(as, () => chats);
+    const at = (kind: string) => pages.find(p => p.kind === kind) as PageOf;
+    const turnOver = async () => {
+      await expect(dock(page).locator("button[aria-label='Stop generating']")).toBeVisible({ timeout: 20_000 });
+      await expect(dock(page).locator("button[aria-label='Send message']")).toBeVisible({ timeout: 240_000 });
+    };
+    const chatOf = async () => {
+      const rid = (await dock(page).getAttribute("data-chat-dock")) as string;
+      expect(rid).toMatch(/^[0-9a-f-]{36}$/);
+      chats.push(rid);
+      return rid;
+    };
+    /** The tools the agent called in a chat, in order. */
+    const toolsOf = async (rid: string) => {
+      const { items } = (await as("GET", `/conversations/${rid}/messages?limit=500`)) as { items: { parts: { type: string; toolName?: string }[] }[] };
+      return items.flatMap(m => m.parts.filter(p => p.type === "tool_call").map(p => p.toolName as string));
+    };
+
+    await signIn(page);
+    // A dataset: "this" is the dataset on the page, and its columns come from its file.
+    await page.goto(at("dataset").path);
+    await openDock(page);
+    await askInDock(page, "What columns does this have? List their names.");
+    await turnOver();
+    const aboutData = await dock(page).locator('[data-message-role="assistant"]').last().innerText();
+    for (const column of ["SepalLengthCm", "PetalWidthCm", "Species"]) expect(aboutData).toContain(column);
+    expect(await toolsOf(await chatOf())).toContain("read_dataset_file");
+
+    // A workflow: the agent reads the one on the page, not one it finds by searching.
+    await page.goto(at("workflow").path);
+    await openDock(page);
+    await askInDock(page, "Which operators does this have, and what does it compute? Do not run it.");
+    await turnOver();
+    const aboutWorkflow = await dock(page).locator('[data-message-role="assistant"]').last().innerText();
+    expect(aboutWorkflow).toMatch(/Aggregate/i);
+    expect(aboutWorkflow).toMatch(/PetalLengthCm|petal length/i);
+    const tools = await toolsOf(await chatOf());
+    expect(tools).toContain("get_workflow");
+    expect(tools).not.toContain("create_workflow");
+    await page.screenshot({ path: "test-results/dock-model.png", fullPage: true });
+  });
+});

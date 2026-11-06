@@ -33,7 +33,11 @@ Bob) goes through a guard fixture that puts it back.
 | A Python UDF fails without its environment and completes with it | `test_environment.py` | slow | 2 min |
 | A custom operator as a resource, used by URI, pinned environment, deletion refused while referenced (acceptance 5) | `test_operator.py` | slow | 2 min |
 | A project shared with a viewer: reads, runs, nothing more; revoked (acceptance 6) | `test_sharing.py` | | 20 s |
+| What others shared with a person is one list whatever its kind and project (a project, a chat, a workflow, a dataset), not what is inside a project they were given; a grant taken back takes the thing off it | `test_sharing.py` | | 5 s |
+| A watch ends when what let the watcher read is taken back, on the project the resource lives in, though nothing about the resource changed | `test_sharing.py` | | 20 s |
 | A shared chat is a group chat: a viewer reads and watches, an editor posts and takes the turn under his name, the watch delivers messages, rewrites and the lock to the others | `test_collaboration.py` | | 10 s |
+| A note is a message of no turn: said under its writer's name while someone else's turn runs, which it leaves untouched | `test_collaboration.py` | | 5 s |
+| The document of a workflow's live session is the live service's alone to read and write; only it saves a version in the names of the people who edited; an edit against a head that moved is a conflict | `test_collaboration.py` | | 5 s |
 | An execution watched through its event stream: operator progress, pause and resume through the catalog, the phase following the unit's word, every row at the end | `test_controls.py` | slow | 1 min |
 | A credential in an operator property, leased for the execution; a viewer refused before any execution exists, until granted use (acceptance 7) | `test_credentials.py` | | 30 s |
 | The lake enforces the catalog's decision: namespaces per execution, identities per unit, nothing for anyone else | `test_lake.py` | local | 20 s |
@@ -57,8 +61,8 @@ passes the right ones per layer. `local` means the Compose stack's host ports (L
 Keycloak, OpenBao, the unit process); `destructive` means other tests may see the effect
 (the unit restarts, every finished run on the stack expires), so those run last.
 
-Playwright covers the pages: sign-in, a chat started by its first message with an upload
-that becomes a dataset and stays a card of the message, the agent's page (on show, read-only),
+Playwright covers the pages, in four files under `frontend-next/e2e/`. `texera2.spec.ts`, the
+app: sign-in, a chat started by its first message with an upload that becomes a dataset and stays a card of the message, the agent's page (on show, read-only),
 the project a person works in (what the lists show, where new things go, the pick kept), a
 chat's model, unit and add-ons chosen in its box, a turn that fails and says why across a
 reload, a long first answer that ends up on screen, the operator page with its versions and
@@ -66,10 +70,37 @@ sharing, a computing unit made with a size, an execution's lineage and its keep 
 people in one chat (the other's messages and turn arrive live, under their name), an
 execution's page that follows a slow one and pauses and resumes it, and with the model the two
 chat scenarios: the agent answering from a workflow it built in the chat's project on the
-unit the chat prefers, and one agent researching, analyzing and sharing in one chat
-(`frontend-next/e2e/texera2.spec.ts`). The two model scenarios make the iris dataset they ask
+unit the chat prefers, and one agent researching, analyzing and sharing in one chat. The two
+model scenarios make the iris dataset they ask
 about in a project of their own, work in that project, and remove it at the end with what the
 chat made, as the pytest scenarios do; a wiped stack has no iris to find otherwise.
+
+`dock.spec.ts`, the agent beside a page: on the page of every kind (thirteen, made in a
+project of the test's or taken from the built-ins) the chat button opens a chat whose message
+tells the agent the kind, the name and the URI of what is on screen, in the resource's project
+when the person may write there; the app remembers the chat used beside a page; the operator
+selected on a canvas is told; and with the model, the agent answers about "this" dataset from
+its file and about "this" workflow without making another.
+
+`sharing.spec.ts`: a project, a chat, a workflow and a dataset are each shared from the Share
+button of their page (the link, copied; the person found by name; the owner's own grant not
+one to take back), and the other person finds all four under "Shared with me" and opens each;
+a link to something not shared says so on the page of every kind and opens once it is shared;
+a grant taken back in the dialog closes the page the other has open, with no reload, and takes
+the thing off their list.
+
+`collaboration.spec.ts`, people together: who has a page open is shown at its top right on
+every kind's page and in a chat; two people see each other come and go; two people edit one
+workflow at the same moment (an operator added, a property changed, an operator dragged) and
+the versions name them both, the layout being one for everyone and no version of its own; a
+viewer watches and cannot change; a version written through the API arrives on an open canvas
+beside an edit not saved yet; a workflow the catalog does not take as a version says so on
+everyone's page, does not run, and is saved once put right; a note is posted from the chat
+box without asking the agent, also during someone else's turn; what a chat runs with changes
+in everyone's box at once; and with the model, one of two people asks the agent, which answers
+from what the other said under his name, while the other watches the answer arrive.
+`e2e/support.ts` holds what the files share: signing in, the API caller, a page of every kind,
+and the tidying up each scenario owes the stack.
 
 ## Rules
 

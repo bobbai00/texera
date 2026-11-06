@@ -30,6 +30,7 @@ export function turnDeps(deps: RuntimeDeps): TurnDeps {
     log: deps.log,
     build: deps.build,
     maxHandoffs: deps.config.maxHandoffs,
+    answerKeptEveryMs: deps.config.answerKeptEveryMs,
     newId: deps.newId,
   };
 }

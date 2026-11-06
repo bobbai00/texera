@@ -107,6 +107,46 @@ func TestBuiltinsSeededByAnEarlierReleaseEndAsAFreshSeedLeavesThem(t *testing.T)
 }
 
 // apply runs a migration file against the test database, as Migrate does once.
+// Where a workflow's operators sit is part of the workflow's live document, one layout for
+// everyone. The places each person kept in their preferences are no longer read, and go; the
+// rest of what a person prefers stays.
+func TestThePlacesAPersonKeptForACanvasAreDropped(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	alice, bob := user(t, st, "alice"), user(t, st, "bob")
+	if _, err := st.UpdatePreferences(ctx, alice.PID, json.RawMessage(`{"project": "p1", "canvas": {"w1": {"scan": {"x": 1, "y": 2}}}, "dock": {"r1": "c1"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdatePreferences(ctx, bob.PID, json.RawMessage(`{"project": "p2"}`)); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, "migrations/0006_layout_in_the_document.sql")
+
+	for who, want := range map[*store.Principal]string{alice: `{"dock": {"r1": "c1"}, "project": "p1"}`, bob: `{"project": "p2"}`} {
+		p, err := st.GetPrincipal(ctx, who.PID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got, expected any
+		if err := json.Unmarshal(p.Preferences, &got); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.Unmarshal([]byte(want), &expected)
+		if g, e := mustMarshal(t, got), mustMarshal(t, expected); g != e {
+			t.Errorf("%s prefers %s, want %s", who.DisplayName, g, e)
+		}
+	}
+}
+
+func mustMarshal(t *testing.T, v any) string {
+	t.Helper()
+	out, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
 func apply(t *testing.T, file string) {
 	t.Helper()
 	sql, err := os.ReadFile(file)

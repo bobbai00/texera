@@ -20,7 +20,8 @@
 # Texera 2.0 dev stack
 
 Everything that is Texera runs as a plain process on the host: the catalog (Go), the computing
-unit (the Amber engine, sbt), the agent runtime (Bun) and the frontend (vite). Only the standard
+unit (the Amber engine, sbt), the agent runtime and the live service (Bun) and the frontend
+(vite). Only the standard
 components run in containers (compose project `texera2`): the Envoy gateway, Keycloak, OpenFGA,
 Postgres, RustFS (S3) and Lakekeeper (Iceberg REST). Everything is reached through the gateway at
 `http://localhost:8088`. No Kubernetes is involved in development.
@@ -109,6 +110,7 @@ its page), which takes its tables with it; one a dataset version derives from is
 | 8090 | Catalog (Go): resources, versions, grants, executions, lineage, MCP server |
 | 28085 | Computing unit (Amber); actor port 2652 |
 | 23002 | Agent runtime (AI SDK 7, AG-UI) |
+| 23003 | Live service (Hocuspocus, Yjs): the sessions people share on a resource, behind the gateway at `/live/` |
 | 5174 | Frontend (vite) |
 | 23010 | Bio MCP server (PubMed, genes, variants, proteins), behind the gateway at `/bio-mcp`; its key is a seeded credential |
 | 18081 | Keycloak (admin/admin; users alice/alice, bob/bob, texera-admin/admin) |
@@ -130,7 +132,7 @@ guide: what each proves, the markers, the fixtures, how to add one.
 The same stack on a local Kubernetes cluster, in one command:
 
 ```
-bin/texera-2-0/k8s.sh up            # the kind cluster if missing, the five images, config, workloads, wait
+bin/texera-2-0/k8s.sh up            # the kind cluster if missing, the six images, config, workloads, wait
 bin/texera-2-0/k8s.sh check         # test.sh cluster: the scenarios and Playwright against the cluster
 bin/texera-2-0/k8s.sh status        # pods, services, jobs
 bin/texera-2-0/k8s.sh down          # delete the namespace (the cluster stays)
@@ -149,7 +151,7 @@ fs.inotify.max_user_watches=1048576`).
 What runs there: Postgres, Keycloak, OpenFGA, OpenBao (dev mode), RustFS, Lakekeeper (with
 authentication and OpenFGA, bootstrapped by the catalog, reaching the public issuer through a
 `socat` sidecar in its pod), the Envoy gateway, the catalog, one static computing unit, the
-agent runtime, the bio MCP server and the frontend behind nginx, from `deploy/kubernetes/`
+agent runtime, the live service, the bio MCP server and the frontend behind nginx, from `deploy/kubernetes/`
 (kustomize) and the images under `bin/dockerfiles/`. The config maps are rendered from the
 dev stack's own files (the realm, the gateway, the database bootstrap); the model key goes
 from `.env` into a Secret and from there into OpenBao by the `openbao-init` job.

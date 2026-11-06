@@ -24,6 +24,7 @@ import {
   MCP_RID,
   MODEL_URI,
   OTHER_MODEL_URI,
+  OTHER_PID,
   PROJECT_RID,
   TEMPLATE_RID,
   UNIT_URI,
@@ -45,6 +46,7 @@ const config: RuntimeConfig = {
   maxSteps: 5,
   answerPolicy: "free",
   maxHandoffs: 2,
+  answerKeptEveryMs: 5,
 };
 
 /** An app whose agents run a scripted model with local tools; the agents list no MCP server unless a test gives one. */
@@ -320,6 +322,59 @@ describe("POST /agents/conversations/:rid/ag-ui", () => {
     expect(state).toContain("Today is 2026-11-05.");
     expect(state).toContain(`Project: alice's home (${PROJECT_RID}).`);
     expect(state).toContain(`Computing unit: alice's unit (${UNIT_URI}).`);
+  });
+
+  test("what the app says the person is looking at reaches the agent with the message", async () => {
+    const { app, model } = makeApp([{ text: "It averages petal lengths." }]);
+    const viewing = { description: "The person is looking at", value: "the workflow petals (texera://workflows/w@3)" };
+    await readSse(
+      await post(app, { ...runInput("What does this do?"), context: [viewing, { description: 7, value: null }] }),
+    );
+    const state = turnState(model);
+    expect(state).toContain("The person is looking at: the workflow petals (texera://workflows/w@3)");
+    // Only what is text is passed on.
+    expect(state).not.toContain("7:");
+  });
+
+  test("in a chat several people write in, the model reads who wrote what and whom it is answering", async () => {
+    const { app, fake, model } = makeApp([{ text: "Running it on the 2020 data." }]);
+    // Bob said something to the group before alice asked: a message of no turn.
+    fake.said(OTHER_PID, "Use the 2020 data.");
+    await readSse(await post(app, runInput("Run it.")));
+    const prompt = JSON.stringify(model.doStreamCalls[0]?.prompt);
+    expect(prompt).toContain("[Bob Builder] Use the 2020 data.");
+    expect(prompt).toContain("[Alice Liddell] Run it.");
+    expect(turnState(model)).toContain("People in this chat: Alice Liddell and Bob Builder.");
+    expect(turnState(model)).toContain("You are answering Alice Liddell:");
+    // What the catalog keeps is what was said, without the names the model read.
+    expect(fake.messages.map((m) => m.parts[0]?.text)).toEqual([
+      "Use the 2020 data.",
+      "Run it.",
+      "Running it on the 2020 data.",
+    ]);
+  });
+
+  test("a chat one person writes in reads as it always did", async () => {
+    const { app, model } = makeApp([{ text: "Hello." }]);
+    await readSse(await post(app, runInput("Hi")));
+    const prompt = JSON.stringify(model.doStreamCalls[0]?.prompt);
+    expect(prompt).not.toContain("[Alice Liddell]");
+    expect(turnState(model)).not.toContain("People in this chat");
+  });
+
+  test("the answer is kept in the catalog while it streams, so the others in the chat watch it grow", async () => {
+    const answer = "The mean petal length is 3.76 cm across the three species of iris.";
+    const { app, fake } = makeApp([{ text: answer, chunkDelayMs: 15 }]);
+    await readSse(await post(app, runInput("What is the mean?")));
+    const kept = fake.calls
+      .filter((c) => c.method === "PUT" && /\/messages\/\d+$/.test(c.path))
+      .map((c) => (c.body as { parts: { text?: string }[] }).parts.map((part) => part.text ?? "").join(""));
+    // More than the one write at the end of the step, each holding more of the answer.
+    expect(kept.length).toBeGreaterThan(2);
+    for (let i = 1; i < kept.length; i++) expect((kept[i] as string).startsWith(kept[i - 1] as string)).toBe(true);
+    expect(kept[0]).not.toBe(answer);
+    expect(kept.at(-1)).toBe(answer);
+    expect(fake.messages.at(-1)?.parts.at(-1)?.text).toBe(answer);
   });
 
   test("with no unit to fall back on, the agent is told a call has to name one", async () => {

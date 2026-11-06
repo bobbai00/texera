@@ -18,6 +18,9 @@ export const BIO_TEMPLATE_RID = "99999999-9999-4999-8999-999999999999";
 export const MCP_RID = "44444444-4444-4444-8444-444444444444";
 export const SKILL_RID = "55555555-5555-4555-8555-555555555555";
 export const USER_PID = "66666666-6666-4666-8666-666666666666";
+export const OTHER_PID = "77777777-7777-4777-8777-777777777777";
+/** The people the catalog knows: the caller, and someone the chat is shared with. */
+const PEOPLE: Record<string, string> = { [USER_PID]: "Alice Liddell", [OTHER_PID]: "Bob Builder" };
 export const MODEL_RID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 export const OTHER_MODEL_RID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 export const CREDENTIAL_RID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -257,6 +260,12 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       leases.push(String((body as { purpose?: string })?.purpose));
       return json(201, { lease: "lease-1", fields: { value: "sk-test" }, expiresAt: "2099-01-01T00:00:00Z" });
     }
+    const principal = /^\/catalog\/v1\/principals\/([^/]+)$/.exec(p);
+    if (principal && method === "GET") {
+      const pid = principal[1] as string;
+      if (!PEOPLE[pid]) return json(404, { code: "not_found", message: `principal ${pid} not found` });
+      return json(200, { pid, kind: "user", displayName: PEOPLE[pid] });
+    }
     if (p === `/catalog/v1/conversations/${CONVERSATION_RID}`) {
       if (method === "PUT") {
         conversation.spec = (body as { spec: Record<string, unknown> }).spec;
@@ -319,5 +328,17 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
     return json(404, { code: "not_found", message: `no route ${method} ${p}` });
   };
 
-  return { fetch: fetchImpl, calls, messages, conversation, leases, analyst, bio };
+  /** Something said in the chat by someone else it is shared with: a message of no turn. */
+  const said = (pid: string, text: string) => {
+    messages.push({
+      conversation: CONVERSATION_RID,
+      seq: messages.length + 1,
+      role: "user",
+      author: pid,
+      parts: [{ type: "text", text }],
+      createdAt: new Date().toISOString(),
+    });
+  };
+
+  return { fetch: fetchImpl, calls, messages, conversation, leases, analyst, bio, said };
 }

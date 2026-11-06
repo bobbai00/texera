@@ -17,7 +17,7 @@ import {
   renderTurnState,
   runReactLoop,
 } from "../run/react-loop.ts";
-import { chatContext } from "./chat-context.ts";
+import { type ChatPeople, chatContext } from "./chat-context.ts";
 import { candidatesOf, HANDOFF_TOOL, type HandoffCandidate, handoffTool } from "./handoff.ts";
 import {
   type McpMount,
@@ -57,6 +57,10 @@ export interface BuildInput {
   turn: TurnContext;
   /** What a lease is for: the conversation URI. */
   purpose: string;
+  /** What the person's app says they are looking at: the run's context, as it was sent. */
+  app?: unknown;
+  /** The people of a chat several write in, and the one being answered. */
+  people?: ChatPeople;
 }
 
 export interface RunInput {
@@ -142,6 +146,8 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
     today: (deps.now ?? (() => new Date()))(),
     project: settings.project,
     computingUnit: settings.computingUnit,
+    app: input.app,
+    people: input.people,
     unavailable: mcp.unavailable,
   });
   deps.log.info("agent built", {

@@ -269,9 +269,11 @@ catalog/             Go control plane: cmd/catalog, cmd/catalogen; internal/{kin
                      adapters,services,server,store,authn,authz,mcp,config}
 agent-runtime/       TypeScript (Bun, Hono, AI SDK 7): AG-UI stream, A2A server, MCP client,
                      skills, agent host, sandbox interface
+live/                TypeScript (Bun, Hocuspocus): the sessions people share on a resource;
+                     presence everywhere, a workflow's document edited together
 frontend-next/       the React app (routes, shell); becomes frontend/ at the cutover
 packages/            catalog-client (generated), kinds (generated registry and URI grammar),
-                     workflow-model, ui, chat
+                     workflow-model, ui, chat, service-auth
 amber/               the Amber engine as a pure engine (see "Engine boundary")
 common/              workflow-core, workflow-operator, workflow-compiler, config, auth, pybuilder
 bin/texera-2-0/      the dev stack (docker compose) and scripts
@@ -287,7 +289,8 @@ Everything that is Texera runs as a plain process on the host; only the standard
 in containers (compose project `texera2`); no Kubernetes is involved in development. Envoy
 (container, host port 8088; jwt_authn on Keycloak JWKS, ext_authz to the catalog) routes:
 `/` → frontend (vite :5174 on the host), `/catalog/v1`, `/access/v1`, `/mcp`, `/lineage/v1`
-→ catalog (:8090 host), `/agents` → agent-runtime (:23002 host), `/units/{rid}/wsapi` and
+→ catalog (:8090 host), `/agents` → agent-runtime (:23002 host), `/live/` → the live
+service (:23003 host, a WebSocket whose first message carries the token), `/units/{rid}/wsapi` and
 `/units/{rid}/api` → the unit (ComputingUnitMaster under sbt, :28085 host), `/auth` → Keycloak.
 Infrastructure containers: postgres, keycloak, openfga, openbao (from S3), rustfs (S3),
 lakekeeper (Iceberg REST) with a socat sidecar that makes 127.0.0.1:19001 reach RustFS inside

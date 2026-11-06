@@ -332,3 +332,51 @@ func TestWatchFollowsAnExecutionAndItsControls(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// A watch is for someone who may read. When what let them read is taken back, on the resource
+// or on the project it lives in, their stream ends within a beat, whether or not the resource
+// changes meanwhile; a stream they may still read goes on.
+func TestAWatchEndsWhenTheWatcherMayNoLongerRead(t *testing.T) {
+	h := newHarness(t)
+	h.svc.Config.WatchBeat = 100 * time.Millisecond
+	bob := principalOf(h, "bob")
+	lab := h.create("alice", "projects", "lab", map[string]any{})
+	inLab := createIn(h, "alice", "workflows", "in the lab", lab.Metadata.Rid, map[string]any{"operators": []any{}, "links": []any{}})
+	chat := h.create("alice", "conversations", "team chat", map[string]any{})
+	grants := func(r envelope) string { return p + "/resources/" + rid(r) + "/grants/" + bob }
+	events := func(r envelope) string { return p + "/resources/" + rid(r) + "/events" }
+	h.mustJSON("alice", "PUT", grants(lab), map[string]any{"relation": "viewer"}, nil)
+	h.mustJSON("alice", "PUT", grants(chat), map[string]any{"relation": "editor"}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Bob watches the workflow he reads through the lab, and the chat he was given.
+	status, workflowCh := h.stream(ctx, "bob", events(inLab))
+	if status != http.StatusOK {
+		t.Fatalf("bob watches the workflow in the lab: %d", status)
+	}
+	next(t, workflowCh, "resource")
+	status, chatCh := h.stream(ctx, "bob", events(chat))
+	if status != http.StatusOK {
+		t.Fatalf("bob watches the chat: %d", status)
+	}
+	next(t, chatCh, "resource")
+
+	// The lab is taken back: nothing about the workflow changed, and its stream ends.
+	h.mustJSON("alice", "DELETE", grants(lab), nil, nil)
+	if !ended(workflowCh) {
+		t.Fatal("the workflow's stream is still open after the lab was taken back")
+	}
+	if status, _ := h.stream(ctx, "bob", events(inLab)); status != http.StatusForbidden {
+		t.Fatalf("bob watches the workflow again: %d", status)
+	}
+	// The chat is still his: what is said there reaches him.
+	h.mustJSON("alice", "POST", p+"/conversations/"+rid(chat)+"/messages", map[string]any{"role": "user", "parts": []any{map[string]any{"type": "text", "text": "still there?"}}}, nil)
+	next(t, chatCh, "message")
+
+	// The chat is taken back too: its stream ends, and what is said next is not his to hear.
+	h.mustJSON("alice", "DELETE", grants(chat), nil, nil)
+	if !ended(chatCh) {
+		t.Fatal("the chat's stream is still open after it was taken back")
+	}
+}

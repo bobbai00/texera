@@ -88,6 +88,11 @@ if [ -z "$model_key_loaded" ]; then
   echo "agent-runtime: up, but no model key was loaded; put ANTHROPIC_API_KEY in the environment or in $ROOT/.env to chat"
 fi
 
+# The live service: the sessions in which people are on a resource together, behind the gateway
+# at /live/. It asks the catalog who may join and saves what they edit into its versions.
+start live 23003 "$ROOT/live" "TEXERA_LIVE_PORT=23003 TEXERA_CATALOG_URL=http://localhost:8088 TEXERA_OIDC_TOKEN_URL=http://localhost:18081/auth/realms/texera/protocol/openid-connect/token exec bun src/main.ts"
+wait_for live 60 http_ok "http://localhost:23003/live/health"
+
 start frontend 5174 "$ROOT/frontend-next" "exec bun run dev"
 wait_for frontend 60 http_ok "http://localhost:8088/"
 

@@ -187,6 +187,22 @@ func ridParam(r *http.Request, name string) (uuid.UUID, error) {
 	return rid, nil
 }
 
+// pids reads a list of principal ids from a request body.
+func pids(list *[]api.Pid) ([]uuid.UUID, error) {
+	if list == nil {
+		return nil, nil
+	}
+	out := make([]uuid.UUID, 0, len(*list))
+	for _, raw := range *list {
+		pid, err := uuid.Parse(string(raw))
+		if err != nil {
+			return nil, catalog.Invalid("not a principal id: "+string(raw), nil)
+		}
+		out = append(out, pid)
+	}
+	return out, nil
+}
+
 func intParam(r *http.Request, name string) (int, error) {
 	raw := r.PathValue(name)
 	n, err := strconv.Atoi(raw)

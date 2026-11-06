@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/google/uuid"
 	"net/http"
 	"strings"
@@ -532,3 +533,32 @@ func names(edges []api.Edge) []string {
 }
 
 var _ = json.Marshal
+
+// A list gives as much as was asked for, up to the most a page holds: asking for more than
+// that is asking for a full page, not for the default.
+func TestAListAskedForMoreThanAPageHoldsGivesAFullPage(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 60; i++ {
+		h.create("alice", "skills", fmt.Sprintf("skill-%02d", i), map[string]any{"name": fmt.Sprintf("skill-%02d", i), "description": "d", "body": "b"})
+	}
+	count := func(query string) (int, bool) {
+		var page api.ResourcePage
+		h.mustJSON("alice", "GET", p+"/skills"+query, nil, &page)
+		return len(page.Items), page.NextCursor != nil && *page.NextCursor != ""
+	}
+	if n, more := count(""); n != 50 || !more {
+		t.Fatalf("with no limit: %d items, more=%v", n, more)
+	}
+	if n, more := count("?limit=10"); n != 10 || !more {
+		t.Fatalf("limit=10: %d items, more=%v", n, more)
+	}
+	// 60 of alice's and the platform's own, all on one page of 200.
+	if n, more := count("?limit=5000"); n < 60 || more {
+		t.Fatalf("limit=5000: %d items, more=%v", n, more)
+	}
+	var versions api.SkillVersionPage
+	h.mustJSON("alice", "GET", p+"/skills/"+rid(h.create("alice", "skills", "versioned", map[string]any{"name": "versioned", "description": "d", "body": "b"}))+"/versions?limit=5000", nil, &versions)
+	if len(versions.Items) != 1 {
+		t.Fatalf("versions with limit=5000: %d", len(versions.Items))
+	}
+}

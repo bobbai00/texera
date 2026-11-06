@@ -3,9 +3,9 @@
 The chat's host. It runs one turn of a conversation at a time, statelessly: the catalog holds
 the conversation (its current agent template, its messages), the runtime takes the turn lock,
 builds the agent of the template version, runs the ReAct loop on AI SDK 7 with the history
-as context, streams AG-UI 1.0 events to the app, persists the assistant message after every
-step, and releases the lock. Nothing survives a turn; scaling the runtime is running more
-copies.
+as context, streams AG-UI 1.0 events to the person who asked, keeps the assistant message in
+the catalog close behind the stream (the others in the chat watch it there), and releases the
+lock. Nothing survives a turn; scaling the runtime is running more copies.
 
 An agent is a template version running one turn on the person's behalf: the template is the
 definition (prompt, skills, MCP servers, model endpoint, handoffs, loop settings), the
@@ -29,18 +29,26 @@ origin of everything it creates.
    headers, `credential:<uri>#<field>` values leased; the `handoff` tool when the agent lists
    handoffs. The catalog server holds the agent's basic tools and a turn fails without it;
    any other server is an add-on, left out of the turn and named to the agent when it cannot
-   be reached. The agent is also told the date, the chat's project and the computing unit an
-   execution falls back to, at the end of every step's prompt (`src/agent/chat-context.ts`).
-   Each answer records the agent version, the model endpoint and the servers mounted.
+   be reached. The agent is also told, at the end of every step's prompt
+   (`src/agent/chat-context.ts`): the date, the chat's project, the computing unit an
+   execution falls back to, what the person's app says they are looking at (the run input's
+   AG-UI `context`, text only and bounded since a client writes it), and, in a chat several
+   people write in, who they are and whom the turn answers. In such a chat each person's
+   message reaches the model under its writer's name (`[Alice Liddell] ...`); one person's
+   chat reads as it was written. Each answer records the agent version, the model endpoint
+   and the servers mounted.
 4. The loop streams: one model call per step, the step's tool calls run, until the model
    replies without a tool call, the step budget is spent, the run is aborted, or a handoff is
    called. The answer policy (`free` or `after_result`) decides whether a reply without a
    tool call is the answer. The prompt is laid out for Anthropic prompt caching.
 5. A handoff sets the conversation's template, emits `texera.handoff`, and the target
    template finishes the same turn on the same stream (at most `TEXERA_AGENT_MAX_HANDOFFS`).
-6. The assistant message is persisted after every step with the template version that wrote
-   it; a turn that fails before or outside the loop is recorded as an `error` part; the lock
-   is released; `RUN_FINISHED` or `RUN_ERROR` ends the stream.
+6. The assistant message is written to the catalog while it streams, at most every
+   `TEXERA_AGENT_ANSWER_KEPT_EVERY_MS` and at the end of every step, one write at a time
+   (`src/run/keeper.ts`), with the template version that wrote it: the catalog's event stream
+   is how everyone else in the chat sees the answer arrive. A turn that fails before or
+   outside the loop is recorded as an `error` part; the lock is released; `RUN_FINISHED` or
+   `RUN_ERROR` ends the stream.
 
 The platform ships one agent, the Texera Agent, which lists no handoffs: `/mode` and the
 handoff tool are kept for agents that will.
@@ -74,6 +82,7 @@ platform's model endpoint names a credential whose value `up.sh` loads into the 
 | `TEXERA_AGENT_MAX_STEPS` | `40` | model steps per turn, unless the template's `loop.maxSteps` says otherwise |
 | `TEXERA_AGENT_ANSWER_POLICY` | `free` | `free` or `after_result`, for templates whose `loop` names none |
 | `TEXERA_AGENT_MAX_HANDOFFS` | `2` | handoffs in one turn |
+| `TEXERA_AGENT_ANSWER_KEPT_EVERY_MS` | `400` | how closely the catalog's copy of an answer follows it while it streams |
 | `TEXERA_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 ## Protocol surface
@@ -89,10 +98,10 @@ platform's model endpoint names a credential whose value `up.sh` loads into the 
 
 ```
 src/config.ts          environment → RuntimeConfig
-src/auth/              user token verification (jose), service token (client credentials)
+src/auth/              user token verification (jose); the service token comes from @texera/service-auth
 src/catalog/           the catalog client over the contract's routes (types from @texera/catalog-client)
 src/agent/             build an agent for a turn: model endpoint + lease, skills, MCP mounts, handoff tool, system prompt
-src/run/               the ReAct loop (react-loop.ts) and the turn: lock → history → loop → AG-UI events → persisted messages
+src/run/               the ReAct loop (react-loop.ts) and the turn: lock → history → loop → AG-UI events → the answer kept in the catalog (keeper.ts)
 src/protocol/          AG-UI and A2A HTTP handlers
 src/host/sandbox.ts    the sandbox seam for code-execution tools (unused yet)
 src/server.ts          Hono app;  src/main.ts  Bun server
@@ -107,5 +116,7 @@ test/                  bun tests with a fake catalog, a scripted model and in-me
   the answer; the A2A endpoint exists, the tool does not.
 - **A router**: a host step that picks the template from the first message of a new
   conversation; today the person picks, or the default template applies.
-- **Durable turns**: the per-step persistence is where a checkpoint would go.
+- **Durable turns**: a turn lives in the request of the person who asked, and ends when they
+  leave; the answer kept in the catalog is where a turn that outlives its request would
+  continue from.
 - **Sandbox**: `LocalSandbox` runs commands as child processes; nothing uses it yet.

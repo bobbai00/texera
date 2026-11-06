@@ -48,8 +48,8 @@ case "$CONTEXT" in
   *arn:aws* | *eks* | *gke_* | *aks*) echo "refusing to touch $CONTEXT: this script is for a local cluster" >&2; exit 1 ;;
 esac
 k() { kubectl --context "$CONTEXT" -n "$NS" "$@"; }
-IMAGES=(catalog agent-runtime frontend bio-mcp computing-unit-master)
-APPS=(catalog unit agent-runtime bio-mcp frontend gateway)
+IMAGES=(catalog agent-runtime live frontend bio-mcp computing-unit-master)
+APPS=(catalog unit agent-runtime live bio-mcp frontend gateway)
 
 need() { command -v "$1" >/dev/null || { echo "$1 is required; see bin/texera-2-0/README.md" >&2; exit 1; }; }
 
@@ -102,6 +102,7 @@ configure() {
     -e 's#uri: http://host.docker.internal:8090#uri: http://catalog:8090#' \
     -e 's#address: host.docker.internal, port_value: 8090#address: catalog, port_value: 8090#' \
     -e 's#address: host.docker.internal, port_value: 23002#address: agent-runtime, port_value: 23002#' \
+    -e 's#address: host.docker.internal, port_value: 23003#address: live, port_value: 23003#' \
     -e 's#address: host.docker.internal, port_value: 23010#address: bio-mcp, port_value: 23010#' \
     -e 's#address: host.docker.internal, port_value: 5174#address: frontend, port_value: 8080#' \
     "$HERE/envoy/envoy.yaml" >"$tmp/envoy.yaml"

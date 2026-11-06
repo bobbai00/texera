@@ -1,5 +1,5 @@
-import { Button, formatBytes } from "@texera/ui";
-import { ArrowUp, Paperclip, Square, X } from "lucide-react";
+import { Button, formatBytes, Tooltip } from "@texera/ui";
+import { ArrowUp, MessageSquareText, Paperclip, Square, X } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 
 interface Props {
@@ -9,6 +9,11 @@ interface Props {
   disabled?: boolean;
   /** Resolves false when the message could not be sent, so the draft stays in the box. */
   onSend: (message: { text: string; files: File[] }) => Promise<boolean>;
+  /**
+   * Posts the draft as a note: said to the people in the chat, the agent is not asked. Given
+   * where there is a chat to say it in; possible while someone else's turn runs.
+   */
+  onNote?: (message: { text: string; files: File[] }) => Promise<boolean>;
   onStop: () => void;
   files: File[];
   onFilesChange: (files: File[]) => void;
@@ -19,16 +24,21 @@ interface Props {
   controls?: ReactNode;
 }
 
-export function Composer({ busy, disabled = false, onSend, onStop, files, onFilesChange, autoFocus, placeholder, status, controls }: Props) {
+export function Composer({ busy, disabled = false, onSend, onNote, onStop, files, onFilesChange, autoFocus, placeholder, status, controls }: Props) {
   const [text, setText] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
+  const empty = !text.trim() && files.length === 0;
 
-  const submit = async (e?: FormEvent) => {
-    e?.preventDefault();
-    if (busy || disabled || (!text.trim() && files.length === 0)) return;
+  /** Hands the draft over; it comes back into the box when it could not be sent. */
+  const hand = async (to: (message: { text: string; files: File[] }) => Promise<boolean>) => {
+    if (busy || empty) return;
     const draft = text;
     setText("");
-    if (!(await onSend({ text: draft.trim(), files }))) setText(draft);
+    if (!(await to({ text: draft.trim(), files }))) setText(draft);
+  };
+  const submit = (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!disabled) void hand(onSend);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) submit(e);
@@ -87,9 +97,18 @@ export function Composer({ busy, disabled = false, onSend, onStop, files, onFile
             <Square className="size-3.5 fill-current" />
           </Button>
         ) : (
-          <Button type="submit" size="icon-sm" disabled={disabled || (!text.trim() && files.length === 0)} aria-label="Send message">
-            <ArrowUp />
-          </Button>
+          <>
+            {onNote && (
+              <Tooltip content="Post as a note: the people in this chat read it, the agent is not asked">
+                <Button variant="ghost" size="icon-sm" disabled={empty} onClick={() => void hand(onNote)} aria-label="Post as a note" data-send-note>
+                  <MessageSquareText />
+                </Button>
+              </Tooltip>
+            )}
+            <Button type="submit" size="icon-sm" disabled={disabled || empty} aria-label="Send message">
+              <ArrowUp />
+            </Button>
+          </>
         )}
       </div>
     </form>

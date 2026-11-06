@@ -93,6 +93,8 @@ model EditWorkflow {
   expectedHead?: Vno;
   @doc("What changed, recorded on the new version.")
   message?: string;
+  @doc("The people whose edits this version holds, when the platform's live service saves a workflow they edited together: the first is recorded as the version's creator, all of them as its contributors. Refused from anyone else.")
+  onBehalfOf?: Pid[];
 }
 
 @doc("A dry run: the engine's compile result and the plan the catalog would start an execution with.")
@@ -154,7 +156,7 @@ namespace Routes {
     @extension("x-texera-permission", "write")
     @extension("x-mcp", #{
       tool: "edit_workflow",
-      description: "Edit a workflow by applying an RFC 6902 JSON Patch to its head spec (paths like /operators/- or /links/-), or by giving a full new spec; creates a new version and returns it. Validate afterwards with validate_workflow.",
+      description: "Edit a workflow by applying an RFC 6902 JSON Patch to its head spec (paths like /operators/- or /links/-), or by giving a full new spec; creates a new version and returns it. Pass expectedHead, the head you read, so an edit someone made in between is not written over: on a conflict, read the workflow again and redo the edit. Validate afterwards with validate_workflow.",
       readOnlyHint: false,
       destructiveHint: false,
     })

@@ -70,6 +70,7 @@ unit() {
   echo "== unit (no stack)"
   step "catalog (go vet, go test)" bash -c "cd catalog && go vet ./... && TEXERA_TEST_REQUIRE_DB=1 go test -count=1 -p 1 ./..."
   step "agent runtime (types, lint, bun test)" bash -c "cd agent-runtime && bun run typecheck && bun run lint && bun test"
+  step "live service (types, lint, bun test)" bash -c "cd live && bun run typecheck && bun run lint && bun test"
   step "frontend (types, lint, vitest)" bash -c "cd frontend-next && bun run typecheck && bun run lint && bun run test"
   # Every sbt module as CI runs them: results on the stack's Postgres-backed Iceberg catalog,
   # Python workers on the uv environment, integration-tagged suites left to `contract`.

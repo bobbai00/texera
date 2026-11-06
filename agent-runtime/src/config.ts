@@ -30,6 +30,8 @@ export interface RuntimeConfig {
   answerPolicy: AnswerPolicy;
   /** Handoffs allowed in one turn. */
   maxHandoffs: number;
+  /** How closely the catalog's copy of an answer follows it while it streams: the others in a chat watch that copy. */
+  answerKeptEveryMs: number;
 }
 
 function env(name: string, fallback: string): string {
@@ -65,5 +67,6 @@ export function loadConfig(): RuntimeConfig {
     maxSteps: envInt("TEXERA_AGENT_MAX_STEPS", 40),
     answerPolicy,
     maxHandoffs: envInt("TEXERA_AGENT_MAX_HANDOFFS", 2),
+    answerKeptEveryMs: envInt("TEXERA_AGENT_ANSWER_KEPT_EVERY_MS", 400),
   };
 }

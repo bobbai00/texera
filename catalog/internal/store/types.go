@@ -59,6 +59,8 @@ type Version struct {
 	Content      json.RawMessage
 	Message      *string
 	CreatedByPID uuid.UUID
+	// Contributors are the people whose edits the version holds, when more than one made it.
+	Contributors []uuid.UUID
 	Origin       *Origin
 	CreatedAt    time.Time
 }

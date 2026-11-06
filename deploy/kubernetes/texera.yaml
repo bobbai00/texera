@@ -194,6 +194,49 @@ spec:
             tcpSocket: { port: 23002 }
             periodSeconds: 5
 ---
+# The live service: the sessions in which people are on a resource together, reached through
+# the gateway at /live/. It holds no data: the catalog says who may join and keeps what a
+# session saves.
+apiVersion: v1
+kind: Service
+metadata:
+  name: live
+spec:
+  selector: { app: live }
+  ports:
+    - { name: ws, port: 23003 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: live
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: live }
+  template:
+    metadata:
+      labels: { app: live }
+    spec:
+      initContainers:
+        - name: wait-for-keycloak
+          image: alpine:3.19
+          command: ["sh", "-c", "until wget -q -O /dev/null http://keycloak:8080/auth/realms/texera; do sleep 3; done"]
+      containers:
+        - name: live
+          image: texera/live:2.0-dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: TEXERA_LIVE_PORT, value: "23003" }
+            # Like the agent runtime, it calls the catalog through the gateway.
+            - { name: TEXERA_CATALOG_URL, value: "http://gateway:28088" }
+            - { name: TEXERA_OIDC_TOKEN_URL, value: "http://keycloak:8080/auth/realms/texera/protocol/openid-connect/token" }
+          ports:
+            - containerPort: 23003
+          readinessProbe:
+            httpGet: { path: /live/health, port: 23003 }
+            periodSeconds: 5
+---
 apiVersion: v1
 kind: Service
 metadata:

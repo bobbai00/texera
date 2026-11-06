@@ -42,15 +42,19 @@ func (s *Server) routeWorkflows() {
 			if err != nil {
 				return catalog.Invalid("bad patch: "+err.Error(), nil)
 			}
+			// A patch names operators by their place in the spec its writer read. When that is
+			// not the head any more the workflow changed under them, and the patch is not tried
+			// on a spec they never saw.
+			head := api.Vno(res.HeadVno)
+			if body.ExpectedHead != nil && *body.ExpectedHead != head {
+				return catalog.Conflict("conflict", store.HeadMoved(int(head), int(*body.ExpectedHead)).Error(), nil)
+			}
 			spec, err = patch.Apply(res.Spec)
 			if err != nil {
 				return catalog.Invalid("the patch does not apply: "+err.Error(), nil)
 			}
-			if body.ExpectedHead == nil {
-				head := int(res.HeadVno)
-				expected := api.Vno(head)
-				body.ExpectedHead = &expected
-			}
+			// The patch was applied to this head: it is saved onto no other.
+			body.ExpectedHead = &head
 		default:
 			return catalog.Invalid("give a patch or a spec", nil)
 		}
@@ -59,7 +63,11 @@ func (s *Server) routeWorkflows() {
 			n := int(*body.ExpectedHead)
 			expected = &n
 		}
-		res, v, err := s.svc.UpdateSpec(ctxOf(r), callerOf(r), wf, catalog.UpdateSpecInput{RID: rid, Spec: spec, Message: body.Message, ExpectedHead: expected})
+		onBehalfOf, err := pids(body.OnBehalfOf)
+		if err != nil {
+			return err
+		}
+		res, v, err := s.svc.UpdateSpec(ctxOf(r), callerOf(r), wf, catalog.UpdateSpecInput{RID: rid, Spec: spec, Message: body.Message, ExpectedHead: expected, OnBehalfOf: onBehalfOf})
 		if err != nil {
 			return err
 		}

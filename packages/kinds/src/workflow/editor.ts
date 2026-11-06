@@ -1,142 +1,96 @@
-// The open workflow: one store per workflow, shared by every view of it, holding the spec
-// being edited and its canvas positions, and saving the spec shortly after each change as a
-// new version (POST /workflows/{rid}/edit with the head the editor saw, so two writers never
-// silently overwrite each other). Positions stay out of the spec, which is the engine's plan:
-// a person's moves are kept in their preferences, the free-form document the app owns.
+// The open workflow, as its views read and change it: the spec, where its operators sit, what
+// is selected. The store holds none of it by itself. It mirrors the workflow's document (the
+// live session's, or one version to look at): an edit is written into the document and comes
+// back from it, the same way someone else's edit arrives. Saving is the session's work, so
+// the store only says whether what was written has got there and whether the catalog took it.
 
-import { meGet, meUpdatePreferences, workflowsEdit } from "@texera/catalog-client";
-import type { WorkflowVersion } from "@texera/catalog-client/types";
-import { type Point, type Positions, reconcilePositions, type WorkflowSpec } from "@texera/workflow-model";
+import { normalizeSpec, type Point, type Positions, reconcilePositions, same, type WorkflowSpec } from "@texera/workflow-model";
 import { createStore, type StoreApi } from "zustand";
-import { CatalogError, unwrap, updateMetadata } from "../api";
+import { updateMetadata } from "../api";
+import type { SyncState, WorkflowDocument } from "./document";
 
-export type SaveState = "saved" | "pending" | "saving" | "failed" | "conflict";
+export type SaveState = SyncState;
 
 export interface OpenWorkflow {
   rid: string;
   name: string;
   headVno: number;
-  spec: WorkflowSpec;
+  /** A version that is only shown, or a person who may only look. */
   readonly: boolean;
-  /** Positions the person set before, from their preferences; the rest is laid out. */
-  positions?: Positions;
 }
 
 export interface EditorState {
   rid: string;
   name: string;
-  /** The version this editor's spec is based on; every save moves it forward. */
+  /** The workflow's newest version, as the catalog reports it. */
   headVno: number;
   spec: WorkflowSpec;
+  /** A place for every operator: where the session put it, or laid out until it has. */
   positions: Positions;
   readonly: boolean;
   selected: string | null;
   saveState: SaveState;
+  /** Why the catalog did not take the workflow as a version, while that stands. */
+  refusal?: string;
+  /** Why a new name was not saved. */
   saveError?: string;
   edit: (change: (spec: WorkflowSpec) => WorkflowSpec) => void;
   move: (moves: Record<string, Point>) => void;
   rename: (name: string) => void;
   select: (operatorId: string | null) => void;
-  /** Takes a newer version from the server unless edits of this view are waiting. */
-  adopt: (spec: WorkflowSpec, vno: number, name?: string) => void;
-  /** Saves now if a save is waiting. */
-  flush: () => Promise<void>;
+  /** Takes the head and the name the catalog reports for the workflow. */
+  follow: (headVno: number, name: string) => void;
+  /** Resolves once the catalog has a version of everything written here, with that version's number. */
+  flush: () => Promise<number | undefined>;
+  /** Stops following the document: the view is gone. */
+  close: () => void;
 }
 
 export interface EditorDeps {
-  save: (rid: string, spec: WorkflowSpec, expectedHead: number) => Promise<WorkflowVersion>;
   rename: (rid: string, name: string) => Promise<void>;
-  /** Keeps the person's canvas positions for this workflow; absent means they are not kept. */
-  savePositions?: (rid: string, positions: Positions) => Promise<void>;
-  /** Called with every version this editor created, so caches can follow. */
-  onSaved?: (version: WorkflowVersion, spec: WorkflowSpec) => void;
-}
-
-const SAVE_DELAY_MS = 800;
-const POSITIONS_DELAY_MS = 1500;
-
-/** Where a person's canvas layouts live in their preferences: `canvas[rid]`. */
-export function canvasPositions(preferences: Record<string, unknown> | undefined, rid: string): Positions {
-  const canvas = preferences?.canvas;
-  const mine = canvas && typeof canvas === "object" ? (canvas as Record<string, unknown>)[rid] : undefined;
-  return mine && typeof mine === "object" ? (mine as Positions) : {};
 }
 
 export type EditorStore = StoreApi<EditorState>;
 
 export const catalogDeps: EditorDeps = {
-  save: (rid, spec, expectedHead) => unwrap(workflowsEdit({ path: { rid }, body: { spec, expectedHead, message: "Edited in the workflow editor" } })),
   rename: async (rid, name) => {
     await updateMetadata(rid, { name });
   },
-  savePositions: async (rid, positions) => {
-    const me = await unwrap(meGet());
-    const canvas = { ...(me.preferences.canvas as Record<string, unknown> | undefined), [rid]: positions };
-    await unwrap(meUpdatePreferences({ body: { ...me.preferences, canvas } }));
-  },
 };
 
-export function createEditorStore(workflow: OpenWorkflow, deps: EditorDeps): EditorStore {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let inFlight: Promise<void> | undefined;
-  let positionsTimer: ReturnType<typeof setTimeout> | undefined;
-
-  const store = createStore<EditorState>()((set, get) => {
-    const save = async (): Promise<void> => {
-      timer = undefined;
-      if (inFlight) {
-        await inFlight;
-        if (get().saveState === "pending") return save();
-        return;
-      }
-      const { rid, spec, headVno } = get();
-      set({ saveState: "saving" });
-      inFlight = deps
-        .save(rid, spec, headVno)
-        .then(version => {
-          set({ headVno: version.vno });
-          if (get().spec === spec) set({ saveState: "saved", saveError: undefined });
-          deps.onSaved?.(version, spec);
-        })
-        .catch(e => {
-          const conflict = e instanceof CatalogError && e.status === 409;
-          set({ saveState: conflict ? "conflict" : "failed", saveError: e instanceof Error ? e.message : String(e) });
-        })
-        .finally(() => {
-          inFlight = undefined;
-        });
-      await inFlight;
-      if (get().saveState === "pending" && !timer) schedule();
-    };
-    const schedule = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void save(), SAVE_DELAY_MS);
-    };
-
+export function createEditorStore(workflow: OpenWorkflow, document: WorkflowDocument, deps: EditorDeps = catalogDeps): EditorStore {
+  return createStore<EditorState>()((set, get) => {
+    // What the views read has its ports spelled out, as every spec the app shows; the document
+    // holds what the catalog has, and takes only what a person changes.
+    const read = (previous?: WorkflowSpec) => normalizeSpec(document.spec(previous));
+    const first = read();
+    const stop = [
+      document.watch(() => {
+        // The same spec object while only the layout changed: whatever is computed from the
+        // spec (a compile) is not redone for a move.
+        const next = read(get().spec);
+        const spec = same(next, get().spec) ? get().spec : next;
+        set({ spec, positions: reconcilePositions(spec, document.positions()) });
+      }),
+      document.watchState(() => set({ saveState: document.state(), refusal: document.refusal() })),
+    ];
     return {
       rid: workflow.rid,
       name: workflow.name,
       headVno: workflow.headVno,
-      spec: workflow.spec,
-      positions: reconcilePositions(workflow.spec, workflow.positions ?? {}),
+      spec: first,
+      positions: reconcilePositions(first, document.positions()),
       readonly: workflow.readonly,
       selected: null,
-      saveState: "saved",
+      saveState: document.state(),
+      refusal: document.refusal(),
       edit: change => {
         if (get().readonly) return;
-        const spec = change(get().spec);
-        if (spec === get().spec) return;
-        set({ spec, positions: reconcilePositions(spec, get().positions), saveState: "pending" });
-        schedule();
+        const next = change(get().spec);
+        if (next !== get().spec) document.change(get().spec, next);
       },
       move: moves => {
-        set({ positions: { ...get().positions, ...moves } });
-        if (!deps.savePositions) return;
-        if (positionsTimer) clearTimeout(positionsTimer);
-        positionsTimer = setTimeout(() => {
-          positionsTimer = undefined;
-          void deps.savePositions?.(get().rid, get().positions).catch(e => set({ saveError: e instanceof Error ? e.message : String(e) }));
-        }, POSITIONS_DELAY_MS);
+        if (!get().readonly) document.move(moves);
       },
       rename: name => {
         const next = name.trim();
@@ -145,49 +99,11 @@ export function createEditorStore(workflow: OpenWorkflow, deps: EditorDeps): Edi
         void deps.rename(get().rid, next).catch(e => set({ saveError: e instanceof Error ? e.message : String(e) }));
       },
       select: id => set({ selected: id }),
-      adopt: (spec, vno, name) => {
-        const state = get().saveState;
-        if (state === "pending" || state === "saving") return;
-        if (vno < get().headVno && state !== "conflict") return;
-        set({ spec, positions: reconcilePositions(spec, get().positions), headVno: vno, saveState: "saved", saveError: undefined, ...(name ? { name } : {}) });
-      },
-      flush: async () => {
-        if (positionsTimer) {
-          clearTimeout(positionsTimer);
-          positionsTimer = undefined;
-          await deps.savePositions?.(get().rid, get().positions).catch(() => undefined);
-        }
-        if (timer) {
-          clearTimeout(timer);
-          await save();
-        } else if (inFlight) await inFlight;
+      follow: (headVno, name) => set({ headVno, name }),
+      flush: () => document.settle(),
+      close: () => {
+        for (const unsubscribe of stop) unsubscribe();
       },
     };
   });
-  return store;
 }
-
-// Views of the same workflow share one store; it lives while any of them is mounted.
-const open = new Map<string, { store: EditorStore; users: number }>();
-
-export function acquireEditor(workflow: OpenWorkflow, deps: EditorDeps = catalogDeps): EditorStore {
-  const entry = open.get(workflow.rid);
-  if (entry) {
-    entry.users++;
-    return entry.store;
-  }
-  const store = createEditorStore(workflow, deps);
-  open.set(workflow.rid, { store, users: 1 });
-  return store;
-}
-
-export function releaseEditor(rid: string): void {
-  const entry = open.get(rid);
-  if (!entry) return;
-  if (--entry.users > 0) return;
-  open.delete(rid);
-  void entry.store.getState().flush();
-}
-
-/** The store of a workflow open in some view, if any (so the chat can push an agent's edits into it). */
-export const openEditor = (rid: string): EditorStore | undefined => open.get(rid)?.store;

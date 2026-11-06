@@ -4,6 +4,8 @@ import { KINDS } from "../registry";
 import type { ResourceRef } from "../types";
 import { KindIcon } from "./KindIcon";
 import { useOpenResource } from "./navigation";
+import { Presence } from "./Presence";
+import { ShareButton } from "./Share";
 
 /** The header of a kind's panel or page, wired to the panel stack and the router. */
 export function KindHeader({
@@ -29,7 +31,14 @@ export function KindHeader({
       kindLabel={KINDS[ref.kind].label}
       name={name}
       meta={meta}
-      actions={actions}
+      // Whoever has the resource's page open is on it, and sees who else is.
+      actions={
+        <>
+          {mode === "page" && ref.rid && <Presence rid={ref.rid} />}
+          {actions}
+          {mode === "page" && ref.rid && <ShareButton ref={ref} />}
+        </>
+      }
       mode={mode}
       onBack={depth > 1 ? back : undefined}
       onExpand={() => expand(ref)}

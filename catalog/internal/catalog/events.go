@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/apache/texera/catalog/internal/auth"
+	"github.com/apache/texera/catalog/internal/authz"
 	"github.com/apache/texera/catalog/internal/store"
 )
 
@@ -101,10 +102,11 @@ func (s *Service) Events() *Broker {
 type Sender func(event string, data any) error
 
 // Watch streams a resource to a caller who may read it, until the context ends, the resource
-// is deleted or the caller loses the right to read it. It opens with the messages after
-// `after` (a conversation) and the resource as it stands; then every change: `message` for a
-// message appended or rewritten, `resource` for anything else, re-read through the caller's
-// permissions. A watcher that fell behind is resynchronised from the store.
+// is deleted or the caller loses the right to read it: that is asked again on every beat. It
+// opens with the messages after `after` (a conversation) and the resource as it stands; then
+// every change: `message` for a message appended or rewritten, `resource` for anything else,
+// re-read through the caller's permissions. A watcher that fell behind is resynchronised from
+// the store.
 func (s *Service) Watch(ctx context.Context, caller *auth.Caller, rid uuid.UUID, after int64, send Sender) error {
 	sub, cancel := s.Events().Subscribe(rid)
 	defer cancel()
@@ -139,13 +141,22 @@ func (s *Service) Watch(ctx context.Context, caller *auth.Caller, rid uuid.UUID,
 	if err := send("resource", Envelope(res)); err != nil {
 		return err
 	}
-	keepalive := time.NewTicker(15 * time.Second)
+	beat := s.Config.WatchBeat
+	if beat <= 0 {
+		beat = 15 * time.Second
+	}
+	keepalive := time.NewTicker(beat)
 	defer keepalive.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-keepalive.C:
+			// The right to read is not settled once: a grant taken back, on the resource or on
+			// what it lives in, ends the watch though nothing about the resource changed.
+			if err := s.decide(ctx, caller, authz.Read, rid); err != nil {
+				return err
+			}
 			if err := send("", nil); err != nil {
 				return err
 			}

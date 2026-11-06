@@ -1,6 +1,6 @@
 # Texera 2.0 handoff
 
-Nov 4, 2026 · JB (design statements brought up to date on Nov 5)
+Nov 4, 2026 · JB (design statements brought up to date on Nov 5; session 9 added the same day)
 
 ## Where things stand
 
@@ -26,6 +26,7 @@ automated checks, and the close gate (`down.sh --wipe && up.sh && test.sh`) is g
 | Catalog (Go) | :8090 | `/catalog/v1`, and its one MCP server at `/mcp/catalog` (every tool: resources, files, operators, units, and the workflow verbs) |
 | Computing unit (Amber) | :28085 | reached by the catalog only |
 | Agent runtime (Bun) | :23002 | `/agents/conversations/{rid}/ag-ui` |
+| Live service (Bun, Hocuspocus) | :23003 | `/live/sessions`, a WebSocket: who is on a resource, and a workflow's document edited together |
 | Bio MCP server | :23010 | `/bio-mcp`, its key a seeded credential |
 | Frontend (vite) | :5174 | served through the gateway at `/` |
 | Keycloak, OpenFGA, OpenBao, Postgres, RustFS, Lakekeeper | Compose project `texera2` | see `bin/texera-2-0/README.md` for ports; Lakekeeper takes a token (the catalog is its operator, the dev unit is `texera-unit`) |
@@ -37,7 +38,7 @@ automated checks, and the close gate (`down.sh --wipe && up.sh && test.sh`) is g
   URIs equal to REST paths, immutable versions with digests, executions nested under workflows with
   ports, grants, lineage, search, AuthZEN and OpenLineage routes. `cmd/catalogen` generates the
   kind table, the JSON Schema bundle, the MCP tool tables, the permission table and the indexes.
-- The catalog: an eleven-table store, six ports (Identity, Authorizer, SecretStore, BlobStore,
+- The catalog: a twelve-table store, six ports (Identity, Authorizer, SecretStore, BlobStore,
   UnitProvider, LineageSink) with one adapter each and contract suites, a generic service and
   server, the generated MCP bridge. OpenFGA decides every call; viewing never implies using.
   Running a workflow is authorized, compiled and materialized in the catalog; the execution stores its
@@ -69,10 +70,20 @@ automated checks, and the close gate (`down.sh --wipe && up.sh && test.sh`) is g
   the chat follow their
   resource's event stream, so a shared chat is a group chat (authors named, the other's turn
   shown and waited for) and an execution shows its progress and its pause and resume buttons.
+- People together, since Nov 5 (session 9). A live service holds one session per resource:
+  whoever may read a resource and has its page open is shown at its top right, and a workflow
+  is one document its editors change at once (Yjs: operators and their properties merge per
+  field, the layout is shared), loaded and saved by the service alone as versions that name
+  the people whose edits they hold. The catalog stays the authority, and a session says how
+  its document stands with it ("Not saved" and why, when the catalog refuses a version). A
+  chat is a group chat with notes (a message that asks the agent nothing), names the model
+  reads, and the answer arriving for everyone as it is written. Sharing has a button on every
+  page, a "Shared with me" list and a page that says a link was not shared. Every resource's
+  page has the agent a click away, told what the person is looking at.
 - Checks in four layers (`docs/texera-2-0/TESTING.md`): unit (Go, sbt, Bun, vitest), contract
-  (adapters and the engine against the stack's peers), scenario (39 pytest scenarios in
+  (adapters and the engine against the stack's peers), scenario (44 pytest scenarios in
   `tests/e2e/`, twenty modules, one per use case, each in a project of its own), ui
-  (Playwright, thirteen tests);
+  (Playwright, 29 tests in four files, four of them with the model);
   plus evals (the real agents through the real model) and the same against the cluster.
 
 ## Run and test
@@ -101,11 +112,14 @@ OpenFGA with one identity per unit, retention (an execution delete route, a resu
 policy with an hourly sweep, unreferenced blobs), running a workflow in three phases with the unit's
 doors closed and the output tables named by the catalog (steps 1 to 3 of the note "Texera
 2.0: Authorize, Compile, Materialize"; results live with the execution, `texera.keep` keeps them),
-the resource event stream with the group chat and the execution controls built on it.
-Nearest gaps: steps 4 and 5 of that note; token-level streaming of a reply to the other
-members of a chat (today they see it step by step, as the runtime rewrites the message);
-the canvas as a shared document (Yjs, as the 1.0 frontend had, with a sync service beside
-the runtime); the rest of the engine's interactive protocol (retry, skip, reconfigure, the
+the resource event stream with the group chat and the execution controls built on it, the
+canvas as a shared document with a live service beside the runtime, a reply reaching the
+other members of a chat as it is written (the runtime rewrites the message every 400 ms).
+Nearest gaps: steps 4 and 5 of that note; a turn that outlives the request of the person who
+asked, with a stop any member can use; other people's cursors and selections on the canvas;
+text merged inside a property (a Python operator's code is last write wins); a grant to a
+group expanded in "Shared with me"; more than one live service (Hocuspocus's Redis
+extension); the rest of the engine's interactive protocol (retry, skip, reconfigure, the
 Python console) as catalog verbs; quotas and metering, groups beyond admins, a purge of
 soft-deleted resources. Known limit: the
 units still hold the store's static S3 key for large binaries (`STORAGE_S3_AUTH_*`), which also
@@ -139,6 +153,21 @@ reaches the warehouse's files; a key scoped to the objects prefix closes that.
   `socat` forward in its own network namespace (`lakekeeper-net` in Compose, the `auth`
   sidecar in the pod).
 - **Names are unique per project and kind**; the catalog answers 409 on a duplicate.
+- **The authorizer is a copy.** Grants reach OpenFGA through the outbox relay, one relay at a
+  time and idempotently (`on_duplicate: ignore`); before Nov 5 two relays at the same moment
+  could drop a new tuple that shared a request with one already there, leaving an owner
+  refused on their own resource. Every start of the catalog writes the whole copy again
+  (`access rebuilt` in its log), which heals an older stack; the work grows with the catalog.
+- **Nobody's browser saves a workflow.** The live service does, and only it reads and writes
+  the session's document (`/resources/{rid}/live`). A workflow page with the live service down
+  shows the head read-only. A document the catalog has not taken stays in the service's
+  memory until it is; restarting the service in that state loses those edits.
+- **Hocuspocus on Bun.** Its `Server` class needs Node's `ws`; `live/src/server.ts` hands
+  Bun's own WebSockets to `hocuspocus.handleConnection` instead.
+- **The gateway's `/mcp/` and `/live/` routes** are prefixes with the trailing slash: `/mcp`
+  alone also matched the app's `/mcp-servers/...` pages.
+- **Browser scenarios run one at a time** (`workers: 1`): they act as the same two people and
+  some change what a person works in.
 - **Python for engine tests.** The uv-managed `.venv` at the repo root; `test.sh` sets
   `UDF_PYTHON_PATH`. Without it the engine's integration suites hang.
 - **Engine ids** are derived from the catalog's UUIDs; a result table replaces one of the same

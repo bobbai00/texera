@@ -7,6 +7,7 @@
     "api",
     "packages/*",
     "agent-runtime",
+    "live",
     "bio-mcp-service",
     "frontend-next"
   ],

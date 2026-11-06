@@ -3,11 +3,13 @@
 // generated client leaves out). The hook keeps the resource's query fresh for every component
 // that reads it and hands a conversation's messages to the caller. It reconnects with a
 // backoff when the connection drops and stops when the resource is deleted, when the caller
-// may no longer read it, or when the component goes away.
+// may no longer read it (the catalog asks that again while the stream is open), or when the
+// component goes away.
 import { useQueryClient } from "@tanstack/react-query";
 import { client } from "@texera/catalog-client";
 import type { Message, Resource } from "@texera/catalog-client/types";
 import { useEffect, useRef } from "react";
+import { askAgain } from "./queries";
 
 export interface WatchHandlers {
   onResource?: (resource: Resource) => void;
@@ -56,7 +58,8 @@ export async function* readSseEvents(body: ReadableStream<Uint8Array>): AsyncGen
   }
 }
 
-async function bearer(): Promise<string | undefined> {
+/** The token the app's catalog client sends: the person's, kept fresh by the session. */
+export async function accessToken(): Promise<string | undefined> {
   const auth = client.getConfig().auth;
   const value = typeof auth === "function" ? await auth({ scheme: "bearer", type: "http" }) : auth;
   return value ? String(value) : undefined;
@@ -68,7 +71,7 @@ export async function watchOnce(rid: string, handlers: WatchHandlers, signal?: A
   const base = (config.baseUrl ?? "/").replace(/\/$/, "");
   const after = handlers.after?.() ?? 0;
   const url = `${base}/catalog/v1/resources/${encodeURIComponent(rid)}/events${after > 0 ? `?after=${after}` : ""}`;
-  const token = await bearer();
+  const token = await accessToken();
   const fetchImpl = config.fetch ?? fetch;
   const response = await fetchImpl(new Request(url, { headers: { accept: "text/event-stream", ...(token ? { authorization: `Bearer ${token}` } : {}) }, signal }));
   if (!response.ok) return [401, 403, 404].includes(response.status) ? "refused" : "ended";
@@ -95,10 +98,59 @@ export async function watchOnce(rid: string, handlers: WatchHandlers, signal?: A
   return "ended";
 }
 
+/** How a watch ends for good. `turned-away`: it had been open, and the caller may no longer read the resource. */
+export type WatchEnd = "deleted" | "refused" | "turned-away" | "left";
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+/**
+ * Watches a resource until it is deleted, the caller is refused or the signal aborts,
+ * connecting again with a backoff whenever the stream drops, and says how it ended.
+ */
+export async function watchUntilEnd(rid: string, handlers: WatchHandlers, signal: AbortSignal, pause: (ms: number) => Promise<void> = sleep): Promise<WatchEnd> {
+  let delay = 1000;
+  let opened = false;
+  const heard = () => {
+    delay = 1000;
+    opened = true;
+  };
+  while (!signal.aborted) {
+    let outcome: WatchOutcome = "ended";
+    try {
+      outcome = await watchOnce(
+        rid,
+        {
+          after: handlers.after,
+          onResource: r => {
+            heard();
+            handlers.onResource?.(r);
+          },
+          onMessage: m => {
+            heard();
+            handlers.onMessage?.(m);
+          },
+          onDeleted: handlers.onDeleted,
+        },
+        signal
+      );
+    } catch {
+      // a failed connection is retried below
+    }
+    if (signal.aborted) break;
+    if (outcome === "deleted") return "deleted";
+    if (outcome === "refused") return opened ? "turned-away" : "refused";
+    await pause(delay);
+    delay = Math.min(delay * 2, 15_000);
+  }
+  return "left";
+}
+
 /**
  * Watches a resource while the component is mounted. Every `resource` event lands in the
  * resource's query (`["resource", rid]`), so whoever reads it re-renders; messages go to
- * `onMessage`. The handlers may change between renders without reconnecting.
+ * `onMessage`. The handlers may change between renders without reconnecting. A person turned
+ * away from a watch that was open may no longer read the resource: the app asks the catalog
+ * again, and the view shows its answer.
  */
 export function useWatch(rid: string | undefined, handlers: WatchHandlers & { enabled?: boolean } = {}) {
   const queryClient = useQueryClient();
@@ -108,36 +160,21 @@ export function useWatch(rid: string | undefined, handlers: WatchHandlers & { en
   useEffect(() => {
     if (!rid || !enabled) return;
     const controller = new AbortController();
-    void (async () => {
-      let delay = 1000;
-      while (!controller.signal.aborted) {
-        let outcome: WatchOutcome = "ended";
-        try {
-          outcome = await watchOnce(
-            rid,
-            {
-              after: () => current.current.after?.() ?? 0,
-              onResource: r => {
-                delay = 1000;
-                queryClient.setQueryData(["resource", rid], r);
-                current.current.onResource?.(r);
-              },
-              onMessage: m => {
-                delay = 1000;
-                current.current.onMessage?.(m);
-              },
-              onDeleted: () => current.current.onDeleted?.(),
-            },
-            controller.signal
-          );
-        } catch {
-          // a failed connection is retried below
-        }
-        if (outcome !== "ended" || controller.signal.aborted) return;
-        await new Promise(resolve => setTimeout(resolve, delay));
-        delay = Math.min(delay * 2, 15_000);
-      }
-    })();
+    void watchUntilEnd(
+      rid,
+      {
+        after: () => current.current.after?.() ?? 0,
+        onResource: r => {
+          queryClient.setQueryData(["resource", rid], r);
+          current.current.onResource?.(r);
+        },
+        onMessage: m => current.current.onMessage?.(m),
+        onDeleted: () => current.current.onDeleted?.(),
+      },
+      controller.signal
+    ).then(end => {
+      if (end === "turned-away") void askAgain(queryClient, rid);
+    });
     return () => controller.abort();
   }, [rid, enabled, queryClient]);
 }

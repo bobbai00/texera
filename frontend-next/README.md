@@ -33,7 +33,7 @@ to them. Test users: `alice`/`alice`, `bob`/`bob`.
 | `bun run build` | production bundle in `dist/` (route tree regenerated) |
 | `bun run typecheck` | `tsc` over the app and, through imports, every package |
 | `bun run test` | vitest: the app's tests and `packages/*/src/**/*.test.*` |
-| `bun run e2e` | Playwright against the live stack (`e2e/texera2.spec.ts`); `TEXERA_E2E_SKIP_MODEL=1` leaves out the real-model scenarios |
+| `bun run e2e` | Playwright against the live stack (`e2e/*.spec.ts`: the app, the agent beside a page, sharing, people together); `TEXERA_E2E_SKIP_MODEL=1` leaves out the real-model scenarios |
 | `bun run lint` | biome over the app's `src`. The packages are named in the script and the config but lie outside the config's root, so biome skips them: they are not linted or formatted yet (see `PROGRESS.md`, Nov 5) |
 
 ## Layout
@@ -47,11 +47,18 @@ frontend-next/src
 packages/
   catalog-client/     generated from the OpenAPI contract: types, SDK, TanStack Query options, Zod
   workflow-model/     pure: the workflow spec, graph edits and link rules, the canvas layout,
-                      operator schemas, compile interpretation, React Flow mapping
+                      operator schemas, compile interpretation, React Flow mapping, and the
+                      spec as a document several people edit at once (live.ts, shared with
+                      the live service)
+  service-auth/       a service's own token (client credentials), for the runtime and the
+                      live service
   ui/                 tokens (oklch, light/dark), Base UI primitives, Shell, panel stack,
                       ResourceHeader, DataTable, SandboxedFrame
-  kinds/              the URI grammar, the kind registry, the generic page, one module per kind
-  chat/               AG-UI client, conversation reducer, message parts, composer, new chat
+  kinds/              the URI grammar, the kind registry, the generic page, one module per kind,
+                      a resource's live session (live/), what the person is looking at
+                      (shell/viewing.ts), sharing (shell/Share.tsx, library/Shared.tsx)
+  chat/               AG-UI client, conversation reducer, message parts, composer, new chat,
+                      the chat beside a page (ChatDock.tsx)
 ```
 
 Routes are the catalog's paths: a resource's page is its URI without the scheme.
@@ -63,6 +70,7 @@ Routes are the catalog's paths: a resource's page is its URI without the scheme.
 | `/{plural}` | the library of one kind: `/workflows`, `/datasets`, `/operators`, … |
 | `/{plural}/$rid` | the page of one resource (`?vno=` pins a version) |
 | `/workflows/$rid/executions/$eid` | an execution, nested under its workflow as its URI is |
+| `/shared` | what other people shared with the person, of any kind and project |
 | `/settings` | the deployment's settings (administrators) |
 | `/login`, `/callback` | Keycloak sign-in |
 
@@ -152,6 +160,45 @@ the live ones, except an error the catalog never got, which stays on screen. Eve
 message carries the agent version and the model endpoint that wrote it, shown as a label. The
 platform ships one agent, shown read-only under Agents; a `texera.handoff` event or a system
 note naming another template (from a chat of an older release) still renders as a divider.
+
+A shared chat is a group chat. The others' messages and the answer to someone else's turn
+arrive through the conversation's event stream (`packages/kinds/src/watch.ts`), the answer as
+it is written; one turn runs at a time, and the box says whose. A message asks the agent
+unless it is posted as a note (`useConversation().note`): a message of no turn, marked as a
+note and outlined instead of filled.
+
+## The agent beside a page
+
+`ChatDock.tsx`, mounted once in the app shell, puts a chat button at the bottom right of every
+resource's page. The chat it opens is an ordinary conversation; what makes it about the page is
+what each message carries: AG-UI's `context` of a run, built by `shell/viewing.ts` from the
+page's address (`pageResource`) and from what the page itself adds (`useTellViewing`: the
+operator selected on a canvas). The runtime writes it into the turn's state and the agent's
+prompt says what "this" then means. Nothing is bound: the app remembers the chat last used
+beside each page in the person's preferences (`dock.ts`), and the chat is made in the
+resource's project when the person may write there, else in the one they work in. Before a
+message is sent the page settles (`settleViewing`): a workflow's session saves, so the agent
+reads what is on screen.
+
+## People together
+
+A resource's page joins the resource's live session (`packages/kinds/src/live/room.ts`): one
+connection per resource for every view of it, left when the last view goes. `Presence.tsx`
+shows who is in it, at the top right of every page and chat.
+
+A workflow's editor reads and writes the session's document, not the catalog
+(`workflow/document.ts`, `workflow/editor.ts`): an edit is the difference between the spec the
+person saw and what they made of it, written into the document, and it comes back from the
+document the same way someone else's does. The store holds no draft and saves nothing; the
+live service does, and the page shows what the session says: "Saved", "Saving", "Offline", or
+"Not saved" with the catalog's reason. `Run` asks the session to save first and runs the
+version it answers with. An older version is the same editor over a document that never
+changes; a session that cannot be reached shows the head read-only.
+
+A person the session or the resource's watch turns away may no longer read the resource: the
+app asks the catalog again about it (`askAgain` in `queries.ts`) and the view shows the answer,
+which is `shell/OpenError.tsx`: "has not been shared with you" or "does not exist" instead of
+a failure.
 
 ## Rules
 

@@ -11,6 +11,9 @@ export default defineConfig({
   timeout: 120_000,
   expect: { timeout: 15_000 },
   retries: 0,
+  // One scenario at a time: they act as the same two people, and some change what a person
+  // works in, which every page of theirs follows.
+  workers: 1,
   reporter: process.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE ? [["list"], ["junit", { outputFile: process.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE }]] : "list",
   use: {
     baseURL: process.env.TEXERA_BASE_URL ?? "http://localhost:8088",

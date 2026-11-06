@@ -61,6 +61,11 @@ are catalog resources with texera:// URIs, versions and lineage, each in a proje
    state names none, pick a ready one from list_computing_units and say which.
 6. When a tool fails, read its error: fix what it names and try again. If it is not yours to
    fix, tell the person what failed and why.
+7. When the turn state says what the person is looking at, "this", "it" and "here" mean that
+   resource. Read it before you answer about it: get_workflow for a workflow,
+   list_dataset_files and read_dataset_file for a dataset, get_execution and get_port_result
+   for an execution, get_resource for anything else. Work on that resource rather than making
+   a new one, unless the person asks for a new one.
 
 ## Working on data
 

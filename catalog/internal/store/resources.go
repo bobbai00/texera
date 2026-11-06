@@ -139,6 +139,9 @@ type ResourceFilter struct {
 	// itself or through its parent or its project, as the authorization model carries the
 	// relations down the tree. Nil means no restriction (an administrator or a service).
 	ReadableBy *uuid.UUID
+	// SharedWith keeps what was shared with the principal: a grant of their own on a resource
+	// someone else owns.
+	SharedWith *uuid.UUID
 	Limit      int
 	Offset     int
 }
@@ -199,6 +202,9 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 	if f.WithoutLabel != "" {
 		add("NOT (r.labels ? $%d)", f.WithoutLabel)
 	}
+	if f.SharedWith != nil {
+		add(`(r.owner_pid <> $%d AND EXISTS (SELECT 1 FROM access_index a WHERE a.rid = r.rid AND a.pid = $%[1]d))`, *f.SharedWith)
+	}
 	if f.ReadableBy != nil {
 		add(`(r.visibility = 'public' OR r.owner_pid = $%d OR EXISTS (
 			SELECT 1 FROM resource up WHERE up.rid IN (r.parent_rid, r.project_rid) AND up.visibility = 'public') OR EXISTS (
@@ -248,6 +254,12 @@ func (s *Store) CountChildren(ctx context.Context, parent uuid.UUID) (int64, err
 	return n, err
 }
 
+// HeadMoved is the conflict of a write that names a head the resource is no longer at: someone
+// else wrote a version in between.
+func HeadMoved(head, expected int) error {
+	return fmt.Errorf("%w: head is %d, expected %d", ErrConflict, head, expected)
+}
+
 // SpecUpdate is what UpdateSpec needs.
 type SpecUpdate struct {
 	RID  uuid.UUID
@@ -262,6 +274,7 @@ type SpecUpdate struct {
 	Content      json.RawMessage
 	Message      *string
 	CreatedByPID uuid.UUID
+	Contributors []uuid.UUID
 	Origin       *Origin
 	// From is the name the new content's references are recorded under: the resource for an
 	// unversioned kind, its new version for a versioned one. References are the edges extracted
@@ -284,12 +297,12 @@ func (s *Store) UpdateSpec(ctx context.Context, in SpecUpdate) (*Resource, *Vers
 			return ErrPrecondition
 		}
 		if in.ExpectedHead != nil && *in.ExpectedHead != cur.HeadVno {
-			return fmt.Errorf("%w: head is %d, expected %d", ErrConflict, cur.HeadVno, *in.ExpectedHead)
+			return HeadMoved(cur.HeadVno, *in.ExpectedHead)
 		}
 		head := cur.HeadVno
 		if in.Versioned {
 			head++
-			v, err = insertVersion(ctx, tx, NewVersion{RID: in.RID, Vno: head, ContentKind: in.ContentKind, Content: in.Content, Message: in.Message, CreatedByPID: in.CreatedByPID, Origin: in.Origin})
+			v, err = insertVersion(ctx, tx, NewVersion{RID: in.RID, Vno: head, ContentKind: in.ContentKind, Content: in.Content, Message: in.Message, CreatedByPID: in.CreatedByPID, Contributors: in.Contributors, Origin: in.Origin})
 			if err != nil {
 				return err
 			}
@@ -465,6 +478,7 @@ type NewVersion struct {
 	Content      json.RawMessage
 	Message      *string
 	CreatedByPID uuid.UUID
+	Contributors []uuid.UUID
 	Origin       *Origin
 	ExpectedHead *int
 	References   []Edge
@@ -482,7 +496,7 @@ func (s *Store) CreateVersion(ctx context.Context, in NewVersion) (*Version, err
 			return err
 		}
 		if in.ExpectedHead != nil && *in.ExpectedHead != cur.HeadVno {
-			return fmt.Errorf("%w: head is %d, expected %d", ErrConflict, cur.HeadVno, *in.ExpectedHead)
+			return HeadMoved(cur.HeadVno, *in.ExpectedHead)
 		}
 		in.Vno = cur.HeadVno + 1
 		v, err = insertVersion(ctx, tx, in)
@@ -514,9 +528,9 @@ func insertVersion(ctx context.Context, tx pgx.Tx, in NewVersion) (*Version, err
 		return nil, fmt.Errorf("content: %w", err)
 	}
 	origin, _ := marshalOrigin(in.Origin)
-	row := tx.QueryRow(ctx, `INSERT INTO resource_version (rid, vno, content_kind, digest, content, message, created_by_pid, origin)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING rid, vno, content_kind, digest, content, message, created_by_pid, origin, created_at`,
-		in.RID, in.Vno, in.ContentKind, digest, in.Content, in.Message, in.CreatedByPID, origin)
+	row := tx.QueryRow(ctx, `INSERT INTO resource_version (rid, vno, content_kind, digest, content, message, created_by_pid, contributors, origin)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING `+versionColumns,
+		in.RID, in.Vno, in.ContentKind, digest, in.Content, in.Message, in.CreatedByPID, in.Contributors, origin)
 	v, err := scanVersion(row)
 	return v, translate(err)
 }
@@ -525,10 +539,10 @@ func insertVersion(ctx context.Context, tx pgx.Tx, in NewVersion) (*Version, err
 func (s *Store) GetVersion(ctx context.Context, rid uuid.UUID, vno int) (*Version, error) {
 	var row pgx.Row
 	if vno <= 0 {
-		row = s.pool.QueryRow(ctx, `SELECT v.rid, v.vno, v.content_kind, v.digest, v.content, v.message, v.created_by_pid, v.origin, v.created_at
+		row = s.pool.QueryRow(ctx, `SELECT `+versionColumnsOf("v")+`
 			FROM resource_version v JOIN resource r ON r.rid = v.rid WHERE v.rid = $1 AND v.vno = r.head_vno AND r.deleted_at IS NULL`, rid)
 	} else {
-		row = s.pool.QueryRow(ctx, `SELECT v.rid, v.vno, v.content_kind, v.digest, v.content, v.message, v.created_by_pid, v.origin, v.created_at
+		row = s.pool.QueryRow(ctx, `SELECT `+versionColumnsOf("v")+`
 			FROM resource_version v JOIN resource r ON r.rid = v.rid WHERE v.rid = $1 AND v.vno = $2 AND r.deleted_at IS NULL`, rid, vno)
 	}
 	v, err := scanVersion(row)
@@ -540,7 +554,7 @@ func (s *Store) ListVersions(ctx context.Context, rid uuid.UUID, limit, offset i
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `SELECT v.rid, v.vno, v.content_kind, v.digest, 'null'::jsonb, v.message, v.created_by_pid, v.origin, v.created_at
+	rows, err := s.pool.Query(ctx, `SELECT v.rid, v.vno, v.content_kind, v.digest, 'null'::jsonb, v.message, v.created_by_pid, v.contributors, v.origin, v.created_at
 		FROM resource_version v WHERE v.rid = $1 ORDER BY v.vno DESC LIMIT $2 OFFSET $3`, rid, limit, offset)
 	if err != nil {
 		return nil, err
@@ -585,10 +599,18 @@ func scanResource(row scanner) (*Resource, error) {
 	return &r, nil
 }
 
+// versionColumns are a version's columns, in the order scanVersion reads them.
+const versionColumns = "rid, vno, content_kind, digest, content, message, created_by_pid, contributors, origin, created_at"
+
+// versionColumnsOf qualifies them with a table alias.
+func versionColumnsOf(alias string) string {
+	return alias + "." + strings.ReplaceAll(versionColumns, ", ", ", "+alias+".")
+}
+
 func scanVersion(row scanner) (*Version, error) {
 	var v Version
 	var origin []byte
-	if err := row.Scan(&v.RID, &v.Vno, &v.ContentKind, &v.Digest, &v.Content, &v.Message, &v.CreatedByPID, &origin, &v.CreatedAt); err != nil {
+	if err := row.Scan(&v.RID, &v.Vno, &v.ContentKind, &v.Digest, &v.Content, &v.Message, &v.CreatedByPID, &v.Contributors, &origin, &v.CreatedAt); err != nil {
 		return nil, err
 	}
 	v.Origin = unmarshalOrigin(origin)

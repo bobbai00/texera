@@ -1,7 +1,7 @@
 import { client } from "@texera/catalog-client";
 import type { Message, Resource } from "@texera/catalog-client/types";
 import { afterEach, describe, expect, it } from "vitest";
-import { readSseEvents, watchOnce } from "./watch";
+import { readSseEvents, watchOnce, watchUntilEnd } from "./watch";
 
 const RID = "0b7a1c2d-0000-4000-8000-00000000000a";
 
@@ -77,5 +77,40 @@ describe("watchOnce", () => {
   it("ends quietly when the connection closes, so the caller reconnects", async () => {
     client.setConfig({ baseUrl: "http://catalog", fetch: async () => sse([`event: resource\ndata: {"kind":"execution","metadata":{"rid":"${RID}"},"spec":{}}\n\n`]) });
     expect(await watchOnce(RID, {})).toBe("ended");
+  });
+});
+
+describe("watchUntilEnd", () => {
+  const resource = `event: resource\ndata: {"kind":"workflow","metadata":{"rid":"${RID}"},"spec":{}}\n\n`;
+  const answers = (responses: (() => Response)[]) => {
+    let calls = 0;
+    client.setConfig({ baseUrl: "http://catalog", fetch: async () => (responses[Math.min(calls++, responses.length - 1)] as () => Response)() });
+    return () => calls;
+  };
+  const refused = () => new Response('{"code":"forbidden"}', { status: 403 });
+  const now = async () => undefined;
+
+  it("connects again when the stream drops, and says the person was turned away when it is then refused", async () => {
+    const calls = answers([() => sse([resource]), () => sse([resource]), refused]);
+    const seen: string[] = [];
+    const end = await watchUntilEnd(RID, { onResource: r => seen.push(r.kind) }, new AbortController().signal, now);
+    expect(end).toBe("turned-away");
+    expect(seen).toEqual(["workflow", "workflow"]);
+    expect(calls()).toBe(3);
+  });
+
+  it("says a watch that never opened was refused: nothing changed for the person", async () => {
+    const calls = answers([refused]);
+    expect(await watchUntilEnd(RID, {}, new AbortController().signal, now)).toBe("refused");
+    expect(calls()).toBe(1);
+  });
+
+  it("ends with the resource, and when the component leaves", async () => {
+    answers([() => sse(['event: deleted\ndata: {"rid":"x"}\n\n'])]);
+    expect(await watchUntilEnd(RID, {}, new AbortController().signal, now)).toBe("deleted");
+
+    const leaving = new AbortController();
+    answers([() => sse([resource])]);
+    expect(await watchUntilEnd(RID, { onResource: () => leaving.abort() }, leaving.signal, now)).toBe("left");
   });
 });

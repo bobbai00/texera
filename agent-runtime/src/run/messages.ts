@@ -2,7 +2,8 @@
  * Conversions between the catalog's message model (the source of truth for history) and the
  * AI SDK's model messages, plus the parts of a finished assistant turn. An assistant message
  * another template wrote is rendered with that agent's name in front, so the model knows
- * which words were its own. What a person attached reaches the model as a line that names it.
+ * which words were its own; in a chat several people write in, so is a person's message with
+ * theirs. What a person attached reaches the model as a line that names it.
  */
 import type { ModelMessage } from "ai";
 import type { Message, MessagePart } from "../catalog/types.ts";
@@ -13,6 +14,11 @@ export interface HistoryOptions {
   current?: string;
   /** Names of other templates, by version URI; an unknown one is "another agent". */
   names?: Map<string, string>;
+  /**
+   * The people of a chat several write in, by pid: each of their messages is rendered with its
+   * writer's name in front. Absent in one person's chat, which reads as it was written.
+   */
+  people?: Map<string, string>;
 }
 
 /** Turns catalog history into model messages, keeping tool calls paired with results. */
@@ -30,7 +36,8 @@ export function toModelMessages(history: Message[], options: HistoryOptions = {}
         if (p.type === "resource" && p.resource) return [attachedLine(p.resource, p.text)];
         return [];
       });
-      if (lines.length > 0) out.push({ role: m.role, content: lines.join("\n") });
+      const writer = options.people?.get(m.author);
+      if (lines.length > 0) out.push({ role: m.role, content: (writer ? `[${writer}] ` : "") + lines.join("\n") });
       continue;
     }
     if (m.role === "assistant") {

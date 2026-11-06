@@ -571,9 +571,7 @@ func (s *Service) Rows(ctx context.Context, caller *auth.Caller, workflowRID, ei
 	if err != nil {
 		return nil, err
 	}
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
+	limit = int32(pageSize(int(limit), 100, 1000))
 	if at := resultsExpired(r); at != nil {
 		return nil, Gone("the execution's results", *at)
 	}

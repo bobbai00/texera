@@ -975,6 +975,7 @@ export const zAgentTemplateVersion = z.object({
     content: zAgentTemplateSpec,
     message: z.string().optional(),
     createdBy: zPid,
+    contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
 });
@@ -997,6 +998,7 @@ export const zDatasetVersion = z.object({
     content: zManifest,
     message: z.string().optional(),
     createdBy: zPid,
+    contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
 });
@@ -1030,8 +1032,17 @@ export const zEnvironmentVersion = z.object({
     content: zEnvironmentSpec,
     message: z.string().optional(),
     createdBy: zPid,
+    contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
+});
+
+/**
+ * A resource's live document, as the live service keeps it between sessions: the working copy several people edit at once. Opaque to the catalog, whose versions stay the truth.
+ */
+export const zLiveState = z.object({
+    basedOn: zVno.optional(),
+    state: z.string()
 });
 
 /**
@@ -1047,6 +1058,7 @@ export const zMcpServerVersion = z.object({
     content: zMcpServerSpec,
     message: z.string().optional(),
     createdBy: zPid,
+    contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
 });
@@ -1064,6 +1076,7 @@ export const zModelVersion = z.object({
     content: zManifest,
     message: z.string().optional(),
     createdBy: zPid,
+    contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
 });
@@ -1081,6 +1094,7 @@ export const zOperatorVersion = z.object({
     content: zOperatorSpec,
     message: z.string().optional(),
     createdBy: zPid,
+    contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
 });
@@ -1360,6 +1374,7 @@ export const zSkillVersion = z.object({
     content: zSkillSpec,
     message: z.string().optional(),
     createdBy: zPid,
+    contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
 });
@@ -1455,6 +1470,7 @@ export const zVersion = z.object({
     content: z.unknown(),
     message: z.string().optional(),
     createdBy: zPid,
+    contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
 });
@@ -1479,6 +1495,7 @@ export const zVersionSummary = z.object({
     digest: zDigest,
     message: z.string().optional(),
     createdBy: zPid,
+    contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
 });
@@ -1586,7 +1603,8 @@ export const zEditWorkflow = z.object({
     patch: z.array(zJsonPatchOperation).optional(),
     spec: zWorkflowSpec.optional(),
     expectedHead: zVno.optional(),
-    message: z.string().optional()
+    message: z.string().optional(),
+    onBehalfOf: z.array(zPid).optional()
 });
 
 export const zUpdateWorkflow = z.object({
@@ -1646,6 +1664,7 @@ export const zWorkflowVersion = z.object({
     content: zWorkflowSpec,
     message: z.string().optional(),
     createdBy: zPid,
+    contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
 });
@@ -2793,6 +2812,7 @@ export const zResourcesSearchQuery = z.object({
     parent: zRid.optional(),
     project: zRid.optional(),
     origin: zRid.optional(),
+    shared: z.boolean().optional(),
     limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     cursor: z.string().optional()
 });
@@ -2902,6 +2922,26 @@ export const zResourcesLineageQuery = z.object({
  * The request has succeeded.
  */
 export const zResourcesLineageResponse = zLineageGraph;
+
+export const zResourcesReadLivePath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zResourcesReadLiveResponse = zLiveState;
+
+export const zResourcesWriteLiveBody = zLiveState;
+
+export const zResourcesWriteLivePath = z.object({
+    rid: zRid
+});
+
+/**
+ * There is no content to send for this request, but the headers may be useful.
+ */
+export const zResourcesWriteLiveResponse = z.void();
 
 export const zResourcesListVersionsPath = z.object({
     rid: zRid

@@ -1,13 +1,12 @@
 // Queries shared by every kind: the caller, settings, envelopes, versions, lineage,
 // grants, principals, search, units and operator types.
 
-import { queryOptions } from "@tanstack/react-query";
-import { resourcesRead, resourcesResolve } from "@texera/catalog-client";
+import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import { evaluationEvaluate, operatorsList, resourcesRead, resourcesResolve } from "@texera/catalog-client";
 import {
   computingUnitsAvailableOptions,
   conversationsSettingsOptions,
   meGetOptions,
-  operatorsListOptions,
   principalsListOptions,
   projectsChatSettingsOptions,
   resourcesDependentsOptions,
@@ -53,6 +52,14 @@ export const dependentsQuery = (rid: string) => resourcesDependentsOptions({ pat
 
 export const grantsQuery = (rid: string) => resourcesListGrantsOptions({ path: { rid } });
 
+/** Whether the caller may do something to a resource: the catalog's own decision. */
+export const canQuery = (action: "read" | "write" | "share" | "delete", rid: string) =>
+  queryOptions({
+    queryKey: ["can", action, rid],
+    queryFn: async () => (await evaluationEvaluate({ body: { subject: { type: "user", id: "" }, action: { name: action }, resource: { type: "resource", id: rid } }, throwOnError: true })).data.decision,
+    staleTime: 60_000,
+  });
+
 export const principalsQuery = (q?: string) => ({ ...principalsListOptions({ query: { q: q || undefined, limit: 20 } }), staleTime: 60_000 });
 
 export interface SearchFilter {
@@ -62,6 +69,8 @@ export interface SearchFilter {
   parent?: string;
   /** Exactly a project's own resources. */
   project?: string;
+  /** Only what other people shared with the person, in whatever project. */
+  shared?: boolean;
   q?: string;
   origin?: string;
   limit?: number;
@@ -89,17 +98,44 @@ export const SOURCE_LABEL: Record<SettingSource, string> = {
 /** The same for a chat that is not started yet, in a project. */
 export const newChatSettingsQuery = (project: string) => ({ ...projectsChatSettingsOptions({ path: { rid: project } }), staleTime: 30_000 });
 
-/** Every operator type usable in a scope, with its properties schema, as the editor's schemas. */
-export const operatorSchemasQuery = (scope?: string) => ({
-  ...operatorsListOptions({ query: { view: "full", limit: 500, scope } }),
-  select: (page: { items: Parameters<typeof schemaMap>[0] }) => schemaMap(page.items),
-  staleTime: 10 * 60_000,
-});
+/**
+ * Every operator type usable in a scope, with its properties schema, as the editor's schemas.
+ * The list comes a page at a time, and the palette needs all of it.
+ */
+export const operatorSchemasQuery = (scope?: string) =>
+  queryOptions({
+    queryKey: ["operator-schemas", scope ?? null],
+    queryFn: async () => {
+      const operators: Parameters<typeof schemaMap>[0] = [];
+      for (let cursor: string | undefined; ; ) {
+        const page = (await operatorsList({ query: { view: "full", limit: 200, scope, cursor }, throwOnError: true })).data;
+        operators.push(...page.items);
+        if (!page.nextCursor) return schemaMap(operators);
+        cursor = page.nextCursor;
+      }
+    },
+    staleTime: 10 * 60_000,
+  });
 
 /**
  * The query keys a write to a resource invalidates: its envelope, every kind list, its
  * versions, and what chats resolve their settings to (a default or a choice may have changed).
  */
+/** Whether a query read something of one resource: its envelope, whatever was read by its rid, what the person may do with it. */
+export function isAbout(queryKey: readonly unknown[], rid: string): boolean {
+  const [first, second, third] = queryKey;
+  if (first === "resource") return second === rid;
+  if (first === "can") return third === rid;
+  return typeof first === "object" && first !== null && (first as { path?: { rid?: unknown } }).path?.rid === rid;
+}
+
+/**
+ * Has everything the app read about a resource asked again. A view turned away from the
+ * resource's watch or its live session calls this: what the person may see has changed, and
+ * the catalog's answer is what the view then shows.
+ */
+export const askAgain = (queryClient: QueryClient, rid: string) => queryClient.invalidateQueries({ predicate: query => isAbout(query.queryKey, rid) });
+
 export const keysOf = (rid: string) => [
   ["resource", rid],
   [{ _id: "resourcesSearch" }],

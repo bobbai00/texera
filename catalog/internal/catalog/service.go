@@ -42,6 +42,9 @@ type Config struct {
 	PresignTTL         time.Duration
 	LeaseTTL           time.Duration
 	MaxDownloadBytes   int64
+	// WatchBeat is how often an open watch is kept alive and its watcher's right to read is
+	// asked again; 15 seconds when unset.
+	WatchBeat time.Duration
 	// The seeds of the dev stack.
 	StaticUnitEndpoint string
 	StaticUnitName     string

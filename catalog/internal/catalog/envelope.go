@@ -96,32 +96,34 @@ func VersionOf(r *store.Resource, v *store.Version) api.Version {
 		_ = json.Unmarshal(v.Content, &content)
 	}
 	return api.Version{
-		Rid:         api.Rid(v.RID.String()),
-		Uri:         api.Uri(URI(r).WithVersion(v.Vno).String()),
-		Kind:        api.ResourceKind(r.Kind),
-		Vno:         api.Vno(v.Vno),
-		ContentKind: api.ContentKind(v.ContentKind),
-		Digest:      api.Digest(v.Digest),
-		Content:     content,
-		Message:     v.Message,
-		CreatedBy:   api.Pid(v.CreatedByPID.String()),
-		Origin:      originOf(v.Origin),
-		CreatedAt:   v.CreatedAt,
+		Rid:          api.Rid(v.RID.String()),
+		Uri:          api.Uri(URI(r).WithVersion(v.Vno).String()),
+		Kind:         api.ResourceKind(r.Kind),
+		Vno:          api.Vno(v.Vno),
+		ContentKind:  api.ContentKind(v.ContentKind),
+		Digest:       api.Digest(v.Digest),
+		Content:      content,
+		Message:      v.Message,
+		CreatedBy:    api.Pid(v.CreatedByPID.String()),
+		Contributors: contributorsOf(v),
+		Origin:       originOf(v.Origin),
+		CreatedAt:    v.CreatedAt,
 	}
 }
 
 // SummaryOf renders a version without its content.
 func SummaryOf(r *store.Resource, v *store.Version) api.VersionSummary {
 	return api.VersionSummary{
-		Rid:         api.Rid(v.RID.String()),
-		Uri:         api.Uri(URI(r).WithVersion(v.Vno).String()),
-		Vno:         api.Vno(v.Vno),
-		ContentKind: api.ContentKind(v.ContentKind),
-		Digest:      api.Digest(v.Digest),
-		Message:     v.Message,
-		CreatedBy:   api.Pid(v.CreatedByPID.String()),
-		Origin:      originOf(v.Origin),
-		CreatedAt:   v.CreatedAt,
+		Rid:          api.Rid(v.RID.String()),
+		Uri:          api.Uri(URI(r).WithVersion(v.Vno).String()),
+		Vno:          api.Vno(v.Vno),
+		ContentKind:  api.ContentKind(v.ContentKind),
+		Digest:       api.Digest(v.Digest),
+		Message:      v.Message,
+		CreatedBy:    api.Pid(v.CreatedByPID.String()),
+		Contributors: contributorsOf(v),
+		Origin:       originOf(v.Origin),
+		CreatedAt:    v.CreatedAt,
 	}
 }
 
@@ -179,4 +181,16 @@ func MessageOf(m *store.Message) api.Message {
 		out.Parts = []api.MessagePart{}
 	}
 	return out
+}
+
+// contributorsOf renders the people whose edits a version holds, when it names them.
+func contributorsOf(v *store.Version) *[]api.Pid {
+	if len(v.Contributors) == 0 {
+		return nil
+	}
+	out := make([]api.Pid, len(v.Contributors))
+	for i, pid := range v.Contributors {
+		out[i] = api.Pid(pid.String())
+	}
+	return &out
 }

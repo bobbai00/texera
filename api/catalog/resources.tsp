@@ -40,7 +40,7 @@ namespace Routes {
     @extension("x-texera-permission", "list")
     @extension("x-mcp", #{
       tool: "search_resources",
-      description: "Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, environments, operators, conversations. Filter by kind or text. In a chat a search covers the chat's project and the built-ins; pass scope to look in another project (kind project lists them all).",
+      description: "Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, environments, operators, conversations. Filter by kind or text. In a chat a search covers the chat's project and the built-ins; pass scope to look in another project (kind project lists them all). Pass shared=true for what other people shared with the person.",
       readOnlyHint: true,
     })
     search(
@@ -50,6 +50,8 @@ namespace Routes {
       @query parent?: Rid,
       @query project?: Rid,
       @query origin?: Rid,
+      @doc("Only what others shared with the caller: resources they hold a grant on and do not own, in whatever project.")
+      @query shared?: boolean,
       @query limit?: int32,
       @query cursor?: string,
     ): Ok<ResourcePage> | Error;
@@ -132,6 +134,18 @@ namespace Routes {
     @route("/{rid}/dependents")
     @extension("x-texera-permission", "read")
     dependents(@path rid: Rid, @query vno?: Vno): Edge[] | Error;
+
+    @doc("The live document of a resource, for the platform's live service.")
+    @get
+    @route("/{rid}/live")
+    @extension("x-texera-permission", "service")
+    readLive(@path rid: Rid): LiveState | Error;
+
+    @doc("Keeps the live document of a resource, for the platform's live service.")
+    @put
+    @route("/{rid}/live")
+    @extension("x-texera-permission", "service")
+    writeLive(@path rid: Rid, @body body: LiveState): void | Error;
 
     @get
     @route("/{rid}/grants")

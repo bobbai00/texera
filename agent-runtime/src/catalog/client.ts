@@ -157,6 +157,16 @@ export class CatalogClient {
     return this.request("PUT", `${API}/conversations/${encodeURIComponent(rid)}/messages/${seq}`, auth, body);
   }
 
+  /** The name a person or a group is shown by. */
+  async principalName(pid: string, auth: CatalogAuth): Promise<string> {
+    const principal = await this.request<{ displayName: string }>(
+      "GET",
+      `${API}/principals/${encodeURIComponent(pid)}`,
+      auth,
+    );
+    return principal.displayName;
+  }
+
   resolve(uri: string, auth: CatalogAuth): Promise<Resolved> {
     return this.request("GET", `${API}/resources/resolve?uri=${encodeURIComponent(uri)}`, auth);
   }

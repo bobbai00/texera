@@ -14,7 +14,7 @@ versions and why: `bin/texera-2-0/README.md`). Then, from the repository root:
 
 ```
 cp .env.example .env            # ANTHROPIC_API_KEY=... (the agents need a model; everything else works without)
-bin/texera-2-0/up.sh            # the containers, then the catalog, the computing unit, the agent runtime, the frontend
+bin/texera-2-0/up.sh            # the containers, then the catalog, the computing unit, the agent runtime, the live service, the frontend
 ```
 
 `up.sh` takes a few minutes the first time (the Python environment, the engine's compilation)
@@ -56,11 +56,30 @@ fails says why in the chat, and still does after a reload.
 **A chat with others.** Share a conversation like any resource and it is a group chat: an
 editor posts and takes turns, a viewer reads along. Their messages arrive as they are sent,
 under their names; one person talks to the agent at a time, and while Bob's turn runs Alice
-sees "Bob is talking to the Texera Agent" and waits. The agent's answer to Bob's question is
-Bob's turn, so the history says who asked what. A choice of the chat that someone in it may
-not use (the owner's own model or unit) is passed over for them: their turn runs with the next
+sees "Bob is talking to the Texera Agent", watches the answer arrive, and waits to ask. A
+message asks the agent unless it is posted as a note (the button beside Send): a note is said
+to the people in the chat, takes no turn, and can be posted while someone else's turn runs.
+The agent reads everything said, each person's message under their name, and is told whom it
+is answering, so "run it" from Bob after "use the 2020 data" from Alice means what the two of
+them meant. What the chat runs with is one choice for everyone in it: a model or an add-on
+changed by one person changes in everyone's box. A choice that someone in the chat may not use
+(the owner's own model or unit) is passed over for them: their turn runs with the next
 default, and the chat says so. The same works from the API: a grant on the conversation is the
-membership, every message carries its author, and the turn lock names its holder.
+membership, every message carries its author, a message of no turn is a note, and the turn
+lock names its holder.
+
+**The agent beside a page.** Every resource's page has a chat button at its bottom right. It
+opens a chat beside the page, and each message tells the agent what you are looking at: the
+kind, the name and the URI of the resource, the version if you opened one, and on a workflow's
+canvas the operator you selected. "What does this do?" needs no more than that. An edit of the
+page still on its way is saved before the agent is asked, so it reads what you see. It is an
+ordinary chat: it is bound to nothing, it is in the resource's project when you may write
+there and in your own otherwise, you can open it as a full page, and the app remembers which
+chat you last used beside each page.
+
+**Who is here.** The people who have a resource's page open are shown at its top right, you
+first, each with their own colour: on every kind's page and in a chat. Hover an icon for the
+name.
 
 **Projects.** Everything lives in a project, and you work in one at a time, picked at the top
 of the sidebar: "Personal", your home project, until you pick another, or "All projects". The
@@ -94,6 +113,18 @@ JSON Schema. A file property takes a dataset file URI,
 shows the output columns per port and any errors; "Run" starts an execution and opens its
 page. Every save is a version; an execution pins the version it ran.
 
+**A workflow edited together.** Everyone who may change a workflow edits the same document at
+once: an operator one person adds, a property they change or a place they drag an operator to
+shows on the others' canvases as it happens, and two people changing different properties of
+one operator both keep their change. Someone who may only view watches. Nobody's browser
+saves: the live service saves a version a moment after the edits stop, and the version names
+the people whose edits it holds. A version written elsewhere, by an agent or the API, arrives
+on the open canvas beside the edits not saved yet. "Run", and a question to the agent beside
+the page, first have the session save, so they are about exactly what is on screen. If the
+catalog does not take the workflow as a version (a file property that names a file that does
+not exist, the catalog being away), the page says "Not saved" and why, for everyone in the
+session; the edits stay, a run does not start, and the session keeps trying.
+
 **Executions.** An execution's page shows its phase, the operators with their states and
 counts as the unit reports them (about once a second while it runs), the results of each
 output port (paged rows), its inputs and its lineage. "Pause" holds a running one where it is
@@ -108,8 +139,14 @@ file of any version. Uploading the same bytes twice stores them once.
 
 **Sharing.** A resource is private or public. Grants give a person or group a relation:
 `viewer` reads and runs, `editor` writes too, `owner` everything; `user` is "may use" for a
-computing unit, a credential or a model endpoint, and viewing never implies using. The access
-tab finds people by name or email, logged in or not.
+computing unit, a credential or a model endpoint, and viewing never implies using. The Share
+button at the top right of a resource's page (a project, a chat, a workflow, a dataset, any
+kind) shows its link and who it is shared with, and finds people by name or email, logged in
+or not. What others gave you is under "Shared with me" in the sidebar, in one list whatever
+its kind and project; a project you were given is also one you can work in. A link to
+something that was not shared with you says so instead of failing, and opens once it is.
+Taking a grant back takes the thing off the other person's list and closes a page they have
+open, within half a minute.
 
 **Settings** (administrators): branding, the defaults an execution or a chat falls back to
 (agent, environment, unit, model endpoint) and retention (section 5).
@@ -135,6 +172,14 @@ conversation at a time, on the person's behalf and with the person's own permiss
 - The agent is told, at every step, today's date, the project the chat is in and the computing
   unit an execution falls back to. It works where the chat is: its searches cover the chat's
   project and the built-ins unless it names another scope, and what it makes goes there.
+- Asked from beside a page, it is also told what the person is looking at (the resource and,
+  on a canvas, the selected operator), and "this" means that. In a chat several people write
+  in, it reads each message under its writer's name and is told whom it is answering.
+- It edits a workflow by a patch against the head it read and names that head
+  (`expectedHead`): if someone changed the workflow in the editor meanwhile, the edit is
+  refused as a conflict and the agent reads the workflow again, instead of the patch landing
+  on the wrong operator. What it writes arrives on the canvases of whoever has the workflow
+  open.
 
 **What a chat runs with.** A chat stores choices and nothing else: its agent, the model, the
 computing unit its executions prefer, its add-on servers. A turn runs with the chat's choice,
@@ -308,6 +353,13 @@ Anything that holds a person's token can do what the person can:
   history is the catalog's) and streams AG-UI events back: text, tool calls and results,
   `texera.resource` cards, `texera.handoff`. `GET {gw}/agents/templates/{rid}/.well-known/
   agent-card.json` and `POST .../a2a` expose a template to A2A clients.
+- **The live session.** `{gw}/live/sessions` is a WebSocket speaking the Hocuspocus (Yjs)
+  protocol, one session per resource, named by its rid; the person's token goes in the
+  protocol's first message. Whoever may read the resource joins and says who they are in the
+  session's awareness state (`user: {pid, name}`). For a workflow the session also holds the
+  document people edit at once, and its own awareness state says how the document stands with
+  the catalog (`catalog: {vno, refused?}`). The live service loads and saves; it asks the
+  catalog who a token is and what they may do, and again every half minute.
 - **The contract.** `api/catalog/` (TypeSpec) is the source; `gen/openapi/3.1.0/
   Texera.Catalog.openapi.yaml` the OpenAPI document; `packages/catalog-client` the generated
   TypeScript client; `tests/e2e/texera_e2e/` a small Python client the scenarios use.
@@ -354,6 +406,15 @@ rolls it; `terminate` removes it. Details, the images and the manifests:
 - **An execution failed.** Its page and `get_execution` give the reason: an operator's own
   exception (a Python operator that raises fails it, with its traceback, instead of waiting), a
   compile error per operator, or what the engine refused.
+- **"Not saved" on a workflow.** The catalog did not take the workflow as a version, and the
+  banner says why: a file property that names a file that does not exist, or the catalog being
+  away. The edits stay in the session and are saved once the cause is gone.
+- **"The workflow's live session cannot be reached."** The live service is down or the
+  gateway does not route `/live/`: `logs/texera-2-0/live.log`, or `kubectl -n texera2 logs
+  deploy/live`. The workflow is shown as it was last saved and cannot be edited meanwhile; the
+  people icons at the top right are missing for the same reason.
+- **A conflict (409, `head is N, expected M`) on `edit_workflow`.** Someone changed the
+  workflow after you read it: read it again and redo the edit on that head.
 - **The unit is not ready.** `logs/texera-2-0/unit.log`; the engine compiles with sbt on the
   first start and the catalog shows the unit as pending until its health answers.
 - **Playwright has no browser.** `cd frontend-next && bunx playwright install chromium`, or
@@ -368,6 +429,6 @@ rolls it; `terminate` removes it. Details, the images and the manifests:
 | `docs/texera-2-0/API-REQUESTS.md` | the conventions between the parts beyond the contract, including how an execution works |
 | `docs/texera-2-0/PLAN.md`, `PROGRESS.md` | the milestone with its decisions and acceptance list; what was done, verified and comes next |
 | `docs/texera-2-0/claude-docs/handoff.md` | where things stand, the gotchas, the next steps |
-| `catalog/README.md`, `agent-runtime/README.md`, `frontend-next/README.md` | each part's run instructions, layout and rules |
+| `catalog/README.md`, `agent-runtime/README.md`, `live/README.md`, `frontend-next/README.md` | each part's run instructions, layout and rules |
 | `api/catalog/*.tsp` | the contract: every kind, route, permission and MCP tool |
 | `AGENTS.md` | the map of the repository and the rules for working in it |

@@ -100,6 +100,35 @@ describe("toModelMessages", () => {
     ]);
   });
 
+  test("names who wrote a message in a chat several people write in", () => {
+    const history: Message[] = [
+      { ...base, author: "p-alice", seq: 1, role: "user", parts: [{ type: "text", text: "Use the 2020 data." }] },
+      {
+        ...base,
+        author: "p-bob",
+        seq: 2,
+        role: "user",
+        parts: [
+          { type: "text", text: "Run it." },
+          { type: "resource", resource: "texera://datasets/d@1", text: "sales.csv" },
+        ],
+      },
+      { ...base, author: "p-bob", seq: 3, role: "assistant", parts: [{ type: "text", text: "Done." }] },
+    ];
+    const people = new Map([
+      ["p-alice", "Alice Liddell"],
+      ["p-bob", "Bob Builder"],
+    ]);
+    expect(toModelMessages(history, { people })).toEqual([
+      { role: "user", content: "[Alice Liddell] Use the 2020 data." },
+      { role: "user", content: '[Bob Builder] Run it.\nAttached dataset "sales.csv" (texera://datasets/d@1)' },
+      // What the agent said is its own, whoever it was answering.
+      { role: "assistant", content: [{ type: "text", text: "Done." }] },
+    ]);
+    // One person's chat reads as it always did.
+    expect(toModelMessages(history)[0]).toEqual({ role: "user", content: "Use the 2020 data." });
+  });
+
   test("skips empty messages", () => {
     expect(toModelMessages([{ ...base, seq: 1, role: "assistant", parts: [{ type: "error", text: "x" }] }])).toEqual(
       [],

@@ -152,8 +152,18 @@ model Version {
   content: unknown;
   message?: string;
   createdBy: Pid;
+  @doc("Everyone whose edits the version holds, when more than one person made it together in a live session.")
+  contributors?: Pid[];
   origin?: Origin;
   createdAt: utcDateTime;
+}
+
+@doc("A resource's live document, as the live service keeps it between sessions: the working copy several people edit at once. Opaque to the catalog, whose versions stay the truth.")
+model LiveState {
+  @doc("The version the document was last saved as.")
+  basedOn?: Vno;
+  @doc("The encoded document.")
+  state: bytes;
 }
 
 @doc("A version without its content, as lists return it.")
@@ -165,6 +175,7 @@ model VersionSummary {
   digest: Digest;
   message?: string;
   createdBy: Pid;
+  contributors?: Pid[];
   origin?: Origin;
   createdAt: utcDateTime;
 }
@@ -180,6 +191,7 @@ model TypedVersion<Content> {
   content: Content;
   message?: string;
   createdBy: Pid;
+  contributors?: Pid[];
   origin?: Origin;
   createdAt: utcDateTime;
 }

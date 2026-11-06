@@ -1,118 +1,189 @@
-import type { WorkflowVersion } from "@texera/catalog-client/types";
-import { addOperator, EMPTY_SPEC, type WorkflowSpec } from "@texera/workflow-model";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CatalogError } from "../api";
-import { createEditorStore, type EditorDeps } from "./editor";
+import { addOperator, applySpec, EMPTY_SPEC, movePositions, positionsOf, specOf, type WorkflowSpec } from "@texera/workflow-model";
+import { describe, expect, it } from "vitest";
+import * as Y from "yjs";
+import { documentOf, fixedDocument, type SyncState, type WorkflowDocument } from "./document";
+import { createEditorStore } from "./editor";
 
-const version = (vno: number): WorkflowVersion => ({
-  rid: "wf",
-  uri: `texera://workflows/wf@${vno}`,
-  kind: "workflow",
-  vno,
-  contentKind: "spec",
-  digest: "sha256:0",
-  content: EMPTY_SPEC,
-  createdBy: "p",
-  createdAt: "2026-11-03T00:00:00Z",
-});
+const op = (id: string) => ({ operatorID: id, operatorType: "Limit", operatorProperties: {} as Record<string, unknown> });
+const ids = (spec: WorkflowSpec) => spec.operators.map(o => o.operatorID);
+const workflow = { rid: "wf", name: "Sales", headVno: 1, readonly: false };
+const none = { rename: async () => {} };
 
-const op = (id: string) => ({ operatorID: id, operatorType: "Limit", operatorProperties: {} });
-
-const saves: { spec: WorkflowSpec; expectedHead: number }[] = [];
-let nextVno = 2;
-let deps: EditorDeps;
-
-beforeEach(() => {
-  vi.useFakeTimers();
-  saves.length = 0;
-  nextVno = 2;
-  deps = {
-    save: async (_rid, spec, expectedHead) => {
-      saves.push({ spec, expectedHead });
-      return version(nextVno++);
+/** A session's document as the editor gets it, with the session's side of it in the test's hands. */
+function session(doc: Y.Doc) {
+  let state: SyncState = "saved";
+  let refusal: string | undefined;
+  const listeners = new Set<() => void>();
+  const settled: number[] = [];
+  const document: WorkflowDocument = {
+    ...documentOf(doc),
+    state: () => state,
+    refusal: () => refusal,
+    watchState: listener => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
-    rename: async () => {},
+    settle: async () => {
+      settled.push(Date.now());
+      return 7;
+    },
   };
-});
-afterEach(() => vi.useRealTimers());
+  return {
+    document,
+    settled,
+    /** The session reports where what was written stands. */
+    is(next: SyncState, why?: string) {
+      state = next;
+      refusal = why;
+      for (const listener of listeners) listener();
+    },
+  };
+}
 
-const workflow = { rid: "wf", name: "Sales", headVno: 1, spec: EMPTY_SPEC, readonly: false };
+/** Someone else in the session: a second replica, kept level by hand. */
+function someoneElse(doc: Y.Doc) {
+  const theirs = new Y.Doc();
+  const sync = () => {
+    Y.applyUpdate(theirs, Y.encodeStateAsUpdate(doc, Y.encodeStateVector(theirs)));
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(theirs, Y.encodeStateVector(doc)));
+  };
+  sync();
+  return { theirs, sync };
+}
 
-describe("editor store", () => {
-  it("coalesces quick edits into one new version based on the head it saw, and lays out new operators", async () => {
-    const store = createEditorStore(workflow, deps);
-    store.getState().edit(s => addOperator(s, op("a")));
+describe("the workflow editor's store", () => {
+  it("shows what the session's document holds and writes an edit into it", () => {
+    const doc = new Y.Doc();
+    applySpec(doc, addOperator(EMPTY_SPEC, op("a")));
+    const store = createEditorStore(workflow, session(doc).document, none);
+    expect(ids(store.getState().spec)).toEqual(["a"]);
+
     store.getState().edit(s => addOperator(s, op("b")));
-    expect(store.getState().saveState).toBe("pending");
-    expect(store.getState().positions.a).toBeDefined();
-    expect(store.getState().positions.b?.y).toBeGreaterThan(store.getState().positions.a?.y ?? 0);
-    await vi.runAllTimersAsync();
-    expect(saves).toHaveLength(1);
-    expect(saves[0]?.expectedHead).toBe(1);
-    expect(saves[0]?.spec.operators.map(o => o.operatorID)).toEqual(["a", "b"]);
-    expect(store.getState().saveState).toBe("saved");
-    expect(store.getState().headVno).toBe(2);
-  });
-
-  it("keeps moves out of the spec and does not let a version saved elsewhere overwrite waiting edits", async () => {
-    const store = createEditorStore(workflow, deps);
-    store.getState().edit(s => addOperator(s, op("a")));
-    store.getState().move({ a: { x: 500, y: 500 } });
-    store.getState().adopt(EMPTY_SPEC, 5, "Renamed by the agent");
-    expect(store.getState().spec.operators).toHaveLength(1);
-    await vi.runAllTimersAsync();
-    expect(saves[0]?.spec).not.toHaveProperty("positions");
-    store.getState().adopt(EMPTY_SPEC, 5, "Renamed by the agent");
-    expect(store.getState().name).toBe("Renamed by the agent");
-    expect(store.getState().headVno).toBe(5);
-  });
-
-  it("ignores an older version than the one it is on", () => {
-    const store = createEditorStore({ ...workflow, headVno: 4 }, deps);
-    store.getState().adopt(addOperator(EMPTY_SPEC, op("old")), 3);
-    expect(store.getState().spec.operators).toHaveLength(0);
-  });
-
-  it("reports a conflict when the head moved under it, and recovers by adopting the server's version", async () => {
-    deps.save = async () => {
-      throw new CatalogError(409, "head moved");
-    };
-    const store = createEditorStore(workflow, deps);
-    store.getState().edit(s => addOperator(s, op("a")));
-    await vi.runAllTimersAsync();
-    expect(store.getState().saveState).toBe("conflict");
-    store.getState().adopt(EMPTY_SPEC, 1);
-    expect(store.getState().saveState).toBe("saved");
-  });
-
-  it("starts from the person's kept positions and keeps their moves, debounced, outside the spec", async () => {
-    const kept: Record<string, unknown>[] = [];
-    deps.savePositions = async (_rid, positions) => {
-      kept.push(positions);
-    };
-    const spec = addOperator(addOperator(EMPTY_SPEC, op("a")), op("b"));
-    const store = createEditorStore({ ...workflow, spec, positions: { a: { x: 300, y: 300 } } }, deps);
-    expect(store.getState().positions.a).toEqual({ x: 300, y: 300 });
+    expect(ids(specOf(doc))).toEqual(["a", "b"]);
+    expect(ids(store.getState().spec)).toEqual(["a", "b"]);
+    // Every operator has a place on screen, also one the session has not placed yet.
     expect(store.getState().positions.b).toBeDefined();
-    store.getState().move({ b: { x: 1, y: 1 } });
-    store.getState().move({ b: { x: 2, y: 2 } });
-    await vi.runAllTimersAsync();
-    expect(kept).toEqual([{ a: { x: 300, y: 300 }, b: { x: 2, y: 2 } }]);
-    expect(saves).toHaveLength(0);
   });
 
-  it("does nothing while read-only and saves a rename through its own call", async () => {
+  it("shows a spec with its ports spelled out, and writes only what the person changed", () => {
+    const doc = new Y.Doc();
+    // As an agent or the API writes it: no port lists.
+    applySpec(doc, addOperator(EMPTY_SPEC, { ...op("a"), operatorProperties: { limit: 1 } }));
+    const store = createEditorStore(workflow, session(doc).document, none);
+    expect(store.getState().spec.operators[0]?.outputPorts).toEqual([{ portID: "output-0" }]);
+
+    store.getState().edit(s => ({ ...s, operators: s.operators.map(o => ({ ...o, operatorProperties: { limit: 5 } })) }));
+    expect(specOf(doc).operators[0]).toEqual({ ...op("a"), operatorProperties: { limit: 5 } });
+  });
+
+  it("follows what someone else in the session does: an edit, a move", () => {
+    const doc = new Y.Doc();
+    applySpec(doc, addOperator(EMPTY_SPEC, op("a")));
+    const store = createEditorStore(workflow, session(doc).document, none);
+    const { theirs, sync } = someoneElse(doc);
+
+    applySpec(theirs, addOperator(specOf(theirs), op("theirs")));
+    movePositions(theirs, { a: { x: 640, y: 80 } });
+    sync();
+    expect(ids(store.getState().spec)).toEqual(["a", "theirs"]);
+    expect(store.getState().positions.a).toEqual({ x: 640, y: 80 });
+  });
+
+  it("merges an edit made here with one made elsewhere to another property of the same operator", () => {
+    const doc = new Y.Doc();
+    applySpec(doc, addOperator(EMPTY_SPEC, { ...op("a"), operatorProperties: { limit: 1, offset: 0 } }));
+    const store = createEditorStore(workflow, session(doc).document, none);
+    const { theirs, sync } = someoneElse(doc);
+    const set = (spec: WorkflowSpec, key: string, value: number): WorkflowSpec => ({
+      ...spec,
+      operators: spec.operators.map(o => ({ ...o, operatorProperties: { ...o.operatorProperties, [key]: value } })),
+    });
+
+    store.getState().edit(s => set(s, "limit", 5));
+    applySpec(theirs, set(specOf(theirs), "offset", 9));
+    sync();
+    expect(store.getState().spec.operators[0]?.operatorProperties).toEqual({ limit: 5, offset: 9 });
+  });
+
+  it("keeps the spec it has while only the layout changes, so a move recompiles nothing", () => {
+    const doc = new Y.Doc();
+    applySpec(doc, addOperator(EMPTY_SPEC, op("a")));
+    const store = createEditorStore(workflow, session(doc).document, none);
+    const before = store.getState().spec;
+    store.getState().move({ a: { x: 500, y: 500 } });
+    expect(store.getState().spec).toBe(before);
+    expect(store.getState().positions.a).toEqual({ x: 500, y: 500 });
+    expect(positionsOf(doc).a).toEqual({ x: 500, y: 500 });
+  });
+
+  it("says whether what was written has reached the session", () => {
+    const doc = new Y.Doc();
+    const live = session(doc);
+    const store = createEditorStore(workflow, live.document, none);
+    expect(store.getState().saveState).toBe("saved");
+    live.is("pending");
+    expect(store.getState().saveState).toBe("pending");
+    live.is("offline");
+    expect(store.getState().saveState).toBe("offline");
+    live.is("saved");
+    expect(store.getState().saveState).toBe("saved");
+  });
+
+  it("says why the catalog did not take the workflow, for as long as that stands", () => {
+    const live = session(new Y.Doc());
+    const store = createEditorStore(workflow, live.document, none);
+    live.is("refused", "texera://datasets/d@9/files/x.csv does not exist");
+    expect([store.getState().saveState, store.getState().refusal]).toEqual(["refused", "texera://datasets/d@9/files/x.csv does not exist"]);
+    live.is("saved");
+    expect([store.getState().saveState, store.getState().refusal]).toEqual(["saved", undefined]);
+  });
+
+  it("has the session save before something reads the catalog's version", async () => {
+    const live = session(new Y.Doc());
+    const store = createEditorStore(workflow, live.document, none);
+    // It hands back the version the catalog then has, so a run is of exactly that one.
+    expect(await store.getState().flush()).toBe(7);
+    expect(live.settled).toHaveLength(1);
+  });
+
+  it("changes nothing for someone who may only look, and on a version that is only shown", () => {
+    const doc = new Y.Doc();
+    applySpec(doc, addOperator(EMPTY_SPEC, op("a")));
+    const viewer = createEditorStore({ ...workflow, readonly: true }, session(doc).document, none);
+    viewer.getState().edit(s => addOperator(s, op("b")));
+    viewer.getState().move({ a: { x: 1, y: 1 } });
+    viewer.getState().rename("Nope");
+    expect(ids(specOf(doc))).toEqual(["a"]);
+    expect(positionsOf(doc)).toEqual({});
+    expect(viewer.getState().name).toBe("Sales");
+
+    const old = addOperator(addOperator(EMPTY_SPEC, op("x")), op("y"));
+    const shown = createEditorStore({ ...workflow, readonly: true }, fixedDocument(old), none);
+    expect(ids(shown.getState().spec)).toEqual(["x", "y"]);
+    expect(Object.keys(shown.getState().positions).sort()).toEqual(["x", "y"]);
+    expect(shown.getState().saveState).toBe("saved");
+  });
+
+  it("follows the head and the name the catalog reports, and saves a rename through its own call", () => {
     const renames: string[] = [];
-    deps.rename = async (_rid, name) => {
-      renames.push(name);
-    };
-    const store = createEditorStore({ ...workflow, readonly: true }, deps);
-    store.getState().edit(s => addOperator(s, op("a")));
-    store.getState().rename("Nope");
-    expect(store.getState().spec.operators).toHaveLength(0);
-    const writable = createEditorStore(workflow, deps);
-    writable.getState().rename("  Sales 2026 ");
-    expect(writable.getState().name).toBe("Sales 2026");
+    const store = createEditorStore(workflow, session(new Y.Doc()).document, {
+      rename: async (_rid, name) => {
+        renames.push(name);
+      },
+    });
+    store.getState().follow(4, "Renamed elsewhere");
+    expect(store.getState().headVno).toBe(4);
+    expect(store.getState().name).toBe("Renamed elsewhere");
+    store.getState().rename("  Sales 2026 ");
+    expect(store.getState().name).toBe("Sales 2026");
     expect(renames).toEqual(["Sales 2026"]);
+  });
+
+  it("stops following the document once the view is gone", () => {
+    const doc = new Y.Doc();
+    const store = createEditorStore(workflow, session(doc).document, none);
+    store.getState().close();
+    applySpec(doc, addOperator(EMPTY_SPEC, op("late")));
+    expect(ids(store.getState().spec)).toEqual([]);
   });
 });

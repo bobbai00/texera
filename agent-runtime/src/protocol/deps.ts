@@ -1,6 +1,6 @@
 import type { BuildInput, BuiltAgent } from "../agent/build.ts";
+import type { ServiceTokenSource } from "../auth/index.ts";
 import type { UserTokenVerifier } from "../auth/jwt.ts";
-import type { ServiceTokenSource } from "../auth/service-token.ts";
 import type { CatalogClient } from "../catalog/client.ts";
 import type { RuntimeConfig } from "../config.ts";
 import type { Logger } from "../log.ts";

@@ -26,9 +26,7 @@ func (s *Service) Messages(ctx context.Context, caller *auth.Caller, rid uuid.UU
 	if _, err := s.Get(ctx, caller, &conversationKind, rid); err != nil {
 		return nil, "", err
 	}
-	if limit <= 0 || limit > 500 {
-		limit = 200
-	}
+	limit = pageSize(limit, 200, 500)
 	msgs, err := s.Store.ListMessages(ctx, rid, after, limit+1)
 	if err != nil {
 		return nil, "", err

@@ -73,6 +73,7 @@ export type AgentTemplateVersion = {
     content: AgentTemplateSpec;
     message?: string;
     createdBy: Pid;
+    contributors?: Array<Pid>;
     origin?: Origin;
     createdAt: string;
 };
@@ -643,6 +644,7 @@ export type DatasetVersion = {
     content: Manifest;
     message?: string;
     createdBy: Pid;
+    contributors?: Array<Pid>;
     origin?: Origin;
     createdAt: string;
 };
@@ -710,6 +712,10 @@ export type EditWorkflow = {
      * What changed, recorded on the new version.
      */
     message?: string;
+    /**
+     * The people whose edits this version holds, when the platform's live service saves a workflow they edited together: the first is recorded as the version's creator, all of them as its contributors. Refused from anyone else.
+     */
+    onBehalfOf?: Array<Pid>;
 };
 
 export type EngineSpec = {
@@ -782,6 +788,7 @@ export type EnvironmentVersion = {
     content: EnvironmentSpec;
     message?: string;
     createdBy: Pid;
+    contributors?: Array<Pid>;
     origin?: Origin;
     createdAt: string;
 };
@@ -997,6 +1004,20 @@ export type LineageRun = {
 };
 
 /**
+ * A resource's live document, as the live service keeps it between sessions: the working copy several people edit at once. Opaque to the catalog, whose versions stay the truth.
+ */
+export type LiveState = {
+    /**
+     * The version the document was last saved as.
+     */
+    basedOn?: Vno;
+    /**
+     * The encoded document.
+     */
+    state: string;
+};
+
+/**
  * How the runtime's loop runs the agent; the runtime's defaults apply to what is absent.
  */
 export type LoopSpec = {
@@ -1090,6 +1111,7 @@ export type McpServerVersion = {
     content: McpServerSpec;
     message?: string;
     createdBy: Pid;
+    contributors?: Array<Pid>;
     origin?: Origin;
     createdAt: string;
 };
@@ -1280,6 +1302,7 @@ export type ModelVersion = {
     content: Manifest;
     message?: string;
     createdBy: Pid;
+    contributors?: Array<Pid>;
     origin?: Origin;
     createdAt: string;
 };
@@ -1402,6 +1425,7 @@ export type OperatorVersion = {
     content: OperatorSpec;
     message?: string;
     createdBy: Pid;
+    contributors?: Array<Pid>;
     origin?: Origin;
     createdAt: string;
 };
@@ -1847,6 +1871,7 @@ export type SkillVersion = {
     content: SkillSpec;
     message?: string;
     createdBy: Pid;
+    contributors?: Array<Pid>;
     origin?: Origin;
     createdAt: string;
 };
@@ -2124,6 +2149,10 @@ export type Version = {
     content: unknown;
     message?: string;
     createdBy: Pid;
+    /**
+     * Everyone whose edits the version holds, when more than one person made it together in a live session.
+     */
+    contributors?: Array<Pid>;
     origin?: Origin;
     createdAt: string;
 };
@@ -2139,6 +2168,7 @@ export type VersionSummary = {
     digest: Digest;
     message?: string;
     createdBy: Pid;
+    contributors?: Array<Pid>;
     origin?: Origin;
     createdAt: string;
 };
@@ -2298,6 +2328,7 @@ export type WorkflowVersion = {
     content: WorkflowSpec;
     message?: string;
     createdBy: Pid;
+    contributors?: Array<Pid>;
     origin?: Origin;
     createdAt: string;
 };
@@ -5283,6 +5314,10 @@ export type ResourcesSearchData = {
         parent?: Rid;
         project?: Rid;
         origin?: Rid;
+        /**
+         * Only what others shared with the caller: resources they hold a grant on and do not own, in whatever project.
+         */
+        shared?: boolean;
         limit?: number;
         cursor?: string;
     };
@@ -5560,6 +5595,60 @@ export type ResourcesLineageResponses = {
 };
 
 export type ResourcesLineageResponse = ResourcesLineageResponses[keyof ResourcesLineageResponses];
+
+export type ResourcesReadLiveData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/resources/{rid}/live';
+};
+
+export type ResourcesReadLiveErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ResourcesReadLiveError = ResourcesReadLiveErrors[keyof ResourcesReadLiveErrors];
+
+export type ResourcesReadLiveResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: LiveState;
+};
+
+export type ResourcesReadLiveResponse = ResourcesReadLiveResponses[keyof ResourcesReadLiveResponses];
+
+export type ResourcesWriteLiveData = {
+    body: LiveState;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/resources/{rid}/live';
+};
+
+export type ResourcesWriteLiveErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ResourcesWriteLiveError = ResourcesWriteLiveErrors[keyof ResourcesWriteLiveErrors];
+
+export type ResourcesWriteLiveResponses = {
+    /**
+     * There is no content to send for this request, but the headers may be useful.
+     */
+    204: void;
+};
+
+export type ResourcesWriteLiveResponse = ResourcesWriteLiveResponses[keyof ResourcesWriteLiveResponses];
 
 export type ResourcesListVersionsData = {
     body?: never;

@@ -128,6 +128,12 @@
         "contentKind": {
           "$ref": "#/$defs/ContentKind"
         },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
+        },
         "createdAt": {
           "format": "date-time",
           "type": "string"
@@ -1406,6 +1412,12 @@
         "contentKind": {
           "$ref": "#/$defs/ContentKind"
         },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
+        },
         "createdAt": {
           "format": "date-time",
           "type": "string"
@@ -1546,6 +1558,13 @@
         "message": {
           "description": "What changed, recorded on the new version.",
           "type": "string"
+        },
+        "onBehalfOf": {
+          "description": "The people whose edits this version holds, when the platform's live service saves a workflow they edited together: the first is recorded as the version's creator, all of them as its contributors. Refused from anyone else.",
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
         },
         "patch": {
           "items": {
@@ -1699,6 +1718,12 @@
         },
         "contentKind": {
           "$ref": "#/$defs/ContentKind"
+        },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
         },
         "createdAt": {
           "format": "date-time",
@@ -2244,6 +2269,24 @@
       ],
       "type": "object"
     },
+    "LiveState": {
+      "description": "A resource's live document, as the live service keeps it between sessions: the working copy several people edit at once. Opaque to the catalog, whose versions stay the truth.",
+      "properties": {
+        "basedOn": {
+          "$ref": "#/$defs/Vno",
+          "description": "The version the document was last saved as."
+        },
+        "state": {
+          "contentEncoding": "base64",
+          "description": "The encoded document.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
     "LoopSpec": {
       "description": "How the runtime's loop runs the agent; the runtime's defaults apply to what is absent.",
       "properties": {
@@ -2410,6 +2453,12 @@
         },
         "contentKind": {
           "$ref": "#/$defs/ContentKind"
+        },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
         },
         "createdAt": {
           "format": "date-time",
@@ -2828,6 +2877,12 @@
         "contentKind": {
           "$ref": "#/$defs/ContentKind"
         },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
+        },
         "createdAt": {
           "format": "date-time",
           "type": "string"
@@ -3115,6 +3170,12 @@
         },
         "contentKind": {
           "$ref": "#/$defs/ContentKind"
+        },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
         },
         "createdAt": {
           "format": "date-time",
@@ -4006,6 +4067,12 @@
         "contentKind": {
           "$ref": "#/$defs/ContentKind"
         },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
+        },
         "createdAt": {
           "format": "date-time",
           "type": "string"
@@ -4471,6 +4538,13 @@
         "contentKind": {
           "$ref": "#/$defs/ContentKind"
         },
+        "contributors": {
+          "description": "Everyone whose edits the version holds, when more than one person made it together in a live session.",
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
+        },
         "createdAt": {
           "format": "date-time",
           "type": "string"
@@ -4520,6 +4594,12 @@
       "properties": {
         "contentKind": {
           "$ref": "#/$defs/ContentKind"
+        },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
         },
         "createdAt": {
           "format": "date-time",
@@ -4851,6 +4931,12 @@
         },
         "contentKind": {
           "$ref": "#/$defs/ContentKind"
+        },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
         },
         "createdAt": {
           "format": "date-time",

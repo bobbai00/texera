@@ -23,6 +23,8 @@ export interface ScriptedResponse {
   toolCalls?: ScriptedToolCall[];
   /** How the response ends; default `tool-calls` with tool calls, `stop` otherwise. */
   finishReason?: "stop" | "tool-calls" | "length" | "content-filter";
+  /** The pause between the pieces of the stream, for a test that watches an answer arrive. */
+  chunkDelayMs?: number;
 }
 
 function chunksFor(response: ScriptedResponse): Part[] {
@@ -57,7 +59,7 @@ export function scriptedModel(responses: ScriptedResponse[]): MockLanguageModelV
   return new MockLanguageModelV3({
     modelId: "scripted",
     doStream: responses.map((r) => ({
-      stream: simulateReadableStream({ chunks: chunksFor(r) as never[] }),
+      stream: simulateReadableStream({ chunks: chunksFor(r) as never[], chunkDelayInMs: r.chunkDelayMs }),
     })) as never,
   });
 }

@@ -13,6 +13,7 @@ import { useOpenResource } from "../shell/navigation";
 import type { KindViewProps } from "../types";
 import { useWatch } from "../watch";
 import { executionQuery, isLive, PAGE_SIZE, rowsQuery } from "./queries";
+import { OpenError } from "../shell/OpenError";
 
 const TONE: Record<ExecutionStatus["phase"], "neutral" | "success" | "danger" | "warning"> = {
   pending: "neutral",
@@ -65,7 +66,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["resource", ref.rid] }),
   });
   const [tab, setTab] = useState("results");
-  if (error) return <ErrorNote error={error} prefix="Could not open this execution" className="m-4" />;
+  if (error) return <OpenError error={error} kind="execution" />;
   if (!x) return <Skeleton className="m-4 h-64" />;
   const status = x.status ?? { phase: "pending" as const };
   const kept = x.metadata.labels?.["texera.keep"] === "true";

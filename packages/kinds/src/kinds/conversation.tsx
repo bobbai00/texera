@@ -4,7 +4,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { conversationsListMessagesOptions, conversationsResourcesOptions } from "@texera/catalog-client/query";
 import type { ConversationStatus, Setting } from "@texera/catalog-client/types";
-import { Button, EmptyState, ErrorNote, SectionTitle, Skeleton, cn, timeAgo } from "@texera/ui";
+import { Button, EmptyState, SectionTitle, Skeleton, cn, timeAgo } from "@texera/ui";
 import { ArrowUpRight, MessagesSquare } from "lucide-react";
 import { lazy } from "react";
 import { chatSettingsQuery, resourceQuery, SOURCE_LABEL } from "../queries";
@@ -15,6 +15,7 @@ import { metaLine } from "../shell/MetaLine";
 import { useOpenResource } from "../shell/navigation";
 import type { KindSpec, KindViewProps } from "../types";
 import { isKindId } from "../registry";
+import { OpenError } from "../shell/OpenError";
 
 function ConversationView({ ref, mode }: KindViewProps) {
   const { data, error } = useQuery(resourceQuery(ref.rid));
@@ -22,7 +23,7 @@ function ConversationView({ ref, mode }: KindViewProps) {
   const { data: resources } = useQuery(conversationsResourcesOptions({ path: { rid: ref.rid } }));
   const { data: settings } = useQuery(chatSettingsQuery(ref.rid));
   const { expand } = useOpenResource();
-  if (error) return <ErrorNote error={error} prefix="Could not open this chat" className="m-4" />;
+  if (error) return <OpenError error={error} kind="conversation" />;
   if (!data) return <Skeleton className="m-4 h-64" />;
   return (
     <div className="flex h-full min-h-0 flex-col" data-conversation-view={ref.rid}>

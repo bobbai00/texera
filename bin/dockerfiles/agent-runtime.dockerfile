@@ -30,6 +30,7 @@ COPY package.json bun.lock ./
 COPY api/package.json api/
 COPY packages/ packages/
 COPY agent-runtime/package.json agent-runtime/
+COPY live/package.json live/
 COPY frontend-next/package.json frontend-next/
 COPY bio-mcp-service/package.json bio-mcp-service/
 RUN bun install --frozen-lockfile

@@ -1,7 +1,7 @@
 // The conversation view model: messages made of parts, built from the catalog's history
 // and from AG-UI events as a turn streams. Pure; the hook feeds it.
 
-import type { Message as CatalogMessage } from "@texera/catalog-client/types";
+import type { Message as CatalogMessage, MessagePart } from "@texera/catalog-client/types";
 import { isKindId, isUri, type KindId, refKey, refOf, type ResourceRef, uriOf } from "@texera/kinds";
 import type { AgUiEvent, AgUiMessage, JsonPatchOperation } from "./agui/types";
 
@@ -35,6 +35,8 @@ export interface ChatMessage {
   model?: string;
   /** The person whose message this is, or whose turn an assistant message answered. */
   author?: string;
+  /** A person's message that asked the agent nothing: said to the people in the chat. */
+  note?: boolean;
   seq?: number;
   createdAt?: string;
 }
@@ -83,6 +85,11 @@ export function messageContent(text: string, attachments: { ref: ResourceRef; na
     ...(text ? [{ type: "text", text }] : []),
     ...attachments.map(a => ({ type: "binary", mimeType: "application/vnd.texera.resource", url: uriOf(a.ref), filename: a.name })),
   ];
+}
+
+/** What a person said as the catalog keeps it: the words, and what they attached by its URI and name. */
+export function messageParts(text: string, attachments: { ref: ResourceRef; name: string }[]): MessagePart[] {
+  return [...(text ? [{ type: "text" as const, text }] : []), ...attachments.map(a => ({ type: "resource" as const, resource: uriOf(a.ref), text: a.name }))];
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
@@ -394,6 +401,8 @@ export function fromHistory(messages: CatalogMessage[]): ChatMessage[] {
       seq: m.seq,
       createdAt: m.createdAt,
       author: m.author,
+      // A person's message of no turn asked the agent nothing.
+      ...(m.role === "user" && !m.turn ? { note: true } : {}),
       ...(m.template ? { template: m.template } : {}),
       ...(m.modelEndpoint ? { model: m.modelEndpoint } : {}),
     });

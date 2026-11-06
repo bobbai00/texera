@@ -142,3 +142,11 @@ def test_the_mcp_server(alice, anon, project):
     _, resolved = alice.mcp("tools/call", {"name": "resolve_uri", "arguments": {"uri": wf["metadata"]["uri"] + "@1"}})
     assert resolved["result"]["structuredContent"]["version"]["vno"] == 1
     assert anon.mcp("tools/list")[0] == 401
+
+
+def test_a_resource_page_is_the_apps_to_serve_whatever_its_kind(alice):
+    """A link to a resource's page opens the app. The page of an MCP server is one of them:
+    its address starts like the MCP endpoint's (/mcp/catalog) and is not the endpoint's."""
+    for plural in ("workflows", "mcp-servers", "model-endpoints"):
+        with urllib.request.urlopen(f"{alice.gw}/{plural}/00000000-0000-4000-8000-000000000000", timeout=30) as page:
+            assert page.status == 200 and "text/html" in page.headers["Content-Type"], plural

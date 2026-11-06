@@ -79,3 +79,5 @@ For any other operator, `list_operators` with `q` set to its name returns its JS
 ## Editing
 
 `edit_workflow` applies an RFC 6902 JSON Patch to the head spec: `[{"op": "add", "path": "/operators/-", "value": {...}}, {"op": "add", "path": "/links/-", "value": {...}}, {"op": "replace", "path": "/operators/1/operatorProperties/limit", "value": 5}]`. Indexes follow the operator order `get_workflow` shows. Validate after editing, then rerun: earlier results are stale.
+
+People can have the workflow open in the editor and change it while you work. Pass `expectedHead`: the `head` that `get_workflow`, or your own last edit, returned. If someone changed the workflow in between, the edit is refused as a conflict instead of landing on the wrong operator; `get_workflow` again and redo the edit on what is there now.

@@ -1,7 +1,7 @@
 import type { Message } from "@texera/catalog-client/types";
 import { describe, expect, it } from "vitest";
 import type { AgUiEvent } from "./agui/types";
-import { applyEvent, applyPatch, type ChatState, EMPTY_STATE, extractResourceRefs, fromHistory, messageContent, resourcesOf, settled, toolFailure, visibleParts, writersOf } from "./model";
+import { applyEvent, applyPatch, type ChatState, EMPTY_STATE, extractResourceRefs, fromHistory, messageContent, messageParts, resourcesOf, settled, toolFailure, visibleParts, writersOf } from "./model";
 
 const W = "0b7a1c2d-0000-4000-8000-000000000001";
 const E = "0b7a1c2d-0000-4000-8000-000000000002";
@@ -92,6 +92,17 @@ describe("fromHistory", () => {
       { conversation: "c", seq: 2, role: "user", author: "p-bob", parts: [{ type: "text", text: "hello" }], createdAt: "2026-11-04T00:00:01Z" },
     ]);
     expect([mine?.author, theirs?.author]).toEqual(["p-alice", "p-bob"]);
+  });
+
+  it("tells what a person said to the people in the chat from what they asked the agent", () => {
+    const base = { conversation: "c", author: "p-alice", createdAt: "2026-11-04T00:00:00Z" };
+    const [note, asked, answer] = fromHistory([
+      { ...base, seq: 1, role: "user", parts: [{ type: "text", text: "Use the 2020 data." }] },
+      { ...base, seq: 2, role: "user", turn: "t1", parts: [{ type: "text", text: "Run it." }] },
+      { ...base, seq: 3, role: "assistant", turn: "t1", parts: [{ type: "text", text: "Done." }] },
+    ]);
+    // A message of no turn asked the agent nothing: a note.
+    expect([note?.note, asked?.note, answer?.note]).toEqual([true, undefined, undefined]);
   });
 
   it("rebuilds messages from the catalog, attaching results to calls and keeping the template", () => {
@@ -226,5 +237,16 @@ describe("an attachment in the history", () => {
       { type: "resource", ref: { kind: "dataset", rid: W, vno: 1 } },
     ]);
     expect(resourcesOf(message ? [message] : [])).toEqual([{ kind: "dataset", rid: W, vno: 1 }]);
+  });
+});
+
+describe("messageParts", () => {
+  it("is what a person said as the catalog keeps it: the words, and what they attached by its URI and name", () => {
+    const D = "0b7a1c2d-0000-4000-8000-00000000000d";
+    expect(messageParts("Look at this.", [{ ref: { kind: "dataset", rid: D, vno: 2 }, name: "sales.csv" }])).toEqual([
+      { type: "text", text: "Look at this." },
+      { type: "resource", resource: `texera://datasets/${D}@2`, text: "sales.csv" },
+    ]);
+    expect(messageParts("", [{ ref: { kind: "dataset", rid: D }, name: "sales.csv" }])).toEqual([{ type: "resource", resource: `texera://datasets/${D}`, text: "sales.csv" }]);
   });
 });

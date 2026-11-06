@@ -2,6 +2,136 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-05 (session 9, on the Mac): people together: sharing, a workflow and a chat shared live, the agent beside every page
+
+Asked for sharing as a core experience (a project, a chat, a workflow or a dataset shared with
+another person, who finds it and opens it, with access decided as everywhere else: by the
+catalog asking OpenFGA; there is no access control service of our own any more),
+collaboration on a chat and on a workflow that reuses an existing CRDT, an icon of the people
+on a page at its top right, and a chat agent on every resource's page that knows the page; all
+of it clean and minimal, and tested on every kind of page. Three research passes and two rounds
+of design discussion came first; no code was written until the design was agreed.
+
+What was decided:
+- **The catalog stays the authority.** Who may do what and what the versions are is the
+  catalog's. A live session is a working copy of one resource, named by its rid.
+- **A chat needs no CRDT.** Its messages are an ordered log the catalog already holds and
+  streams; the session of a chat carries who is there. No product found models a chat as a
+  CRDT.
+- **A workflow is a Yjs document** in a session of Hocuspocus 4.8 (MIT), on Bun. Y-Sweet is
+  orphaned, y/hub and Liveblocks' server are AGPL, the Go port is too young. Loading and
+  saving belong to the service, never to a browser: the stale saves of a leader browser are
+  what other products had to fix later.
+- One layout for everyone; every save stays a version; a message asks the agent unless it is
+  posted as a note; the chat beside a page is bound to nothing.
+
+Done:
+- **The agent beside a page.** A chat button at the bottom right of every resource's page
+  (`packages/chat/src/ChatDock.tsx`, mounted once in the shell). The chat is an ordinary
+  conversation; each message carries AG-UI's `context` of the run: the kind, the name and the
+  URI of what is on screen, the version when one is open, and what the page adds (the operator
+  selected on a canvas). The runtime writes it into the turn's state, and the agent's prompt
+  says what "this" then means. The page settles before the agent is asked: a workflow's
+  session saves, so the agent reads what is on screen. The app remembers the chat used beside
+  each page (`preferences.dock`); the chat is made in the resource's project when the person
+  may write there.
+- **The live service** (`live/`, a workspace member; `@texera/service-auth` holds the service
+  token it shares with the runtime). One session per resource behind the gateway at
+  `/live/sessions`; the token goes in the protocol's first message and the service asks the
+  catalog who it is and what they may do, again every half minute. Its rules are one file,
+  `live/src/rooms.ts`, and `live/README.md` states them.
+- **Who is here.** Everyone in a session says who they are in its awareness state; the page of
+  every kind and every chat shows them at its top right, the person first, each with a colour
+  of their own (`shell/Presence.tsx`).
+- **A workflow edited together.** `@texera/workflow-model/live` is the spec as a document:
+  operators and links keyed by id, an operator's properties a map of their own, the layout
+  beside them and not in the spec. Everything that writes goes through one function,
+  `applyChange(doc, from, to)`: a person's edit, a version written elsewhere, the first load.
+  The editor's store holds no draft and saves nothing (`workflow/document.ts`,
+  `workflow/editor.ts`): it mirrors the document. The service saves a moment after the edits
+  stop, as a version that names the people whose edits it holds (`onBehalfOf`, `contributors`
+  on a version; migration 0005 with the table that keeps a session's document), follows the
+  workflow's event stream and takes a version written elsewhere into the open document, and
+  says in the session's own awareness state how the document stands with the catalog. A
+  version the catalog refuses leaves the edits on screen with "Not saved" and why, for
+  everyone; such a document is not let go when the last person leaves, and the save is tried
+  again. `Run` asks the session to save and runs the version it answers with.
+- **A chat together.** The runtime keeps the answer in the catalog while it streams
+  (`run/keeper.ts`, every 400 ms, one write at a time), so everyone else in the chat watches
+  it arrive. In a chat several people write in, the model reads each message under its
+  writer's name and is told whom it is answering. A note is a message of no turn, posted from
+  the box without asking the agent, also while someone else's turn runs.
+- **Sharing.** A Share button at the top right of every page: the link, and who it is shared
+  with. `GET /resources?shared=true` and a "Shared with me" page in the sidebar: what a person
+  holds a grant on and does not own, whatever its kind and project. A link to something not
+  shared says so (`shell/OpenError.tsx`). A watch asks the right to read again on every beat,
+  and a page turned away by the watch or by the session asks the catalog again, so a grant
+  taken back closes an open page within half a minute.
+- **The agent beside people.** The workflow skill and the `edit_workflow` tool tell the agent
+  to name the head it read (`expectedHead`); an edit against a head that moved is a conflict,
+  refused before the patch is tried on a spec the agent never read.
+
+Found on the way and fixed:
+- **Grants could be lost on their way to the authorizer.** Two relays of the outbox at the
+  same moment (two requests, or a request and the timer) sent the same entries; OpenFGA
+  refuses a request that holds a tuple already there, the adapter read that as "already
+  written", and a new tuple that shared the request was dropped and marked done. An owner was
+  then refused on their own resource for good. It showed when four browser files ran at once.
+  The relay now runs one at a time and applies entries in order (of several about one tuple,
+  the newest stands); the adapter has OpenFGA ignore duplicates itself, pinned by the port's
+  contract test; and every start of the catalog writes the authorizer's whole copy again
+  (`Relay.Rebuild`, from the store's `AllTuples`, which nothing called), which put back what
+  this stack had lost.
+- The gateway's `/mcp` route also matched the app's `/mcp-servers/...` pages, which then came
+  back blank (401). The MCP and live routes are prefixes with the trailing slash.
+- A list asked for more than 200 items silently returned 50, so the operator palette showed 50
+  of 165 operators. A page now holds what was asked for up to the most, and the palette reads
+  every page.
+- Two chats started in the same second in one project collided on their name.
+- The share form offered to take back the owner's own grant, which the catalog refuses.
+- The places each person kept for a canvas in their preferences are no longer read; migration
+  0006 drops them.
+
+Verified, on OrbStack's cluster, upgraded in place from the stack session 8 left (no wipe;
+Alice's own chats, workflows and units were kept, and the scenarios' leftovers removed):
+- Unit: `make generate` reproduces the tree; catalog `gofmt`, `go vet`, `go test` (new suites:
+  the live document and the versions saved for people, the shared list, a page of the size
+  asked for, a watch that ends with the right to read, a stale patch as a conflict, the relay,
+  the rebuild over the real tables, migration 0006) and the authorizer's contract test against
+  the stack's OpenFGA; runtime 75 tests, types, lint; live service 15 tests, types, lint;
+  frontend 154 tests and types.
+- `k8s.sh check` on the final images: 35 scenarios (new: the shared list, a watch ended by a
+  grant taken back, a note, the live document's routes) and 25 Playwright tests in four files
+  (new: `dock.spec.ts`, `sharing.spec.ts`, `collaboration.spec.ts`, 16 tests; `TESTING.md`
+  says what each proves). The page of every kind, thirteen of them, is covered for the agent
+  beside it, for who is on it, and for a link that was not shared.
+- With the model (Haiku 5.5), by hand: 4 scenarios (`pytest -m model`) and 4 Playwright
+  scenarios. New: asked "what is this dataset" and "what does this workflow do" from beside
+  their pages, the agent read that dataset's file and that workflow and made no other; and
+  asked by Alice for Bob's number plus one, it answered 42 from the note Bob had posted
+  (41), naming both, while Bob watched the answer arrive before the turn ended.
+
+Not verified:
+- **The Compose stack.** `up.sh` and `down.sh` start and stop the live service the way they
+  do the runtime, and the gateway's Compose configuration routes `/live/`, but `test.sh gate`
+  and the `local` scenarios were not run; the cluster was upgraded in place.
+- **The engine's sbt modules** were not rerun (untouched).
+- **The frontend's lint still does not reach `packages/`** (session 8's note); the new files
+  there pass the type check and their tests only.
+- **A restart of the live service while a document is unsaved** loses those edits by design
+  (see `live/README.md`); nothing tests it.
+
+Left out, by decision: other people's cursors and selections on the canvas; text merged inside
+a property (two people typing in one Python operator's code is last write wins); a turn that
+outlives the request of the person who asked, and a stop any member can use; a grant to a
+group expanded in "Shared with me"; more than one live service; approval before the agent
+shares or deletes.
+
+Next: `test.sh gate` on the Compose stack; the lint over the packages (its own commit); a
+rebuild of the authorizer on request for a catalog too large to rewrite at every start; the
+items left out above, cursors first; a `cancel_execution` tool; smaller tool results and a
+summary of long chats.
+
 ## 2026-11-05 (session 8, on the Mac): built-ins by project, chats that store choices, one MCP server
 
 Asked, after five rounds of design discussion with no code, to implement what was agreed:

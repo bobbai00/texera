@@ -33,6 +33,41 @@ describe("chatContext", () => {
     ]);
   });
 
+  test("says what the person's app shows them, as the app worded it", () => {
+    const text = chatContext({
+      today,
+      project,
+      computingUnit: unit,
+      unavailable: [],
+      app: [
+        { description: "The person is looking at", value: 'workflow "petals" (texera://workflows/w@3)' },
+        { description: "", value: "operator avg is selected" },
+      ],
+    });
+    expect(text.split("\n").slice(4)).toEqual([
+      'The person is looking at: workflow "petals" (texera://workflows/w@3)',
+      "operator avg is selected",
+    ]);
+  });
+
+  test("keeps what the app says to single, bounded lines, and drops what says nothing", () => {
+    const text = chatContext({
+      today,
+      project,
+      unavailable: [],
+      app: [
+        { description: "Looking at", value: `two\nlines ${"x".repeat(2000)}` },
+        { description: "Nothing", value: "   " },
+        ...Array.from({ length: 20 }, (_, i) => ({ description: "More", value: String(i) })),
+      ],
+    });
+    const lines = text.split("\n").slice(4);
+    expect(lines[0]?.startsWith("Looking at: two lines xxx")).toBe(true);
+    expect(lines[0]?.length).toBeLessThanOrEqual("Looking at: ".length + 500);
+    expect(lines).not.toContain("Nothing:");
+    expect(lines.length).toBe(8);
+  });
+
   test("names every server that is missing", () => {
     const text = chatContext({
       today,
@@ -44,5 +79,21 @@ describe("chatContext", () => {
       ],
     });
     expect(text).toContain("the biomcp and lab tools tools");
+  });
+
+  test("in a chat several people write in, says who they are and whom the agent is answering", () => {
+    const text = chatContext({
+      today,
+      project,
+      computingUnit: unit,
+      unavailable: [],
+      people: { names: ["Alice Liddell", "Bob Builder"], asking: "Bob Builder" },
+    });
+    expect(text.split("\n").slice(4)).toEqual([
+      "People in this chat: Alice Liddell and Bob Builder. Each message of theirs starts with its writer's name in brackets; do not start yours that way.",
+      "You are answering Bob Builder: their latest message is the request, and the rest of the chat is context for it.",
+    ]);
+    // One person's chat says nothing of it.
+    expect(chatContext({ today, project, computingUnit: unit, unavailable: [] })).not.toContain("People in this chat");
   });
 });

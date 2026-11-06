@@ -30,6 +30,7 @@ func (s *Server) routeResources() {
 		if f.Origin, err = queryRid(r, "origin"); err != nil {
 			return err
 		}
+		f.Shared = r.URL.Query().Get("shared") == "true"
 		var kind *kinds.Kind
 		if name := r.URL.Query().Get("kind"); name != "" {
 			k, ok := kinds.ByName(name)
@@ -235,6 +236,45 @@ func (s *Server) routeResources() {
 			return err
 		}
 		writeJSON(w, http.StatusOK, page(p.Items, p.NextCursor))
+		return nil
+	})
+
+	// The live document of a resource, kept for the live service between sessions.
+	s.handle("GET "+Prefix+"/resources/{rid}/live", func(w http.ResponseWriter, r *http.Request) error {
+		rid, err := ridParam(r, "rid")
+		if err != nil {
+			return err
+		}
+		l, err := s.svc.LiveState(ctxOf(r), callerOf(r), rid)
+		if err != nil {
+			return err
+		}
+		out := api.LiveState{State: l.State}
+		if l.BasedOn != nil {
+			vno := api.Vno(*l.BasedOn)
+			out.BasedOn = &vno
+		}
+		writeJSON(w, http.StatusOK, out)
+		return nil
+	})
+	s.handle("PUT "+Prefix+"/resources/{rid}/live", func(w http.ResponseWriter, r *http.Request) error {
+		rid, err := ridParam(r, "rid")
+		if err != nil {
+			return err
+		}
+		var body api.LiveState
+		if err := decode(r, &body); err != nil {
+			return err
+		}
+		var basedOn *int
+		if body.BasedOn != nil {
+			n := int(*body.BasedOn)
+			basedOn = &n
+		}
+		if err := s.svc.KeepLiveState(ctxOf(r), callerOf(r), rid, basedOn, body.State); err != nil {
+			return err
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return nil
 	})
 

@@ -7,7 +7,7 @@ import { KindIcon } from "../shell/KindIcon";
 import { useOpenResource } from "../shell/navigation";
 
 /** The library list. Identical for every kind: the point of one envelope. */
-export function ResourceTable({ resources, loading }: { resources: Resource[] | undefined; loading: boolean }) {
+export function ResourceTable({ resources, loading, empty = "Nothing here yet. Ask for one in a chat, or create one." }: { resources: Resource[] | undefined; loading: boolean; empty?: string }) {
   const { expand } = useOpenResource();
   const isBuiltIn = useIsBuiltIn();
   if (loading) {
@@ -20,7 +20,7 @@ export function ResourceTable({ resources, loading }: { resources: Resource[] | 
       </div>
     );
   }
-  if (!resources?.length) return <EmptyState>Nothing here yet. Ask for one in a chat, or create one.</EmptyState>;
+  if (!resources?.length) return <EmptyState>{empty}</EmptyState>;
   return (
     <div className="divide-y overflow-hidden rounded-xl border bg-card" data-resource-table>
       {resources.map(r => {

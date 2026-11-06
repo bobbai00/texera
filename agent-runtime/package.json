@@ -20,6 +20,7 @@
     "@ai-sdk/openai-compatible": "3.0.84",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@texera/catalog-client": "workspace:*",
+    "@texera/service-auth": "workspace:*",
     "ai": "7.0.162",
     "hono": "4.13.16",
     "jose": "6.2.15",

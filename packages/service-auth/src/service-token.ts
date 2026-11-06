@@ -1,9 +1,10 @@
 /**
- * The runtime's own identity at the identity provider: a client-credentials token,
- * cached until shortly before it expires. It accompanies every catalog call so the
- * catalog can trust the `X-Texera-Agent` header that names the acting agent.
+ * A platform service's own identity at the identity provider: a client-credentials token,
+ * cached until shortly before it expires. The agent runtime sends it beside the person's
+ * token, so the catalog trusts the chat turn a call names; the live service calls the catalog
+ * with it, to load and save the documents people edit together.
  */
-/** The subset of `fetch` the runtime needs; lets tests pass a plain function. */
+/** The subset of `fetch` a service needs; lets tests pass a plain function. */
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface ServiceTokenOptions {

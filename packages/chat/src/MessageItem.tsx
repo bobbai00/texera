@@ -1,4 +1,5 @@
 import { KindIcon, PrincipalName, ResourceCard } from "@texera/kinds";
+import { cn } from "@texera/ui";
 import { memo } from "react";
 import { type ChatMessage, visibleParts } from "./model";
 import { ErrorPart, HandoffPart, ReasoningPart, TextPart, ToolCallPart } from "./parts";
@@ -27,16 +28,27 @@ export const MessageItem = memo(function MessageItem({
   if (message.role === "user") {
     const texts = message.parts.filter(p => p.type === "text");
     const resources = message.parts.filter(p => p.type === "resource");
+    const writer = showAuthor ? message.author : undefined;
     return (
       <div className="space-y-2" data-message-role="user">
-        {showAuthor && message.author && (
-          <div className="flex justify-end text-2xs font-medium tracking-wide text-muted-foreground uppercase" data-message-author={message.author}>
-            <PrincipalName pid={message.author} />
+        {(writer || message.note) && (
+          <div className="flex justify-end gap-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
+            {writer && (
+              <span data-message-author={writer}>
+                <PrincipalName pid={writer} />
+              </span>
+            )}
+            {message.note && (
+              <span title="Said to the people in this chat; the agent was not asked" data-message-note>
+                {writer ? "· note" : "note"}
+              </span>
+            )}
           </div>
         )}
         {texts.length > 0 && (
           <div className="flex justify-end">
-            <div className="max-w-[85%] space-y-2 rounded-2xl bg-secondary px-4 py-2.5 text-sm whitespace-pre-wrap">
+            {/* What was asked of the agent is filled in; a note to the people in the chat is outlined. */}
+            <div className={cn("max-w-[85%] space-y-2 rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap", message.note ? "border border-dashed" : "bg-secondary")}>
               {texts.map((p, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: parts are positional
                 <p key={i}>{p.text}</p>

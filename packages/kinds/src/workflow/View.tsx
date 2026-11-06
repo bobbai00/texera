@@ -2,23 +2,28 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { workflowsRun } from "@texera/catalog-client";
 import type { ExecutionStatus } from "@texera/catalog-client/types";
 import { ReactFlowProvider, useReactFlow, useStoreApi } from "@xyflow/react";
-import { Badge, Button, EmptyState, ErrorNote, Select, Skeleton, Tab, TabPanel, Tabs, TabsList, cn, timeAgo } from "@texera/ui";
+import { Badge, Button, EmptyState, ErrorNote, Select, Skeleton, Tab, TabPanel, Tabs, TabsList, timeAgo } from "@texera/ui";
 import { addOperator, type Compilation, freeSpot, newOperator, normalizeSpec, type OperatorOverlay, statusOf, type WorkflowSpec } from "@texera/workflow-model";
 import { AlertTriangle, Blocks, Check, Cpu, GitBranch, History, Loader2, Play, Users, Workflow } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "zustand";
 import { unwrap } from "../api";
-import { keysOf, meQuery, operatorSchemasQuery, unitsQuery } from "../queries";
+import { useRoom } from "../live/room";
+import { keysOf, operatorSchemasQuery, unitsQuery } from "../queries";
 import { ProjectScope, useScope } from "../scope";
 import { Access } from "../shell/Access";
 import { EditableName, KindHeader } from "../shell/KindHeader";
 import { Lineage } from "../shell/Lineage";
 import { metaLine } from "../shell/MetaLine";
+import { OpenError } from "../shell/OpenError";
 import { useOpenResource } from "../shell/navigation";
 import { Versions } from "../shell/Versions";
+import { useTellViewing } from "../shell/viewing";
 import type { KindViewProps } from "../types";
 import { uriOf } from "../uri";
-import { acquireEditor, canvasPositions, type EditorStore, releaseEditor } from "./editor";
+import { useWatch } from "../watch";
+import { fixedDocument, liveDocument, type WorkflowDocument } from "./document";
+import { createEditorStore, type EditorStore } from "./editor";
 import { EditorCanvas } from "./EditorCanvas";
 import { OperatorPalette } from "./OperatorPalette";
 import { PropertyPanel } from "./PropertyPanel";
@@ -29,13 +34,15 @@ const LIVE = new Set<ExecutionStatus["phase"]>(["pending", "provisioning", "runn
 
 /** The workflow workspace: the same view in the side panel next to a chat and as a full page. */
 export default function WorkflowView({ ref, mode }: KindViewProps) {
+  const queryClient = useQueryClient();
   const { data: workflow, error } = useQuery(workflowQuery(ref.rid));
+  // A version saved by anyone, a rename: the page follows the workflow as the catalog has it.
+  useWatch(ref.rid, { onResource: r => queryClient.setQueryData(workflowQuery(ref.rid).queryKey, r as never) });
   const [vno, setVno] = useState<number | undefined>(ref.vno);
   const pinned = workflow !== undefined && vno !== undefined && vno !== workflow.metadata.head;
   const version = useQuery({ ...versionSpecQuery(ref.rid, vno ?? 0), enabled: pinned });
-  if (error || version.error) return <ErrorNote error={error ?? version.error} prefix="Could not open this workflow" className="m-4" />;
+  if (error || version.error) return <OpenError error={error ?? version.error} kind="workflow" />;
   if (!workflow || (pinned && !version.data)) return <Skeleton className="m-4 h-[calc(100%-2rem)]" />;
-  const spec = pinned ? (version.data as WorkflowSpec) : normalizeSpec(workflow.spec);
   return (
     // What the editor lists (operators, datasets, credentials, units) is what the workflow's own
     // project can use, wherever the person is working.
@@ -47,14 +54,44 @@ export default function WorkflowView({ ref, mode }: KindViewProps) {
         name={workflow.metadata.name}
         meta={metaLine("workflow", workflow.metadata)}
         headVno={workflow.metadata.head}
-        spec={spec}
-        specVno={pinned ? (vno as number) : workflow.metadata.head}
-        pinned={pinned}
+        shown={pinned ? (version.data as WorkflowSpec) : undefined}
+        fallback={normalizeSpec(workflow.spec)}
         onPin={setVno}
-        defaultUnit={spec.defaultComputingUnit}
       />
     </ProjectScope>
   );
+}
+
+/** How long the page waits for the workflow's session before it shows the workflow without one. */
+const JOIN_WITHIN_MS = 8000;
+
+/**
+ * The document the editor shows. The head is edited in the workflow's live session, with
+ * whoever else is there; an older version is only shown. A session that cannot be joined
+ * leaves the head on screen as the catalog has it, to look at.
+ */
+function useWorkflowDocument(rid: string, shown: WorkflowSpec | undefined, fallback: WorkflowSpec): { document?: WorkflowDocument; readonly: boolean; unreachable: boolean } {
+  const room = useRoom(shown ? undefined : rid);
+  const [joined, setJoined] = useState(false);
+  const [unreachable, setUnreachable] = useState(false);
+  useEffect(() => {
+    if (!room) return;
+    const on = () => setJoined(true);
+    if (room.isSynced) on();
+    room.on("synced", on);
+    const giveUp = setTimeout(() => setUnreachable(true), JOIN_WITHIN_MS);
+    return () => {
+      room.off("synced", on);
+      clearTimeout(giveUp);
+      setJoined(false);
+    };
+  }, [room]);
+  return useMemo(() => {
+    if (shown) return { document: fixedDocument(shown), readonly: true, unreachable: false };
+    if (room && joined) return { document: liveDocument(room), readonly: room.authorizedScope === "readonly", unreachable: false };
+    if (unreachable) return { document: fixedDocument(fallback), readonly: true, unreachable: true };
+    return { readonly: true, unreachable: false };
+  }, [shown, room, joined, unreachable, fallback]);
 }
 
 function Editor({
@@ -63,49 +100,43 @@ function Editor({
   name,
   meta,
   headVno,
-  spec,
-  specVno,
-  pinned,
+  shown,
+  fallback,
   onPin,
-  defaultUnit,
 }: {
   rid: string;
   mode: "panel" | "page";
   name: string;
   meta: string;
   headVno: number;
-  spec: WorkflowSpec;
-  specVno: number;
-  pinned: boolean;
+  /** An older version to show instead of the head. */
+  shown?: WorkflowSpec;
+  /** The head as the catalog has it, shown when the workflow's session cannot be joined. */
+  fallback: WorkflowSpec;
   onPin: (vno: number | undefined) => void;
-  defaultUnit?: string;
 }) {
   const queryClient = useQueryClient();
-  const [store, setStore] = useState<EditorStore>();
-  // The person's own layout of this canvas comes from their preferences, loaded once.
-  const { data: me } = useQuery(meQuery());
-  const ready = me !== undefined;
+  const { document, readonly, unreachable } = useWorkflowDocument(rid, shown, fallback);
+  // The store is made once per document; the head and the name reach it through follow below.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above
+  const store = useMemo(() => (document ? createEditorStore({ rid, name, headVno, readonly }, document) : undefined), [document, readonly]);
+  useEffect(() => () => store?.getState().close(), [store]);
   useEffect(() => {
-    if (!me) return;
-    const s = acquireEditor({ rid, name, headVno: specVno, spec, readonly: pinned, positions: canvasPositions(me.preferences, rid) });
-    setStore(s);
-    return () => releaseEditor(rid);
-    // The store is created once per (rid, pinned version) when the preferences are known; later specs arrive through adopt below.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: see above
-  }, [rid, pinned, ready]);
+    store?.getState().follow(headVno, name);
+  }, [store, headVno, name]);
   useEffect(() => {
-    store?.getState().adopt(spec, specVno, name);
-  }, [store, spec, specVno, name]);
-  useEffect(() => {
-    // A save made a version: the envelope and the lists follow without a refetch storm.
-    return store?.subscribe((state, previous) => {
-      if (state.headVno !== previous.headVno) for (const key of keysOf(rid)) queryClient.invalidateQueries({ queryKey: key });
-    });
-  }, [store, queryClient, rid]);
+    // A new version: the lists that name it follow.
+    for (const key of keysOf(rid)) if (key[0] !== "resource") queryClient.invalidateQueries({ queryKey: key });
+  }, [headVno, queryClient, rid]);
   if (!store) return <Skeleton className="m-4 h-[calc(100%-2rem)]" />;
   return (
     <ReactFlowProvider>
-      <EditorLayout store={store} mode={mode} meta={meta} headVno={headVno} pinned={pinned} onPin={onPin} defaultUnit={defaultUnit} />
+      {unreachable && (
+        <p className="border-b bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground" data-session-unreachable>
+          The workflow's live session cannot be reached, so it is shown as it was last saved and cannot be edited right now.
+        </p>
+      )}
+      <EditorLayout store={store} mode={mode} meta={meta} headVno={headVno} pinned={shown !== undefined} onPin={onPin} defaultUnit={store.getState().spec.defaultComputingUnit} />
     </ReactFlowProvider>
   );
 }
@@ -153,9 +184,16 @@ function EditorLayout({
   const name = useStore(store, s => s.name);
   const selected = useStore(store, s => s.selected);
   const readonly = useStore(store, s => s.readonly);
+  const refusal = useStore(store, s => s.refusal);
   const vno = useStore(store, s => s.headVno);
   const queryClient = useQueryClient();
   const scope = useScope();
+  // An agent asked about this page is told which operator is in focus, and reads the workflow
+  // as it is on screen: an edit still waiting is saved first.
+  const settle = useCallback(async () => {
+    await store.getState().flush();
+  }, [store]);
+  useTellViewing(mode === "page" && selected ? `the operator ${selected} is selected` : undefined, mode === "page" ? settle : undefined);
   const { data: schemas } = useQuery(operatorSchemasQuery(scope));
   const { data: units } = useQuery(unitsQuery(scope));
   const [unitPick, setUnitPick] = useState<string | undefined>(() => defaultUnit ?? rememberedUnit());
@@ -174,9 +212,10 @@ function EditorLayout({
 
   const run = useMutation({
     mutationFn: async () => {
-      await store.getState().flush();
       if (!unit) throw new Error("No computing unit is available.");
-      return unwrap(workflowsRun({ path: { rid }, body: { vno: store.getState().headVno, computingUnit: unit.metadata.uri, name: `${store.getState().name} v${store.getState().headVno}` } }));
+      // What runs is the version the session has just saved: exactly what is on screen.
+      const vno = (await store.getState().flush()) ?? store.getState().headVno;
+      return unwrap(workflowsRun({ path: { rid }, body: { vno, computingUnit: unit.metadata.uri, name: `${store.getState().name} v${vno}` } }));
     },
     onSuccess: execution => {
       queryClient.invalidateQueries({ queryKey: [{ _id: "workflowsListExecutions", path: { rid } }] });
@@ -260,6 +299,12 @@ function EditorLayout({
           </>
         }
       />
+      {refusal !== undefined && (
+        // Said in full, to everyone in the session: the edits stay on screen and are not a version.
+        <p className="border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive" data-not-saved>
+          Not saved: {refusal}. The edits stay here; they become a version once this is put right.
+        </p>
+      )}
       {run.error && <ErrorNote error={run.error} prefix="Could not start the execution" className="m-3" />}
       <Tabs value={tab} onValueChange={v => setTab(String(v))} className="flex min-h-0 flex-1 flex-col">
         <TabsList>
@@ -345,23 +390,31 @@ function Executions({ rid, onOpen }: { rid: string; onOpen: (eid: string) => voi
   );
 }
 
+/** Where the workflow on screen stands: saved as a version, on its way there, or kept from it and why. */
 function SaveIndicator({ store }: { store: EditorStore }) {
   const state = useStore(store, s => s.saveState);
-  const error = useStore(store, s => s.saveError);
-  if (state === "failed" || state === "conflict")
+  const refusal = useStore(store, s => s.refusal);
+  const renameError = useStore(store, s => s.saveError);
+  if (state === "refused" || renameError)
     return (
-      <span className="inline-flex items-center gap-1 text-destructive" title={error}>
-        <AlertTriangle className="size-3" /> {state === "conflict" ? "Head moved" : "Not saved"}
+      <span className="inline-flex items-center gap-1 text-destructive" title={state === "refused" ? refusal : renameError} data-save-state="refused">
+        <AlertTriangle className="size-3" /> Not saved
+      </span>
+    );
+  if (state === "offline")
+    return (
+      <span className="inline-flex items-center gap-1 text-destructive" title="Edits are kept here and sent when the connection is back." data-save-state="offline">
+        <AlertTriangle className="size-3" /> Offline
       </span>
     );
   if (state === "saved")
     return (
-      <span className={cn("inline-flex items-center gap-1")}>
+      <span className="inline-flex items-center gap-1" data-save-state="saved">
         <Check className="size-3" /> Saved
       </span>
     );
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className="inline-flex items-center gap-1" data-save-state="pending">
       <Loader2 className="size-3 animate-spin" /> Saving
     </span>
   );

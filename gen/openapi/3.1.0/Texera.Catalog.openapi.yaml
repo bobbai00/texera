@@ -3214,6 +3214,13 @@ paths:
           schema:
             $ref: '#/components/schemas/Rid'
           explode: false
+        - name: shared
+          in: query
+          required: false
+          description: 'Only what others shared with the caller: resources they hold a grant on and do not own, in whatever project.'
+          schema:
+            type: boolean
+          explode: false
         - name: limit
           in: query
           required: false
@@ -3242,7 +3249,7 @@ paths:
                 $ref: '#/components/schemas/Error'
       x-mcp:
         tool: search_resources
-        description: "Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, environments, operators, conversations. Filter by kind or text. In a chat a search covers the chat's project and the built-ins; pass scope to look in another project (kind project lists them all)."
+        description: "Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, environments, operators, conversations. Filter by kind or text. In a chat a search covers the chat's project and the built-ins; pass scope to look in another project (kind project lists them all). Pass shared=true for what other people shared with the person."
         readOnlyHint: true
       x-texera-permission: list
   /catalog/v1/resources/resolve:
@@ -3550,6 +3557,55 @@ paths:
         description: 'Get the lineage of a resource or version: what it was derived from, which executions used or produced it, upstream and downstream.'
         readOnlyHint: true
       x-texera-permission: read
+  /catalog/v1/resources/{rid}/live:
+    get:
+      operationId: Resources_readLive
+      description: The live document of a resource, for the platform's live service.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveState'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: service
+    put:
+      operationId: Resources_writeLive
+      description: Keeps the live document of a resource, for the platform's live service.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LiveState'
+      x-texera-permission: service
   /catalog/v1/resources/{rid}/versions:
     get:
       operationId: Resources_listVersions
@@ -4110,7 +4166,7 @@ paths:
               $ref: '#/components/schemas/EditWorkflow'
       x-mcp:
         tool: edit_workflow
-        description: Edit a workflow by applying an RFC 6902 JSON Patch to its head spec (paths like /operators/- or /links/-), or by giving a full new spec; creates a new version and returns it. Validate afterwards with validate_workflow.
+        description: 'Edit a workflow by applying an RFC 6902 JSON Patch to its head spec (paths like /operators/- or /links/-), or by giving a full new spec; creates a new version and returns it. Pass expectedHead, the head you read, so an edit someone made in between is not written over: on a conflict, read the workflow again and redo the edit. Validate afterwards with validate_workflow.'
         readOnlyHint: false
         destructiveHint: false
       x-texera-permission: write
@@ -4689,6 +4745,10 @@ components:
           type: string
         createdBy:
           $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
         origin:
           $ref: '#/components/schemas/Origin'
         createdAt:
@@ -5577,6 +5637,10 @@ components:
           type: string
         createdBy:
           $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
         origin:
           $ref: '#/components/schemas/Origin'
         createdAt:
@@ -5661,6 +5725,11 @@ components:
         message:
           type: string
           description: What changed, recorded on the new version.
+        onBehalfOf:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
+          description: "The people whose edits this version holds, when the platform's live service saves a workflow they edited together: the first is recorded as the version's creator, all of them as its contributors. Refused from anyone else."
       description: 'An edit of a workflow: a JSON Patch over the head spec, or a full new spec.'
     EngineSpec:
       type: object
@@ -5785,6 +5854,10 @@ components:
           type: string
         createdBy:
           $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
         origin:
           $ref: '#/components/schemas/Origin'
         createdAt:
@@ -6147,6 +6220,19 @@ components:
         facets:
           type: object
           additionalProperties: {}
+    LiveState:
+      type: object
+      required:
+        - state
+      properties:
+        basedOn:
+          $ref: '#/components/schemas/Vno'
+          description: The version the document was last saved as.
+        state:
+          type: string
+          contentEncoding: base64
+          description: The encoded document.
+      description: "A resource's live document, as the live service keeps it between sessions: the working copy several people edit at once. Opaque to the catalog, whose versions stay the truth."
     LoopSpec:
       type: object
       properties:
@@ -6289,6 +6375,10 @@ components:
           type: string
         createdBy:
           $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
         origin:
           $ref: '#/components/schemas/Origin'
         createdAt:
@@ -6589,6 +6679,10 @@ components:
           type: string
         createdBy:
           $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
         origin:
           $ref: '#/components/schemas/Origin'
         createdAt:
@@ -6790,6 +6884,10 @@ components:
           type: string
         createdBy:
           $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
         origin:
           $ref: '#/components/schemas/Origin'
         createdAt:
@@ -7427,6 +7525,10 @@ components:
           type: string
         createdBy:
           $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
         origin:
           $ref: '#/components/schemas/Origin'
         createdAt:
@@ -7753,6 +7855,11 @@ components:
           type: string
         createdBy:
           $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
+          description: Everyone whose edits the version holds, when more than one person made it together in a live session.
         origin:
           $ref: '#/components/schemas/Origin'
         createdAt:
@@ -7784,6 +7891,10 @@ components:
           type: string
         createdBy:
           $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
         origin:
           $ref: '#/components/schemas/Origin'
         createdAt:
@@ -8019,6 +8130,10 @@ components:
           type: string
         createdBy:
           $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
         origin:
           $ref: '#/components/schemas/Origin'
         createdAt:

@@ -172,7 +172,8 @@ export function EditorCanvas({
         minZoom={0.1}
         colorMode="system">
         <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} />
-        {!compact && <MiniMap pannable zoomable className="!rounded-lg !border" />}
+        {/* Top right: the bottom right corner is where the chat about this page opens. */}
+        {!compact && <MiniMap position="top-right" pannable zoomable className="!rounded-lg !border" />}
         <Controls showInteractive={false} className="!rounded-lg !border !shadow-none" />
       </ReactFlow>
     </div>

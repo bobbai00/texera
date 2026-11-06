@@ -164,11 +164,13 @@ type ListFilter struct {
 	Parent  *uuid.UUID
 	Project *uuid.UUID
 	Origin  *uuid.UUID
-	Query   string
-	Fields  map[string]string
-	Labels  map[string]string
-	Limit   int
-	Cursor  string
+	// Shared keeps what others shared with the caller: what they hold a grant on and do not own.
+	Shared bool
+	Query  string
+	Fields map[string]string
+	Labels map[string]string
+	Limit  int
+	Cursor string
 }
 
 // Page is a list with its cursor.
@@ -177,12 +179,22 @@ type Page struct {
 	NextCursor string
 }
 
+// pageSize is how many items a page holds: as many as were asked for, `usual` when nothing
+// was, and never more than `most`. Asking for more than a page holds is asking for a full
+// page, not for the usual one.
+func pageSize(limit, usual, most int) int {
+	switch {
+	case limit <= 0:
+		return usual
+	case limit > most:
+		return most
+	}
+	return limit
+}
+
 // List returns the resources of a kind (any kind when nil) the caller may read.
 func (s *Service) List(ctx context.Context, caller *auth.Caller, kind *kinds.Kind, f ListFilter) (*Page, error) {
-	limit := f.Limit
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
+	limit := pageSize(f.Limit, 50, 200)
 	offset := decodeCursor(f.Cursor)
 	scope, err := s.scope(ctx, caller, f)
 	if err != nil {
@@ -191,6 +203,10 @@ func (s *Service) List(ctx context.Context, caller *auth.Caller, kind *kinds.Kin
 	filter := store.ResourceFilter{Scope: scope, ParentRID: f.Parent, ProjectRID: f.Project, OriginConversation: f.Origin, Query: f.Query, Fields: f.Fields, Labels: f.Labels, ReadableBy: readableBy(caller), Limit: limit + 1, Offset: offset}
 	if kind != nil {
 		filter.Kind = kind.Name
+	}
+	if f.Shared {
+		pid := caller.PID()
+		filter.SharedWith = &pid
 	}
 	rs, err := s.Store.ListResources(ctx, filter)
 	if err != nil {
@@ -213,7 +229,7 @@ func (s *Service) scope(ctx context.Context, caller *auth.Caller, f ListFilter) 
 		if p, err := s.Store.GetResource(ctx, *project); err != nil || p.Kind != projectKind.Name {
 			return nil, Invalid("scope must name a project", nil)
 		}
-	} else if f.Project == nil && f.Parent == nil && f.Origin == nil {
+	} else if f.Project == nil && f.Parent == nil && f.Origin == nil && !f.Shared {
 		if chat := s.chatProject(ctx, caller); chat != nil {
 			project = &chat.RID
 		}
@@ -270,6 +286,9 @@ type UpdateSpecInput struct {
 	Message      *string
 	ExpectedHead *int
 	IfMatch      string
+	// OnBehalfOf names the people whose edits the new version holds, when the live service
+	// saves for them.
+	OnBehalfOf []uuid.UUID
 }
 
 // UpdateSpec replaces a spec; a kind that snapshots its spec gets a new version.
@@ -302,9 +321,13 @@ func (s *Service) UpdateSpec(ctx context.Context, caller *auth.Caller, k kinds.K
 	if err != nil {
 		return nil, nil, err
 	}
+	creator, contributors, err := s.authorsOf(ctx, caller, in.OnBehalfOf)
+	if err != nil {
+		return nil, nil, err
+	}
 	updated, v, err := s.Store.UpdateSpec(ctx, store.SpecUpdate{
 		RID: r.RID, Spec: spec, ExpectedHead: expected, IfMatch: in.IfMatch, Versioned: versioned, ContentKind: k.Content, Content: spec,
-		Message: in.Message, CreatedByPID: caller.PID(), Origin: caller.Origin, From: from.String(), References: references,
+		Message: in.Message, CreatedByPID: creator, Contributors: contributors, Origin: caller.Origin, From: from.String(), References: references,
 	})
 	if err != nil {
 		return nil, nil, wrap(err, k.Name)
@@ -411,9 +434,7 @@ func (s *Service) Versions(ctx context.Context, caller *auth.Caller, kind *kinds
 	if err != nil {
 		return nil, nil, "", err
 	}
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
+	limit = pageSize(limit, 50, 200)
 	offset := decodeCursor(cursor)
 	vs, err := s.Store.ListVersions(ctx, rid, limit+1, offset)
 	if err != nil {

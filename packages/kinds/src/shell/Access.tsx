@@ -81,9 +81,12 @@ function Grants({ resource }: { resource: Resource }) {
                 <li key={`${g.principal}:${g.relation}`} className="flex items-center gap-2 px-3 py-2 text-sm" data-grant={g.relation}>
                   <PrincipalName pid={g.principal} className="min-w-0 flex-1 truncate" />
                   <Badge>{g.relation}</Badge>
-                  <Button variant="ghost" size="icon-xs" aria-label="Revoke" onClick={() => revoke.mutate(g.principal)} disabled={revoke.isPending}>
-                    <Trash2 className="size-3.5" />
-                  </Button>
+                  {/* The owner's own grant is the ownership: the catalog does not take it back. */}
+                  {g.principal !== resource.metadata.owner && (
+                    <Button variant="ghost" size="icon-xs" aria-label="Revoke" onClick={() => revoke.mutate(g.principal)} disabled={revoke.isPending}>
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>

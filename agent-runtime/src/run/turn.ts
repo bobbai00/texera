@@ -1,22 +1,28 @@
 /**
  * One turn of a conversation, run statelessly: take the conversation's turn lock, append the
  * person's message, ask the catalog what the chat runs with (its agent, model, servers and
- * unit), build that agent, run the loop with the history as context, stream AG-UI events,
- * persist the assistant message after every step, and release the lock. A handoff sets the
- * conversation's template and the target finishes the same turn on the same stream. The
- * catalog is the only state.
+ * unit), build that agent, run the loop with the history as context, stream AG-UI events to
+ * the person who asked, keep the assistant message in the catalog close behind the stream (the
+ * others in the chat watch it there), and release the lock. A handoff sets the conversation's
+ * template and the target finishes the same turn on the same stream. The catalog is the only
+ * state.
+ *
+ * A chat several people write in is a group chat: the model reads each person's message under
+ * their name and is told whom it is answering.
  *
  * The host's native commands are handled here without a model: `/mode <name or uri>` switches
  * the conversation's template.
  */
 import type { Message as AGUIMessage, RunAgentInput } from "@ag-ui/core";
 import type { BuildInput, BuiltAgent } from "../agent/build.ts";
+import type { ChatPeople } from "../agent/chat-context.ts";
 import { HANDOFF_TOOL, handoffTarget } from "../agent/handoff.ts";
 import { TurnContext } from "../agent/turn-context.ts";
 import { type CatalogClient, CatalogError } from "../catalog/client.ts";
-import { baseUri, type CatalogAuth, type MessagePart, type Turn } from "../catalog/types.ts";
+import { baseUri, type CatalogAuth, type Message, type MessagePart, type Turn } from "../catalog/types.ts";
 import type { Logger } from "../log.ts";
 import { type AGUIEvent, events, StreamMapper } from "./ag-ui-events.ts";
+import { keeper } from "./keeper.ts";
 import { assistantParts, toModelMessages } from "./messages.ts";
 
 export interface TurnDeps {
@@ -24,6 +30,8 @@ export interface TurnDeps {
   log: Logger;
   build: (input: BuildInput) => Promise<BuiltAgent>;
   maxHandoffs: number;
+  /** How closely the catalog's copy of an answer follows it while it streams. */
+  answerKeptEveryMs: number;
   newId?: () => string;
 }
 
@@ -89,6 +97,20 @@ export function newestUserAttachments(messages: AGUIMessage[]): Attachment[] {
 
 const MODE = /^\/mode\s+(.+)$/s;
 
+/**
+ * The people who wrote in a chat, by pid, when more than one did: the chat is then a group
+ * chat. Someone whose name the catalog does not give is still someone.
+ */
+async function writersOf(
+  history: Message[],
+  name: (pid: string) => Promise<string>,
+): Promise<Map<string, string> | undefined> {
+  const pids = [...new Set(history.filter((m) => m.role === "user").map((m) => m.author))];
+  if (pids.length < 2) return undefined;
+  const names = await Promise.all(pids.map((pid) => name(pid).catch(() => "someone")));
+  return new Map(pids.map((pid, i) => [pid, names[i] as string]));
+}
+
 /** Runs a turn, yielding AG-UI events in order. Never throws; errors become RUN_ERROR. */
 export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator<AGUIEvent> {
   const { input, conversationRid: rid } = req;
@@ -136,7 +158,11 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
     const attached = attachments.map(
       (a): MessagePart => ({ type: "resource", resource: a.uri, ...(a.name ? { text: a.name } : {}) }),
     );
-    await deps.catalog.appendMessage(rid, { turn: turn.turn, role: "user", parts: [...said, ...attached] }, auth());
+    const asked = await deps.catalog.appendMessage(
+      rid,
+      { turn: turn.turn, role: "user", parts: [...said, ...attached] },
+      auth(),
+    );
     for (let hop = 0; ; hop++) {
       // What this chat runs with, as the catalog resolves it for the person; after a handoff,
       // for the agent that took over.
@@ -148,18 +174,27 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
       current = template.uri;
       context.setTemplate(template.uri);
       names.set(template.uri, template.name);
+      const history = await deps.catalog.listMessages(rid, auth());
+      const writers = await writersOf(history, (pid) => deps.catalog.principalName(pid, auth()));
+      const people: ChatPeople | undefined = writers && {
+        names: [...writers.values()].sort(),
+        asking: writers.get(asked.author) ?? "someone",
+      };
       const built = await deps.build({
         settings,
         template,
         auth: auth(),
         turn: context,
         purpose: `texera://conversations/${rid}`,
+        app: input.context,
+        people,
       });
       let outcome: Awaited<ReturnType<BuiltAgent["run"]>["return"]> extends never
         ? never
         : import("./react-loop.ts").LoopOutcome;
+      // The catalog's copy of the answer, kept close behind the stream.
+      let kept: ReturnType<typeof keeper> | undefined;
       try {
-        const history = await deps.catalog.listMessages(rid, auth());
         for (const m of history) {
           if (m.template && !names.has(m.template)) {
             names.set(
@@ -192,8 +227,10 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
             log.error("could not persist the assistant message", { error: (err as Error).message });
           }
         };
+        const answer = keeper(persist, deps.answerKeptEveryMs);
+        kept = answer;
         const loop = built.run({
-          messages: toModelMessages(history, { current: template.uri, names }),
+          messages: toModelMessages(history, { current: template.uri, names, people: writers }),
           abortSignal: req.signal,
         });
         let next = await loop.next();
@@ -204,6 +241,7 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
               if (event.type === "RUN_ERROR") errored = true;
               yield event;
             }
+            answer.soon();
           } else if (ev.type === "step") {
             log.info("step", {
               template: template.name,
@@ -213,7 +251,7 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
               finish: ev.step.finishReason,
               usage: ev.step.usage,
             });
-            await persist();
+            await answer.now();
           } else {
             log.info("reply sent back", { reason: ev.reason });
             yield events.correction(ev.reason);
@@ -238,8 +276,9 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
             yield events.runError(message, outcome.reason);
           }
         }
-        await persist();
+        await answer.now();
       } finally {
+        kept?.stop();
         await built.close();
       }
       if (outcome.reason !== "interrupted" || outcome.interrupt?.toolName !== HANDOFF_TOOL) break;

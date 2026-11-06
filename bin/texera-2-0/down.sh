@@ -28,6 +28,7 @@ LOGS=${TEXERA2_LOG_DIR:-$ROOT/logs/texera-2-0}
 source "$HERE/lib.sh"
 
 stop frontend 5174
+stop live 23003
 stop agent-runtime 23002
 stop bio-mcp 23010
 stop unit 28085
