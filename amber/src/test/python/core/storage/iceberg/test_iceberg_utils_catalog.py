@@ -345,9 +345,10 @@ class TestCreateTable:
     NAME = "tbl"
     IDENTIFIER = "ns.tbl"
 
-    def _catalog(self, table_exists):
+    def _catalog(self, table_exists, namespace_exists=True):
         catalog = MagicMock()
         catalog.table_exists.return_value = table_exists
+        catalog.namespace_exists.return_value = namespace_exists
         return catalog
 
     def _create(self, catalog, override_if_exists):
@@ -365,7 +366,6 @@ class TestCreateTable:
         catalog = self._catalog(table_exists=True)
         table, schema = self._create(catalog, override_if_exists=True)
 
-        catalog.create_namespace_if_not_exists.assert_called_once_with(self.NAMESPACE)
         catalog.table_exists.assert_called_once_with(self.IDENTIFIER)
         catalog.drop_table.assert_called_once_with(self.IDENTIFIER)
         catalog.create_table.assert_called_once_with(
@@ -383,6 +383,18 @@ class TestCreateTable:
 
         catalog.drop_table.assert_not_called()
         catalog.create_table.assert_called_once()
+
+    def test_a_namespace_is_made_only_when_it_is_missing(self):
+        # A unit may write inside a namespace made for it and may not make one: an
+        # authorizing catalog refuses the attempt before it looks whether it is there.
+        catalog = self._catalog(table_exists=False)
+        self._create(catalog, override_if_exists=False)
+        catalog.namespace_exists.assert_called_once_with(self.NAMESPACE)
+        catalog.create_namespace_if_not_exists.assert_not_called()
+
+        catalog = self._catalog(table_exists=False, namespace_exists=False)
+        self._create(catalog, override_if_exists=False)
+        catalog.create_namespace_if_not_exists.assert_called_once_with(self.NAMESPACE)
 
     def test_a_missing_table_is_never_dropped_even_when_override_is_requested(self):
         catalog = self._catalog(table_exists=False)
