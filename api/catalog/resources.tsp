@@ -153,6 +153,12 @@ namespace Routes {
     @extension("x-texera-permission", "share")
     listGrants(@path rid: Rid): Grant[] | Error;
 
+    @doc("What a person this resource is shared with cannot open of what it uses, for the one sharing it: what its head version names, of the kinds that hold data or code (a workflow's datasets and custom operators), that the person may not read. The unit or warehouse it names is where it runs, not what it uses.")
+    @get
+    @route("/{rid}/needs")
+    @extension("x-texera-permission", "share")
+    needs(@path rid: Rid, @query principal: Pid): Needed[] | Error;
+
     @put
     @route("/{rid}/grants/{pid}")
     @extension("x-texera-permission", "share")

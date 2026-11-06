@@ -1372,6 +1372,14 @@ export const zChatResource = z.object({
     versions: z.array(zChatVersion).optional()
 });
 
+/**
+ * Something a resource uses that a person cannot open.
+ */
+export const zNeeded = z.object({
+    resource: zResource,
+    shareable: z.boolean()
+});
+
 export const zResourcePage = z.object({
     items: z.array(zResource),
     nextCursor: z.string().optional()
@@ -3054,6 +3062,19 @@ export const zResourcesWriteLivePath = z.object({
  * There is no content to send for this request, but the headers may be useful.
  */
 export const zResourcesWriteLiveResponse = z.void();
+
+export const zResourcesNeedsPath = z.object({
+    rid: zRid
+});
+
+export const zResourcesNeedsQuery = z.object({
+    principal: zPid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zResourcesNeedsResponse = z.array(zNeeded);
 
 export const zResourcesListVersionsPath = z.object({
     rid: zRid

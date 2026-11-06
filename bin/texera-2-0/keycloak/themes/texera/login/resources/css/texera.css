@@ -1,0 +1,79 @@
+/* Texera's look on Keycloak's sign-in pages: the app's page, card, colours, font and logo, the
+   values of packages/ui/src/styles/tokens.css. */
+:root {
+  --texera-background: oklch(0.985 0.004 220);
+  --texera-foreground: oklch(0.22 0.014 232);
+  --texera-muted: oklch(0.51 0.02 228);
+  --texera-border: oklch(0.915 0.008 220);
+  --texera-primary: oklch(0.532 0.097 223);
+  --texera-primary-hover: oklch(0.47 0.095 223);
+  --texera-ring: oklch(0.581 0.099 204);
+  --texera-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  --keycloak-card-top-color: transparent;
+
+  --pf-v5-global--FontFamily--text: var(--texera-font);
+  --pf-v5-global--FontFamily--heading: var(--texera-font);
+  --pf-v5-global--Color--100: var(--texera-foreground);
+  --pf-v5-global--Color--200: var(--texera-muted);
+  --pf-v5-global--primary-color--100: var(--texera-primary);
+  --pf-v5-global--primary-color--200: var(--texera-primary-hover);
+  --pf-v5-global--link--Color: var(--texera-primary);
+  --pf-v5-global--link--Color--hover: var(--texera-primary-hover);
+  --pf-v5-global--active-color--100: var(--texera-ring);
+  --pf-v5-global--BorderColor--100: var(--texera-border);
+}
+
+/* The app's page, not Keycloak's dark picture. */
+.login-pf body {
+  background: var(--texera-background);
+  color: var(--texera-foreground);
+  font-family: var(--texera-font);
+}
+
+/* Texera's logo in place of the realm's name, which is written for Keycloak's dark picture. */
+#kc-header-wrapper {
+  width: 123px;
+  height: 56px;
+  margin: 0 auto 1.5rem;
+  background: url("../img/texera-logo.png") no-repeat center / contain;
+  color: transparent;
+  font-size: 0;
+}
+
+/* One card, drawn as the app draws its cards. */
+.pf-v5-c-login__main {
+  border: 1px solid var(--texera-border);
+  border-radius: 1rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 12px 32px rgb(15 23 42 / 0.08);
+  overflow: hidden;
+}
+.pf-v5-c-login__main-header {
+  border-top: 0;
+}
+.pf-v5-c-login__main-header .pf-v5-c-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Fields and buttons, rounded and coloured as the app's. */
+.pf-v5-c-form-control {
+  --pf-v5-c-form-control--BorderRadius: 0.625rem;
+  --pf-v5-c-form-control--before--BorderRadius: 0.625rem;
+  --pf-v5-c-form-control--after--BorderRadius: 0.625rem;
+  --pf-v5-c-form-control--hover--after--BorderBottomColor: var(--texera-ring);
+  --pf-v5-c-form-control--focus--after--BorderBottomColor: var(--texera-ring);
+  border-radius: 0.625rem;
+}
+.pf-v5-c-button {
+  --pf-v5-c-button--BorderRadius: 0.625rem;
+  border-radius: 0.625rem;
+  font-weight: 500;
+}
+.pf-v5-c-button.pf-m-primary {
+  --pf-v5-c-button--m-primary--BackgroundColor: var(--texera-primary);
+  --pf-v5-c-button--m-primary--hover--BackgroundColor: var(--texera-primary-hover);
+  --pf-v5-c-button--m-primary--focus--BackgroundColor: var(--texera-primary-hover);
+  --pf-v5-c-button--m-primary--active--BackgroundColor: var(--texera-primary-hover);
+}

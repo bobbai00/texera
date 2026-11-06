@@ -1,7 +1,9 @@
 // The agent beside a page. It is the same chat as anywhere else, opened over the resource page
 // a person is on: each message says what that page shows, so the agent knows what "this" is
 // and reads it with its own tools. Nothing binds the chat to the resource; the app remembers
-// the chat last used beside each page, so opening the dock there again continues it.
+// the chat last used beside each page, so opening the dock there again continues it. Open, it
+// is a window that floats over the page without blocking the rest of it: its header moves it,
+// its top left corner sizes it, a double click on the header puts it back.
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -16,11 +18,12 @@ import {
   useViewingDetail,
   viewingContext,
 } from "@texera/kinds";
-import { Button, Tooltip } from "@texera/ui";
+import { Button, cn, Tooltip } from "@texera/ui";
 import { Maximize2, MessageCircle, SquarePen, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ChatView } from "./ChatView";
 import { dockChat, withDockChat } from "./dock";
+import { DEFAULT_WINDOW, type DockWindow, fitted, moved, remember, remembered, resized } from "./dock-window";
 import { NewChat } from "./NewChat";
 
 export function ChatDock({ page, getToken }: { page: ResourceRef; getToken: () => string | undefined }) {
@@ -64,12 +67,28 @@ function Dock({ page, getToken, onClose }: { page: ResourceRef; getToken: () => 
   });
 
   const label = KINDS[page.kind].label.toLowerCase();
+  const { box, drag, grip, reset, dragging } = useDockWindow();
   return (
     <section
-      className="pointer-events-auto flex h-[min(40rem,calc(100vh-6rem))] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border bg-background shadow-xl"
+      className="pointer-events-auto fixed flex flex-col overflow-hidden rounded-2xl border bg-background shadow-xl"
+      style={box}
       aria-label="Chat about this page"
       data-chat-dock={conversation ?? "new"}>
-      <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+      {/* The corner that faces the page sizes the window; the opposite one stays where it is. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: a pointer's grip; the window is whole at the size it opens at */}
+      <div
+        className="absolute top-0 left-0 z-10 size-4 cursor-nwse-resize touch-none"
+        aria-hidden
+        {...grip}
+        data-dock-grip
+      />
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: a pointer's handle that moves the window; it is whole where it opens */}
+      <header
+        className={cn("flex shrink-0 touch-none items-center gap-2 border-b px-3 py-2", dragging ? "cursor-grabbing" : "cursor-grab")}
+        title="Drag to move; double-click to put it back"
+        onDoubleClick={reset}
+        {...drag}
+        data-dock-header>
         <KindIcon kind="conversation" className="size-7" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold">{chat && conversation ? chat.metadata.name : "New chat"}</div>
@@ -112,4 +131,49 @@ function Dock({ page, getToken, onClose }: { page: ResourceRef; getToken: () => 
       </div>
     </section>
   );
+}
+
+/**
+ * The window's place and size, kept on screen as the screen changes and remembered in this
+ * browser: a pointer held on the header moves it, one held on the grip sizes it. A press on one
+ * of the header's buttons is the button's, not a move.
+ */
+const screen = () => ({ width: window.innerWidth, height: window.innerHeight });
+
+function useDockWindow() {
+  const [box, setBox] = useState<DockWindow>(() => fitted(remembered(), screen()));
+  const [dragging, setDragging] = useState(false);
+  const held = useRef<{ x: number; y: number; from: DockWindow; how: typeof moved } | null>(null);
+  useEffect(() => {
+    const refit = () => setBox(b => fitted(b, screen()));
+    window.addEventListener("resize", refit);
+    return () => window.removeEventListener("resize", refit);
+  }, []);
+  const handlers = (how: typeof moved) => ({
+    onPointerDown: (e: PointerEvent<HTMLElement>) => {
+      if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      held.current = { x: e.clientX, y: e.clientY, from: box, how };
+      setDragging(true);
+    },
+    onPointerMove: (e: PointerEvent<HTMLElement>) => {
+      const h = held.current;
+      if (h) setBox(fitted(h.how(h.from, e.clientX - h.x, e.clientY - h.y), screen()));
+    },
+    onPointerUp: () => {
+      if (!held.current) return;
+      held.current = null;
+      setDragging(false);
+      setBox(b => {
+        remember(b);
+        return b;
+      });
+    },
+  });
+  const reset = () => {
+    remember(undefined);
+    setBox(fitted(DEFAULT_WINDOW, screen()));
+  };
+  return { box, drag: handlers(moved), grip: handlers(resized), reset, dragging };
 }

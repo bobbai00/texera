@@ -2946,6 +2946,23 @@
       ],
       "type": "object"
     },
+    "Needed": {
+      "description": "Something a resource uses that a person cannot open.",
+      "properties": {
+        "resource": {
+          "$ref": "#/$defs/Resource"
+        },
+        "shareable": {
+          "description": "Whether the caller may share it, and so give the person access in one step.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "resource",
+        "shareable"
+      ],
+      "type": "object"
+    },
     "Operator": {
       "description": "The typed envelope, served by the kind routes.",
       "properties": {

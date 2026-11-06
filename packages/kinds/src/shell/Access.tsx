@@ -1,11 +1,14 @@
 // Who can do what with a resource: its visibility, and the grants by principal. The
-// catalog answers through the authorizer; this only edits the grant tuples.
+// catalog answers through the authorizer; this only edits the grant tuples. Under each person
+// it is shared with, what they cannot open of what it uses (its lineage: what its version
+// names), and the one step that opens it to them.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { resourcesGrant, resourcesRevoke } from "@texera/catalog-client";
+import { resourcesNeedsOptions } from "@texera/catalog-client/query";
 import type { Principal, Relation, Resource } from "@texera/catalog-client/types";
 import { Avatar, Badge, Button, EmptyState, ErrorNote, Input, NativeSelect, SectionTitle, Skeleton } from "@texera/ui";
-import { Globe, Loader2, Lock, Trash2, UserPlus } from "lucide-react";
+import { Globe, Loader2, Lock, Trash2, TriangleAlert, UserPlus } from "lucide-react";
 import { useDeferredValue, useState } from "react";
 import { CatalogError, unwrap, updateMetadata } from "../api";
 import { grantsQuery, keysOf, principalsQuery } from "../queries";
@@ -79,15 +82,19 @@ function Grants({ resource }: { resource: Resource }) {
             <ul className="divide-y rounded-lg border" data-grants>
               {grants.data.length === 0 && <li className="px-3 py-2 text-xs text-muted-foreground">Nobody yet besides the owner.</li>}
               {grants.data.map(g => (
-                <li key={`${g.principal}:${g.relation}`} className="flex items-center gap-2 px-3 py-2 text-sm" data-grant={g.relation}>
-                  <PrincipalName pid={g.principal} className="min-w-0 flex-1 truncate" />
-                  <Badge>{g.relation}</Badge>
-                  {/* The owner's own grant is the ownership: the catalog does not take it back. */}
-                  {g.principal !== resource.metadata.owner && (
-                    <Button variant="ghost" size="icon-xs" aria-label="Revoke" onClick={() => revoke.mutate(g.principal)} disabled={revoke.isPending}>
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  )}
+                <li key={`${g.principal}:${g.relation}`} className="space-y-1 px-3 py-2 text-sm" data-grant={g.relation}>
+                  <div className="flex items-center gap-2">
+                    <PrincipalName pid={g.principal} className="min-w-0 flex-1 truncate" />
+                    <Badge>{g.relation}</Badge>
+                    {/* The owner's own grant is the ownership: the catalog does not take it back. */}
+                    {g.principal !== resource.metadata.owner && (
+                      <Button variant="ghost" size="icon-xs" aria-label="Revoke" onClick={() => revoke.mutate(g.principal)} disabled={revoke.isPending}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                  {/* Someone it is shared with to read it, not to run on it: what they cannot open of what it uses. */}
+                  {g.principal !== resource.metadata.owner && g.relation !== "user" && <Needs rid={rid} pid={g.principal} />}
                 </li>
               ))}
             </ul>
@@ -96,6 +103,37 @@ function Grants({ resource }: { resource: Resource }) {
           </>
         )}
       </section>
+    </div>
+  );
+}
+
+/**
+ * What a person cannot open of what the resource uses, and the one step that opens it to them:
+ * viewer on each the sharer may share; the rest is its owner's to share.
+ */
+function Needs({ rid, pid }: { rid: string; pid: string }) {
+  const queryClient = useQueryClient();
+  const { data } = useQuery(resourcesNeedsOptions({ path: { rid }, query: { principal: pid } }));
+  const share = useMutation({
+    mutationFn: (rids: string[]) => Promise.all(rids.map(r => unwrap(resourcesGrant({ path: { rid: r, pid }, body: { relation: "viewer" } })))),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesNeeds", path: { rid } }] }),
+  });
+  if (!data?.length) return null;
+  const shareable = data.filter(n => n.shareable).map(n => n.resource.metadata.rid);
+  const theirs = data.filter(n => !n.shareable).map(n => n.resource.metadata.name);
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-needs={data.length}>
+      <TriangleAlert className="size-3.5 shrink-0 text-warning" />
+      <span>
+        Can't open {data.length === 1 ? "1 thing" : `${data.length} things`} this uses: {data.map(n => n.resource.metadata.name).join(" · ")}
+      </span>
+      {shareable.length > 0 && (
+        <Button variant="outline" size="xs" onClick={() => share.mutate(shareable)} disabled={share.isPending} data-share-needs>
+          {share.isPending && <Loader2 className="animate-spin" />} Share {shareable.length === data.length ? "them" : shareable.length} too
+        </Button>
+      )}
+      {theirs.length > 0 && <span>Ask the owner to share {theirs.join(", ")}.</span>}
+      {share.error && <ErrorNote error={share.error} prefix="Could not share" />}
     </div>
   );
 }

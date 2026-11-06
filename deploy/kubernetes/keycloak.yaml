@@ -68,6 +68,15 @@ spec:
             failureThreshold: 60
           volumeMounts:
             - { name: realm, mountPath: /opt/keycloak/data/import }
+            # The sign-in pages in Texera's look; the realm names the theme.
+            - { name: theme, mountPath: /opt/keycloak/themes/texera, readOnly: true }
       volumes:
         - name: realm
           configMap: { name: keycloak-realm }
+        - name: theme
+          configMap:
+            name: keycloak-theme
+            items:
+              - { key: theme.properties, path: login/theme.properties }
+              - { key: texera.css, path: login/resources/css/texera.css }
+              - { key: texera-logo.png, path: login/resources/img/texera-logo.png }

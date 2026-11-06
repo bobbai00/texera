@@ -2,6 +2,31 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-06 (session 13, part 4): polish: a chat window, sharing that says what is missing, the sign-in page, Executions under Work
+
+The user asked for four details, designed and agreed first, and to get them done fast.
+
+- **The chat beside a page is a window** that moves by its header, sizes by its top left corner
+  (the bottom right one stays), stays on screen, comes back where it was left (this browser),
+  and blocks nothing else on the page; a double click on its header puts it back
+  (`packages/chat/src/dock-window.ts`, pure, tested).
+- **Sharing says what the person cannot open of what it uses**: `GET /resources/{rid}/needs
+  ?principal=` lists what the resource's head version names (lineage's references), of the
+  kinds that hold data or code, that the principal (a user, or a group as its grants name it)
+  may not read, of what the caller may read, each `shareable` or not. Under each person in the
+  Access list: "Can't open N things this uses: …", "Share them too" (viewer on each the sharer
+  may share; the existing grant route), and "Ask the owner" for the rest.
+- **Sign-in in Texera's look**: realm login theme `texera`, extending Keycloak's `keycloak.v2`
+  with CSS and the logo; mounted from the `keycloak-theme` config map (Kubernetes) or the theme
+  directory (compose). The flow is unchanged: the app never sees a password.
+- **Executions are under Work** in the sidebar, after Workflows; the Activity group is gone.
+
+Verified: Go suite green (new `TestSharingSaysWhatThePersonCannotOpenOfWhatItUses`); vitest 258
+(`dock-window.test.ts`); typecheck; Playwright 47 without a model (new: the sign-in page's
+look, the chat window moved, sized, kept and put back while the page stays in use, sharing a
+workflow says what Bob cannot open and shares it). The model scenarios were not rerun: nothing
+the agent does changed.
+
 ## 2026-11-06 (session 13, part 3): lineage says who made each thing; a chat says who started it
 
 The user: "the linear event should show that xxx created by a chat. and a chat created by a

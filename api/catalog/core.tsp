@@ -86,6 +86,13 @@ model ResourceMetadata {
   updatedAt: utcDateTime;
 }
 
+@doc("Something a resource uses that a person cannot open.")
+model Needed {
+  resource: Resource;
+  @doc("Whether the caller may share it, and so give the person access in one step.")
+  shareable: boolean;
+}
+
 @doc("The untyped envelope, served by the generic routes.")
 model Resource {
   apiVersion: "catalog.texera.apache.org/v1";

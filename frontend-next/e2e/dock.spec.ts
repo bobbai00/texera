@@ -244,6 +244,57 @@ test("on a workflow's canvas the agent is told which operator is selected", asyn
   ]);
 });
 
+// Open, the chat is a window over the page that blocks nothing else on it: its header moves it,
+// its top left corner sizes it, the page stays in use around it, and it opens again where it
+// was left; a double click on its header puts it back.
+test("the chat beside a page is a window that moves, sizes and stays out of the page's way", async ({ page, request }) => {
+  const as = await api(request);
+  const spec = { operators: [{ operatorID: "limit", operatorType: "Limit", operatorProperties: { limit: 5 } }], links: [] };
+  const workflow: Envelope = await as("POST", "/workflows", { name: `dock window ${Date.now()}`, spec });
+  cleanups.push(() => discard(as, [workflow.metadata.rid]));
+  await signIn(page);
+  await page.goto(`/workflows/${workflow.metadata.rid}`);
+  await openDock(page);
+  const box = async () => (await dock(page).boundingBox()) as { x: number; y: number; width: number; height: number };
+  const start = await box();
+
+  // Moved by its header.
+  const header = dock(page).locator("[data-dock-header]");
+  const at = (await header.boundingBox()) as { x: number; y: number };
+  await page.mouse.move(at.x + 60, at.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(at.x - 240, at.y - 10, { steps: 6 });
+  await page.mouse.up();
+  const shifted = await box();
+  expect(Math.round(shifted.x - start.x)).toBe(-300);
+  expect(Math.round(shifted.y - start.y)).toBe(-30);
+  expect(shifted.width).toBe(start.width);
+
+  // Sized by its top left corner: its bottom right corner stays put.
+  const grip = (await dock(page).locator("[data-dock-grip]").boundingBox()) as { x: number; y: number };
+  await page.mouse.move(grip.x + 4, grip.y + 4);
+  await page.mouse.down();
+  await page.mouse.move(grip.x - 96, grip.y + 104, { steps: 6 });
+  await page.mouse.up();
+  const sized = await box();
+  expect(Math.round(sized.width - shifted.width)).toBe(100);
+  expect(Math.round(sized.height - shifted.height)).toBe(-100);
+  expect(Math.round(sized.x + sized.width)).toBe(Math.round(shifted.x + shifted.width));
+
+  // The page around it is in use: its tabs switch while the chat is open.
+  await page.getByRole("tab", { name: "Versions" }).click();
+  await expect(page.locator("[data-versions]")).toBeVisible();
+  await expect(dock(page)).toBeVisible();
+  await page.screenshot({ path: "test-results/dock-window.png" });
+
+  // Opened again on another visit, it is where it was left; a double click puts it back.
+  await page.reload();
+  await openDock(page);
+  expect(await box()).toEqual(sized);
+  await header.dblclick();
+  expect(await box()).toEqual(start);
+});
+
 test.describe("with the model", () => {
   test.skip(!!process.env.TEXERA_E2E_SKIP_MODEL, "needs the agent runtime's model key");
 

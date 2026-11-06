@@ -2,6 +2,7 @@
   "realm": "texera",
   "enabled": true,
   "displayName": "Texera",
+  "loginTheme": "texera",
   "sslRequired": "none",
   "registrationAllowed": true,
   "accessTokenLifespan": 3600,

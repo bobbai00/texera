@@ -39,14 +39,13 @@ export const KINDS: Record<KindId, KindSpec> = {
 };
 
 /**
- * The sidebar's sections, in order. Each entry is a view, not a place: what a person makes and
- * keeps and what it runs on and stores into (Work), what happened (Activity: an execution lives under its workflow, and is listed
- * here because people look for one across workflows), what the agent is made of (Agent), and
- * the projects themselves.
+ * The sidebar's sections, in order. Each entry is a view, not a place: what a person makes,
+ * runs and keeps, and what it runs on and stores into (Work: an execution lives under its
+ * workflow, and is listed after workflows because people look for one across workflows), what
+ * the agent is made of (Agent), and the projects themselves.
  */
 export const LIBRARY_GROUPS: { title: string; kinds: KindId[] }[] = [
-  { title: "Work", kinds: ["workflow", "dataset", "model", "operator", "computing-unit", "profile", "warehouse"] },
-  { title: "Activity", kinds: ["execution"] },
+  { title: "Work", kinds: ["workflow", "execution", "dataset", "model", "operator", "computing-unit", "profile", "warehouse"] },
   { title: "Agent", kinds: ["agent-template", "skill", "mcp-server", "model-endpoint", "credential"] },
   { title: "Projects", kinds: ["project"] },
 ];

@@ -3644,6 +3644,38 @@ paths:
             schema:
               $ref: '#/components/schemas/LiveState'
       x-texera-permission: service
+  /catalog/v1/resources/{rid}/needs:
+    get:
+      operationId: Resources_needs
+      description: "What a person this resource is shared with cannot open of what it uses, for the one sharing it: what its head version names, of the kinds that hold data or code (a workflow's datasets and custom operators), that the person may not read. The unit or warehouse it names is where it runs, not what it uses."
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: principal
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Pid'
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Needed'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: share
   /catalog/v1/resources/{rid}/versions:
     get:
       operationId: Resources_listVersions
@@ -6941,6 +6973,18 @@ components:
         nextCursor:
           type: string
           description: Opaque cursor for the next page; absent on the last page.
+    Needed:
+      type: object
+      required:
+        - resource
+        - shareable
+      properties:
+        resource:
+          $ref: '#/components/schemas/Resource'
+        shareable:
+          type: boolean
+          description: Whether the caller may share it, and so give the person access in one step.
+      description: Something a resource uses that a person cannot open.
     Operator:
       type: object
       required:

@@ -1352,6 +1352,17 @@ export type ModelVersionPage = {
 };
 
 /**
+ * Something a resource uses that a person cannot open.
+ */
+export type Needed = {
+    resource: Resource;
+    /**
+     * Whether the caller may share it, and so give the person access in one step.
+     */
+    shareable: boolean;
+};
+
+/**
  * The typed envelope, served by the kind routes.
  */
 export type Operator = {
@@ -5882,6 +5893,35 @@ export type ResourcesWriteLiveResponses = {
 };
 
 export type ResourcesWriteLiveResponse = ResourcesWriteLiveResponses[keyof ResourcesWriteLiveResponses];
+
+export type ResourcesNeedsData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query: {
+        principal: Pid;
+    };
+    url: '/catalog/v1/resources/{rid}/needs';
+};
+
+export type ResourcesNeedsErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ResourcesNeedsError = ResourcesNeedsErrors[keyof ResourcesNeedsErrors];
+
+export type ResourcesNeedsResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: Array<Needed>;
+};
+
+export type ResourcesNeedsResponse = ResourcesNeedsResponses[keyof ResourcesNeedsResponses];
 
 export type ResourcesListVersionsData = {
     body?: never;

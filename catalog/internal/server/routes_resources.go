@@ -171,6 +171,29 @@ func (s *Server) routeResources() {
 		writeJSON(w, http.StatusOK, out)
 		return nil
 	})
+	s.handle("GET "+base+"/{rid}/needs", func(w http.ResponseWriter, r *http.Request) error {
+		rid, err := ridParam(r, "rid")
+		if err != nil {
+			return err
+		}
+		principal, err := queryRid(r, "principal")
+		if err != nil {
+			return err
+		}
+		if principal == nil {
+			return catalog.Invalid("principal is required", nil)
+		}
+		needed, err := s.svc.Needs(ctxOf(r), callerOf(r), rid, *principal)
+		if err != nil {
+			return err
+		}
+		out := make([]api.Needed, 0, len(needed))
+		for i := range needed {
+			out = append(out, api.Needed{Resource: catalog.Envelope(&needed[i].Resource), Shareable: needed[i].Shareable})
+		}
+		writeJSON(w, http.StatusOK, out)
+		return nil
+	})
 	s.handle("PUT "+base+"/{rid}/grants/{pid}", func(w http.ResponseWriter, r *http.Request) error {
 		rid, err := ridParam(r, "rid")
 		if err != nil {

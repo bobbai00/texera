@@ -87,6 +87,7 @@ var Permissions = map[string]string{
 	"GET /catalog/v1/resources/{rid}/grants":                                                      "share",
 	"GET /catalog/v1/resources/{rid}/lineage":                                                     "read",
 	"GET /catalog/v1/resources/{rid}/live":                                                        "service",
+	"GET /catalog/v1/resources/{rid}/needs":                                                       "share",
 	"GET /catalog/v1/resources/{rid}/versions":                                                    "read",
 	"GET /catalog/v1/resources/{rid}/versions/{vno}":                                              "read",
 	"GET /catalog/v1/settings":                                                                    "self",

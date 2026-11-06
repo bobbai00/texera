@@ -11,6 +11,20 @@ import { AGENT, api, ask, cleanups, conversationOf, createdIn, discard, IRIS_QUE
 
 test.afterEach(tidyUp);
 
+// Signing in is Keycloak's, on a page in Texera's look: the app's page, card, colours and logo.
+test("the sign-in page wears Texera's look", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("[data-sign-in]").first().click();
+  await expect(page.locator("#kc-login")).toBeVisible();
+  await expect(page.locator('link[rel="stylesheet"][href*="/login/texera/css/texera.css"]')).toHaveCount(1);
+  expect(await page.locator("#kc-header-wrapper").evaluate(el => getComputedStyle(el).backgroundImage)).toContain("texera-logo.png");
+  await page.screenshot({ path: "test-results/sign-in.png" });
+  await page.locator("#username").fill("alice");
+  await page.locator("#password").fill("alice");
+  await page.locator("#kc-login").click();
+  await expect(page.locator("[data-new-chat]")).toBeVisible();
+});
+
 test("signs in, starts a chat by saying something and attaches a CSV that becomes a dataset", async ({ page, request }) => {
   await signIn(page);
   // Nothing to pick before talking. The box says what a chat runs with: the platform's agent and

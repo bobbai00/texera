@@ -79,7 +79,9 @@ canvas the operator you selected. "What does this do?" needs no more than that. 
 page still on its way is saved before the agent is asked, so it reads what you see. It is an
 ordinary chat: it is bound to nothing, it is in the resource's project when you may write
 there and in your own otherwise, you can open it as a full page, and the app remembers which
-chat you last used beside each page.
+chat you last used beside each page. It is a window over the page that blocks nothing else on
+it: drag its header to move it, its top left corner to size it, double-click the header to put
+it back; this browser remembers where you left it.
 
 **Who is here.** The people who have a resource's page open are shown at its top right, you
 first, each with their own colour: on every kind's page and in a chat. Hover an icon for the
@@ -203,7 +205,11 @@ or not. What others gave you is under "Shared with me" in the sidebar, in one li
 its kind and project; a project you were given is also one you can work in. A link to
 something that was not shared with you says so instead of failing, and opens once it is.
 Taking a grant back takes the thing off the other person's list and closes a page they have
-open, within half a minute.
+open, within half a minute. Under each person something is shared with, the list says what they
+cannot open of what it uses, from its lineage: the datasets a workflow reads, its custom
+operators ("Can't open 1 thing this uses: iris"). "Share them too" gives them viewer on each one
+you may share; for the rest it says to ask the owner. The unit and the warehouse it names are
+left out: whoever opens it runs on their own.
 
 **Settings** (administrators): branding, the defaults an execution or a chat falls back to
 (agent, unit, profile, warehouse, model endpoint), the stores a warehouse of someone's own
@@ -457,7 +463,9 @@ Anything that holds a person's token can do what the person can:
   Texera.Catalog.openapi.yaml` the OpenAPI document; `packages/catalog-client` the generated
   TypeScript client; `tests/e2e/texera_e2e/` a small Python client the scenarios use.
 - **Tokens.** People sign in through Keycloak (the public client `texera-app`; the password
-  grant works for scripts, PKCE for the app). Services use client credentials
+  grant works for scripts, PKCE for the app). Its sign-in pages wear Texera's look: the realm's
+  login theme `texera` (`bin/texera-2-0/keycloak/themes/texera`) is Keycloak's own `keycloak.v2`
+  with the app's page, card, colours and logo, mounted from a config map on Kubernetes. Services use client credentials
   (`texera-services` is the platform's own). A token must carry the audience `texera`.
 
 ## 8. Testing and deploying

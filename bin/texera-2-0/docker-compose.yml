@@ -46,6 +46,8 @@ services:
       KC_HEALTH_ENABLED: "true"
     volumes:
       - ./keycloak/texera-realm.json:/opt/keycloak/data/import/texera-realm.json:ro
+      # The sign-in pages in Texera's look; the realm names the theme.
+      - ./keycloak/themes/texera:/opt/keycloak/themes/texera:ro
     depends_on:
       postgres:
         condition: service_healthy

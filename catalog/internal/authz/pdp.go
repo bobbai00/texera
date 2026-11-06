@@ -64,6 +64,16 @@ func (p *PDP) Allowed(ctx context.Context, caller *auth.Caller, permission strin
 	return p.authorizer.Check(ctx, "user:"+caller.PID().String(), "can_"+permission, "resource:"+rid.String())
 }
 
+// AllowedFor reports whether a principal other than the caller holds the permission, as the
+// authorizer decides it for them: for telling someone what a person or a group they share with
+// can open. The principal is named as its grants name it: user:<pid> or group:<pid>#member.
+func (p *PDP) AllowedFor(ctx context.Context, subject, permission string, rid uuid.UUID) (bool, error) {
+	if !IsResourcePermission(permission) {
+		return false, fmt.Errorf("permission %q is not checked on a resource", permission)
+	}
+	return p.authorizer.Check(ctx, subject, "can_"+permission, "resource:"+rid.String())
+}
+
 // Require returns ErrForbidden unless Allowed.
 func (p *PDP) Require(ctx context.Context, caller *auth.Caller, permission string, rid uuid.UUID) error {
 	ok, err := p.Allowed(ctx, caller, permission, rid)

@@ -195,3 +195,38 @@ test("a grant taken back takes the thing off the other's list and closes its pag
   await bobs.goto(pathOf(made.workflow));
   await expect(cannotOpen(bobs)).toHaveAttribute("data-cannot-open", "forbidden");
 });
+
+// Sharing a workflow says, under the person it is shared with, what they cannot open of what it
+// uses (its lineage: the dataset it reads), and one step shares that with them too.
+test("sharing a workflow says what the person cannot open of what it uses, and shares that too in one step", async ({ page, request }) => {
+  const alice = await api(request);
+  const bob = await api(request, "bob", "bob");
+  const stamp = Date.now();
+  const project: Envelope = await alice("POST", "/projects", { name: `uses ${stamp}`, spec: {} });
+  const dataset: Envelope = await alice("POST", "/datasets", { name: `iris ${stamp}`, parent: project.metadata.rid, spec: { format: "csv" } });
+  await alice("PUT", `/datasets/${dataset.metadata.rid}/files/iris.csv`, IRIS_CSV, "text/csv");
+  await alice("POST", `/datasets/${dataset.metadata.rid}/commit`, {});
+  const scan = { operatorID: "scan", operatorType: "CSVFileScan", operatorProperties: { fileName: `${dataset.metadata.uri}@1/files/iris.csv`, fileEncoding: "UTF_8", hasHeader: true } };
+  const workflow: Envelope = await alice("POST", "/workflows", { name: `reads iris ${stamp}`, parent: project.metadata.rid, spec: { operators: [scan], links: [] } });
+  cleanups.push(async () => {
+    await discard(alice, [workflow.metadata.rid], [dataset.metadata.rid]);
+    await alice.attempt("DELETE", `/projects/${project.metadata.rid}`);
+  });
+
+  await signIn(page);
+  await page.goto(pathOf(workflow));
+  await header(page).locator("[data-share]").click();
+  const dialog = page.locator("[data-share-dialog]");
+  await dialog.getByLabel("Principal").fill("bob");
+  await dialog.locator(`[data-principal="${BOB}"]`).click();
+  await dialog.getByLabel("Relation").selectOption("viewer");
+  await dialog.locator("[data-grant-button]").click();
+
+  // Bob cannot open the dataset the workflow reads, and the dialog says so under his name.
+  const needs = grantOf(page, BOB).locator("[data-needs]");
+  await expect(needs).toContainText(`Can't open 1 thing this uses: iris ${stamp}`);
+  await page.screenshot({ path: "test-results/share-needs.png" });
+  await needs.locator("[data-share-needs]").click();
+  await expect(needs).toHaveCount(0);
+  expect((await bob("GET", `/datasets/${dataset.metadata.rid}`)).metadata.name).toBe(`iris ${stamp}`);
+});
