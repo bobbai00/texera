@@ -1162,6 +1162,41 @@
       ],
       "type": "object"
     },
+    "CreateWarehouse": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/WarehouseSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
     "CreateWorkflow": {
       "properties": {
         "description": {
@@ -1492,6 +1527,10 @@
         },
         "modelEndpoint": {
           "$ref": "#/$defs/Uri"
+        },
+        "warehouse": {
+          "$ref": "#/$defs/Uri",
+          "description": "The warehouse an execution keeps its results in when nothing else names one."
         }
       },
       "type": "object"
@@ -1890,7 +1929,7 @@
           "description": "The engine's logical plan, with dataset files and credentials still named by URI."
         },
         "namespace": {
-          "description": "The namespace in the lake the execution writes to; absent for a dry run.",
+          "description": "The namespace in the execution's warehouse that it writes to; absent for a dry run.",
           "type": "string"
         },
         "operators": {
@@ -1974,6 +2013,10 @@
           "$ref": "#/$defs/ExecutionPlan",
           "description": "The compiled plan the execution was started with."
         },
+        "warehouse": {
+          "$ref": "#/$defs/Uri",
+          "description": "The warehouse the execution keeps its result tables in."
+        },
         "workflow": {
           "$ref": "#/$defs/Uri",
           "description": "The workflow version, with `@vno`."
@@ -1981,7 +2024,8 @@
       },
       "required": [
         "workflow",
-        "computingUnit"
+        "computingUnit",
+        "warehouse"
       ],
       "type": "object"
     },
@@ -3452,6 +3496,10 @@
           "$ref": "#/$defs/Uri",
           "description": "The model endpoint the agent uses in a chat of this project when the chat names none; absent: the agent's own."
         },
+        "defaultWarehouse": {
+          "$ref": "#/$defs/Uri",
+          "description": "The warehouse an execution in this project keeps its results in when the request and the workflow name none."
+        },
         "mcpServers": {
           "description": "Add-on MCP servers every chat in this project mounts besides the agent's, unless the chat lists its own.",
           "items": {
@@ -3619,6 +3667,7 @@
         "model",
         "environment",
         "computing-unit",
+        "warehouse",
         "operator",
         "agent-template",
         "skill",
@@ -3817,6 +3866,10 @@
           "description": "Wait up to this many seconds for the execution to finish before returning.",
           "format": "int32",
           "type": "integer"
+        },
+        "warehouse": {
+          "$ref": "#/$defs/Uri",
+          "description": "Overrides the workflow's and the project's default warehouse: where the execution keeps its results."
         }
       },
       "type": "object"
@@ -3967,6 +4020,13 @@
         },
         "retention": {
           "$ref": "#/$defs/Retention"
+        },
+        "warehouseEndpoints": {
+          "description": "The object stores, by endpoint, a warehouse of someone's own may be kept on besides the deployment's own store. The lake and the computing units connect to the address a warehouse names, so an administrator lists them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -4491,6 +4551,25 @@
       ],
       "type": "object"
     },
+    "UpdateWarehouse": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/WarehouseSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
     "UpdateWorkflow": {
       "properties": {
         "expectedHead": {
@@ -4676,6 +4755,109 @@
       "format": "int32",
       "type": "integer"
     },
+    "Warehouse": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/WarehouseSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/WarehouseStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "warehouse",
+        "parent": "project",
+        "plural": "warehouses",
+        "versioned": false
+      }
+    },
+    "WarehousePage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Warehouse"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "WarehouseSpec": {
+      "properties": {
+        "storage": {
+          "$ref": "#/$defs/WarehouseStorage",
+          "description": "A store of the owner's to keep the tables in. Absent: a place of its own on the deployment's store."
+        }
+      },
+      "type": "object"
+    },
+    "WarehouseStatus": {
+      "properties": {
+        "name": {
+          "description": "The warehouse's name in the lake: what an Iceberg client passes as `warehouse`.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "WarehouseStorage": {
+      "description": "A place in an S3-compatible object store that is the warehouse's alone. The store must hand out short-lived keys itself (STS, as MinIO and RustFS do): that is how a unit reaches one table's files.",
+      "properties": {
+        "bucket": {
+          "type": "string"
+        },
+        "credential": {
+          "$ref": "#/$defs/Uri",
+          "description": "The credential the lake uses for the bucket; its secret holds `accessKeyId` and `secretAccessKey`. No computing unit ever gets it: the lake hands a unit short-lived access to the tables it may touch."
+        },
+        "endpoint": {
+          "description": "The store's endpoint, as the lake and the computing units reach it. It is the deployment's own store or one an administrator listed in the settings (`warehouseEndpoints`).",
+          "type": "string"
+        },
+        "keyPrefix": {
+          "description": "A path in the bucket that only this warehouse uses; absent: the whole bucket.",
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint",
+        "region",
+        "bucket",
+        "credential"
+      ],
+      "type": "object"
+    },
     "Workflow": {
       "description": "The typed envelope, served by the kind routes.",
       "properties": {
@@ -4848,6 +5030,10 @@
         "defaultEnvironment": {
           "$ref": "#/$defs/Uri",
           "description": "The environment an execution uses when the request names none."
+        },
+        "defaultWarehouse": {
+          "$ref": "#/$defs/Uri",
+          "description": "The warehouse an execution keeps its results in when the request names none."
         },
         "links": {
           "items": {

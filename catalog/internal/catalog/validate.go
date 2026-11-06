@@ -36,7 +36,7 @@ func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID
 	if unitName == "" {
 		return nil, Conflict("no_unit", "no computing unit to compile on", nil)
 	}
-	unit, err := s.unitByURI(ctx, unitName)
+	unit, err := s.named(ctx, unitName, unitKind)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizePlan(ctx, caller, c, unit, nil); err != nil {
+	if err := s.authorizePlan(ctx, caller, c, unit, nil, nil); err != nil {
 		return nil, err
 	}
 	client, status, err := s.unitClient(ctx, unit)

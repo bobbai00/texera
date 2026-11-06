@@ -106,7 +106,6 @@ import scala.collection.mutable.ArrayBuffer
   *     knowing if it ever acquires a reader: the completion diff handler runs only while something
   *     consumes the metadata store's websocket-event stream, so the snapshot silently does not
   *     happen when no client is connected.
-  *   - `resolveLakekeeperWarehouseName`, owned by `WorkflowServiceWarehouseSpec`.
   */
 class WorkflowServiceSpec extends AnyFlatSpec with Matchers {
 
@@ -215,7 +214,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers {
       workflowSettings = WorkflowSettings(),
       emailNotificationEnabled = false,
       computingUnitId = cuid,
-      warehouseId = None
+      warehouse = None
     )
   }
 
@@ -228,7 +227,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers {
       workflowSettings = WorkflowSettings(),
       emailNotificationEnabled = false,
       computingUnitId = 1,
-      warehouseId = None
+      warehouse = None
     )
     new WorkflowExecutionService(
       null,
@@ -373,34 +372,25 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers {
     events shouldBe empty
   }
 
-  it should "refuse an invalid warehouse pick before detaching the previous execution" in {
-    // The pick is resolved before the teardown: an agent (or a stale client)
-    // asking for a warehouse the deployment will reject must not take the
-    // execution already running down with it (#7751). With the feature off,
-    // any explicit pick is refused (#6930), which is the cheapest way to make
-    // resolution fail here.
-    val service = new TestWorkflowService(9L)
-    val previous = newExecution()
-    service.executionService.onNext(previous)
-    val events = collectExecutionEvents(previous)
-    val request = WorkflowExecuteRequest(
-      executionName = "test",
-      engineVersion = "test",
-      logicalPlan = LogicalPlanPojo(List.empty, List.empty, List.empty, List.empty),
-      replayFromExecution = None,
-      workflowSettings = WorkflowSettings(),
-      emailNotificationEnabled = false,
-      computingUnitId = 1,
-      warehouseId = Some(1)
+  it should "run an execution in the warehouse its request names" in {
+    // Every URI the execution writes to is built from its context, so this is where the
+    // name the catalog gave has to arrive.
+    val service = new TestWorkflowService(9416L, testCuid)
+    service.initExecutionService(
+      compileFailingRequest("named-warehouse-run", testCuid).copy(warehouse = Some("w_0a1b2c")),
+      Some(executingUser),
+      new URI("vfs:///session")
     )
+    service.executionService.getValue.workflowContext.warehouse shouldBe Some("w_0a1b2c")
 
-    val error = intercept[IllegalArgumentException] {
-      service.initExecutionService(request, Some(executingUser), new URI("vfs:///session"))
-    }
-    error.getMessage should include("warehouse")
-
-    previous.executionStateStore.metadataStore.updateState(_.withState(RUNNING))
-    events should not be empty
+    // A request that names none runs in the unit's default warehouse; the one before it
+    // leaves nothing behind.
+    service.initExecutionService(
+      compileFailingRequest("default-warehouse-run", testCuid),
+      Some(executingUser),
+      new URI("vfs:///session")
+    )
+    service.executionService.getValue.workflowContext.warehouse shouldBe None
   }
 
   it should "refuse to start an execution with no signed-in user, leaving the previous one attached" in {
@@ -416,7 +406,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers {
       workflowSettings = WorkflowSettings(),
       emailNotificationEnabled = false,
       computingUnitId = 1,
-      warehouseId = None
+      warehouse = None
     )
 
     // Every execution records who started it, so this has to fail before one is registered.

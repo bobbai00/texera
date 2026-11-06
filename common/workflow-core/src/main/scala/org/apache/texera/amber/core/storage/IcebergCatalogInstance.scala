@@ -41,17 +41,17 @@ import scala.util.Try
   * IcebergCatalogInstance manages the Iceberg catalog clients used across the Texera application.
   *
   * Catalogs are cached per warehouse: each distinct warehouse name gets its own lazily-created
-  * catalog client, so a single JVM may hold several catalogs, one per warehouse it touches. Callers
-  * that do not specify a warehouse use the configured default, preserving single-warehouse (non-BYO)
-  * behavior.
+  * catalog client, so a single JVM may hold several catalogs, one per warehouse it touches: the
+  * executions on one unit may each name a different warehouse. Callers that do not specify a
+  * warehouse use the configured default.
   *
   * Only the REST catalog varies by warehouse; the hadoop and postgres catalogs are warehouse-agnostic
   * and ignore the warehouse argument.
   *
-  * The cache is bounded (#7290): per-user warehouses (#6870) make the set of catalogs a
-  * long-lived JVM touches unbounded, and each REST catalog holds an HTTP client. An entry
-  * idle for the expiry window is closed -- nothing can be using it, and idle entries are
-  * exactly what a long-lived JVM accumulates. An entry evicted by *size* is only dropped,
+  * The cache is bounded (#7290): the set of warehouses a long-lived JVM is asked to use
+  * is not, and each REST catalog holds an HTTP client. An entry idle for the expiry
+  * window is closed -- nothing can be using it, and idle entries are exactly what a
+  * long-lived JVM accumulates. An entry evicted by *size* is only dropped,
   * never closed: size pressure means more simultaneously hot warehouses than the bound,
   * and closing a hot catalog would fail the operations still using it. Load degrades into
   * rebuild churn (the dropped catalog decays once its in-flight users finish), not errors.

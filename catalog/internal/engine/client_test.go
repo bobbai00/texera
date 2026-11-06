@@ -39,7 +39,7 @@ var everyCall = map[string]func(context.Context, *Unit) error{
 	"Pause":     func(c context.Context, u *Unit) error { _, err := u.Pause(c, "e"); return err },
 	"Resume":    func(c context.Context, u *Unit) error { _, err := u.Resume(c, "e"); return err },
 	"Result": func(c context.Context, u *Unit) error {
-		_, err := u.Result(c, "e", "op", "output-0", "", "", 0, 10)
+		_, err := u.Result(c, "e", "op", "output-0", "", "", "", 0, 10)
 		return err
 	},
 	"BuildEnvironment": func(c context.Context, u *Unit) error {
@@ -106,7 +106,7 @@ func TestASuccessIsDecoded(t *testing.T) {
 	}
 	// A long column keeps its exact digits, which a float64 would round.
 	u = unitAnswering(t, 200, "application/json", `{"offset":0,"schema":[{"attributeName":"id","attributeType":"long"}],"rows":[[9007199254740993]]}`)
-	page, err := u.Result(context.Background(), "e", "op", "output-0", "t", "n", 0, 10)
+	page, err := u.Result(context.Background(), "e", "op", "output-0", "t", "n", "w", 0, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

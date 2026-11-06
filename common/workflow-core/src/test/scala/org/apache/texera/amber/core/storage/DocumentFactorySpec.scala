@@ -295,4 +295,79 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     }
     thrown.getMessage should include("No storage is found")
   }
+
+  private def resultURIIn(warehouse: String): URI =
+    VFSURIFactory.resultURI(
+      VFSURIFactory.createPortBaseURI(
+        WorkflowIdentity(0),
+        ExecutionIdentity(0),
+        GlobalPortIdentity(
+          PhysicalOpIdentity(
+            logicalOpId = OperatorIdentity(s"op-${UUID.randomUUID().toString.replace("-", "")}"),
+            layerName = "main"
+          ),
+          PortIdentity()
+        ),
+        warehouse = Some(warehouse)
+      )
+    )
+
+  "openTable" should "open a table by the warehouse, namespace and name it was written under" in {
+    val written = DocumentFactory
+      .createDocument(resultURIIn("wh-test"), vfsSchema)
+      .asInstanceOf[IcebergDocument[_]]
+
+    val (doc, schemaOpt) =
+      DocumentFactory.openTable(Some("wh-test"), written.tableNamespace, written.tableName)
+    doc.asInstanceOf[IcebergDocument[_]].warehouse shouldBe Some("wh-test")
+    schemaOpt.get.getAttributes.map(_.getName) should contain("v")
+  }
+
+  it should "look in the named warehouse only, never in the default one" in {
+    assume(
+      LocalHadoopIcebergCatalog.warehousesAreSeparate,
+      "every warehouse shares one catalog under this catalog type"
+    )
+    LocalHadoopIcebergCatalog.installSeparate("wh-separate")
+    val written = DocumentFactory
+      .createDocument(resultURIIn("wh-separate"), vfsSchema)
+      .asInstanceOf[IcebergDocument[_]]
+
+    val (_, schemaOpt) =
+      DocumentFactory.openTable(Some("wh-separate"), written.tableNamespace, written.tableName)
+    schemaOpt.get.getAttributes.map(_.getName) should contain("v")
+    // The default warehouse and another one do not hold it.
+    Seq(None, Some("wh-test")).foreach { elsewhere =>
+      withClue(s"$elsewhere: ") {
+        intercept[IllegalArgumentException] {
+          DocumentFactory.openTable(elsewhere, written.tableNamespace, written.tableName)
+        }.getMessage should include("No storage is found")
+      }
+    }
+  }
+
+  "A vfs URI with a malformed warehouse segment" should
+    "be refused, never resolved in the default warehouse" in {
+    // The table this URI would name once its bad segment is dropped exists in the
+    // default warehouse: a lenient reading finds it there, and a lenient create
+    // would overwrite it.
+    val inDefault = freshResultURI()
+    DocumentFactory.createDocument(inDefault, vfsSchema)
+    val malformed = new URI(inDefault.toString.replaceFirst("^vfs://", "vfs:///wh/-lead"))
+    malformed.getPath should startWith("/wh/-lead/wid/")
+
+    Seq[(String, URI => Any)](
+      "open" -> (DocumentFactory.openDocument(_)),
+      "exists" -> (DocumentFactory.documentExists(_)),
+      "create" -> (DocumentFactory.createDocument(_, vfsSchema))
+    ).foreach {
+      case (what, use) =>
+        withClue(s"$what: ") {
+          intercept[IllegalArgumentException](use(malformed)).getMessage should include(
+            "warehouse"
+          )
+        }
+    }
+    DocumentFactory.documentExists(inDefault) shouldBe true
+  }
 }

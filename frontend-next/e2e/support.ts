@@ -187,6 +187,7 @@ export async function aPageOfEveryKind(as: Caller): Promise<{ pages: PageOf[]; p
   await make("models", "a model", {});
   await make("environments", "an environment", { python: { packages: [] } });
   await make("credentials", "a key", { kind: "api_key" });
+  await make("warehouses", "a warehouse", {});
   await make("model-endpoints", "an endpoint", { provider: "anthropic", model: "claude-haiku-5-5" });
   await make("skills", "a-skill", { name: "a-skill", description: "What it is for", body: "How to do it." });
   cleanups.push(async () => {

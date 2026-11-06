@@ -47,6 +47,7 @@
   --kind-agent-template: oklch(0.62 0.18 25);
   --kind-mcp-server: oklch(0.58 0.16 300);
   --kind-computing-unit: oklch(0.55 0.08 260);
+  --kind-warehouse: oklch(0.58 0.11 95);
   --kind-environment: oklch(0.65 0.13 120);
   --kind-project: oklch(0.6 0.12 40);
   --kind-skill: oklch(0.6 0.15 330);
@@ -124,6 +125,7 @@
   --color-kind-agent-template: var(--kind-agent-template);
   --color-kind-mcp-server: var(--kind-mcp-server);
   --color-kind-computing-unit: var(--kind-computing-unit);
+  --color-kind-warehouse: var(--kind-warehouse);
   --color-kind-environment: var(--kind-environment);
   --color-kind-project: var(--kind-project);
   --color-kind-skill: var(--kind-skill);

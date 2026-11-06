@@ -888,20 +888,28 @@ class ExecutionResultServiceSpec
     thrown.getMessage shouldBe "No execution is recorded"
   }
 
-  it should "refuse to read a result whose warehouse the URI cannot resolve" in {
+  it should "refuse a result URI whose warehouse segment is malformed, never reading the default warehouse" in {
     val executionId = newExecution()
-    // Only the URI row is needed: the guard has to reject before the document is
-    // opened, and no table was ever created for this warehouse. An unresolvable
-    // /wh/ prefix is what the guard refuses in *either* flag state, so this pins
-    // the wiring — that paginate consults the guard at all — without depending on
-    // the shipping default. WarehouseReadGuardSpec pins the enabled and disabled
-    // behaviour of the guard itself.
-    val resolvable = resultUriOf(executionId, "erss-warehouse", Some("byo"))
-    insertResultUri(executionId, new URI(resolvable.toString.replace("/wh/byo/", "/wh/a%2Fb/")))
+    val schema = new Schema(List(new Attribute("id", AttributeType.INTEGER)))
+    // The rows exist in the default warehouse, at the place this URI would name once its
+    // bad segment is dropped: a lenient reading pages through them. Recorded by hand
+    // because VFSURIFactory builds no such URI.
+    val inDefault = storeResult(
+      executionId,
+      "erss-warehouse",
+      schema,
+      Seq(Tuple.builder(schema).add("id", AttributeType.INTEGER, 1).build())
+    )
+    ExecutionRegistry.recordPortResultUri(
+      executionId,
+      globalPortIdOf("erss-warehouse"),
+      new URI(inDefault.toString.replaceFirst("^vfs://", "vfs:///wh/-lead"))
+    )
 
-    a[WarehouseUnavailableException] should be thrownBy paginate(
+    val refused = the[IllegalArgumentException] thrownBy paginate(
       paginationRequest.copy(operatorID = "erss-warehouse")
     )
+    refused.getMessage should include("warehouse")
   }
 
   // -- attachToExecution: the result-store diff handler -----------------------

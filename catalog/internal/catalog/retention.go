@@ -74,7 +74,7 @@ func (s *Service) expireResults(ctx context.Context, before time.Time) int {
 			continue
 		}
 		for i := range executions {
-			if err := s.Lake.DropNamespace(ctx, executionNamespace(executions[i].RID)); err != nil {
+			if err := s.Lake.DropNamespace(ctx, s.warehouseOf(ctx, &executions[i]), executionNamespace(executions[i].RID)); err != nil {
 				s.Log.Warn("retention: drop namespace", "execution", executions[i].RID, "err", err)
 				continue
 			}

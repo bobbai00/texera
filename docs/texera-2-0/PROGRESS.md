@@ -2,6 +2,125 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-05 (session 10, on the Mac): a warehouse is a resource: an execution runs on a unit and keeps its results in a warehouse
+
+Asked, after a discussion of how the result warehouse is managed and how it should be, to
+implement what was agreed, quickly and cleanly, and to test it. The agreed view is one
+sentence: an execution runs on a computing unit and keeps its results in a warehouse. Until
+now there was one warehouse, made by the catalog at startup from its environment and named
+nowhere in the model; the engine ignored the warehouse a start request named; and the engine
+still carried main's per-user warehouse feature, switched off.
+
+What was decided:
+- **A warehouse is a resource, like a computing unit.** The platform's own is built in; a
+  project owns any other. There is no warehouse per person: what justifies a second warehouse
+  is a different place to keep data, not a different person.
+- **It is chosen like a unit and used like a unit.** The request's, else the workflow's, the
+  project's, the platform's; whoever runs needs `use` on it. Reading stays decided by the
+  execution.
+- **Isolation is one rule.** A namespace per execution inside its warehouse, opened for the
+  identity of the unit that runs it. People who may run on one unit share that unit; nothing
+  special is promised on top of that.
+
+Done:
+- **The contract.** A kind `warehouse` (`api/catalog/kinds/warehouse.tsp`): `spec.storage`
+  absent is a place of its own on the deployment's store; present, a store of the owner's
+  (endpoint, region, bucket, a folder, a credential). `status.name` is its name in the lake.
+  An execution records its warehouse (`spec.warehouse`, required); a workflow and a project
+  name a default (`defaultWarehouse`), the settings the platform's (`defaults.warehouse`), a
+  run may name one (`warehouse`); the settings list the stores a warehouse of someone's own
+  may be on (`warehouseEndpoints`). The engine's `ResultStore` is the warehouse and the
+  namespace (the lake's address went: a unit knows it from its own configuration), and a
+  read of rows names the warehouse.
+- **The catalog** (`internal/catalog/warehouses.go`, one file). The `Lake` port makes,
+  updates and removes warehouses and opens namespaces in one; the Lakekeeper adapter no longer
+  makes a warehouse of its own at startup. The platform's warehouse is seeded as a built-in
+  and brought up to date at every start; any other is made in the lake when it is created,
+  and the lake tries its storage first, so a refusal (a wrong key, no such bucket) is the
+  caller's 400 with the lake's reason and nothing is made. A warehouse's place cannot change;
+  its key follows its credential when the secret is replaced. The warehouse of an execution
+  is resolved in one place and checked with the rest of the plan (`use`); expiry and deletion
+  drop the namespace in the execution's own warehouse. A warehouse goes only when no
+  execution keeps results in it. Executions made before this are given the platform's
+  warehouse at the next start.
+- **The engine.** A start request's warehouse is where the run writes everything, and a read
+  names the warehouse it reads from; the unit keeps a catalog client per warehouse. What was
+  left of the per-user warehouse feature of main is deleted (the lookup of a user's warehouse,
+  the engine's own Lakekeeper client, the switch and the read guard).
+- **The app.** Warehouses in the sidebar with a page like every kind's. "New warehouse" asks
+  where it keeps its tables: the platform's store, or a store of one's own with its address,
+  bucket, folder and credential. A warehouse's page shows its place and, for the project's
+  writers, one button: "Keep <project>'s results here". An execution's page names its
+  warehouse beside its unit. Sharing offers "may use", as for a unit.
+
+Found on the way and fixed:
+- **The lake writes a store's address back with a slash at its end.** Compared as text, the
+  platform's warehouse looked moved at every start and its storage would have been replaced
+  instead of its key refreshed. Found by reading the running lake before the first deploy;
+  the adapter now compares places, and has its first tests (a stand-in for Lakekeeper's
+  management API).
+- **A warehouse cannot be dropped for some seconds after its last table.** Lakekeeper clears
+  the files of dropped tables in the background and refuses to drop the warehouse meanwhile
+  (`WarehouseHasUnfinishedTasks`, five to nine seconds here). The adapter waits for it, up to
+  half a minute, so nobody above it retries; a warehouse that still holds a namespace is
+  refused at once, in the lake's words.
+- **A stale engine test.** `create_table` in the Python engine stopped making a namespace that
+  is already there when units got identities of their own; its test still expected the call
+  and failed. It now states the rule.
+
+Verified, on OrbStack's cluster, upgraded in place from the stack session 9 left (no wipe; the
+catalog's database was dumped first):
+- **The upgrade itself.** The platform's warehouse was seeded as a built-in and the lake's
+  `texera` warehouse kept as it was; all 214 executions in the store were given it (8 of them
+  live, Alice's own); the rows of every result table of those 8 read back the same before and
+  after, through the new engine.
+- Unit: `make generate` reproduces the tree; catalog `gofmt`, `go vet`, `go test` (new: the
+  warehouse suite, the Lakekeeper adapter); runtime 75 tests, live service 15, frontend 157,
+  each with types and lint; the engine's `sbt test` 5,347 passed and its Python tests 1,409.
+- **Against the real lake.** A warehouse on the platform's store is made in a tenth of a
+  second; one on a store of its own is refused with Lakekeeper's own reason for a wrong key
+  ("the request signature we calculated does not match") and for a bucket that is not there,
+  taken with the right key, and refused before the lake is asked when nobody listed the
+  address. A workflow ran into each kind and its rows were read back; the lake listed the
+  execution's namespace in the warehouse the execution names and not in the platform's.
+- `k8s.sh check` on the final images: 40 scenarios (new: `test_warehouse.py`, five) and 26
+  Playwright tests (new: a warehouse made from its page and kept as its project's; the page
+  of every kind is now fourteen, for the agent beside it, for who is on it and for a link
+  that was not shared).
+- With the model (Haiku 5.5), by hand: 4 scenarios (`pytest -m model`) and 4 Playwright
+  scenarios, as before.
+
+Not verified:
+- **A store other than the stack's own RustFS.** The scenario for a store of one's own names
+  the stack's RustFS with a place and a credential of its own, so the path is the real one
+  (the lake's check, the key from the credential, keys handed out per table), but no second
+  store and no second key were tried. AWS S3 itself will not work as it is: it hands out
+  short-lived keys only for a role, and a warehouse names an access key (left out below).
+- **The Compose stack**, as in session 9: `test.sh gate`, the `local` scenarios and the
+  engine's integration suites on the REST catalog were not run; the cluster was upgraded in
+  place.
+- **The frontend's lint still does not reach `packages/`** (session 8's note).
+
+Seen and not changed:
+- **Rows of a port the catalog names no table for** (an operator in the middle that nothing
+  marks as a result) are served from the memory of the unit that ran the execution, so they
+  are gone when that unit restarts. Restarting the units for this upgrade took them from four
+  of Alice's earlier executions; their result tables were untouched. The tables are still in
+  the lake under the engine's own keys; the catalog has no name for them.
+- **Two executions of one workflow started in the same second** collide on their default
+  name, as two chats did before session 9.
+
+Left out, by decision: what a warehouse holds and what it costs (usage per warehouse, quotas);
+reading results without the unit that ran the execution; a store that needs a role instead of
+a key (AWS S3); taking the deployment's own store key away from the units; choosing a
+warehouse for one workflow or one run from the app (the API takes both; the app sets the
+project's); a warehouse that can be restored after it is deleted.
+
+Next: `test.sh gate` on the Compose stack; a second store with its own key (MinIO beside
+RustFS) in the scenario; usage per warehouse; results read from the warehouse when the unit
+is gone, the ports in the middle included; roles for AWS S3; the warehouse picker beside the
+unit's on a workflow's page; the items carried from session 9.
+
 ## 2026-11-05 (session 9, on the Mac): people together: sharing, a workflow and a chat shared live, the agent beside every page
 
 Asked for sharing as a core experience (a project, a chat, a workflow or a dataset shared with

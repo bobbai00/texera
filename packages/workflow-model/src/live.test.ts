@@ -114,6 +114,22 @@ describe("a workflow as a live document", () => {
   });
 });
 
+describe("what a workflow names beside its graph", () => {
+  it("is kept by the document and changes like the rest: the unit it runs on, where it keeps results, its environment", () => {
+    const named: WorkflowSpec = {
+      ...base,
+      defaultEnvironment: "texera://environments/e",
+      defaultWarehouse: "texera://warehouses/w",
+    };
+    const doc = docOf(named);
+    expect(specOf(doc, named)).toEqual(named);
+    // Another warehouse, and no environment any more.
+    const { defaultEnvironment: _, ...rest } = named;
+    applySpec(doc, { ...rest, defaultWarehouse: "texera://warehouses/other" });
+    expect(specOf(replicaOf(doc), named)).toEqual({ ...rest, defaultWarehouse: "texera://warehouses/other" });
+  });
+});
+
 describe("where the operators of a live document sit", () => {
   it("is one layout for everyone: laid out where nobody placed an operator, kept where someone did", () => {
     const doc = docOf(base);

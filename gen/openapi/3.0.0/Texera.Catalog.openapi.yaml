@@ -3982,6 +3982,156 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-texera-permission: read
+  /catalog/v1/warehouses:
+    get:
+      operationId: Warehouses_list
+      description: List the resources of this kind the caller may read.
+      parameters:
+        - $ref: '#/components/parameters/Scoped'
+        - name: parent
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WarehousePage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: list
+    post:
+      operationId: Warehouses_create
+      parameters: []
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created as a result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Warehouse'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWarehouse'
+      x-texera-permission: create
+  /catalog/v1/warehouses/{rid}:
+    get:
+      operationId: Warehouses_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Warehouse'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: read
+    put:
+      operationId: Warehouses_update
+      description: Replace the spec; for a versioned kind this creates a version.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Warehouse'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWarehouse'
+      x-texera-permission: write
+    delete:
+      operationId: Warehouses_delete
+      description: Delete the resource; refused with 409 while another resource references it.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: delete
   /catalog/v1/workflows:
     get:
       operationId: Workflows_list
@@ -4499,7 +4649,7 @@ paths:
               $ref: '#/components/schemas/RunWorkflow'
       x-mcp:
         tool: run_workflow
-        description: Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the chat's unit; name one only when the person asks for another.
+        description: Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the chat's unit; name one only when the person asks for another. Results are kept in the warehouse of the workflow, its project or the platform; name one only when the person asks.
         readOnlyHint: false
         destructiveHint: false
         idempotentHint: false
@@ -5464,6 +5614,31 @@ components:
         message:
           type: string
           description: Recorded on the first version of a versioned kind.
+    CreateWarehouse:
+      type: object
+      required:
+        - name
+        - spec
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        parent:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The parent; for a top-level kind a project, default the caller's home project.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/WarehouseSpec'
+        message:
+          type: string
+          description: Recorded on the first version of a versioned kind.
     CreateWorkflow:
       type: object
       required:
@@ -5699,6 +5874,10 @@ components:
           $ref: '#/components/schemas/Uri'
         computingUnit:
           $ref: '#/components/schemas/Uri'
+        warehouse:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: The warehouse an execution keeps its results in when nothing else names one.
         modelEndpoint:
           $ref: '#/components/schemas/Uri'
     Digest:
@@ -5982,7 +6161,7 @@ components:
       properties:
         namespace:
           type: string
-          description: The namespace in the lake the execution writes to; absent for a dry run.
+          description: The namespace in the execution's warehouse that it writes to; absent for a dry run.
         outputs:
           type: array
           items:
@@ -6034,6 +6213,7 @@ components:
       required:
         - workflow
         - computingUnit
+        - warehouse
       properties:
         workflow:
           allOf:
@@ -6045,6 +6225,10 @@ components:
           description: The environment version, with `@vno`.
         computingUnit:
           $ref: '#/components/schemas/Uri'
+        warehouse:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: The warehouse the execution keeps its result tables in.
         inputs:
           type: array
           items:
@@ -7108,6 +7292,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/Uri'
           description: The computing unit an execution in this project uses when the request and the workflow name none.
+        defaultWarehouse:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: The warehouse an execution in this project keeps its results in when the request and the workflow name none.
         defaultAgentTemplate:
           allOf:
             - $ref: '#/components/schemas/Uri'
@@ -7236,6 +7424,7 @@ components:
         - model
         - environment
         - computing-unit
+        - warehouse
         - operator
         - agent-template
         - skill
@@ -7376,6 +7565,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/Uri'
           description: Overrides the workflow's and the project's default unit.
+        warehouse:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: "Overrides the workflow's and the project's default warehouse: where the execution keeps its results."
         environment:
           allOf:
             - $ref: '#/components/schemas/Uri'
@@ -7499,6 +7692,11 @@ components:
             type: boolean
         retention:
           $ref: '#/components/schemas/Retention'
+        warehouseEndpoints:
+          type: array
+          items:
+            type: string
+          description: The object stores, by endpoint, a warehouse of someone's own may be kept on besides the deployment's own store. The lake and the computing units connect to the address a warehouse names, so an administrator lists them.
     SettingsStatus:
       type: object
     Skill:
@@ -7875,6 +8073,20 @@ components:
           allOf:
             - $ref: '#/components/schemas/Vno'
           description: The head version the caller saw; refused with 409 when it moved.
+    UpdateWarehouse:
+      type: object
+      required:
+        - spec
+      properties:
+        spec:
+          $ref: '#/components/schemas/WarehouseSpec'
+        message:
+          type: string
+          description: Recorded on the new version of a versioned kind.
+        expectedHead:
+          allOf:
+            - $ref: '#/components/schemas/Vno'
+          description: The head version the caller saw; refused with 409 when it moved.
     UpdateWorkflow:
       type: object
       required:
@@ -8014,6 +8226,81 @@ components:
       type: integer
       format: int32
       description: Version number within a resource, starting at 1.
+    Warehouse:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          $ref: '#/components/schemas/WarehouseSpec'
+        status:
+          $ref: '#/components/schemas/WarehouseStatus'
+      description: The typed envelope, served by the kind routes.
+      x-texera-kind:
+        kind: warehouse
+        plural: warehouses
+        versioned: false
+        content: spec
+        parent: project
+    WarehousePage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Warehouse'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    WarehouseSpec:
+      type: object
+      properties:
+        storage:
+          allOf:
+            - $ref: '#/components/schemas/WarehouseStorage'
+          description: "A store of the owner's to keep the tables in. Absent: a place of its own on the deployment's store."
+    WarehouseStatus:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "The warehouse's name in the lake: what an Iceberg client passes as `warehouse`."
+    WarehouseStorage:
+      type: object
+      required:
+        - endpoint
+        - region
+        - bucket
+        - credential
+      properties:
+        endpoint:
+          type: string
+          description: The store's endpoint, as the lake and the computing units reach it. It is the deployment's own store or one an administrator listed in the settings (`warehouseEndpoints`).
+        region:
+          type: string
+        bucket:
+          type: string
+        keyPrefix:
+          type: string
+          description: 'A path in the bucket that only this warehouse uses; absent: the whole bucket.'
+        credential:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: 'The credential the lake uses for the bucket; its secret holds `accessKeyId` and `secretAccessKey`. No computing unit ever gets it: the lake hands a unit short-lived access to the tables it may touch.'
+      description: "A place in an S3-compatible object store that is the warehouse's alone. The store must hand out short-lived keys itself (STS, as MinIO and RustFS do): that is how a unit reaches one table's files."
     Workflow:
       type: object
       required:
@@ -8151,6 +8438,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/Uri'
           description: The computing unit an execution uses when the request names none.
+        defaultWarehouse:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: The warehouse an execution keeps its results in when the request names none.
     WorkflowStatus:
       type: object
       properties:

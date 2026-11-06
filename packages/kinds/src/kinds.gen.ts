@@ -30,5 +30,6 @@ export const KIND_TABLE: readonly KindEntry[] = [
   { kind: "project", plural: "projects", versioned: false, content: "spec", nested: false, singleton: false, envelope: "Project", spec: "ProjectSpec", status: "ProjectStatus" },
   { kind: "settings", plural: "settings", versioned: false, content: "spec", nested: false, singleton: true, envelope: "Settings", spec: "SettingsSpec", status: "SettingsStatus" },
   { kind: "skill", plural: "skills", versioned: true, content: "spec", parent: "project", nested: false, singleton: false, envelope: "Skill", spec: "SkillSpec", status: "SkillStatus" },
+  { kind: "warehouse", plural: "warehouses", versioned: false, content: "spec", parent: "project", nested: false, singleton: false, envelope: "Warehouse", spec: "WarehouseSpec", status: "WarehouseStatus" },
   { kind: "workflow", plural: "workflows", versioned: true, content: "spec", parent: "project", nested: false, singleton: false, envelope: "Workflow", spec: "WorkflowSpec", status: "WorkflowStatus" },
 ];

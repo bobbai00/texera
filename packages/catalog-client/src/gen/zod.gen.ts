@@ -394,6 +394,7 @@ export const zResourceKind = z.enum([
     'model',
     'environment',
     'computing-unit',
+    'warehouse',
     'operator',
     'agent-template',
     'skill',
@@ -569,6 +570,7 @@ export const zDefaults = z.object({
     agentTemplate: zUri.optional(),
     environment: zUri.optional(),
     computingUnit: zUri.optional(),
+    warehouse: zUri.optional(),
     modelEndpoint: zUri.optional()
 });
 
@@ -609,6 +611,7 @@ export const zExecutionSpec = z.object({
     workflow: zUri,
     environment: zUri.optional(),
     computingUnit: zUri,
+    warehouse: zUri,
     inputs: z.array(zUri).optional(),
     parameters: z.record(z.string(), z.unknown()).optional(),
     plan: zExecutionPlan.optional()
@@ -726,6 +729,7 @@ export const zOrigin = z.object({
 export const zProjectSpec = z.object({
     defaultEnvironment: zUri.optional(),
     defaultComputingUnit: zUri.optional(),
+    defaultWarehouse: zUri.optional(),
     defaultAgentTemplate: zUri.optional(),
     defaultModelEndpoint: zUri.optional(),
     mcpServers: z.array(zUri).optional()
@@ -782,7 +786,8 @@ export const zSettingsSpec = z.object({
     branding: zBranding,
     defaults: zDefaults,
     features: z.record(z.string(), z.boolean()).optional(),
-    retention: zRetention.optional()
+    retention: zRetention.optional(),
+    warehouseEndpoints: z.array(z.string()).optional()
 });
 
 /**
@@ -1328,6 +1333,7 @@ export const zResourcePage = z.object({
 export const zRunWorkflow = z.object({
     vno: zVno.optional(),
     computingUnit: zUri.optional(),
+    warehouse: zUri.optional(),
     environment: zUri.optional(),
     parameters: z.record(z.string(), z.unknown()).optional(),
     waitSeconds: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
@@ -1540,6 +1546,57 @@ export const zVersionSummaryPage = z.object({
     nextCursor: z.string().optional()
 });
 
+export const zWarehouseStatus = z.object({
+    name: z.string().optional()
+});
+
+/**
+ * A place in an S3-compatible object store that is the warehouse's alone. The store must hand out short-lived keys itself (STS, as MinIO and RustFS do): that is how a unit reaches one table's files.
+ */
+export const zWarehouseStorage = z.object({
+    endpoint: z.string(),
+    region: z.string(),
+    bucket: z.string(),
+    keyPrefix: z.string().optional(),
+    credential: zUri
+});
+
+export const zWarehouseSpec = z.object({
+    storage: zWarehouseStorage.optional()
+});
+
+export const zCreateWarehouse = z.object({
+    name: z.string(),
+    description: z.string().optional(),
+    parent: zRid.optional(),
+    visibility: zVisibility.optional(),
+    labels: z.record(z.string(), z.string()).optional(),
+    spec: zWarehouseSpec,
+    message: z.string().optional()
+});
+
+export const zUpdateWarehouse = z.object({
+    spec: zWarehouseSpec,
+    message: z.string().optional(),
+    expectedHead: zVno.optional()
+});
+
+/**
+ * The typed envelope, served by the kind routes.
+ */
+export const zWarehouse = z.object({
+    apiVersion: z.enum(['catalog.texera.apache.org/v1']),
+    kind: zResourceKind,
+    metadata: zResourceMetadata,
+    spec: zWarehouseSpec,
+    status: zWarehouseStatus.optional()
+});
+
+export const zWarehousePage = z.object({
+    items: z.array(zWarehouse),
+    nextCursor: z.string().optional()
+});
+
 export const zWorkflowLinkEnd = z.object({
     operatorID: z.string(),
     portID: z.string()
@@ -1583,7 +1640,8 @@ export const zWorkflowSpec = z.object({
     operators: z.array(zWorkflowOperator),
     links: z.array(zWorkflowLink),
     defaultEnvironment: zUri.optional(),
-    defaultComputingUnit: zUri.optional()
+    defaultComputingUnit: zUri.optional(),
+    defaultWarehouse: zUri.optional()
 });
 
 export const zCreateWorkflow = z.object({
@@ -3070,6 +3128,60 @@ export const zSkillsReadVersionPath = z.object({
  * The request has succeeded.
  */
 export const zSkillsReadVersionResponse = zSkillVersion;
+
+export const zWarehousesListQuery = z.object({
+    scope: zRid.optional(),
+    parent: zRid.optional(),
+    project: zRid.optional(),
+    q: z.string().optional(),
+    limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
+    cursor: z.string().optional()
+});
+
+/**
+ * A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+ */
+export const zWarehousesListResponse = zWarehousePage;
+
+export const zWarehousesCreateBody = zCreateWarehouse;
+
+/**
+ * The request has succeeded and a new resource has been created as a result.
+ */
+export const zWarehousesCreateResponse = zWarehouse;
+
+export const zWarehousesDeletePath = z.object({
+    rid: zRid
+});
+
+/**
+ * There is no content to send for this request, but the headers may be useful.
+ */
+export const zWarehousesDeleteResponse = z.void();
+
+export const zWarehousesReadPath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zWarehousesReadResponse = zWarehouse;
+
+export const zWarehousesUpdateBody = zUpdateWarehouse;
+
+export const zWarehousesUpdateHeaders = z.object({
+    'If-Match': z.string().optional()
+});
+
+export const zWarehousesUpdatePath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zWarehousesUpdateResponse = zWarehouse;
 
 export const zWorkflowsListQuery = z.object({
     scope: zRid.optional(),

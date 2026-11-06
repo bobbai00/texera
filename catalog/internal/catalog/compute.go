@@ -252,7 +252,7 @@ func (s *Service) BuildEnvironment(ctx context.Context, caller *auth.Caller, rid
 	if unitName == "" {
 		return nil, Conflict("no_unit", "no computing unit to build on", nil)
 	}
-	unit, err := s.unitByURI(ctx, unitName)
+	unit, err := s.named(ctx, unitName, unitKind)
 	if err != nil {
 		return nil, err
 	}

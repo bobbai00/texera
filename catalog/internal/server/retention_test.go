@@ -48,7 +48,7 @@ func TestRetention(t *testing.T) {
 	}
 	dropped := false
 	for _, ns := range h.lake.Dropped {
-		dropped = dropped || ns == namespace(first)
+		dropped = dropped || ns == "texera/"+namespace(first)
 	}
 	if !dropped {
 		t.Fatalf("the namespace is dropped with the execution: %v", h.lake.Dropped)
@@ -90,7 +90,7 @@ func TestRetention(t *testing.T) {
 	if sweep.ExecutionsExpired != 1 {
 		t.Fatalf("the finished execution expires: %+v", sweep)
 	}
-	if h.lake.OpenedFor(namespace(second)) != "" {
+	if h.lake.OpenedFor("texera", namespace(second)) != "" {
 		t.Fatal("the expired execution's namespace is dropped")
 	}
 	var after envelope

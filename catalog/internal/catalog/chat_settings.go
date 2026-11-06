@@ -190,7 +190,7 @@ func (r *chatResolver) computingUnit(name string) (*store.Resource, error) {
 
 // usableUnit loads a unit by URI when the caller may run on it.
 func (s *Service) usableUnit(ctx context.Context, caller *auth.Caller, name string) (*store.Resource, error) {
-	unit, err := s.unitByURI(ctx, name)
+	unit, err := s.named(ctx, name, unitKind)
 	if err != nil {
 		return nil, err
 	}

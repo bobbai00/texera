@@ -128,19 +128,45 @@ type Workloads interface {
 // ErrWorkloadNotFound is returned when no client has the id.
 var ErrWorkloadNotFound = errors.New("workload not found")
 
-// Lake is the table catalog over the warehouse (the Iceberg REST catalog, Lakekeeper): it
-// holds the result tables and enforces who may touch them.
+// Lake is the table catalog over the warehouses (the Iceberg REST catalog, Lakekeeper): it
+// holds the result tables and enforces who may touch them. A warehouse is named here as the
+// lake names it.
 type Lake interface {
-	// Prepare makes the lake ready for this deployment: bootstrapped, with the warehouse the
-	// units write to. Idempotent; called at startup.
+	// Prepare makes the lake ready for this deployment: reachable, with the catalog as its
+	// operator. Idempotent; called at startup.
 	Prepare(ctx context.Context) error
-	// OpenNamespace creates an execution's namespace and lets the workload with the subject
-	// create and write tables in it; name labels the workload in the lake.
-	OpenNamespace(ctx context.Context, namespace, subject, name string) error
-	// DropNamespace drops the namespace with every table in it; a namespace that does not
-	// exist is not an error.
-	DropNamespace(ctx context.Context, namespace string) error
+	// EnsureWarehouse makes the warehouse exist on this storage, or brings its storage and its
+	// key up to date. The lake tries the storage before it takes it: ErrStorageRefused wraps
+	// its reason.
+	EnsureWarehouse(ctx context.Context, warehouse string, storage WarehouseStorage) error
+	// RemoveWarehouse deletes a warehouse that holds nothing; one that does not exist is not an
+	// error. A lake still clearing the tables that were dropped is waited for; ErrWarehouseNotEmpty
+	// wraps its reason when the warehouse still holds something.
+	RemoveWarehouse(ctx context.Context, warehouse string) error
+	// OpenNamespace creates an execution's namespace in a warehouse and lets the workload with
+	// the subject create and write tables in it; name labels the workload in the lake.
+	OpenNamespace(ctx context.Context, warehouse, namespace, subject, name string) error
+	// DropNamespace drops the namespace with every table in it; a namespace or a warehouse that
+	// does not exist is not an error.
+	DropNamespace(ctx context.Context, warehouse, namespace string) error
 }
+
+// WarehouseStorage is where a warehouse keeps its tables: a place in an S3-compatible store,
+// as the lake and the units reach it, and the key to it.
+type WarehouseStorage struct {
+	Endpoint  string
+	Region    string
+	Bucket    string
+	KeyPrefix string
+	AccessKey string
+	SecretKey string
+}
+
+// ErrStorageRefused is returned when the lake could not use a warehouse's storage.
+var ErrStorageRefused = errors.New("the lake cannot use this storage")
+
+// ErrWarehouseNotEmpty is returned when a warehouse to remove still holds tables.
+var ErrWarehouseNotEmpty = errors.New("the warehouse is not empty")
 
 // LineageSink forwards OpenLineage events to an external consumer.
 type LineageSink interface {

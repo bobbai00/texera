@@ -25,6 +25,7 @@ import (
 type RunInput struct {
 	Vno           int
 	ComputingUnit string
+	Warehouse     string
 	Environment   string
 	Parameters    map[string]any
 	WaitSeconds   int
@@ -71,7 +72,16 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	if unitName == "" {
 		return nil, Conflict("no_unit", "no computing unit: name one in the request, the chat, the workflow, the project or the settings", nil)
 	}
-	unit, err := s.unitByURI(ctx, unitName)
+	unit, err := s.named(ctx, unitName, unitKind)
+	if err != nil {
+		return nil, err
+	}
+	// Where the results are kept is chosen the same way.
+	warehouseName := firstNonEmpty(in.Warehouse, uriString(spec.DefaultWarehouse), uriString(project.DefaultWarehouse), uriString(settings.Defaults.Warehouse))
+	if warehouseName == "" {
+		return nil, Conflict("no_warehouse", "no warehouse: name one in the request, the workflow, the project or the settings", nil)
+	}
+	warehouse, err := s.named(ctx, warehouseName, warehouseKind)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +96,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizePlan(ctx, caller, c, unit, env); err != nil {
+	if err := s.authorizePlan(ctx, caller, c, unit, warehouse, env); err != nil {
 		return nil, err
 	}
 	client, status, err := s.unitClient(ctx, unit)
@@ -113,7 +123,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	rid := uuid.New()
 	namespace := executionNamespace(rid)
 	plan := c.apiPlan(namespace)
-	execSpec := api.ExecutionSpec{Workflow: api.Uri(URI(wf).WithVersion(version.Vno).String()), ComputingUnit: api.Uri(unitURI), Plan: &plan}
+	execSpec := api.ExecutionSpec{Workflow: api.Uri(URI(wf).WithVersion(version.Vno).String()), ComputingUnit: api.Uri(unitURI), Warehouse: api.Uri(URI(warehouse).String()), Plan: &plan}
 	if env != nil {
 		e := api.Uri(URI(env).WithVersion(envVno).String())
 		execSpec.Environment = &e
@@ -150,14 +160,15 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 		s.setPhase(ctx, exec.RID, api.ExecutionPhaseFailed, map[string]any{"message": what + ": " + err.Error()})
 		return nil, err
 	}
-	// The execution's tables go into a namespace of their own, which the unit's identity may write.
+	// The execution's tables go into a namespace of their own in its warehouse, which the unit's
+	// identity may write.
 	subject := ""
 	if identity := unitIdentity(unit); identity != nil {
 		subject = identity.Subject
 	} else {
 		s.Log.Warn("the unit has no identity; the lake will take its writes only if it is open", "unit", unit.RID)
 	}
-	if err := s.Lake.OpenNamespace(ctx, namespace, subject, unit.Name); err != nil {
+	if err := s.Lake.OpenNamespace(ctx, lakeNameOf(warehouse), namespace, subject, unit.Name); err != nil {
 		return fail("the lake refused the execution's namespace", Unavailable("lake", err))
 	}
 	bound, resolved, err := s.bindInputs(ctx, caller, c)
@@ -182,7 +193,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 		}{Rid: wf.RID.String(), Vno: int32(version.Vno)},
 		Name:        &name,
 		LogicalPlan: bound,
-		ResultStore: &engine.ResultStore{CatalogUri: s.Config.IcebergCatalogURI, Warehouse: s.Config.IcebergWarehouse, Namespace: namespace, Tables: &tables},
+		ResultStore: &engine.ResultStore{Warehouse: lakeNameOf(warehouse), Namespace: namespace, Tables: &tables},
 		Reporting:   engine.Reporting{LineageUrl: s.Config.LineageCallbackURL},
 		Actor:       caller.PID().String(),
 	}
@@ -494,7 +505,7 @@ func plannedTable(exec *store.Resource, operatorID, portID string) string {
 }
 
 // executionNamespace is the namespace an execution's tables live in: the catalog makes it in
-// the lake before the execution starts and drops it with the execution.
+// the execution's warehouse before the execution starts and drops it with the execution.
 func executionNamespace(rid uuid.UUID) string {
 	return "e_" + strings.ReplaceAll(rid.String(), "-", "")
 }
@@ -504,7 +515,7 @@ func (s *Service) executionUnit(ctx context.Context, _ *auth.Caller, exec *store
 	// The caller was allowed to read the execution; the unit is the catalog's to reach.
 	var spec api.ExecutionSpec
 	_ = json.Unmarshal(exec.Spec, &spec)
-	unit, err := s.unitByURI(ctx, string(spec.ComputingUnit))
+	unit, err := s.named(ctx, string(spec.ComputingUnit), unitKind)
 	if err != nil {
 		return nil, err
 	}
@@ -580,7 +591,7 @@ func (s *Service) Rows(ctx context.Context, caller *auth.Caller, workflowRID, ei
 		return nil, err
 	}
 	table := plannedTable(r, operatorID, portID)
-	page, err := client.Result(ctx, eid.String(), operatorID, portID, table, executionNamespace(eid), offset, limit)
+	page, err := client.Result(ctx, eid.String(), operatorID, portID, table, executionNamespace(eid), s.warehouseOf(ctx, r), offset, limit)
 	if err != nil {
 		// A port the plan names has no table until the execution writes it: nothing to read yet.
 		var refused *engine.UnitError
@@ -599,28 +610,8 @@ func finished(r *store.Resource) bool {
 	return isTerminal(st.Phase)
 }
 
-// unitByURI loads a computing unit without the read check: running on a unit, compiling or
-// building on it needs can_run_on, which a `user` grant gives without reading the unit's spec.
-// Every caller requires that permission itself.
-func (s *Service) unitByURI(ctx context.Context, name string) (*store.Resource, error) {
-	ref, err := uri.Parse(name)
-	if err != nil {
-		return nil, Invalid(err.Error(), nil)
-	}
-	if ref.Kind.Name != unitKind.Name {
-		return nil, Invalid(fmt.Sprintf("%s is not a computing unit", name), nil)
-	}
-	rid, err := uuid.Parse(ref.Rid)
-	if err != nil {
-		return nil, Invalid(err.Error(), nil)
-	}
-	unit, err := s.Store.GetResource(ctx, rid)
-	if err != nil {
-		return nil, NotFound("computing unit " + rid.String())
-	}
-	return unit, nil
-}
-
+// resourceByURI reads the resource a URI names as the caller, who must be allowed to read it;
+// of the kind it must be, when one is given.
 func (s *Service) resourceByURI(ctx context.Context, caller *auth.Caller, name string, kind *kinds.Kind) (*store.Resource, error) {
 	ref, err := uri.Parse(name)
 	if err != nil {

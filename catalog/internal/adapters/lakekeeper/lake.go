@@ -1,5 +1,5 @@
 // Package lakekeeper is the Lake adapter: Lakekeeper's management API for the bootstrap, the
-// warehouse, the users and the grants, and its Iceberg REST API for the namespaces. Every call
+// warehouses, the users and the grants, and its Iceberg REST API for the namespaces. Every call
 // carries the catalog's own token; the first one bootstraps the server with the catalog as its
 // operator, so the catalog may create warehouses and namespaces and hand out grants on them.
 package lakekeeper
@@ -24,12 +24,6 @@ import (
 type Options struct {
 	// URL is Lakekeeper's base URL as the catalog reaches it.
 	URL string
-	// Warehouse is the warehouse the units write to; created when missing.
-	Warehouse string
-	// S3Endpoint is the store's endpoint as Lakekeeper and the units reach it; Bucket and
-	// KeyPrefix locate the warehouse in it; the key pair is the warehouse's own.
-	S3Endpoint, S3Region, S3Bucket, S3KeyPrefix string
-	S3AccessKey, S3SecretKey                    string
 	// Tokens mints the catalog's tokens.
 	Tokens ports.Identity
 }
@@ -40,18 +34,20 @@ type Lake struct {
 	log  *slog.Logger
 	http *http.Client
 
-	mu        sync.Mutex
-	warehouse string // the warehouse id, the prefix of its Iceberg routes
+	mu  sync.Mutex
+	ids map[string]string // a warehouse's id by its name: the prefix of its Iceberg routes
+
+	// How long a warehouse that is being emptied is waited for, and how often it is asked.
+	clearing, pause time.Duration
 }
 
 // New returns the adapter; Prepare connects.
 func New(opts Options, log *slog.Logger) *Lake {
-	return &Lake{opts: opts, log: log, http: &http.Client{Timeout: 60 * time.Second}}
+	return &Lake{opts: opts, log: log, http: &http.Client{Timeout: 60 * time.Second}, ids: map[string]string{}, clearing: 30 * time.Second, pause: time.Second}
 }
 
-// Prepare waits for Lakekeeper, bootstraps it with the catalog as the operator when nobody
-// did, and makes sure the warehouse exists with the store's current endpoint and credential
-// vending turned on.
+// Prepare waits for Lakekeeper and bootstraps it with the catalog as the operator when nobody
+// did. The warehouses are the catalog's resources: it makes each one with EnsureWarehouse.
 func (l *Lake) Prepare(ctx context.Context) error {
 	var info struct {
 		Bootstrapped bool `json:"bootstrapped"`
@@ -90,13 +86,13 @@ func (l *Lake) Prepare(ctx context.Context) error {
 			return fmt.Errorf("create project: status %d: %s", status, truncate(raw))
 		}
 	}
-	return l.ensureWarehouse(ctx)
+	return nil
 }
 
 type storageProfile struct {
 	Type            string `json:"type"`
 	Bucket          string `json:"bucket"`
-	KeyPrefix       string `json:"key-prefix"`
+	KeyPrefix       string `json:"key-prefix,omitempty"`
 	Region          string `json:"region"`
 	Endpoint        string `json:"endpoint"`
 	PathStyleAccess bool   `json:"path-style-access"`
@@ -104,85 +100,172 @@ type storageProfile struct {
 	StsEnabled      bool   `json:"sts-enabled"`
 }
 
-func (l *Lake) profile() storageProfile {
+// profileOf is a storage as Lakekeeper takes it: an S3-compatible store reached by path, with
+// credential vending on, so a unit never holds a key to the whole warehouse.
+func profileOf(storage ports.WarehouseStorage) storageProfile {
 	return storageProfile{
-		Type: "s3", Bucket: l.opts.S3Bucket, KeyPrefix: l.opts.S3KeyPrefix, Region: l.opts.S3Region,
-		Endpoint: l.opts.S3Endpoint, PathStyleAccess: true, Flavor: "s3-compat", StsEnabled: true,
+		Type: "s3", Bucket: storage.Bucket, KeyPrefix: storage.KeyPrefix, Region: storage.Region,
+		Endpoint: storage.Endpoint, PathStyleAccess: true, Flavor: "s3-compat", StsEnabled: true,
 	}
 }
 
-func (l *Lake) credential() map[string]any {
-	return map[string]any{"type": "s3", "credential-type": "access-key", "aws-access-key-id": l.opts.S3AccessKey, "aws-secret-access-key": l.opts.S3SecretKey}
+// samePlace reports whether two profiles are one place. Lakekeeper writes an endpoint back with
+// a slash at its end.
+func (p storageProfile) samePlace(o storageProfile) bool {
+	p.Endpoint, o.Endpoint = strings.TrimRight(p.Endpoint, "/"), strings.TrimRight(o.Endpoint, "/")
+	p.KeyPrefix, o.KeyPrefix = strings.Trim(p.KeyPrefix, "/"), strings.Trim(o.KeyPrefix, "/")
+	return p == o
 }
 
-// ensureWarehouse creates the warehouse, or updates its storage when the endpoint or the
-// vending changed, and remembers its id.
-func (l *Lake) ensureWarehouse(ctx context.Context) error {
+func credentialOf(storage ports.WarehouseStorage) map[string]any {
+	return map[string]any{"type": "s3", "credential-type": "access-key", "aws-access-key-id": storage.AccessKey, "aws-secret-access-key": storage.SecretKey}
+}
+
+type warehouseEntry struct {
+	ID      string         `json:"id"`
+	Name    string         `json:"name"`
+	Profile storageProfile `json:"storage-profile"`
+}
+
+// find returns the warehouse of a name, nil when the lake has none.
+func (l *Lake) find(ctx context.Context, warehouse string) (*warehouseEntry, error) {
 	var list struct {
-		Warehouses []struct {
-			ID      string         `json:"id"`
-			Name    string         `json:"name"`
-			Profile storageProfile `json:"storage-profile"`
-		} `json:"warehouses"`
+		Warehouses []warehouseEntry `json:"warehouses"`
 	}
 	if err := l.get(ctx, "/management/v1/warehouse", &list); err != nil {
-		return err
+		return nil, err
 	}
-	want := l.profile()
-	for _, w := range list.Warehouses {
-		if w.Name != l.opts.Warehouse {
-			continue
+	for i := range list.Warehouses {
+		if list.Warehouses[i].Name == warehouse {
+			l.remember(warehouse, list.Warehouses[i].ID)
+			return &list.Warehouses[i], nil
 		}
-		if w.Profile.Endpoint != want.Endpoint || !w.Profile.StsEnabled {
-			body := map[string]any{"storage-profile": want, "storage-credential": l.credential()}
-			if status, raw, err := l.do(ctx, http.MethodPost, "/management/v1/warehouse/"+w.ID+"/storage", body); err != nil {
-				return err
-			} else if status/100 != 2 {
-				return fmt.Errorf("update warehouse storage: status %d: %s", status, truncate(raw))
-			}
-			l.log.Info("lakekeeper warehouse storage updated", "warehouse", w.Name, "endpoint", want.Endpoint)
-		}
-		l.setWarehouse(w.ID)
-		return nil
 	}
-	body := map[string]any{"warehouse-name": l.opts.Warehouse, "storage-profile": want, "storage-credential": l.credential()}
-	status, raw, err := l.do(ctx, http.MethodPost, "/management/v1/warehouse", body)
+	return nil, nil
+}
+
+// EnsureWarehouse creates the warehouse, or brings its storage and its key up to date.
+// Lakekeeper tries a storage before it takes it; what it answers then is the refusal's reason.
+func (l *Lake) EnsureWarehouse(ctx context.Context, warehouse string, storage ports.WarehouseStorage) error {
+	found, err := l.find(ctx, warehouse)
 	if err != nil {
 		return err
 	}
+	want := profileOf(storage)
+	if found == nil {
+		body := map[string]any{"warehouse-name": warehouse, "storage-profile": want, "storage-credential": credentialOf(storage)}
+		status, raw, err := l.do(ctx, http.MethodPost, "/management/v1/warehouse", body)
+		if err != nil {
+			return err
+		}
+		if status/100 == 4 {
+			return fmt.Errorf("%w: %s", ports.ErrStorageRefused, reason(raw))
+		}
+		if status/100 != 2 {
+			return fmt.Errorf("create warehouse %s: status %d: %s", warehouse, status, truncate(raw))
+		}
+		var created struct {
+			ID string `json:"warehouse-id"`
+		}
+		if err := json.Unmarshal(raw, &created); err == nil && created.ID != "" {
+			l.remember(warehouse, created.ID)
+		}
+		l.log.Info("lakekeeper warehouse created", "warehouse", warehouse, "id", created.ID)
+		return nil
+	}
+	// The same place: only the key may have changed. Another place: the storage with its key.
+	path, body := "/storage-credential", map[string]any{"new-storage-credential": credentialOf(storage)}
+	if !found.Profile.samePlace(want) {
+		path, body = "/storage", map[string]any{"storage-profile": want, "storage-credential": credentialOf(storage)}
+	}
+	status, raw, err := l.do(ctx, http.MethodPost, "/management/v1/warehouse/"+found.ID+path, body)
+	if err != nil {
+		return err
+	}
+	if status/100 == 4 {
+		return fmt.Errorf("%w: %s", ports.ErrStorageRefused, reason(raw))
+	}
 	if status/100 != 2 {
-		return fmt.Errorf("create warehouse %s: status %d: %s", l.opts.Warehouse, status, truncate(raw))
+		return fmt.Errorf("update warehouse %s: status %d: %s", warehouse, status, truncate(raw))
 	}
-	var created struct {
-		ID string `json:"warehouse-id"`
-	}
-	if err := json.Unmarshal(raw, &created); err != nil || created.ID == "" {
-		return fmt.Errorf("create warehouse: unexpected answer %s", truncate(raw))
-	}
-	l.log.Info("lakekeeper warehouse created", "warehouse", l.opts.Warehouse, "id", created.ID)
-	l.setWarehouse(created.ID)
 	return nil
 }
 
-func (l *Lake) setWarehouse(id string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.warehouse = id
+// RemoveWarehouse deletes the warehouse. Lakekeeper refuses while it holds a namespace. Once
+// the last one is dropped it clears the files of the dropped tables, for some seconds, and
+// refuses until it is done: that is waited for here, since nothing is kept there any more.
+func (l *Lake) RemoveWarehouse(ctx context.Context, warehouse string) error {
+	found, err := l.find(ctx, warehouse)
+	if err != nil || found == nil {
+		return err
+	}
+	deadline := time.Now().Add(l.clearing)
+	for {
+		status, raw, err := l.do(ctx, http.MethodDelete, "/management/v1/warehouse/"+found.ID, nil)
+		if err != nil {
+			return err
+		}
+		message, kind := answerOf(raw)
+		switch {
+		case status/100 == 2 || status == http.StatusNotFound:
+			l.mu.Lock()
+			delete(l.ids, warehouse)
+			l.mu.Unlock()
+			return nil
+		case status == http.StatusConflict && kind == "WarehouseHasUnfinishedTasks" && time.Now().Before(deadline):
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(l.pause):
+			}
+		case status == http.StatusConflict || status == http.StatusBadRequest:
+			return fmt.Errorf("%w: %s", ports.ErrWarehouseNotEmpty, message)
+		default:
+			return fmt.Errorf("delete warehouse %s: status %d: %s", warehouse, status, truncate(raw))
+		}
+	}
 }
 
-func (l *Lake) prefix(ctx context.Context) (string, error) {
+func (l *Lake) remember(warehouse, id string) {
 	l.mu.Lock()
-	id := l.warehouse
+	defer l.mu.Unlock()
+	l.ids[warehouse] = id
+}
+
+// prefix is a warehouse's id, which its Iceberg routes start with; "" when the lake has no
+// warehouse of the name.
+func (l *Lake) prefix(ctx context.Context, warehouse string) (string, error) {
+	l.mu.Lock()
+	id := l.ids[warehouse]
 	l.mu.Unlock()
 	if id != "" {
 		return id, nil
 	}
-	if err := l.ensureWarehouse(ctx); err != nil {
+	found, err := l.find(ctx, warehouse)
+	if err != nil || found == nil {
 		return "", err
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.warehouse, nil
+	return found.ID, nil
+}
+
+// answerOf is what Lakekeeper said in an error answer, and the kind of error it named.
+func answerOf(raw []byte) (message, kind string) {
+	var answer struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &answer); err == nil && answer.Error.Message != "" {
+		return answer.Error.Message, answer.Error.Type
+	}
+	return truncate(raw), ""
+}
+
+// reason is what Lakekeeper said in an error answer.
+func reason(raw []byte) string {
+	message, _ := answerOf(raw)
+	return message
 }
 
 // userID is how Lakekeeper names an OIDC subject.
@@ -190,10 +273,13 @@ func userID(subject string) string { return "oidc~" + subject }
 
 // OpenNamespace creates the namespace and grants the subject create and modify on it, which
 // its tables inherit. Without a subject the namespace is created and nothing is granted.
-func (l *Lake) OpenNamespace(ctx context.Context, namespace, subject, name string) error {
-	prefix, err := l.prefix(ctx)
+func (l *Lake) OpenNamespace(ctx context.Context, warehouse, namespace, subject, name string) error {
+	prefix, err := l.prefix(ctx, warehouse)
 	if err != nil {
 		return err
+	}
+	if prefix == "" {
+		return fmt.Errorf("the lake has no warehouse %s", warehouse)
 	}
 	body := map[string]any{"namespace": []string{namespace}, "properties": map[string]string{}}
 	status, raw, err := l.do(ctx, http.MethodPost, "/catalog/v1/"+prefix+"/namespaces", body)
@@ -254,9 +340,9 @@ func (l *Lake) OpenNamespace(ctx context.Context, namespace, subject, name strin
 }
 
 // DropNamespace drops the namespace with its tables and their data.
-func (l *Lake) DropNamespace(ctx context.Context, namespace string) error {
-	prefix, err := l.prefix(ctx)
-	if err != nil {
+func (l *Lake) DropNamespace(ctx context.Context, warehouse, namespace string) error {
+	prefix, err := l.prefix(ctx, warehouse)
+	if err != nil || prefix == "" {
 		return err
 	}
 	status, raw, err := l.do(ctx, http.MethodDelete, "/catalog/v1/"+prefix+"/namespaces/"+url.PathEscape(namespace)+"?recursive=true&force=true&purge=true", nil)

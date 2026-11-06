@@ -73,11 +73,11 @@ func (fakeIdentity) SearchUsers(_ context.Context, q string, _ int) ([]ports.Use
 // fakeUnit is an engine: health, operators, compile, start, status, results, environments.
 type fakeUnit struct {
 	*httptest.Server
-	mu              sync.Mutex
-	started         []map[string]any
-	controlled      []string
-	compiled        int
-	resultNamespace string
+	mu          sync.Mutex
+	started     []map[string]any
+	controlled  []string
+	compiled    int
+	resultPlace string
 	// refuse, when set, answers before the engine does: a request it returns true for is done.
 	refuse func(w http.ResponseWriter, r *http.Request) bool
 }
@@ -143,7 +143,7 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 	}
 	mux.HandleFunc("GET /api/executions/{eid}/results/{opid}/{port}", func(w http.ResponseWriter, r *http.Request) {
 		u.mu.Lock()
-		u.resultNamespace = r.URL.Query().Get("namespace")
+		u.resultPlace = r.URL.Query().Get("warehouse") + "/" + r.URL.Query().Get("namespace")
 		u.mu.Unlock()
 		offset := 0
 		fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
@@ -189,11 +189,11 @@ func (u *fakeUnit) compiles() int {
 	return u.compiled
 }
 
-// lastResultNamespace is the namespace the last rows request named.
-func (u *fakeUnit) lastResultNamespace() string {
+// lastResultPlace is where the last rows request said the table is: "warehouse/namespace".
+func (u *fakeUnit) lastResultPlace() string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.resultNamespace
+	return u.resultPlace
 }
 
 func (u *fakeUnit) starts() []map[string]any {
@@ -284,8 +284,9 @@ func newHarness(t *testing.T) *harness {
 	svc := &catalog.Service{
 		Store: st, PDP: pdp, Relay: relay, Identity: fakeIdentity{}, Secrets: secrets, Blobs: memory.NewBlobs(), Units: memory.Units{}, Workloads: workloads, Lake: lake, LineageSink: &memory.Lineage{},
 		Config: catalog.Config{PublicURL: "http://test", APIPrefix: server.Prefix, OIDCIssuer: "http://test/auth/realms/texera", OIDCClientID: "texera-app", BrandName: "Texera Test",
-			IcebergCatalogURI: "http://lakekeeper/catalog", IcebergWarehouse: "texera", LineageCallbackURL: "http://catalog/lineage/v1/events",
-			PresignTTL: time.Hour, LeaseTTL: time.Hour, MaxDownloadBytes: 1 << 20,
+			Warehouse: "texera", WarehouseStore: ports.WarehouseStorage{Endpoint: "http://store:9000", Region: "us-east-1", Bucket: "texera", KeyPrefix: "warehouse", AccessKey: "store-key", SecretKey: "store-secret"},
+			LineageCallbackURL: "http://catalog/lineage/v1/events",
+			PresignTTL:         time.Hour, LeaseTTL: time.Hour, MaxDownloadBytes: 1 << 20,
 			StaticUnitEndpoint: unit.URL, StaticUnitName: "test unit", StaticUnitClientID: "texera-unit", BioMcpURL: "http://test/bio-mcp", BioMcpKey: "bio-dev-key", ModelName: "claude-haiku-5-5", ModelSecretPath: "platform/anthropic"},
 		Log: log,
 	}

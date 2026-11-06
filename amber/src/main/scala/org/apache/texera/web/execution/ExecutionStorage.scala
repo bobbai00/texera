@@ -25,7 +25,6 @@ import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.result.iceberg.OnIceberg
 import org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
 import org.apache.texera.service.util.LargeBinaryManager
-import org.apache.texera.web.service.WarehouseReadGuard
 
 import java.net.URI
 
@@ -68,12 +67,8 @@ object ExecutionStorage extends LazyLogging {
   }
 
   private def bestEffort(uri: URI)(action: => Unit): Unit =
-    try {
-      // While per-user warehouses are disabled, clean-up must not reach into them (#6930).
-      if (WarehouseReadGuard.skipWhileDisabled(uri))
-        logger.info(s"skipping $uri: per-user warehouses are disabled")
-      else action
-    } catch {
+    try action
+    catch {
       case error: Throwable => logger.warn(s"could not drop $uri: ${error.getMessage}")
     }
 }

@@ -10,7 +10,10 @@ worktree `~/Desktop/texera-2-0` on this Linux box. For development every piece r
 process over a Compose stack; the same stack also deploys to a local Kubernetes cluster in one
 command, where computing units are created as resources. The lake (Lakekeeper) authenticates
 every caller and authorizes with OpenFGA: each unit runs as a client of its own and reaches only
-the namespaces of the executions it ran, which the catalog opens for it. Running a workflow goes through the
+the namespaces of the executions it ran, which the catalog opens for it. An execution runs on a
+computing unit and keeps its results in a warehouse, and both are resources: the platform's
+warehouse is built in, a project can have its own, on the platform's store or on a store of
+its own. Running a workflow goes through the
 catalog in three phases: authorize (everything the plan names, before anything is written),
 compile (one plan, as data, the same a dry run returns), materialize (the execution with its
 plan, its namespace, a bound copy with presigned inputs and leased secrets to the engine, which
@@ -34,7 +37,7 @@ automated checks, and the close gate (`down.sh --wipe && up.sh && test.sh`) is g
 
 ## What is done
 
-- One contract (`api/catalog/`, TypeSpec) for fifteen kinds behind one envelope, with `texera://`
+- One contract (`api/catalog/`, TypeSpec) for sixteen kinds behind one envelope, with `texera://`
   URIs equal to REST paths, immutable versions with digests, executions nested under workflows with
   ports, grants, lineage, search, AuthZEN and OpenLineage routes. `cmd/catalogen` generates the
   kind table, the JSON Schema bundle, the MCP tool tables, the permission table and the indexes.

@@ -69,6 +69,31 @@ class ExecutionStorageSpec extends AnyFlatSpec with Matchers {
     other.portResults should have size 1
   }
 
+  it should "clear an execution's documents in the warehouse it named" in {
+    // The warehouse is part of each URI, so the drop reaches the documents wherever the
+    // execution wrote them, whatever the unit's own default warehouse is.
+    val expired = ExecutionRegistry.create(33, 0, "run", Some(UUID.randomUUID().toString))
+    val port =
+      GlobalPortIdentity(PhysicalOpIdentity(OperatorIdentity("op"), "main"), PortIdentity(0))
+    val result = VFSURIFactory.resultURI(
+      VFSURIFactory.createPortBaseURI(WorkflowIdentity(33), expired.eid, port, Some("w_0a1b2c"))
+    )
+    val console = VFSURIFactory.createConsoleMessagesURI(
+      WorkflowIdentity(33),
+      expired.eid,
+      OperatorIdentity("op"),
+      Some("w_0a1b2c")
+    )
+    ExecutionRegistry.recordPortResultUri(expired.eid, port, result)
+    ExecutionRegistry.insertOperatorExecutions(expired.eid.id, "op", console)
+    val cleared = ArrayBuffer.empty[URI]
+
+    ExecutionStorage.drop(expired.eid, uri => new ClearRecorder(uri, cleared), _ => ())
+
+    cleared.toSet shouldBe Set(result, console)
+    cleared.foreach(uri => VFSURIFactory.decodeURI(uri).warehouse shouldBe Some("w_0a1b2c"))
+  }
+
   it should "keep going past a document it cannot open or a URI it cannot decode" in {
     val expired = run(32, ports = 2)
     ExecutionRegistry.insertOperatorExecutions(

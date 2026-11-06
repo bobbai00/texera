@@ -14,9 +14,9 @@ import (
 	"github.com/apache/texera/catalog/internal/kinds"
 )
 
-// An execution gets a namespace of its own in the lake, opened for the unit's identity, and the
-// engine is told to write there; the catalog reads rows back naming the same namespace;
-// deleting the execution drops it.
+// An execution gets a namespace of its own in its warehouse (the platform's, when nothing
+// names another), opened for the unit's identity, and the engine is told to write there; the
+// catalog reads rows back naming the same place; deleting the execution drops it.
 func TestRunOpensTheLakeForTheUnit(t *testing.T) {
 	h := newHarness(t)
 	ds := h.create("alice", "datasets", "iris", map[string]any{"format": "csv"})
@@ -49,7 +49,7 @@ func TestRunOpensTheLakeForTheUnit(t *testing.T) {
 	var exec envelope
 	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{"name": "first"}, &exec)
 	namespace := "e_" + strings.ReplaceAll(rid(exec), "-", "")
-	if got := h.lake.OpenedFor(namespace); got != "sa:texera-unit" {
+	if got := h.lake.OpenedFor("texera", namespace); got != "sa:texera-unit" {
 		t.Fatalf("the namespace is opened for the unit's subject: %q", got)
 	}
 	deadline := time.Now().Add(10 * time.Second)
@@ -60,14 +60,14 @@ func TestRunOpensTheLakeForTheUnit(t *testing.T) {
 	if len(starts) != 1 {
 		t.Fatalf("unit starts: %d", len(starts))
 	}
-	if rs, _ := starts[0]["resultStore"].(map[string]any); rs["namespace"] != namespace {
-		t.Fatalf("the engine is told the namespace: %v", starts[0]["resultStore"])
+	if rs, _ := starts[0]["resultStore"].(map[string]any); rs["namespace"] != namespace || rs["warehouse"] != "texera" || len(rs) != 3 {
+		t.Fatalf("the engine is told the warehouse, the namespace and the tables: %v", starts[0]["resultStore"])
 	}
-	// A read names the namespace too, for a unit that no longer holds the execution.
+	// A read names the place too, for a unit that no longer holds the execution.
 	var page api.RowPage
 	h.mustJSON("alice", "GET", p+"/workflows/"+rid(wf)+"/executions/"+rid(exec)+"/operators/scan/ports/output-0/rows", nil, &page)
-	if h.unit.lastResultNamespace() != namespace {
-		t.Fatalf("the rows request names the namespace: %q", h.unit.lastResultNamespace())
+	if h.unit.lastResultPlace() != "texera/"+namespace {
+		t.Fatalf("the rows request names the warehouse and the namespace: %q", h.unit.lastResultPlace())
 	}
 
 	// Deleting the execution drops its namespace.
@@ -76,7 +76,7 @@ func TestRunOpensTheLakeForTheUnit(t *testing.T) {
 	if err := h.svc.Delete(context.Background(), caller, &k, uuid.MustParse(rid(exec))); err != nil {
 		t.Fatalf("delete execution: %v", err)
 	}
-	if h.lake.OpenedFor(namespace) != "" || len(h.lake.Dropped) != 1 || h.lake.Dropped[0] != namespace {
+	if h.lake.OpenedFor("texera", namespace) != "" || len(h.lake.Dropped) != 1 || h.lake.Dropped[0] != "texera/"+namespace {
 		t.Fatalf("the namespace is dropped with the execution: %v", h.lake.Dropped)
 	}
 }

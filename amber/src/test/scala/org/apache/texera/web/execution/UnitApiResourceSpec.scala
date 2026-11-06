@@ -25,6 +25,7 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 import java.util.UUID
+import javax.ws.rs.WebApplicationException
 
 class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
 
@@ -128,7 +129,6 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
     }
     val eid = ExecutionIdentity(EngineIds.of(UUID.randomUUID().toString))
     val store = ResultStore(
-      "http://lake/catalog",
       "texera",
       "e_abc",
       Some(List(OutputTable("avg", "output-0", "avg_output_0")))
@@ -148,6 +148,148 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
         PortIdentity(0, false)
       )
     ) shouldBe None
+  }
+
+  "a start request" should "name the warehouse the execution stores what it writes in" in {
+    val request = objectMapper.readValue(
+      """{"eid":"0b6f8a2e-52c1-4a52-9d55-0c6f6b2f9a10","workflow":{"rid":"w","vno":1},
+        |"logicalPlan":{"operators":[],"links":[]},
+        |"resultStore":{"warehouse":"w_0a1b2c3d","namespace":"e_abc",
+        |"tables":[{"opid":"avg","port":"output-0","table":"avg_output_0"}]},
+        |"reporting":{"lineageUrl":"http://catalog/lineage"},"actor":"p"}""".stripMargin,
+      classOf[ExecutionStartRequest]
+    )
+    val store = request.resultStore.get
+    UnitApiResource.warehouseNamed(store.warehouse) shouldBe Some("w_0a1b2c3d")
+    store.layout.namespace shouldBe "e_abc"
+  }
+
+  "warehouseNamed" should "take a legal name as given, and none as the unit's default warehouse" in {
+    UnitApiResource.warehouseNamed("texera") shouldBe Some("texera")
+    UnitApiResource.warehouseNamed("w_0a1b2c3d") shouldBe Some("w_0a1b2c3d")
+    UnitApiResource.warehouseNamed("") shouldBe None
+    UnitApiResource.warehouseNamed(null) shouldBe None
+  }
+
+  it should "refuse a name the storage layer cannot carry, never using the default instead" in {
+    Seq("a/b", "a%2Fb", "-lead", "sp ace", "../texera").foreach { bad =>
+      withClue(s"'$bad': ") {
+        val refused = intercept[WebApplicationException](UnitApiResource.warehouseNamed(bad))
+        refused.getResponse.getStatus shouldBe 400
+      }
+    }
+  }
+
+  "result" should "read a recorded table from the warehouse the catalog names" in {
+    import org.apache.iceberg.catalog.{Namespace, SupportsNamespaces, TableIdentifier}
+    import org.apache.texera.amber.core.storage.model.BufferedItemWriter
+    import org.apache.texera.amber.core.storage.{
+      DocumentFactory,
+      ExecutionLayout,
+      ExecutionLayouts,
+      IcebergCatalogInstance,
+      VFSURIFactory
+    }
+    import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
+    import org.apache.texera.amber.core.virtualidentity.{
+      ExecutionIdentity,
+      OperatorIdentity,
+      PhysicalOpIdentity,
+      WorkflowIdentity
+    }
+    import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+    import org.apache.texera.amber.util.IcebergUtil
+    import org.apache.texera.common.config.StorageConfig
+
+    import java.nio.file.{Files, Path}
+    import java.util.Comparator
+    import scala.util.Try
+
+    // Only the REST catalog is scoped to a warehouse. Under it, each of the two names gets
+    // a local catalog of its own, so a table in one is not in the other. The other catalog
+    // types share one catalog whatever the name, and only the read itself is checked.
+    val separate = StorageConfig.icebergCatalogType == "rest"
+    val (home, elsewhere) = ("w_unitapispec_home", "w_unitapispec_elsewhere")
+    if (separate) {
+      Seq(home, elsewhere).foreach { name =>
+        val directory = Files.createTempDirectory(name)
+        // Best effort: the temp warehouse goes when the JVM does.
+        sys.addShutdownHook {
+          try Files
+            .walk(directory)
+            .sorted(Comparator.reverseOrder[Path]())
+            .forEach((p: Path) => Files.deleteIfExists(p))
+          catch { case _: Throwable => () }
+        }
+        IcebergCatalogInstance.replaceInstance(
+          IcebergUtil.createHadoopCatalog(name, directory),
+          Some(name)
+        )
+      }
+    }
+
+    // A finished execution as the catalog laid it out: a namespace of its own, the output
+    // port's table under the name the catalog chose, in the warehouse it named.
+    val eid = ExecutionIdentity(EngineIds.fresh())
+    val namespace = "e_unitapispec"
+    ExecutionLayouts.register(eid, ExecutionLayout(namespace, Map(("avg", 0) -> "avg_output_0")))
+    try {
+      val schema = new Schema(List(new Attribute("mean", AttributeType.INTEGER)))
+      val writer = DocumentFactory
+        .createDocument(
+          VFSURIFactory.resultURI(
+            VFSURIFactory.createPortBaseURI(
+              WorkflowIdentity(5),
+              eid,
+              GlobalPortIdentity(
+                PhysicalOpIdentity(OperatorIdentity("avg"), "main"),
+                PortIdentity(0)
+              ),
+              Some(home)
+            )
+          ),
+          schema
+        )
+        .writer("unit-api-spec")
+        .asInstanceOf[BufferedItemWriter[Tuple]]
+      writer.open()
+      Seq(4, 2).foreach(v =>
+        writer.putOne(Tuple.builder(schema).add("mean", AttributeType.INTEGER, v).build())
+      )
+      writer.close()
+
+      // The unit no longer holds the execution: the catalog says where the table is.
+      def read(warehouse: String): RowPage =
+        new UnitApiResource().result(
+          UUID.randomUUID().toString,
+          "avg",
+          "output-0",
+          0,
+          10,
+          "avg_output_0",
+          namespace,
+          warehouse
+        )
+
+      val page = read(home)
+      page.schema.map(_.attributeName) shouldBe List("mean")
+      page.rows.map(_.map(_.asInt())) should contain theSameElementsAs List(List(4), List(2))
+      page.total shouldBe Some(2)
+
+      if (separate) {
+        intercept[WebApplicationException](read(elsewhere)).getResponse.getStatus shouldBe 404
+      }
+      intercept[WebApplicationException](read("a/b")).getResponse.getStatus shouldBe 400
+    } finally {
+      // Leave nothing behind in a catalog that other suites and other runs share.
+      val catalog = IcebergCatalogInstance.getInstance(Some(home))
+      Try(catalog.dropTable(TableIdentifier.of(namespace, "avg_output_0")))
+      catalog match {
+        case namespaces: SupportsNamespaces =>
+          Try(namespaces.dropNamespace(Namespace.of(namespace)))
+        case _ =>
+      }
+    }
   }
 
   "EnvironmentManager.nameOf" should "make a filesystem-safe, version-specific name" in {

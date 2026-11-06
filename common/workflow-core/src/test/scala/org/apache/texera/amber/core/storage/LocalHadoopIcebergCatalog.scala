@@ -21,6 +21,7 @@ package org.apache.texera.amber.core.storage
 
 import org.apache.iceberg.catalog.Catalog
 import org.apache.texera.amber.util.IcebergUtil
+import org.apache.texera.common.config.StorageConfig
 
 import java.nio.file.{Files, Path}
 import java.util.Comparator
@@ -58,21 +59,45 @@ object LocalHadoopIcebergCatalog {
   def ensure(warehouses: String*): Unit =
     synchronized {
       val installed = catalog.getOrElse {
-        val warehouse = Files.createTempDirectory("wfcore-iceberg-shared")
-        // Best-effort recursive cleanup of the temp warehouse on JVM exit so test runs
-        // don't leave wfcore-iceberg-shared* directories behind on dev machines / CI.
-        sys.addShutdownHook {
-          try Files
-            .walk(warehouse)
-            .sorted(Comparator.reverseOrder[Path]())
-            .forEach((p: Path) => Files.deleteIfExists(p))
-          catch { case _: Throwable => () }
-        }
-        val created = IcebergUtil.createHadoopCatalog("wfcore-test", warehouse)
+        val created = localCatalog("wfcore-test", "wfcore-iceberg-shared")
         catalog = Some(created)
         IcebergCatalogInstance.replaceInstance(created)
         created
       }
       warehouses.foreach(name => IcebergCatalogInstance.replaceInstance(installed, Some(name)))
     }
+
+  /**
+    * Whether a named warehouse is a catalog of its own. Only the `rest` catalog type
+    * is scoped to a warehouse; the others share one catalog whatever the name.
+    */
+  def warehousesAreSeparate: Boolean = StorageConfig.icebergCatalogType == "rest"
+
+  /**
+    * Registers a catalog of its own under `warehouse`, so a suite can tell a table in
+    * a named warehouse from one in the default warehouse. Only for a suite that has
+    * checked [[warehousesAreSeparate]]: under the other catalog types every name
+    * shares one entry, and this would replace the catalog all suites share.
+    */
+  def installSeparate(warehouse: String): Unit = {
+    require(warehousesAreSeparate, "every warehouse shares one catalog under this catalog type")
+    IcebergCatalogInstance.replaceInstance(
+      localCatalog(s"wfcore-test-$warehouse", s"wfcore-iceberg-$warehouse"),
+      Some(warehouse)
+    )
+  }
+
+  private def localCatalog(name: String, directoryPrefix: String): Catalog = {
+    val warehouse = Files.createTempDirectory(directoryPrefix)
+    // Best-effort recursive cleanup of the temp warehouse on JVM exit so test runs
+    // don't leave wfcore-iceberg-* directories behind on dev machines / CI.
+    sys.addShutdownHook {
+      try Files
+        .walk(warehouse)
+        .sorted(Comparator.reverseOrder[Path]())
+        .forEach((p: Path) => Files.deleteIfExists(p))
+      catch { case _: Throwable => () }
+    }
+    IcebergUtil.createHadoopCatalog(name, warehouse)
+  }
 }

@@ -13,8 +13,8 @@ func TestTableIsComplete(t *testing.T) {
 	if err := json.Unmarshal(Bundle(), &bundle); err != nil {
 		t.Fatal(err)
 	}
-	if len(Table) != 15 {
-		t.Fatalf("expected 15 kinds, got %d", len(Table))
+	if len(Table) != 16 {
+		t.Fatalf("expected 16 kinds, got %d", len(Table))
 	}
 	for _, k := range Table {
 		if _, ok := bundle.Defs[k.Spec]; !ok {

@@ -29,6 +29,7 @@ import (
 	"github.com/apache/texera/catalog/internal/catalog"
 	"github.com/apache/texera/catalog/internal/config"
 	"github.com/apache/texera/catalog/internal/mcp"
+	"github.com/apache/texera/catalog/internal/ports"
 	"github.com/apache/texera/catalog/internal/server"
 	"github.com/apache/texera/catalog/internal/store"
 )
@@ -92,15 +93,11 @@ func run(log *slog.Logger) error {
 	go relay.Run(ctx, 2*time.Second)
 
 	// The lake: bootstrapped with the catalog as its operator, the warehouse the units write to.
-	lake := lakekeeper.New(lakekeeper.Options{
-		URL: cfg.LakeURL, Warehouse: cfg.IcebergWarehouse,
-		S3Endpoint: cfg.LakeS3Endpoint, S3Region: cfg.S3Region, S3Bucket: cfg.LakeBucket, S3KeyPrefix: cfg.LakeKeyPrefix,
-		S3AccessKey: cfg.S3AccessKey, S3SecretKey: cfg.S3SecretKey, Tokens: identity,
-	}, log)
+	lake := lakekeeper.New(lakekeeper.Options{URL: cfg.LakeURL, Tokens: identity}, log)
 	if err := lake.Prepare(ctx); err != nil {
 		return err
 	}
-	log.Info("lake ready", "url", cfg.LakeURL, "warehouse", cfg.IcebergWarehouse)
+	log.Info("lake ready", "url", cfg.LakeURL)
 
 	// Units: static ones always; Kubernetes ones when a namespace is configured.
 	units := unitmux.Mux{api.UnitProviderStatic: staticunit.Provider{}}
@@ -142,8 +139,13 @@ func run(log *slog.Logger) error {
 		LineageSink: noop.Lineage{},
 		Config: catalog.Config{
 			PublicURL: cfg.PublicURL, APIPrefix: server.Prefix, OIDCIssuer: cfg.OIDCIssuer, OIDCClientID: cfg.OIDCAppClientID, BrandName: cfg.BrandName,
-			IcebergCatalogURI: cfg.IcebergCatalogURI, IcebergWarehouse: cfg.IcebergWarehouse, LineageCallbackURL: cfg.LineageCallbackURL,
-			PresignTTL: cfg.PresignTTL, LeaseTTL: cfg.LeaseTTL, MaxDownloadBytes: cfg.MaxDownloadBytes,
+			Warehouse: cfg.IcebergWarehouse,
+			WarehouseStore: ports.WarehouseStorage{
+				Endpoint: cfg.LakeS3Endpoint, Region: cfg.S3Region, Bucket: cfg.LakeBucket, KeyPrefix: cfg.LakeKeyPrefix,
+				AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey,
+			},
+			LineageCallbackURL: cfg.LineageCallbackURL,
+			PresignTTL:         cfg.PresignTTL, LeaseTTL: cfg.LeaseTTL, MaxDownloadBytes: cfg.MaxDownloadBytes,
 			StaticUnitEndpoint: cfg.StaticUnitEndpoint, StaticUnitName: cfg.StaticUnitName, StaticUnitClientID: cfg.StaticUnitClientID, BioMcpURL: cfg.BioMcpURL, BioMcpKey: cfg.BioMcpKey,
 			ModelName: cfg.ModelName, ModelSecretPath: cfg.ModelSecretPath,
 		},

@@ -22,6 +22,8 @@ model Defaults {
   agentTemplate?: Uri;
   environment?: Uri;
   computingUnit?: Uri;
+  @doc("The warehouse an execution keeps its results in when nothing else names one.")
+  warehouse?: Uri;
   modelEndpoint?: Uri;
 }
 
@@ -38,6 +40,8 @@ model SettingsSpec {
   defaults: Defaults;
   features?: Record<boolean>;
   retention?: Retention;
+  @doc("The object stores, by endpoint, a warehouse of someone's own may be kept on besides the deployment's own store. The lake and the computing units connect to the address a warehouse names, so an administrator lists them.")
+  warehouseEndpoints?: string[];
 }
 
 @doc("What one retention sweep did.")

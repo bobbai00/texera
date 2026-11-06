@@ -68,7 +68,7 @@ object DocumentFactory {
   /**
     * The iceberg coordinates a VFS URI resolves to: which warehouse's catalog, which
     * namespace, and which table (storage key). One resolver shared by every VFS entry
-    * point below, so the decode steps cannot drift apart (promised in #6944 review).
+    * point below, so the decode steps cannot drift apart.
     */
   private case class IcebergLocation(
       warehouse: Option[String],
@@ -184,15 +184,22 @@ object DocumentFactory {
     if (reuseExisting && exists(uri)) open(uri) else create(uri, schema)
 
   /**
+    * Opens a table by where it is, as the catalog recorded it: a warehouse, a namespace
+    * and a table name. `None` is the configured default warehouse.
+    */
+  def openTable(
+      warehouse: Option[String],
+      namespace: String,
+      table: String
+  ): (VirtualDocument[_], Option[Schema]) =
+    openLocation(IcebergLocation(warehouse, namespace, table))
+
+  /**
     * Open a document specified by the uri.
     * If the document is storing structural data, the schema will also be returned
     * @param uri the uri of the document
     * @return the VirtualDocument, which is the handler of the data; the Schema, which is the schema of the data stored in the document
     */
-  /** Opens a table by where it is, as the catalog recorded it: a namespace and a table name. */
-  def openTable(namespace: String, table: String): (VirtualDocument[_], Option[Schema]) =
-    openLocation(IcebergLocation(None, namespace, table))
-
   def openDocument(uri: URI): (VirtualDocument[_], Option[Schema]) = {
     uri.getScheme match {
       case VFS_FILE_URI_SCHEME => openLocation(resolveIcebergLocation(uri))

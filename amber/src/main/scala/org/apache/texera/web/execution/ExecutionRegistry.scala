@@ -36,11 +36,11 @@ import scala.util.Try
   * Engine-side ids derived from the catalog's UUIDs.
   *
   * The engine keys storage by numbers: a result table is named after the workflow id and the
-  * execution id, and creating a result document replaces any table of that name. Units share one
-  * warehouse, so these numbers must never repeat: not across units, and not across restarts of
-  * one unit. Deriving them from the catalog's UUIDs gives exactly that, and lets anyone holding
-  * the catalog id recompute the engine id. Both halves are mixed so the id stays random even for
-  * time-ordered UUIDs, whose high half is mostly a timestamp.
+  * execution id, and creating a result document replaces any table of that name. Units write
+  * to the same warehouses, so these numbers must never repeat: not across units, and not across
+  * restarts of one unit. Deriving them from the catalog's UUIDs gives exactly that, and lets
+  * anyone holding the catalog id recompute the engine id. Both halves are mixed so the id stays
+  * random even for time-ordered UUIDs, whose high half is mostly a timestamp.
   */
 object EngineIds {
   def of(uuid: UUID): Long = {

@@ -45,11 +45,19 @@ func (s *Service) prepareSpec(ctx context.Context, caller *auth.Caller, k kinds.
 		}
 		return nil, err
 	}
+	if k.Name == "warehouse" {
+		if err := s.checkWarehouse(ctx, caller, normalized); err != nil {
+			return nil, err
+		}
+	}
 	return normalized, nil
 }
 
 // afterCreate gives a kind what it needs outside the store; an error undoes the creation.
 func (s *Service) afterCreate(ctx context.Context, r *store.Resource) error {
+	if r.Kind == "warehouse" {
+		return s.provisionWarehouse(ctx, r)
+	}
 	if r.Kind != "computing-unit" {
 		return nil
 	}
@@ -112,6 +120,18 @@ func (s *Service) unitIdentityFor(ctx context.Context, r *store.Resource, spec a
 
 // beforeUpdate refuses a spec change a kind cannot take.
 func (s *Service) beforeUpdate(ctx context.Context, r *store.Resource, spec json.RawMessage) error {
+	if r.Kind == "warehouse" {
+		// The tables stay where they were written: a warehouse's key can change, its place cannot.
+		var current, next api.WarehouseSpec
+		_ = json.Unmarshal(r.Spec, &current)
+		if err := json.Unmarshal(spec, &next); err != nil {
+			return err
+		}
+		if !samePlace(current, next) {
+			return Invalid("where a warehouse keeps its tables cannot change; make a new warehouse", nil)
+		}
+		return nil
+	}
 	if r.Kind != "computing-unit" {
 		return nil
 	}
@@ -137,8 +157,11 @@ func (s *Service) beforeUpdate(ctx context.Context, r *store.Resource, spec json
 }
 
 // afterUpdate applies a changed spec outside the store: a provisioned unit rolls to it at
-// once, a static unit's identity follows its client.
+// once, a static unit's identity follows its client, a warehouse's key reaches the lake.
 func (s *Service) afterUpdate(ctx context.Context, r *store.Resource) error {
+	if r.Kind == "warehouse" {
+		return s.provisionWarehouse(ctx, r)
+	}
 	if r.Kind != "computing-unit" {
 		return nil
 	}
@@ -192,9 +215,11 @@ func (s *Service) beforeDelete(ctx context.Context, r *store.Resource) error {
 		}
 	case "execution":
 		// The execution's tables go with it.
-		if err := s.Lake.DropNamespace(ctx, executionNamespace(r.RID)); err != nil {
+		if err := s.Lake.DropNamespace(ctx, s.warehouseOf(ctx, r), executionNamespace(r.RID)); err != nil {
 			return Unavailable("lake", err)
 		}
+	case "warehouse":
+		return s.removeWarehouse(ctx, r)
 	}
 	return nil
 }

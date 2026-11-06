@@ -16,8 +16,8 @@
 # under the License.
 
 # Object storage (RustFS, S3 API) for datasets and result tables, and the Iceberg REST catalog
-# (Lakekeeper) the computing unit writes results through. Two jobs bootstrap them: the buckets,
-# and Lakekeeper's project and `texera` warehouse.
+# (Lakekeeper) the computing units write results through. A job makes the buckets; Lakekeeper's
+# warehouses are the catalog's resources, and the catalog makes them.
 apiVersion: v1
 kind: Service
 metadata:

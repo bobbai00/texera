@@ -256,38 +256,79 @@ func (w *Workloads) Has(clientID string) bool {
 	return ok
 }
 
-// Lake is a ports.Lake that remembers which namespaces were opened for whom and dropped.
+// Lake is a ports.Lake that remembers the warehouses it was given, and which namespaces were
+// opened in them for whom and dropped. A namespace is kept as "warehouse/namespace".
 type Lake struct {
-	mu      sync.Mutex
-	Opened  map[string]string
-	Dropped []string
+	mu         sync.Mutex
+	Warehouses map[string]ports.WarehouseStorage
+	Opened     map[string]string
+	Dropped    []string
+	// Refuse, when set, is asked about a storage before it is taken: a reason refuses it.
+	Refuse func(ports.WarehouseStorage) string
 }
 
 // NewLake returns an empty lake.
-func NewLake() *Lake { return &Lake{Opened: map[string]string{}} }
+func NewLake() *Lake {
+	return &Lake{Warehouses: map[string]ports.WarehouseStorage{}, Opened: map[string]string{}}
+}
 
 func (l *Lake) Prepare(context.Context) error { return nil }
 
-func (l *Lake) OpenNamespace(_ context.Context, namespace, subject, _ string) error {
+func (l *Lake) EnsureWarehouse(_ context.Context, warehouse string, storage ports.WarehouseStorage) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.Opened[namespace] = subject
+	if l.Refuse != nil {
+		if reason := l.Refuse(storage); reason != "" {
+			return fmt.Errorf("%w: %s", ports.ErrStorageRefused, reason)
+		}
+	}
+	l.Warehouses[warehouse] = storage
 	return nil
 }
 
-func (l *Lake) DropNamespace(_ context.Context, namespace string) error {
+func (l *Lake) RemoveWarehouse(_ context.Context, warehouse string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.Opened, namespace)
-	l.Dropped = append(l.Dropped, namespace)
+	for key := range l.Opened {
+		if strings.HasPrefix(key, warehouse+"/") {
+			return ports.ErrWarehouseNotEmpty
+		}
+	}
+	delete(l.Warehouses, warehouse)
 	return nil
 }
 
-// OpenedFor returns the subject a namespace was opened for, "" when it was not.
-func (l *Lake) OpenedFor(namespace string) string {
+func (l *Lake) OpenNamespace(_ context.Context, warehouse, namespace, subject, _ string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.Opened[namespace]
+	if _, ok := l.Warehouses[warehouse]; !ok {
+		return fmt.Errorf("no warehouse %s", warehouse)
+	}
+	l.Opened[warehouse+"/"+namespace] = subject
+	return nil
+}
+
+func (l *Lake) DropNamespace(_ context.Context, warehouse, namespace string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.Opened, warehouse+"/"+namespace)
+	l.Dropped = append(l.Dropped, warehouse+"/"+namespace)
+	return nil
+}
+
+// OpenedFor returns the subject a namespace of a warehouse was opened for, "" when it was not.
+func (l *Lake) OpenedFor(warehouse, namespace string) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.Opened[warehouse+"/"+namespace]
+}
+
+// Storage returns the storage a warehouse was given, and whether the lake has the warehouse.
+func (l *Lake) Storage(warehouse string) (ports.WarehouseStorage, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	storage, ok := l.Warehouses[warehouse]
+	return storage, ok
 }
 
 // Lineage is a ports.LineageSink that keeps the events.

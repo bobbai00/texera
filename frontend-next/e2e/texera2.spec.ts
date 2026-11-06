@@ -336,6 +336,86 @@ test("a computing unit is made with the size asked for", async ({ page, request 
   expect(unit.metadata.name).toBe(name);
 });
 
+test("a project keeps its results in a warehouse made for it, and an execution says where its results are", async ({ page, request }) => {
+  test.setTimeout(240_000);
+  const call = await api(request);
+  const stamp = Date.now();
+  const lab = await withIris(call, "warehouse lab");
+  const made: string[] = [];
+  const workflows: string[] = [];
+  cleanups.push(async () => {
+    // The project may still name the warehouse: a resource still named cannot go.
+    await call.attempt("PUT", `/projects/${lab.project}`, { spec: {} });
+    await discard(call, workflows);
+    await lab.clear(undefined, made);
+  });
+  await signIn(page);
+  await workIn(page, lab.name);
+
+  // The platform's warehouse is on show, built in; a project makes its own from the same page.
+  await page.locator('[data-library-link="warehouse"]').click();
+  await expect(page.locator('[data-library="warehouse"]').getByRole("heading", { name: "Warehouses" })).toBeVisible();
+  await expect(page.locator('[data-resource-row="warehouse"]').filter({ hasText: "texera" }).locator("[data-built-in]")).toBeVisible();
+  await page.locator('[data-new="warehouse"]').click();
+  const dialog = page.locator('[data-new-resource="warehouse"]');
+  await dialog.locator("input").first().fill(`lab results ${stamp}`);
+  // The dialog proposes the platform's store; a store of one's own is asked for its place.
+  await expect(dialog.locator('[data-field="where"]')).toHaveValue("platform");
+  await dialog.locator('[data-field="where"]').selectOption("own");
+  await expect(dialog.locator('[data-field="endpoint"]')).toBeVisible();
+  await expect(dialog.locator("[data-credential-picker]")).toBeVisible();
+  await page.screenshot({ path: "test-results/warehouse-new.png", fullPage: true });
+  await dialog.locator('[data-field="where"]').selectOption("platform");
+  await expect(dialog.locator('[data-field="endpoint"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/warehouses\//);
+  const rid = /\/warehouses\/([0-9a-f-]{36})/.exec(page.url())?.[1] as string;
+  made.push(rid);
+  const warehouse = await call("GET", `/warehouses/${rid}`);
+  expect(warehouse.metadata.project).toBe(lab.project);
+  expect(warehouse.spec).toEqual({});
+
+  // Its page says where it keeps its tables; one click makes it where the project keeps its results.
+  const view = page.locator('[data-resource-view="warehouse"]');
+  await expect(view.locator("[data-warehouse-place]")).toContainText("The platform's own");
+  await expect(view.locator("[data-warehouse-place]")).toContainText(warehouse.status.name);
+  await view.locator('[data-warehouse-use="start"]').click();
+  await expect(view.locator('[data-warehouse-default="project"]')).toContainText(`${lab.name} keeps its results here`);
+  expect((await call("GET", `/projects/${lab.project}`)).spec.defaultWarehouse).toBe(warehouse.metadata.uri);
+
+  // An execution in the project keeps its results there: its page names the warehouse and shows the rows.
+  const wf = await call("POST", "/workflows", {
+    name: `mean petals ${stamp}`,
+    parent: lab.project,
+    spec: {
+      operators: [
+        { operatorID: "scan", operatorType: "CSVFileScan", operatorProperties: { fileName: `texera://datasets/${lab.dataset}@1/files/iris.csv`, fileEncoding: "UTF_8", hasHeader: true } },
+        { operatorID: "avg", operatorType: "Aggregate", viewResult: true, operatorProperties: { groupByKeys: ["Species"], aggregations: [{ aggFunction: "average", attribute: "PetalLengthCm", "result attribute": "avg" }] } },
+      ],
+      links: [{ linkID: "l1", source: { operatorID: "scan", portID: "output-0" }, target: { operatorID: "avg", portID: "input-0" } }],
+    },
+  });
+  workflows.push(wf.metadata.rid);
+  const started = await call("POST", `/workflows/${wf.metadata.rid}/run`, { waitSeconds: 180, name: `mean petals, kept in the lab ${stamp}` });
+  expect(started.status.phase).toBe("completed");
+  expect(started.spec.warehouse).toBe(warehouse.metadata.uri);
+  await page.goto(`/workflows/${wf.metadata.rid}/executions/${started.metadata.rid}`);
+  const execution = page.locator("[data-execution-view]");
+  await expect(execution.locator('[data-uri-chip="warehouse"]')).toHaveText(`lab results ${stamp}`);
+  await expect(execution.locator("[data-port-rows]")).toBeVisible();
+  await page.screenshot({ path: "test-results/warehouse-execution.png", fullPage: true });
+
+  // It stays while the execution keeps results in it, and says why; the project lets go of it in one click.
+  await page.goto(`/warehouses/${rid}`);
+  await expect(view.locator('[data-warehouse-default="project"]')).toBeVisible();
+  await page.screenshot({ path: "test-results/warehouse.png", fullPage: true });
+  await view.locator('[data-warehouse-use="stop"]').click();
+  await expect(view.locator('[data-warehouse-default="project"]')).toHaveCount(0);
+  page.once("dialog", d => d.accept());
+  await view.locator("[data-delete]").click();
+  await expect(page.getByText(/still keep results in/)).toBeVisible();
+});
+
 test("an execution shows the file it read in its lineage, and can be kept past the retention policy", async ({ page, request }) => {
   const call = await api(request);
   const ds = await call("POST", "/datasets", { name: `lineage e2e ${Date.now()}`, spec: { format: "csv" } });

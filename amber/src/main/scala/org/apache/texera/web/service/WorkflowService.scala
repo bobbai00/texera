@@ -24,7 +24,7 @@ import com.typesafe.scalalogging.LazyLogging
 import io.opentelemetry.api.trace.StatusCode
 import io.reactivex.rxjava3.disposables.{CompositeDisposable, Disposable}
 import io.reactivex.rxjava3.subjects.BehaviorSubject
-import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
+import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.observability.{SpanAttrs, TexeraTracer}
 import org.apache.texera.amber.core.WorkflowRuntimeException
 import org.apache.texera.amber.core.virtualidentity.{
@@ -67,28 +67,6 @@ import scala.jdk.CollectionConverters.IterableHasAsScala
 object WorkflowService {
   private val workflowServiceMapping = new ConcurrentHashMap[String, WorkflowService]()
 
-  /**
-    * Maps an execution's chosen warehouse (its user_warehouse row id) to its Lakekeeper
-    * warehouse name, checking that the requesting user owns it.
-    *
-    * With warehouses enabled a pick is **required**, the same way a computing unit is:
-    * falling back to the shared default would make "a run writes into the user's own
-    * warehouse" a UI convention rather than a system property, and would silently route
-    * any caller that forgot to pick into shared storage (#7751).
-    *
-    * With warehouses disabled, an explicit pick is refused loudly rather than silently
-    * routed into the shared warehouse, and no pick keeps the shared default (#6930).
-    */
-  def resolveLakekeeperWarehouseName(
-      warehouseId: Option[Int],
-      enabled: Boolean = StorageConfig.warehouseEnabled
-  ): Option[String] = {
-    // Per-user warehouses are a catalog concern now; the unit writes to the configured default.
-    if (!enabled && warehouseId.nonEmpty) {
-      throw new IllegalArgumentException("per-user warehouses are disabled in this deployment")
-    }
-    None
-  }
   val cleanUpDeadlineInSeconds: Int = ApplicationConfig.executionStateCleanUpInSecs
 
   def getAllWorkflowServices: Iterable[WorkflowService] = workflowServiceMapping.values().asScala
@@ -215,14 +193,13 @@ class WorkflowService(
           "Cannot start execution: a signed-in user is required but none was provided."
         )
       }
-      val warehouseName = WorkflowService.resolveLakekeeperWarehouseName(req.warehouseId)
 
       if (executionService.hasValue) {
         executionService.getValue.unsubscribeAll()
       }
 
       val workflowContext: WorkflowContext = createWorkflowContext()
-      workflowContext.warehouse = warehouseName
+      workflowContext.warehouse = req.warehouse
       workflowContext.pastRuntimeStatistics =
         ExecutionRegistry.latestCompletedStatistics(workflowId.id)
       var coordinatorConf = CoordinatorConfig.default
@@ -234,7 +211,6 @@ class WorkflowService(
         req.executionName,
         convertToJson(req.engineVersion),
         req.computingUnitId,
-        req.warehouseId,
         req.externalExecutionId
       )
       span.setAttribute(SpanAttrs.ExecutionId, Long.box(workflowContext.executionId.id))

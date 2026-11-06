@@ -157,6 +157,21 @@ func (s *Service) Seed(ctx context.Context) error {
 		}
 		unitURI = URI(unit).String()
 	}
+	// The platform's warehouse, where an execution keeps its results unless something names
+	// another. Its storage is looked at on every start: the store's address may have changed.
+	warehouse, err := ensure("warehouse", s.Config.Warehouse, "The warehouse of this deployment", api.WarehouseSpec{}, api.WarehouseStatus{Name: &s.Config.Warehouse})
+	if err != nil {
+		return err
+	}
+	if err := s.provisionWarehouse(ctx, warehouse); err != nil {
+		return fmt.Errorf("the platform's warehouse: %w", err)
+	}
+	// An execution of a release that had one warehouse kept its results in this one.
+	if n, err := s.Store.FillExecutionWarehouse(ctx, URI(warehouse).String()); err != nil {
+		return err
+	} else if n > 0 {
+		s.Log.Info("executions given their warehouse", "executions", n)
+	}
 	env, err := ensure("environment", "python-default", "Python with pandas, numpy and scikit-learn",
 		api.EnvironmentSpec{Python: &api.PythonEnvironment{Packages: []string{"pandas", "numpy", "scikit-learn"}}}, nil)
 	if err != nil {
@@ -245,7 +260,7 @@ func (s *Service) Seed(ctx context.Context) error {
 		return err
 	}
 
-	settings := api.SettingsSpec{Branding: api.Branding{Name: s.Config.BrandName}, Defaults: api.Defaults{AgentTemplate: uriPtr(URI(agent).String()), Environment: uriPtr(envURI), ModelEndpoint: uriPtr(URI(model).String())}}
+	settings := api.SettingsSpec{Branding: api.Branding{Name: s.Config.BrandName}, Defaults: api.Defaults{AgentTemplate: uriPtr(URI(agent).String()), Environment: uriPtr(envURI), ModelEndpoint: uriPtr(URI(model).String()), Warehouse: uriPtr(URI(warehouse).String())}}
 	if unitURI != "" {
 		settings.Defaults.ComputingUnit = uriPtr(unitURI)
 	}
@@ -402,6 +417,7 @@ func (s *Service) ensureSettings(ctx context.Context, caller *auth.Caller, spec 
 		fill(&current.Defaults.AgentTemplate, spec.Defaults.AgentTemplate)
 		fill(&current.Defaults.Environment, spec.Defaults.Environment)
 		fill(&current.Defaults.ComputingUnit, spec.Defaults.ComputingUnit)
+		fill(&current.Defaults.Warehouse, spec.Defaults.Warehouse)
 		fill(&current.Defaults.ModelEndpoint, spec.Defaults.ModelEndpoint)
 		if changed {
 			if r, err = s.UpdateSettings(ctx, caller, mustJSON(current), ""); err != nil {

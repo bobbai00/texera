@@ -137,7 +137,7 @@ class VFSURIFactorySpec extends AnyFlatSpec {
     )
   }
 
-  it should "return None when no /wh/ segment is present (non-BYO URIs are unchanged)" in {
+  it should "report no warehouse when the execution named none (no /wh/ segment)" in {
     val uri = VFSURIFactory.createPortBaseURI(workflowId, executionId, portId)
     assert(!uri.getPath.contains("/wh/"))
     assert(VFSURIFactory.decodeURI(VFSURIFactory.resultURI(uri)).warehouse.isEmpty)
@@ -146,7 +146,8 @@ class VFSURIFactorySpec extends AnyFlatSpec {
   it should "only honour a LEADING wh segment, never one deeper in the path" in {
     // A `wh` appearing later -- e.g. inside an operator id -- must not select a
     // warehouse: it would disagree with DocumentFactory, which strips only a
-    // leading `wh/<name>/`, and would route the write to another user's warehouse.
+    // leading `wh/<name>/`, and would route the write to a warehouse the execution
+    // never named.
     assert(
       VFSURIFactory
         .decodeURI(new URI("vfs:///wid/1/eid/2/opid/a/wh/victim/b/consolemessages"))
@@ -162,35 +163,39 @@ class VFSURIFactorySpec extends AnyFlatSpec {
     )
   }
 
-  it should "not let a percent-encoded slash in the name forge extra segments" in {
-    // Decoded before splitting, this path would read as /wh/a/wid/999/... -- handing
-    // back "a" as the warehouse and shifting which `wid` the parser sees. Splitting
-    // the raw path keeps `%2F` inside its own segment, and the name is then rejected
-    // as illegal, so the URI resolves to no warehouse rather than to a wrong one.
-    assert(
-      VFSURIFactory
-        .decodeURI(new URI("vfs:///wh/a%2Fwid%2F999/wid/1/eid/2/result"))
-        .warehouse
-        .isEmpty
-    )
-    assert(
-      VFSURIFactory
-        .decodeURI(new URI("vfs:///wh/user-2%2Dfoo/wid/7/eid/3/result"))
-        .warehouse
-        .isEmpty
-    )
+  it should "refuse a leading wh segment that names no legal warehouse" in {
+    // A URI that says "a warehouse follows" and then names none the factory could
+    // have written is malformed. It must never read as "no warehouse": that would
+    // send the read or the write to the unit's default warehouse instead.
+    Seq(
+      // decoded before splitting, this would read as /wh/a/wid/999/...
+      "vfs:///wh/a%2Fwid%2F999/wid/1/eid/2/result",
+      "vfs:///wh/user-2%2Dfoo/wid/7/eid/3/result",
+      "vfs:///wh/-lead/wid/1/eid/2/result",
+      "vfs:///wh//wid/1/eid/2/result",
+      "vfs:///wh"
+    ).foreach { malformed =>
+      withClue(s"$malformed: ") {
+        val refused = intercept[IllegalArgumentException] {
+          VFSURIFactory.decodeURI(new URI(malformed))
+        }
+        assert(refused.getMessage.contains("warehouse"))
+      }
+    }
   }
 
-  it should "locate wid/eid by raw segment, so an encoded slash cannot shift them" in {
-    // Decoded before splitting, this path reads as /wh/a/wid/999/wid/1/... and the
-    // key search finds the injected `wid` first -- resolving to execution 999 and
-    // landing this execution's data under another's storage key. Python's
-    // decode_uri splits the raw path, so decoding here would also make the two
-    // languages disagree about which execution a URI belongs to.
+  it should "split the raw path, so an encoded slash stays inside its segment" in {
+    // Decoded and then split, the operator id below would add a `globalportid`
+    // segment the URI never had. Python's decode_uri splits the raw path too, so
+    // both languages read a URI identically.
     val components =
-      VFSURIFactory.decodeURI(new URI("vfs:///wh/a%2Fwid%2F999/wid/1/eid/2/result"))
+      VFSURIFactory.decodeURI(
+        new URI("vfs:///wh/w_1/wid/1/eid/2/opid/a%2Fglobalportid%2Fb/consolemessages")
+      )
+    assert(components.warehouse.contains("w_1"))
     assert(components.workflowId == WorkflowIdentity(1))
     assert(components.executionId == ExecutionIdentity(2))
+    assert(components.globalPortId.isEmpty)
   }
 
   "VFSURIFactory" should "reject an operatorId containing '/' rather than let it forge URI segments" in {

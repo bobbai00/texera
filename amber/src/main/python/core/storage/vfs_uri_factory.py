@@ -52,8 +52,9 @@ class VFSUriComponents(NamedTuple):
     global_port_id: Optional[GlobalPortIdentity]
     resource_type: VFSResourceType
     # The warehouse whose catalog holds this URI's table, from the optional leading
-    # "/wh/<name>" segment; None for non-BYO storage, which uses the configured
-    # default. Last so positional unpacking of the earlier fields still works.
+    # "/wh/<name>" segment: the one the catalog named for the execution. None when
+    # the execution named none, which uses the configured default. Last so
+    # positional unpacking of the earlier fields still works.
     warehouse: Optional[str] = None
 
 
@@ -71,6 +72,7 @@ class VFSURIFactory:
             raise ValueError(f"Invalid URI scheme: {parsed_uri.scheme}")
 
         segments = parsed_uri.path.lstrip("/").split("/")
+        warehouse = VFSURIFactory._warehouse_from(segments, uri)
 
         def extract_value(key: str) -> str:
             try:
@@ -99,7 +101,7 @@ class VFSURIFactory:
             execution_id,
             global_port_id,
             resource_type,
-            VFSURIFactory._warehouse_from(segments),
+            warehouse,
         )
 
     @staticmethod
@@ -111,7 +113,7 @@ class VFSURIFactory:
         return _WAREHOUSE_NAME_RE.fullmatch(name) is not None
 
     @staticmethod
-    def _warehouse_from(segments: list) -> Optional[str]:
+    def _warehouse_from(segments: list, uri: str) -> Optional[str]:
         """
         The warehouse encoded in a VFS URI, if present. Reported as part of
         VFSUriComponents by decode_uri, which is the only way in. Mirrors
@@ -120,19 +122,20 @@ class VFSURIFactory:
         Anchored to the leading segment: a later segment that happens to be "wh"
         -- e.g. inside a user-chosen operator id -- must not select a warehouse; it
         would disagree with document_factory.sanitize_uri_path, which strips only a
-        leading one, and would route the write to another user's warehouse. The
-        segments come from the RAW path (see decode_uri), so a percent-encoded slash
-        stays inside its own segment, and the name must be a legal warehouse name,
-        so anything create_port_base_uri could not have written resolves to no
-        warehouse rather than to a wrong one.
+        leading one, and would route the write to another warehouse. The segments
+        come from the RAW path (see decode_uri), so a percent-encoded slash stays
+        inside its own segment.
+
+        A leading "wh" must be followed by a legal warehouse name. Anything
+        create_port_base_uri could not have written is refused: reading it as "no
+        warehouse" would send the read to the configured default warehouse, and
+        reading it as some other name to a wrong one.
         """
-        if (
-            len(segments) >= 2
-            and segments[0] == "wh"
-            and VFSURIFactory._is_valid_warehouse_name(segments[1])
-        ):
+        if not segments or segments[0] != "wh":
+            return None
+        if len(segments) >= 2 and VFSURIFactory._is_valid_warehouse_name(segments[1]):
             return segments[1]
-        return None
+        raise ValueError(f"the URI names no legal warehouse after /wh/: {uri}")
 
     @staticmethod
     def create_port_base_uri(
@@ -142,8 +145,8 @@ class VFSURIFactory:
         `result_uri` / `state_uri`.
 
         `warehouse` is written as the leading "/wh/<name>" segment, mirroring the
-        Scala side; when None the URI is byte-for-byte what it was before warehouses
-        existed.
+        Scala side; when None the URI has no such segment and the configured default
+        warehouse is used.
         """
         if warehouse is not None and not VFSURIFactory._is_valid_warehouse_name(
             warehouse

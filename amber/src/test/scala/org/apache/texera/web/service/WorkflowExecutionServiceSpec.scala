@@ -175,7 +175,7 @@ class WorkflowExecutionServiceSpec
       workflowSettings = settings,
       emailNotificationEnabled = false,
       computingUnitId = 0,
-      warehouseId = None
+      warehouse = None
     )
     new WorkflowExecutionService(
       null,

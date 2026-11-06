@@ -31,10 +31,10 @@ object StorageConfig {
   // Iceberg specifics
   val icebergCatalogType: String = conf.getString("storage.iceberg.catalog.type")
   val icebergRESTCatalogUri: String = conf.getString("storage.iceberg.catalog.rest.uri")
+  // The warehouse used when a request names none. An execution names its own: Texera's
+  // catalog says which warehouse it writes to, and which one a result is read from.
   val icebergRESTCatalogWarehouseName: String =
     conf.getString("storage.iceberg.catalog.rest.warehouse-name")
-  val icebergRESTCatalogS3Bucket: String =
-    conf.getString("storage.iceberg.catalog.rest.s3-bucket")
   // The unit's own OAuth2 client toward the REST catalog; an empty client id means none.
   val icebergRESTCatalogClientId: String =
     conf.getString("storage.iceberg.catalog.rest.client-id")
@@ -86,12 +86,6 @@ object StorageConfig {
   val cleanupRetentionHours: Int = conf.getInt("storage.cleanup.retention-hours")
   val cleanupIntervalMinutes: Int = conf.getInt("storage.cleanup.interval-minutes")
 
-  // Per-user warehouses (#6870). On only when the switch is on AND the catalog is REST
-  // (Lakekeeper): warehouses are Lakekeeper entities, so any other catalog type keeps
-  // the feature off regardless of the switch.
-  val warehouseEnabled: Boolean =
-    conf.getBoolean("storage.warehouse.enabled") && icebergCatalogType == "rest"
-
   // File storage configurations
   val fileStorageDirectoryPath: Path =
     Path
@@ -126,9 +120,6 @@ object StorageConfig {
   val ENV_CLEANUP_ENABLED = "STORAGE_CLEANUP_ENABLED"
   val ENV_CLEANUP_RETENTION_HOURS = "STORAGE_CLEANUP_RETENTION_HOURS"
   val ENV_CLEANUP_INTERVAL_MINUTES = "STORAGE_CLEANUP_INTERVAL_MINUTES"
-
-  // Per-user warehouses
-  val ENV_WAREHOUSE_ENABLED = "STORAGE_WAREHOUSE_ENABLED"
 
   // S3
   val ENV_S3_ENDPOINT = "STORAGE_S3_ENDPOINT"

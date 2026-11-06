@@ -84,8 +84,13 @@ and Lakekeeper fetches its signing keys from there). Lakekeeper's own base URI i
 
 Lakekeeper authenticates every caller against Keycloak and authorizes with OpenFGA (a store of
 its own, `lakekeeper`, on the stack's OpenFGA server). The catalog bootstraps it as its operator
-at startup and creates the `texera` warehouse with credential vending on, so a unit never holds
-a key to the whole store. An execution gets a namespace of its own (`e_<execution rid>`), which the
+at startup. A warehouse of the lake is a resource of the catalog's (`/warehouses`), and the
+catalog makes each one there with credential vending on, so a unit never holds a key to a
+store: the platform's own, `texera` (`TEXERA_ICEBERG_WAREHOUSE`), at every start, on the
+stack's RustFS under `warehouse/` of the bucket `texera` (`TEXERA_LAKE_S3_ENDPOINT`,
+`TEXERA_LAKE_BUCKET`, `TEXERA_LAKE_KEY_PREFIX`); a project's own, `w_<rid>`, when it is
+created, under `w/<rid>/` of the same bucket or on the store its spec names. An execution gets
+a namespace of its own (`e_<execution rid>`) in its warehouse, which the
 catalog opens for the identity of the unit that runs it: every table of the execution goes there, and
 nobody else, not even a person with their own token, gets anything from the lake directly;
 people read results through the catalog, which decides. The dev stack's unit presents the

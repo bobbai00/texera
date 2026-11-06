@@ -25,6 +25,7 @@ enum ResourceKind {
   `model`,
   environment,
   computingUnit: "computing-unit",
+  warehouse,
   operator,
   agentTemplate: "agent-template",
   skill,

@@ -1,8 +1,9 @@
 # Texera frontend
 
 The one React app of Texera 2.0: a chat-first workspace where every kind of the catalog
-(workflows, executions, datasets, models, operators, environments, computing units, agents,
-skills, MCP servers, model endpoints, credentials, projects, settings) is a card, a side panel
+(workflows, executions, datasets, models, operators, environments, computing units,
+warehouses, agents, skills, MCP servers, model endpoints, credentials, projects, settings) is
+a card, a side panel
 and a page. It talks to the catalog through the generated client and to agents through AG-UI;
 executions are the catalog's, so the app never talks to an engine directly.
 
@@ -126,11 +127,13 @@ carries a resource (an envelope, a ref, a URI) renders that kind's card, never a
 
 ### Adding a kind
 
-1. Declare it in the contract (`api/catalog/kinds/<name>.tsp`) and run `make generate`; the
-   kind table, the JSON Schema bundle and the client follow.
+1. Declare it in the contract (`api/catalog/kinds/<name>.tsp`, imported by `main.tsp` and
+   named in `ResourceKind` of `core.tsp`) and run `make generate`; the kind table, the JSON
+   Schema bundle and the client follow.
 2. Add an accent token `--kind-<name>` in `packages/ui/src/styles/tokens.css`.
 3. Add `packages/kinds/src/kinds/<name>.ts` with the `KindSpec` (icon, `defaultSpec`, `facts`,
-   and tabs or an editor when the schema form is not enough) and register it in `registry.ts`.
+   and tabs or an editor when the schema form is not enough), register it in `registry.ts`,
+   and name its create and update calls in `api.ts` when the app makes or changes it.
 
 The registry test checks that every kind of the contract is registered with its accent.
 

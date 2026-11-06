@@ -27,7 +27,7 @@ const PROPERTIES = "operatorProperties";
 type Setting = Exclude<keyof WorkflowSpec, "operators" | "links">;
 // Every one of them, or this does not compile: a field the document did not keep would be
 // dropped from the next version without a word.
-const SETTINGS_KEPT: Record<Setting, true> = { defaultEnvironment: true, defaultComputingUnit: true };
+const SETTINGS_KEPT: Record<Setting, true> = { defaultEnvironment: true, defaultComputingUnit: true, defaultWarehouse: true };
 const SETTING_KEYS = Object.keys(SETTINGS_KEPT) as Setting[];
 
 type Json = Record<string, unknown>;

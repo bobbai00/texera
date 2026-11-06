@@ -469,9 +469,15 @@ func (s *Service) versionURI(ctx context.Context, name, kind string) (string, er
 // authorizePlan is the one authorization pass of an execution or a dry run, before anything is
 // written: running on the unit, reading the environment, every dataset and every custom
 // operator the plan names, using every credential.
-func (s *Service) authorizePlan(ctx context.Context, caller *auth.Caller, c *compiled, unit *store.Resource, env *store.Resource) error {
+func (s *Service) authorizePlan(ctx context.Context, caller *auth.Caller, c *compiled, unit, warehouse, env *store.Resource) error {
 	if err := s.require(ctx, caller, authz.RunOn, unit.RID); err != nil {
 		return err
+	}
+	// A dry run keeps no results and names no warehouse.
+	if warehouse != nil {
+		if err := s.require(ctx, caller, authz.Use, warehouse.RID); err != nil {
+			return err
+		}
 	}
 	if env != nil {
 		if err := s.require(ctx, caller, authz.Read, env.RID); err != nil {

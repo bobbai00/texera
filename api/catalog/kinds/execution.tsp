@@ -33,7 +33,7 @@ model PortTable {
 
 @doc("What the catalog compiled for an execution, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the execution starts and never stored.")
 model ExecutionPlan {
-  @doc("The namespace in the lake the execution writes to; absent for a dry run.")
+  @doc("The namespace in the execution's warehouse that it writes to; absent for a dry run.")
   `namespace`?: string;
   @doc("One table per output port the engine writes, inside the namespace: the ports of operators marked viewResult and of operators nothing reads.")
   outputs: PortTable[];
@@ -51,6 +51,8 @@ model ExecutionSpec {
   @doc("The environment version, with `@vno`.")
   environment?: Uri;
   computingUnit: Uri;
+  @doc("The warehouse the execution keeps its result tables in.")
+  warehouse: Uri;
   @doc("The dataset file versions the execution reads, resolved at start.")
   inputs?: Uri[];
   parameters?: Record<unknown>;

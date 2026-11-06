@@ -153,13 +153,16 @@ func (u *Unit) Resume(ctx context.Context, eid string) (*ExecutionState, error) 
 // column passes through without the float64 rounding a plain decode would apply. table is where
 // the result was recorded (empty when unknown) and namespace the execution's namespace: a unit
 // that no longer holds the execution reads it there.
-func (u *Unit) Result(ctx context.Context, eid, opid, port, table, namespace string, offset int64, limit int32) (*RowPage, error) {
+func (u *Unit) Result(ctx context.Context, eid, opid, port, table, namespace, warehouse string, offset int64, limit int32) (*RowPage, error) {
 	params := &ExecutionsResultParams{Offset: &offset, Limit: &limit}
 	if table != "" {
 		params.Table = &table
 	}
 	if namespace != "" {
 		params.Namespace = &namespace
+	}
+	if warehouse != "" {
+		params.Warehouse = &warehouse
 	}
 	resp, err := u.client.ExecutionsResult(ctx, eid, opid, port, params)
 	body, err := answer(resp, err)

@@ -444,6 +444,19 @@ class WorkflowWebsocketResourceSpec
     forwardedUri.toString should endWith("/wsapi/workflow-websocket")
   }
 
+  it should "not let a client on this route name the warehouse of its run" in {
+    // The catalog names an execution's warehouse, after checking who may use it. A frame that
+    // carries one runs in the unit's default warehouse like any other run started here.
+    val (session, _) = mockSession(caller = Some(caller42))
+    val state = registerState(session)
+    val workflow = new TestWorkflowService(9110L)
+    state.subscribe(workflow)
+
+    resource.myOnMsg(session, frameOf(executeRequest.copy(warehouse = Some("w_0a1b2c"))))
+
+    workflow.initCalls.map(_._1.warehouse) shouldBe List(None)
+  }
+
   // -- the default dispatch arm -------------------------------------------------
 
   it should "report a runtime command that arrives before any workflow is attached" in {

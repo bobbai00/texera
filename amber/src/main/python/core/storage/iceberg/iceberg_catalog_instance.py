@@ -28,8 +28,8 @@ from core.storage.storage_config import StorageConfig
 class IcebergCatalogInstance:
     """
     Manages Iceberg catalog instances, cached per warehouse.
-    - REST catalogs are keyed by warehouse so one process can read/write tables in
-      many warehouses (Design 2, warehouse-per-execution).
+    - REST catalogs are keyed by warehouse: a URI names the warehouse the catalog
+      chose for its execution, and a URI that names none uses the configured one.
     - The postgres catalog has no warehouse concept and shares a single entry.
     - Catalogs are lazily created on first access; entries can be replaced for
       testing or reconfiguration.

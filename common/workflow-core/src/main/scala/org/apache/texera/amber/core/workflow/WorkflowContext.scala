@@ -36,8 +36,10 @@ class WorkflowContext(
     var executionId: ExecutionIdentity = DEFAULT_EXECUTION_ID,
     var workflowSettings: WorkflowSettings = DEFAULT_WORKFLOW_SETTINGS,
     var cuid: Option[Int] = None,
-    // The Lakekeeper catalog name this execution writes into; becomes the `/wh/<name>`
-    // URI segment. None routes to the shared default warehouse.
+    // The warehouse this execution stores what it writes in, by its name in the lake
+    // catalog: the one the catalog named when it started the execution. It becomes the
+    // `/wh/<name>` segment of every URI of the execution. None is the unit's configured
+    // default warehouse.
     var warehouse: Option[String] = None,
     // Runtime statistics of the workflow's last completed run, if the unit has one; the
     // scheduler estimates region costs from it. The engine keeps no history of its own.

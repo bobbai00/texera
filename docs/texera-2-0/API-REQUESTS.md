@@ -93,8 +93,9 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    minted by the catalog for a unit it provisions (`status.identity` names the client and its
    subject; the secret lives in the secret store and the unit's Kubernetes Secret), or the
    operator's client for a static unit (`spec.clientId`). An execution's tables live in the namespace
-   `e_<execution rid>`, which the catalog creates in the lake and opens for that identity
-   before the engine starts (`ResultStore.namespace`); reads name it again. The lake
+   `e_<execution rid>` of its warehouse, which the catalog creates in the lake and opens for
+   that identity before the engine starts (`ResultStore.warehouse`, the warehouse's name in
+   the lake, and `ResultStore.namespace`); reads name both again. The lake
    authenticates every caller and authorizes with the catalog's grants, so a person reads
    results through the catalog only. Deleting an execution drops its namespace; deleting a
    provisioned unit deletes its client and credential.
@@ -118,11 +119,11 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    `POST /lineage/v1/events` takes an execution's events from the unit that runs it alone: a
    unit's token is neither a person nor the service, and it may do nothing else.
 9. **Running a workflow, in three phases.** `POST /workflows/{rid}/run` authorizes first
-   (execute on the workflow, then, on the compiled plan, run on the unit, read on every dataset, operator and
-   environment it names, use on every credential; a refusal leaves nothing behind), compiles
+   (execute on the workflow, then, on the compiled plan, run on the unit, use on the warehouse, read on every
+   dataset, operator and environment it names, use on every credential; a refusal leaves nothing behind), compiles
    once (`validate` returns the same plan as `plan`), and materializes: the execution is
    stored with `spec.plan` (URIs only, one table per output port named by the catalog, no
-   secret, no URL), its namespace is opened, and a bound copy with presigned inputs and
+   secret, no URL) and `spec.warehouse`, its namespace is opened there, and a bound copy with presigned inputs and
    leased secrets goes to the engine. A custom operator's pinned environment is the
    execution's when the request names none, and a different one is refused with 409. Results
    live with the execution: there is no save-as-dataset; the label `texera.keep` on an
@@ -136,8 +137,8 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    the start, rows and snapshots filled in as the unit reports. A reported table the plan
    does not name is refused with 400. The engine owns the schemas and creates the tables;
    internal ports, state, console and statistics tables keep the engine's own keys inside
-   the namespace. Rows are read by namespace and table, so a unit that did not run the
-   execution, or restarted since, serves them from the lake.
+   the namespace. Rows are read by warehouse, namespace and table, so a unit that did not run
+   the execution, or restarted since, serves them from the lake.
 11. **Watching a resource.** `GET /resources/{rid}/events` streams server-sent events to
    whoever may read the resource, for as long as the connection stays open: `resource` with
    the envelope after each change (status included), `message` with a conversation's message
@@ -185,6 +186,26 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    (`head is N, expected M`) when the head moved, before a patch is applied: a patch names
    operators by their place in the spec its writer read. A patch that names no head is
    applied to the head as it is and saved onto no other.
+17. **An execution's warehouse.** A warehouse is a resource (`/warehouses`). Its
+   `status.name` is its name in the lake, what an Iceberg client passes as `warehouse`: the
+   configured one for the platform's built-in warehouse, `w_<rid without dashes>` for any
+   other. An execution keeps its results in the warehouse the request names (`warehouse`),
+   else the workflow's `defaultWarehouse`, the project's, the settings' `defaults.warehouse`;
+   none at all is 409 `no_warehouse`, and one the caller may not `use` is 403. The engine is
+   told the warehouse by that name with the namespace, at the start (`resultStore`) and on
+   every read of rows (`warehouse` in the query); the lake's address is the unit's own
+   configuration. Without `spec.storage` a warehouse is kept on the deployment's store under
+   `w/<rid>`; with it, on the store it names, which must be the deployment's own or one of the
+   settings' `warehouseEndpoints`, with the key its credential holds (`accessKeyId`,
+   `secretAccessKey`), handed to the lake again when the secret is replaced. The lake tries a
+   storage before it takes it: a refusal is 400 with `details.field: /storage` and the lake's
+   reason, and nothing is made. Where a warehouse keeps its tables cannot change afterwards
+   (400). `DELETE` answers 409 `in_use` while an execution that is neither deleted nor expired
+   keeps results in the warehouse. After the last one goes, the lake clears the files of the
+   dropped tables for some seconds and refuses to drop the warehouse meanwhile: the catalog
+   waits for it, up to half a minute, and answers 409 `not_empty` with the lake's words if
+   the lake still holds something then. An execution of a release that had one warehouse is
+   given the platform's at the next start.
 
 ## catalog and its tools
 

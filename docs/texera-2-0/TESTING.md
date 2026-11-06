@@ -40,6 +40,11 @@ Bob) goes through a guard fixture that puts it back.
 | The document of a workflow's live session is the live service's alone to read and write; only it saves a version in the names of the people who edited; an edit against a head that moved is a conflict | `test_collaboration.py` | | 5 s |
 | An execution watched through its event stream: operator progress, pause and resume through the catalog, the phase following the unit's word, every row at the end | `test_controls.py` | slow | 1 min |
 | A credential in an operator property, leased for the execution; a viewer refused before any execution exists, until granted use (acceptance 7) | `test_credentials.py` | | 30 s |
+| An execution keeps its results in a warehouse chosen like a unit: the platform's, built in, unless the project's default or the request names another; the rows are written there and read from there | `test_warehouse.py` | | 15 s |
+| Using a warehouse is a permission of its own: a viewer runs into the platform's, and into the project's once given the use of it | `test_warehouse.py` | | 15 s |
+| A warehouse on a store of its own: an address nobody listed is refused, the lake refuses a wrong key and nothing is made, the right one is taken and written to; its place cannot change and its credential stays | `test_warehouse.py` | | 10 s |
+| A warehouse goes only when nothing keeps results in it and nothing names it | `test_warehouse.py` | | 10 s |
+| The lake holds an execution's namespace in the warehouse it names and not in the platform's; a person's own token gets nothing from it | `test_warehouse.py` | cluster | 10 s |
 | The lake enforces the catalog's decision: namespaces per execution, identities per unit, nothing for anyone else | `test_lake.py` | local | 20 s |
 | The unit's doors: its API answers the catalog alone, the gateway has no route to it, only the running unit reports on an execution | `test_doors.py` | local | 20 s |
 | Results survive a restart of the unit | `test_unit_restart.py` | local, destructive | 2 min |
@@ -66,7 +71,9 @@ app: sign-in, a chat started by its first message with an upload that becomes a 
 the project a person works in (what the lists show, where new things go, the pick kept), a
 chat's model, unit and add-ons chosen in its box, a turn that fails and says why across a
 reload, a long first answer that ends up on screen, the operator page with its versions and
-sharing, a computing unit made with a size, an execution's lineage and its keep mark, two
+sharing, a computing unit made with a size, a warehouse made from its page and kept as its
+project's (the dialog asks where it keeps its tables; an execution's page names it and shows
+the rows; it stays while results are in it), an execution's lineage and its keep mark, two
 people in one chat (the other's messages and turn arrive live, under their name), an
 execution's page that follows a slow one and pauses and resumes it, and with the model the two
 chat scenarios: the agent answering from a workflow it built in the chat's project on the
@@ -75,7 +82,7 @@ model scenarios make the iris dataset they ask
 about in a project of their own, work in that project, and remove it at the end with what the
 chat made, as the pytest scenarios do; a wiped stack has no iris to find otherwise.
 
-`dock.spec.ts`, the agent beside a page: on the page of every kind (thirteen, made in a
+`dock.spec.ts`, the agent beside a page: on the page of every kind (fourteen, made in a
 project of the test's or taken from the built-ins) the chat button opens a chat whose message
 tells the agent the kind, the name and the URI of what is on screen, in the resource's project
 when the person may write there; the app remembers the chat used beside a page; the operator

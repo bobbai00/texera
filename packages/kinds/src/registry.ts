@@ -15,6 +15,7 @@ import { operatorKind } from "./kinds/operator";
 import { projectKind } from "./kinds/project";
 import { settingsKind } from "./kinds/settings";
 import { skillKind } from "./kinds/skill";
+import { warehouseKind } from "./kinds/warehouse";
 import type { KindId, KindSpec } from "./types";
 import { workflowKind } from "./workflow/spec";
 
@@ -26,6 +27,7 @@ export const KINDS: Record<KindId, KindSpec> = {
   model: modelKind,
   environment: environmentKind,
   "computing-unit": computingUnitKind,
+  warehouse: warehouseKind,
   operator: operatorKind,
   "agent-template": agentTemplateKind,
   skill: skillKind,
@@ -38,12 +40,12 @@ export const KINDS: Record<KindId, KindSpec> = {
 
 /**
  * The sidebar's sections, in order. Each entry is a view, not a place: what a person makes and
- * keeps (Work), what happened (Activity: an execution lives under its workflow, and is listed
+ * keeps and what it runs on and stores into (Work), what happened (Activity: an execution lives under its workflow, and is listed
  * here because people look for one across workflows), what the agent is made of (Agent), and
  * the projects themselves.
  */
 export const LIBRARY_GROUPS: { title: string; kinds: KindId[] }[] = [
-  { title: "Work", kinds: ["workflow", "dataset", "model", "operator", "environment", "computing-unit"] },
+  { title: "Work", kinds: ["workflow", "dataset", "model", "operator", "environment", "computing-unit", "warehouse"] },
   { title: "Activity", kinds: ["execution"] },
   { title: "Agent", kinds: ["agent-template", "skill", "mcp-server", "model-endpoint", "credential"] },
   { title: "Projects", kinds: ["project"] },

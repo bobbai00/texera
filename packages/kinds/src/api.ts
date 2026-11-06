@@ -55,6 +55,7 @@ const CREATE: Partial<Record<KindId, Create>> = {
   operator: sdk.operatorsCreate as Create,
   project: sdk.projectsCreate as Create,
   skill: sdk.skillsCreate as Create,
+  warehouse: sdk.warehousesCreate as Create,
   workflow: sdk.workflowsCreate as Create,
 };
 
@@ -71,6 +72,7 @@ const UPDATE: Partial<Record<KindId, Update>> = {
   operator: sdk.operatorsUpdate as Update,
   project: sdk.projectsUpdate as Update,
   skill: sdk.skillsUpdate as Update,
+  warehouse: sdk.warehousesUpdate as Update,
   workflow: sdk.workflowsUpdate as Update,
 };
 

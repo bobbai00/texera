@@ -109,7 +109,9 @@ class WorkflowWebsocketResource extends LazyLogging {
               sessionState.send(WorkflowStateEvent("Initializing"))
               synchronized {
                 workflow.initExecutionService(
-                  workflowExecuteRequest,
+                  // The catalog names an execution's warehouse, after checking who may use
+                  // it. A client on this route cannot: its run uses the unit's default.
+                  workflowExecuteRequest.copy(warehouse = None),
                   principalOpt,
                   session.getRequestURI
                 )

@@ -88,6 +88,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
             </span>
             <UriChip uri={x.spec.workflow} />
             <UriChip uri={x.spec.computingUnit} />
+            <UriChip uri={x.spec.warehouse} />
             {x.spec.environment && <UriChip uri={x.spec.environment} />}
           </span>
         }

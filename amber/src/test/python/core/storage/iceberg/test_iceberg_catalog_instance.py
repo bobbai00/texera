@@ -52,10 +52,9 @@ def _rest_config():
 
 class TestRestCatalogCachedPerWarehouse:
     """
-    Under the `rest` catalog type the cache is keyed by warehouse name -- the
-    core of the per-warehouse catalog cache (#6870 Phase 0): one process can
-    hold several REST catalogs, one per warehouse it touches, while repeated
-    lookups for the same warehouse share one client.
+    Under the `rest` catalog type the cache is keyed by warehouse name: one
+    process can hold several REST catalogs, one per warehouse it touches, while
+    repeated lookups for the same warehouse share one client.
     """
 
     def test_caches_one_catalog_per_warehouse(self):

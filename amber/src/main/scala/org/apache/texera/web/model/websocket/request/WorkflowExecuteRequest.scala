@@ -37,8 +37,9 @@ case class WorkflowExecuteRequest(
     workflowSettings: WorkflowSettings,
     emailNotificationEnabled: Boolean,
     computingUnitId: Int,
-    // The user_warehouse this run writes into; absent = the shared default warehouse.
-    warehouseId: Option[Int],
+    // The warehouse the run stores what it writes in, by its name in the lake catalog;
+    // absent is the unit's configured default warehouse.
+    warehouse: Option[String],
     // The catalog's execution id when started through the unit API; absent for WebSocket runs.
     externalExecutionId: Option[String] = None
 ) extends TexeraWebSocketRequest

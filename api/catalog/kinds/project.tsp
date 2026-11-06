@@ -16,6 +16,8 @@ model ProjectSpec {
   defaultEnvironment?: Uri;
   @doc("The computing unit an execution in this project uses when the request and the workflow name none.")
   defaultComputingUnit?: Uri;
+  @doc("The warehouse an execution in this project keeps its results in when the request and the workflow name none.")
+  defaultWarehouse?: Uri;
   @doc("The agent template a chat in this project runs when the chat names none.")
   defaultAgentTemplate?: Uri;
   @doc("The model endpoint the agent uses in a chat of this project when the chat names none; absent: the agent's own.")

@@ -71,7 +71,7 @@ test("the agent can be asked from the page of every kind of resource, and is tol
   forgetDocks(as, () => chats);
   // Every kind the catalog has a page for, but the chat itself and the settings.
   expect(pages.map(p => p.kind).sort()).toEqual(
-    ["agent-template", "computing-unit", "credential", "dataset", "environment", "execution", "mcp-server", "model", "model-endpoint", "operator", "project", "skill", "workflow"].sort()
+    ["agent-template", "computing-unit", "credential", "dataset", "environment", "execution", "mcp-server", "model", "model-endpoint", "operator", "project", "skill", "warehouse", "workflow"].sort()
   );
 
   await signIn(page);

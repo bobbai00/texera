@@ -25,6 +25,7 @@ import "./kinds/dataset.tsp";
 import "./kinds/model.tsp";
 import "./kinds/environment.tsp";
 import "./kinds/computing-unit.tsp";
+import "./kinds/warehouse.tsp";
 import "./kinds/operator.tsp";
 import "./kinds/agent-template.tsp";
 import "./kinds/skill.tsp";

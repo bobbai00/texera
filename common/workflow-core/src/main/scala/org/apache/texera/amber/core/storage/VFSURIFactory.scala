@@ -47,8 +47,9 @@ case class VFSUriComponents(
     globalPortId: Option[GlobalPortIdentity],
     resourceType: VFSResourceType.Value,
     // The warehouse whose catalog holds this URI's table, from the optional leading
-    // `/wh/<name>` segment; None for non-BYO storage, which uses the configured
-    // default. Last so positional unpacking of the earlier fields still works.
+    // `/wh/<name>` segment: the one the catalog named for the execution. None when
+    // the execution named none, which uses the configured default. Last so
+    // positional unpacking of the earlier fields still works.
     warehouse: Option[String] = None
 )
 
@@ -57,20 +58,21 @@ object VFSURIFactory {
 
   // A warehouse name becomes a URI path segment, so it is restricted to characters
   // that carry no meaning there: no '/' to add segments, and no '%' to smuggle one
-  // in percent-encoded form. Registration applies a stricter rule still; this is the
-  // invariant the URI layer itself depends on.
+  // in percent-encoded form. The catalog names its warehouses within this rule; it
+  // is the invariant the URI layer itself depends on.
   private val warehouseNamePattern = "[A-Za-z0-9][A-Za-z0-9_-]*".r
 
   /**
-    * Whether `name` is safe as a URI path segment. Public so registration-time
-    * validation (WarehouseResource) enforces the exact rule this layer parses by,
-    * instead of keeping a drifting copy.
+    * Whether `name` is safe as a URI path segment. Public so whoever takes a
+    * warehouse name from outside (a start request, a result read) checks it by the
+    * exact rule this layer parses by, instead of keeping a drifting copy.
     */
   def isValidWarehouseName(name: String): Boolean =
     warehouseNamePattern.pattern.matcher(name).matches()
 
-  // Warehouse is carried as a leading `/wh/<name>` path segment so a storage URI
-  // fully identifies which warehouse its table lives in. Absent for non-BYO storage.
+  // The warehouse is carried as a leading `/wh/<name>` path segment so a storage URI
+  // fully identifies which warehouse its table lives in. Absent when the execution
+  // named none: the configured default is used.
   private def warehousePathSegment(warehouse: Option[String]): String =
     warehouse
       .map { name =>
@@ -95,14 +97,17 @@ object VFSURIFactory {
     *
     * The segments come from the RAW path (see `decodeURI`), so a percent-encoded
     * slash stays inside the segment that contains it instead of becoming a
-    * separator. The name is then required to be a legal warehouse name, so anything
-    * that could not have been written by `warehousePathSegment` resolves to no
-    * warehouse rather than to a wrong one.
+    * separator. A leading `wh` must then be followed by a legal warehouse name.
+    * Anything `warehousePathSegment` could not have written is refused: reading it
+    * as "no warehouse" would send the read or the write to the configured default
+    * warehouse, and reading it as some other name to a wrong one.
     */
-  private def warehouseFrom(segments: List[String]): Option[String] =
+  private def warehouseFrom(segments: List[String], uri: URI): Option[String] =
     segments match {
       case "wh" :: name :: _ if isValidWarehouseName(name) => Some(name)
-      case _                                               => None
+      case "wh" :: _ =>
+        throw new IllegalArgumentException(s"the URI names no legal warehouse after /wh/: $uri")
+      case _ => None
     }
 
   /**
@@ -117,11 +122,12 @@ object VFSURIFactory {
       throw new IllegalArgumentException(s"Invalid URI scheme: ${uri.getScheme}")
     }
 
-    // Raw path, for the same reason as warehouseFromURI: keys are located by
-    // searching the segments, so a percent-encoded slash inside a segment must not
-    // split it and shift which `wid`/`eid` the search finds. Python's decode_uri
-    // splits the raw path too, so both languages read a URI identically.
+    // Raw path: keys are located by searching the segments, so a percent-encoded
+    // slash inside a segment must not split it and add keys the URI never had.
+    // Python's decode_uri splits the raw path too, so both languages read a URI
+    // identically.
     val segments = uri.getRawPath.stripPrefix("/").split("/").toList
+    val warehouse = warehouseFrom(segments, uri)
 
     def extractValue(key: String): String = {
       val index = segments.indexOf(key)
@@ -149,7 +155,7 @@ object VFSURIFactory {
       executionId,
       globalPortIdOption,
       resourceType,
-      warehouseFrom(segments)
+      warehouse
     )
   }
 

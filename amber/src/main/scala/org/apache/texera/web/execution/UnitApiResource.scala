@@ -104,9 +104,12 @@ case class EnvironmentRequest(rid: String, vno: Int, python: Option[PythonEnviro
 @JsonIgnoreProperties(ignoreUnknown = true)
 case class OutputTable(opid: String, port: String, table: String)
 
+/**
+  * Where an execution stores what it writes: the warehouse, by its name in the lake catalog,
+  * the namespace the catalog made for the execution in it, and the tables of the output ports.
+  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 case class ResultStore(
-    catalogUri: String,
     warehouse: String,
     namespace: String,
     tables: Option[List[OutputTable]]
@@ -215,6 +218,22 @@ object UnitApiResource {
   private val claimed = new TrieMap[String, Unit]()
   private[execution] def claim(eid: String): Boolean = claimed.putIfAbsent(eid, ()).isEmpty
   val UNIT_ID = 0
+
+  /**
+    * The warehouse a request names, by its name in the lake catalog. Absent or empty is the
+    * unit's configured default warehouse. A name the storage layer cannot carry is refused:
+    * it must never turn into the default.
+    */
+  def warehouseNamed(name: String): Option[String] =
+    Option(name).filter(_.nonEmpty).map { named =>
+      if (!VFSURIFactory.isValidWarehouseName(named)) {
+        throw new WebApplicationException(
+          s"'$named' names no warehouse",
+          Response.Status.BAD_REQUEST
+        )
+      }
+      named
+    }
 
   /**
     * Where a port's result is, as the catalog knows it: `namespace.table` when the catalog
@@ -373,6 +392,9 @@ class UnitApiResource extends LazyLogging {
   @Path("/executions")
   @RolesAllowed(Array("SERVICE"))
   def start(request: ExecutionStartRequest, @Auth user: UnitPrincipal): ExecutionAck = {
+    // Where the run stores everything it writes: the warehouse the catalog named. Checked
+    // before the execution is claimed, so a request that cannot run touches nothing.
+    val warehouse = request.resultStore.flatMap(store => warehouseNamed(store.warehouse))
     // A repeated start (a retry after a timeout, say) must not touch the run already going.
     if (!UnitApiResource.claim(request.eid)) {
       throw new WebApplicationException(
@@ -399,8 +421,9 @@ class UnitApiResource extends LazyLogging {
       }
     }
     val plan = objectMapper.treeToValue(planNode, classOf[LogicalPlanPojo])
-    // Every table of the run goes into the namespace the catalog made for it, the output ports
-    // under the names it chose, registered before the first worker can write.
+    // Every table of the run goes into the namespace the catalog made for it in that
+    // warehouse, the output ports under the names it chose, registered before the first
+    // worker can write.
     request.resultStore.foreach(store =>
       ExecutionLayouts.register(ExecutionIdentity(EngineIds.of(request.eid)), store.layout)
     )
@@ -419,7 +442,7 @@ class UnitApiResource extends LazyLogging {
         WorkflowSettings(dataTransferBatchSize = ApplicationConfig.defaultDataTransferBatchSize),
       emailNotificationEnabled = false,
       computingUnitId = UNIT_ID,
-      warehouseId = None,
+      warehouse = warehouse,
       externalExecutionId = Some(request.eid)
     )
     reporter.runStatus("running", None)
@@ -681,11 +704,13 @@ class UnitApiResource extends LazyLogging {
       @QueryParam("offset") @DefaultValue("0") offset: Long,
       @QueryParam("limit") @DefaultValue("100") limit: Int,
       @QueryParam("table") table: String,
-      @QueryParam("namespace") namespace: String
+      @QueryParam("namespace") namespace: String,
+      @QueryParam("warehouse") warehouse: String
   ): RowPage = {
     val portIndex = port.stripPrefix("output-").toIntOption.getOrElse(0)
+    val recordedWarehouse = warehouseNamed(warehouse)
     // The run's own record while this unit holds it; otherwise the table where the catalog
-    // put it, by namespace and name.
+    // put it, by warehouse, namespace and name.
     val own = runs
       .get(eid)
       .flatMap(h =>
@@ -702,7 +727,7 @@ class UnitApiResource extends LazyLogging {
     val (document, schemaOpt) = (own, recorded) match {
       case (Some(uri), _) => DocumentFactory.openDocument(uri)
       case (None, Some((ns, t))) =>
-        try DocumentFactory.openTable(ns, t)
+        try DocumentFactory.openTable(recordedWarehouse, ns, t)
         catch {
           case _: IllegalArgumentException =>
             throw new WebApplicationException(s"no table $ns.$t", Response.Status.NOT_FOUND)

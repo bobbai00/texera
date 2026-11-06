@@ -34,9 +34,12 @@ type Config struct {
 	OIDCClientID string
 	// Branding of the deployment.
 	BrandName string
-	// IcebergCatalogURI and IcebergWarehouse are where units write results.
-	IcebergCatalogURI string
-	IcebergWarehouse  string
+	// Warehouse is the name of the platform's warehouse, in the lake and in the catalog, and
+	// WarehouseStore the deployment's own store for warehouses, as the lake and the units reach
+	// it: its key prefix is the platform warehouse's place, and a warehouse someone makes
+	// without a store of their own gets another place in the same bucket.
+	Warehouse      string
+	WarehouseStore ports.WarehouseStorage
 	// LineageCallbackURL is where units post OpenLineage events, as a unit reaches it.
 	LineageCallbackURL string
 	PresignTTL         time.Duration

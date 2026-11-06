@@ -38,7 +38,6 @@ object ExecutionsMetadataPersistService extends LazyLogging {
       executionName: String,
       environmentVersion: String,
       computingUnitId: Integer,
-      warehouseId: Option[Int] = None,
       externalId: Option[String] = None
   ): ExecutionIdentity = {
     val record = ExecutionRegistry.create(workflowId.id, computingUnitId, executionName, externalId)

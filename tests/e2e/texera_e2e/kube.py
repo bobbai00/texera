@@ -1,6 +1,7 @@
 """What the cluster holds for a unit, through kubectl when it is around."""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -39,3 +40,17 @@ def memory_request(rid: str) -> str:
 
 def rolled_out(rid: str) -> None:
     _run(["rollout", "status", f"deploy/unit-{rid}", "--timeout=600s"], timeout=620)
+
+
+def lake_namespaces(warehouse: str, token: str) -> list[str] | None:
+    """The namespaces of a warehouse as the lake lists them to the caller of the token, asked
+    from inside the cluster (the lake has no door outside it); None when the lake has no such
+    warehouse for them."""
+    script = (
+        "const [w,t]=process.argv.slice(1);const h={authorization:'Bearer '+t};const base='http://lakekeeper:8181/catalog/v1';"
+        "const c=await fetch(base+'/config?warehouse='+encodeURIComponent(w),{headers:h});"
+        "if(!c.ok){console.log(JSON.stringify(null))}else{const j=await c.json();const p=(j.overrides&&j.overrides.prefix)||(j.defaults&&j.defaults.prefix);"
+        "const n=await fetch(base+'/'+p+'/namespaces',{headers:h});const l=await n.json();console.log(JSON.stringify((l.namespaces||[]).map(x=>x[0])))}"
+    )
+    out = _run(["exec", "deploy/live", "-c", "live", "--", "bun", "-e", script, warehouse, token])
+    return json.loads(out) if out else None

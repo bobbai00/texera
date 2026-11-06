@@ -57,7 +57,7 @@ func (s *Service) reportsFor(ctx context.Context, caller *auth.Caller, exec *sto
 	if err := json.Unmarshal(exec.Spec, &spec); err != nil {
 		return false
 	}
-	unit, err := s.unitByURI(ctx, string(spec.ComputingUnit))
+	unit, err := s.named(ctx, string(spec.ComputingUnit), unitKind)
 	if err != nil {
 		return false
 	}

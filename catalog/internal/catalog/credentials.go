@@ -43,8 +43,10 @@ func (s *Service) SetSecret(ctx context.Context, caller *auth.Caller, rid uuid.U
 	if err := s.Secrets.Put(ctx, secretPath(r), fields); err != nil {
 		return Unavailable("secret store", err)
 	}
-	_, err = s.Store.MergeStatus(ctx, rid, mustJSON(map[string]any{"hasSecret": true, "rotatedAt": time.Now().UTC()}))
-	return wrap(err, "credential")
+	if _, err = s.Store.MergeStatus(ctx, rid, mustJSON(map[string]any{"hasSecret": true, "rotatedAt": time.Now().UTC()})); err != nil {
+		return wrap(err, "credential")
+	}
+	return s.credentialRotated(ctx, r)
 }
 
 // Lease hands a credential's value to an execution or a turn and logs it.

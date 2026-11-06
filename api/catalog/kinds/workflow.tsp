@@ -61,6 +61,8 @@ model WorkflowSpec {
   defaultEnvironment?: Uri;
   @doc("The computing unit an execution uses when the request names none.")
   defaultComputingUnit?: Uri;
+  @doc("The warehouse an execution keeps its results in when the request names none.")
+  defaultWarehouse?: Uri;
 }
 
 model WorkflowStatus {
@@ -117,6 +119,8 @@ model RunWorkflow {
   vno?: Vno;
   @doc("Overrides the workflow's and the project's default unit.")
   computingUnit?: Uri;
+  @doc("Overrides the workflow's and the project's default warehouse: where the execution keeps its results.")
+  warehouse?: Uri;
   @doc("Overrides the workflow's and the project's default environment; `@vno` pins a version, else the head.")
   environment?: Uri;
   @doc("Inputs of this execution alone; the version itself stays as authored.")
@@ -179,7 +183,7 @@ namespace Routes {
     @extension("x-texera-permission", "execute")
     @extension("x-mcp", #{
       tool: "run_workflow",
-      description: "Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the chat's unit; name one only when the person asks for another.",
+      description: "Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the chat's unit; name one only when the person asks for another. Results are kept in the warehouse of the workflow, its project or the platform; name one only when the person asks.",
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,

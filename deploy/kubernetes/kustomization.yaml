@@ -17,7 +17,7 @@
 
 # Texera 2.0 on Kubernetes: the dev stack's services as workloads in one namespace. Apply with
 # bin/texera-2-0/k8s.sh, which builds the images, renders the config maps from the files the dev
-# stack uses (realm, gateway, warehouse bootstrap) and creates the model-key secret.
+# stack uses (realm, gateway, database init) and creates the model-key secret.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: texera2

@@ -173,7 +173,7 @@ paths:
   /api/executions/{eid}/results/{opid}/{port}:
     get:
       operationId: Executions_result
-      description: A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+      description: A page of a port result. `table` is where the catalog recorded the result, `namespace` the execution's namespace (ResultStore.namespace) and `warehouse` the warehouse it wrote to (ResultStore.warehouse); a unit that no longer holds the execution (after a restart, or another unit that may read the namespace) serves it from there.
       parameters:
         - name: eid
           in: path
@@ -211,6 +211,12 @@ paths:
             type: string
           explode: false
         - name: namespace
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: warehouse
           in: query
           required: false
           schema:
@@ -590,15 +596,12 @@ components:
     ResultStore:
       type: object
       required:
-        - catalogUri
         - warehouse
         - namespace
       properties:
-        catalogUri:
-          type: string
-          description: Iceberg REST catalog URI the unit writes results to.
         warehouse:
           type: string
+          description: 'The warehouse the execution writes to, by its name in the lake: what an Iceberg client passes as `warehouse`.'
         namespace:
           type: string
           description: "The namespace the catalog made for this execution: every table of the execution goes there, and the unit's identity was granted write access to it."
@@ -607,6 +610,7 @@ components:
           items:
             $ref: '#/components/schemas/OutputTable'
           description: One table per output port, named by the catalog; the engine writes each port's result under its name and reports it as `namespace.table`.
+      description: Where an execution's results go in the lake. The unit knows the lake's address from its own configuration; the catalog names the warehouse and the namespace.
     Rid:
       type: string
       description: Resource id, a UUID.

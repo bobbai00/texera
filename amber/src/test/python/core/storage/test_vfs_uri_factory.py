@@ -152,13 +152,15 @@ class TestWarehouseInDecodedUri:
         assert components.warehouse == "user-2-foo"
 
     def test_warehouse_is_none_when_no_wh_segment(self):
-        # Non-BYO URIs have no /wh/ segment, so the warehouse is absent.
+        # An execution that named no warehouse has no /wh/ segment: the worker's
+        # configured default is used.
         assert VFSURIFactory.decode_uri("vfs:///wid/7/eid/3/result").warehouse is None
 
     def test_only_a_leading_wh_segment_counts(self):
         # A `wh` deeper in the path -- e.g. inside an operator id -- must not select
         # a warehouse; it would disagree with sanitize_uri_path, which strips only a
-        # leading one, and would route the write to another user's warehouse.
+        # leading one, and would route the write to a warehouse the execution never
+        # named.
         assert (
             VFSURIFactory.decode_uri(
                 "vfs:///wid/1/eid/2/opid/a/wh/victim/b/result"
@@ -170,28 +172,33 @@ class TestWarehouseInDecodedUri:
             is None
         )
 
-    def test_percent_encoded_name_is_rejected_not_decoded(self):
-        # The raw path is split and the name must be a legal warehouse name, so a
-        # percent-encoded name resolves to no warehouse rather than to a decoded
-        # one. Decoding first would let "%2F" become a separator and pick the wrong
-        # warehouse; it would also diverge from Scala, which splits its raw path.
-        assert (
-            VFSURIFactory.decode_uri(
-                "vfs:///wh/user-2%2Dfoo/wid/7/eid/3/result"
-            ).warehouse
-            is None
-        )
+    def test_a_wh_segment_that_names_no_legal_warehouse_is_refused(self):
+        # A URI that says a warehouse follows and then names none the builder could
+        # have written is malformed. It must never read as "no warehouse": the
+        # table would then be looked for in the configured default warehouse. The
+        # raw path is split, so a percent-encoded name is refused rather than
+        # decoded; decoding first would let "%2F" become a separator and pick a
+        # wrong warehouse, and would diverge from Scala, which splits its raw path.
+        for uri in (
+            "vfs:///wh/user-2%2Dfoo/wid/7/eid/3/result",
+            "vfs:///wh/a%2Fwid%2F999/wid/1/eid/2/result",
+            "vfs:///wh/-lead/wid/1/eid/2/result",
+            "vfs:///wh//wid/1/eid/2/result",
+            "vfs:///wh",
+        ):
+            with pytest.raises(ValueError, match="warehouse"):
+                VFSURIFactory.decode_uri(uri)
 
-    def test_encoded_slash_in_name_cannot_forge_segments(self):
-        # "%2F" must stay inside its own segment: decoded-then-split, this URI would
-        # read as /wh/a/wid/999/... handing back "a" as the warehouse, and the key
-        # search would find the injected `wid` instead of the real one.
+    def test_encoded_slash_in_a_segment_cannot_forge_segments(self):
+        # "%2F" stays inside its own segment: decoded and then split, the operator
+        # id below would add a `globalportid` segment the URI never had.
         components = VFSURIFactory.decode_uri(
-            "vfs:///wh/a%2Fwid%2F999/wid/1/eid/2/result"
+            "vfs:///wh/w_1/wid/1/eid/2/opid/a%2Fglobalportid%2Fb/consolemessages"
         )
-        assert components.warehouse is None
+        assert components.warehouse == "w_1"
         assert components.workflow_id.id == 1
         assert components.execution_id.id == 2
+        assert components.global_port_id is None
 
     def test_builder_rejects_an_unsafe_warehouse_name(self):
         with pytest.raises(ValueError, match="warehouse name must match"):
@@ -200,7 +207,7 @@ class TestWarehouseInDecodedUri:
             )
 
     def test_round_trips_a_warehouse_written_by_the_python_builder(self):
-        # Python can now write the segment, not just read it.
+        # Python can write the segment, not just read it.
         uri = VFSURIFactory.create_port_base_uri(
             WorkflowIdentity(id=7), ExecutionIdentity(id=3), _gpi(), "user-2-foo"
         )

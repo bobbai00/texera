@@ -644,3 +644,15 @@ func nullableJSON(raw json.RawMessage) any {
 
 // ErrReferenced is returned when a delete is refused because live resources reference it.
 var ErrReferenced = errors.New("referenced")
+
+// FillExecutionWarehouse names a warehouse on every execution that names none, and says how
+// many it changed: an execution made before warehouses were resources kept its results in the
+// platform's. Nothing else about the execution changes, its age for the retention policy
+// included.
+func (s *Store) FillExecutionWarehouse(ctx context.Context, warehouse string) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE resource SET spec = jsonb_set(spec, '{warehouse}', to_jsonb($1::text)) WHERE kind = 'execution' AND NOT (spec ? 'warehouse')`, warehouse)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

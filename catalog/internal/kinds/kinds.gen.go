@@ -18,5 +18,6 @@ var Table = []Kind{
 	{Name: "project", Plural: "projects", Versioned: false, Content: "spec", Parent: "", Nested: false, Singleton: false, Index: nil, Envelope: "Project", Spec: "ProjectSpec", Status: "ProjectStatus"},
 	{Name: "settings", Plural: "settings", Versioned: false, Content: "spec", Parent: "", Nested: false, Singleton: true, Index: nil, Envelope: "Settings", Spec: "SettingsSpec", Status: "SettingsStatus"},
 	{Name: "skill", Plural: "skills", Versioned: true, Content: "spec", Parent: "project", Nested: false, Singleton: false, Index: nil, Envelope: "Skill", Spec: "SkillSpec", Status: "SkillStatus"},
+	{Name: "warehouse", Plural: "warehouses", Versioned: false, Content: "spec", Parent: "project", Nested: false, Singleton: false, Index: nil, Envelope: "Warehouse", Spec: "WarehouseSpec", Status: "WarehouseStatus"},
 	{Name: "workflow", Plural: "workflows", Versioned: true, Content: "spec", Parent: "project", Nested: false, Singleton: false, Index: nil, Envelope: "Workflow", Spec: "WorkflowSpec", Status: "WorkflowStatus"},
 }

@@ -48,7 +48,8 @@ function Grants({ resource }: { resource: Resource }) {
   });
   const forbidden = grants.error instanceof CatalogError && grants.error.status === 403;
   const isPublic = resource.metadata.visibility === "public";
-  const unit = kindEntry(resource.kind).kind === "computing-unit";
+  // What is shared to be used rather than read: where executions run and where they keep results.
+  const used = ["computing-unit", "warehouse"].includes(kindEntry(resource.kind).kind);
   return (
     <div className="space-y-5 p-4" data-access>
       <section className="space-y-2">
@@ -90,7 +91,7 @@ function Grants({ resource }: { resource: Resource }) {
                 </li>
               ))}
             </ul>
-            <GrantForm unit={unit} busy={grant.isPending} onGrant={(pid, relation) => grant.mutate({ pid, relation })} />
+            <GrantForm used={used} busy={grant.isPending} onGrant={(pid, relation) => grant.mutate({ pid, relation })} />
             {(grant.error ?? revoke.error) && <ErrorNote error={grant.error ?? revoke.error} prefix="Could not change access" />}
           </>
         )}
@@ -99,10 +100,10 @@ function Grants({ resource }: { resource: Resource }) {
   );
 }
 
-function GrantForm({ unit, busy, onGrant }: { unit: boolean; busy: boolean; onGrant: (pid: string, relation: Relation) => void }) {
+function GrantForm({ used, busy, onGrant }: { used: boolean; busy: boolean; onGrant: (pid: string, relation: Relation) => void }) {
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Principal>();
-  const [relation, setRelation] = useState<Relation>(unit ? "user" : "viewer");
+  const [relation, setRelation] = useState<Relation>(used ? "user" : "viewer");
   const q = useDeferredValue(query.trim());
   const { data } = useQuery({ ...principalsQuery(q), enabled: q.length > 0 && !picked });
   return (

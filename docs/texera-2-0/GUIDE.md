@@ -87,22 +87,23 @@ lists show the project you work in and what it inherits, the built-ins; what you
 into it, and so does what the agent makes in a chat of that project. Names are unique per
 project and kind (a duplicate is refused with 409). Share a project and everything in it is
 shared the same way; make it public and everyone can read what is in it. A project can name
-its own defaults: the agent, the model, the computing unit, the environment, and add-on tools
-for all its chats.
+its own defaults: the agent, the model, the computing unit, the warehouse, the environment,
+and add-on tools for all its chats.
 
 **Built-in.** What the platform ships (the agent, its skills and MCP servers, the model
-endpoint, the default unit and environment, the engine's operators) lives in one project,
+endpoint, the default unit, warehouse and environment, the engine's operators) lives in one project,
 "Built-in", and that is all that makes a resource built in. Everyone can view and use what is
 in it; nobody changes it through the app or the API, an administrator included (`409
-builtin`): it changes with a release. An administrator changes which agent, unit, environment
-or model is the default in the settings, and a project in its own.
+builtin`): it changes with a release. An administrator changes which agent, unit, warehouse,
+environment or model is the default in the settings, and a project in its own.
 
 **The library.** Every kind has a page under its plural, linked from the sidebar: what you
 make and keep (`/workflows`, `/datasets`, `/models`, `/operators`, `/environments`,
-`/computing-units`), what happened (`/executions`, across workflows), what the agent is made
+`/computing-units`, `/warehouses`), what happened (`/executions`, across workflows), what the agent is made
 of (`/agent-templates`, `/skills`, `/mcp-servers`, `/model-endpoints`, `/credentials`),
 `/projects`, and `/settings` for administrators. "New …" opens a form generated from the
-kind's schema; a new computing unit asks for its memory and CPU. A resource's page has its
+kind's schema; a new computing unit asks for its memory and CPU, a new warehouse for where it
+keeps its tables. A resource's page has its
 spec (a form, the JSON a click away), its versions, who can access it, its lineage and the raw
 envelope; `?panel=` opens a second resource beside the first.
 
@@ -139,7 +140,7 @@ file of any version. Uploading the same bytes twice stores them once.
 
 **Sharing.** A resource is private or public. Grants give a person or group a relation:
 `viewer` reads and runs, `editor` writes too, `owner` everything; `user` is "may use" for a
-computing unit, a credential or a model endpoint, and viewing never implies using. The Share
+computing unit, a warehouse, a credential or a model endpoint, and viewing never implies using. The Share
 button at the top right of a resource's page (a project, a chat, a workflow, a dataset, any
 kind) shows its link and who it is shared with, and finds people by name or email, logged in
 or not. What others gave you is under "Shared with me" in the sidebar, in one list whatever
@@ -149,7 +150,8 @@ Taking a grant back takes the thing off the other person's list and closes a pag
 open, within half a minute.
 
 **Settings** (administrators): branding, the defaults an execution or a chat falls back to
-(agent, environment, unit, model endpoint) and retention (section 5).
+(agent, environment, unit, warehouse, model endpoint), the stores a warehouse of someone's own
+may be on, and retention (section 5).
 
 ## 3. Agents
 
@@ -253,14 +255,14 @@ operator nothing reads is stored anyway.
 
 **How an execution starts.** `POST /workflows/{rid}/run` goes through three phases in the catalog.
 It authorizes everything the compiled plan names before anything is written: execute on the
-workflow, run on the unit, read on the environment, every dataset file and custom operator,
-use on every credential; a refusal leaves nothing behind. It compiles the version into a plan
+workflow, run on the unit, use on the warehouse, read on the environment, every dataset file
+and custom operator, use on every credential; a refusal leaves nothing behind. It compiles the version into a plan
 that is data: the engine's logical plan with files and credentials still named by URI, the
 custom operators compiled in, and one table per output port the engine writes, named
-`<operator>_<port>` inside the execution's own namespace `e_<rid>` in the lake. `validate`
+`<operator>_<port>` inside the execution's own namespace `e_<rid>` in its warehouse. `validate`
 returns the same plan, so a dry run shows what an execution would do. Then it materializes: the execution is
-stored with its plan (`spec.plan`, no secret, no URL that expires), its namespace is opened
-for the unit's identity, and the engine receives a bound copy with presigned inputs and
+stored with its plan (`spec.plan`, no secret, no URL that expires) and its warehouse
+(`spec.warehouse`), its namespace is opened there for the unit's identity, and the engine receives a bound copy with presigned inputs and
 leased secrets. The unit reports back as itself through OpenLineage events, and only the unit
 running an execution may report on it. `status.ports[]` lists the tables from the start and
 fills in rows and snapshots as they are reported; the rows are read by namespace and table,
@@ -301,10 +303,32 @@ fit the phase answers 409. A workflow with an execution still going on the same 
   catalog leases the secret for the execution and puts it in the plan the engine receives, never in
   a version or an execution. The caller must be allowed to use the credential.
 
-## 5. Keeping and losing results
+## 5. Results: warehouses, keeping and losing
 
-Results are Iceberg tables in the lake, in the execution's namespace, written by the unit's own
-identity and readable through the catalog alone. The settings' `retention.results` (an ISO
+An execution runs on a computing unit and keeps its results in a warehouse. A warehouse is a
+resource, like a unit: a place in an object store whose tables the lake (Lakekeeper, an Iceberg
+REST catalog) manages. The platform's own is built in and is where results go unless something
+names another. A project can have its own: "New warehouse" makes one on the platform's store,
+in a place of its own, or on a store of yours (`spec.storage`: the endpoint, the region, the
+bucket, a folder in it, and a credential whose secret holds `accessKeyId` and
+`secretAccessKey`). Such a store is S3-compatible and hands out short-lived keys itself (STS,
+as MinIO and RustFS do): the lake gives a unit access to one table's files that way, and no
+unit ever holds the store's key. An administrator lists the stores a warehouse may be on
+(`warehouseEndpoints` in the settings; the deployment's own always is), and the lake tries a
+store before it takes it, so a wrong key or a bucket that is not there is refused when the
+warehouse is made. A warehouse does not move: its place is chosen once, and its key follows
+its credential when the secret is replaced.
+
+An execution keeps its results in the warehouse the request names (`warehouse` of `run`), else
+the workflow's (`defaultWarehouse`), the project's, the platform's, and records it
+(`spec.warehouse`); its page shows it. On a warehouse's page, "Keep <project>'s results here"
+makes it the project's. Whoever runs needs `use` on the warehouse (grant `user`; the
+platform's is everyone's). Reading is decided by the execution, not by the warehouse: whoever
+may read an execution reads its rows, through the catalog. A warehouse is deleted only when no
+execution keeps results in it (`409 in_use`).
+
+Results are Iceberg tables in the execution's own namespace of its warehouse, written by the
+unit's own identity and readable through the catalog alone. The settings' `retention.results` (an ISO
 8601 duration, `P30D`) is how long a finished execution keeps its tables; absent, forever. The
 catalog sweeps hourly (`POST /settings/retention/sweep` runs one now, for administrators);
 an expired execution keeps its record and summaries and answers 410 to its rows. The label

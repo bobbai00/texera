@@ -44,9 +44,9 @@ model OutputTable {
   table: string;
 }
 
+@doc("Where an execution's results go in the lake. The unit knows the lake's address from its own configuration; the catalog names the warehouse and the namespace.")
 model ResultStore {
-  @doc("Iceberg REST catalog URI the unit writes results to.")
-  catalogUri: string;
+  @doc("The warehouse the execution writes to, by its name in the lake: what an Iceberg client passes as `warehouse`.")
   warehouse: string;
   @doc("The namespace the catalog made for this execution: every table of the execution goes there, and the unit's identity was granted write access to it.")
   `namespace`: string;
@@ -133,8 +133,8 @@ namespace Routes {
     @post @route("/{eid}/pause") pause(@path eid: string): ExecutionState | Error;
     @doc("Resume a paused execution.")
     @post @route("/{eid}/resume") resume(@path eid: string): ExecutionState | Error;
-    @doc("A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.")
-    @get @route("/{eid}/results/{opid}/{port}") result(@path eid: string, @path opid: string, @path port: string, @query offset?: int64, @query limit?: int32, @query table?: string, @query `namespace`?: string): RowPage | Error;
+    @doc("A page of a port result. `table` is where the catalog recorded the result, `namespace` the execution's namespace (ResultStore.namespace) and `warehouse` the warehouse it wrote to (ResultStore.warehouse); a unit that no longer holds the execution (after a restart, or another unit that may read the namespace) serves it from there.")
+    @get @route("/{eid}/results/{opid}/{port}") result(@path eid: string, @path opid: string, @path port: string, @query offset?: int64, @query limit?: int32, @query table?: string, @query `namespace`?: string, @query warehouse?: string): RowPage | Error;
   }
 
   @route("/environments")

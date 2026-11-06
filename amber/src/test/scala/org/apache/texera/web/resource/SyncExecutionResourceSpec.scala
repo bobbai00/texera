@@ -22,6 +22,7 @@ package org.apache.texera.web.resource
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.texera.amber.core.storage.model.BufferedItemWriter
+import org.apache.texera.amber.core.storage.result.ResultSchema
 import org.apache.texera.amber.core.storage.{DocumentFactory, VFSURIFactory}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
@@ -55,13 +56,12 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
 import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
-import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.web.auth.UnitPrincipal
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.web.execution.ExecutionRegistry
 import org.apache.texera.web.service.ExecutionsMetadataPersistService
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
-import org.apache.texera.web.service.{WarehouseUnavailableException, WorkflowExecutionService}
+import org.apache.texera.web.service.WorkflowExecutionService
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -285,7 +285,7 @@ class SyncExecutionResourceSpec
         workflowSettings = WorkflowSettings(),
         emailNotificationEnabled = false,
         computingUnitId = testCuid,
-        warehouseId = None
+        warehouse = None
       ),
       stateStore,
       (_: Throwable) => (),
@@ -794,31 +794,49 @@ class SyncExecutionResourceSpec
     infos("silent").warnings shouldBe None
   }
 
-  it should "let a disabled-warehouse refusal reach the caller" in {
-    // #6930: every other storage failure degrades into an absent result, but a kill-switch
-    // refusal must not — "no data" is indistinguishable from data loss. The URI carries an
-    // unresolvable warehouse name, which WarehouseReadGuard refuses in either flag state, so this
-    // does not depend on how the deployment has the switch set.
-    insertConsoleUri(
-      otherEid,
-      "guarded",
-      s"vfs:///wh/a%2Fb/wid/$testWid/eid/$otherEid/opid/guarded/consolemessages"
+  it should "never read the default warehouse for a console URI whose warehouse segment is malformed" in {
+    // The console exists in the default warehouse, at the place this URI would name once its
+    // bad segment is dropped: a lenient reading returns it. The URI is refused instead, and
+    // like every other storage failure here that degrades into an absent console.
+    val opId = "serc-console-malformed"
+    val inDefault = VFSURIFactory.createConsoleMessagesURI(
+      WorkflowIdentity(testWid.toLong),
+      ExecutionIdentity(otherEid),
+      OperatorIdentity(opId)
     )
+    val writer = DocumentFactory
+      .createDocument(inDefault, ResultSchema.consoleMessagesSchema)
+      .writer(opId)
+      .asInstanceOf[BufferedItemWriter[Tuple]]
+    writer.open()
+    writer.putOne(
+      new Tuple(
+        ResultSchema.consoleMessagesSchema,
+        Array(
+          ConsoleMessage.defaultInstance
+            .withMsgType(ConsoleMessageType.PRINT)
+            .withTitle("somebody else's line")
+            .toProtoString
+        )
+      )
+    )
+    writer.close()
+    insertConsoleUri(otherEid, opId, inDefault.toString.replaceFirst("^vfs://", "vfs:///wh/-lead"))
     val stateStore = new ExecutionStateStore()
     stateStore.statsStore.updateState(
-      _.withOperatorInfo(Map("guarded" -> metrics(COMPLETED, Seq.empty, Seq.empty)))
+      _.withOperatorInfo(Map(opId -> metrics(COMPLETED, Seq.empty, Seq.empty)))
     )
 
-    a[WarehouseUnavailableException] should be thrownBy {
-      resource invokePrivate collectOperatorInfos(
-        ExecutionIdentity(otherEid),
-        newExecution(stateStore),
-        List("guarded"),
-        100000,
-        20000,
-        None
-      )
-    }
+    val infos = resource invokePrivate collectOperatorInfos(
+      ExecutionIdentity(otherEid),
+      newExecution(stateStore),
+      List(opId),
+      100000,
+      20000,
+      None
+    )
+
+    infos(opId).consoleLogs shouldBe None
   }
 
   "collectOperatorResult" should "return every row of a result that fits the char budget" in {
@@ -976,21 +994,20 @@ class SyncExecutionResourceSpec
     result._5 shouldBe Some(false)
   }
 
-  it should "let a disabled-warehouse refusal reach the caller" in {
-    // #6930, on the result path this time: every other storage failure degrades into an absent
-    // result, but a kill-switch refusal must not — "no data" is indistinguishable from data loss.
-    // The URI carries an unresolvable warehouse name, which WarehouseReadGuard refuses in either
-    // flag state, so this does not depend on how the deployment has the switch set. Built by hand
-    // because VFSURIFactory rejects a name it could not parse back.
-    val opId = "serc-guarded"
-    registerResultUri(
-      new URI(
-        s"vfs:///wh/a%2Fb/wid/$testWid/eid/$resultEid" +
-          s"/globalportid/${globalPortIdOf(opId).serializeAsString}/result"
-      )
+  it should "never read the default warehouse for a result URI whose warehouse segment is malformed" in {
+    // The rows exist in the default warehouse, at the place this URI would name once its bad
+    // segment is dropped: a lenient reading returns them. The URI is refused instead, and like
+    // every other storage failure here that degrades into an absent result. Recorded by hand
+    // because VFSURIFactory builds no such URI.
+    val opId = "serc-result-malformed"
+    storeResult(opId, (0 until 3).map(row))
+    ExecutionRegistry.recordPortResultUri(
+      ExecutionIdentity(resultEid),
+      globalPortIdOf(opId),
+      new URI(resultUriOf(opId).toString.replaceFirst("^vfs://", "vfs:///wh/-lead"))
     )
 
-    a[WarehouseUnavailableException] should be thrownBy collect(opId, 100000, 20000)
+    collect(opId, 100000, 20000) shouldBe (("table", None, None, None, None))
   }
 
   it should "degrade to an absent result when the registered URI has no document behind it" in {

@@ -530,6 +530,24 @@ export type CreateSkill = {
     message?: string;
 };
 
+export type CreateWarehouse = {
+    name: string;
+    description?: string;
+    /**
+     * The parent; for a top-level kind a project, default the caller's home project.
+     */
+    parent?: Rid;
+    visibility?: Visibility;
+    labels?: {
+        [key: string]: string;
+    };
+    spec: WarehouseSpec;
+    /**
+     * Recorded on the first version of a versioned kind.
+     */
+    message?: string;
+};
+
 export type CreateWorkflow = {
     name: string;
     description?: string;
@@ -664,6 +682,10 @@ export type Defaults = {
     agentTemplate?: Uri;
     environment?: Uri;
     computingUnit?: Uri;
+    /**
+     * The warehouse an execution keeps its results in when nothing else names one.
+     */
+    warehouse?: Uri;
     modelEndpoint?: Uri;
 };
 
@@ -835,7 +857,7 @@ export type ExecutionPhase = 'pending' | 'provisioning' | 'running' | 'paused' |
  */
 export type ExecutionPlan = {
     /**
-     * The namespace in the lake the execution writes to; absent for a dry run.
+     * The namespace in the execution's warehouse that it writes to; absent for a dry run.
      */
     namespace?: string;
     /**
@@ -884,6 +906,10 @@ export type ExecutionSpec = {
      */
     environment?: Uri;
     computingUnit: Uri;
+    /**
+     * The warehouse the execution keeps its result tables in.
+     */
+    warehouse: Uri;
     /**
      * The dataset file versions the execution reads, resolved at start.
      */
@@ -1541,6 +1567,10 @@ export type ProjectSpec = {
      */
     defaultComputingUnit?: Uri;
     /**
+     * The warehouse an execution in this project keeps its results in when the request and the workflow name none.
+     */
+    defaultWarehouse?: Uri;
+    /**
      * The agent template a chat in this project runs when the chat names none.
      */
     defaultAgentTemplate?: Uri;
@@ -1638,7 +1668,7 @@ export type Resource = {
 /**
  * The kinds. The value is the singular kebab-case kind; the collection is its plural.
  */
-export type ResourceKind = 'project' | 'workflow' | 'execution' | 'dataset' | 'model' | 'environment' | 'computing-unit' | 'operator' | 'agent-template' | 'skill' | 'mcp-server' | 'conversation' | 'credential' | 'model-endpoint' | 'settings';
+export type ResourceKind = 'project' | 'workflow' | 'execution' | 'dataset' | 'model' | 'environment' | 'computing-unit' | 'warehouse' | 'operator' | 'agent-template' | 'skill' | 'mcp-server' | 'conversation' | 'credential' | 'model-endpoint' | 'settings';
 
 export type ResourceMetadata = {
     rid: Rid;
@@ -1730,6 +1760,10 @@ export type RunWorkflow = {
      */
     computingUnit?: Uri;
     /**
+     * Overrides the workflow's and the project's default warehouse: where the execution keeps its results.
+     */
+    warehouse?: Uri;
+    /**
      * Overrides the workflow's and the project's default environment; `@vno` pins a version, else the head.
      */
     environment?: Uri;
@@ -1814,6 +1848,10 @@ export type SettingsSpec = {
         [key: string]: boolean;
     };
     retention?: Retention;
+    /**
+     * The object stores, by endpoint, a warehouse of someone's own may be kept on besides the deployment's own store. The lake and the computing units connect to the address a warehouse names, so an administrator lists them.
+     */
+    warehouseEndpoints?: Array<string>;
 };
 
 export type SettingsStatus = {
@@ -2098,6 +2136,18 @@ export type UpdateSkill = {
     expectedHead?: Vno;
 };
 
+export type UpdateWarehouse = {
+    spec: WarehouseSpec;
+    /**
+     * Recorded on the new version of a versioned kind.
+     */
+    message?: string;
+    /**
+     * The head version the caller saw; refused with 409 when it moved.
+     */
+    expectedHead?: Vno;
+};
+
 export type UpdateWorkflow = {
     spec: WorkflowSpec;
     /**
@@ -2196,6 +2246,59 @@ export type Vno = number;
 /**
  * The typed envelope, served by the kind routes.
  */
+export type Warehouse = {
+    apiVersion: 'catalog.texera.apache.org/v1';
+    kind: ResourceKind;
+    metadata: ResourceMetadata;
+    spec: WarehouseSpec;
+    status?: WarehouseStatus;
+};
+
+export type WarehousePage = {
+    items: Array<Warehouse>;
+    /**
+     * Opaque cursor for the next page; absent on the last page.
+     */
+    nextCursor?: string;
+};
+
+export type WarehouseSpec = {
+    /**
+     * A store of the owner's to keep the tables in. Absent: a place of its own on the deployment's store.
+     */
+    storage?: WarehouseStorage;
+};
+
+export type WarehouseStatus = {
+    /**
+     * The warehouse's name in the lake: what an Iceberg client passes as `warehouse`.
+     */
+    name?: string;
+};
+
+/**
+ * A place in an S3-compatible object store that is the warehouse's alone. The store must hand out short-lived keys itself (STS, as MinIO and RustFS do): that is how a unit reaches one table's files.
+ */
+export type WarehouseStorage = {
+    /**
+     * The store's endpoint, as the lake and the computing units reach it. It is the deployment's own store or one an administrator listed in the settings (`warehouseEndpoints`).
+     */
+    endpoint: string;
+    region: string;
+    bucket: string;
+    /**
+     * A path in the bucket that only this warehouse uses; absent: the whole bucket.
+     */
+    keyPrefix?: string;
+    /**
+     * The credential the lake uses for the bucket; its secret holds `accessKeyId` and `secretAccessKey`. No computing unit ever gets it: the lake hands a unit short-lived access to the tables it may touch.
+     */
+    credential: Uri;
+};
+
+/**
+ * The typed envelope, served by the kind routes.
+ */
 export type Workflow = {
     apiVersion: 'catalog.texera.apache.org/v1';
     kind: ResourceKind;
@@ -2285,6 +2388,10 @@ export type WorkflowSpec = {
      * The computing unit an execution uses when the request names none.
      */
     defaultComputingUnit?: Uri;
+    /**
+     * The warehouse an execution keeps its results in when the request names none.
+     */
+    defaultWarehouse?: Uri;
 };
 
 export type WorkflowStatus = {
@@ -6012,6 +6119,150 @@ export type SkillsReadVersionResponses = {
 };
 
 export type SkillsReadVersionResponse = SkillsReadVersionResponses[keyof SkillsReadVersionResponses];
+
+export type WarehousesListData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
+        parent?: Rid;
+        project?: Rid;
+        q?: string;
+        limit?: number;
+        cursor?: string;
+    };
+    url: '/catalog/v1/warehouses';
+};
+
+export type WarehousesListErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type WarehousesListError = WarehousesListErrors[keyof WarehousesListErrors];
+
+export type WarehousesListResponses = {
+    /**
+     * A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+     */
+    200: WarehousePage;
+};
+
+export type WarehousesListResponse = WarehousesListResponses[keyof WarehousesListResponses];
+
+export type WarehousesCreateData = {
+    body: CreateWarehouse;
+    path?: never;
+    query?: never;
+    url: '/catalog/v1/warehouses';
+};
+
+export type WarehousesCreateErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type WarehousesCreateError = WarehousesCreateErrors[keyof WarehousesCreateErrors];
+
+export type WarehousesCreateResponses = {
+    /**
+     * The request has succeeded and a new resource has been created as a result.
+     */
+    201: Warehouse;
+};
+
+export type WarehousesCreateResponse = WarehousesCreateResponses[keyof WarehousesCreateResponses];
+
+export type WarehousesDeleteData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/warehouses/{rid}';
+};
+
+export type WarehousesDeleteErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type WarehousesDeleteError = WarehousesDeleteErrors[keyof WarehousesDeleteErrors];
+
+export type WarehousesDeleteResponses = {
+    /**
+     * There is no content to send for this request, but the headers may be useful.
+     */
+    204: void;
+};
+
+export type WarehousesDeleteResponse = WarehousesDeleteResponses[keyof WarehousesDeleteResponses];
+
+export type WarehousesReadData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/warehouses/{rid}';
+};
+
+export type WarehousesReadErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type WarehousesReadError = WarehousesReadErrors[keyof WarehousesReadErrors];
+
+export type WarehousesReadResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: Warehouse;
+};
+
+export type WarehousesReadResponse = WarehousesReadResponses[keyof WarehousesReadResponses];
+
+export type WarehousesUpdateData = {
+    body: UpdateWarehouse;
+    headers?: {
+        'If-Match'?: string;
+    };
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/warehouses/{rid}';
+};
+
+export type WarehousesUpdateErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type WarehousesUpdateError = WarehousesUpdateErrors[keyof WarehousesUpdateErrors];
+
+export type WarehousesUpdateResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: Warehouse;
+};
+
+export type WarehousesUpdateResponse = WarehousesUpdateResponses[keyof WarehousesUpdateResponses];
 
 export type WorkflowsListData = {
     body?: never;

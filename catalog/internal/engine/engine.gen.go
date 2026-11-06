@@ -137,7 +137,9 @@ type ExecutionStartRequest struct {
 	OnBehalfOf  *string                 `json:"onBehalfOf,omitempty"`
 	Parameters  *map[string]interface{} `json:"parameters,omitempty"`
 	Reporting   Reporting               `json:"reporting"`
-	ResultStore *ResultStore            `json:"resultStore,omitempty"`
+
+	// ResultStore Where an execution's results go in the lake. The unit knows the lake's address from its own configuration; the catalog names the warehouse and the namespace.
+	ResultStore *ResultStore `json:"resultStore,omitempty"`
 	Workflow    struct {
 		Rid string `json:"rid"`
 		Vno int32  `json:"vno"`
@@ -224,17 +226,16 @@ type ResolvedInput struct {
 	Vno int32  `json:"vno"`
 }
 
-// ResultStore defines model for ResultStore.
+// ResultStore Where an execution's results go in the lake. The unit knows the lake's address from its own configuration; the catalog names the warehouse and the namespace.
 type ResultStore struct {
-	// CatalogUri Iceberg REST catalog URI the unit writes results to.
-	CatalogUri string `json:"catalogUri"`
-
 	// Namespace The namespace the catalog made for this execution: every table of the execution goes there, and the unit's identity was granted write access to it.
 	Namespace string `json:"namespace"`
 
 	// Tables One table per output port, named by the catalog; the engine writes each port's result under its name and reports it as `namespace.table`.
-	Tables    *[]OutputTable `json:"tables,omitempty"`
-	Warehouse string         `json:"warehouse"`
+	Tables *[]OutputTable `json:"tables,omitempty"`
+
+	// Warehouse The warehouse the execution writes to, by its name in the lake: what an Iceberg client passes as `warehouse`.
+	Warehouse string `json:"warehouse"`
 }
 
 // Rid Resource id, a UUID.
@@ -272,6 +273,7 @@ type ExecutionsResultParams struct {
 	Limit     *int32  `form:"limit,omitempty" json:"limit,omitempty"`
 	Table     *string `form:"table,omitempty" json:"table,omitempty"`
 	Namespace *string `form:"namespace,omitempty" json:"namespace,omitempty"`
+	Warehouse *string `form:"warehouse,omitempty" json:"warehouse,omitempty"`
 }
 
 // CompileCompileJSONRequestBody defines body for CompileCompile for application/json ContentType.
@@ -405,7 +407,7 @@ type ClientInterface interface {
 
 	// ExecutionsResult performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 	//
-	// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+	// A page of a port result. `table` is where the catalog recorded the result, `namespace` the execution's namespace (ResultStore.namespace) and `warehouse` the warehouse it wrote to (ResultStore.warehouse); a unit that no longer holds the execution (after a restart, or another unit that may read the namespace) serves it from there.
 	ExecutionsResult(ctx context.Context, eid string, opid string, port string, params *ExecutionsResultParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecutionsResume performs a POST /api/executions/{eid}/resume (the `ExecutionsResume` operationId) request.
@@ -568,7 +570,7 @@ func (c *Client) ExecutionsPause(ctx context.Context, eid string, reqEditors ...
 
 // ExecutionsResult performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 //
-// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+// A page of a port result. `table` is where the catalog recorded the result, `namespace` the execution's namespace (ResultStore.namespace) and `warehouse` the warehouse it wrote to (ResultStore.warehouse); a unit that no longer holds the execution (after a restart, or another unit that may read the namespace) serves it from there.
 func (c *Client) ExecutionsResult(ctx context.Context, eid string, opid string, port string, params *ExecutionsResultParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExecutionsResultRequest(c.Server, eid, opid, port, params)
 	if err != nil {
@@ -982,6 +984,18 @@ func NewExecutionsResultRequest(server string, eid string, opid string, port str
 
 		}
 
+		if params.Warehouse != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "warehouse", *params.Warehouse, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -1190,7 +1204,7 @@ type ClientWithResponsesInterface interface {
 
 	// ExecutionsResultWithResponse performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 	//
-	// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+	// A page of a port result. `table` is where the catalog recorded the result, `namespace` the execution's namespace (ResultStore.namespace) and `warehouse` the warehouse it wrote to (ResultStore.warehouse); a unit that no longer holds the execution (after a restart, or another unit that may read the namespace) serves it from there.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ExecutionsResultWithResponse(ctx context.Context, eid string, opid string, port string, params *ExecutionsResultParams, reqEditors ...RequestEditorFn) (*ExecutionsResultResponse, error)
@@ -1856,7 +1870,7 @@ func (c *ClientWithResponses) ExecutionsPauseWithResponse(ctx context.Context, e
 
 // ExecutionsResultWithResponse performs a GET /api/executions/{eid}/results/{opid}/{port} (the `ExecutionsResult` operationId) request.
 //
-// A page of a port result. `table` is where the catalog recorded the result and `namespace` the execution's namespace (ResultStore.namespace); a unit that no longer holds the execution (after a restart, or another unit on the same warehouse) serves it from there, once it checked the location belongs to this execution.
+// A page of a port result. `table` is where the catalog recorded the result, `namespace` the execution's namespace (ResultStore.namespace) and `warehouse` the warehouse it wrote to (ResultStore.warehouse); a unit that no longer holds the execution (after a restart, or another unit that may read the namespace) serves it from there.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ExecutionsResultWithResponse(ctx context.Context, eid string, opid string, port string, params *ExecutionsResultParams, reqEditors ...RequestEditorFn) (*ExecutionsResultResponse, error) {
