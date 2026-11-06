@@ -240,6 +240,18 @@ func (o outbox) MarkOutboxProcessed(ctx context.Context, ids []int64) error {
 	return o.st.MarkOutboxProcessed(ctx, ids)
 }
 
+func (o outbox) AllTuples(ctx context.Context) ([]authz.OutboxEntry, error) {
+	entries, err := o.st.AllTuples(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]authz.OutboxEntry, len(entries))
+	for i, e := range entries {
+		out[i] = authz.OutboxEntry{Op: e.Op, Object: e.Object, Relation: e.Relation, Subject: e.Subject}
+	}
+	return out, nil
+}
+
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	url := os.Getenv("TEXERA_TEST_DATABASE_URL")

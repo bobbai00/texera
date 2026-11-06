@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -75,18 +76,25 @@ func (p *PDP) Require(ctx context.Context, caller *auth.Caller, permission strin
 	return nil
 }
 
-// Relay moves outbox entries into the authorizer.
+// Relay moves outbox entries into the authorizer, one relay at a time and in the order the
+// entries were made.
 type Relay struct {
 	outbox     Outbox
 	authorizer ports.Authorizer
 	log        *slog.Logger
 	wake       chan struct{}
+	// mu lets one relay run at a time. A request that changes a grant relays before it
+	// answers, and a timer relays what a failure left: without it two of them send the same
+	// entries, and one returns before its own are applied.
+	mu sync.Mutex
 }
 
-// Outbox is what the relay reads: the store's pending tuples.
+// Outbox is what the relay reads: the store's pending tuples, and every tuple its index of
+// grants implies.
 type Outbox interface {
 	PendingOutbox(ctx context.Context, limit int) ([]OutboxEntry, error)
 	MarkOutboxProcessed(ctx context.Context, ids []int64) error
+	AllTuples(ctx context.Context) ([]OutboxEntry, error)
 }
 
 // OutboxEntry mirrors store.OutboxEntry without importing the store.
@@ -120,8 +128,15 @@ func (r *Relay) Flush(ctx context.Context) {
 	}
 }
 
-// Once applies every pending entry.
+// Once applies every pending entry, after a relay that is under way.
 func (r *Relay) Once(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.drain(ctx)
+}
+
+// drain applies the pending entries batch by batch; the caller holds mu.
+func (r *Relay) drain(ctx context.Context) error {
 	for {
 		entries, err := r.outbox.PendingOutbox(ctx, 200)
 		if err != nil {
@@ -130,17 +145,11 @@ func (r *Relay) Once(ctx context.Context) error {
 		if len(entries) == 0 {
 			return nil
 		}
-		var writes, deletes []ports.Tuple
 		ids := make([]int64, 0, len(entries))
 		for _, e := range entries {
-			t := ports.Tuple{Object: e.Object, Relation: e.Relation, Subject: e.Subject}
-			if e.Op == "delete" {
-				deletes = append(deletes, t)
-			} else {
-				writes = append(writes, t)
-			}
 			ids = append(ids, e.ID)
 		}
+		writes, deletes := lastWords(entries)
 		if err := r.authorizer.Write(ctx, writes, deletes); err != nil {
 			return err
 		}
@@ -151,6 +160,56 @@ func (r *Relay) Once(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+// lastWords reduces a batch to what it leaves of each tuple. Entries are applied in the order
+// they were made, so of several about one tuple (shared and taken back at once) the newest
+// stands; the authorizer takes a tuple once per request.
+func lastWords(entries []OutboxEntry) (writes, deletes []ports.Tuple) {
+	last := map[ports.Tuple]string{}
+	var order []ports.Tuple
+	for _, e := range entries {
+		t := ports.Tuple{Object: e.Object, Relation: e.Relation, Subject: e.Subject}
+		if _, seen := last[t]; !seen {
+			order = append(order, t)
+		}
+		last[t] = e.Op
+	}
+	for _, t := range order {
+		if last[t] == "delete" {
+			deletes = append(deletes, t)
+		} else {
+			writes = append(writes, t)
+		}
+	}
+	return writes, deletes
+}
+
+// Rebuild writes every tuple the catalog's index implies, after what is still pending, and
+// says how many. The authorizer is a copy of that index: a rebuild puts back what a relay
+// lost and adds nothing the index does not hold. No relay runs meanwhile, so a grant taken
+// back while the rebuild writes is taken back after it, not written back by it.
+func (r *Relay) Rebuild(ctx context.Context) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.drain(ctx); err != nil {
+		return 0, err
+	}
+	entries, err := r.outbox.AllTuples(ctx)
+	if err != nil {
+		return 0, err
+	}
+	const batch = 500
+	for start := 0; start < len(entries); start += batch {
+		writes := make([]ports.Tuple, 0, batch)
+		for _, e := range entries[start:min(start+batch, len(entries))] {
+			writes = append(writes, ports.Tuple{Object: e.Object, Relation: e.Relation, Subject: e.Subject})
+		}
+		if err := r.authorizer.Write(ctx, writes, nil); err != nil {
+			return start, err
+		}
+	}
+	return len(entries), nil
 }
 
 // Run relays on a timer and on kicks until the context ends.

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	sdk "github.com/openfga/go-sdk"
@@ -115,29 +114,30 @@ func (a *Authorizer) Write(ctx context.Context, writes, deletes []ports.Tuple) e
 	for _, t := range deletes {
 		req.Deletes = append(req.Deletes, client.ClientTupleKeyWithoutCondition{User: t.Subject, Relation: t.Relation, Object: t.Object})
 	}
-	opts := client.ClientWriteOptions{Transaction: &client.TransactionOptions{Disable: true, MaxParallelRequests: 4, MaxPerChunk: 20}}
+	// OpenFGA applies a request whole or not at all, and by default refuses one that holds a
+	// tuple already there or deletes one that is not. It is told to pass over those instead:
+	// what remains of the request is applied, so a tuple relayed twice never costs the ones
+	// that travel with it.
+	opts := client.ClientWriteOptions{
+		Conflict: client.ClientWriteConflictOptions{
+			OnDuplicateWrites: client.CLIENT_WRITE_REQUEST_ON_DUPLICATE_WRITES_IGNORE,
+			OnMissingDeletes:  client.CLIENT_WRITE_REQUEST_ON_MISSING_DELETES_IGNORE,
+		},
+		Transaction: &client.TransactionOptions{Disable: true, MaxParallelRequests: 4, MaxPerChunk: 20},
+	}
 	resp, err := a.client.Write(ctx).Body(req).Options(opts).Execute()
 	if err != nil {
 		return err
 	}
 	for _, w := range resp.Writes {
-		if w.Error != nil && !containsAny(w.Error.Error(), "already exists", "duplicate") {
+		if w.Error != nil {
 			return fmt.Errorf("write %v: %w", w.TupleKey, w.Error)
 		}
 	}
 	for _, d := range resp.Deletes {
-		if d.Error != nil && !containsAny(d.Error.Error(), "not found", "does not exist", "no tuple") {
+		if d.Error != nil {
 			return fmt.Errorf("delete %v: %w", d.TupleKey, d.Error)
 		}
 	}
 	return nil
-}
-
-func containsAny(s string, subs ...string) bool {
-	for _, sub := range subs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
 }

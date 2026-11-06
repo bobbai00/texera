@@ -162,4 +162,26 @@ func Authorizer(t *testing.T, a ports.Authorizer) {
 		t.Fatal("revoked")
 	}
 	must(a.Write(ctx, nil, []ports.Tuple{{Object: workflow, Relation: "viewer", Subject: bob}}))
+
+	// A write is applied whole whatever is already there: a tuple written again beside a new
+	// one, a delete of one that is not there beside a delete of one that is. Two relays of the
+	// same outbox entry must never cost the tuple that travelled with it.
+	dave := "user:dave-" + suffix
+	must(a.Write(ctx, []ports.Tuple{
+		{Object: project, Relation: "owner", Subject: alice},
+		{Object: project, Relation: "viewer", Subject: dave},
+	}, []ports.Tuple{
+		{Object: project, Relation: "viewer", Subject: "user:nobody-" + suffix},
+		{Object: group, Relation: "member", Subject: carol},
+	}))
+	time.Sleep(50 * time.Millisecond)
+	if !check(dave, "can_read", project) {
+		t.Fatal("a tuple written beside one that was already there is lost")
+	}
+	if check(carol, "can_write", workflow) {
+		t.Fatal("a tuple deleted beside one that was not there stays")
+	}
+	if !check(alice, "can_delete", project) {
+		t.Fatal("the tuple written again is gone")
+	}
 }

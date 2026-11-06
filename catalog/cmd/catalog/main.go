@@ -152,6 +152,19 @@ func run(log *slog.Logger) error {
 	if err := svc.Seed(ctx); err != nil {
 		return err
 	}
+	// The authorizer is a copy of the catalog's grants. Every start writes the copy again, in
+	// the background, so whatever a relay once lost is there again. The work grows with the
+	// catalog and holds the relay while it runs: a deployment too large for that needs a
+	// rebuild on request instead.
+	go func() {
+		started := time.Now()
+		n, err := relay.Rebuild(ctx)
+		if err != nil {
+			log.Warn("the access rebuild failed; what it wrote so far stays", "tuples", n, "err", err)
+			return
+		}
+		log.Info("access rebuilt", "tuples", n, "took", time.Since(started).Round(time.Millisecond).String())
+	}()
 	go svc.RunOperatorSync(ctx, 30*time.Second)
 	go svc.RunRetention(ctx, time.Hour)
 
@@ -195,4 +208,16 @@ func (o outbox) PendingOutbox(ctx context.Context, limit int) ([]authz.OutboxEnt
 
 func (o outbox) MarkOutboxProcessed(ctx context.Context, ids []int64) error {
 	return o.st.MarkOutboxProcessed(ctx, ids)
+}
+
+func (o outbox) AllTuples(ctx context.Context) ([]authz.OutboxEntry, error) {
+	entries, err := o.st.AllTuples(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]authz.OutboxEntry, len(entries))
+	for i, e := range entries {
+		out[i] = authz.OutboxEntry{Op: e.Op, Object: e.Object, Relation: e.Relation, Subject: e.Subject}
+	}
+	return out, nil
 }
