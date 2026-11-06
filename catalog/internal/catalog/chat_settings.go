@@ -16,15 +16,16 @@ import (
 	"github.com/apache/texera/catalog/internal/uri"
 )
 
-// What a chat runs with. A chat stores choices and nothing else: its agent, the model the agent
-// uses, the computing unit its executions prefer, its add-on MCP servers. Each is optional, and a new
-// chat stores none. A turn runs with the chat's choice, else the project's, else the agent's own
-// or the platform's default. A choice that names something gone, or something the caller may
-// not use, is passed over and reported, so a chat shared with someone who lacks its owner's
-// rights still works for them.
+// What a chat runs with. A chat stores choices of how its agent works and nothing else: its
+// agent, the model the agent uses, its add-on MCP servers. Each is optional, and a new chat
+// stores none. A turn runs with the chat's choice, else the project's, else the agent's own or
+// the platform's default. A choice that names something gone, or something the caller may not
+// use, is passed over and reported, so a chat shared with someone who lacks its owner's rights
+// still works for them. Where an execution runs is not a chat's choice: an execution started in
+// a chat goes where any other does.
 //
-// This file is the one place that decides it. The runtime builds a turn from the answer, the
-// app shows it, and a run in the chat takes its unit from the same rule.
+// This file is the one place that decides it. The runtime builds a turn from the answer and the
+// app shows it.
 
 // McpPath is where the catalog serves its own MCP server, under its public URL.
 const McpPath = "/mcp/catalog"
@@ -110,12 +111,6 @@ func (s *Service) resolveChat(ctx context.Context, caller *auth.Caller, chat api
 	}
 	out.ModelEndpoint = settingOf(model, chosen.from)
 
-	if unit, chosen := r.first(api.SkippedSettingSettingComputingUnit, r.computingUnit,
-		choice{chat.ComputingUnit, api.SettingSourceChat}, choice{inProject.DefaultComputingUnit, api.SettingSourceProject}, choice{platform.ComputingUnit, api.SettingSourcePlatform}); unit != nil {
-		setting := settingOf(unit, chosen.from)
-		out.ComputingUnit = &setting
-	}
-
 	out.McpServers = r.servers(own, chat, inProject)
 	if len(r.skipped) > 0 {
 		out.Skipped = &r.skipped
@@ -181,23 +176,6 @@ func (r *chatResolver) modelEndpoint(name string) (*store.Resource, error) {
 		}
 	}
 	return endpoint, nil
-}
-
-// computingUnit: a unit the caller may run on.
-func (r *chatResolver) computingUnit(name string) (*store.Resource, error) {
-	return r.s.usableUnit(r.ctx, r.caller, name)
-}
-
-// usableUnit loads a unit by URI when the caller may run on it.
-func (s *Service) usableUnit(ctx context.Context, caller *auth.Caller, name string) (*store.Resource, error) {
-	unit, err := s.named(ctx, name, unitKind)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.require(ctx, caller, authz.RunOn, unit.RID); err != nil {
-		return nil, err
-	}
-	return unit, nil
 }
 
 // server: an MCP server the caller may read.
@@ -286,26 +264,4 @@ func versionOf(r *store.Resource, name api.Uri) int {
 		return ref.Vno
 	}
 	return r.HeadVno
-}
-
-// chatUnit is the computing unit the chat a call acts in prefers, when the runtime vouches for
-// the chat and the caller may run on the unit: a person picks where the executions of a chat
-// go, and what an agent runs goes there without having to be told. A unit that is not the caller's to use
-// is passed over, as in the chat's settings.
-func (s *Service) chatUnit(ctx context.Context, caller *auth.Caller) string {
-	if caller.Origin == nil {
-		return ""
-	}
-	conversation, err := s.Store.GetResource(ctx, caller.Origin.Conversation)
-	if err != nil || conversation.Kind != conversationKind.Name {
-		return ""
-	}
-	var chat api.ConversationSpec
-	if err := json.Unmarshal(conversation.Spec, &chat); err != nil || chat.ComputingUnit == nil {
-		return ""
-	}
-	if _, err := s.usableUnit(ctx, caller, string(*chat.ComputingUnit)); err != nil {
-		return ""
-	}
-	return string(*chat.ComputingUnit)
 }

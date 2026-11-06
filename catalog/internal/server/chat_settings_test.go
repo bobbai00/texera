@@ -45,7 +45,7 @@ func choose(h *harness, token string, conv envelope, spec map[string]any) {
 }
 
 // A chat stores choices and nothing else, and a new one stores none: it runs with the
-// platform's agent, the agent's model and servers, and the platform's unit.
+// platform's agent and the agent's model and servers.
 func TestANewChatStoresNothingAndRunsWithTheDefaults(t *testing.T) {
 	h := newHarness(t)
 	conv := h.create("alice", "conversations", "a chat", map[string]any{})
@@ -62,9 +62,6 @@ func TestANewChatStoresNothingAndRunsWithTheDefaults(t *testing.T) {
 	}
 	if said(got.ModelEndpoint) != "anthropic-platform from agent" {
 		t.Errorf("model: %+v", got.ModelEndpoint)
-	}
-	if got.ComputingUnit == nil || said(*got.ComputingUnit) != "test unit from platform" {
-		t.Errorf("unit: %+v", got.ComputingUnit)
 	}
 	if mounts(got) != "catalog from agent, the platform's; biomcp from agent" {
 		t.Errorf("servers: %s", mounts(got))
@@ -107,28 +104,24 @@ func TestAChatsChoiceComesFirstThenTheProjectsThenTheAgents(t *testing.T) {
 	server := func(name string) envelope {
 		return h.create("alice", "mcp-servers", name, map[string]any{"url": "http://" + name + ".test/mcp"})
 	}
-	unit := func(name string) envelope {
-		return h.create("alice", "computing-units", name, map[string]any{"provider": "static", "endpoint": h.unit.URL})
-	}
 	projectModel, chatModel := endpoint("project-model"), endpoint("chat-model")
 	projectServer, chatServer := server("project-server"), server("chat-server")
-	projectUnit, chatUnit := unit("project unit"), unit("chat unit")
 
 	h.mustJSON("alice", "PUT", p+"/projects/"+home, map[string]any{"spec": map[string]any{
-		"defaultModelEndpoint": uriOf(projectModel), "defaultComputingUnit": uriOf(projectUnit), "mcpServers": []string{uriOf(projectServer)},
+		"defaultModelEndpoint": uriOf(projectModel), "mcpServers": []string{uriOf(projectServer)},
 	}}, nil)
 	got := settingsOf(h, "alice", rid(conv))
-	if said(got.Agent) != "Texera Agent from platform" || said(got.ModelEndpoint) != "project-model from project" || said(*got.ComputingUnit) != "project unit from project" {
-		t.Errorf("with the project's defaults: %s, %s, %s", said(got.Agent), said(got.ModelEndpoint), said(*got.ComputingUnit))
+	if said(got.Agent) != "Texera Agent from platform" || said(got.ModelEndpoint) != "project-model from project" {
+		t.Errorf("with the project's defaults: %s, %s", said(got.Agent), said(got.ModelEndpoint))
 	}
 	if mounts(got) != "catalog from agent, the platform's; biomcp from agent; project-server from project" {
 		t.Errorf("with the project's add-on: %s", mounts(got))
 	}
 
-	choose(h, "alice", conv, map[string]any{"modelEndpoint": uriOf(chatModel), "computingUnit": uriOf(chatUnit), "mcpServers": []string{uriOf(chatServer)}})
+	choose(h, "alice", conv, map[string]any{"modelEndpoint": uriOf(chatModel), "mcpServers": []string{uriOf(chatServer)}})
 	got = settingsOf(h, "alice", rid(conv))
-	if said(got.ModelEndpoint) != "chat-model from chat" || said(*got.ComputingUnit) != "chat unit from chat" {
-		t.Errorf("with the chat's choices: %s, %s", said(got.ModelEndpoint), said(*got.ComputingUnit))
+	if said(got.ModelEndpoint) != "chat-model from chat" {
+		t.Errorf("with the chat's choices: %s", said(got.ModelEndpoint))
 	}
 	if mounts(got) != "catalog from agent, the platform's; chat-server from chat" {
 		t.Errorf("with the chat's add-on: %s", mounts(got))
@@ -155,9 +148,6 @@ func TestAChatsChoiceComesFirstThenTheProjectsThenTheAgents(t *testing.T) {
 	if mounts(got) != "project-server from agent, only only_this; chat-server from project" {
 		t.Errorf("its servers: %s", mounts(got))
 	}
-	if said(*got.ComputingUnit) != "test unit from platform" {
-		t.Errorf("its unit: %s", said(*got.ComputingUnit))
-	}
 }
 
 // A chat shared with someone who lacks its owner's rights still works for them: a choice that
@@ -166,13 +156,12 @@ func TestAChoiceSomeoneCannotUseIsPassedOverForThem(t *testing.T) {
 	h := newHarness(t)
 	model := h.create("alice", "model-endpoints", "alice's model", map[string]any{"provider": "anthropic", "model": "m"})
 	server := h.create("alice", "mcp-servers", "alice's server", map[string]any{"url": "http://alice.test/mcp"})
-	unit := h.create("alice", "computing-units", "alice's unit", map[string]any{"provider": "static", "endpoint": h.unit.URL})
-	conv := h.create("alice", "conversations", "ours", map[string]any{"modelEndpoint": uriOf(model), "computingUnit": uriOf(unit), "mcpServers": []string{uriOf(server)}})
+	conv := h.create("alice", "conversations", "ours", map[string]any{"modelEndpoint": uriOf(model), "mcpServers": []string{uriOf(server)}})
 	h.mustJSON("alice", "PUT", p+"/resources/"+rid(conv)+"/grants/"+string(me(h, "bob").Principal.Pid), map[string]any{"relation": "editor"}, nil)
 
 	hers := settingsOf(h, "alice", rid(conv))
-	if said(hers.ModelEndpoint) != "alice's model from chat" || said(*hers.ComputingUnit) != "alice's unit from chat" || hers.Skipped != nil {
-		t.Fatalf("alice's own: %s, %s, skipped %v", said(hers.ModelEndpoint), said(*hers.ComputingUnit), hers.Skipped)
+	if said(hers.ModelEndpoint) != "alice's model from chat" || hers.Skipped != nil {
+		t.Fatalf("alice's own: %s, skipped %v", said(hers.ModelEndpoint), hers.Skipped)
 	}
 	if mounts(hers) != "catalog from agent, the platform's; alice's server from chat" {
 		t.Fatalf("alice's servers: %s", mounts(hers))
@@ -183,8 +172,8 @@ func TestAChoiceSomeoneCannotUseIsPassedOverForThem(t *testing.T) {
 	if his.Project != hers.Project || his.Project.Name != "alice's home" {
 		t.Errorf("bob's view of the chat's project: %+v", his.Project)
 	}
-	if said(his.ModelEndpoint) != "anthropic-platform from agent" || said(*his.ComputingUnit) != "test unit from platform" {
-		t.Errorf("bob's: %s, %s", said(his.ModelEndpoint), said(*his.ComputingUnit))
+	if said(his.ModelEndpoint) != "anthropic-platform from agent" {
+		t.Errorf("bob's: %s", said(his.ModelEndpoint))
 	}
 	if mounts(his) != "catalog from agent, the platform's" {
 		t.Errorf("bob's servers: %s", mounts(his))
@@ -198,26 +187,9 @@ func TestAChoiceSomeoneCannotUseIsPassedOverForThem(t *testing.T) {
 			passed[string(s.Setting)] = string(s.Uri)
 		}
 	}
-	want := map[string]string{"modelEndpoint": uriOf(model), "computingUnit": uriOf(unit), "mcpServers": uriOf(server)}
+	want := map[string]string{"modelEndpoint": uriOf(model), "mcpServers": uriOf(server)}
 	if !reflect.DeepEqual(passed, want) {
 		t.Errorf("passed over for bob: %v", passed)
-	}
-
-	// His run in the chat goes where his settings say, not to a unit that is not his to use.
-	ds := h.create("bob", "datasets", "bob's iris", map[string]any{"format": "csv"})
-	h.mustJSON("bob", "PUT", p+"/datasets/"+rid(ds)+"/files/iris.csv", "Species,PetalLengthCm\nsetosa,1.4\n", nil)
-	h.mustJSON("bob", "POST", p+"/datasets/"+rid(ds)+"/commit", map[string]any{}, nil)
-	wf := h.create("bob", "workflows", "bob's", map[string]any{
-		"operators": []any{map[string]any{"operatorID": "scan", "operatorType": "CSVFileScan", "viewResult": true, "operatorProperties": map[string]any{"fileName": uriOf(ds) + "@1/files/iris.csv"}}},
-		"links":     []any{},
-	})
-	var turn api.Turn
-	h.mustJSON("bob", "POST", p+"/conversations/"+rid(conv)+"/turns", map[string]any{}, &turn)
-	inChat := []string{"X-Texera-Origin", "conversation=" + rid(conv) + ";turn=" + turn.Turn + ";template=" + string(turn.Template), "X-Texera-Service-Token", "service"}
-	var exec envelope
-	h.mustJSON("bob", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{}, &exec, inChat...)
-	if ran, _ := exec.Spec["computingUnit"].(string); ran != string(his.ComputingUnit.Uri) {
-		t.Errorf("bob's run in the chat went to %s", ran)
 	}
 }
 

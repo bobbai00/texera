@@ -2,8 +2,8 @@
  * Builds the agent of one turn from what the chat's settings resolve to: the agent's version
  * gives the system prompt, the skills, the handoffs and the loop's rules; the settings give the
  * model endpoint (leased as the person) and the MCP servers. The runtime decides none of it.
- * The chat's own facts (the date, its computing unit, add-ons that could not be mounted) go
- * into every step's turn state. Nothing survives the turn: `close` drops the MCP sessions.
+ * The chat's own facts (the date, its project, add-ons that could not be mounted) go into every
+ * step's turn state. Nothing survives the turn: `close` drops the MCP sessions.
  */
 import type { LanguageModel, ModelMessage, ToolSet } from "ai";
 import type { CatalogClient } from "../catalog/client.ts";
@@ -145,7 +145,6 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
   const chat = chatContext({
     today: (deps.now ?? (() => new Date()))(),
     project: settings.project,
-    computingUnit: settings.computingUnit,
     app: input.app,
     people: input.people,
     unavailable: mcp.unavailable,

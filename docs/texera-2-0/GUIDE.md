@@ -43,11 +43,11 @@ The same stack on Kubernetes: `bin/texera-2-0/k8s.sh up`, then http://localhost:
 **A chat.** The home page is where a chat starts: say what you want, and your first message
 makes the chat, in the project you work in. Every chat runs the Texera Agent: it answers data
 questions by building and running workflows, and grounds research questions in the biomedical
-literature. The foot of the box shows what the chat runs with: the agent, its model, the
-computing unit and the add-on tools. Change one and the chat stores your choice; a chat you
-never touch stores nothing and follows its project's and the platform's defaults. The unit is a
-preference, not a binding: "Automatic" lets each execution take the workflow's, the project's
-or the platform's default, and a call can always name another unit. Attach a CSV from the box
+literature. The foot of the box shows what the chat runs with: the agent, its model and the
+add-on tools. Change one and the chat stores your choice; a chat you never touch stores nothing
+and follows its project's and the platform's defaults. Where its executions run is not a chat's
+choice: they go where any execution goes (see "Computing units"), and you say "run it on my GPU
+unit" in words when you want another. Attach a CSV from the box
 and it becomes a dataset of the chat's project, shown as a card of your message. What the
 agent makes shows as a card in its message. Beside the chat, "From this chat" holds what the
 chat made and what it worked from as a tree: a section per kind, each resource, its versions,
@@ -401,12 +401,12 @@ unit has an identity of its own, and reaches only the namespaces of the executio
 Grant `user` on a unit to let someone run on it; `GET /computing-units/available` lists the
 ones you may use.
 
-An execution goes to the unit the request names, else the one its chat prefers, else the
-workflow's, the project's or the platform's default. A chat is not bound to a unit: it has a
-preference only when someone picked one in its box, and "Automatic" removes it. The catalog
-applies the preference to every compile and execution the agent starts in that chat, so the
-agent need not be told, and names a unit itself only when you ask for another. A preference
-gives no right to the unit: it is passed over for someone in the chat who may not run on it.
+An execution goes to the unit the request names, else the workflow's default unit, the
+project's or the platform's, the same for a run you start and one the agent starts in a chat.
+The Run bar proposes that unit, and a unit you pick there is for that page's runs. When the
+agent makes a unit for a workflow (it needs packages the platform's unit lacks), it makes it
+the workflow's default unit, so the workflow's later runs go there, yours from the Run bar
+too. Naming a unit gives no right to it: you must be allowed to run on it.
 
 **Profiles.** A profile is what a unit's node is made of: its memory, CPU and GPUs, and the
 Python packages it adds to the platform's runtime (PEP 508 lines), versioned. A unit is made

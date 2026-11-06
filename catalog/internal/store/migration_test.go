@@ -205,6 +205,38 @@ func TestAnEnvironmentBecomesAProfile(t *testing.T) {
 	}
 }
 
+// A chat no longer chooses a unit: the one it chose goes, and its other choices stay.
+func TestAChatLetsGoOfTheUnitItChose(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	alice := user(t, st, "alice")
+	home := project(t, st, alice, "alice's home")
+	chat := func(spec string) *store.Resource {
+		t.Helper()
+		r, _, err := st.CreateResource(ctx, store.NewResource{Kind: "conversation", Name: spec, ParentRID: &home.RID, ProjectRID: &home.RID, OwnerPID: alice.PID, CreatedByPID: alice.PID, Spec: json.RawMessage(spec)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	chose := chat(`{"modelEndpoint": "texera://model-endpoints/m", "computingUnit": "texera://computing-units/u"}`)
+	unit, _, err := st.CreateResource(ctx, store.NewResource{Kind: "computing-unit", Name: "u", ParentRID: &home.RID, ProjectRID: &home.RID, OwnerPID: alice.PID, CreatedByPID: alice.PID, Spec: json.RawMessage(`{"computingUnit": "kept"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(t, "migrations/0009_chats_choose_no_unit.sql")
+
+	for r, want := range map[*store.Resource]string{chose: `{"modelEndpoint":"texera://model-endpoints/m"}`, unit: `{"computingUnit":"kept"}`} {
+		got, err := st.GetResource(ctx, r.RID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(compact(t, got.Spec)) != want {
+			t.Errorf("%s: %s, want %s", r.Kind, got.Spec, want)
+		}
+	}
+}
+
 func mustMarshal(t *testing.T, v any) string {
 	t.Helper()
 	out, err := json.Marshal(v)

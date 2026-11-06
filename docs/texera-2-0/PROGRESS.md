@@ -2,7 +2,45 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
-## 2026-11-06 (session 13, part 1): what a chat made and worked from, as a tree beside it
+## 2026-11-06 (session 13, part 2): a chat chooses no computing unit
+
+The user: "does chat have to bind with computing unit? i don't think so right? currently it
+seems to be binded and there is a selector in the chat box". Agreed: a chat chooses how its
+agent works (the agent, its model, its add-ons); where an execution runs is the run's to say.
+
+What was decided:
+- **One rule for where a run goes**, the same for a person and for an agent in a chat: the
+  unit the call names, else the workflow's `defaultComputingUnit`, the project's, the
+  platform's. The chat's unit was a hidden extra rule: the Run bar said one unit, the agent's
+  run of the same workflow went to another.
+- **Saying it in words** is how a person picks a unit in a chat ("run it on my GPU unit"); the
+  agent names it in the call, and the execution records it.
+- **A unit made for a workflow becomes its default unit**: the agent's rule and its Python
+  skill say to set `defaultComputingUnit` (with `edit_workflow`) when it makes a unit for the
+  packages a workflow needs, so the person's later runs from the Run bar go there too.
+- **The Run bar proposes the same default** as the catalog (the workflow's, the project's,
+  the platform's unit); a unit picked there is for that page's runs. It no longer remembers a
+  unit in the browser, which was one more rule.
+
+Done:
+- **The contract**: `ConversationSpec.computingUnit`, `ChatSettings.computingUnit` and the
+  `computingUnit` setting of `skipped` are gone.
+- **The catalog**: the chat's unit left the run and compile chains (`chatUnit`, the resolver,
+  `usableUnit`); migration `0009` drops the unit chats chose.
+- **The runtime**: the turn state no longer names a unit.
+- **The app**: the chat box's unit picker, the chat page's "Computing unit" row and the Run
+  bar's browser memory are gone.
+- **The agent**: rule 5 and the Python skill, as above; the MCP instructions name the chain.
+
+Verified: Go suite green (`TestARunInAChatGoesWhereAnyRunGoes` in place of the chat-unit test;
+`TestAChatLetsGoOfTheUnitItChose` for the migration); runtime 73; vitest 254; typecheck; the
+k8s check, 40 cluster scenarios (`test_chat_runs.py` in place of `test_chat_unit.py`) and 43
+Playwright without a model (new: the Run bar proposes the workflow's own unit, else the
+platform's, and a pick is the page's alone; no unit picker in the chat box); with the model, 5
+pytest scenarios (the agent runs on the unit the person names in words; it makes a unit from a
+profile) and 4 Playwright scenarios (the core loop on the unit named in the question). On the
+stack, migration 0009 left no chat naming a unit.
+: what a chat made and worked from, as a tree beside it
 
 The user, on "From this chat": "show it in hierarchy ... datasets, you then show dataset;
 workflows ... you then show workflow, and execution is nested under that specific workflow",

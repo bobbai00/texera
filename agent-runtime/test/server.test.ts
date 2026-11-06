@@ -27,7 +27,6 @@ import {
   OTHER_PID,
   PROJECT_RID,
   TEMPLATE_RID,
-  UNIT_URI,
 } from "./helpers/fake-catalog.ts";
 import { type ScriptedResponse, scriptedModel } from "./helpers/mock-model.ts";
 
@@ -314,14 +313,14 @@ describe("POST /agents/conversations/:rid/ag-ui", () => {
     expect(fake.messages.at(-1)?.mcpServers).toEqual([]);
   });
 
-  test("the agent is told the date and the computing unit the chat's settings resolve to", async () => {
-    const { app, model } = makeApp([{ text: "On alice's unit." }], {}, { conversationUnit: { name: "alice's unit" } });
+  test("the agent is told the date and the chat's project, and nothing chooses its units", async () => {
+    const { app, model } = makeApp([{ text: "Where the call or the workflow says." }]);
     await readSse(await post(app, runInput("Where will this run?")));
     const state = turnState(model);
     expect(state).toContain("## Turn state");
     expect(state).toContain("Today is 2026-11-05.");
     expect(state).toContain(`Project: alice's home (${PROJECT_RID}).`);
-    expect(state).toContain(`Computing unit: alice's unit (${UNIT_URI}).`);
+    expect(state).not.toContain("Computing unit");
   });
 
   test("what the app says the person is looking at reaches the agent with the message", async () => {
@@ -375,13 +374,6 @@ describe("POST /agents/conversations/:rid/ag-ui", () => {
     expect(kept[0]).not.toBe(answer);
     expect(kept.at(-1)).toBe(answer);
     expect(fake.messages.at(-1)?.parts.at(-1)?.text).toBe(answer);
-  });
-
-  test("with no unit to fall back on, the agent is told a call has to name one", async () => {
-    const { app, model } = makeApp([{ text: "Hello." }]);
-    await readSse(await post(app, runInput("Hi")));
-    expect(turnState(model)).toContain("Today is 2026-11-05.");
-    expect(turnState(model)).toContain("No computing unit is set");
   });
 
   test("a turn runs with what the chat's settings resolve to, and the answer records it", async () => {

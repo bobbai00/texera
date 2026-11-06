@@ -612,7 +612,6 @@ export const zComputingUnitSpec = z.object({
 export const zConversationSpec = z.object({
     template: zUri.optional(),
     modelEndpoint: zUri.optional(),
-    computingUnit: zUri.optional(),
     mcpServers: z.array(zUri).optional()
 });
 
@@ -842,7 +841,6 @@ export const zSkippedSetting = z.object({
     setting: z.enum([
         'template',
         'modelEndpoint',
-        'computingUnit',
         'mcpServers'
     ]),
     uri: zUri,
@@ -857,7 +855,6 @@ export const zChatSettings = z.object({
     project: zChatProject,
     agent: zSetting,
     modelEndpoint: zSetting,
-    computingUnit: zSetting.optional(),
     mcpServers: z.array(zServerSetting),
     skipped: z.array(zSkippedSetting).optional()
 });

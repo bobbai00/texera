@@ -73,9 +73,11 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 	project := s.projectSpec(ctx, wf.ProjectRID)
 	settings := s.settingsSpec(ctx)
-	unitName := firstNonEmpty(in.ComputingUnit, s.chatUnit(ctx, caller), uriString(spec.DefaultComputingUnit), uriString(project.DefaultComputingUnit), uriString(settings.Defaults.ComputingUnit))
+	// Where it runs: the unit the request names, else the workflow's, the project's or the
+	// platform's default, the same for a person and for an agent in a chat.
+	unitName := firstNonEmpty(in.ComputingUnit, uriString(spec.DefaultComputingUnit), uriString(project.DefaultComputingUnit), uriString(settings.Defaults.ComputingUnit))
 	if unitName == "" {
-		return nil, Conflict("no_unit", "no computing unit: name one in the request, the chat, the workflow, the project or the settings", nil)
+		return nil, Conflict("no_unit", "no computing unit: name one in the request, the workflow, the project or the settings", nil)
 	}
 	unit, err := s.named(ctx, unitName, unitKind)
 	if err != nil {

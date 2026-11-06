@@ -1,14 +1,14 @@
-// What a chat runs with, in the chat box: the agent, its model, the computing unit and the
-// add-on tools. It shows what the catalog resolves and writes a choice only when the person
-// makes one, so a chat that was never touched keeps following its project's and the platform's
-// defaults.
+// What a chat runs with, in the chat box: the agent, its model and the add-on tools. It shows
+// what the catalog resolves and writes a choice only when the person makes one, so a chat that
+// was never touched keeps following its project's and the platform's defaults. Where an
+// execution runs is the run's to say, not the chat's.
 
 import { useQuery } from "@tanstack/react-query";
 import type { ChatSettings, ConversationSpec } from "@texera/catalog-client/types";
-import { baseUri, KindIcon, searchQuery, unitsQuery } from "@texera/kinds";
+import { baseUri, KindIcon, searchQuery } from "@texera/kinds";
 import { Button, DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuTrigger, Select, type SelectOption } from "@texera/ui";
 import { Blocks } from "lucide-react";
-import { AUTOMATIC, asOption, effective, withAddOn, withModel, withUnit } from "./settings";
+import { asOption, effective, withAddOn, withModel } from "./settings";
 
 export function ChatSettingsBar({
   settings,
@@ -26,7 +26,6 @@ export function ChatSettingsBar({
   const scope = settings?.project.rid;
   const ready = settings !== undefined;
   const { data: models } = useQuery({ ...searchQuery({ kind: "model-endpoint", scope }), enabled: ready });
-  const { data: units } = useQuery({ ...unitsQuery(scope), enabled: ready });
   const { data: servers } = useQuery({ ...searchQuery({ kind: "mcp-server", scope }), enabled: ready });
   const now = effective(settings, choices);
   if (!settings || !now) return null;
@@ -38,10 +37,6 @@ export function ChatSettingsBar({
   const named = (uri: string, known: SelectOption<string>[], fallback: string) =>
     known.some(o => o.value === baseUri(uri)) ? known : [...known, { value: baseUri(uri), label: fallback }];
   const modelOptions = named(now.model, (models?.items ?? []).map(asOption), settings.modelEndpoint.name);
-  const unitOptions = [
-    { value: AUTOMATIC, label: now.automaticUnit ? `Automatic: ${now.automaticUnit}` : "Automatic" },
-    ...(now.unit === AUTOMATIC ? (units ?? []).map(asOption) : named(now.unit, (units ?? []).map(asOption), settings.computingUnit?.name ?? "a computing unit")),
-  ];
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5" data-chat-settings>
@@ -50,14 +45,6 @@ export function ChatSettingsBar({
         {now.agent}
       </span>
       <Select aria-label="Model" value={baseUri(now.model)} onChange={uri => onChange(withModel(choices, uri))} options={modelOptions} disabled={disabled} className="max-w-44" />
-      <Select
-        aria-label="Computing unit"
-        value={now.unit === AUTOMATIC ? AUTOMATIC : baseUri(now.unit)}
-        onChange={unit => onChange(withUnit(choices, unit))}
-        options={unitOptions}
-        disabled={disabled}
-        className="max-w-48"
-      />
       <DropdownMenu>
         <DropdownMenuTrigger>
           <Button variant="outline" size="sm" className="h-8 gap-1.5 px-2 text-xs font-normal" disabled={disabled} data-chat-add-ons={now.addOns.length}>
@@ -91,7 +78,7 @@ export function ChatSettingsBar({
 /** What was passed over for this person: a choice of the chat they may not use. */
 export function PassedOver({ settings }: { settings: ChatSettings | undefined }) {
   if (!settings?.skipped?.length) return null;
-  const what = { template: "agent", modelEndpoint: "model", computingUnit: "computing unit", mcpServers: "add-on" } as const;
+  const what = { template: "agent", modelEndpoint: "model", mcpServers: "add-on" } as const;
   return (
     <p className="text-xs text-muted-foreground" data-passed-over>
       {settings.skipped.map(s => `This chat's ${what[s.setting]} was passed over: ${s.reason}.`).join(" ")}

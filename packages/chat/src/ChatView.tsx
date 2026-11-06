@@ -133,7 +133,7 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   });
 
   return (
-    // What the chat lists (models, units, add-ons) and makes is its own project's.
+    // What the chat lists (models, add-ons) and makes is its own project's.
     <ProjectScope project={project}>
     {/* biome-ignore lint/a11y/noStaticElementInteractions: a file drop zone; the attach button is the keyboard path */}
     <div

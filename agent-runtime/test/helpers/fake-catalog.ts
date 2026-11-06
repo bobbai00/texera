@@ -24,9 +24,7 @@ const PEOPLE: Record<string, string> = { [USER_PID]: "Alice Liddell", [OTHER_PID
 export const MODEL_RID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 export const OTHER_MODEL_RID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 export const CREDENTIAL_RID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-export const UNIT_RID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 export const PROJECT_RID = "00000000-0000-4000-8000-000000000000";
-export const UNIT_URI = `texera://computing-units/${UNIT_RID}`;
 
 export const ANALYST_URI = `texera://agent-templates/${TEMPLATE_RID}`;
 export const BIO_URI = `texera://agent-templates/${BIO_TEMPLATE_RID}`;
@@ -52,8 +50,6 @@ export interface FakeCatalogOptions {
   skill?: SkillSpec;
   /** The conversation's template at the start; default the Data Analyst. */
   conversationTemplate?: string;
-  /** The computing unit the chat's settings resolve to. */
-  conversationUnit?: { name: string };
   /** The model endpoint the chat chooses, in place of its agent's. */
   conversationModel?: string;
 }
@@ -100,7 +96,6 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
   const conversation = {
     spec: {
       template: options.conversationTemplate ?? ANALYST_URI,
-      ...(options.conversationUnit ? { computingUnit: UNIT_URI } : {}),
       ...(options.conversationModel ? { modelEndpoint: options.conversationModel } : {}),
     } as Record<string, unknown>,
     status: { messages: 0 } as Record<string, unknown>,
@@ -170,14 +165,6 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       spec: options.mcpServer,
       head: 1,
     };
-  if (options.conversationUnit)
-    resources[`computing-units/${UNIT_RID}`] = {
-      kind: "computing-unit",
-      rid: UNIT_RID,
-      name: options.conversationUnit.name,
-      spec: { provider: "static" },
-      head: 0,
-    };
   if (options.skill)
     resources[`skills/${SKILL_RID}`] = {
       kind: "skill",
@@ -199,9 +186,6 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       project: { rid: PROJECT_RID, name: "alice's home" },
       agent: { uri: `texera://${chosen[1]}@${chosen[2] ?? agent.head}`, name: agent.name, from: "chat" },
       modelEndpoint: { uri: model, name: named(model), from: options.conversationModel ? "chat" : "agent" },
-      ...(options.conversationUnit
-        ? { computingUnit: { uri: UNIT_URI, name: options.conversationUnit.name, from: "chat" as const } }
-        : {}),
       mcpServers: (spec.mcpServers ?? []).map((b) => ({
         uri: b.server,
         name: named(b.server),

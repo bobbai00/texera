@@ -429,10 +429,6 @@
           "$ref": "#/$defs/Setting",
           "description": "The agent, at the version a turn runs."
         },
-        "computingUnit": {
-          "$ref": "#/$defs/Setting",
-          "description": "The unit a compile or an execution uses when the call names none; absent when nothing names one."
-        },
         "mcpServers": {
           "description": "The platform's own server first, then the add-ons.",
           "items": {
@@ -837,10 +833,6 @@
     },
     "ConversationSpec": {
       "properties": {
-        "computingUnit": {
-          "$ref": "#/$defs/Uri",
-          "description": "The computing unit a compile or an execution started in this chat uses when the call names none; absent: the workflow's, the project's or the platform's default. A preference, not a binding: a call can always name another unit."
-        },
         "mcpServers": {
           "description": "The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.",
           "items": {
@@ -4333,7 +4325,6 @@
           "enum": [
             "template",
             "modelEndpoint",
-            "computingUnit",
             "mcpServers"
           ],
           "type": "string"

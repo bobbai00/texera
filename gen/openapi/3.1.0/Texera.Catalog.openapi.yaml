@@ -5121,9 +5121,6 @@ components:
           description: The agent, at the version a turn runs.
         modelEndpoint:
           $ref: '#/components/schemas/Setting'
-        computingUnit:
-          $ref: '#/components/schemas/Setting'
-          description: The unit a compile or an execution uses when the call names none; absent when nothing names one.
         mcpServers:
           type: array
           items:
@@ -5407,9 +5404,6 @@ components:
         modelEndpoint:
           $ref: '#/components/schemas/Uri'
           description: "The model endpoint the agent uses in this chat; absent: the project's default, else the agent's own."
-        computingUnit:
-          $ref: '#/components/schemas/Uri'
-          description: "The computing unit a compile or an execution started in this chat uses when the call names none; absent: the workflow's, the project's or the platform's default. A preference, not a binding: a call can always name another unit."
         mcpServers:
           type: array
           items:
@@ -7880,7 +7874,6 @@ components:
           enum:
             - template
             - modelEndpoint
-            - computingUnit
             - mcpServers
           description: The field of the spec the choice is in.
         uri:

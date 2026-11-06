@@ -51,13 +51,13 @@ Bob) goes through a guard fixture that puts it back.
 | A computing unit as a resource on Kubernetes: ready, run, spec change rolls it, use granted, terminate, delete | `test_cluster_unit.py` | cluster, slow | 2 min |
 | What the engine says reaches whoever asked, through the API and the MCP tools: a raising operator fails the execution in its own words, a compile error, a port with no result; a port is empty until its table is written | `test_engine_errors.py` | | 30 s |
 | The agent runtime reaches every add-on a chat mounts, from inside its pod; the catalog's own server is the one marked the platform's | `test_cluster_agents.py` | cluster | 5 s |
-| A chat's preferred unit: a tool call made in the chat compiles and runs there, a unit named in the call wins, a chat that names none and a call outside a chat fall back, a forged origin is refused | `test_chat_unit.py` | | 30 s |
+| A run in a chat goes where any run goes: the platform's unit when nothing is named, a workflow's own unit, a unit named in the call; a forged origin is refused | `test_chat_runs.py` | | 30 s |
 | What the platform ships is built in by living in its project: everyone lists and opens it, nobody changes it or adds to its project, an administrator included; a public project's contents are listed as they can be opened | `test_builtin.py` | | 10 s |
 | A scope is a project and what it inherits; a call made in a chat is scoped to the chat's project and what it makes goes there | `test_scope.py` | | 10 s |
-| A chat stores choices only; the catalog resolves what a turn runs with: the chat's choice, then the project's, then the agent's own or the platform's; a choice someone may not use is passed over for them | `test_chat_settings.py` | | 15 s |
+| A chat stores choices of how its agent works only (no unit); the catalog resolves what a turn runs with: the chat's choice, then the project's, then the agent's own or the platform's; a choice someone may not use is passed over for them | `test_chat_settings.py` | | 15 s |
 | The Texera Agent builds, runs, edits and reruns through a chat that stores nothing; what it makes is in the chat's project, and every answer records its agent version, model and servers (acceptance 3, 9) | `test_agents.py` | model, slow | 2 min, about 30 model calls |
 | One agent, one chat: it consults the bio tools for research ideas, analyzes the person's data from an execution, and shares it with Bob, with no handoff (acceptance 10, 11) | `test_agents.py` | model, slow | 3 min, about 40 model calls |
-| The agent's executions go to the unit the chat prefers, without being told | `test_agents.py` | model, slow | 1 min, about 10 model calls |
+| The agent's executions go to the unit the person names in their words; the chat stores no unit | `test_agents.py` | model, slow | 1 min, about 10 model calls |
 | Asked to, the agent makes a unit from a profile, runs on it and keeps the results in the warehouse it was told | `test_agents.py` | model, cluster, slow | 3 min, about 15 model calls |
 | Bob, an editor of Alice's chat, asks the analyst; the question and the answer are his turn, and Alice reads them | `test_agents.py` | model, slow | 30 s, a few model calls |
 
@@ -84,7 +84,7 @@ people in one chat (the other's messages and turn arrive live, under their name)
 execution's page that follows a slow one on its canvas (the operator's card running, paused,
 done, with its rows) and pauses and resumes it, and with the model the two
 chat scenarios: the agent answering from a workflow it built in the chat's project on the
-unit the chat prefers, and one agent researching, analyzing and sharing in one chat. The two
+unit named in the question, and one agent researching, analyzing and sharing in one chat. The two
 model scenarios make the iris dataset they ask
 about in a project of their own, work in that project, and remove it at the end with what the
 chat made, as the pytest scenarios do; a wiped stack has no iris to find otherwise.

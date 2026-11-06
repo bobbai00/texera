@@ -241,23 +241,24 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 
 ## catalog and its tools
 
-1. **What a chat runs with.** A conversation stores choices only, each optional:
-   `spec.template`, `modelEndpoint`, `computingUnit`, `mcpServers`. `GET
+1. **What a chat runs with.** A conversation stores choices of how its agent works only, each
+   optional: `spec.template`, `modelEndpoint`, `mcpServers`. `GET
    /conversations/{rid}/settings` resolves them for the caller: the chat's choice, else its
-   project's default (`defaultAgentTemplate`, `defaultModelEndpoint`, `defaultComputingUnit`,
-   `mcpServers`), else the agent's own model and servers or the settings' defaults. Each
+   project's default (`defaultAgentTemplate`, `defaultModelEndpoint`, `mcpServers`), else the
+   agent's own model and servers or the settings' defaults. Where an execution runs is not
+   among them (item 2). Each
    setting says which level chose it (`from`: `chat`, `project`, `agent`, `platform`). The
    add-ons a chat lists replace the agent's and the project's; the platform's own server, the
    one whose URL is the catalog's MCP address, is `platform: true` and stays. A choice that
    names something gone, or not the caller's to use (no read; no `use` on a model endpoint's
-   credential; no `run_on` on a unit), is passed over and listed in `skipped`. `POST
+   credential), is passed over and listed in `skipped`. `POST
    …/turns` pins the agent version the settings resolve to. `GET
    /projects/{rid}/chat-settings` is the same for a chat not started yet.
 2. **A call made in a chat.** The chat is the call's origin (`X-Texera-Origin`), which the
    catalog honors only with the runtime's service token. The catalog applies the chat's
    context itself, so no agent has to pass it. A compile or an execution takes its unit from
-   the request, else the chat's preference when the caller may run on it, else the workflow,
-   the project and the settings. A list that names no `scope`, `project`, `parent` or `origin`
+   the request, else the workflow, the project and the settings, as any other does: a chat
+   chooses no unit. A list that names no `scope`, `project`, `parent` or `origin`
    is scoped to the chat's project. A resource made with no `parent` goes into the chat's
    project when the caller may write there, else into their home project.
 3. **Scope.** `scope=<project rid>` on a list (`GET /resources`, every kind's list, `GET
@@ -319,10 +320,9 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    be reached within ten seconds, or whose credential cannot be leased, is left out of the
    turn and named to the agent.
 3. **What the agent is told about the chat.** Every step's prompt ends with the turn state
-   and the chat's facts: today's date, the project the chat is in, the computing unit an
-   execution falls back to (or that none is set), what the app says the person is looking at
-   (frontend item 9), who is in a chat several people write in and whom the turn answers,
-   and the add-ons left out. The instructions before it are the same text for every chat.
+   and the chat's facts: today's date, the project the chat is in, what the app says the
+   person is looking at (frontend item 9), who is in a chat several people write in and whom
+   the turn answers, and the add-ons left out. The instructions before it are the same text for every chat.
    In a chat with more than one writer, each person's message reaches the model with its
    writer's name in front, `[Alice Liddell] ...`; the catalog keeps the words as they were
    said.

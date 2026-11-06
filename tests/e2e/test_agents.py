@@ -1,10 +1,10 @@
 """The Texera Agent through the real model: one agent is the entry to every chat. It builds,
 runs, edits and reruns a workflow over the iris file; in one chat it grounds a research question
 with the bio tools, analyzes the person's data and shares it with Bob through the catalog
-server, with nobody to hand the chat to; it works in the chat's project; and its executions go
-to the computing unit the chat prefers without being told; asked to, it makes a unit from a
-profile and keeps a run's results in a warehouse of the person's choosing. A chat stores no
-agent, model or unit unless one was chosen. Acceptance items 3, 9, 10 and 11. Outcomes are asserted in the
+server, with nobody to hand the chat to; it works in the chat's project; it runs on the
+computing unit the person names in their words; asked to, it makes a unit from a profile and
+keeps a run's results in a warehouse of the person's choosing. A chat stores no agent or model
+unless one was chosen, and never a unit. Acceptance items 3, 9, 10 and 11. Outcomes are asserted in the
 catalog, never the wording."""
 import itertools
 
@@ -104,16 +104,17 @@ def test_one_agent_researches_analyzes_and_shares(alice, bob, project, my_iris, 
 
 @pytest.mark.model
 @pytest.mark.slow
-def test_the_agents_runs_go_to_the_chats_unit(alice, project, my_iris):
-    """The person picks a computing unit for the chat and says nothing more about it."""
+def test_the_agent_runs_on_the_unit_the_person_names(alice, project, my_iris):
+    """A chat chooses no unit: the person says which one in their words, and the agent names it."""
     name = my_iris["metadata"]["name"]
-    mine = chat.second_unit(alice, project)
-    crid = chat.conversation(alice, "on my unit", project, computingUnit=mine)
-    turn = chat.say(alice, crid, f"Using the dataset named {name} in my catalog, how many flowers are there per species? Build and run a Texera workflow to count them, then report the numbers.")
+    mine = chat.second_unit(alice, project, "counting unit")
+    crid = chat.conversation(alice, "on my unit", project)
+    turn = chat.say(alice, crid, f"Using the dataset named {name} in my catalog, how many flowers are there per species? Build and run a Texera workflow to count them on my computing unit named 'counting unit', then report the numbers.")
     assert turn.outcome == "success", turn.errors
+    assert alice.get(f"/conversations/{crid}")["spec"] == {}, "the chat stores no unit"
     runs = [r for r in chat.made_in(alice, crid) if r["kind"] == "execution"]
     assert runs, "the agent ran a workflow"
-    assert {r["spec"]["computingUnit"] for r in runs} == {mine}, "every execution of the chat is on the chat's unit"
+    assert {r["spec"]["computingUnit"] for r in runs} == {mine}, "every execution of the chat is on the unit the person named"
     assert any(r["status"]["phase"] == "completed" for r in runs)
 
 

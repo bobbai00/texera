@@ -376,6 +376,43 @@ test("the bar says where a run goes, and it goes there: on a unit made from a pr
   await page.screenshot({ path: "test-results/run-target-lineage.png" });
 });
 
+// Where a run goes is proposed as the catalog decides it for anyone's run, the agent's in a chat
+// included: the workflow's unit, else its project's, else the platform's. A unit picked in the
+// bar is for this page's runs and is not remembered past it.
+test("the bar proposes the workflow's own unit, else the platform's, and a pick is the page's alone", async ({ page, request }) => {
+  const alice = await api(request);
+  const defaults = (await alice("GET", "/settings")).spec.defaults;
+  const platform: Envelope & { spec: { endpoint?: string; clientId?: string } } = await alice("GET", defaults.computingUnit.replace("texera://", "/"));
+  const { endpoint, clientId } = platform.spec;
+  const stamp = Date.now();
+  const project: Envelope = await alice("POST", "/projects", { name: `its own unit ${stamp}`, spec: {} });
+  const own: Envelope = await alice("POST", "/computing-units", { name: `its own ${stamp}`, parent: project.metadata.rid, spec: { provider: "static", endpoint, ...(clientId ? { clientId } : {}) } });
+  const scan = { operatorID: "scan", operatorType: "CSVFileScan", operatorProperties: { fileName: "", fileEncoding: "UTF_8", hasHeader: true } };
+  const workflow: Envelope = await alice("POST", "/workflows", { name: `its own unit ${stamp}`, parent: project.metadata.rid, spec: { operators: [scan], links: [] } });
+  const rid = workflow.metadata.rid;
+  // The workflow names the unit, so it goes first, then the unit, then the project they were in.
+  cleanups.push(async () => {
+    await discard(alice, [rid], [own.metadata.rid]);
+    await alice.attempt("DELETE", `/projects/${project.metadata.rid}`);
+  });
+  await signIn(page);
+  const unit = page.locator("[data-run-target]").getByLabel("Computing unit");
+
+  // Naming none, the workflow runs on the platform's unit; a pick holds for the page.
+  await page.goto(`/workflows/${rid}`);
+  await expect(unit).toHaveText(platform.metadata.name);
+  await pick(page, unit, own.metadata.name);
+  await expect(unit).toHaveText(own.metadata.name);
+  await page.reload();
+  await expect(unit).toHaveText(platform.metadata.name);
+
+  // A workflow that names its unit is proposed it.
+  const head = await alice("GET", `/workflows/${rid}`);
+  await alice("PUT", `/workflows/${rid}`, { spec: { ...head.spec, defaultComputingUnit: own.metadata.uri } });
+  await page.reload();
+  await expect(unit).toHaveText(own.metadata.name);
+});
+
 test("an execution's page is the workflow as it ran, and a visualization's result is the chart it drew", async ({ page, request }) => {
   test.setTimeout(240_000);
   const alice = await api(request);

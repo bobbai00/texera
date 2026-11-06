@@ -69,7 +69,7 @@ Routes are the catalog's paths: a resource's page is its URI without the scheme.
 
 | Path | Page |
 |---|---|
-| `/` | a new chat: type to start. The box shows the agent and picks the model, the computing unit (Automatic by default) and the add-on servers |
+| `/` | a new chat: type to start. The box shows the agent and picks the model and the add-on servers |
 | `/conversations/$rid` | a chat: its messages and, beside them, what it made and worked from as a tree that folds |
 | `/{plural}` | the library of one kind: `/workflows`, `/datasets`, `/operators`, … |
 | `/{plural}/$rid` | the page of one resource (`?vno=` pins a version) |

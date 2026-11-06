@@ -1,8 +1,9 @@
-// conversation: the state of a chat. The spec holds the chat's choices, each optional: its
-// agent, the model the agent uses, the computing unit its executions prefer, its add-on MCP servers.
-// A turn runs with the chat's choice, else the project's, else the agent's own or the
-// platform's default (ChatSettings). Messages are an append-only subresource; a turn is one
-// run of the loop, locked on the conversation.
+// conversation: the state of a chat. The spec holds the chat's choices of how its agent works,
+// each optional: the agent, the model the agent uses, its add-on MCP servers. A turn runs with
+// the chat's choice, else the project's, else the agent's own or the platform's default
+// (ChatSettings). Where an execution runs is not a chat's to choose: the call names a unit, else
+// the workflow's, the project's or the platform's default applies, for everyone alike. Messages
+// are an append-only subresource; a turn is one run of the loop, locked on the conversation.
 import "@typespec/http";
 import "@typespec/rest";
 import "@typespec/openapi";
@@ -20,8 +21,6 @@ model ConversationSpec {
   template?: Uri;
   @doc("The model endpoint the agent uses in this chat; absent: the project's default, else the agent's own.")
   modelEndpoint?: Uri;
-  @doc("The computing unit a compile or an execution started in this chat uses when the call names none; absent: the workflow's, the project's or the platform's default. A preference, not a binding: a call can always name another unit.")
-  computingUnit?: Uri;
   @doc("The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.")
   mcpServers?: Uri[];
 }
@@ -53,7 +52,7 @@ model ServerSetting {
 @doc("A choice that was passed over: what it names is gone, or is not the caller's to use.")
 model SkippedSetting {
   @doc("The field of the spec the choice is in.")
-  setting: "template" | "modelEndpoint" | "computingUnit" | "mcpServers";
+  setting: "template" | "modelEndpoint" | "mcpServers";
   uri: Uri;
   from: SettingSource;
   reason: string;
@@ -72,8 +71,6 @@ model ChatSettings {
   @doc("The agent, at the version a turn runs.")
   agent: Setting;
   modelEndpoint: Setting;
-  @doc("The unit a compile or an execution uses when the call names none; absent when nothing names one.")
-  computingUnit?: Setting;
   @doc("The platform's own server first, then the add-ons.")
   mcpServers: ServerSetting[];
   skipped?: SkippedSetting[];

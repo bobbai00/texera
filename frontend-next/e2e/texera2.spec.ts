@@ -13,13 +13,13 @@ test.afterEach(tidyUp);
 
 test("signs in, starts a chat by saying something and attaches a CSV that becomes a dataset", async ({ page, request }) => {
   await signIn(page);
-  // Nothing to pick before talking. The box says what a chat runs with: the platform's agent,
-  // its model, and whichever unit an execution falls back to.
+  // Nothing to pick before talking. The box says what a chat runs with: the platform's agent and
+  // its model. Where an execution runs is not the chat's to choose.
   await expect(page.locator("[data-start-chat]")).toHaveCount(0);
   const box = page.locator("[data-new-chat] [data-composer]");
   await expect(box.locator(`[data-chat-agent="${AGENT}"]`)).toBeVisible();
   await expect(box.getByLabel("Model")).toHaveText("anthropic-platform");
-  await expect(box.getByLabel("Computing unit")).toHaveText(/^Automatic/);
+  await expect(box.getByLabel("Computing unit")).toHaveCount(0);
 
   // Attach a CSV and send: the first message makes the chat, and the upload makes a dataset
   // version before the agent is asked.
@@ -303,24 +303,21 @@ test("the sidebar collapses to a rail, and nothing lies over a page's header", a
 });
 
 // What a chat runs with is chosen in its box and stored as the chat's choices; the catalog says
-// what a turn would run with.
-test("a chat's model, unit and add-ons are chosen in its box", async ({ page, request }) => {
+// what a turn would run with. A unit is not among them.
+test("a chat's model and add-ons are chosen in its box", async ({ page, request }) => {
   const call = await api(request);
   const stamp = Date.now();
   const other = await call("POST", "/model-endpoints", { name: `other model ${stamp}`, spec: { provider: "anthropic", model: "claude-haiku-5-5" } });
   cleanups.push(() => call.attempt("DELETE", `/resources/${other.metadata.rid}`));
   await signIn(page);
   const rid = await openChat(page, call, `settings chat ${stamp}`);
-  // The unit an execution of this chat falls back to: the platform's.
-  const unit = (await call("GET", `/conversations/${rid}/settings`)).computingUnit as { uri: string; name: string; from: string };
-  expect(unit.from).toBe("platform");
   const spec = async () => (await call("GET", `/conversations/${rid}`)).spec as Record<string, unknown>;
   const box = page.locator("[data-composer]");
 
   // Untouched, the chat follows the defaults.
   await expect(box.locator(`[data-chat-agent="${AGENT}"]`)).toBeVisible();
   await expect(box.getByLabel("Model")).toHaveText("anthropic-platform");
-  await expect(box.getByLabel("Computing unit")).toHaveText(`Automatic: ${unit.name}`);
+  await expect(box.getByLabel("Computing unit")).toHaveCount(0);
   await expect(box.locator('[data-chat-add-ons="1"]')).toBeVisible();
   expect(await spec()).toEqual({});
 
@@ -330,12 +327,6 @@ test("a chat's model, unit and add-ons are chosen in its box", async ({ page, re
   await page.keyboard.press("Escape");
   await pick(page, box.getByLabel("Model"), `other model ${stamp}`);
   await expect(box.getByLabel("Model")).toHaveText(`other model ${stamp}`);
-  await expect.poll(spec).toEqual({ modelEndpoint: other.metadata.uri });
-
-  // A unit of the chat's own, and back to none: the chat is not bound to one.
-  await pick(page, box.getByLabel("Computing unit"), unit.name);
-  await expect.poll(spec).toEqual({ modelEndpoint: other.metadata.uri, computingUnit: unit.uri });
-  await pick(page, box.getByLabel("Computing unit"), /^Automatic/);
   await expect.poll(spec).toEqual({ modelEndpoint: other.metadata.uri });
 
   // An add-on off: from then on the chat's add-ons are its own list.
@@ -350,6 +341,7 @@ test("a chat's model, unit and add-ons are chosen in its box", async ({ page, re
   const runsWith = await call("GET", `/conversations/${rid}/settings`);
   expect(runsWith.modelEndpoint).toEqual({ uri: other.metadata.uri, name: `other model ${stamp}`, from: "chat" });
   expect(runsWith.mcpServers.map((m: { name: string; platform: boolean }) => [m.name, m.platform])).toEqual([["catalog", true]]);
+  expect(runsWith.computingUnit).toBeUndefined();
   // The chat's own page shows it too.
   await page.getByLabel("Open the chat's details beside").click();
   await expect(page.locator("[data-side-panel] [data-chat-settings]")).toContainText("chosen for this chat");
@@ -744,14 +736,14 @@ test("an execution's page follows it as it goes, and pauses and resumes it", asy
 // The core loop with the real model: bob works in a project of his, picks a computing unit of
 // his own in the chat box and asks about his iris dataset; the agent finds the data in that
 // project, builds and runs a workflow there with the catalog's tools; the answer arrives on
-// screen, the execution went to the unit he picked without a word about it, and the workflow is
-// listed as a resource of this chat and opens beside it.
-test("the agent answers from a workflow it built, in the chat's project and on the unit the chat prefers", async ({ page, request }) => {
+// screen, the execution went to the unit he named in his words (the chat stores no unit), and the
+// workflow is listed in the chat's tree and opens beside it.
+test("the agent answers from a workflow it built, in the chat's project and on the unit named in words", async ({ page, request }) => {
   test.skip(!!process.env.TEXERA_E2E_SKIP_MODEL, "needs the real model");
   test.setTimeout(300_000);
   const asBob = await api(request, "bob", "bob");
   const iris = await withIris(asBob, "core loop e2e");
-  // A second unit at the deployment's engine, so the execution's unit tells where the chat sent it.
+  // A second unit at the deployment's engine, so the execution's unit tells where the agent sent it.
   const platform = (await asBob("GET", "/me")).systemProject as string;
   const units: Array<{ metadata: { uri: string }; spec: { provider: string; endpoint?: string; clientId?: string } }> = await asBob("GET", `/computing-units/available?scope=${platform}`);
   const base = units.find(u => u.spec.provider === "static");
@@ -764,11 +756,10 @@ test("the agent answers from a workflow it built, in the chat's project and on t
   });
   await signIn(page, "bob", "bob");
   await workIn(page, iris.name);
-  await pick(page, page.locator("[data-new-chat]").getByLabel("Computing unit"), unitName);
-  await ask(page, IRIS_QUESTION);
+  await ask(page, `${IRIS_QUESTION} Run it on my computing unit named "${unitName}".`);
   conversation = conversationOf(page);
-  // The chat stores what bob chose and nothing else.
-  expect((await asBob("GET", `/conversations/${conversation}`)).spec).toEqual({ computingUnit: unit.metadata.uri });
+  // The chat stores nothing: bob chose nothing in its box.
+  expect((await asBob("GET", `/conversations/${conversation}`)).spec).toEqual({});
 
   const answer = page.locator('[data-message-role="assistant"]').last();
   // The averages, as the model may round them: 1.462, 4.260 and 5.552.
@@ -779,8 +770,8 @@ test("the agent answers from a workflow it built, in the chat's project and on t
   await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible({ timeout: 60_000 });
   await expect(answer.getByText(/5\.55/).last()).toBeInViewport();
 
-  // Where it ran: the unit bob picked for the chat, though neither he nor the agent named it.
-  // Where it was made: the project the chat is in.
+  // Where it ran: the unit bob named, which the agent passed on. Where it was made: the project
+  // the chat is in.
   const made = await createdIn<Made & { metadata: { project: string }; spec: { computingUnit?: string } }>(asBob, conversation);
   const executions = made.filter(r => r.kind === "execution");
   expect(executions.length).toBeGreaterThan(0);

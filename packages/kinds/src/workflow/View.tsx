@@ -65,7 +65,6 @@ import { createEditorStore, type EditorStore } from "./editor";
 import { EditorCanvas } from "./EditorCanvas";
 import { compilationQuery, executionsQuery, versionSpecQuery, workflowQuery } from "./queries";
 
-const UNIT_KEY = "texera-unit";
 const LIVE = new Set<ExecutionStatus["phase"]>(["pending", "provisioning", "running"]);
 
 /** The workflow workspace: the same view in the side panel next to a chat and as a full page. */
@@ -172,7 +171,7 @@ function Editor({
           The workflow's live session cannot be reached, so it is shown as it was last saved and cannot be edited right now.
         </p>
       )}
-      <EditorLayout store={store} mode={mode} meta={meta} headVno={headVno} pinned={shown !== undefined} onPin={onPin} defaultUnit={store.getState().spec.defaultComputingUnit} />
+      <EditorLayout store={store} mode={mode} meta={meta} headVno={headVno} pinned={shown !== undefined} onPin={onPin} />
     </ReactFlowProvider>
   );
 }
@@ -188,14 +187,6 @@ function overlayFor(spec: WorkflowSpec, compilation: Compilation | undefined, ex
   return overlay;
 }
 
-function rememberedUnit(): string | undefined {
-  try {
-    return localStorage.getItem(UNIT_KEY) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function EditorLayout({
   store,
   mode,
@@ -203,7 +194,6 @@ function EditorLayout({
   headVno,
   pinned,
   onPin,
-  defaultUnit,
 }: {
   store: EditorStore;
   mode: "panel" | "page";
@@ -211,7 +201,6 @@ function EditorLayout({
   headVno: number;
   pinned: boolean;
   onPin: (vno: number | undefined) => void;
-  defaultUnit?: string;
 }) {
   const rid = store.getState().rid;
   const spec = useStore(store, s => s.spec);
@@ -232,17 +221,19 @@ function EditorLayout({
   const { data: units } = useQuery(unitsQuery(scope));
   // How the canvas is looked at: how much the cards say, the card open, the result on screen.
   const view = useMemo(() => createCanvasView(), []);
-  const [unitPick, setUnitPick] = useState<string | undefined>(() => defaultUnit ?? rememberedUnit());
-  const unit = units?.find(u => u.metadata.uri === unitPick) ?? units?.find(u => u.status?.phase === "ready") ?? units?.[0];
-  const madeFrom = unit && masterOf(unit.spec as ComputingUnitSpec)?.profile;
-  // Where the results go: the warehouse picked here for this page's runs, else the one the
-  // workflow, its project or the platform names, as the catalog decides.
+  // Where a run goes and keeps its results: what is picked here for this page's runs, else what
+  // the workflow, its project or the platform names, as the catalog decides for anyone's run.
   const { data: warehouses } = useQuery(searchQuery({ kind: "warehouse", scope }));
   const { data: project } = useQuery({ ...resourceQuery(scope ?? ""), enabled: !!scope });
   const { data: settings } = useQuery(settingsQuery());
+  const defaults = { project: project?.spec as ProjectSpec | undefined, platform: settings?.spec.defaults };
+  const [unitPick, setUnitPick] = useState<string>();
+  const named = unitPick ?? spec.defaultComputingUnit ?? defaults.project?.defaultComputingUnit ?? defaults.platform?.computingUnit;
+  // A unit the person may not run on is not among theirs: a ready one of theirs stands in.
+  const unit = units?.find(u => u.metadata.uri === named) ?? units?.find(u => u.status?.phase === "ready") ?? units?.[0];
+  const madeFrom = unit && masterOf(unit.spec as ComputingUnitSpec)?.profile;
   const [warehousePick, setWarehousePick] = useState<string>();
-  const warehouse =
-    warehousePick ?? spec.defaultWarehouse ?? (project?.spec as ProjectSpec | undefined)?.defaultWarehouse ?? settings?.spec.defaults?.warehouse;
+  const warehouse = warehousePick ?? spec.defaultWarehouse ?? defaults.project?.defaultWarehouse ?? defaults.platform?.warehouse;
   const { data: compilation } = useQuery(compilationQuery(rid, spec, unit?.metadata.uri));
   const executions = useQuery({
     ...executionsQuery(rid),
@@ -291,15 +282,6 @@ function EditorLayout({
   });
   const runTo = useCallback((operatorID: string) => run.mutate(operatorID), [run.mutate]);
 
-  const pickUnit = (u: string) => {
-    setUnitPick(u);
-    try {
-      localStorage.setItem(UNIT_KEY, u);
-    } catch {
-      /* remembered for this page only */
-    }
-  };
-
   return (
     <div className="flex h-full min-h-0 flex-col" data-workflow-view={rid}>
       <KindHeader
@@ -330,7 +312,7 @@ function EditorLayout({
                 <Select
                   aria-label="Computing unit"
                   value={unit?.metadata.uri ?? null}
-                  onChange={pickUnit}
+                  onChange={setUnitPick}
                   options={units.map(u => ({ value: u.metadata.uri, label: u.metadata.name }))}
                   className="w-36"
                 />

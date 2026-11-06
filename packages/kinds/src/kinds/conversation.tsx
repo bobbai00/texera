@@ -44,7 +44,6 @@ function ConversationView({ ref, mode }: KindViewProps) {
             <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1.5 text-xs">
               <Chosen label="Agent" setting={settings.agent} emphasis />
               <Chosen label="Model" setting={settings.modelEndpoint} />
-              {settings.computingUnit && <Chosen label="Computing unit" setting={settings.computingUnit} />}
               {settings.mcpServers.map(server => (
                 <Chosen key={server.uri} label={server.platform ? "Tools" : "Add-on"} setting={server} />
               ))}

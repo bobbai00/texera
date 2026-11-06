@@ -20,7 +20,7 @@ interface Props {
   autoFocus?: boolean;
   placeholder?: string;
   status?: string;
-  /** What the chat runs with, shown in the box's foot: its agent, model, unit and add-ons. */
+  /** What the chat runs with, shown in the box's foot: its agent, model and add-ons. */
   controls?: ReactNode;
 }
 

@@ -13,7 +13,7 @@ import { leaveFirstMessage } from "./pending";
  * The start of a chat: say what you want. The chat is created in the project the person works
  * in when the first message is sent; with every project in view the box asks which, starting
  * from the one the page suggests. It stores only what the person chose here: nothing, unless
- * they picked another model, a computing unit or other add-ons. In the dock beside a page it
+ * they picked another model or other add-ons. In the dock beside a page it
  * is the box alone, under a line that says what the chat is about.
  */
 export function NewChat({

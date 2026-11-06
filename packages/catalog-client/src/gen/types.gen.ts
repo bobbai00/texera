@@ -191,10 +191,6 @@ export type ChatSettings = {
     agent: Setting;
     modelEndpoint: Setting;
     /**
-     * The unit a compile or an execution uses when the call names none; absent when nothing names one.
-     */
-    computingUnit?: Setting;
-    /**
      * The platform's own server first, then the add-ons.
      */
     mcpServers: Array<ServerSetting>;
@@ -366,10 +362,6 @@ export type ConversationSpec = {
      * The model endpoint the agent uses in this chat; absent: the project's default, else the agent's own.
      */
     modelEndpoint?: Uri;
-    /**
-     * The computing unit a compile or an execution started in this chat uses when the call names none; absent: the workflow's, the project's or the platform's default. A preference, not a binding: a call can always name another unit.
-     */
-    computingUnit?: Uri;
     /**
      * The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.
      */
@@ -2033,7 +2025,7 @@ export type SkippedSetting = {
     /**
      * The field of the spec the choice is in.
      */
-    setting: 'template' | 'modelEndpoint' | 'computingUnit' | 'mcpServers';
+    setting: 'template' | 'modelEndpoint' | 'mcpServers';
     uri: Uri;
     from: SettingSource;
     reason: string;

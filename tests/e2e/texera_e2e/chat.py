@@ -93,8 +93,8 @@ def say(api: Api, conversation: str, prompt: str, template: str | None = None, t
 
 
 def conversation(api: Api, name: str, project: str | None = None, **choices) -> str:
-    """A chat in a project. It stores only the choices given (modelEndpoint, computingUnit,
-    mcpServers, template); with none it runs with the project's and the platform's defaults."""
+    """A chat in a project. It stores only the choices given (modelEndpoint, mcpServers,
+    template); with none it runs with the project's and the platform's defaults."""
     body = {"name": name, "spec": choices}
     if project:
         body["parent"] = project

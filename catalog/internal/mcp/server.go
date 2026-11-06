@@ -62,7 +62,8 @@ in a warehouse; every edit is a version, and running it makes an execution with 
 links} where a scan's fileName is texera://datasets/<rid>@<vno>/files/<path>; get_workflow reads
 it; edit_workflow applies an RFC 6902 patch as a new version; validate_workflow compiles it,
 until it reports ok; run_workflow with waitSeconds starts an execution (on the computing unit and
-in the warehouse it names, else the defaults; upTo runs only what leads to one operator) and
+in the warehouse it names, else the workflow's, the project's or the platform's default; upTo
+runs only what leads to one operator) and
 get_port_result reads its rows: results live with the execution. get_execution follows one that is still going;
 pause_execution and resume_execution hold and continue it.`
 
