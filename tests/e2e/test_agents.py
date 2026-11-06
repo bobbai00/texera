@@ -111,7 +111,7 @@ def test_the_agents_runs_go_to_the_chats_unit(alice, project, my_iris):
     crid = chat.conversation(alice, "on my unit", project, computingUnit=mine)
     turn = chat.say(alice, crid, f"Using the dataset named {name} in my catalog, how many flowers are there per species? Build and run a Texera workflow to count them, then report the numbers.")
     assert turn.outcome == "success", turn.errors
-    runs = [r for r in alice.get(f"/conversations/{crid}/resources") if r["kind"] == "execution"]
+    runs = [r for r in chat.made_in(alice, crid) if r["kind"] == "execution"]
     assert runs, "the agent ran a workflow"
     assert {r["spec"]["computingUnit"] for r in runs} == {mine}, "every execution of the chat is on the chat's unit"
     assert any(r["status"]["phase"] == "completed" for r in runs)
@@ -134,7 +134,7 @@ def test_the_agent_makes_a_unit_from_a_profile_and_keeps_results_where_asked(ali
         f"and run it on that new unit, keeping its results in the warehouse named '{lab['metadata']['name']}'. Report the numbers."
     ))
     assert turn.outcome == "success", turn.errors
-    made = alice.get(f"/conversations/{crid}/resources")
+    made = chat.made_in(alice, crid)
     units = [r for r in made if r["kind"] == "computing-unit"]
     assert len(units) == 1, [r["metadata"]["name"] for r in units]
     unit = units[0]

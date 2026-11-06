@@ -48,8 +48,12 @@ computing unit and the add-on tools. Change one and the chat stores your choice;
 never touch stores nothing and follows its project's and the platform's defaults. The unit is a
 preference, not a binding: "Automatic" lets each execution take the workflow's, the project's
 or the platform's default, and a call can always name another unit. Attach a CSV from the box
-and it becomes a dataset of the chat's project, shown as a card of your message. Every resource
-the agent makes or touches shows as a card in the message and in the rail beside the chat.
+and it becomes a dataset of the chat's project, shown as a card of your message. What the
+agent makes shows as a card in its message. Beside the chat, "From this chat" holds what the
+chat made and what it worked from as a tree: a section per kind, each resource, its versions,
+and under a version the executions that ran it or the files it holds. Every level folds. What
+the chat made reads plainly; what it worked from (what you attached, what its workflows read,
+the workflow a run ran) is dimmed. What a search or a list only returned is not in it.
 Each answer is labelled with the version of the agent and the model that wrote it. A turn that
 fails says why in the chat, and still does after a reload.
 

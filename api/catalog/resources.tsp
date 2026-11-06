@@ -49,6 +49,7 @@ namespace Routes {
       @query kind?: ResourceKind,
       @query parent?: Rid,
       @query project?: Rid,
+      @doc("Only what a chat made: the resources it created and those it made a version of.")
       @query origin?: Rid,
       @doc("Only what others shared with the caller: resources they hold a grant on and do not own, in whatever project.")
       @query shared?: boolean,

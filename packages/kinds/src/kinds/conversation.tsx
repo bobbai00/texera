@@ -1,26 +1,24 @@
-// A chat seen from outside: what it runs with, its last messages and the resources it
-// produced. The chat page itself is the app's.
+// A chat seen from outside: what it runs with, what it made and worked from, and its last
+// messages. The chat page itself is the app's.
 
 import { useQuery } from "@tanstack/react-query";
-import { conversationsListMessagesOptions, conversationsResourcesOptions } from "@texera/catalog-client/query";
+import { conversationsListMessagesOptions } from "@texera/catalog-client/query";
 import type { ConversationStatus, Setting } from "@texera/catalog-client/types";
 import { Button, EmptyState, SectionTitle, Skeleton, cn, timeAgo } from "@texera/ui";
 import { ArrowUpRight, MessagesSquare } from "lucide-react";
 import { lazy } from "react";
 import { chatSettingsQuery, resourceQuery, SOURCE_LABEL } from "../queries";
-import { ResourceCard } from "../ResourceView";
 import { UriChip } from "../shell/Chips";
+import { FromThisChat } from "../shell/FromThisChat";
 import { KindHeader } from "../shell/KindHeader";
 import { metaLine } from "../shell/MetaLine";
 import { useOpenResource } from "../shell/navigation";
 import type { KindSpec, KindViewProps } from "../types";
-import { isKindId } from "../registry";
 import { OpenError } from "../shell/OpenError";
 
 function ConversationView({ ref, mode }: KindViewProps) {
   const { data, error } = useQuery(resourceQuery(ref.rid));
   const { data: messages } = useQuery(conversationsListMessagesOptions({ path: { rid: ref.rid }, query: { limit: 20 } }));
-  const { data: resources } = useQuery(conversationsResourcesOptions({ path: { rid: ref.rid } }));
   const { data: settings } = useQuery(chatSettingsQuery(ref.rid));
   const { expand } = useOpenResource();
   if (error) return <OpenError error={error} kind="conversation" />;
@@ -53,13 +51,7 @@ function ConversationView({ ref, mode }: KindViewProps) {
             </dl>
           )}
         </section>
-        <section className="space-y-2">
-          <SectionTitle>Resources from this chat</SectionTitle>
-          {!resources?.length && <EmptyState className="py-4">Nothing produced yet.</EmptyState>}
-          {resources?.map(r =>
-            isKindId(r.kind) ? <ResourceCard key={r.metadata.rid} ref={{ kind: r.kind, rid: r.metadata.rid, parent: r.metadata.parent }} resource={r} /> : null
-          )}
-        </section>
+        <FromThisChat rid={ref.rid} empty={<EmptyState className="py-4">Nothing made or used yet.</EmptyState>} />
         <section className="space-y-2">
           <SectionTitle>Recent messages</SectionTitle>
           {!messages?.items.length && <EmptyState className="py-4">No messages yet.</EmptyState>}

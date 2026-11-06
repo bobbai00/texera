@@ -3,7 +3,6 @@ export { NewChat } from "./NewChat";
 export { ChatDock } from "./ChatDock";
 export { Composer } from "./Composer";
 export { MessageItem } from "./MessageItem";
-export { ResourcesRail } from "./ResourcesRail";
 export { useConversation, agUiUrl, type Attachment } from "./useConversation";
 export { useResourceLabels, type ResourceLabel } from "./labels";
 export { ChatSettingsBar } from "./ChatSettingsBar";

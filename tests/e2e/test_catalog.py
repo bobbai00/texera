@@ -110,7 +110,7 @@ def test_conversation_turn_and_origin(alice, service, project):
                      headers={"X-Texera-Service-Token": service, "X-Texera-Origin": f"conversation={crid};turn={tid};template={tpl}"})
     assert made["metadata"]["origin"]["turn"] == tid
     alice.delete(f"/conversations/{crid}/turns/{tid}")
-    assert [(r["kind"], r["metadata"]["name"]) for r in alice.get(f"/conversations/{crid}/resources")] == [("workflow", "from chat")]
+    assert [(i["resource"]["kind"], i["resource"]["metadata"]["name"], i["made"]) for i in alice.get(f"/conversations/{crid}/resources")] == [("workflow", "from chat", True)]
     status = alice.get(f"/conversations/{crid}")["status"]
     assert status.get("activeTurn") is None and status["messages"] >= 1
 

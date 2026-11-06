@@ -2,7 +2,49 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
-## 2026-11-06 (session 12, part C): computing profiles replace environments; where a run goes, said at Run and in lineage
+## 2026-11-06 (session 13, part 1): what a chat made and worked from, as a tree beside it
+
+The user, on "From this chat": "show it in hierarchy ... datasets, you then show dataset;
+workflows ... you then show workflow, and execution is nested under that specific workflow",
+then "there should also be versions there, the hierarchy is resource, version, then sub
+resource if needed ... dataset, version, files. make sure each component is foldable".
+
+What was decided:
+- **A tree, every level folding**: a section per kind in the sidebar's order, each resource,
+  its versions newest first, and under a version what belongs to it: the executions that ran
+  a workflow version, the files of a dataset version (read when the version is opened). Every
+  section, what the chat made and each newest version start open.
+- **What counts is the catalog's record, nothing guessed from tool results.** Made: the chat
+  is the origin of the resource or of one of its versions, so a workflow the agent changed
+  counts with the versions it made. Worked from, dimmed: what a person attached, what the
+  chat's versions and other resources name at a version (the files a workflow reads, the
+  profile version a unit was made from), what its executions ran and read. A name with no
+  version (a unit, a warehouse, a credential) is a live link, not something worked from; a
+  search hit or a listed unit is neither. Before, every resource any tool returned was listed.
+
+Done:
+- **The contract**: `GET /conversations/{rid}/resources` answers `ChatResource[]` (`resource`,
+  `made`, `versions` of `ChatVersion` with `made`); `origin=` on `GET /resources` keeps the
+  same "made".
+- **The catalog** (`chat_resources.go`): made, then worked from, each resource the caller may
+  read once; what the chat worked from does not depend on who asks, only what of it they see.
+  The store finds the versions a chat made (index `resource_version_origin_idx`, migration
+  `0008`), versions by name, references by exact name, and what people attached.
+- **The app**: `FromThisChat` (with the pure `chatTree`) beside a chat and on the chat's page;
+  a running execution's row is watched until it ends; the tree is asked again whenever a tool
+  answers. Gone: the rail, and the chat model's list of every resource a tool returned.
+
+Verified: Go suite green (new `TestWhatAChatMadeIsFoundByTheChat`,
+`TestAChatListsWhatItMadeAndWhatItWorkedFrom`: made then worked from, versions, a search not
+counted, a viewer seeing only what is theirs to read); vitest 256 (`chat-tree.test.ts`);
+typecheck; the k8s check's cluster scenarios; Playwright 41 of 42 without a model plus the
+new `chat-tree.spec.ts` (made through a chat turn with the runtime's service token: sections in
+order, every level folding, the run's row ending `completed`, the dataset's file, a version
+opened beside). The one failure, `collaboration.spec.ts` "two people edit one workflow at the
+same moment", is intermittent and older than this work (4 of 4 on rerun). With the model: the
+core-loop browser scenario (the built workflow, its version and run in the tree) and
+`test_the_agent_builds_runs_edits_and_reruns`.
+: computing profiles replace environments; where a run goes, said at Run and in lineage
 
 Part C of the work the user decided on Nov 6. Their words: "maybe we call it a 'computing
 profile'", "the profile is on node of that unit, i.e. how many cpu / gpu / memory, how many

@@ -2,7 +2,7 @@
 // and from AG-UI events as a turn streams. Pure; the hook feeds it.
 
 import type { Message as CatalogMessage, MessagePart } from "@texera/catalog-client/types";
-import { isKindId, isUri, type KindId, refKey, refOf, type ResourceRef, uriOf } from "@texera/kinds";
+import { isKindId, isUri, type KindId, refOf, type ResourceRef, uriOf } from "@texera/kinds";
 import type { AgUiEvent, AgUiMessage, JsonPatchOperation } from "./agui/types";
 
 export type ToolStatus = "running" | "done" | "error";
@@ -19,7 +19,6 @@ export type Part =
       result?: unknown;
       status: ToolStatus;
       error?: string;
-      resources: ResourceRef[];
     }
   | { type: "resource"; ref: ResourceRef }
   | { type: "handoff"; from?: string; to: string; name: string; by: "agent" | "person" }
@@ -51,11 +50,9 @@ export interface ChatState {
   state?: unknown;
   steps: string[];
   error?: string;
-  /** Every resource the turn touched, in order of first appearance. */
-  resources: ResourceRef[];
 }
 
-export const EMPTY_STATE: ChatState = { messages: [], running: false, steps: [], resources: [] };
+export const EMPTY_STATE: ChatState = { messages: [], running: false, steps: [] };
 
 /**
  * What stays on screen once the catalog has the turn: its copy replaces the live one, except an
@@ -212,13 +209,6 @@ function updateTool(state: ChatState, toolCallId: string, update: (p: Extract<Pa
   return { ...state, messages };
 }
 
-function addResources(state: ChatState, refs: ResourceRef[]): ChatState {
-  if (!refs.length) return state;
-  const known = new Set(state.resources.map(refKey));
-  const fresh = refs.filter(r => !known.has(refKey(r)));
-  return fresh.length ? { ...state, resources: [...state.resources, ...fresh] } : state;
-}
-
 /** Applies one AG-UI event. */
 export function applyEvent(state: ChatState, event: AgUiEvent): ChatState {
   switch (event.type) {
@@ -256,7 +246,7 @@ export function applyEvent(state: ChatState, event: AgUiEvent): ChatState {
     case "TOOL_CALL_START":
       return withMessage(state, event.parentMessageId ?? currentAssistantId(state), "assistant", m => ({
         ...m,
-        parts: [...m.parts, { type: "tool", id: event.toolCallId, name: event.toolCallName, args: "", status: "running", resources: [] }],
+        parts: [...m.parts, { type: "tool", id: event.toolCallId, name: event.toolCallName, args: "", status: "running" }],
       }));
     case "TOOL_CALL_ARGS":
       return updateTool(state, event.toolCallId, p => ({ ...p, args: p.args + event.delta }));
@@ -270,22 +260,14 @@ export function applyEvent(state: ChatState, event: AgUiEvent): ChatState {
         ? state
         : withMessage(state, event.parentMessageId ?? currentAssistantId(state), "assistant", m => ({
             ...m,
-            parts: [...m.parts, { type: "tool", id, name: event.toolCallName ?? "tool", args: "", status: "running", resources: [] }],
+            parts: [...m.parts, { type: "tool", id, name: event.toolCallName ?? "tool", args: "", status: "running" }],
           }));
       return event.delta ? updateTool(started, id, p => ({ ...p, args: p.args + (event.delta ?? "") })) : started;
     }
     case "TOOL_CALL_RESULT": {
       const result = parseJson(event.content);
-      const refs = extractResourceRefs(result);
       const failure = toolFailure(result);
-      const next = updateTool(state, event.toolCallId, p => ({
-        ...p,
-        result,
-        status: failure ? "error" : "done",
-        error: failure,
-        resources: refs,
-      }));
-      return addResources(next, refs);
+      return updateTool(state, event.toolCallId, p => ({ ...p, result, status: failure ? "error" : "done", error: failure }));
     }
     case "STATE_SNAPSHOT":
       return { ...state, state: event.snapshot };
@@ -297,8 +279,7 @@ export function applyEvent(state: ChatState, event: AgUiEvent): ChatState {
       if (event.name === "texera.resource") {
         const refs = extractResourceRefs(event.value);
         if (!refs.length) return state;
-        const next = addResources(state, refs);
-        return withMessage(next, currentAssistantId(next), "assistant", m => ({ ...m, parts: [...m.parts, ...refs.map(ref => ({ type: "resource" as const, ref }))] }));
+        return withMessage(state, currentAssistantId(state), "assistant", m => ({ ...m, parts: [...m.parts, ...refs.map(ref => ({ type: "resource" as const, ref }))] }));
       }
       if (event.name === "texera.handoff" && isRecord(event.value) && typeof event.value.to === "string") {
         const v = event.value as { from?: string; to: string; name?: string; by?: string };
@@ -319,7 +300,7 @@ function fromAgUiMessage(m: AgUiMessage): ChatMessage {
   const text = typeof m.content === "string" ? m.content : (m.content ?? []).map(c => c.text ?? "").join("");
   if (text) parts.push({ type: m.role === "reasoning" ? "reasoning" : "text", text });
   for (const call of m.toolCalls ?? []) {
-    parts.push({ type: "tool", id: call.id, name: call.function.name, args: call.function.arguments, input: parseJson(call.function.arguments), status: "done", resources: [] });
+    parts.push({ type: "tool", id: call.id, name: call.function.name, args: call.function.arguments, input: parseJson(call.function.arguments), status: "done" });
   }
   const role: ChatMessage["role"] = m.role === "user" ? "user" : m.role === "tool" ? "tool" : m.role === "system" || m.role === "developer" ? "system" : "assistant";
   return { id: m.id, role, parts };
@@ -347,25 +328,22 @@ export function fromHistory(messages: CatalogMessage[]): ChatMessage[] {
             args: typeof p.args === "string" ? p.args : JSON.stringify(p.args ?? {}),
             input: p.args,
             status: "done",
-            resources: [],
           };
           tools.set(part.id, part);
           parts.push(part);
           break;
         }
         case "tool_result": {
-          const refs = extractResourceRefs(p.result);
           const failure = toolFailure(p.result);
           const call = p.toolCallId ? tools.get(p.toolCallId) : undefined;
           if (call) {
             call.result = p.result;
-            call.resources = refs;
             if (failure) {
               call.status = "error";
               call.error = failure;
             }
           } else {
-            parts.push({ type: "tool", id: p.toolCallId ?? crypto.randomUUID(), name: p.toolName ?? "tool", args: "", result: p.result, status: failure ? "error" : "done", error: failure, resources: refs });
+            parts.push({ type: "tool", id: p.toolCallId ?? crypto.randomUUID(), name: p.toolName ?? "tool", args: "", result: p.result, status: failure ? "error" : "done", error: failure });
           }
           break;
         }
@@ -408,11 +386,6 @@ export function fromHistory(messages: CatalogMessage[]): ChatMessage[] {
     });
   }
   return out;
-}
-
-/** Every resource the conversation's messages reference, in order. */
-export function resourcesOf(messages: ChatMessage[]): ResourceRef[] {
-  return dedupe(messages.flatMap(m => m.parts.flatMap(p => (p.type === "tool" ? p.resources : p.type === "resource" ? [p.ref] : []))));
 }
 
 /** What the messages were written by, in order of first appearance: agent versions, and the models they used. */

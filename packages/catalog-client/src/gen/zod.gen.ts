@@ -1031,6 +1031,23 @@ export const zAgentTemplateVersion = z.object({
 });
 
 /**
+ * A version as a chat knows it: one the chat made, or one it worked from.
+ */
+export const zChatVersion = z.object({
+    rid: zRid,
+    uri: zUri,
+    vno: zVno,
+    contentKind: zContentKind,
+    digest: zDigest,
+    message: z.string().optional(),
+    createdBy: zPid,
+    contributors: z.array(zPid).optional(),
+    origin: zOrigin.optional(),
+    createdAt: z.iso.datetime(),
+    made: z.boolean()
+});
+
+/**
  * A version with typed content, served by the kind routes.
  */
 export const zDatasetVersion = z.object({
@@ -1347,6 +1364,15 @@ export const zResource = z.object({
     metadata: zResourceMetadata,
     spec: z.record(z.string(), z.unknown()),
     status: z.record(z.string(), z.unknown()).optional()
+});
+
+/**
+ * A resource as a chat knows it, with the versions that count.
+ */
+export const zChatResource = z.object({
+    resource: zResource,
+    made: z.boolean(),
+    versions: z.array(zChatVersion).optional()
 });
 
 export const zResourcePage = z.object({
@@ -2067,7 +2093,7 @@ export const zConversationsResourcesPath = z.object({
 /**
  * The request has succeeded.
  */
-export const zConversationsResourcesResponse = z.array(zResource);
+export const zConversationsResourcesResponse = z.array(zChatResource);
 
 export const zConversationsSettingsPath = z.object({
     rid: zRid

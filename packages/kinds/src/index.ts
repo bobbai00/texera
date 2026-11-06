@@ -21,6 +21,7 @@ export { Versions } from "./shell/Versions";
 export { Lineage } from "./shell/Lineage";
 export { Access } from "./shell/Access";
 export { UriChip, OriginChip, PrincipalName } from "./shell/Chips";
+export { FromThisChat } from "./shell/FromThisChat";
 export { NewResourceDialog } from "./shell/NewResourceDialog";
 export { GenericView, ResourcePage } from "./shell/GenericView";
 export { useOpenResource, panelRef } from "./shell/navigation";

@@ -79,6 +79,22 @@ model ChatSettings {
   skipped?: SkippedSetting[];
 }
 
+@doc("A version as a chat knows it: one the chat made, or one it worked from.")
+model ChatVersion {
+  ...VersionSummary;
+  @doc("True when the chat made the version; false for one it worked from.")
+  made: boolean;
+}
+
+@doc("A resource as a chat knows it, with the versions that count.")
+model ChatResource {
+  resource: Resource;
+  @doc("True when the chat made the resource or a version of it; false for one it only worked from: what a person attached to a message, what the chat's versions and resources name at a version, what its executions ran and read.")
+  made: boolean;
+  @doc("The versions the chat made and those it worked from, newest first; absent for a kind without versions.")
+  versions?: ChatVersion[];
+}
+
 model ConversationStatus {
   @doc("The turn in progress, when one is.")
   activeTurn?: string;
@@ -188,11 +204,11 @@ namespace Routes {
     @extension("x-texera-permission", "write")
     endTurn(@path rid: Rid, @path turn: string): void | Error;
 
-    @doc("The resources whose origin is this conversation.")
+    @doc("What this chat made or changed, and what it worked from: each resource the caller may read once, those it made first, newest first, with the versions that count.")
     @get
     @route("/{rid}/resources")
     @extension("x-texera-permission", "read")
-    resources(@path rid: Rid): Resource[] | Error;
+    resources(@path rid: Rid): ChatResource[] | Error;
 
     @doc("What a turn of this chat runs with, for the caller.")
     @get

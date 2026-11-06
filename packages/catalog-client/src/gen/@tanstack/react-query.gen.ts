@@ -668,7 +668,7 @@ export const conversationsReplaceMessageMutation = (options?: Partial<Options<Co
 export const conversationsResourcesQueryKey = (options: Options<ConversationsResourcesData>) => createQueryKey('conversationsResources', options);
 
 /**
- * The resources whose origin is this conversation.
+ * What this chat made or changed, and what it worked from: each resource the caller may read once, those it made first, newest first, with the versions that count.
  */
 export const conversationsResourcesOptions = (options: Options<ConversationsResourcesData>) => queryOptions<ConversationsResourcesResponse, ConversationsResourcesError, ConversationsResourcesResponse, ReturnType<typeof conversationsResourcesQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {

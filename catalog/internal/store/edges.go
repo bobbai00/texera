@@ -62,6 +62,20 @@ func (s *Store) EdgesFrom(ctx context.Context, uri string, relations []string) (
 	return s.queryEdges(ctx, `e.from_uri = $1 OR e.from_uri LIKE $2 OR e.from_uri LIKE $3`, uri, relations)
 }
 
+// ReferencesFrom returns what these exact URIs name: the references their content records.
+func (s *Store) ReferencesFrom(ctx context.Context, uris []string) ([]Edge, error) {
+	if len(uris) == 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+edgeColumns+` FROM edge e WHERE e.relation = 'references' AND e.from_uri = ANY($1)
+		ORDER BY e.at, e.from_uri, e.to_uri`, uris)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return pgx.CollectRows(rows, scanEdge)
+}
+
 // EdgesTo returns the arrows arriving at a URI, its versions or its subresources.
 func (s *Store) EdgesTo(ctx context.Context, uri string, relations []string) ([]Edge, error) {
 	return s.queryEdges(ctx, `e.to_uri = $1 OR e.to_uri LIKE $2 OR e.to_uri LIKE $3`, uri, relations)

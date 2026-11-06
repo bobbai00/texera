@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { AGENT, api, ask, cleanups, conversationOf, discard, IRIS_QUESTION, type Made, openChat, operatorCard, pick, say, signIn, tidyUp, withIris, workAtHome, workIn } from "./support";
+import { AGENT, api, ask, cleanups, conversationOf, createdIn, discard, IRIS_QUESTION, type Made, openChat, operatorCard, pick, say, signIn, tidyUp, withIris, workAtHome, workIn } from "./support";
 
 // The pages against the real stack: sign in through Keycloak, start a chat by saying something,
 // attach a CSV (which becomes a dataset version) and see it as a card; the agent every chat runs,
@@ -56,7 +56,13 @@ test("signs in, starts a chat by saying something and attaches a CSV that become
   await expect(mine.locator('[data-resource-card="dataset"]')).toBeVisible();
   await expect(mine).toContainText("What is in this file?");
   await expect(mine.getByText("texera://")).toHaveCount(0);
-  await expect(page.locator('[data-rail-item="dataset"]').first()).toBeVisible();
+  // Beside the chat, what it worked from: the attached dataset, dimmed, made elsewhere; unfolded,
+  // its version and the version's file.
+  const tree = page.locator("[data-chat-tree]");
+  const attached = tree.locator('[data-tree-section="dataset"] [data-tree-resource="dataset"][data-made="false"]');
+  await expect(attached).toBeVisible();
+  await attached.getByRole("button", { name: /^Unfold / }).first().click();
+  await expect(attached.locator('[data-tree-version="1"] [data-tree-file="penguins.csv"]')).toBeVisible();
   await page.screenshot({ path: "test-results/chat-with-dataset.png", fullPage: true });
 });
 
@@ -775,7 +781,7 @@ test("the agent answers from a workflow it built, in the chat's project and on t
 
   // Where it ran: the unit bob picked for the chat, though neither he nor the agent named it.
   // Where it was made: the project the chat is in.
-  const made = (await asBob("GET", `/conversations/${conversation}/resources`)) as Array<Made & { metadata: { project: string }; spec: { computingUnit?: string } }>;
+  const made = await createdIn<Made & { metadata: { project: string }; spec: { computingUnit?: string } }>(asBob, conversation);
   const executions = made.filter(r => r.kind === "execution");
   expect(executions.length).toBeGreaterThan(0);
   for (const execution of executions) expect(execution.spec.computingUnit).toBe(unit.metadata.uri);
@@ -785,9 +791,11 @@ test("the agent answers from a workflow it built, in the chat's project and on t
   // The answer says what wrote it: the agent and the model.
   await expect(page.locator('[data-message-model="anthropic-platform"]').first()).toBeVisible({ timeout: 30_000 });
 
-  const built = page.locator('[data-rail-item="workflow"]').first();
+  // Beside the chat, the workflow it built, its version, and the run under the version.
+  const built = page.locator('[data-chat-tree] [data-tree-resource="workflow"][data-made="true"]').first();
   await expect(built).toBeVisible({ timeout: 30_000 });
-  await built.click();
+  await expect(built.locator("[data-tree-version] [data-tree-execution]").first()).toBeVisible();
+  await built.locator("[data-open-row]").first().click();
   const view = page.locator("[data-side-panel] [data-workflow-view]").first();
   await expect(view).toBeVisible();
   await expect(view.locator("[data-workflow-canvas]").first()).toBeVisible();

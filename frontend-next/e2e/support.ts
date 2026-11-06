@@ -53,14 +53,14 @@ export async function pick(page: Page, select: ReturnType<Page["locator"]>, opti
 /** Picks the project the person works in, in the sidebar. */
 export const workIn = (page: Page, project: string) => pick(page, page.getByLabel("Project", { exact: true }), project);
 
-/** A token and a JSON caller for the API, as the smoke tests use it. */
-export async function api(request: APIRequestContext, user = USER, password = PASSWORD) {
+/** A token and a JSON caller for the API, as the smoke tests use it; `headers` go on every call. */
+export async function api(request: APIRequestContext, user = USER, password = PASSWORD, headers: Record<string, string> = {}) {
   const form = { grant_type: "password", client_id: "texera-app", username: user, password };
   const tokenResponse = await request.post("/auth/realms/texera/protocol/openid-connect/token", { form });
   expect(tokenResponse.ok()).toBeTruthy();
   const token = (await tokenResponse.json()).access_token as string;
   const send = (method: string, path: string, data?: unknown, contentType = "application/json") =>
-    request.fetch(`/catalog/v1${path}`, { method, data, headers: { Authorization: `Bearer ${token}`, "Content-Type": contentType } });
+    request.fetch(`/catalog/v1${path}`, { method, data, headers: { ...headers, Authorization: `Bearer ${token}`, "Content-Type": contentType } });
   const call = async (method: string, path: string, data?: unknown, contentType = "application/json") => {
     const r = await send(method, path, data, contentType);
     expect(r.ok(), `${method} ${path}: ${await r.text()}`).toBeTruthy();
@@ -75,6 +75,21 @@ export async function api(request: APIRequestContext, user = USER, password = PA
   return Object.assign(call, { attempt });
 }
 export type Caller = Awaited<ReturnType<typeof api>>;
+
+/**
+ * The person's calls made in a turn of a chat, as the agent runtime makes them: the chat as their
+ * origin, vouched for by the platform's service token. `end` ends the turn.
+ */
+export async function inTurn(request: APIRequestContext, as: Caller, conversation: string, user = USER, password = PASSWORD) {
+  const form = { grant_type: "client_credentials", client_id: "texera-services", client_secret: "texera-services-secret" };
+  const tokenResponse = await request.post("/auth/realms/texera/protocol/openid-connect/token", { form });
+  expect(tokenResponse.ok()).toBeTruthy();
+  const service = (await tokenResponse.json()).access_token as string;
+  const turn = await as("POST", `/conversations/${conversation}/turns`, {});
+  const origin = `conversation=${conversation};turn=${turn.turn};template=${turn.template}`;
+  const agent = await api(request, user, password, { "X-Texera-Origin": origin, "X-Texera-Service-Token": service });
+  return Object.assign(agent, { end: () => as("DELETE", `/conversations/${conversation}/turns/${turn.turn}`) });
+}
 
 /** The list of operators beside a canvas, opened when it is not: a workflow that has operators shows them, not the list. */
 export async function operatorList(page: Page) {
@@ -122,7 +137,13 @@ export function conversationOf(page: Page): string {
   return rid as string;
 }
 
-export type Made = { kind: string; metadata: { rid: string; parent?: string }; status?: { phase?: string } };
+export type Made = { kind: string; metadata: { rid: string; parent?: string; origin?: { conversation: string } }; status?: { phase?: string } };
+
+/** What a chat created itself, the latest first: not what it changed or worked from, which was someone's before. */
+export async function createdIn<T extends Made = Made>(as: Caller, conversation: string): Promise<T[]> {
+  const items: { resource: T; made: boolean }[] = await as("GET", `/conversations/${conversation}/resources`);
+  return items.filter(i => i.made && i.resource.metadata.origin?.conversation === conversation).map(i => i.resource);
+}
 
 /** Removes workflows with their executions, then other resources: what a scenario made in the person's own project. */
 export async function discard(as: Caller, workflows: string[], others: string[] = []) {
@@ -155,7 +176,7 @@ export async function withIris(as: Caller, label: string) {
     await as.attempt("DELETE", `/workflows/${workflow}/executions/${eid}`);
   };
   const clear = async (conversation?: string, others: string[] = []) => {
-    const made: Made[] = conversation ? await as("GET", `/conversations/${conversation}/resources`) : [];
+    const made = conversation ? await createdIn(as, conversation) : [];
     for (const r of made) if (r.kind === "execution" && r.metadata.parent) await removeExecution(r.metadata.parent, r.metadata.rid, r.status?.phase);
     for (const r of made) {
       if (r.kind !== "workflow") continue;

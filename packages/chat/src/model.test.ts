@@ -1,7 +1,7 @@
 import type { Message } from "@texera/catalog-client/types";
 import { describe, expect, it } from "vitest";
 import type { AgUiEvent } from "./agui/types";
-import { applyEvent, applyPatch, type ChatState, EMPTY_STATE, extractResourceRefs, fromHistory, messageContent, messageParts, resourcesOf, settled, toolFailure, visibleParts, writersOf } from "./model";
+import { applyEvent, applyPatch, type ChatState, EMPTY_STATE, extractResourceRefs, fromHistory, messageContent, messageParts, settled, toolFailure, visibleParts, writersOf } from "./model";
 
 const W = "0b7a1c2d-0000-4000-8000-000000000001";
 const E = "0b7a1c2d-0000-4000-8000-000000000002";
@@ -39,8 +39,9 @@ describe("applyEvent", () => {
     const m = state.messages[0];
     expect(m?.template).toBe(T);
     expect(m?.parts[0]).toEqual({ type: "text", text: "Hello there" });
-    expect(m?.parts[1]).toMatchObject({ type: "tool", name: "search_resources", input: { q: "iris" }, status: "done", resources: [{ kind: "dataset", rid: W }] });
-    expect(state.resources).toEqual([{ kind: "dataset", rid: W }]);
+    expect(m?.parts[1]).toMatchObject({ type: "tool", name: "search_resources", input: { q: "iris" }, status: "done" });
+    // What a tool returned is the tool's answer, not something the chat made: no card of its own.
+    expect(m?.parts).toHaveLength(2);
   });
 
   it("records a handoff as a divider and labels later messages with the new template", () => {
@@ -133,9 +134,8 @@ describe("fromHistory", () => {
     const assistant = messages[1];
     expect(assistant?.template).toBe(T);
     expect(assistant?.parts).toHaveLength(3);
-    expect(assistant?.parts[0]).toMatchObject({ type: "tool", name: "get_workflow", input: { rid: W }, result: { kind: "workflow", metadata: { rid: W } }, resources: [{ kind: "workflow", rid: W }] });
+    expect(assistant?.parts[0]).toMatchObject({ type: "tool", name: "get_workflow", input: { rid: W }, result: { kind: "workflow", metadata: { rid: W } } });
     expect(assistant?.parts[1]).toEqual({ type: "resource", ref: { kind: "workflow", rid: W, vno: 2 } });
-    expect(resourcesOf(messages)).toEqual([{ kind: "workflow", rid: W }]);
   });
 });
 
@@ -236,7 +236,6 @@ describe("an attachment in the history", () => {
       { type: "text", text: "What is this?" },
       { type: "resource", ref: { kind: "dataset", rid: W, vno: 1 } },
     ]);
-    expect(resourcesOf(message ? [message] : [])).toEqual([{ kind: "dataset", rid: W, vno: 1 }]);
   });
 });
 

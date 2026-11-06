@@ -847,7 +847,7 @@ paths:
   /catalog/v1/conversations/{rid}/resources:
     get:
       operationId: Conversations_resources
-      description: The resources whose origin is this conversation.
+      description: 'What this chat made or changed, and what it worked from: each resource the caller may read once, those it made first, newest first, with the versions that count.'
       parameters:
         - name: rid
           in: path
@@ -862,7 +862,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Resource'
+                  $ref: '#/components/schemas/ChatResource'
         default:
           description: An unexpected error response.
           content:
@@ -3248,6 +3248,7 @@ paths:
         - name: origin
           in: query
           required: false
+          description: 'Only what a chat made: the resources it created and those it made a version of.'
           schema:
             $ref: '#/components/schemas/Rid'
           explode: false
@@ -5094,6 +5095,23 @@ components:
         name:
           type: string
       description: The project a chat is in.
+    ChatResource:
+      type: object
+      required:
+        - resource
+        - made
+      properties:
+        resource:
+          $ref: '#/components/schemas/Resource'
+        made:
+          type: boolean
+          description: "True when the chat made the resource or a version of it; false for one it only worked from: what a person attached to a message, what the chat's versions and resources name at a version, what its executions ran and read."
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatVersion'
+          description: The versions the chat made and those it worked from, newest first; absent for a kind without versions.
+      description: A resource as a chat knows it, with the versions that count.
     ChatSettings:
       type: object
       required:
@@ -5126,6 +5144,45 @@ components:
           items:
             $ref: '#/components/schemas/SkippedSetting'
       description: "What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default."
+    ChatVersion:
+      type: object
+      required:
+        - rid
+        - uri
+        - vno
+        - contentKind
+        - digest
+        - createdBy
+        - createdAt
+        - made
+      properties:
+        rid:
+          $ref: '#/components/schemas/Rid'
+        uri:
+          $ref: '#/components/schemas/Uri'
+        vno:
+          $ref: '#/components/schemas/Vno'
+        contentKind:
+          $ref: '#/components/schemas/ContentKind'
+        digest:
+          $ref: '#/components/schemas/Digest'
+        message:
+          type: string
+        createdBy:
+          $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
+        origin:
+          $ref: '#/components/schemas/Origin'
+        createdAt:
+          type: string
+          format: date-time
+        made:
+          type: boolean
+          description: True when the chat made the version; false for one it worked from.
+      description: 'A version as a chat knows it: one the chat made, or one it worked from.'
     CommitFiles:
       type: object
       properties:

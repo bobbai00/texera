@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@texera/ui";
-import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { CardShell, useCardSummary } from "../shell/CardShell";
 import type { KindCardProps } from "../types";
+import { PhaseIcon } from "./PhaseIcon";
 import { executionQuery } from "./queries";
 
 /** An execution inside a chat message: how it ended, then what it produced. */
@@ -16,13 +16,7 @@ export default function ExecutionCard({ ref, resource }: KindCardProps) {
     <CardShell ref={x ? { ...ref, parent: x.metadata.parent } : ref} summary={summary}>
       {x && (
         <div className="flex items-center gap-2 px-3 py-2.5 text-sm">
-          {phase === "completed" ? (
-            <CheckCircle2 className="size-4 text-success" />
-          ) : phase === "failed" || phase === "cancelled" ? (
-            <XCircle className="size-4 text-destructive" />
-          ) : (
-            <Loader2 className="size-4 animate-spin text-muted-foreground" />
-          )}
+          <PhaseIcon phase={phase} />
           <span className="font-medium capitalize">{phase}</span>
           {!!failed && <Badge tone="danger">{failed} operator{failed === 1 ? "" : "s"} failed</Badge>}
           {error !== undefined && error !== null && <span className="min-w-0 truncate text-xs text-destructive">{String((error as { message?: string }).message ?? error)}</span>}

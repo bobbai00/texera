@@ -101,6 +101,13 @@ def conversation(api: Api, name: str, project: str | None = None, **choices) -> 
     return api.post("/conversations", body)["metadata"]["rid"]
 
 
+def made_in(api: Api, conversation_rid: str) -> list:
+    """The resources a chat made, or made a version of, as envelopes, the latest first."""
+    return [item["resource"] for item in api.get(f"/conversations/{conversation_rid}/resources") if item["made"]]
+
+
 def created_in(api: Api, conversation_rid: str) -> list:
-    """The resources a chat made: [(kind, name, head)]."""
-    return [(r["kind"], r["metadata"]["name"], r["metadata"]["rid"]) for r in api.get(f"/conversations/{conversation_rid}/resources")]
+    """The resources a chat created itself: [(kind, name, rid)]. Not one it only changed, which
+    was someone's before the chat."""
+    return [(r["kind"], r["metadata"]["name"], r["metadata"]["rid"]) for r in made_in(api, conversation_rid)
+            if (r["metadata"].get("origin") or {}).get("conversation") == conversation_rid]

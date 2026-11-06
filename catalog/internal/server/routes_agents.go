@@ -124,11 +124,15 @@ func (s *Server) routeAgents() {
 		if err != nil {
 			return err
 		}
-		rs, err := s.svc.ConversationResources(ctxOf(r), callerOf(r), rid)
+		items, err := s.svc.ConversationResources(ctxOf(r), callerOf(r), rid)
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, envelopes(rs))
+		out := make([]api.ChatResource, 0, len(items))
+		for i := range items {
+			out = append(out, catalog.ChatResourceOf(&items[i]))
+		}
+		writeJSON(w, http.StatusOK, out)
 		return nil
 	})
 

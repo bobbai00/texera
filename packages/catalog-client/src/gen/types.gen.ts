@@ -163,6 +163,21 @@ export type ChatProject = {
 };
 
 /**
+ * A resource as a chat knows it, with the versions that count.
+ */
+export type ChatResource = {
+    resource: Resource;
+    /**
+     * True when the chat made the resource or a version of it; false for one it only worked from: what a person attached to a message, what the chat's versions and resources name at a version, what its executions ran and read.
+     */
+    made: boolean;
+    /**
+     * The versions the chat made and those it worked from, newest first; absent for a kind without versions.
+     */
+    versions?: Array<ChatVersion>;
+};
+
+/**
  * What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default.
  */
 export type ChatSettings = {
@@ -184,6 +199,26 @@ export type ChatSettings = {
      */
     mcpServers: Array<ServerSetting>;
     skipped?: Array<SkippedSetting>;
+};
+
+/**
+ * A version as a chat knows it: one the chat made, or one it worked from.
+ */
+export type ChatVersion = {
+    rid: Rid;
+    uri: Uri;
+    vno: Vno;
+    contentKind: ContentKind;
+    digest: Digest;
+    message?: string;
+    createdBy: Pid;
+    contributors?: Array<Pid>;
+    origin?: Origin;
+    createdAt: string;
+    /**
+     * True when the chat made the version; false for one it worked from.
+     */
+    made: boolean;
 };
 
 export type CommitFiles = {
@@ -3340,7 +3375,7 @@ export type ConversationsResourcesResponses = {
     /**
      * The request has succeeded.
      */
-    200: Array<Resource>;
+    200: Array<ChatResource>;
 };
 
 export type ConversationsResourcesResponse = ConversationsResourcesResponses[keyof ConversationsResourcesResponses];
@@ -5516,6 +5551,9 @@ export type ResourcesSearchData = {
         kind?: ResourceKind;
         parent?: Rid;
         project?: Rid;
+        /**
+         * Only what a chat made: the resources it created and those it made a version of.
+         */
         origin?: Rid;
         /**
          * Only what others shared with the caller: resources they hold a grant on and do not own, in whatever project.

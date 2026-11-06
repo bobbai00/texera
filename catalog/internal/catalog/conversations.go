@@ -188,15 +188,3 @@ func (s *Service) EndTurn(ctx context.Context, caller *auth.Caller, rid uuid.UUI
 	}
 	return s.Store.EndTurn(ctx, rid, turn)
 }
-
-// ConversationResources lists what a conversation produced.
-func (s *Service) ConversationResources(ctx context.Context, caller *auth.Caller, rid uuid.UUID) ([]store.Resource, error) {
-	if _, err := s.Get(ctx, caller, &conversationKind, rid); err != nil {
-		return nil, err
-	}
-	page, err := s.List(ctx, caller, nil, ListFilter{Origin: &rid, Limit: 200})
-	if err != nil {
-		return nil, err
-	}
-	return page.Items, nil
-}

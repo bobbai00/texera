@@ -292,6 +292,17 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 9. **One MCP server.** Every `x-mcp` operation of the contract is a tool of `/mcp/catalog`.
 10. **What an answer records.** An assistant message carries the agent version (`template`),
    the model endpoint (`modelEndpoint`) and the servers its turn mounted (`mcpServers`).
+11. **What a chat made, and what it worked from.** `GET /conversations/{rid}/resources` lists
+   each resource once, with `made` and the versions that count (`versions`, newest first, each
+   with `made`). Made: the chat is the origin of the resource or of one of its versions, so a
+   workflow the agent changed counts with the versions it made; the latest made comes first.
+   Worked from, after them by name: what a person attached to a message, what the chat's
+   versions and other resources name at a version (the files a workflow version reads, the
+   profile version a unit was made from), and what its executions ran and read. A name with no
+   version (the unit a workflow runs on, a credential) is a live link, not something worked
+   from, and what a tool only returned, a search hit, is neither. What the chat worked from is
+   the chat's whoever asks; the caller sees what of it they may read. `origin=` on `GET
+   /resources` keeps the same "made".
 
 ## agent runtime
 

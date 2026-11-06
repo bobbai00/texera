@@ -398,6 +398,30 @@
       ],
       "type": "object"
     },
+    "ChatResource": {
+      "description": "A resource as a chat knows it, with the versions that count.",
+      "properties": {
+        "made": {
+          "description": "True when the chat made the resource or a version of it; false for one it only worked from: what a person attached to a message, what the chat's versions and resources name at a version, what its executions ran and read.",
+          "type": "boolean"
+        },
+        "resource": {
+          "$ref": "#/$defs/Resource"
+        },
+        "versions": {
+          "description": "The versions the chat made and those it worked from, newest first; absent for a kind without versions.",
+          "items": {
+            "$ref": "#/$defs/ChatVersion"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "resource",
+        "made"
+      ],
+      "type": "object"
+    },
     "ChatSettings": {
       "description": "What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default.",
       "properties": {
@@ -435,6 +459,60 @@
         "agent",
         "modelEndpoint",
         "mcpServers"
+      ],
+      "type": "object"
+    },
+    "ChatVersion": {
+      "description": "A version as a chat knows it: one the chat made, or one it worked from.",
+      "properties": {
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "made": {
+          "description": "True when the chat made the version; false for one it worked from.",
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "vno",
+        "contentKind",
+        "digest",
+        "createdBy",
+        "createdAt",
+        "made"
       ],
       "type": "object"
     },

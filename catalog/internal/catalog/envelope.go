@@ -127,6 +127,23 @@ func SummaryOf(r *store.Resource, v *store.Version) api.VersionSummary {
 	}
 }
 
+// ChatResourceOf renders a resource as a chat knows it; the versions only for a kind that has them.
+func ChatResourceOf(c *ChatResource) api.ChatResource {
+	out := api.ChatResource{Resource: Envelope(&c.Resource), Made: c.Made}
+	if k, _ := kinds.ByName(c.Resource.Kind); k.Versioned {
+		versions := make([]api.ChatVersion, 0, len(c.Versions))
+		for i := range c.Versions {
+			s := SummaryOf(&c.Resource, &c.Versions[i].Version)
+			versions = append(versions, api.ChatVersion{
+				Rid: s.Rid, Uri: s.Uri, Vno: s.Vno, ContentKind: s.ContentKind, Digest: s.Digest, Message: s.Message,
+				CreatedBy: s.CreatedBy, Contributors: s.Contributors, Origin: s.Origin, CreatedAt: s.CreatedAt, Made: c.Versions[i].Made,
+			})
+		}
+		out.Versions = &versions
+	}
+	return out
+}
+
 // GrantOf renders a grant.
 func GrantOf(g store.Grant) api.Grant {
 	return api.Grant{Rid: api.Rid(g.RID.String()), Principal: api.Pid(g.PID.String()), Relation: api.Relation(g.Relation), CreatedAt: g.CreatedAt}

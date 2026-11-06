@@ -11,7 +11,7 @@ import warnings
 
 import pytest
 
-from texera_e2e import kube
+from texera_e2e import chat, kube
 from texera_e2e.client import Api, ApiError, token
 
 IRIS = pathlib.Path(__file__).resolve().parents[2] / "bin" / "texera-2-0" / "examples" / "iris.csv"
@@ -98,7 +98,8 @@ def _clear(api: Api, project: str) -> None:
     api.call("PUT", f"/projects/{project}", {"spec": {}})
     made: list = []
     for c in api.get(f"/conversations?project={project}&limit=500")["items"]:
-        made += api.get(f"/conversations/{c['metadata']['rid']}/resources")
+        crid = c["metadata"]["rid"]
+        made += [r for r in chat.made_in(api, crid) if (r["metadata"].get("origin") or {}).get("conversation") == crid]
     for r in made:
         if r["kind"] == "execution":
             _delete_execution(api, r["metadata"]["parent"], r["metadata"]["rid"], r["status"]["phase"])

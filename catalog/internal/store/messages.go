@@ -96,6 +96,19 @@ func (s *Store) ListMessages(ctx context.Context, conversation uuid.UUID, after 
 	return out, rows.Err()
 }
 
+// Attached returns what people attached to their messages in a conversation, by name, first
+// attached first.
+func (s *Store) Attached(ctx context.Context, conversation uuid.UUID) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT p ->> 'resource' FROM message m, jsonb_array_elements(m.parts) p
+		WHERE m.conversation_rid = $1 AND m.role = 'user' AND p ->> 'type' = 'resource' AND p ->> 'resource' IS NOT NULL
+		ORDER BY m.seq`, conversation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
 // StartTurn takes the conversation's turn lock for a person; ErrConflict when a turn is active.
 func (s *Store) StartTurn(ctx context.Context, conversation uuid.UUID, turn string, by *uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, `UPDATE resource SET status = coalesce(status, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object('activeTurn', $2::text, 'activeTurnBy', $4::text)), etag = $3, updated_at = now()

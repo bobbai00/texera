@@ -279,7 +279,7 @@ export const conversationsReplaceMessage = <ThrowOnError extends boolean = false
 });
 
 /**
- * The resources whose origin is this conversation.
+ * What this chat made or changed, and what it worked from: each resource the caller may read once, those it made first, newest first, with the versions that count.
  */
 export const conversationsResources = <ThrowOnError extends boolean = false>(options: Options<ConversationsResourcesData, ThrowOnError>): RequestResult<ConversationsResourcesResponses, ConversationsResourcesErrors, ThrowOnError> => (options.client ?? client).get<ConversationsResourcesResponses, ConversationsResourcesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],

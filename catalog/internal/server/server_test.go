@@ -441,9 +441,9 @@ func TestConversationsCredentialsAndUnits(t *testing.T) {
 	if status, _ := h.do("alice", "POST", p+"/workflows", map[string]any{"name": "forged", "spec": map[string]any{}}, "X-Texera-Origin", origin); status != http.StatusUnauthorized {
 		t.Fatalf("origin without a service token: %d", status)
 	}
-	var produced []envelope
+	var produced []api.ChatResource
 	h.mustJSON("alice", "GET", p+"/conversations/"+rid(conv)+"/resources", nil, &produced)
-	if len(produced) != 1 || produced[0].Metadata.Rid != wf.Metadata.Rid {
+	if len(produced) != 1 || produced[0].Resource.Metadata.Rid != wf.Metadata.Rid || !produced[0].Made {
 		t.Fatalf("conversation resources: %+v", produced)
 	}
 

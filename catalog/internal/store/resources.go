@@ -123,8 +123,11 @@ type ResourceFilter struct {
 	Name string
 	// Query is a full-text or substring search over name and description.
 	Query string
-	// OriginConversation selects what a conversation produced.
+	// OriginConversation selects what a conversation made: the resources it created and those
+	// it made a version of.
 	OriginConversation *uuid.UUID
+	// RIDs keeps these resources.
+	RIDs []uuid.UUID
 	// Labels must all be present with these values.
 	Labels map[string]string
 	// Fields restricts spec or status fields, by JSON pointer, to a value.
@@ -177,7 +180,11 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 		add("(r.search @@ plainto_tsquery('simple', $%d) OR r.name ILIKE '%%' || $%[1]d || '%%')", q)
 	}
 	if f.OriginConversation != nil {
-		add("r.origin ->> 'conversation' = $%d", f.OriginConversation.String())
+		add(`(r.origin ->> 'conversation' = $%d
+			OR EXISTS (SELECT 1 FROM resource_version v WHERE v.rid = r.rid AND v.origin ->> 'conversation' = $%[1]d))`, f.OriginConversation.String())
+	}
+	if f.RIDs != nil {
+		add("r.rid = ANY($%d)", f.RIDs)
 	}
 	if len(f.Labels) > 0 {
 		labels, _ := json.Marshal(f.Labels)
@@ -554,8 +561,42 @@ func (s *Store) ListVersions(ctx context.Context, rid uuid.UUID, limit, offset i
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `SELECT v.rid, v.vno, v.content_kind, v.digest, 'null'::jsonb, v.message, v.created_by_pid, v.contributors, v.origin, v.created_at
-		FROM resource_version v WHERE v.rid = $1 ORDER BY v.vno DESC LIMIT $2 OFFSET $3`, rid, limit, offset)
+	return s.summaries(ctx, `SELECT `+summaryColumns+` FROM resource_version v WHERE v.rid = $1 ORDER BY v.vno DESC LIMIT $2 OFFSET $3`, rid, limit, offset)
+}
+
+// VersionKey names one version of a resource.
+type VersionKey struct {
+	RID uuid.UUID
+	Vno int
+}
+
+// VersionsMadeIn returns the versions a conversation made, of live resources, without their
+// content.
+func (s *Store) VersionsMadeIn(ctx context.Context, conversation uuid.UUID) ([]Version, error) {
+	return s.summaries(ctx, `SELECT `+summaryColumns+` FROM resource_version v JOIN resource r ON r.rid = v.rid
+		WHERE v.origin ->> 'conversation' = $1 AND r.deleted_at IS NULL ORDER BY v.rid, v.vno DESC`, conversation.String())
+}
+
+// VersionSummaries returns these versions of live resources, without their content; one that
+// does not exist is left out.
+func (s *Store) VersionSummaries(ctx context.Context, keys []VersionKey) ([]Version, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	rids, vnos := make([]uuid.UUID, len(keys)), make([]int32, len(keys))
+	for i, k := range keys {
+		rids[i], vnos[i] = k.RID, int32(k.Vno)
+	}
+	return s.summaries(ctx, `SELECT `+summaryColumns+` FROM resource_version v JOIN resource r ON r.rid = v.rid
+		JOIN unnest($1::uuid[], $2::int[]) AS k (rid, vno) ON k.rid = v.rid AND k.vno = v.vno
+		WHERE r.deleted_at IS NULL ORDER BY v.rid, v.vno DESC`, rids, vnos)
+}
+
+// summaryColumns are a version's columns without its content, in the order scanVersion reads them.
+const summaryColumns = `v.rid, v.vno, v.content_kind, v.digest, 'null'::jsonb, v.message, v.created_by_pid, v.contributors, v.origin, v.created_at`
+
+func (s *Store) summaries(ctx context.Context, sql string, args ...any) ([]Version, error) {
+	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}

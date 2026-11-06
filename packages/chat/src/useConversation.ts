@@ -8,7 +8,7 @@ import { type AppContext, type ResourceRef, unwrap, useWatch } from "@texera/kin
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { newRunId, runAgent } from "./agui/client";
 import type { AgUiEvent, RunAgentInput } from "./agui/types";
-import { applyEvent, type ChatMessage, type ChatState, EMPTY_STATE, fromHistory, messageContent, messageParts, resourcesOf, settled } from "./model";
+import { applyEvent, type ChatMessage, type ChatState, EMPTY_STATE, fromHistory, messageContent, messageParts, settled } from "./model";
 
 export interface Attachment {
   ref: ResourceRef;
@@ -97,15 +97,9 @@ export function useConversation({ rid, template, getToken, context, onRunEnd }: 
   }, [baseline, inFlight, maxSeq, history.data]);
 
   const messages = useMemo(() => [...persisted, ...live.messages], [persisted, live.messages]);
-  const resources = useMemo(() => {
-    const seen = new Set<string>();
-    return [...resourcesOf(persisted), ...live.resources].filter(r => {
-      const k = `${r.kind}:${r.rid}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-  }, [persisted, live.resources]);
+  // What the chat made and worked from is the catalog's to say: asked again whenever a tool
+  // answers, so what a turn makes shows up as it is made.
+  const remade = useCallback(() => queryClient.invalidateQueries({ queryKey: [{ _id: "conversationsResources", path: { rid } }] }), [queryClient, rid]);
 
   const send = useCallback(
     async (text: string, attachments: Attachment[] = []) => {
@@ -121,20 +115,29 @@ export function useConversation({ rid, template, getToken, context, onRunEnd }: 
       abort.current = controller;
       const input: RunAgentInput = { threadId: rid, runId: newRunId(), messages: [{ id: messageId, role: "user", content: messageContent(text, attachments) }], tools: [], context: viewing.current ?? [], forwardedProps: {} };
       try {
-        await runAgent({ url: agUiUrl(rid), input, token: getToken(), signal: controller.signal, onEvent: event => dispatch({ type: "event", event }) });
+        await runAgent({
+          url: agUiUrl(rid),
+          input,
+          token: getToken(),
+          signal: controller.signal,
+          onEvent: event => {
+            dispatch({ type: "event", event });
+            if (event.type === "TOOL_CALL_RESULT") void remade();
+          },
+        });
       } catch (e) {
         if (!controller.signal.aborted) dispatch({ type: "fail", message: e instanceof Error ? e.message : String(e) });
       } finally {
         abort.current = null;
         await queryClient.invalidateQueries({ queryKey: [{ _id: "conversationsListMessages", path: { rid } }] });
-        queryClient.invalidateQueries({ queryKey: [{ _id: "conversationsResources", path: { rid } }] });
+        void remade();
         queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
         queryClient.invalidateQueries({ queryKey: ["resource", rid] });
         setInFlight(false);
         onRunEnd?.();
       }
     },
-    [rid, template, maxSeq, getToken, queryClient, onRunEnd]
+    [rid, template, maxSeq, getToken, queryClient, onRunEnd, remade]
   );
 
   /**
@@ -144,8 +147,9 @@ export function useConversation({ rid, template, getToken, context, onRunEnd }: 
   const note = useCallback(
     async (text: string, attachments: Attachment[] = []) => {
       take(await unwrap(conversationsAppendMessage({ path: { rid }, body: { role: "user", parts: messageParts(text, attachments) } })));
+      if (attachments.length) void remade();
     },
-    [rid, take]
+    [rid, take, remade]
   );
 
   const stop = useCallback(() => {
@@ -155,7 +159,6 @@ export function useConversation({ rid, template, getToken, context, onRunEnd }: 
 
   return {
     messages,
-    resources,
     running,
     steps: live.steps,
     state: live.state,
