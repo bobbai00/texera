@@ -106,6 +106,12 @@ func validateGraph(spec *api.WorkflowSpec) error {
 		if op.OperatorType == "" {
 			return Invalid("operator "+op.OperatorID+" has no operatorType", nil)
 		}
+		// The engine names what a port keeps after its operator and refuses '_' in that name, so
+		// an execution would start and never end.
+		if strings.Contains(op.OperatorID, "_") {
+			return Invalid(fmt.Sprintf("operator %s: an operatorID may not contain '_', which the engine cannot keep results under; use '-', as in %s",
+				op.OperatorID, strings.ReplaceAll(op.OperatorID, "_", "-")), map[string]any{"operator": op.OperatorID})
+		}
 		if seen[op.OperatorID] != nil {
 			return Invalid("duplicate operatorID "+op.OperatorID, nil)
 		}

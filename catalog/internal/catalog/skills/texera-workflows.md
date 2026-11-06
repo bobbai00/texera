@@ -23,7 +23,7 @@ description: Build, validate, run and edit Texera workflows - the spec JSON, dat
 
 # Texera workflows
 
-A workflow's spec is a dataflow graph: `operators` and `links`. Each operator has an `operatorID` you choose (short, unique, lowercase), an exact `operatorType` from the registry, and `operatorProperties` named exactly as the operator's JSON Schema names them. Ports are `input-0`, `input-1`, ... and `output-0`; a link joins `{operatorID, portID}` to `{operatorID, portID}`. Set `"viewResult": true` on every operator whose output you will read.
+A workflow's spec is a dataflow graph: `operators` and `links`. Each operator has an `operatorID` you choose (short, unique, lowercase letters, digits and `-`; never `_`, which the engine cannot keep results under: `join-geo`, not `join_geo`), an exact `operatorType` from the registry, and `operatorProperties` named exactly as the operator's JSON Schema names them. Ports are `input-0`, `input-1`, ... and `output-0`; a link joins `{operatorID, portID}` to `{operatorID, portID}`. Set `"viewResult": true` on every operator whose output you will read.
 
 ```json
 {"operators": [
