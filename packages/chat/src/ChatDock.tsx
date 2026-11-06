@@ -3,9 +3,19 @@
 // and reads it with its own tools. Nothing binds the chat to the resource; the app remembers
 // the chat last used beside each page, so opening the dock there again continues it.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { meUpdatePreferences } from "@texera/catalog-client";
-import { canQuery, KINDS, KindIcon, meQuery, ProjectScope, type ResourceRef, resourceQuery, unwrap, useOpenResource, useViewingDetail, viewingContext } from "@texera/kinds";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  canQuery,
+  KINDS,
+  KindIcon,
+  meQuery,
+  type ResourceRef,
+  resourceQuery,
+  useChangePreferences,
+  useOpenResource,
+  useViewingDetail,
+  viewingContext,
+} from "@texera/kinds";
 import { Button, Tooltip } from "@texera/ui";
 import { Maximize2, MessageCircle, SquarePen, X } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -31,7 +41,7 @@ export function ChatDock({ page, getToken }: { page: ResourceRef; getToken: () =
 }
 
 function Dock({ page, getToken, onClose }: { page: ResourceRef; getToken: () => string | undefined; onClose: () => void }) {
-  const queryClient = useQueryClient();
+  const change = useChangePreferences();
   const { expand } = useOpenResource();
   const { data: me } = useQuery(meQuery());
   const { data: resource } = useQuery(resourceQuery(page.rid));
@@ -39,8 +49,9 @@ function Dock({ page, getToken, onClose }: { page: ResourceRef; getToken: () => 
   const detail = useViewingDetail();
   const context = useMemo(() => viewingContext(page, name, detail), [page, name, detail]);
 
-  // The chat goes where the page's resource is, when the person may add to that project;
-  // otherwise where they work.
+  // A chat goes into the project the person works in, like anything they make. With every
+  // project in view they are asked, starting from the project of the page's resource when
+  // they may add to it.
   const project = resource?.metadata.project;
   const { data: mayAdd } = useQuery({ ...canQuery("write", project ?? ""), enabled: project !== undefined });
 
@@ -49,13 +60,7 @@ function Dock({ page, getToken, onClose }: { page: ResourceRef; getToken: () => 
   const { data: chat, isError: gone } = useQuery({ ...resourceQuery(remembered ?? ""), enabled: remembered !== undefined, retry: false });
   const conversation = remembered && !gone ? remembered : undefined;
   const remember = useMutation({
-    mutationFn: async (next: string | undefined) => {
-      if (!me) return;
-      const preferences = withDockChat(me.preferences, page.rid, next);
-      queryClient.setQueryData(meQuery().queryKey, { ...me, preferences });
-      await unwrap(meUpdatePreferences({ body: preferences }));
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: meQuery().queryKey }),
+    mutationFn: (next: string | undefined) => change(preferences => withDockChat(preferences, page.rid, next)),
   });
 
   const label = KINDS[page.kind].label.toLowerCase();
@@ -95,9 +100,13 @@ function Dock({ page, getToken, onClose }: { page: ResourceRef; getToken: () => 
           <ChatView key={conversation} rid={conversation} getToken={getToken} context={context} dock />
         ) : (
           mayAdd !== undefined && (
-            <ProjectScope project={mayAdd ? project : undefined}>
-              <NewChat dock about={name} greeting={`Ask about this ${label}. The agent reads it as it is now.`} onCreated={rid => remember.mutate(rid)} />
-            </ProjectScope>
+            <NewChat
+              dock
+              about={name}
+              suggested={mayAdd ? project : undefined}
+              greeting={`Ask about this ${label}. The agent reads it as it is now.`}
+              onCreated={rid => remember.mutate(rid)}
+            />
           )
         )}
       </div>

@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import { useState } from "react";
 import { searchQuery } from "../queries";
 import { KINDS } from "../registry";
-import { useScope } from "../scope";
+import { useScope, useWorkingProject } from "../scope";
 import { KindIcon } from "../shell/KindIcon";
 import { NewResourceDialog } from "../shell/NewResourceDialog";
 import type { KindId } from "../types";
@@ -17,8 +17,10 @@ import { ResourceTable } from "./ResourceTable";
 export function Library({ kind }: { kind: KindId }) {
   const spec = KINDS[kind];
   const scope = useScope();
+  // The list waits for the working project: until it is known there is nothing to scope to.
+  const known = useWorkingProject().current !== undefined;
   const [creating, setCreating] = useState(false);
-  const { data, isPending } = useQuery(searchQuery({ kind, scope }));
+  const { data, isPending } = useQuery({ ...searchQuery({ kind, scope }), enabled: known });
   return (
     <div className="scrollbar-thin h-full overflow-y-auto" data-library={kind}>
       <div className="mx-auto max-w-5xl px-6 py-10">
@@ -36,7 +38,7 @@ export function Library({ kind }: { kind: KindId }) {
         </header>
         <ResourceTable resources={data?.items} loading={isPending} />
       </div>
-      {spec.defaultSpec && <NewResourceDialog kind={kind} open={creating} onOpenChange={setCreating} parent={scope} />}
+      {spec.defaultSpec && <NewResourceDialog kind={kind} open={creating} onOpenChange={setCreating} />}
     </div>
   );
 }

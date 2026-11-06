@@ -1,19 +1,61 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { resourcesUpdateMetadata, workflowsCancelExecution, workflowsDeleteExecution, workflowsPauseExecution, workflowsResumeExecution } from "@texera/catalog-client";
-import type { Execution, ExecutionStatus, PortSummary } from "@texera/catalog-client/types";
-import { Badge, Button, DataTable, EmptyState, ErrorNote, Skeleton, Tab, TabPanel, Tabs, TabsList, cn, formatDuration, formatNumber, timeAgo } from "@texera/ui";
-import { AlertTriangle, Bookmark, BookmarkCheck, Braces, ChevronLeft, ChevronRight, Database, GitBranch, Loader2, Pause, Play, Square, Table2, Trash2, Workflow } from "lucide-react";
-import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  resourcesUpdateMetadata,
+  workflowsCancelExecution,
+  workflowsDeleteExecution,
+  workflowsPauseExecution,
+  workflowsResumeExecution,
+} from "@texera/catalog-client";
+import type { Execution, ExecutionStatus } from "@texera/catalog-client/types";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  ErrorNote,
+  formatDuration,
+  SectionTitle,
+  Skeleton,
+  Tab,
+  TabPanel,
+  Tabs,
+  TabsList,
+  timeAgo,
+} from "@texera/ui";
+import { operatorLabel } from "@texera/workflow-model";
+import { ReactFlowProvider } from "@xyflow/react";
+import {
+  Bookmark,
+  BookmarkCheck,
+  Braces,
+  GitBranch,
+  Loader2,
+  Pause,
+  Play,
+  Square,
+  Trash2,
+  Workflow,
+} from "lucide-react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import { unwrap } from "../api";
+import { operatorSchemasQuery } from "../queries";
+import { ResultConnector } from "../results/Connector";
+import { ResultsPanel } from "../results/ResultsPanel";
+import { ProjectScope, useScope } from "../scope";
 import { UriChip } from "../shell/Chips";
 import { JsonBlock } from "../shell/JsonBlock";
 import { KindHeader } from "../shell/KindHeader";
 import { Lineage } from "../shell/Lineage";
 import { useOpenResource } from "../shell/navigation";
-import type { KindViewProps } from "../types";
-import { useWatch } from "../watch";
-import { executionQuery, isLive, PAGE_SIZE, rowsQuery } from "./queries";
 import { OpenError } from "../shell/OpenError";
+import type { KindViewProps } from "../types";
+import { parseUri } from "../uri";
+import { useWatch } from "../watch";
+import { createCanvasView } from "../workflow/canvas-view";
+import { versionSpecQuery } from "../workflow/queries";
+import { WorkflowCanvas } from "../workflow/WorkflowCanvas";
+import { executionOverlay } from "./overlay";
+import { executionQuery, isLive } from "./queries";
 
 const TONE: Record<ExecutionStatus["phase"], "neutral" | "success" | "danger" | "warning"> = {
   pending: "neutral",
@@ -25,7 +67,10 @@ const TONE: Record<ExecutionStatus["phase"], "neutral" | "success" | "danger" | 
   cancelled: "danger",
 };
 
-/** An execution: when and how it ended, each operator's state, its port results, and what it read. */
+/**
+ * An execution: the workflow as it ran, each operator's card saying how it did, and under it
+ * the results, each tied to the operator and the port it came out of.
+ */
 export default function ExecutionView({ ref, mode }: KindViewProps) {
   const queryClient = useQueryClient();
   const { data: x, error } = useQuery(executionQuery(ref.rid));
@@ -71,9 +116,6 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
   const status = x.status ?? { phase: "pending" as const };
   const kept = x.metadata.labels?.["texera.keep"] === "true";
   const live = isLive(x as never);
-  const operators = Object.entries(status.operators ?? {});
-  const errors = operators.filter(([, o]) => o.error);
-  const ports = status.ports ?? [];
   const inputs = x.spec.inputs ?? [];
   return (
     <div className="flex h-full min-h-0 flex-col" data-execution-view={ref.rid}>
@@ -89,7 +131,6 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
             <UriChip uri={x.spec.workflow} />
             <UriChip uri={x.spec.computingUnit} />
             <UriChip uri={x.spec.warehouse} />
-            {x.spec.environment && <UriChip uri={x.spec.environment} />}
           </span>
         }
         actions={
@@ -99,166 +140,175 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
               {status.phase}
             </Badge>
             {status.phase === "running" && (
-              <Button variant="secondary" size="sm" onClick={() => pause.mutate()} disabled={pause.isPending} data-pause-execution title="Pause the execution; it keeps its state">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => pause.mutate()}
+                disabled={pause.isPending}
+                data-pause-execution
+                title="Pause the execution; it keeps its state">
                 <Pause className="fill-current" /> Pause
               </Button>
             )}
             {status.phase === "paused" && (
-              <Button variant="secondary" size="sm" onClick={() => resume.mutate()} disabled={resume.isPending} data-resume-execution title="Continue the execution">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => resume.mutate()}
+                disabled={resume.isPending}
+                data-resume-execution
+                title="Continue the execution">
                 <Play className="fill-current" /> Resume
               </Button>
             )}
             {live && (
-              <Button variant="secondary" size="sm" onClick={() => cancel.mutate()} disabled={cancel.isPending} data-stop-execution>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => cancel.mutate()}
+                disabled={cancel.isPending}
+                data-stop-execution>
                 <Square className="fill-current" /> Stop
               </Button>
             )}
             {!live && (
-              <Button variant="ghost" size="sm" onClick={() => keep.mutate(!kept)} disabled={keep.isPending} data-keep-execution={kept ? "kept" : "free"} title={kept ? "Let the retention policy expire these results" : "Keep these results past the retention policy"}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => keep.mutate(!kept)}
+                disabled={keep.isPending}
+                data-keep-execution={kept ? "kept" : "free"}
+                title={
+                  kept
+                    ? "Let the retention policy expire these results"
+                    : "Keep these results past the retention policy"
+                }>
                 {kept ? <BookmarkCheck /> : <Bookmark />} {kept ? "Kept" : "Keep"}
               </Button>
             )}
             {!live && (
-              <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending} data-delete-execution title="Delete this execution and its result tables">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => remove.mutate()}
+                disabled={remove.isPending}
+                data-delete-execution
+                title="Delete this execution and its result tables">
                 <Trash2 /> Delete
               </Button>
             )}
           </>
         }
       />
-      {status.error !== undefined && status.error !== null && <ErrorNote error={status.error} prefix="The execution failed" className="m-3" />}
+      {status.error !== undefined && status.error !== null && (
+        <ErrorNote error={status.error} prefix="The execution failed" className="m-3" />
+      )}
       {cancel.error && <ErrorNote error={cancel.error} prefix="Could not stop the execution" className="m-3" />}
       {pause.error && <ErrorNote error={pause.error} prefix="Could not pause the execution" className="m-3" />}
       {resume.error && <ErrorNote error={resume.error} prefix="Could not resume the execution" className="m-3" />}
       {remove.error && <ErrorNote error={remove.error} prefix="Could not delete the execution" className="m-3" />}
-      {keep.error && <ErrorNote error={keep.error} prefix="Could not change the execution's keep mark" className="m-3" />}
+      {keep.error && (
+        <ErrorNote error={keep.error} prefix="Could not change the execution's keep mark" className="m-3" />
+      )}
       {status.resultsExpiredAt && (
-        <p className="mx-3 mt-3 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground" data-results-expired>
-          The result tables expired {timeAgo(status.resultsExpiredAt)} under the retention policy; the summaries below stay.
+        <p
+          className="mx-3 mt-3 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground"
+          data-results-expired>
+          The result tables expired {timeAgo(status.resultsExpiredAt)} under the retention policy; what each operator
+          did stays.
         </p>
       )}
       <Tabs value={tab} onValueChange={v => setTab(String(v))} className="flex min-h-0 flex-1 flex-col">
         <TabsList>
           <Tab value="results">
-            <Table2 /> Results ({ports.length})
+            <Workflow /> Results
           </Tab>
-          <Tab value="operators">
-            <Workflow /> Operators
-          </Tab>
-          <Tab value="inputs">
-            <Database /> Inputs ({inputs.length})
-          </Tab>
-          {errors.length > 0 && (
-            <Tab value="errors" className="text-destructive">
-              <AlertTriangle /> Errors ({errors.length})
-            </Tab>
-          )}
           <Tab value="lineage">
             <GitBranch /> Lineage
           </Tab>
-          <Tab value="raw">
-            <Braces /> JSON
+          <Tab value="details">
+            <Braces /> Details
           </Tab>
         </TabsList>
-        <TabPanel value="results" className="flex min-h-0 flex-1 flex-col">
-          <Results execution={x} workflow={workflow} ports={ports} expired={Boolean(status.resultsExpiredAt)} />
-        </TabPanel>
-        <TabPanel value="operators" className="scrollbar-thin overflow-y-auto">
-          {operators.length === 0 ? (
-            <EmptyState>No operator states reported yet.</EmptyState>
-          ) : (
-            <DataTable
-              columns={[{ name: "operator" }, { name: "state" }, { name: "tuples", type: "long" }, { name: "node" }]}
-              rows={operators.map(([opid, o]) => [opid, o.state, o.tuples !== undefined ? formatNumber(o.tuples) : "", o.computingNode ?? ""])}
-              className="min-h-0"
-            />
-          )}
-        </TabPanel>
-        <TabPanel value="inputs" className="scrollbar-thin space-y-2 overflow-y-auto p-3">
-          {inputs.length === 0 ? <EmptyState>This execution read no dataset files.</EmptyState> : inputs.map(uri => <UriChip key={uri} uri={uri} emphasis />)}
-        </TabPanel>
-        <TabPanel value="errors" className="scrollbar-thin space-y-2 overflow-y-auto p-3">
-          {errors.map(([opid, o]) => (
-            <ErrorNote key={opid} error={o.error} prefix={opid} />
-          ))}
+        <TabPanel value="results" className="flex min-h-0 flex-1 flex-col" keepMounted>
+          {/* What the canvas lists (operator names, their settings' titles) is what the workflow's project can use. */}
+          <ProjectScope project={x.metadata.project}>
+            <Ran execution={x} workflow={workflow} />
+          </ProjectScope>
         </TabPanel>
         <TabPanel value="lineage" className="scrollbar-thin overflow-y-auto">
           <Lineage ref={{ kind: "execution", rid: ref.rid, parent: workflow }} />
         </TabPanel>
-        <TabPanel value="raw" className="scrollbar-thin overflow-y-auto p-3">
-          <JsonBlock value={x} />
+        <TabPanel value="details" className="scrollbar-thin space-y-4 overflow-y-auto p-4">
+          <section className="space-y-2">
+            <SectionTitle>Read</SectionTitle>
+            {inputs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">This execution read no dataset files.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {inputs.map(uri => (
+                  <UriChip key={uri} uri={uri} emphasis />
+                ))}
+              </div>
+            )}
+          </section>
+          {x.spec.environment && (
+            <section className="space-y-2">
+              <SectionTitle>Environment</SectionTitle>
+              <UriChip uri={x.spec.environment} emphasis />
+            </section>
+          )}
+          <section className="space-y-2">
+            <SectionTitle>As the catalog has it</SectionTitle>
+            <JsonBlock value={x} />
+          </section>
         </TabPanel>
       </Tabs>
     </div>
   );
 }
 
-function Results({ execution, workflow, ports, expired }: { execution: Execution; workflow: string; ports: PortSummary[]; expired: boolean }) {
-  const [picked, setPicked] = useState<string>();
-  const key = (p: PortSummary) => `${p.operatorID}:${p.portID}`;
-  const active = ports.find(p => key(p) === picked) ?? ports[0];
-  if (!active) return <EmptyState>No port results yet.</EmptyState>;
-  if (expired) {
-    return (
-      <DataTable
-        columns={[{ name: "operator" }, { name: "port" }, { name: "rows", type: "long" }]}
-        rows={ports.map(p => [p.operatorID, p.portID, p.rows !== undefined ? formatNumber(p.rows) : ""])}
-        className="min-h-0"
-      />
-    );
-  }
-  return (
-    <>
-      <div className="scrollbar-thin flex gap-1 overflow-x-auto border-b px-2 py-1.5" role="tablist">
-        {ports.map(p => (
-          <button
-            key={key(p)}
-            type="button"
-            role="tab"
-            aria-selected={key(p) === key(active)}
-            onClick={() => setPicked(key(p))}
-            data-port={key(p)}
-            className={cn(
-              "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium",
-              key(p) === key(active) ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
-            )}>
-            <Table2 className="size-3.5" />
-            {p.operatorID}
-            <span className="opacity-60">{p.portID}</span>
-            {p.rows !== undefined && <span className="opacity-60">· {formatNumber(p.rows)}</span>}
-          </button>
-        ))}
-      </div>
-      <PortRows key={key(active)} eid={execution.metadata.rid} workflow={workflow} port={active} />
-    </>
+/**
+ * The workflow version the execution ran, laid out from its graph, with the results under it.
+ * The canvas and the results are one stage: the line from a result to its port is drawn over
+ * both.
+ */
+function Ran({ execution, workflow }: { execution: Execution; workflow: string }) {
+  const stage = useRef<HTMLDivElement>(null);
+  const view = useMemo(() => createCanvasView(), []);
+  const vno = parseUri(execution.spec.workflow)?.ref.vno;
+  const { data: spec, error } = useQuery({ ...versionSpecQuery(workflow, vno ?? 0), enabled: vno !== undefined });
+  const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
+  const overlay = useMemo(() => executionOverlay(execution.status), [execution.status]);
+  const nameOf = useCallback(
+    (operatorID: string) => {
+      const op = spec?.operators.find(o => o.operatorID === operatorID);
+      if (!op) return operatorID;
+      return op.customDisplayName || (schemas?.get(op.operatorType)?.userFriendlyName ?? operatorLabel(op));
+    },
+    [spec, schemas]
   );
-}
-
-function PortRows({ eid, workflow, port }: { eid: string; workflow: string; port: PortSummary }) {
-  const [page, setPage] = useState(1);
-  const { data, error, isPending } = useQuery({ ...rowsQuery(workflow, eid, port.operatorID, port.portID, page), placeholderData: keepPreviousData });
-  if (error) return <ErrorNote error={error} prefix="Could not load the result" className="m-3" />;
-  if (isPending) return <Skeleton className="m-3 h-32" />;
-  const total = data.total ?? port.rows ?? data.rows.length;
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const results = (
+    <ResultsPanel execution={execution} workflow={workflow} view={view} nameOf={nameOf} className="h-full" />
+  );
+  // Without the version (it cannot be read, or is gone) the results stand alone.
+  if (error || vno === undefined) return results;
+  if (!spec) return <Skeleton className="m-4 h-64" />;
+  if (spec.operators.length === 0) return <EmptyState>The workflow had no operators.</EmptyState>;
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-port-rows>
-      <DataTable columns={data.schema.map(a => ({ name: a.attributeName, type: a.attributeType }))} rows={data.rows} className="min-h-0 flex-1" />
-      <div className="flex shrink-0 items-center gap-2 border-t px-3 py-1 text-xs text-muted-foreground">
-        <span className="flex-1">
-          {formatNumber(total)} row{total === 1 ? "" : "s"}
-          {port.table && <span className="ml-2 font-mono text-2xs">{port.table}</span>}
-        </span>
-        <Button variant="ghost" size="icon-xs" disabled={page <= 1} onClick={() => setPage(page - 1)} aria-label="Previous page">
-          <ChevronLeft />
-        </Button>
-        <span className="tabular-nums">
-          {page} / {pages}
-        </span>
-        <Button variant="ghost" size="icon-xs" disabled={page >= pages} onClick={() => setPage(page + 1)} aria-label="Next page">
-          <ChevronRight />
-        </Button>
+    <ReactFlowProvider>
+      <div ref={stage} className="relative flex min-h-0 flex-1 flex-col" data-execution-stage>
+        <Group orientation="vertical" className="min-h-0 flex-1">
+          <Panel id="canvas" minSize="20%">
+            <WorkflowCanvas provided spec={spec} overlay={overlay} view={view} className="h-full bg-canvas" />
+          </Panel>
+          <Separator className="h-px bg-border transition-colors hover:bg-primary data-[separator=active]:bg-primary" />
+          <Panel id="results" defaultSize="45%" minSize="15%">
+            {results}
+          </Panel>
+        </Group>
+        <ResultConnector container={stage} view={view} />
       </div>
-    </div>
+    </ReactFlowProvider>
   );
 }

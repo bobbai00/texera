@@ -17,8 +17,10 @@ export function Select<T extends string>({
   placeholder = "Choose…",
   disabled,
   className,
+  id,
   "aria-label": ariaLabel,
 }: {
+  id?: string;
   value: T | null;
   onChange: (value: T) => void;
   options: SelectOption<T>[];
@@ -35,6 +37,7 @@ export function Select<T extends string>({
       // The trigger shows the chosen option's label, not its raw value.
       items={options.map(o => ({ value: o.value, label: o.label }))}>
       <BaseSelect.Trigger
+        id={id}
         aria-label={ariaLabel}
         className={cn(
           "control focus-ring inline-flex h-8 items-center justify-between gap-2 px-2.5 text-xs data-[popup-open]:border-ring",

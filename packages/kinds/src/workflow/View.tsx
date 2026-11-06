@@ -1,15 +1,50 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { workflowsRun } from "@texera/catalog-client";
-import type { ExecutionStatus } from "@texera/catalog-client/types";
-import { ReactFlowProvider, useReactFlow, useStoreApi } from "@xyflow/react";
-import { Badge, Button, EmptyState, ErrorNote, Select, Skeleton, Tab, TabPanel, Tabs, TabsList, timeAgo } from "@texera/ui";
-import { addOperator, type Compilation, freeSpot, newOperator, normalizeSpec, type OperatorOverlay, statusOf, type WorkflowSpec } from "@texera/workflow-model";
-import { AlertTriangle, Blocks, Check, Cpu, GitBranch, History, Loader2, Play, Users, Workflow } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Execution, ExecutionStatus } from "@texera/catalog-client/types";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  ErrorNote,
+  Select,
+  Skeleton,
+  Tab,
+  TabPanel,
+  Tabs,
+  TabsList,
+  timeAgo,
+} from "@texera/ui";
+import {
+  type Compilation,
+  normalizeSpec,
+  type OperatorOverlay,
+  operatorLabel,
+  type WorkflowSpec,
+} from "@texera/workflow-model";
+import { ReactFlowProvider } from "@xyflow/react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Cpu,
+  GitBranch,
+  History,
+  Loader2,
+  Play,
+  Users,
+  Workflow,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import { useStore } from "zustand";
 import { unwrap } from "../api";
+import { executionOverlay } from "../execution/overlay";
 import { useRoom } from "../live/room";
 import { keysOf, operatorSchemasQuery, unitsQuery } from "../queries";
+import { ResultConnector } from "../results/Connector";
+import { ResultsPanel } from "../results/ResultsPanel";
 import { ProjectScope, useScope } from "../scope";
 import { Access } from "../shell/Access";
 import { EditableName, KindHeader } from "../shell/KindHeader";
@@ -22,11 +57,10 @@ import { useTellViewing } from "../shell/viewing";
 import type { KindViewProps } from "../types";
 import { uriOf } from "../uri";
 import { useWatch } from "../watch";
+import { createCanvasView } from "./canvas-view";
 import { fixedDocument, liveDocument, type WorkflowDocument } from "./document";
 import { createEditorStore, type EditorStore } from "./editor";
 import { EditorCanvas } from "./EditorCanvas";
-import { OperatorPalette } from "./OperatorPalette";
-import { PropertyPanel } from "./PropertyPanel";
 import { compilationQuery, executionsQuery, versionSpecQuery, workflowQuery } from "./queries";
 
 const UNIT_KEY = "texera-unit";
@@ -141,15 +175,13 @@ function Editor({
   );
 }
 
+/** What the cards say: how each operator did in the execution on screen, and what the compiler says is wrong with it now. */
 function overlayFor(spec: WorkflowSpec, compilation: Compilation | undefined, execution: ExecutionStatus | undefined) {
+  const ran = executionOverlay(execution);
   const overlay: Record<string, OperatorOverlay> = {};
   for (const op of spec.operators) {
-    const progress = execution?.operators?.[op.operatorID];
     const error = compilation?.errors[op.operatorID];
-    overlay[op.operatorID] = {
-      ...(progress ? { status: statusOf(progress.state), rows: progress.tuples } : {}),
-      ...(error ? { error } : {}),
-    };
+    overlay[op.operatorID] = { ...ran[op.operatorID], ...(error ? { error } : {}) };
   }
   return overlay;
 }
@@ -196,19 +228,32 @@ function EditorLayout({
   useTellViewing(mode === "page" && selected ? `the operator ${selected} is selected` : undefined, mode === "page" ? settle : undefined);
   const { data: schemas } = useQuery(operatorSchemasQuery(scope));
   const { data: units } = useQuery(unitsQuery(scope));
+  // How the canvas is looked at: how much the cards say, the card open, the result on screen.
+  const view = useMemo(() => createCanvasView(), []);
   const [unitPick, setUnitPick] = useState<string | undefined>(() => defaultUnit ?? rememberedUnit());
   const unit = units?.find(u => u.metadata.uri === unitPick) ?? units?.find(u => u.status?.phase === "ready") ?? units?.[0];
   const { data: compilation } = useQuery(compilationQuery(rid, spec, unit?.metadata.uri));
   const executions = useQuery({
     ...executionsQuery(rid),
-    refetchInterval: q => (q.state.data?.items.some(x => LIVE.has(x.status?.phase ?? "pending")) ? 2000 : false),
+    // While an execution goes, the cards follow it second by second.
+    refetchInterval: q => (q.state.data?.items.some(x => LIVE.has(x.status?.phase ?? "pending")) ? 1000 : false),
   });
-  const latest = executions.data?.items[0];
-  const [paletteOpen, setPaletteOpen] = useState(mode === "page" && !readonly);
+  const latest = executions.data?.items[0] as Execution | undefined;
   const [tab, setTab] = useState("canvas");
+  const [resultsOpen, setResultsOpen] = useState(true);
   const overlay = useMemo(() => overlayFor(spec, compilation, latest?.status), [spec, compilation, latest?.status]);
   const { beside } = useOpenResource();
   const live = latest !== undefined && LIVE.has(latest.status?.phase ?? "pending");
+  // The canvas and the results under it, which the line from a result to its port is drawn over.
+  const stage = useRef<HTMLDivElement>(null);
+  const nameOf = useCallback(
+    (operatorID: string) => {
+      const op = spec.operators.find(o => o.operatorID === operatorID);
+      if (!op) return operatorID;
+      return op.customDisplayName || (schemas?.get(op.operatorType)?.userFriendlyName ?? operatorLabel(op));
+    },
+    [spec, schemas]
+  );
 
   const run = useMutation({
     mutationFn: async () => {
@@ -217,30 +262,15 @@ function EditorLayout({
       const vno = (await store.getState().flush()) ?? store.getState().headVno;
       return unwrap(workflowsRun({ path: { rid }, body: { vno, computingUnit: unit.metadata.uri, name: `${store.getState().name} v${vno}` } }));
     },
-    onSuccess: execution => {
+    onSuccess: () => {
+      // The execution shows where it runs: on the cards of this canvas, its results under it.
       queryClient.invalidateQueries({ queryKey: [{ _id: "workflowsListExecutions", path: { rid } }] });
       queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
-      beside({ kind: "execution", rid: execution.metadata.rid, parent: rid });
+      view.getState().show(null);
+      setResultsOpen(true);
+      setTab("canvas");
     },
   });
-
-  const { setCenter, getViewport } = useReactFlow();
-  const flowStore = useStoreApi();
-  const addFromPalette = (type: string) => {
-    const schema = schemas?.get(type);
-    if (!schema) return;
-    const op = newOperator(schema);
-    const { positions, selected: after } = store.getState();
-    const anchor = after ? positions[after] : undefined;
-    const { width, height } = flowStore.getState();
-    const view = getViewport();
-    const middle = { x: (width / 2 - view.x) / view.zoom - 28, y: (height / 2 - view.y) / view.zoom - 28 };
-    const spot = freeSpot(positions, anchor ? { x: anchor.x + 180, y: anchor.y } : middle);
-    store.getState().move({ [op.operatorID]: spot });
-    store.getState().edit(s => addOperator(s, op));
-    store.getState().select(op.operatorID);
-    setTimeout(() => void setCenter(spot.x + 28, spot.y + 28, { zoom: getViewport().zoom, duration: 200 }), 60);
-  };
 
   const pickUnit = (u: string) => {
     setUnitPick(u);
@@ -323,25 +353,59 @@ function EditorLayout({
           <Tab value="lineage">
             <GitBranch /> Lineage
           </Tab>
-          {!readonly && tab === "canvas" && (
-            <Button variant={paletteOpen ? "secondary" : "ghost"} size="icon-xs" className="ml-auto" onClick={() => setPaletteOpen(o => !o)} aria-label="Toggle operator palette">
-              <Blocks />
-            </Button>
-          )}
         </TabsList>
         <TabPanel value="canvas" className="flex min-h-0 flex-1" keepMounted>
-          {paletteOpen && (
-            <aside className="w-56 shrink-0 border-r bg-sidebar">
-              <OperatorPalette onAdd={addFromPalette} />
-            </aside>
-          )}
-          <div className="flex min-h-0 min-w-0 flex-1">
-            <EditorCanvas store={store} overlay={overlay} className="relative min-w-0 flex-1 bg-canvas" />
-            {selected && (
-              <aside className="w-80 shrink-0 border-l bg-background">
-                <PropertyPanel store={store} compilation={compilation} />
-              </aside>
+          <div ref={stage} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            {latest && resultsOpen ? (
+              <Group orientation="vertical" className="min-h-0 flex-1">
+                <Panel id="canvas" minSize="25%">
+                  <EditorCanvas
+                    store={store}
+                    view={view}
+                    overlay={overlay}
+                    compilation={compilation}
+                    className="flex h-full min-w-0"
+                  />
+                </Panel>
+                <Separator className="h-px bg-border transition-colors hover:bg-primary data-[separator=active]:bg-primary" />
+                <Panel id="results" defaultSize="38%" minSize="15%">
+                  <ResultsPanel
+                    execution={latest}
+                    workflow={rid}
+                    view={view}
+                    nameOf={nameOf}
+                    className="h-full"
+                    trailing={
+                      <LatestExecution
+                        execution={latest}
+                        onOpen={() => beside({ kind: "execution", rid: latest.metadata.rid, parent: rid })}
+                        onHide={() => setResultsOpen(false)}
+                      />
+                    }
+                  />
+                </Panel>
+              </Group>
+            ) : (
+              <>
+                <EditorCanvas
+                  store={store}
+                  view={view}
+                  overlay={overlay}
+                  compilation={compilation}
+                  className="flex min-h-0 min-w-0 flex-1"
+                />
+                {latest && (
+                  <button
+                    type="button"
+                    onClick={() => setResultsOpen(true)}
+                    className="flex shrink-0 items-center gap-2 border-t px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent/60"
+                    data-show-results>
+                    <ChevronUp className="size-3.5" /> Results of {latest.metadata.name}
+                  </button>
+                )}
+              </>
             )}
+            {latest && resultsOpen && <ResultConnector container={stage} view={view} />}
           </div>
         </TabPanel>
         <TabPanel value="executions" className="scrollbar-thin overflow-y-auto">
@@ -358,6 +422,41 @@ function EditorLayout({
         </TabPanel>
       </Tabs>
     </div>
+  );
+}
+
+/** Which execution the results under the canvas are of, and the way to its own page. */
+function LatestExecution({
+  execution,
+  onOpen,
+  onHide,
+}: {
+  execution: Execution;
+  onOpen: () => void;
+  onHide: () => void;
+}) {
+  const phase = execution.status?.phase ?? "pending";
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground" data-latest-execution={phase}>
+      <Badge
+        tone={phase === "completed" ? "success" : phase === "failed" || phase === "cancelled" ? "danger" : "warning"}
+        className="capitalize">
+        {LIVE.has(phase) && <Loader2 className="size-3 animate-spin" />}
+        {phase}
+      </Badge>
+      <span className="hidden max-w-56 truncate lg:inline">{timeAgo(execution.metadata.createdAt)}</span>
+      <Button
+        variant="ghost"
+        size="xs"
+        onClick={onOpen}
+        title="Open this execution beside the workflow"
+        data-open-execution>
+        <ArrowUpRight /> Execution
+      </Button>
+      <Button variant="ghost" size="icon-xs" onClick={onHide} aria-label="Hide the results">
+        <ChevronDown />
+      </Button>
+    </span>
   );
 }
 

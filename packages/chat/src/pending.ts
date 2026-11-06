@@ -13,6 +13,9 @@ export function leaveFirstMessage(rid: string, message: FirstMessage): void {
   pending.set(rid, message);
 }
 
+/** Whether a chat is about to be asked the message it was made for. */
+export const awaitsFirstMessage = (rid: string): boolean => pending.has(rid);
+
 export function takeFirstMessage(rid: string): FirstMessage | undefined {
   const message = pending.get(rid);
   pending.delete(rid);

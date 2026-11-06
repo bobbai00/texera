@@ -1,96 +1,139 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  Background,
-  BackgroundVariant,
-  type Connection,
-  Controls,
-  type Edge,
-  MiniMap,
-  type OnSelectionChangeParams,
-  ReactFlow,
-  useEdgesState,
-  useNodesState,
-  useReactFlow,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+import { Button, useDark } from "@texera/ui";
 import {
   addLink,
   addOperator,
+  COLUMN,
+  type Compilation,
   deleteLinks,
   deleteOperators,
+  freeSpot,
   linkProblem,
   newOperator,
   type OperatorNode,
   type OperatorOverlay,
   toFlow,
 } from "@texera/workflow-model";
+import {
+  Background,
+  BackgroundVariant,
+  type Connection,
+  type Edge,
+  type OnSelectionChangeParams,
+  Panel,
+  ReactFlow,
+  useEdgesState,
+  useNodesInitialized,
+  useNodesState,
+  useReactFlow,
+  useStoreApi,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { Plus, X } from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { operatorSchemasQuery } from "../queries";
 import { useScope } from "../scope";
+import { edgeOptions } from "../shell/canvas";
+import { CanvasContext, type CanvasView } from "./canvas-view";
+import { CanvasControls } from "./controls";
+import { DensityToggle, spread, unspread, useRowSpread } from "./density";
 import type { EditorStore } from "./editor";
+import { useFollow, useFrame, useReframe } from "./framing";
 import { nodeTypes } from "./OperatorNode";
-import { OPERATOR_DRAG_TYPE } from "./OperatorPalette";
-import { defaultEdgeOptions } from "./WorkflowCanvas";
+import { OPERATOR_DRAG_TYPE, OperatorPalette } from "./OperatorPalette";
 
-const EDITOR_FIT = { padding: 0.2, maxZoom: 1 };
 const FIT_UP_TO = 60;
 const EDITOR_VIEWPORT = { x: 40, y: 40, zoom: 1 };
 
-/** The editable canvas: every change goes through the editor store, which saves it. Needs a ReactFlowProvider above. */
+/**
+ * The editable canvas: every change goes through the editor store, which saves it. Operators
+ * are added from a list that opens beside it and are edited in their cards. Needs a
+ * ReactFlowProvider above.
+ */
 export function EditorCanvas({
   store,
+  view,
   overlay,
+  compilation,
   className,
 }: {
   store: EditorStore;
+  view: CanvasView;
   overlay?: Record<string, OperatorOverlay>;
+  compilation?: Compilation;
   className?: string;
 }) {
   const spec = useStore(store, s => s.spec);
   const positions = useStore(store, s => s.positions);
   const selected = useStore(store, s => s.selected);
   const readonly = useStore(store, s => s.readonly);
+  const editing = useStore(view, s => s.editing);
+  const density = useStore(view, s => s.density);
   const [fitOnOpen] = useState(() => store.getState().spec.operators.length <= FIT_UP_TO);
+  // An empty workflow opens with the operators to choose from; one with operators shows them.
+  const [paletteOpen, setPaletteOpen] = useState(
+    () => !store.getState().readonly && store.getState().spec.operators.length === 0
+  );
   const wrapper = useRef<HTMLDivElement>(null);
   const userMoved = useRef(false);
-  const [compact, setCompact] = useState(false);
-  const { fitView, screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, setCenter, getViewport } = useReactFlow();
+  const flowStore = useStoreApi();
+  const frame = useFrame(view);
+  const measured = useNodesInitialized();
+  const dark = useDark();
+  // Cards that say every setting are taller: the rows move apart so none lies on the next.
+  const k = useRowSpread(editing);
+  // Until the person has moved the canvas themselves, it is the app's to frame.
+  const still = useCallback(() => fitOnOpen && !userMoved.current, [fitOnOpen]);
+  useReframe(wrapper, frame, still);
+  // The workflow is brought into view when it opens, and again when how much the cards say
+  // changes how far it reaches, until the person has moved the canvas themselves.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: on opening, and on a change of density and of the spread it causes
   useEffect(() => {
-    const el = wrapper.current;
-    if (!el) return;
-    let lastHeight = el.clientHeight;
-    const observer = new ResizeObserver(([entry]) => {
-      const { width, height } = entry?.contentRect ?? { width: 0, height: 0 };
-      setCompact(width < 640 || height < 420);
-      if (fitOnOpen && !userMoved.current && Math.abs(height - lastHeight) > 1) void fitView(EDITOR_FIT);
-      lastHeight = height;
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [fitOnOpen, fitView]);
-  const flow = useMemo(() => toFlow(spec, positions, overlay), [spec, positions, overlay]);
+    if (measured && fitOnOpen && !userMoved.current) void frame();
+  }, [measured, density, k]);
+  useFollow(view);
+  // Escape closes the card that is open, wherever in it the person is.
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") view.getState().edit(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editing, view]);
+  const flow = useMemo(() => toFlow(spec, spread(positions, k), overlay), [spec, positions, k, overlay]);
   const [nodes, setNodes, onNodesChange] = useNodesState<OperatorNode>(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(flow.edges);
   const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
+  const canvas = useMemo(() => ({ view, schemas, editor: store, compilation }), [view, schemas, store, compilation]);
 
-  // The store is the truth; React Flow keeps what it measured and what is being dragged.
+  // The store is the truth of the workflow; React Flow keeps what it measured, what is being
+  // dragged and what is picked. The store's pick is put onto the canvas only when the store
+  // changed it (an operator just added is picked): a pick made on the canvas is the canvas's
+  // until it has told the store, and the two must not answer each other.
+  const picked = useRef(selected);
   useEffect(() => {
+    const told = picked.current !== selected;
+    picked.current = selected;
     setNodes(previous => {
       const before = new Map(previous.map(n => [n.id, n]));
       return flow.nodes.map(n => {
         const p = before.get(n.id);
-        const chosen = n.id === selected;
+        const chosen = told || !p ? n.id === selected : p.selected;
+        // The card open for editing lies over its neighbours while it is.
+        const zIndex = n.id === editing ? 1000 : undefined;
         return p
-          ? { ...p, data: n.data, position: p.dragging ? p.position : n.position, selected: chosen }
-          : { ...n, selected: chosen };
+          ? { ...p, data: n.data, position: p.dragging ? p.position : n.position, selected: chosen, zIndex }
+          : { ...n, selected: chosen, zIndex };
       });
     });
     setEdges(previous => {
       const picked = new Set(previous.filter(e => e.selected).map(e => e.id));
       return flow.edges.map(e => ({ ...e, selected: picked.has(e.id) }));
     });
-  }, [flow, selected, setNodes, setEdges]);
+  }, [flow, selected, editing, setNodes, setEdges]);
 
   const edit = store.getState().edit;
 
@@ -98,7 +141,11 @@ export function EditorCanvas({
     (c: Connection) => {
       if (!c.sourceHandle || !c.targetHandle) return;
       edit(cur =>
-        addLink(cur, { operatorID: c.source, portID: c.sourceHandle ?? "" }, { operatorID: c.target, portID: c.targetHandle ?? "" })
+        addLink(
+          cur,
+          { operatorID: c.source, portID: c.sourceHandle ?? "" },
+          { operatorID: c.target, portID: c.targetHandle ?? "" }
+        )
       );
     },
     [edit]
@@ -113,18 +160,31 @@ export function EditorCanvas({
     [store]
   );
 
-  const onDrop = useCallback(
-    (e: DragEvent) => {
-      const schema = schemas?.get(e.dataTransfer.getData(OPERATOR_DRAG_TYPE));
-      if (!schema || readonly) return;
-      e.preventDefault();
+  /** Puts a new operator of a type on the canvas, at a place on screen, and opens it. */
+  const place = useCallback(
+    (type: string, at: { x: number; y: number }) => {
+      const schema = schemas?.get(type);
+      if (!schema || store.getState().readonly) return undefined;
       const op = newOperator(schema);
-      const at = screenToFlowPosition({ x: e.clientX - 28, y: e.clientY - 28 });
-      store.getState().move({ [op.operatorID]: at });
+      const spot = freeSpot(store.getState().positions, unspread(at, k));
+      store.getState().move({ [op.operatorID]: spot });
       edit(cur => addOperator(cur, op));
       store.getState().select(op.operatorID);
+      // A new operator is there to be set.
+      view.getState().edit(op.operatorID);
+      return spread({ at: spot }, k).at;
     },
-    [schemas, readonly, edit, screenToFlowPosition, store]
+    [schemas, store, edit, view, k]
+  );
+
+  const onDrop = useCallback(
+    (e: DragEvent) => {
+      const type = e.dataTransfer.getData(OPERATOR_DRAG_TYPE);
+      if (!type) return;
+      e.preventDefault();
+      place(type, screenToFlowPosition({ x: e.clientX - 124, y: e.clientY - 28 }));
+    },
+    [place, screenToFlowPosition]
   );
   const onDragOver = useCallback((e: DragEvent) => {
     if (e.dataTransfer.types.includes(OPERATOR_DRAG_TYPE)) {
@@ -132,6 +192,21 @@ export function EditorCanvas({
       e.dataTransfer.dropEffect = "move";
     }
   }, []);
+
+  /** Adds an operator picked from the list: right of the one selected, else in the middle of what is on screen. */
+  const addFromPalette = (type: string) => {
+    const { positions: placed, selected: after } = store.getState();
+    const anchor = after ? spread({ at: placed[after] ?? { x: 0, y: 0 } }, k).at : undefined;
+    const { width, height } = flowStore.getState();
+    const viewport = getViewport();
+    const middle = {
+      x: (width / 2 - viewport.x) / viewport.zoom - 124,
+      y: (height / 2 - viewport.y) / viewport.zoom - 32,
+    };
+    const spot = place(type, anchor && after && placed[after] ? { x: anchor.x + COLUMN, y: anchor.y } : middle);
+    if (spot)
+      setTimeout(() => void setCenter(spot.x + 124, spot.y + 120, { zoom: getViewport().zoom, duration: 200 }), 60);
+  };
 
   const onSelectionChange = useCallback(
     ({ nodes: chosen }: OnSelectionChangeParams) => {
@@ -142,40 +217,84 @@ export function EditorCanvas({
   );
 
   return (
-    <div ref={wrapper} className={className} data-workflow-canvas data-editable={!readonly}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        defaultEdgeOptions={defaultEdgeOptions}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={readonly ? undefined : onConnect}
-        isValidConnection={isValidConnection}
-        onNodeDragStop={(_, __, dragged) =>
-          store.getState().move(Object.fromEntries(dragged.map(n => [n.id, { x: n.position.x, y: n.position.y }])))
-        }
-        onNodesDelete={deleted => edit(cur => deleteOperators(cur, deleted.map(n => n.id)))}
-        onEdgesDelete={deleted => edit(cur => deleteLinks(cur, deleted.map(e => e.id)))}
-        onSelectionChange={onSelectionChange}
-        onMoveStart={event => {
-          if (event) userMoved.current = true;
-        }}
-        onDrop={onDrop}
-        onDragOver={onDragOver}
-        nodesDraggable={!readonly}
-        nodesConnectable={!readonly}
-        deleteKeyCode={readonly ? null : ["Backspace", "Delete"]}
-        fitView={fitOnOpen}
-        fitViewOptions={EDITOR_FIT}
-        defaultViewport={EDITOR_VIEWPORT}
-        minZoom={0.1}
-        colorMode="system">
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} />
-        {/* Top right: the bottom right corner is where the chat about this page opens. */}
-        {!compact && <MiniMap position="top-right" pannable zoomable className="!rounded-lg !border" />}
-        <Controls showInteractive={false} className="!rounded-lg !border !shadow-none" />
-      </ReactFlow>
-    </div>
+    <CanvasContext value={canvas}>
+      <div className={className}>
+        {paletteOpen && !readonly && (
+          <aside className="w-60 shrink-0 border-r bg-sidebar" data-operator-palette-panel>
+            <OperatorPalette onAdd={addFromPalette} />
+          </aside>
+        )}
+        <div
+          ref={wrapper}
+          className="relative min-w-0 flex-1 bg-canvas"
+          data-workflow-canvas
+          data-editable={!readonly}
+          data-density={density}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            defaultEdgeOptions={edgeOptions}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={readonly ? undefined : onConnect}
+            isValidConnection={isValidConnection}
+            onNodeDragStop={(_, __, dragged) =>
+              store
+                .getState()
+                .move(Object.fromEntries(dragged.map(n => [n.id, unspread({ x: n.position.x, y: n.position.y }, k)])))
+            }
+            onNodesDelete={deleted =>
+              edit(cur =>
+                deleteOperators(
+                  cur,
+                  deleted.map(n => n.id)
+                )
+              )
+            }
+            onEdgesDelete={deleted =>
+              edit(cur =>
+                deleteLinks(
+                  cur,
+                  deleted.map(e => e.id)
+                )
+              )
+            }
+            onSelectionChange={onSelectionChange}
+            // A double click on a card opens it for editing, as its pencil does.
+            onNodeDoubleClick={readonly ? undefined : (_, node) => view.getState().edit(node.id)}
+            // A click on the empty canvas closes the card that is open.
+            onPaneClick={() => view.getState().edit(null)}
+            onMoveStart={event => {
+              if (event) userMoved.current = true;
+            }}
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+            nodesDraggable={!readonly}
+            nodesConnectable={!readonly}
+            deleteKeyCode={readonly ? null : ["Backspace", "Delete"]}
+            defaultViewport={EDITOR_VIEWPORT}
+            minZoom={0.1}
+            colorMode={dark ? "dark" : "light"}>
+            <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} />
+            <Panel position="top-left" className="flex items-center gap-2">
+              {!readonly && (
+                <Button
+                  variant={paletteOpen ? "secondary" : "outline"}
+                  size="sm"
+                  className="bg-background shadow-xs"
+                  onClick={() => setPaletteOpen(o => !o)}
+                  aria-expanded={paletteOpen}
+                  data-add-operator>
+                  {paletteOpen ? <X /> : <Plus />} {paletteOpen ? "Close" : "Add operator"}
+                </Button>
+              )}
+              <DensityToggle view={view} />
+            </Panel>
+            <CanvasControls view={view} />
+          </ReactFlow>
+        </div>
+      </div>
+    </CanvasContext>
   );
 }

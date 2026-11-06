@@ -5,8 +5,8 @@ import { Tooltip } from "./tooltip";
 import { cn } from "./utils";
 
 /**
- * The header every panel and page shares: the kind's icon and label, the resource's
- * name and a meta line, kind actions, and for a panel the back/expand/close controls.
+ * The header every panel and page shares: the kind's icon, the resource's name and one line
+ * about it, the kind's actions, and for a panel the back/expand/close controls.
  */
 export function ResourceHeader({
   icon,
@@ -32,16 +32,17 @@ export function ResourceHeader({
   className?: string;
 }) {
   return (
-    <header className={cn("flex items-center gap-2 border-b px-3 py-2", className)} data-resource-header>
+    <header className={cn("flex items-center gap-2.5 border-b px-4 py-2.5", className)} data-resource-header>
       {mode === "panel" && onBack && (
         <Button variant="ghost" size="icon-sm" onClick={onBack} aria-label="Back">
           <ChevronLeft />
         </Button>
       )}
-      {icon}
+      <span title={kindLabel} className="shrink-0">
+        {icon}
+      </span>
       <div className="min-w-0 flex-1">
-        <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{kindLabel}</div>
-        <div className="truncate text-sm font-semibold">{name}</div>
+        <div className={cn("truncate font-semibold", mode === "page" ? "text-base" : "text-sm")}>{name}</div>
         {meta && <div className="truncate text-xs text-muted-foreground">{meta}</div>}
       </div>
       {actions}

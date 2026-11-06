@@ -77,6 +77,46 @@ export function Avatar({ name, className }: { name: string; className?: string }
   );
 }
 
+/** A few choices of which exactly one is on: how much a canvas shows, the level of a graph. */
+export function Segmented<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+  className,
+}: {
+  label: string;
+  value: T;
+  onChange: (value: T) => void;
+  options: { value: T; label: ReactNode; title?: string }[];
+  className?: string;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className={cn("inline-flex items-center gap-0.5 rounded-lg border bg-background p-0.5 shadow-xs", className)}>
+      {options.map(o => (
+        // biome-ignore lint/a11y/useSemanticElements: a button that reads as one of a radio group
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={o.value === value}
+          title={o.title}
+          onClick={() => onChange(o.value)}
+          data-segment={o.value}
+          className={cn(
+            "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 [&_svg]:size-3.5",
+            o.value === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+          )}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** A removable chip, for lists of names and tags. */
 export function Chip({
   children,

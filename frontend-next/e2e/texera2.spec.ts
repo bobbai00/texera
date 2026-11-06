@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { AGENT, api, ask, cleanups, conversationOf, discard, IRIS_QUESTION, type Made, openChat, pick, say, signIn, tidyUp, withIris, workAtHome, workIn } from "./support";
+import { AGENT, api, ask, cleanups, conversationOf, discard, IRIS_QUESTION, type Made, openChat, operatorCard, pick, say, signIn, tidyUp, withIris, workAtHome, workIn } from "./support";
 
 // The pages against the real stack: sign in through Keycloak, start a chat by saying something,
 // attach a CSV (which becomes a dataset version) and see it as a card; the agent every chat runs,
@@ -169,6 +169,133 @@ test("the project a person works in scopes what they see and where things go", a
   await expect(row(`home skill ${stamp}`)).toBeVisible();
 });
 
+test("a project made in the app is worked in at once, and what is made then goes into it", async ({ page, request }) => {
+  const call = await api(request);
+  const stamp = Date.now();
+  const name = `made here ${stamp}`;
+  let project: string | undefined;
+  cleanups.push(async () => {
+    await workAtHome(call);
+    if (!project) return;
+    for (const plural of ["conversations", "workflows"]) {
+      const made: { items: Made[] } = await call("GET", `/${plural}?project=${project}`);
+      for (const r of made.items) await call.attempt("DELETE", `/resources/${r.metadata.rid}`);
+    }
+    await call.attempt("DELETE", `/projects/${project}`);
+  });
+  await signIn(page);
+  await expect(page.getByLabel("Project", { exact: true })).toHaveText("Personal");
+
+  // Making a project is choosing to work in it: the sidebar says so, and so does its page.
+  await page.locator('[data-library-link="project"]').click();
+  await page.locator('[data-new="project"]').click();
+  await page.locator('[data-new-resource="project"] input').first().fill(name);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/projects\//);
+  project = /\/projects\/([0-9a-f-]{36})/.exec(page.url())?.[1] as string;
+  await expect(page.getByLabel("Project", { exact: true })).toHaveText(name);
+  await expect(page.locator("[data-working-here]")).toBeVisible();
+  expect((await call("GET", "/me")).preferences.project).toBe(project);
+
+  // A workflow made now goes into it, and the dialog says where before it is made.
+  await page.locator('[data-library-link="workflow"]').click();
+  await page.locator('[data-new="workflow"]').click();
+  const dialog = page.locator('[data-new-resource="workflow"]');
+  await expect(page.getByRole("dialog")).toContainText(`New workflow in ${name}`);
+  await expect(dialog).toHaveAttribute("data-new-in", project);
+  await dialog.locator("input").first().fill(`in the new project ${stamp}`);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/workflows\//);
+  const workflow = /\/workflows\/([0-9a-f-]{36})/.exec(page.url())?.[1] as string;
+  expect((await call("GET", `/workflows/${workflow}`)).metadata.project).toBe(project);
+
+  // So does a chat started from the home page.
+  await page.locator("[data-new-chat-link]").click();
+  await expect(page.locator("[data-new-chat]")).toHaveAttribute("data-new-chat-in", project);
+  await page.route("**/agents/conversations/*/ag-ui", route => route.abort());
+  await say(page, "hello");
+  await expect(page).toHaveURL(/\/conversations\//);
+  expect((await call("GET", `/conversations/${conversationOf(page)}`)).metadata.project).toBe(project);
+
+  // A project's page says whether the person works there, and makes it so in one click.
+  const home = (await call("GET", "/me")).homeProject as string;
+  await page.goto(`/projects/${home}`);
+  await expect(page.locator("[data-working-here]")).toHaveCount(0);
+  await page.locator("[data-work-here]").click();
+  await expect(page.getByLabel("Project", { exact: true })).toHaveText("Personal");
+  await expect(page.locator("[data-working-here]")).toBeVisible();
+});
+
+test("with every project in view, the app asks which project a new thing goes into", async ({ page, request }) => {
+  const call = await api(request);
+  const stamp = Date.now();
+  const lab = await call("POST", "/projects", { name: `asked lab ${stamp}`, spec: {} });
+  const home = (await call("GET", "/me")).homeProject as string;
+  cleanups.push(async () => {
+    await workAtHome(call);
+    for (const where of [lab.metadata.rid, home])
+      for (const plural of ["conversations", "skills"]) {
+        const made: { items: (Made & { metadata: { name: string } })[] } = await call("GET", `/${plural}?project=${where}&limit=200`);
+        for (const r of made.items) if (where !== home || r.metadata.name.includes(String(stamp))) await call.attempt("DELETE", `/resources/${r.metadata.rid}`);
+      }
+    await call.attempt("DELETE", `/projects/${lab.metadata.rid}`);
+  });
+  await signIn(page);
+  await workIn(page, "All projects");
+  await expect(page.getByLabel("Project", { exact: true })).toHaveText("All projects");
+
+  // The dialog asks, and makes nothing until it is told.
+  await page.locator('[data-library-link="skill"]').click();
+  await page.locator('[data-new="skill"]').click();
+  const dialog = page.locator('[data-new-resource="skill"]');
+  await dialog.locator("input").first().fill(`asked skill ${stamp}`);
+  await expect(page.getByRole("dialog")).not.toContainText("New skill in");
+  await expect(page.getByRole("button", { name: "Create" })).toBeDisabled();
+  await pick(page, page.getByLabel("Project to make it in"), `asked lab ${stamp}`);
+  await expect(dialog).toHaveAttribute("data-new-in", lab.metadata.rid);
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/skills\//);
+  const inLab: { items: { metadata: { name: string } }[] } = await call("GET", `/skills?project=${lab.metadata.rid}`);
+  expect(inLab.items.map(r => r.metadata.name)).toEqual([`asked skill ${stamp}`]);
+
+  // So does the chat box: nothing can be sent until a project is chosen.
+  await page.locator("[data-new-chat-link]").click();
+  const box = page.locator("[data-new-chat]");
+  await expect(box).toHaveAttribute("data-new-chat-in", "");
+  await expect(box).toContainText("Choose the project this chat goes into.");
+  await page.getByLabel("Message", { exact: true }).fill("hello");
+  await expect(page.getByLabel("Send message")).toBeDisabled();
+  await pick(page, page.getByLabel("Project for this chat"), `asked lab ${stamp}`);
+  await expect(box).toHaveAttribute("data-new-chat-in", lab.metadata.rid);
+  await page.route("**/agents/conversations/*/ag-ui", route => route.abort());
+  await page.getByLabel("Send message").click();
+  await expect(page).toHaveURL(/\/conversations\//);
+  expect((await call("GET", `/conversations/${conversationOf(page)}`)).metadata.project).toBe(lab.metadata.rid);
+  // Nothing went to the person's own project behind their back.
+  const atHome: { items: { metadata: { name: string } }[] } = await call("GET", `/skills?project=${home}&limit=200`);
+  expect(atHome.items.filter(r => r.metadata.name.includes(String(stamp)))).toEqual([]);
+});
+
+test("the sidebar collapses to a rail, and nothing lies over a page's header", async ({ page, request }) => {
+  const call = await api(request);
+  const home = (await call("GET", "/me")).homeProject as string;
+  await signIn(page);
+  await page.goto(`/projects/${home}`);
+  const header = page.locator("[data-resource-header]");
+  await expect(header).toBeVisible();
+  await page.getByLabel("Collapse sidebar").click();
+  const rail = page.locator("[data-sidebar-rail]");
+  await expect(rail).toBeVisible();
+  // The way back is in the rail, beside the page, not over the page's own icon.
+  const expand = (await rail.getByLabel("Expand sidebar").boundingBox()) as { x: number; width: number };
+  const top = (await header.boundingBox()) as { x: number };
+  expect(expand.x + expand.width).toBeLessThanOrEqual(top.x);
+  await page.screenshot({ path: "test-results/sidebar-rail.png" });
+  await rail.getByLabel("Expand sidebar").click();
+  await expect(rail).toHaveCount(0);
+  await expect(page.getByLabel("Project", { exact: true })).toBeVisible();
+});
+
 // What a chat runs with is chosen in its box and stored as the chat's choices; the catalog says
 // what a turn would run with.
 test("a chat's model, unit and add-ons are chosen in its box", async ({ page, request }) => {
@@ -300,12 +427,13 @@ test("creates a custom operator from its page and finds it in a workflow's palet
   await expect(page.locator("[data-workflow-view] [data-workflow-canvas]")).toBeVisible();
   const workflow = madeIn("workflows");
   cleanups.push(() => discard(call, [workflow]));
+  // A new workflow opens with the operators to choose from; the one picked opens in its card.
   const palette = page.locator("[data-operator-palette]");
   await palette.getByPlaceholder("Search operators").fill("E2E rank");
   const entry = palette.locator('[data-palette-operator^="texera://operators/"]').filter({ hasText: name });
   await expect(entry).toBeVisible();
   await entry.click();
-  const properties = page.locator("[data-property-panel]");
+  const properties = page.locator("[data-operator-editor]");
   await expect(properties).toBeVisible();
   await expect(properties.locator("[data-credential-picker]")).toBeVisible();
   await page.screenshot({ path: "test-results/custom-operator.png", fullPage: true });
@@ -525,16 +653,20 @@ test("an execution's page follows it as it goes, and pauses and resumes it", asy
   await page.goto(`/workflows/${wfRid}/executions/${started.metadata.rid}`);
   const execution = page.locator("[data-execution-view]");
   await expect(execution.locator("[data-phase]")).toHaveText("running", { timeout: 90_000 });
-  // The operators tab fills in as the unit reports progress, with no reload.
-  await execution.getByRole("tab", { name: "Operators" }).click();
-  await expect(execution.getByRole("cell", { name: "slow" })).toBeVisible({ timeout: 30_000 });
+  // The canvas shows the workflow as it runs: each operator's card says where it stands and
+  // how many rows it has put out, as the unit reports them, with no reload.
+  const slow = operatorCard(page, "slow").locator("[data-operator-status]");
+  await expect(slow).toHaveAttribute("data-operator-status", "running", { timeout: 30_000 });
+  await expect(slow.locator("[data-operator-rows]")).toBeVisible({ timeout: 30_000 });
   await execution.locator("[data-pause-execution]").click();
   await expect(execution.locator("[data-phase]")).toHaveText("paused", { timeout: 30_000 });
+  await expect(slow).toHaveAttribute("data-operator-status", "paused", { timeout: 30_000 });
   await page.screenshot({ path: "test-results/paused-execution.png", fullPage: true });
   await execution.locator("[data-resume-execution]").click();
   await expect(execution.locator("[data-phase]")).toHaveText("running", { timeout: 30_000 });
   await expect(execution.locator("[data-phase]")).toHaveText("completed", { timeout: 90_000 });
-  await execution.getByRole("tab", { name: /^Results/ }).click();
+  await expect(slow).toHaveAttribute("data-operator-status", "completed");
+  await expect(slow.locator("[data-operator-rows]")).toContainText("150 rows");
   await expect(execution.locator("[data-port-rows]")).toBeVisible();
 });
 

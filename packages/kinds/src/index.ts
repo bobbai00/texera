@@ -4,6 +4,7 @@ export * from "./registry";
 export * from "./api";
 export * from "./queries";
 export * from "./scope";
+export { useChangePreferences } from "./preferences";
 export { useIsBuiltIn } from "./shell/builtin";
 export { useWatch, watchOnce, type WatchHandlers, type WatchOutcome } from "./watch";
 export { ResourceView, ResourceCard } from "./ResourceView";

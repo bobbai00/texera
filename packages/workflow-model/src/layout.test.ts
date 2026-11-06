@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { COLUMN, freeSpot, layoutPositions, ORIGIN, reconcilePositions, ROW } from "./layout";
+import { COLUMN, freeSpot, ICONS, layoutPositions, ORIGIN, ROW, reconcilePositions } from "./layout";
 import type { WorkflowSpec } from "./types";
 
-const link = (from: string, to: string) => ({ linkID: `${from}-${to}`, source: { operatorID: from, portID: "output-0" }, target: { operatorID: to, portID: "input-0" } });
+const link = (from: string, to: string) => ({
+  linkID: `${from}-${to}`,
+  source: { operatorID: from, portID: "output-0" },
+  target: { operatorID: to, portID: "input-0" },
+});
 const spec: WorkflowSpec = {
   operators: ["a", "b", "c", "d"].map(id => ({ operatorID: id, operatorType: "X", operatorProperties: {} })),
   links: [link("a", "c"), link("b", "c"), link("c", "d")],
@@ -15,6 +19,13 @@ describe("layout", () => {
     expect(p.b).toEqual({ x: ORIGIN.x, y: ORIGIN.y + ROW });
     expect(p.c).toEqual({ x: ORIGIN.x + COLUMN, y: ORIGIN.y });
     expect(p.d).toEqual({ x: ORIGIN.x + 2 * COLUMN, y: ORIGIN.y });
+  });
+
+  it("lays a small picture out closer together, where an operator is its icon", () => {
+    const p = layoutPositions(spec, ICONS);
+    expect(p.c).toEqual({ x: ORIGIN.x + ICONS.column, y: ORIGIN.y });
+    expect(p.b).toEqual({ x: ORIGIN.x, y: ORIGIN.y + ICONS.row });
+    expect(ICONS.column).toBeLessThan(COLUMN);
   });
 
   it("survives a cycle and keeps positions the person already set", () => {

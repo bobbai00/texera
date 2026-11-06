@@ -2,6 +2,173 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-05 (session 11, on the Mac): the canvas, executions on it, lineage as a graph, and where new things go
+
+Asked to put everything else aside and polish the front end. The list: the icon at the top
+left of a page lay over the resource's own icon; text was too small in many places; an
+operator on the canvas showed almost nothing, and clicking it threw a panel open beside the
+canvas; arrows were rigid; an execution did not show which operator was running or how a
+result mapped to its operator and port; visualizations came out as raw tables; lineage was a
+list of URIs; and, as a bug, things made after switching to another project still went to the
+person's own. Session 10 (the warehouse) was committed and pushed first, at the user's word.
+
+What was decided:
+- **An operator is a card, edited where it is.** It says its settings in words, in one line
+  or each on a line, as the viewer chooses; it opens into its own form. There is no panel
+  beside the canvas any more.
+- **An execution is shown on the canvas of the workflow that ran**, on the workflow's page
+  and on its own, and a result is tied to the operator and port it came out of by a line.
+- **How a canvas is looked at is the viewer's**, not the workflow's: how much the cards say,
+  the card open, the result on screen are in no document and no version.
+- **One rule for where new things go**: into the project the person works in, wherever they
+  make them; with every project in view the app asks. The chat beside a page follows it too,
+  which replaces session 9's rule (the resource's project when writable).
+
+Done:
+- **Shell and type.** A collapsed sidebar is a rail of its own (the way back, a new chat, the
+  search), so nothing floats over a page; that floating button was what lay over the
+  resource's icon. The two small text sizes are a step larger (nothing under 12px). A page's
+  header is the name and one line: the tiny uppercase kind is gone (the icon says it), and so
+  is the word "private".
+- **The card** (`workflow/OperatorNode.tsx`, `workflow-model/summary.ts`). The operator's
+  name and its settings as a person would say them: a file by its name, a filter as
+  `medal = Gold`, code by its length, defaults left out. "Compact | Detailed" for the canvas
+  and a chevron for one card (`canvas-view.ts`); the pencil or a double click opens the card
+  into the form the panel had; Escape or "Done" closes it. The list of operators opens from
+  "Add operator", and by itself for a workflow with none. Arrows are curves, drawn the same
+  on every graph (`shell/canvas.ts`). The layout is for cards (`layout.ts`); cards that say
+  more draw their rows further apart by one factor without moving anything (`density.tsx`);
+  the canvas opens at a size its words can be read at and keeps in view the card that matters
+  (`framing.ts`). The map of a workflow of a dozen operators or more lies over the canvas, so
+  it is closed until the viewer opens it from a button with the zoom buttons, and stays as
+  they left it (`controls.tsx`). A workflow's picture in a chat keeps operators as icons. The
+  places kept for the icons operators once were are a leftover the live service drops
+  (`live.ts`).
+- **An execution on the canvas** (`execution/overlay.ts`, `results/`). Each card says where
+  its operator stands (waiting, running, paused, done, failed and why) and its rows, second by
+  second. Under the canvas, one tab per output port that holds a result; the one on screen
+  rings its card, and a line runs from the tab to the port, following the canvas. "Run" stays
+  on the page. An execution's page is the version that ran on the same canvas with the same
+  results under it; its other tabs are Lineage and Details.
+- **Charts.** A visualization operator's result is shown as the chart it drew. The unit cut
+  every string to 100 characters for a table's cell, the chart's HTML included, so no chart
+  could have been shown: it now serves the one `html-content` cell of such a result whole
+  (`UnitApiResource.rowsOf`).
+- **Lineage** (`lineage/`, built by a second agent in parallel). A graph read left to right,
+  a card per thing and the words for what happened on each arrow, at two levels: resources
+  (dataset, workflow, executions, results folded in) and data flow (file, version, execution,
+  each result). Older executions fold into one card.
+- **Where new things go** (`scope.tsx`, `preferences.ts`). `useDestination` is the one rule;
+  the "New …" dialog names the project, and with every project in view asks for it, as the
+  chat box does. A project made in the app is worked in at once; a project's page has "Work
+  in this project". Preferences have one writer: it reads what the catalog has before it
+  changes it, so the project pick and the dock's memory cannot overwrite each other, and it
+  decides what is on screen meanwhile: a change shows at once and stays while it is written,
+  and one the catalog did not take goes from the screen again.
+
+Found on the way and fixed:
+- **A result first read while its execution ran stayed as it was then.** A page of rows was
+  kept for good; read early it was empty and stayed empty after the execution finished. A
+  running execution's page now follows the rows reported so far.
+- **The canvas and the editor answered each other over what was selected**, without end, once
+  a card could open at the same moment it was picked. The store's pick is put onto the canvas
+  only when the store changed it.
+- **A canvas changed while its tab was not the one shown came back empty.** On an
+  execution's page, "Detailed" and then at once "Details" and back left every card invisible:
+  the canvas gave React Flow new cards whenever their spacing changed, which threw away what
+  it had measured of them, and a card that is not on screen is not measured again. It keeps
+  what was measured now, as the editor's canvas did; and a canvas framed while it had no room
+  (which left it no place at all) is framed again when it is shown.
+- **A chat made by its first message stood empty for a moment, with its box free.** The page
+  that starts a chat leaves the first message for it, and the chat took the message only
+  after it had drawn itself once: an instant that looks like the end of an answer. A model
+  scenario took it for that, once in ten runs, and read the answer before there was one. A
+  chat is busy with its first message from the first time it is drawn (`ChatView.tsx`).
+- **The map lay over operators.** It sat at the top right of a large workflow, on the cards of
+  the first row; see the map above.
+- **A table's way to its next page lay under the button of the chat beside the page.** It
+  stood at the right end of the results' footer, the corner that button floats over. It
+  stands at the left, after the count of rows.
+- **The line from a result ran across the form of a card open for editing.** While a card is
+  open the line is not drawn; it is back when the card closes.
+- **Nothing was made in the wrong project in the cases tried**: the reported bug could not be
+  reproduced by picking a project and making things, as Alice or as Bob. What the catalog
+  holds of that session (a chat in Bob's own project 25 s after his project "test" was made,
+  no pick stored) fits a project that was made and looked at but not picked. The rule above
+  closes that (a new project is worked in), the whole-object writes that could undo a pick,
+  and the moment after a page loads when the working project was taken to be the person's own.
+
+Verified, on OrbStack's cluster, upgraded in place (the frontend, live service and engine
+images were rebuilt; nothing was wiped):
+- Unit: frontend 231 tests with types and lint (74 new: what a card says of an operator's
+  settings, the layout for cards, how a canvas is looked at, an execution on the cards and
+  which result is a chart, the lineage graph's model and layout, where new things go, the one
+  writer of preferences); live service 15; runtime 75; the engine's `UnitApiResourceSpec` 13
+  (new: a table's cell is cut, a visualization's page is not).
+- `k8s.sh check` on the final images: 40 scenarios and 35 Playwright tests (nine new: the four
+  of `canvas.spec.ts`, the lineage graph, a project made in the app, "All projects" asking in
+  the dialog and in the chat beside a page, the sidebar's rail). The bundle the cluster
+  serves was compared with the tree source by source, through its source maps.
+- With the model (Haiku 5.5), by hand: 4 scenarios (`pytest -m model`) and 4 Playwright
+  scenarios. The one beside a page failed once before the fix above and passed nine runs of
+  ten without it; with it, every run since.
+- The scenario of the chat beside every page, twelve times in a row (168 chats), after its
+  stand-in for the runtime was put in the runtime's order: the catalog has the turn before
+  the stream says it is over. It wrote the turn after, and once in a few runs the chat then
+  showed the answer without the question.
+- By eye, in screenshots of the built stack (1440 by 900, light and dark): a workflow compact,
+  detailed and with a card open; its latest execution with a table and with a chart and the
+  line to the port; an execution's page; lineage at both levels; the rail; the dialogs with
+  every project in view.
+- A workflow of 151 operators on the cards (a scan and five chains of thirty): the first card
+  1.2 s after the page is asked for, "Detailed" settled within 0.4 s, 60 frames a second while
+  it is dragged, a card's form open in 0.1 s. Measured once, on the development build.
+
+Not verified:
+- **The reported bug itself**: nothing reproduced it, as said above.
+- **The engine's whole suite.** One function of the unit's API changed; its spec ran and the
+  scenarios read rows and a chart through it, but `sbt test` and the Python tests were not
+  run again.
+- **A chart where the internet cannot be reached.** Every visualization operator writes a
+  page that loads Plotly from its CDN, and the frame it is shown in lets it. Where the CDN
+  cannot be reached the frame stays empty.
+- **Browsers other than Chromium, and screens narrower than a laptop's.**
+- **The Compose stack**, as in sessions 9 and 10.
+
+Seen and not changed:
+- **The button of the chat beside a page floats over the page's bottom right corner**, on
+  whatever is there: the last column of a table, the end of a chart's axis. That corner is
+  where the button was asked for in session 9, so it stays; the results' controls were moved
+  out of its way, and nothing to click belongs there.
+- **Opening any dropdown logs a refused inline style** in the browser's console: the
+  component library adds a `<style>` to hide a scrollbar and the page's policy
+  (`style-src 'self'`) refuses it. Nothing shows wrong; it has been so since the dropdowns
+  were added.
+- **`packages/` is still outside the frontend's lint** (session 8's note). The files made or
+  rewritten this session, and the lines changed in the others, were put through it by hand.
+  Two findings in lines not changed remain (`workflow/View.tsx`, an effect's dependencies;
+  `ui/primitives.tsx`, a label with no control).
+- **A message that arrives in the instant a turn ends is passed over.** While a person's own
+  turn is on screen the chat does not take messages from the watch, and it reads the history
+  once at the end of the request; what the watch brings between that read and the chat
+  counting as free again (someone else's note, in a group chat) shows only when the history
+  is next read. The runtime writes a turn before it ends the stream, so a person's own turn
+  is never affected; seen while reading why the scenario above failed.
+- **Rows of a port in the middle** and **two executions in one second**, as in session 10.
+  The app now says what happened to such rows ("it was not kept, and the computing unit that
+  held it has restarted") and how to keep them.
+
+Left out, by decision: a chart the app chooses for a result that is a table (only what a
+visualization operator drew is shown as a chart); a small picture of the result inside a card;
+cards that can be resized; places kept per density (an operator has one place, for cards that
+say one line); other people's cursors and selections on the canvas; lineage below a result
+(columns) and of chats and agents; choosing an execution's unit or warehouse on the canvas; a
+layout for phones.
+
+Next: lint over `packages/` as its own commit; the refused inline style (a nonce, or the rule in the app's own stylesheet); a
+chart picked for a table, kept as a visualization operator so that it is in the version;
+results read without the unit that ran; the items carried from session 10.
+
 ## 2026-11-05 (session 10, on the Mac): a warehouse is a resource: an execution runs on a unit and keeps its results in a warehouse
 
 Asked, after a discussion of how the result warehouse is managed and how it should be, to

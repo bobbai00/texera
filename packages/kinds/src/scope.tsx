@@ -1,14 +1,15 @@
 // The project a person works in. Lists show it with what it inherits (the platform's
-// built-ins), and what is made goes into it. It is the person's home project until they pick
-// another; the pick is kept in their preferences, so it follows them. Inside a resource's own
-// page (a workflow's editor, a chat) the scope is that resource's project: its pickers list
-// what it can use, wherever the person is working.
+// built-ins), and what the person makes goes into it: a chat, a workflow, anything. With every
+// project in view there is no one project to make things in, so the app asks which. It is the
+// person's home project until they pick another; the pick is kept in their preferences, so it
+// follows them. Inside a resource's own page (a workflow's editor, a chat) what is listed is
+// scoped to that resource's project: its pickers show what it can use, wherever the person is
+// working.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { meUpdatePreferences } from "@texera/catalog-client";
+import { useQuery } from "@tanstack/react-query";
 import type { Me, Resource } from "@texera/catalog-client/types";
-import { createContext, type ReactNode, use } from "react";
-import { unwrap } from "./api";
+import { createContext, type ReactNode, use, useState } from "react";
+import { useChangePreferences } from "./preferences";
 import { meQuery, searchQuery } from "./queries";
 
 /** The pick that lifts the scope: every project the person may read. */
@@ -25,6 +26,21 @@ export function workingProject(me: Person | undefined, readable: string[]): stri
   const picked = me.preferences.project;
   if (picked === ALL_PROJECTS) return ALL_PROJECTS;
   return typeof picked === "string" && picked !== me.systemProject && readable.includes(picked) ? picked : me.homeProject;
+}
+
+/**
+ * Where something new goes: the project the person works in. With every project in view the
+ * person is asked, starting from what the page suggests (the project of the resource it is
+ * about). Nowhere until the working project is known: nothing is made in the meantime.
+ */
+export function destination(
+  working: string | undefined,
+  chosen: string | undefined,
+  suggested?: string
+): { project: string | undefined; asking: boolean } {
+  if (working === undefined) return { project: undefined, asking: false };
+  if (working !== ALL_PROJECTS) return { project: working, asking: false };
+  return { project: chosen ?? suggested, asking: true };
 }
 
 /** How the app names a working project. */
@@ -46,33 +62,57 @@ export function ProjectScope({ project, children }: { project: string | undefine
 
 /** The person's working project, the ones they can pick, and how to pick one. */
 export function useWorkingProject() {
-  const queryClient = useQueryClient();
   const { data: me } = useQuery(meQuery());
   const { data: projects } = useQuery(projectsQuery());
-  const readable: Resource[] = projects?.items ?? [];
-  const current = workingProject(
-    me,
-    readable.map(p => p.metadata.rid)
-  );
-  const pick = useMutation({
-    mutationFn: async (project: string) => {
-      if (!me) return;
-      await unwrap(meUpdatePreferences({ body: { ...me.preferences, project } }));
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: meQuery().queryKey }),
-  });
+  const change = useChangePreferences();
+  // Until the projects are known, nothing says whether the pick still stands: the working
+  // project is unknown, not the person's home.
+  const readable: Resource[] | undefined = projects?.items;
+  const current = readable
+    ? workingProject(
+        me,
+        readable.map(p => p.metadata.rid)
+      )
+    : undefined;
   return {
     current,
-    label: current === undefined ? "" : projectLabel(current, me, readable.find(p => p.metadata.rid === current)?.metadata.name),
+    label:
+      current === undefined
+        ? ""
+        : projectLabel(current, me, readable?.find(p => p.metadata.rid === current)?.metadata.name),
     /** What can be picked: the person's home first, then the others; never the platform's own. */
-    choices: me
-      ? [
-          { value: me.homeProject, label: projectLabel(me.homeProject, me, undefined) },
-          ...readable.filter(p => p.metadata.rid !== me.homeProject && p.metadata.rid !== me.systemProject).map(p => ({ value: p.metadata.rid, label: p.metadata.name })),
-          { value: ALL_PROJECTS, label: projectLabel(ALL_PROJECTS, me, undefined) },
-        ]
-      : [],
-    pick: (project: string) => pick.mutate(project),
+    choices:
+      me && readable
+        ? [
+            { value: me.homeProject, label: projectLabel(me.homeProject, me, undefined) },
+            ...readable
+              .filter(p => p.metadata.rid !== me.homeProject && p.metadata.rid !== me.systemProject)
+              .map(p => ({ value: p.metadata.rid, label: p.metadata.name })),
+            { value: ALL_PROJECTS, label: projectLabel(ALL_PROJECTS, me, undefined) },
+          ]
+        : [],
+    /** Works in a project from now on. The app follows at once; the catalog keeps the pick. */
+    pick: (project: string) => change(p => ({ ...p, project })),
+  };
+}
+
+/**
+ * Where what the person makes here goes, and what to ask them when that is not settled: the
+ * projects to choose from, and how to choose. `suggested` is the project a page proposes
+ * while every project is in view.
+ */
+export function useDestination(suggested?: string) {
+  const { current, choices } = useWorkingProject();
+  const [chosen, setChosen] = useState<string>();
+  const { project, asking } = destination(current, chosen, suggested);
+  const projects = choices.filter(c => c.value !== ALL_PROJECTS);
+  return {
+    project,
+    /** The project's name as the app says it, once there is one. */
+    label: projects.find(c => c.value === project)?.label,
+    asking,
+    projects,
+    choose: setChosen,
   };
 }
 

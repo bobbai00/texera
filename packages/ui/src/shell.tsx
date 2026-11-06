@@ -1,7 +1,5 @@
-import { PanelLeftOpen } from "lucide-react";
 import type { ReactNode } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
-import { Button } from "./button";
 import { TooltipProvider } from "./tooltip";
 
 /**
@@ -11,14 +9,15 @@ import { TooltipProvider } from "./tooltip";
  */
 export function Shell({
   sidebar,
+  rail,
   sidebarOpen,
-  onOpenSidebar,
   panel,
   children,
 }: {
   sidebar: ReactNode;
+  /** What stands in the sidebar's place while it is collapsed: a narrow column of its own, so nothing lies over the page. */
+  rail: ReactNode;
   sidebarOpen: boolean;
-  onOpenSidebar: () => void;
   /** The side panel's content, or null when nothing is open. */
   panel: ReactNode | null;
   children: ReactNode;
@@ -26,18 +25,8 @@ export function Shell({
   return (
     <TooltipProvider delay={400}>
       <div className="flex h-full">
-        {sidebarOpen && <div className="shrink-0 border-r">{sidebar}</div>}
+        <div className="shrink-0 border-r">{sidebarOpen ? sidebar : rail}</div>
         <main className="relative min-w-0 flex-1">
-          {!sidebarOpen && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="absolute top-2.5 left-2.5 z-10"
-              onClick={onOpenSidebar}
-              aria-label="Expand sidebar">
-              <PanelLeftOpen />
-            </Button>
-          )}
           <Group orientation="horizontal" className="h-full">
             <Panel id="page" minSize="30%">
               {children}

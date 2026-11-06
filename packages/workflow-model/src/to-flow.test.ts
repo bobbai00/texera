@@ -41,8 +41,50 @@ describe("toFlow", () => {
     expect(nodes[0]?.data).toMatchObject({ status: "completed", rows: 12 });
     expect(nodes[1]?.data.label).toBe("Custom operator");
     expect(nodes[1]?.data.error).toBe("boom");
-    expect(statusOf("Completed")).toBe("completed");
+  });
+
+  it("gives a card what it says: the operator's settings, whether its result is kept, and the results on screen", () => {
+    const { nodes } = toFlow(
+      spec([
+        op("top", "Limit", 1, 1, { operatorProperties: { limit: 15 }, viewResult: true, isDisabled: true }),
+        op("mid", "Filter", 1, 1),
+      ]),
+      {},
+      { top: { results: ["output-0"] } }
+    );
+    expect(nodes[0]?.data).toMatchObject({
+      properties: { limit: 15 },
+      keepsResult: true,
+      disabled: true,
+      results: ["output-0"],
+    });
+    expect(nodes[1]?.data).toMatchObject({ properties: {}, keepsResult: false });
+    expect(nodes[1]?.data.results).toBeUndefined();
+  });
+
+  it("says where an operator stands in the execution: waiting, running, paused, done or failed", () => {
+    expect(statusOf("Uninitialized")).toBe("waiting");
+    expect(statusOf("Ready")).toBe("waiting");
     expect(statusOf("RUNNING")).toBe("running");
+    expect(statusOf("Pausing")).toBe("running");
+    expect(statusOf("Paused")).toBe("paused");
+    expect(statusOf("Completed")).toBe("completed");
+    expect(statusOf("Failed")).toBe("failed");
+    expect(statusOf("Killed")).toBe("failed");
+    expect(statusOf("something else")).toBeUndefined();
     expect(statusOf(undefined)).toBeUndefined();
+  });
+
+  it("moves along the arrows out of an operator that is running", () => {
+    const links = [
+      { linkID: "l1", source: { operatorID: "a", portID: "output-0" }, target: { operatorID: "b", portID: "input-0" } },
+      { linkID: "l2", source: { operatorID: "b", portID: "output-0" }, target: { operatorID: "c", portID: "input-0" } },
+    ];
+    const { edges } = toFlow(
+      spec([op("a", "Scan", 0, 1), op("b", "Filter", 1, 1), op("c", "Limit", 1, 1)], links),
+      {},
+      { a: { status: "running" }, b: { status: "waiting" } }
+    );
+    expect(edges.map(e => e.animated ?? false)).toEqual([true, false]);
   });
 });

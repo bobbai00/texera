@@ -76,6 +76,29 @@ export async function api(request: APIRequestContext, user = USER, password = PA
 }
 export type Caller = Awaited<ReturnType<typeof api>>;
 
+/** The list of operators beside a canvas, opened when it is not: a workflow that has operators shows them, not the list. */
+export async function operatorList(page: Page) {
+  const list = page.locator("[data-operator-palette]");
+  if (!(await list.isVisible())) await page.locator("[data-add-operator]").click();
+  await expect(list).toBeVisible();
+  return list;
+}
+
+/** An operator's card on a canvas. */
+export const operatorCard = (page: Page, id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
+
+/** Opens an operator's card for editing, as its pencil does, and returns the form in it. */
+export async function editOperator(page: Page, id: string) {
+  const card = operatorCard(page, id);
+  const editor = card.locator("[data-operator-editor]");
+  if (!(await editor.isVisible())) {
+    await card.hover();
+    await card.locator("[data-operator-edit]").click();
+  }
+  await expect(editor).toBeVisible();
+  return editor;
+}
+
 /** A chat made through the API and opened, for a scenario that needs the chat before a word is said. */
 export async function openChat(page: Page, as: Caller, name: string, spec: Record<string, unknown> = {}) {
   const conversation = await as("POST", "/conversations", { name, spec });
@@ -156,7 +179,7 @@ export interface PageOf {
   /** The URI the agent is told. */
   uri: string;
   name: string;
-  /** Whether the scenario made it in its own project: a chat about it goes there. */
+  /** Whether the scenario made it in its own project; the others are the platform's own. */
   mine: boolean;
 }
 

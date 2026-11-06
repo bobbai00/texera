@@ -9,7 +9,6 @@ import {
   meGetOptions,
   principalsListOptions,
   projectsChatSettingsOptions,
-  resourcesDependentsOptions,
   resourcesLineageOptions,
   resourcesListGrantsOptions,
   resourcesListVersionsOptions,
@@ -47,8 +46,6 @@ export const versionsQuery = (rid: string, limit = 50) => resourcesListVersionsO
 
 export const lineageQuery = (ref: ResourceRef, direction: LineageDirection = "both") =>
   resourcesLineageOptions({ path: { rid: ref.rid }, query: { direction, ...(ref.vno !== undefined ? { vno: ref.vno } : {}) } });
-
-export const dependentsQuery = (rid: string) => resourcesDependentsOptions({ path: { rid } });
 
 export const grantsQuery = (rid: string) => resourcesListGrantsOptions({ path: { rid } });
 

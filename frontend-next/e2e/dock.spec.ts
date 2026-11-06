@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { aPageOfEveryKind, api, type Caller, cleanups, discard, type Envelope, type PageOf, signIn, tidyUp } from "./support";
+import { aPageOfEveryKind, api, type Caller, cleanups, discard, type Envelope, type PageOf, pick, signIn, tidyUp, workAtHome, workIn } from "./support";
 
 // The agent beside a page: on the page of any resource a chat opens over it, and what is asked
 // there reaches the agent with a line that says which resource the person is looking at. The
@@ -16,9 +16,9 @@ async function openDock(page: Page) {
 }
 
 /**
- * Answers the next turn in place of the agent runtime: the page gets the stream, the catalog
- * gets the turn as the runtime would write it. Hands back what the page sent: the run's input,
- * with the context the dock adds, and the conversation it was sent to.
+ * Answers the next turn in place of the agent runtime, in the runtime's order: the catalog
+ * has the turn before the stream says it is over. Hands back what the page sent: the run's
+ * input, with the context the dock adds, and the conversation it was sent to.
  */
 async function answerAs(page: Page, as: Caller, answer: string) {
   let recorded: () => void = () => undefined;
@@ -38,14 +38,39 @@ async function answerAs(page: Page, as: Caller, answer: string) {
       { type: "TEXT_MESSAGE_END", messageId: "m" },
       { type: "RUN_FINISHED", threadId: rid, runId: "r" },
     ];
-    await route.fulfill({ status: 200, contentType: "text/event-stream", body: events.map(e => `data: ${JSON.stringify(e)}\n\n`).join("") });
     const turn = await as("POST", `/conversations/${rid}/turns`, {});
     await as("POST", `/conversations/${rid}/messages`, { turn: turn.turn, role: "user", parts: [{ type: "text", text: sent.input?.messages.at(-1)?.content }] });
     await as("POST", `/conversations/${rid}/messages`, { turn: turn.turn, role: "assistant", template: turn.template, parts: [{ type: "text", text: answer }] });
     await as("DELETE", `/conversations/${rid}/turns/${turn.turn}`);
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: events.map(e => `data: ${JSON.stringify(e)}\n\n`).join("") });
     recorded();
   });
   return sent;
+}
+
+/**
+ * Follows the open dock from now on. Hands back which chats it has shown since, in order
+ * ("new" while there is none yet), and what each chat looked like as it changed: whether its
+ * box was busy or free to write in, and whether anything the person said was in it.
+ */
+async function watchDock(page: Page) {
+  type Seen = { chats: (string | null)[]; looked: string[] };
+  await dock(page).evaluate(box => {
+    const seen: Seen = { chats: [], looked: [] };
+    (window as unknown as { dockSeen: Seen }).dockSeen = seen;
+    new MutationObserver(records => {
+      for (const record of records) if (record.attributeName === "data-chat-dock") seen.chats.push(record.oldValue);
+      const chat = box.querySelector("[data-chat]");
+      if (!chat) return;
+      const box_ = chat.querySelector("button[aria-label='Stop generating']") ? "busy" : chat.querySelector("button[aria-label='Send message']") ? "free" : "no box";
+      const look = `${box_}, ${chat.querySelector('[data-message-role="user"]') ? "said" : "nothing said"}`;
+      if (seen.looked.at(-1) !== look) seen.looked.push(look);
+    }).observe(box, { subtree: true, childList: true, attributes: true, attributeOldValue: true });
+  });
+  return async () => {
+    const seen = await page.evaluate(() => (window as unknown as { dockSeen: Seen }).dockSeen);
+    return { chats: [...seen.chats, await dock(page).getAttribute("data-chat-dock")], looked: seen.looked };
+  };
 }
 
 async function askInDock(page: Page, text: string) {
@@ -65,7 +90,7 @@ function forgetDocks(as: Caller, conversations: () => string[]) {
 test("the agent can be asked from the page of every kind of resource, and is told which page", async ({ page, request }) => {
   test.setTimeout(240_000);
   const as = await api(request);
-  const { pages, project } = await aPageOfEveryKind(as);
+  const { pages } = await aPageOfEveryKind(as);
   const home = (await as("GET", "/me")).homeProject as string;
   const chats: string[] = [];
   forgetDocks(as, () => chats);
@@ -82,25 +107,71 @@ test("the agent can be asked from the page of every kind of resource, and is tol
       await expect(dock(page).locator("[data-dock-about]")).toContainText(at.name);
       const answer = `Answer ${i} about ${at.kind}.`;
       const sent = await answerAs(page, as, answer);
+      const shown = await watchDock(page);
       await askInDock(page, "What is this?");
       await expect(dock(page).getByText(answer).first()).toBeVisible();
       await sent.recorded;
       await page.unroute("**/agents/conversations/*/ag-ui");
+      // Known from here on, so it is removed whatever the rest finds.
+      expect(sent.conversation).toBeDefined();
+      chats.push(sent.conversation as string);
+
+      // The dock goes to the chat it made and stays on it while the app saves which chat that
+      // is. That chat is busy with the question from the moment it shows: it is never an empty
+      // chat with a box to write in, which is what the end of an answer looks like.
+      const beside = at.path.split("/").at(-1) as string;
+      await expect.poll(async () => ((await as("GET", "/me")).preferences.dock ?? {})[beside]).toBe(sent.conversation);
+      const seen = await shown();
+      expect(seen.chats).toEqual(["new", sent.conversation]);
+      expect(seen.looked, seen.looked.join(" > ")).not.toContain("free, nothing said");
 
       // The agent is told what the person is looking at: the resource by name and URI.
       expect(sent.input?.context[0]?.description).toBe("The person is looking at");
       expect(sent.input?.context[0]?.value).toContain(`"${at.name}"`);
       expect(sent.input?.context[0]?.value).toContain(`(${at.uri})`);
-      // The chat is an ordinary one, beside the resource when the person may add there, else
-      // where they work.
-      expect(sent.conversation).toBeDefined();
-      chats.push(sent.conversation as string);
+      // The chat is an ordinary one, in the project the person works in, as anything they make.
       const chat = await as("GET", `/conversations/${sent.conversation}`);
-      expect(chat.metadata.project).toBe(at.mine ? project : home);
+      expect(chat.metadata.project).toBe(home);
       expect(chat.spec).toEqual({});
     });
   }
   await page.screenshot({ path: "test-results/dock.png", fullPage: true });
+});
+
+test("with every project in view, the chat beside a page proposes the page's own project, and the person may choose another", async ({ page, request }) => {
+  const as = await api(request);
+  const stamp = Date.now();
+  const lab: Envelope = await as("POST", "/projects", { name: `dock lab ${stamp}`, spec: {} });
+  const workflow: Envelope = await as("POST", "/workflows", { name: `dock where ${stamp}`, parent: lab.metadata.rid, spec: { operators: [], links: [] } });
+  const home = (await as("GET", "/me")).homeProject as string;
+  const chats: string[] = [];
+  cleanups.push(async () => {
+    await workAtHome(as);
+    await discard(as, [workflow.metadata.rid]);
+    await as.attempt("DELETE", `/projects/${lab.metadata.rid}`);
+  });
+  forgetDocks(as, () => chats);
+
+  await signIn(page);
+  await workIn(page, "All projects");
+  // The pick is kept by the catalog: once it has it, another page of the app starts from it.
+  await expect.poll(async () => (await as("GET", "/me")).preferences.project).toBe("all");
+  await page.goto(`/workflows/${workflow.metadata.rid}`);
+  await openDock(page);
+  // No one project is worked in, so the box says where the chat will go: where the page's
+  // workflow is, since the person may add there.
+  const box = dock(page).locator("[data-new-chat]");
+  await expect(box).toHaveAttribute("data-new-chat-in", lab.metadata.rid);
+  await expect(dock(page).getByLabel("Project for this chat")).toHaveText(`dock lab ${stamp}`);
+  // Their own choice replaces it.
+  await pick(page, dock(page).getByLabel("Project for this chat"), "Personal");
+  await expect(box).toHaveAttribute("data-new-chat-in", home);
+  const sent = await answerAs(page, as, "It is empty.");
+  await askInDock(page, "What is in this workflow?");
+  await expect(dock(page).getByText("It is empty.").first()).toBeVisible();
+  await sent.recorded;
+  chats.push(sent.conversation as string);
+  expect((await as("GET", `/conversations/${sent.conversation}`)).metadata.project).toBe(home);
 });
 
 test("a page's dock continues the chat last used there, and starts over when asked", async ({ page, request }) => {

@@ -15,12 +15,19 @@
 
 import * as Y from "yjs";
 import { reconcilePositions } from "./layout";
+import { same } from "./same";
 import type { Point, Positions, WorkflowLink, WorkflowOperator, WorkflowSpec } from "./types";
+
+// Whoever holds a document compares specs the way the document does.
+export { same };
 
 const OPERATORS = "operators";
 const LINKS = "links";
 const SETTINGS = "settings";
-const POSITIONS = "positions";
+// Where each operator's card sits. Operators were small icons once, placed closer together
+// than a card is wide, and their places were kept as `positions`: those are a leftover.
+const POSITIONS = "places";
+const FORMER_POSITIONS = "positions";
 const PROPERTIES = "operatorProperties";
 
 /** The spec's fields that are neither operators nor links. */
@@ -31,16 +38,6 @@ const SETTINGS_KEPT: Record<Setting, true> = { defaultEnvironment: true, default
 const SETTING_KEYS = Object.keys(SETTINGS_KEPT) as Setting[];
 
 type Json = Record<string, unknown>;
-
-/** Whether two JSON values say the same, whatever the order of their keys. */
-export function same(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-  if (Array.isArray(a)) return a.length === (b as unknown[]).length && a.every((v, i) => same(v, (b as unknown[])[i]));
-  const keys = Object.keys(a);
-  return keys.length === Object.keys(b).length && keys.every(k => k in (b as Json) && same((a as Json)[k], (b as Json)[k]));
-}
 
 const byId = <T>(items: T[], id: (item: T) => string) => new Map(items.map(item => [id(item), item]));
 
@@ -157,20 +154,23 @@ export function placeOperators(doc: Y.Doc, origin?: unknown): void {
 
 /**
  * Takes out of the document what its spec leaves out: a link whose operator is gone, the place
- * of an operator that is gone. Two people leave either behind by removing and changing at the
- * same moment. One writer does this, when it saves, so the document it keeps says what the
- * version says and an operator made later under the same id starts clean.
+ * of an operator that is gone, and the places kept for the icons operators once were. Two
+ * people leave the first two behind by removing and changing at the same moment. One writer
+ * does this, when it saves, so the document it keeps says what the version says and an
+ * operator made later under the same id starts clean.
  */
 export function dropLeftovers(doc: Y.Doc, origin?: unknown): void {
   const operators = doc.getMap<Y.Map<unknown>>(OPERATORS);
   const links = doc.getMap<Omit<WorkflowLink, "linkID">>(LINKS);
   const positions = doc.getMap<Point>(POSITIONS);
+  const former = doc.getMap<Point>(FORMER_POSITIONS);
   const looseLinks = [...links].filter(([, link]) => !operators.has(link.source.operatorID) || !operators.has(link.target.operatorID)).map(([id]) => id);
   const loosePlaces = [...positions.keys()].filter(id => !operators.has(id));
-  if (looseLinks.length === 0 && loosePlaces.length === 0) return;
+  if (looseLinks.length === 0 && loosePlaces.length === 0 && former.size === 0) return;
   doc.transact(() => {
     for (const id of looseLinks) links.delete(id);
     for (const id of loosePlaces) positions.delete(id);
+    for (const id of [...former.keys()]) former.delete(id);
   }, origin);
 }
 

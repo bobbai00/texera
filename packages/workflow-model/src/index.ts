@@ -4,6 +4,7 @@ export * from "./graph";
 export * from "./layout";
 export * from "./plan";
 export * from "./schema";
+export * from "./summary";
 export * from "./compile";
 export * from "./to-flow";
 export * from "./live";

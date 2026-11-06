@@ -13,10 +13,40 @@ import {
   Kbd,
   Select,
   Skeleton,
+  Tooltip,
   toggleTheme,
 } from "@texera/ui";
-import { LogOut, MoonStar, PanelLeftClose, Search, Settings, SquarePen, Users } from "lucide-react";
+import { LogOut, MoonStar, PanelLeftClose, PanelLeftOpen, Search, Settings, SquarePen, Users } from "lucide-react";
 import { signOut, useSession } from "@/auth/session";
+
+/** The sidebar collapsed: a narrow column with the way back, a new chat and the search. */
+export function SidebarRail({ onExpand, onSearch }: { onExpand: () => void; onSearch: () => void }) {
+  return (
+    <nav
+      className="flex h-full w-12 flex-col items-center gap-1 bg-sidebar py-3"
+      aria-label="Main, collapsed"
+      data-sidebar-rail>
+      <Link to="/" aria-label="Texera" className="mb-1">
+        <img src="/texera-mark.png" alt="" className="size-7" />
+      </Link>
+      <Tooltip content="Expand sidebar" side="right">
+        <Button variant="ghost" size="icon-sm" onClick={onExpand} aria-label="Expand sidebar">
+          <PanelLeftOpen />
+        </Button>
+      </Tooltip>
+      <Tooltip content="New chat" side="right">
+        <Button variant="ghost" size="icon-sm" render={<Link to="/" />} aria-label="New chat">
+          <SquarePen />
+        </Button>
+      </Tooltip>
+      <Tooltip content="Search" side="right">
+        <Button variant="ghost" size="icon-sm" onClick={onSearch} aria-label="Search">
+          <Search />
+        </Button>
+      </Tooltip>
+    </nav>
+  );
+}
 
 export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSearch: () => void }) {
   const user = useSession();
@@ -31,6 +61,7 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
       ...(working.current === ALL_PROJECTS ? {} : { project: working.current }),
     }),
     staleTime: 15_000,
+    enabled: working.current !== undefined,
   });
 
   return (
@@ -50,7 +81,7 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
         <Select
           aria-label="Project"
           value={working.current ?? null}
-          onChange={working.pick}
+          onChange={project => void working.pick(project).catch(() => undefined)}
           options={working.choices}
           placeholder="Project"
           className="w-full"

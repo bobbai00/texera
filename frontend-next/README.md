@@ -43,21 +43,24 @@ to them. Test users: `alice`/`alice`, `bob`/`bob`.
 frontend-next/src
   main.tsx            client config (token), query client, router, toasts
   auth/               oidc-client-ts session: PKCE login, silent renew, /callback, sign-out
-  app/                AppShell (Shell + panel + ⌘K), Sidebar, CommandMenu, PanelSync (?panel= ⇄ stack)
+  app/                AppShell (Shell + panel + ⌘K), Sidebar and the rail it collapses to,
+                      CommandMenu, PanelSync (?panel= ⇄ stack)
   routes/             TanStack file routes (below)
 packages/
   catalog-client/     generated from the OpenAPI contract: types, SDK, TanStack Query options, Zod
   workflow-model/     pure: the workflow spec, graph edits and link rules, the canvas layout,
-                      operator schemas, compile interpretation, React Flow mapping, and the
-                      spec as a document several people edit at once (live.ts, shared with
-                      the live service)
+                      operator schemas, an operator's settings in words (summary.ts), compile
+                      interpretation, React Flow mapping, and the spec as a document several
+                      people edit at once (live.ts, shared with the live service)
   service-auth/       a service's own token (client credentials), for the runtime and the
                       live service
-  ui/                 tokens (oklch, light/dark), Base UI primitives, Shell, panel stack,
-                      ResourceHeader, DataTable, SandboxedFrame
+  ui/                 tokens (oklch, light/dark; nothing on screen under 12px), Base UI
+                      primitives, Shell, panel stack, ResourceHeader, DataTable, SandboxedFrame
   kinds/              the URI grammar, the kind registry, the generic page, one module per kind,
                       a resource's live session (live/), what the person is looking at
-                      (shell/viewing.ts), sharing (shell/Share.tsx, library/Shared.tsx)
+                      (shell/viewing.ts), sharing (shell/Share.tsx, library/Shared.tsx), the
+                      results of an execution under a canvas (results/), the lineage graph
+                      (lineage/), the person's preferences (preferences.ts)
   chat/               AG-UI client, conversation reducer, message parts, composer, new chat,
                       the chat beside a page (ChatDock.tsx)
 ```
@@ -113,11 +116,10 @@ interface KindSpec {
 The generic page (`shell/GenericView.tsx`) renders any kind from its envelope: the name and
 description, the kind's own tabs, then the spec as a form generated from the kind's JSON Schema
 (`schema/SchemaForm.tsx`, with the raw JSON a click away), its versions, who can access it
-(visibility and grants, with principal search), its lineage (the edge table walked upstream and
-downstream, plus the specs that reference it) and the envelope itself. Most kinds are a single
-file under `kinds/` that declares the registry entry; the ones with their own surfaces are
-folders: `workflow/` (the canvas editor; the spec holds no positions, the app lays the graph
-out and keeps a person's moves in their preferences), `execution/` (phase, operators, the port view with paged rows, the keep mark),
+(visibility and grants, with principal search), its lineage (a graph, below) and the envelope
+itself. Most kinds are a single file under `kinds/` that declares the registry entry; the ones
+with their own surfaces are folders: `workflow/` (the canvas, below), `execution/` (the
+workflow as it ran with its results, the controls, the keep mark),
 `agent-template/` (the form over card, model endpoint, prompt, skills, MCP servers, handoffs and
 loop), `files/` (the files and staging tabs datasets and models share).
 
@@ -137,14 +139,64 @@ carries a resource (an envelope, a ref, a URI) renders that kind's card, never a
 
 The registry test checks that every kind of the contract is registered with its accent.
 
+## The canvas
+
+A workflow, and an execution of one, are shown on one canvas (`packages/kinds/src/workflow/`).
+
+- **An operator is a card** (`OperatorNode.tsx`). It says the operator's name and its settings
+  in words (`describeProperties` in `workflow-model/summary.ts`: a file by its name, a list of
+  conditions as written, code by its length, defaults left out), in one line or with each
+  setting on a line. How much the cards say is the viewer's choice (`canvas-view.ts`:
+  "Compact | Detailed" for the canvas, a chevron for one card), kept in the browser, never in
+  the workflow.
+- **It is edited in place.** The pencil, or a double click, opens the card into the
+  operator's form (`PropertyForm.tsx`); every change goes into the workflow as it is made.
+  There is no panel beside the canvas. The list of operators opens from "Add operator".
+- **Places are for cards that say one line** (`workflow-model/layout.ts`). Cards that say
+  more are taller, so while they do the rows are drawn further apart by one factor for the
+  canvas (`density.tsx`); nothing is moved in the workflow. The canvas opens at a size its
+  words can be read at and is moved by hand from there (`framing.ts`), and keeps in view the
+  operator whose result is on screen and the card that is open.
+- **Nothing lies over the operators unasked** (`controls.tsx`). The zoom buttons sit in a
+  corner; a workflow of a dozen operators or more has a map, which the viewer opens from a
+  button there and which stays as they left it (`canvas-view.ts`).
+- **An execution shows on the cards** (`execution/overlay.ts`): where each operator stands,
+  its rows, why it failed, and which of its results can be read. The workflow's page shows its
+  latest execution; an execution's page shows the version that ran (`WorkflowCanvas.tsx` with
+  a view), laid out from its graph.
+- **Results are tied to where they came from** (`results/`). Under the canvas one tab per
+  output port that holds a result; the one on screen rings its operator's card, and
+  `Connector.tsx` draws a line from the tab to the port, measured again whenever either end
+  may have moved. A result whose one column is `html-content` is what a visualization operator
+  drew and is shown as that page in `SandboxedFrame`; the unit serves such a cell whole and
+  cuts any other long string for a table's cell.
+- **Every graph draws its arrows the same way** (`shell/canvas.ts`, the `--edge` token): the
+  canvas and the lineage graph.
+
+## Lineage
+
+`shell/Lineage.tsx` is the tab; `lineage/` holds the graph. `model.ts` turns the catalog's
+edges into cards and arrows at one of two levels: "Resources" (one card per resource and per
+execution, an execution's results folded in, parallel arrows merged) and "Data flow" (files,
+versions, executions and one card per result). Data runs left to right, so `used`,
+`references`, `derivedFrom` and `reused` are drawn the reverse of how they are stored; an arrow
+is dashed when a spec only names the thing. A workflow's two most recent executions are cards
+and earlier ones fold into one. `layout.ts` is a layered layout with no dependency.
+
 ## Projects and built-ins
 
 The sidebar picks the project a person works in (`packages/kinds/src/scope.tsx`): Personal by
 default, kept in their preferences, or "All projects". A library lists that project's resources
-and the platform's (`?scope=`), new resources go into it, and so do the chats listed below the
-picker. A resource of the platform's project is built in: its row carries a badge, its page is
-read-only and has no delete, and its access tab says why (`shell/builtin.ts`). The workflow
-editor lists what the workflow's own project can use, wherever the person is working.
+and the platform's (`?scope=`), and so do the chats listed below the picker. What a person
+makes goes into the project they work in, wherever they make it (`useDestination`): the "New
+…" dialog names it; with every project in view the dialog and the chat box ask, the chat
+beside a page starting from that page's project; nothing is made while the working project is
+not known yet. A project made in the app is worked in at once. Preferences are one object the
+catalog replaces whole, so one writer changes them (`preferences.ts`): it reads what the
+catalog has, changes that, and writes it back, one change at a time. A resource of the
+platform's project is built in: its row carries a badge, its page is read-only and has no
+delete, and its access tab says why (`shell/builtin.ts`). The workflow editor lists what the
+workflow's own project can use, wherever the person is working.
 
 ## The chat
 
@@ -178,8 +230,8 @@ what each message carries: AG-UI's `context` of a run, built by `shell/viewing.t
 page's address (`pageResource`) and from what the page itself adds (`useTellViewing`: the
 operator selected on a canvas). The runtime writes it into the turn's state and the agent's
 prompt says what "this" then means. Nothing is bound: the app remembers the chat last used
-beside each page in the person's preferences (`dock.ts`), and the chat is made in the
-resource's project when the person may write there, else in the one they work in. Before a
+beside each page in the person's preferences (`dock.ts`), and the chat is made in the project
+the person works in, like anything they make. Before a
 message is sent the page settles (`settleViewing`): a workflow's session saves, so the agent
 reads what is on screen.
 

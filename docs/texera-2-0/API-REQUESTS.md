@@ -35,8 +35,11 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    Where operators sit is part of the document of the workflow's live session (item 10): one
    layout for everyone, laid out once by the live service (sources left, one column per hop),
    changed by whoever drags an operator, and kept with the document between sessions. A
-   version of a workflow records what runs, not how it is drawn, so an older version is laid
-   out afresh when it is shown.
+   place is where an operator's card sits while cards say their settings in one line; how
+   much the cards say is each viewer's own choice and is not in the document, so a canvas
+   whose cards say more draws its rows further apart without moving anything. A version of a
+   workflow records what runs, not how it is drawn, so an older version, and the workflow on
+   an execution's page, is laid out afresh when it is shown.
 6. **Compile result port keys.** `CompileResult.operatorOutputSchemas[op]` keyed by
    `"<port>_false"` (the engine's serializer) or `"<port>"`; both are read.
 7. **Names.** Names are unique per project and kind (the catalog refuses a duplicate with
@@ -60,8 +63,10 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    joins. Everyone says who they are in their awareness state, `user: {pid, name}`: that is
    the presence shown on a page. A workflow's session also holds its document: maps
    `operators` (a map per operator id, with `operatorProperties` a map of its own), `links`
-   (one value per link id), `settings` (the spec's other fields) and `positions`; code that
-   reads or writes it goes through `@texera/workflow-model/live`. Someone who may not write
+   (one value per link id), `settings` (the spec's other fields) and `places` (where each
+   operator's card sits; `positions`, kept when operators were small icons, is dropped when
+   the document is next saved); code that reads or writes it goes through
+   `@texera/workflow-model/live`. Someone who may not write
    gets a read-only connection. The session's own awareness state holds how the document
    stands with the catalog, `catalog: {vno, refused?}`. `save:<id>` as a stateless message
    asks for a save now and is answered to the asker with `saved:<id>:<vno>` or
@@ -206,6 +211,16 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    waits for it, up to half a minute, and answers 409 `not_empty` with the lake's words if
    the lake still holds something then. An execution of a release that had one warehouse is
    given the platform's at the next start.
+
+18. **A visualization's result.** A visualization operator puts out one row whose one column,
+   `html-content`, holds the page it drew. A page of rows cuts any string longer than 100
+   characters to its start and `...`, which keeps a table's page small; the cell of such a
+   result is served whole, since cut it is no page. The app shows a result of that shape as
+   the page itself, in a frame that can reach nothing of the app's.
+19. **Rows while an execution goes.** A port's rows can be read while the execution still
+   writes them; what a page holds then is what is there at that moment. The app reads the
+   result on screen again as the port reports more rows, and reads it once when the
+   execution is over.
 
 ## catalog and its tools
 

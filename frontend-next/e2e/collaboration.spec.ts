@@ -1,5 +1,5 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
-import { aPageOfEveryKind, api, type Caller, cleanups, discard, type Envelope, IRIS_CSV, openChat, say, signIn, tidyUp } from "./support";
+import { aPageOfEveryKind, api, type Caller, cleanups, discard, editOperator, type Envelope, IRIS_CSV, openChat, operatorList, say, signIn, tidyUp } from "./support";
 
 // People on the same resource: who has a page open is shown at its top right, on every kind of
 // page; a workflow is edited by several people at once, each seeing the others' changes as
@@ -119,19 +119,19 @@ test("two people edit one workflow at the same moment, and what they made is sav
   await expect(node(bobs, "avg")).toBeVisible();
   await expect(bobs.locator("[data-workflow-canvas]")).toHaveAttribute("data-editable", "true");
 
-  // Alice adds an operator from the palette: it appears on bob's canvas with no reload.
-  const palette = page.locator("[data-operator-palette]");
+  // Alice adds an operator from the list: it appears on bob's canvas with no reload.
+  const palette = await operatorList(page);
   await palette.getByPlaceholder("Search operators").fill("Limit");
   await palette.locator('[data-palette-operator="Limit"]').click();
   await expect(page.locator('.react-flow__node [data-operator-type="Limit"]')).toHaveCount(1);
   await expect(bobs.locator('.react-flow__node [data-operator-type="Limit"]')).toHaveCount(1);
+  // A new operator opens in its card, to be set; alice is done with it.
+  await page.locator("[data-operator-done]").click();
 
-  // At the same moment bob changes a property of the aggregate: alice's panel shows it.
-  await node(bobs, "avg").click();
-  const bobsPanel = bobs.locator("[data-property-panel]");
-  await bobsPanel.getByLabel("Operator name").fill("mean petal");
-  await node(page, "avg").click();
-  await expect(page.locator("[data-property-panel]").getByLabel("Operator name")).toHaveValue("mean petal");
+  // At the same moment bob changes the aggregate in its card: alice's card says so.
+  await (await editOperator(bobs, "avg")).getByLabel("Operator name").fill("mean petal");
+  await expect(node(page, "avg")).toContainText("mean petal");
+  await bobs.locator("[data-operator-done]").click();
 
   // One layout for both: where alice drags an operator is where bob sees it. The two operators
   // start on one row; how far the scan sits below the average says where it was put, whatever
@@ -176,10 +176,14 @@ test("someone who may only view a workflow watches it change and cannot change i
   await expect(node(bobs, "avg")).toBeVisible();
   await expect(bobs.locator("[data-workflow-canvas]")).toHaveAttribute("data-editable", "false");
 
-  const palette = page.locator("[data-operator-palette]");
+  const palette = await operatorList(page);
   await palette.getByPlaceholder("Search operators").fill("Limit");
   await palette.locator('[data-palette-operator="Limit"]').click();
   await expect(bobs.locator('.react-flow__node [data-operator-type="Limit"]')).toHaveCount(1);
+  // Bob's canvas offers him nothing to change it with: no list of operators, no pencil on a card.
+  await expect(bobs.locator("[data-add-operator]")).toHaveCount(0);
+  await bobs.locator('.react-flow__node [data-operator-type="Limit"]').hover();
+  await expect(bobs.locator("[data-operator-edit]")).toHaveCount(0);
   // Bob cannot remove it: the key does nothing on his canvas.
   await bobs.locator('.react-flow__node [data-operator-type="Limit"]').click();
   await bobs.keyboard.press("Delete");
@@ -205,7 +209,7 @@ test("a version written elsewhere arrives on an open canvas, beside an edit not 
   await expect(node(page, "top")).toBeVisible();
   await expect(page.locator(".react-flow__edge")).toHaveCount(2);
   // The person keeps editing on top of it, and the next version holds both.
-  const palette = page.locator("[data-operator-palette]");
+  const palette = await operatorList(page);
   await palette.getByPlaceholder("Search operators").fill("Sort");
   await palette.locator('[data-palette-operator="Sort"]').click();
   await expect.poll(async () => (await headOf(alice, rid)).spec.operators.map(o => o.operatorType).sort(), { timeout: 20_000 }).toEqual(["Aggregate", "CSVFileScan", "Limit", "Sort"]);
@@ -224,8 +228,7 @@ test("a workflow the catalog does not take as a version says so on everyone's pa
   await expect(saveState(page)).toHaveAttribute("data-save-state", "saved");
 
   // Alice points the scan at a file that is not there: the catalog takes no such version.
-  await node(page, "scan").click();
-  const file = page.locator("[data-property-panel]").getByPlaceholder("texera://datasets/<rid>@<vno>/files/file.csv");
+  const file = (await editOperator(page, "scan")).getByPlaceholder("texera://datasets/<rid>@<vno>/files/file.csv");
   const there = await file.inputValue();
   await file.fill("texera://datasets/00000000-0000-4000-8000-000000000000@1/files/nothing.csv");
   for (const on of [page, bobs]) {

@@ -5,7 +5,7 @@ import { Shell, useOpenPanel } from "@texera/ui";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { getAccessToken } from "@/auth/session";
 import { PanelSync } from "./PanelSync";
-import { Sidebar } from "./Sidebar";
+import { Sidebar, SidebarRail } from "./Sidebar";
 
 // The palette pulls in cmdk; load it the first time it is opened.
 const CommandMenu = lazy(() => import("./CommandMenu").then(m => ({ default: m.CommandMenu })));
@@ -34,21 +34,17 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const search = () => {
+    setSearchLoaded(true);
+    setSearchOpen(true);
+  };
   return (
     <>
       <PanelSync />
       <Shell
-        sidebar={
-          <Sidebar
-            onCollapse={() => setSidebarOpen(false)}
-            onSearch={() => {
-              setSearchLoaded(true);
-              setSearchOpen(true);
-            }}
-          />
-        }
+        sidebar={<Sidebar onCollapse={() => setSidebarOpen(false)} onSearch={search} />}
+        rail={<SidebarRail onExpand={() => setSidebarOpen(true)} onSearch={search} />}
         sidebarOpen={sidebarOpen}
-        onOpenSidebar={() => setSidebarOpen(true)}
         panel={
           ref ? (
             <section className="h-full min-w-0 bg-background" aria-label="Resource panel" data-side-panel={panel}>

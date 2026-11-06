@@ -66,26 +66,45 @@ passes the right ones per layer. `local` means the Compose stack's host ports (L
 Keycloak, OpenBao, the unit process); `destructive` means other tests may see the effect
 (the unit restarts, every finished run on the stack expires), so those run last.
 
-Playwright covers the pages, in four files under `frontend-next/e2e/`. `texera2.spec.ts`, the
+Playwright covers the pages, in six files under `frontend-next/e2e/`. `texera2.spec.ts`, the
 app: sign-in, a chat started by its first message with an upload that becomes a dataset and stays a card of the message, the agent's page (on show, read-only),
-the project a person works in (what the lists show, where new things go, the pick kept), a
+the project a person works in (what the lists show, where new things go, the pick kept; a
+project made in the app is worked in at once and the dialog names it; with every project in
+view the dialog and the chat box ask which project and make nothing until told), the sidebar
+collapsed to a rail that lies over nothing, a
 chat's model, unit and add-ons chosen in its box, a turn that fails and says why across a
 reload, a long first answer that ends up on screen, the operator page with its versions and
 sharing, a computing unit made with a size, a warehouse made from its page and kept as its
 project's (the dialog asks where it keeps its tables; an execution's page names it and shows
 the rows; it stays while results are in it), an execution's lineage and its keep mark, two
 people in one chat (the other's messages and turn arrive live, under their name), an
-execution's page that follows a slow one and pauses and resumes it, and with the model the two
+execution's page that follows a slow one on its canvas (the operator's card running, paused,
+done, with its rows) and pauses and resumes it, and with the model the two
 chat scenarios: the agent answering from a workflow it built in the chat's project on the
 unit the chat prefers, and one agent researching, analyzing and sharing in one chat. The two
 model scenarios make the iris dataset they ask
 about in a project of their own, work in that project, and remove it at the end with what the
 chat made, as the pytest scenarios do; a wiped stack has no iris to find otherwise.
 
+`canvas.spec.ts`, the canvas: an operator is a card that says its settings in words, in one
+line or each on its own for the canvas or for one card, and is edited in place with no panel
+beside it; the arrows are curves; a workflow too large to see at once offers a map, which
+lies over the canvas only once the viewer opens it and stays as they left it; a run stays on
+the workflow's page, where each card says how its operator did and each result has a tab that
+a line joins to the output port it came out of, also after the canvas is moved; an execution's
+page is the workflow as it ran, and a visualization's result is the chart it drew, whole, not
+a table of its HTML.
+
+`lineage.spec.ts`: a workflow's lineage as a graph at its two levels: the dataset, the
+workflow and its executions as cards with the arrows' words, then the file, the version that
+ran and each result.
+
 `dock.spec.ts`, the agent beside a page: on the page of every kind (fourteen, made in a
 project of the test's or taken from the built-ins) the chat button opens a chat whose message
-tells the agent the kind, the name and the URI of what is on screen, in the resource's project
-when the person may write there; the app remembers the chat used beside a page; the operator
+tells the agent the kind, the name and the URI of what is on screen, in the project the
+person works in, and the dock stays on that chat, busy with the question from the moment it
+shows; with every project in view the box proposes the page's own project and the
+person may choose another; the app remembers the chat used beside a page; the operator
 selected on a canvas is told; and with the model, the agent answers about "this" dataset from
 its file and about "this" workflow without making another.
 

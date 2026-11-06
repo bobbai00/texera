@@ -4,12 +4,29 @@
 
 import type { Point, Positions, WorkflowSpec } from "./types";
 
-export const COLUMN = 180;
-export const ROW = 110;
+/** An operator's card as the layout counts it: its width, and its height while it says its settings in one line. */
+export const CARD = { width: 248, height: 64 };
+/**
+ * From one column of cards to the next, and from one row to the next: a card, the room for an
+ * arrow, and under a card the line that says how it did in an execution.
+ */
+export const COLUMN = CARD.width + 72;
+export const ROW = CARD.height + 64;
 export const ORIGIN: Point = { x: 40, y: 40 };
 
+/** How far apart the layout puts things: from one column to the next, from one row to the next. */
+export interface Grid {
+  column: number;
+  row: number;
+}
+
+/** The grid of a canvas of cards. */
+export const CARDS: Grid = { column: COLUMN, row: ROW };
+/** The grid of a small picture of a workflow, where an operator is its icon with its name under it. */
+export const ICONS: Grid = { column: 150, row: 104 };
+
 /** A position for every operator of the spec. */
-export function layoutPositions(spec: WorkflowSpec): Positions {
+export function layoutPositions(spec: WorkflowSpec, grid: Grid = CARDS): Positions {
   const ids = spec.operators.map(o => o.operatorID);
   const upstream = new Map<string, string[]>(ids.map(id => [id, []]));
   for (const l of spec.links) upstream.get(l.target.operatorID)?.push(l.source.operatorID);
@@ -32,7 +49,7 @@ export function layoutPositions(spec: WorkflowSpec): Positions {
     const r = rankOf(id);
     const row = rows.get(r) ?? 0;
     rows.set(r, row + 1);
-    positions[id] = { x: ORIGIN.x + r * COLUMN, y: ORIGIN.y + row * ROW };
+    positions[id] = { x: ORIGIN.x + r * grid.column, y: ORIGIN.y + row * grid.row };
   }
   return positions;
 }
@@ -41,14 +58,15 @@ export function layoutPositions(spec: WorkflowSpec): Positions {
 export function reconcilePositions(spec: WorkflowSpec, known: Positions): Positions {
   const laid = layoutPositions(spec);
   const out: Positions = {};
-  for (const op of spec.operators) out[op.operatorID] = known[op.operatorID] ?? freeSpot(out, laid[op.operatorID] ?? ORIGIN);
+  for (const op of spec.operators)
+    out[op.operatorID] = known[op.operatorID] ?? freeSpot(out, laid[op.operatorID] ?? ORIGIN);
   return out;
 }
 
-/** Moves a spot down until it does not sit on top of another operator. */
+/** Moves a spot down until its card does not lie on another operator's. */
 export function freeSpot(positions: Positions, at: Point): Point {
   const taken = Object.values(positions);
   const spot = { ...at };
-  while (taken.some(p => Math.abs(p.x - spot.x) < 70 && Math.abs(p.y - spot.y) < 70)) spot.y += ROW;
+  while (taken.some(p => Math.abs(p.x - spot.x) < CARD.width && Math.abs(p.y - spot.y) < CARD.height)) spot.y += ROW;
   return spot;
 }

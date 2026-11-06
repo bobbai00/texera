@@ -1,27 +1,31 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { Positions, WorkflowSpec } from "./types";
 
-export type OperatorStatus = "running" | "completed" | "failed";
+/** Where an operator stands in an execution. */
+export type OperatorStatus = "waiting" | "running" | "paused" | "completed" | "failed";
 
-export interface OperatorNodeData extends Record<string, unknown> {
+/** What a card shows of an execution and of the compiler, per operator. */
+export interface OperatorOverlay {
+  /** The operator's state in the execution on screen, if any. */
+  status?: OperatorStatus;
+  /** Rows the operator has put out in that execution. */
+  rows?: number;
+  /** Why it failed, or what the compiler says is wrong with it. */
+  error?: string;
+  /** The output ports whose result the execution on screen holds. */
+  results?: string[];
+}
+
+export interface OperatorNodeData extends Record<string, unknown>, OperatorOverlay {
   operatorType: string;
   label: string;
   inputs: { id: string; label?: string }[];
   outputs: { id: string; label?: string }[];
+  /** The operator's settings, which its card says in words. */
+  properties: Record<string, unknown>;
   disabled?: boolean;
-  /** The operator's state in the latest execution, if any. */
-  status?: OperatorStatus;
-  /** Rows the operator output in the latest execution. */
-  rows?: number;
-  /** A compile error (bad property, missing input), shown on the node. */
-  error?: string;
-}
-
-/** Per-operator facts the canvas shows on nodes: execution state, output rows, compile errors. */
-export interface OperatorOverlay {
-  status?: OperatorStatus;
-  rows?: number;
-  error?: string;
+  /** Its result is kept after an execution, to be read later. */
+  keepsResult: boolean;
 }
 
 export type OperatorNode = Node<OperatorNodeData, "operator">;
@@ -45,7 +49,9 @@ export function toFlow(
       label: operatorLabel(op),
       inputs: (op.inputPorts ?? []).map(p => ({ id: p.portID, label: p.displayName || undefined })),
       outputs: (op.outputPorts ?? []).map(p => ({ id: p.portID, label: p.displayName || undefined })),
+      properties: op.operatorProperties ?? {},
       disabled: op.isDisabled,
+      keepsResult: op.viewResult === true,
       ...overlay[op.operatorID],
     },
   }));
@@ -55,18 +61,21 @@ export function toFlow(
     sourceHandle: l.source.portID,
     target: l.target.operatorID,
     targetHandle: l.target.portID,
+    // Rows are on their way along the arrows out of an operator that is running.
+    ...(overlay[l.source.operatorID]?.status === "running" ? { animated: true } : {}),
   }));
   return { nodes, edges };
 }
 
-/** Engine operator states (as the catalog records them) as node status. */
+/** The engine's operator states (as the catalog records them) as where an operator stands. */
 export const STATUS_OF: Record<string, OperatorStatus> = {
-  initializing: "running",
-  ready: "running",
+  uninitialized: "waiting",
+  initializing: "waiting",
+  ready: "waiting",
   running: "running",
   pausing: "running",
-  paused: "running",
   resuming: "running",
+  paused: "paused",
   completed: "completed",
   failed: "failed",
   killed: "failed",

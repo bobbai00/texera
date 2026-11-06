@@ -84,7 +84,12 @@ name.
 **Projects.** Everything lives in a project, and you work in one at a time, picked at the top
 of the sidebar: "Personal", your home project, until you pick another, or "All projects". The
 lists show the project you work in and what it inherits, the built-ins; what you make goes
-into it, and so does what the agent makes in a chat of that project. Names are unique per
+into it (a chat, a workflow, anything, from a library page, the home page or the chat beside
+a page), and so does what the agent makes in a chat of that project. The "New …" dialog says
+which project that is. With "All projects" there is no one project to make things in, so the
+dialog and the chat box ask which; beside a page the chat box proposes that page's project.
+A project you make is the one you work in from then on, and a project's page has "Work in
+this project". Names are unique per
 project and kind (a duplicate is refused with 409). Share a project and everything in it is
 shared the same way; make it public and everyone can read what is in it. A project can name
 its own defaults: the agent, the model, the computing unit, the warehouse, the environment,
@@ -108,11 +113,29 @@ spec (a form, the JSON a click away), its versions, who can access it, its linea
 envelope; `?panel=` opens a second resource beside the first.
 
 **Workflows.** The editor is a canvas over the spec: operators (the engine's built-ins and the
-custom operators of the workflow's project, by URI), links, properties from each operator's
-JSON Schema. A file property takes a dataset file URI,
+custom operators of the workflow's project, by URI) joined by arrows. An operator is a card:
+its name, and its settings in one line as a person would say them (a file by its name, a
+filter as `medal = Gold`). "Compact | Detailed" at the top of the canvas chooses how much every
+card says, and a card can be opened or closed on its own; "Detailed" lists each setting on a
+line. The pencil on a card (or a double click) opens the card into its form, where the
+operator is renamed, set (properties from its JSON Schema), switched off, told to keep its
+result, or deleted; nothing opens beside the canvas. "Add operator" opens the list of
+operators; a workflow with none opens with it. A workflow of a dozen operators or more has a
+map button with the zoom buttons; the map opens over a corner of the canvas and stays open or
+closed as you left it. A file property takes a dataset file URI,
 `texera://datasets/{rid}@{vno}/files/{path}`. The editor compiles as you edit, on a unit, and
-shows the output columns per port and any errors; "Run" starts an execution and opens its
-page. Every save is a version; an execution pins the version it ran.
+a card says what is wrong with its operator. Every save is a version; an execution pins the
+version it ran.
+
+**An execution on the canvas.** "Run" starts an execution and the page stays where it is:
+each card says where its operator stands (waiting, running, paused, done, failed, with the
+reason when it failed) and how many rows it has put out, second by second. Under the canvas
+are the results, one tab per output port that holds one, named after its operator. The result
+on screen is tied to where it came from: its operator's card is ringed and a line runs from
+the tab to the output port, following the canvas as it moves; a card's "Result" button puts
+its result on screen, and a tab brings its operator into view. A result is a table (paged
+rows), or, for a visualization operator, the chart it drew. The results fold away; "Execution"
+opens the execution's own page beside the workflow.
 
 **A workflow edited together.** Everyone who may change a workflow edits the same document at
 once: an operator one person adds, a property they change or a place they drag an operator to
@@ -126,14 +149,26 @@ catalog does not take the workflow as a version (a file property that names a fi
 not exist, the catalog being away), the page says "Not saved" and why, for everyone in the
 session; the edits stay, a run does not start, and the session keeps trying.
 
-**Executions.** An execution's page shows its phase, the operators with their states and
-counts as the unit reports them (about once a second while it runs), the results of each
-output port (paged rows), its inputs and its lineage. "Pause" holds a running one where it is
+**Executions.** An execution's page is the workflow as it ran, on the same canvas (the
+version it pinned, laid out from its graph, not editable): each card says how its operator
+did, as the unit reports it while the execution goes, and the results are under it, tied to
+their operators and ports the same way. "Details" has what it read, its environment and the
+record as the catalog holds it; "Lineage" its lineage. "Pause" holds a running one where it is
 and "Resume" continues it; "Stop" cancels a live one; "Keep" marks a finished one so the
 retention policy leaves its results alone; "Delete" removes it with its tables. The page
 follows the execution without reloading. Results live with the execution: to use them again,
 run again or read the rows. An execution lives under its workflow; the sidebar lists them
 across workflows because that is how people look for one.
+
+**Lineage.** A resource's "Lineage" is a graph that reads left to right: what was read, what
+ran, what came out. Each thing is a card with its name and what it is; each arrow says what
+happened (read, ran, produced, saved as, referenced by), drawn dashed when a spec only names
+the thing and nothing ran. "Resources" shows one card per dataset, workflow and execution,
+with an execution's results folded into it. "Data flow" shows the parts: the file an operator
+read, the workflow version that ran, the execution, and the result of each output port with
+its rows. A workflow shows its two most recent executions and folds the earlier ones into one
+card that opens on a click. A card opens its resource beside the page; something that was not
+shared with you is a card that says so.
 
 **Datasets.** Upload files (they stay staged), then commit a version; download or presign any
 file of any version. Uploading the same bytes twice stores them once.

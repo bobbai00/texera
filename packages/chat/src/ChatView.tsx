@@ -10,7 +10,7 @@ import { useResourceLabels } from "./labels";
 import { MessageItem } from "./MessageItem";
 import { writersOf } from "./model";
 import { StatePart } from "./parts";
-import { takeFirstMessage } from "./pending";
+import { awaitsFirstMessage, takeFirstMessage } from "./pending";
 import { ResourcesRail } from "./ResourcesRail";
 import { type Attachment, useConversation } from "./useConversation";
 
@@ -54,7 +54,10 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   const [dragging, setDragging] = useState(false);
   const [upload, setUpload] = useState<{ status?: string; error?: string }>({});
   const uploading = upload.status !== undefined;
-  const busy = chat.running || uploading;
+  // A chat is created by its first message, which the page that started it left for it. Until
+  // that message is sent the chat is busy with it: it never stands empty with a box to write in.
+  const [starting, setStarting] = useState(() => awaitsFirstMessage(rid));
+  const busy = chat.running || uploading || starting;
   const uris = useMemo(() => writersOf(chat.messages), [chat.messages]);
   const labels = useResourceLabels(uris);
   const { beside } = useOpenResource();
@@ -114,12 +117,11 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
     return true;
   };
 
-  // A chat is created by its first message: the page that started it left the message here.
   const sendFirst = useRef(send);
   sendFirst.current = send;
   useEffect(() => {
     const first = takeFirstMessage(rid);
-    if (first) void sendFirst.current(first);
+    if (first) void sendFirst.current(first).finally(() => setStarting(false));
   }, [rid]);
 
   // Which assistant messages open a run of the same template: those get the label.

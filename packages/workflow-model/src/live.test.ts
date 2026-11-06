@@ -182,6 +182,19 @@ describe("how a session's document stands with the catalog", () => {
 });
 
 describe("what a document's spec leaves out", () => {
+  it("forgets the places kept for the icons operators once were", () => {
+    const doc = docOf(base);
+    // A document kept from before: places for icons, closer together than a card is wide.
+    doc.getMap("positions").set("scan", { x: 40, y: 40 });
+    doc.getMap("positions").set("avg", { x: 220, y: 40 });
+    expect(positionsOf(doc)).toEqual({});
+    dropLeftovers(doc);
+    expect(doc.getMap("positions").size).toBe(0);
+    movePositions(doc, { scan: { x: 40, y: 40 } });
+    dropLeftovers(doc);
+    expect(positionsOf(doc)).toEqual({ scan: { x: 40, y: 40 } });
+  });
+
   it("is taken out of the document for good, so it does not come back with an operator of the same id", () => {
     const alice = docOf(base);
     placeOperators(alice);

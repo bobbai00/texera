@@ -1,4 +1,6 @@
 // public/theme-init.js applies the saved theme before first paint; this toggles it afterwards.
+import { useSyncExternalStore } from "react";
+
 const KEY = "texera-theme";
 
 export function isDark(): boolean {
@@ -16,4 +18,17 @@ export function setTheme(dark: boolean) {
 
 export function toggleTheme() {
   setTheme(!isDark());
+}
+
+/** Whether the app is in its dark theme now. What draws itself (a graph's own controls) follows this, not the system's setting. */
+export function useDark(): boolean {
+  return useSyncExternalStore(
+    changed => {
+      const watch = new MutationObserver(changed);
+      watch.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+      return () => watch.disconnect();
+    },
+    isDark,
+    () => false
+  );
 }

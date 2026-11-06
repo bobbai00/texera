@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ALL_PROJECTS, projectLabel, workingProject } from "./scope";
+import { ALL_PROJECTS, destination, projectLabel, workingProject } from "./scope";
 
 const me = (project?: unknown) => ({ homeProject: "home", systemProject: "platform", preferences: project === undefined ? {} : { project } });
 const readable = ["home", "lab", "platform"];
@@ -39,5 +39,26 @@ describe("how a project is named in the app", () => {
     expect(label("lab")).toBe("lab");
     expect(label("platform")).toBe("Built-in");
     expect(projectLabel("unknown", me(), undefined)).toBe("a project");
+  });
+});
+
+describe("where something new goes", () => {
+  it("is the project the person works in", () => {
+    expect(destination("lab", undefined)).toEqual({ project: "lab", asking: false });
+    expect(destination("home", "lab", "field")).toEqual({ project: "home", asking: false });
+  });
+
+  it("is asked for when every project is in view", () => {
+    expect(destination(ALL_PROJECTS, undefined)).toEqual({ project: undefined, asking: true });
+    expect(destination(ALL_PROJECTS, "lab")).toEqual({ project: "lab", asking: true });
+  });
+
+  it("starts from what the page suggests, which the person's own choice replaces", () => {
+    expect(destination(ALL_PROJECTS, undefined, "field")).toEqual({ project: "field", asking: true });
+    expect(destination(ALL_PROJECTS, "lab", "field")).toEqual({ project: "lab", asking: true });
+  });
+
+  it("is nowhere until the person's working project is known", () => {
+    expect(destination(undefined, "lab", "field")).toEqual({ project: undefined, asking: false });
   });
 });
