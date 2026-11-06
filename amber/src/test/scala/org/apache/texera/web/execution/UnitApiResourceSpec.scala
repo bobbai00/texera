@@ -292,6 +292,41 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
     }
   }
 
+  "rowsOf" should "cut a long string for a table's cell, and serve a visualization's page whole" in {
+    import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
+
+    val long = "x" * 5000
+    // An ordinary result: a cell shows the start of a long string.
+    val table = new Schema(
+      List(new Attribute("note", AttributeType.STRING), new Attribute("n", AttributeType.INTEGER))
+    )
+    val row = Tuple
+      .builder(table)
+      .add("note", AttributeType.STRING, long)
+      .add("n", AttributeType.INTEGER, 7)
+      .build()
+    val cells = UnitApiResource.rowsOf(List(row), table.getAttributes).head
+    cells.head.asText() should have length 103
+    cells.head.asText() should endWith("...")
+    cells(1).asInt() shouldBe 7
+
+    // What a visualization operator draws: one column holding the page. Cut, it is no page.
+    val drawn = new Schema(List(new Attribute("html-content", AttributeType.STRING)))
+    val page = Tuple.builder(drawn).add("html-content", AttributeType.STRING, long).build()
+    UnitApiResource.isVisualization(drawn.getAttributes) shouldBe true
+    UnitApiResource.rowsOf(List(page), drawn.getAttributes).head.head.asText() shouldBe long
+
+    // A column of that name among others is a column like any other.
+    val mixed = new Schema(
+      List(
+        new Attribute("html-content", AttributeType.STRING),
+        new Attribute("n", AttributeType.INTEGER)
+      )
+    )
+    UnitApiResource.isVisualization(mixed.getAttributes) shouldBe false
+    UnitApiResource.isVisualization(table.getAttributes) shouldBe false
+  }
+
   "EnvironmentManager.nameOf" should "make a filesystem-safe, version-specific name" in {
     val name = EnvironmentManager.nameOf("e6325d76-7bcf-442c-b926-1c9175ae42d8", 3)
     name shouldBe "env-e6325d767bcf442cb9261c9175ae42d8-v3"

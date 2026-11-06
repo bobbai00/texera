@@ -32,7 +32,7 @@ import org.apache.texera.amber.core.storage.{
   VFSURIFactory
 }
 import org.apache.texera.amber.core.storage.model.VirtualDocument
-import org.apache.texera.amber.core.tuple.Tuple
+import org.apache.texera.amber.core.tuple.{Attribute, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
   OperatorIdentity,
@@ -234,6 +234,29 @@ object UnitApiResource {
       }
       named
     }
+
+  /** The one column of what a visualization operator draws: the page, as HTML. */
+  val VisualizationColumn = "html-content"
+
+  /**
+    * Whether a result is the page a visualization operator drew: its one column holds it.
+    */
+  def isVisualization(attributes: List[Attribute]): Boolean =
+    attributes.size == 1 && attributes.head.getName == VisualizationColumn
+
+  /**
+    * A page of rows as the contract serves them, in the order of the columns. A long string
+    * is cut for a table's cell; a visualization's page is served whole, since cut it is no
+    * page to show.
+    */
+  def rowsOf(tuples: List[Tuple], attributes: List[Attribute]): List[List[JsonNode]] =
+    ExecutionResultService
+      .convertTuplesToJson(tuples, isVisualization(attributes))
+      .map(node =>
+        attributes.map(a =>
+          Option(node.get(a.getName)).getOrElse(objectMapper.nullNode()): JsonNode
+        )
+      )
 
   /**
     * Where a port's result is, as the catalog knows it: `namespace.table` when the catalog
@@ -741,13 +764,9 @@ class UnitApiResource extends LazyLogging {
     val attributes = schemaOpt
       .map(_.getAttributes.toList)
       .getOrElse(tuples.headOption.map(_.getSchema.getAttributes.toList).getOrElse(Nil))
-    val json = ExecutionResultService.convertTuplesToJson(tuples)
-    val rows = json.map(node =>
-      attributes.map(a => Option(node.get(a.getName)).getOrElse(objectMapper.nullNode()): JsonNode)
-    )
     RowPage(
       attributes.map(a => CompileAttribute(a.getName, a.getType.toString)),
-      rows,
+      UnitApiResource.rowsOf(tuples, attributes),
       offset,
       Some(doc.getCount)
     )
