@@ -8,7 +8,7 @@ import { Button, EmptyState, SectionTitle, Skeleton, cn, timeAgo } from "@texera
 import { ArrowUpRight, MessagesSquare } from "lucide-react";
 import { lazy } from "react";
 import { chatSettingsQuery, resourceQuery, SOURCE_LABEL } from "../queries";
-import { UriChip } from "../shell/Chips";
+import { PrincipalName, UriChip } from "../shell/Chips";
 import { FromThisChat } from "../shell/FromThisChat";
 import { KindHeader } from "../shell/KindHeader";
 import { metaLine } from "../shell/MetaLine";
@@ -29,7 +29,11 @@ function ConversationView({ ref, mode }: KindViewProps) {
         ref={{ kind: "conversation", rid: ref.rid }}
         mode={mode}
         name={data.metadata.name}
-        meta={metaLine("conversation", data.metadata)}
+        meta={
+          <>
+            {metaLine("conversation", data.metadata)} · started by <PrincipalName pid={data.metadata.createdBy} />
+          </>
+        }
         actions={
           <Button size="sm" onClick={() => expand({ kind: "conversation", rid: ref.rid })}>
             <ArrowUpRight /> Open chat

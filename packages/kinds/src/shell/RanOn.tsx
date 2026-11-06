@@ -20,30 +20,32 @@ export function Named({ uri }: { uri: string }) {
   );
 }
 
-/**
- * Where an execution runs and keeps its results, in words: `on texera-unit (python-default v1)
- * · results in platform`, the whole of it on hover where it is cut short. The unit and the
- * warehouse are no cards of a workflow's lineage; this is how it says them.
- */
-export function RanOn({
-  unit,
-  profile,
-  warehouse,
-  className,
-}: {
+interface Where {
   unit?: string;
   profile?: string;
   warehouse?: string;
-  className?: string;
-}) {
+}
+
+/** Where an execution ran, as one sentence: `on texera-unit (python-default v1) · results in platform`; empty when nothing says. */
+export function useRanOn({ unit, profile, warehouse }: Where): { said: string; names: Record<keyof Where, string> } {
   const names = { unit: useNamed(unit), profile: useNamed(profile), warehouse: useNamed(warehouse) };
-  if (!unit && !warehouse) return null;
   const said = [
     unit ? `on ${names.unit}${profile ? ` (${names.profile})` : ""}` : "",
     warehouse ? `results in ${names.warehouse}` : "",
   ]
     .filter(Boolean)
     .join(" · ");
+  return { said, names };
+}
+
+/**
+ * Where an execution runs and keeps its results, in words: `on texera-unit (python-default v1)
+ * · results in platform`, the whole of it on hover where it is cut short. The unit and the
+ * warehouse are no cards of a workflow's lineage; this is how it says them.
+ */
+export function RanOn({ unit, profile, warehouse, className }: Where & { className?: string }) {
+  const { said, names } = useRanOn({ unit, profile, warehouse });
+  if (!unit && !warehouse) return null;
   return (
     <span className={cn("min-w-0 truncate text-muted-foreground", className)} title={said} data-ran-on>
       {unit && (

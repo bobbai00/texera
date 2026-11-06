@@ -24,6 +24,8 @@ const factsOf = (x: Execution | Resource): ExecutionFacts => {
     ...(spec.computingUnit ? { unit: spec.computingUnit } : {}),
     ...(spec.computing?.profile ? { profile: spec.computing.profile } : {}),
     ...(spec.warehouse ? { warehouse: spec.warehouse } : {}),
+    createdBy: x.metadata.createdBy,
+    ...(x.metadata.origin ? { origin: x.metadata.origin } : {}),
   };
 };
 

@@ -157,7 +157,7 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold">{conversation.metadata.name}</div>
             <div className="truncate text-xs text-muted-foreground">
-              with <span data-current-template>{agent?.name ?? "…"}</span>
+              with <span data-current-template>{agent?.name ?? "…"}</span> · started by <PrincipalName pid={conversation.metadata.createdBy} />
             </div>
           </div>
           <Presence rid={rid} />

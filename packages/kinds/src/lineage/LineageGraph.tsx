@@ -29,12 +29,14 @@ import {
 import "@xyflow/react/dist/style.css";
 import { History, Table2 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo } from "react";
+import { versionsQuery } from "../queries";
 import { KINDS } from "../registry";
 import { edgeOptions } from "../shell/canvas";
+import { MadeBy, useMadeBy } from "../shell/Chips";
 import { KindIcon } from "../shell/KindIcon";
 import { useOpenResource } from "../shell/navigation";
 import { whyNot } from "../shell/OpenError";
-import { RanOn } from "../shell/RanOn";
+import { RanOn, useRanOn } from "../shell/RanOn";
 import type { ResourceRef } from "../types";
 import { uriOf } from "../uri";
 import { type LabelPlace, layoutLineage, placeLabels } from "./layout";
@@ -44,11 +46,12 @@ import { namedQuery } from "./queries";
 /**
  * The cards of a level are all one size, so the graph is laid out before anything is measured.
  * The level of resources has few columns and says more on an arrow ("read iris.csv"); data flow
- * has a column more and says less, so its cards and the room between them are narrower.
+ * has a column more and says less, so its cards and the room between them are narrower. A card
+ * has room for four lines: its name, what it is, where an execution ran, who made it.
  */
 const CARD: Record<Level, { width: number; height: number }> = {
-  resources: { width: 248, height: 60 },
-  flow: { width: 224, height: 60 },
+  resources: { width: 248, height: 80 },
+  flow: { width: 224, height: 80 },
 };
 const SPACING: Record<Level, { column: number; row: number }> = {
   resources: { column: 200, row: 28 },
@@ -68,7 +71,11 @@ export function shorten(text: string, most = 20): string {
   return text.length <= most ? text : `${text.slice(0, most - 9)}…${text.slice(-8)}`;
 }
 
-/** The frame every card shares: an icon, a name, one line that says what it is. */
+/**
+ * The frame every card shares: an icon, a name, one line that says what it is, and who made it.
+ * A card that opens what it names is a button under its words, so a link in them (the chat that
+ * made it) is a target of its own.
+ */
 function Frame({
   card,
   level,
@@ -76,6 +83,7 @@ function Frame({
   name,
   line,
   more,
+  by,
   title,
   onOpen,
   muted,
@@ -88,28 +96,20 @@ function Frame({
   line: ReactNode;
   /** A third line, for a card that says more: where an execution ran. */
   more?: ReactNode;
+  /** Who made it. */
+  by?: ReactNode;
   title?: string;
   onOpen?: () => void;
   muted?: boolean;
   dashed?: boolean;
 }) {
-  const body = (
-    <>
-      {icon}
-      <span className="min-w-0 flex-1 text-left">
-        <span className={cn("block truncate text-sm font-medium", muted && "text-muted-foreground")}>{name}</span>
-        <span className="block truncate text-xs text-muted-foreground">{line}</span>
-        {more && <span className="block truncate text-xs">{more}</span>}
-      </span>
-    </>
-  );
   // A card that is not dragged or picked gets no pointer from the graph: it takes its own.
   const frame = cn(
-    "pointer-events-auto flex items-center gap-2 rounded-xl border bg-card px-2.5 shadow-sm",
+    "pointer-events-auto relative flex items-center gap-2 rounded-xl border bg-card px-2.5 shadow-sm",
     dashed && "border-dashed bg-transparent shadow-none",
-    card.root && "border-primary ring-4 ring-primary/15"
+    card.root && "border-primary ring-4 ring-primary/15",
+    onOpen && "transition-colors hover:border-foreground/30 hover:bg-accent/40"
   );
-  const attributes = { style: CARD[level], title, "data-lineage-card": card.type, "data-root": card.root || undefined };
   return (
     <>
       <Handle
@@ -118,19 +118,31 @@ function Frame({
         isConnectable={false}
         className="!size-px !min-h-0 !min-w-0 !border-0 !bg-transparent"
       />
-      {onOpen ? (
-        <button
-          type="button"
-          onClick={onOpen}
-          className={cn(frame, "nopan cursor-pointer transition-colors hover:border-foreground/30 hover:bg-accent/40")}
-          {...attributes}>
-          {body}
-        </button>
-      ) : (
-        <div className={frame} {...attributes}>
-          {body}
-        </div>
-      )}
+      <div
+        className={frame}
+        style={CARD[level]}
+        title={title}
+        data-lineage-card={card.type}
+        data-root={card.root || undefined}>
+        {onOpen && (
+          <button
+            type="button"
+            onClick={onOpen}
+            aria-label={title}
+            className="nopan absolute inset-0 cursor-pointer rounded-xl"
+            data-lineage-open
+          />
+        )}
+        <span className="pointer-events-none contents">
+          {icon}
+          <span className="min-w-0 flex-1 text-left">
+            <span className={cn("block truncate text-sm font-medium", muted && "text-muted-foreground")}>{name}</span>
+            <span className="block truncate text-xs text-muted-foreground">{line}</span>
+            {more && <span className="block truncate text-xs">{more}</span>}
+            {by && <span className="block min-w-0 text-xs text-muted-foreground">{by}</span>}
+          </span>
+        </span>
+      </div>
       <Handle
         type="source"
         position={Position.Right}
@@ -159,6 +171,13 @@ function ResourceCard({ card, level }: { card: LineageNode; level: Level }) {
           ? plural(versions.length, "version")
           : "";
   const file = card.type === "file" ? (card.path ?? "") : undefined;
+  // Who made the version the card stands for, the newest when it stands for several; a
+  // resource without versions was made with the resource.
+  const vno = ref.vno ?? (versions.length > 0 ? Math.max(...versions) : undefined);
+  const { data: listed } = useQuery({ ...versionsQuery(ref.rid), enabled: vno !== undefined && why === undefined });
+  const maker = vno === undefined ? data?.metadata : listed?.items.find(v => v.vno === vno);
+  const several = ref.vno === undefined && versions.length > 1;
+  const made = useMadeBy(maker?.createdBy, maker?.origin).said;
   const name =
     why === "forbidden"
       ? "Not shared with you"
@@ -177,7 +196,8 @@ function ResourceCard({ card, level }: { card: LineageNode; level: Level }) {
       icon={<KindIcon kind={ref.kind} className="size-7" />}
       name={name}
       line={line}
-      title={[file ?? named, line].filter(Boolean).join("\n")}
+      by={maker && <MadeBy createdBy={maker.createdBy} origin={maker.origin} prefix={several ? `v${vno} ` : ""} />}
+      title={[file ?? named, line, made && `${several ? `v${vno}: ` : ""}${made}`].filter(Boolean).join("\n")}
       muted={why !== undefined}
       onOpen={openable ? () => beside(data ? { ...ref, parent: data.metadata.parent } : ref) : undefined}
     />
@@ -201,6 +221,9 @@ function ExecutionCard({ card, level }: { card: LineageNode; level: Level }) {
   // What came out of it is on screen at the level of data flow; here it is a count.
   const detail = level === "resources" ? (card.results ? plural(card.results, "result") : "") : took;
   const line = [phase.replace(/^./, c => c.toUpperCase()), detail].filter(Boolean).join(" · ");
+  // Everything the card says, in full where its lines are cut short.
+  const ran = useRanOn({ unit: x?.unit, profile: x?.profile, warehouse: x?.warehouse }).said;
+  const made = useMadeBy(x?.createdBy, x?.origin).said;
   return (
     <Frame
       card={card}
@@ -219,11 +242,14 @@ function ExecutionCard({ card, level }: { card: LineageNode; level: Level }) {
         </>
       }
       more={x && <RanOn unit={x.unit} profile={x.profile} warehouse={x.warehouse} className="block" />}
+      by={x?.createdBy && <MadeBy createdBy={x.createdBy} origin={x.origin} />}
       title={[
         x?.name,
         `Execution · ${line}`,
         x?.vno !== undefined ? `ran version ${x.vno}` : "",
         x ? timeAgo(x.createdAt) : "",
+        ran,
+        made,
       ]
         .filter(Boolean)
         .join("\n")}

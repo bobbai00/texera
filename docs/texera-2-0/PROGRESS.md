@@ -2,7 +2,36 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
-## 2026-11-06 (session 13, part 2): a chat chooses no computing unit
+## 2026-11-06 (session 13, part 3): lineage says who made each thing; a chat says who started it
+
+The user: "the linear event should show that xxx created by a chat. and a chat created by a
+user". What the catalog already recorded (a resource's and a version's `createdBy`, and its
+`origin`: the chat, the turn, the agent version) is now said where lineage is read.
+
+What was decided:
+- **On the card, not as cards.** Arrows in lineage mean data moved; making something is
+  authorship, so each card carries a line saying who made what it names, and no chat or person
+  becomes a card of its own (one chat that edits and runs a workflow many times would otherwise
+  add an arrow for each, and what people made by hand would have no such card).
+- **"by Alice Liddell"** for what a person made; **"by 💬 <the chat>"** for what the agent made
+  in a chat, the chat's name a link that opens it beside. The whole sentence, "Made by Texera
+  Agent for Bob Builder, in the chat …", is on hover. A card for several versions names the
+  newest one's maker ("v3 by …").
+- **A chat says who started it**, on its page and beside a page: "started by Alice Liddell".
+
+Done:
+- `MadeBy` and `useMadeBy` (the line, and the sentence); `useRanOn` gives where an execution ran
+  as one sentence. A lineage card opens what it names through a button laid under its words,
+  so the chat's name is a target of its own, and its tooltip says everything the card says in
+  full; cards are 80 px high for four lines. An execution's facts carry its maker.
+
+Verified: vitest 254; typecheck; the k8s check, 40 cluster scenarios and 44 Playwright without
+a model (new in `lineage.spec.ts`: the dataset "by" its person, the workflow and its execution
+"by" the chat they were made in, the full sentence on hover, the chat's name opening the chat,
+which says who started it, and a card still opening what it names); with the model, the 4
+Playwright scenarios. The first try of the line, "by Texera Agent in <chat>", cut the chat's
+name off a 248 px card, and the test could not click it: the visible line now names the chat.
+: a chat chooses no computing unit
 
 The user: "does chat have to bind with computing unit? i don't think so right? currently it
 seems to be binded and there is a selector in the chat box". Agreed: a chat chooses how its

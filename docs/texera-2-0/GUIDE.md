@@ -186,7 +186,10 @@ with an execution's results folded into it. "Data flow" shows the parts: the fil
 read, the workflow version that ran, the execution, and the result of each output port with
 its rows. A workflow shows its two most recent executions and folds the earlier ones into one
 card that opens on a click. A card opens its resource beside the page; something that was not
-shared with you is a card that says so.
+shared with you is a card that says so. Each card also says who made it: "by Alice Liddell" for
+what a person made, or "by" a chat for what the agent made in one (the whole of it, with the
+person the agent worked for, on hover). The chat's name opens the chat beside, and a chat says
+who started it.
 
 **Datasets.** Upload files (they stay staged), then commit a version; download or presign any
 file of any version. Uploading the same bytes twice stores them once.

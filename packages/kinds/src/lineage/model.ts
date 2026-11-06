@@ -5,7 +5,7 @@
 // file, the version that ran, each result). Data runs left to right: what was read is where an
 // arrow starts, what was made is where it ends.
 
-import type { Edge } from "@texera/catalog-client/types";
+import type { Edge, Origin } from "@texera/catalog-client/types";
 import type { ResourceRef } from "../types";
 import { parseUri, uriOf } from "../uri";
 
@@ -27,6 +27,9 @@ export interface ExecutionFacts {
   unit?: string;
   profile?: string;
   warehouse?: string;
+  /** Who started it: the person, and the chat turn when an agent did for them. */
+  createdBy?: string;
+  origin?: Origin;
 }
 
 export interface LineageNode {
