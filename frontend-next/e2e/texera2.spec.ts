@@ -439,19 +439,23 @@ test("creates a custom operator from its page and finds it in a workflow's palet
   await page.screenshot({ path: "test-results/custom-operator.png", fullPage: true });
 });
 
-test("a computing unit is made with the size asked for", async ({ page, request }) => {
+test("a computing unit is made from a profile, with the size asked for, and says how it differs", async ({ page, request }) => {
   const call = await api(request);
   const name = `sized unit ${Date.now()}`;
+  const profile: string = (await call("GET", "/settings")).spec.defaults.profile;
+  const made = await call("GET", profile.replace("texera://", "/"));
   await signIn(page);
   await page.locator('[data-library-link="computing-unit"]').click();
   await page.locator('[data-new="computing-unit"]').click();
   const dialog = page.locator('[data-new-resource="computing-unit"]');
   await dialog.locator("input").first().fill(name);
-  // The dialog proposes the smallest; the person asks for more.
-  await expect(dialog.locator('[data-field="memory"]')).toHaveValue("2Gi");
+  // The dialog proposes the platform's profile and its size; the person asks for more.
+  await expect(dialog.locator('[data-field="profile"]')).toHaveValue(profile);
+  await expect(dialog.locator('[data-field="memory"]')).toHaveValue(made.spec.memory);
   await expect(dialog.locator('[data-field="cpu"]')).toHaveValue("");
   await dialog.locator('[data-field="memory"]').selectOption({ label: "4 GB" });
   await dialog.locator('[data-field="cpu"]').selectOption({ label: "1 core" });
+  await page.screenshot({ path: "test-results/unit-new.png" });
   await page.getByRole("button", { name: "Create" }).click();
   await expect(page).toHaveURL(/\/computing-units\//);
   const rid = /\/computing-units\/([0-9a-f-]{36})/.exec(page.url())?.[1] as string;
@@ -460,8 +464,66 @@ test("a computing unit is made with the size asked for", async ({ page, request 
     await call.attempt("DELETE", `/resources/${rid}`);
   });
   const unit = await call("GET", `/computing-units/${rid}`);
-  expect(unit.spec.computingNodes).toEqual([{ name: "master", role: "master", memory: "4Gi", cpu: "1" }]);
+  // Made from the profile's version, with its packages, at the size asked for.
+  expect(unit.spec.computingNodes).toEqual([
+    { name: "master", role: "master", profile: `${profile}@${made.metadata.head}`, memory: "4Gi", cpu: "1", packages: made.spec.packages },
+  ]);
   expect(unit.metadata.name).toBe(name);
+  // Its page says what it is made of, and how it differs from its profile.
+  const madeOf = page.locator("[data-made-of]");
+  await expect(madeOf.locator("[data-unit-profile]")).toContainText(`${made.metadata.name}@${made.metadata.head}`);
+  await expect(madeOf.locator("[data-unit-changes]")).toContainText("memory 2 GB → 4 GB");
+  await expect(madeOf.locator("[data-unit-changes]")).toContainText("CPU none → 1 core");
+  await expect(madeOf.locator("[data-unit-packages]")).toContainText("pandas");
+  // A package added on the page is the unit's: saved, it is one more change from the profile.
+  await madeOf.locator("[data-add-package]").fill("humanize==4.11.0");
+  await madeOf.getByRole("button", { name: "Add" }).click();
+  await madeOf.locator("[data-save-unit]").click();
+  await expect(madeOf.locator("[data-unit-changes]")).toContainText("+ humanize==4.11.0");
+  await expect.poll(async () => (await call("GET", `/computing-units/${rid}`)).spec.computingNodes[0].packages).toContain("humanize==4.11.0");
+  await page.screenshot({ path: "test-results/unit-made-of.png", fullPage: true });
+});
+
+test("the platform's unit is saved as a profile of one's own, which units can be made from", async ({ page, request }) => {
+  const call = await api(request);
+  const settings = (await call("GET", "/settings")).spec.defaults;
+  const unit = await call("GET", settings.computingUnit.replace("texera://", "/"));
+  const profile = await call("GET", settings.profile.replace("texera://", "/"));
+  const home: string = (await call("GET", "/me")).homeProject;
+  await signIn(page);
+  await page.goto(`/computing-units/${unit.metadata.rid}`);
+  const madeOf = page.locator("[data-made-of]");
+  await expect(madeOf.locator("[data-unit-profile]")).toContainText(profile.metadata.name);
+  await expect(madeOf.locator('[data-unit-changes="none"]')).toBeVisible();
+  // The platform's unit is not alice's to change.
+  await expect(madeOf.locator("[data-add-package]")).toHaveCount(0);
+  await madeOf.locator("[data-save-as-profile]").click();
+  const form = page.locator("[data-save-profile-form]");
+  // The platform's profile is not saved over: only a new one, in the project alice works in.
+  await expect(form.getByRole("radio")).toHaveCount(0);
+  const name = `my python ${Date.now()}`;
+  await form.locator("[data-profile-name]").fill(name);
+  await page.screenshot({ path: "test-results/unit-save-as-profile.png" });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(form).toHaveCount(0);
+  const found: { items: { metadata: { rid: string; name: string; project: string }; spec: { packages?: string[] } }[] } = await call(
+    "GET",
+    `/profiles?q=${encodeURIComponent(name)}`
+  );
+  const saved = found.items.find(p => p.metadata.name === name);
+  expect(saved, "the profile was saved").toBeDefined();
+  cleanups.push(() => call.attempt("DELETE", `/resources/${saved?.metadata.rid}`));
+  expect(saved?.metadata.project).toBe(home);
+  // Its packages are the unit's, each pinned once the unit has said what it installed.
+  const installed: string[] = unit.status?.installed ?? [];
+  const names = (packages: string[] = []) => packages.map(p => p.split(/[<>=!~;[ @]/)[0]?.toLowerCase()).sort();
+  expect(names(saved?.spec.packages)).toEqual(names(unit.spec.computingNodes[0].packages));
+  if (installed.length) expect(saved?.spec.packages?.every(p => installed.includes(p))).toBe(true);
+  // Its page is a profile's, with what a node made from it gets.
+  await page.goto(`/profiles/${saved?.metadata.rid}`);
+  await expect(page.getByLabel("Profile name")).toHaveValue(name);
+  await expect(page.locator('[data-resource-view="profile"]')).toContainText(saved?.spec.packages?.[0] ?? "");
+  await page.screenshot({ path: "test-results/profile.png", fullPage: true });
 });
 
 test("a project keeps its results in a warehouse made for it, and an execution says where its results are", async ({ page, request }) => {

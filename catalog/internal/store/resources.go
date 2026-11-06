@@ -649,6 +649,23 @@ var ErrReferenced = errors.New("referenced")
 // many it changed: an execution made before warehouses were resources kept its results in the
 // platform's. Nothing else about the execution changes, its age for the retention policy
 // included.
+// SetExecutionPackages records the packages an execution ran with, as its unit installed them.
+func (s *Store) SetExecutionPackages(ctx context.Context, rid uuid.UUID, packages []string) error {
+	raw, err := json.Marshal(packages)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE resource SET spec = jsonb_set(spec, '{computing,packages}', $2::jsonb, true) WHERE rid = $1 AND kind = 'execution' AND spec ? 'computing'`, rid, raw)
+	if err != nil {
+		return translate(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	s.changed(Change{RID: rid})
+	return nil
+}
+
 func (s *Store) FillExecutionWarehouse(ctx context.Context, warehouse string) (int64, error) {
 	tag, err := s.pool.Exec(ctx, `UPDATE resource SET spec = jsonb_set(spec, '{warehouse}', to_jsonb($1::text)) WHERE kind = 'execution' AND NOT (spec ? 'warehouse')`, warehouse)
 	if err != nil {

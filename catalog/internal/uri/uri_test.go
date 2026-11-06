@@ -117,7 +117,7 @@ func TestBuild(t *testing.T) {
 
 func TestExtract(t *testing.T) {
 	var doc any
-	spec := `{"operators":[{"operatorID":"scan","operatorType":"texera://operators/` + rid2 + `@1","operatorProperties":{"fileName":"texera://datasets/` + rid1 + `@2/files/iris.csv","note":"texera://nonsense"}}],"defaultEnvironment":"texera://environments/` + rid1 + `"}`
+	spec := `{"operators":[{"operatorID":"scan","operatorType":"texera://operators/` + rid2 + `@1","operatorProperties":{"fileName":"texera://datasets/` + rid1 + `@2/files/iris.csv","note":"texera://nonsense"}}],"defaultComputingUnit":"texera://computing-units/` + rid1 + `"}`
 	if err := json.Unmarshal([]byte(spec), &doc); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestExtract(t *testing.T) {
 	want := map[string]string{
 		"/operators/0/operatorType":                "texera://operators/" + rid2 + "@1",
 		"/operators/0/operatorProperties/fileName": "texera://datasets/" + rid1 + "@2/files/iris.csv",
-		"/defaultEnvironment":                      "texera://environments/" + rid1,
+		"/defaultComputingUnit":                    "texera://computing-units/" + rid1,
 	}
 	if len(refs) != len(want) {
 		t.Fatalf("got %d refs: %v", len(refs), refs)

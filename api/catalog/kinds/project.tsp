@@ -12,8 +12,6 @@ using OpenAPI;
 namespace Texera.Catalog;
 
 model ProjectSpec {
-  @doc("The environment an execution in this project uses when the workflow names none.")
-  defaultEnvironment?: Uri;
   @doc("The computing unit an execution in this project uses when the request and the workflow name none.")
   defaultComputingUnit?: Uri;
   @doc("The warehouse an execution in this project keeps its results in when the request and the workflow name none.")

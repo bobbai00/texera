@@ -7,7 +7,8 @@ import (
 	"github.com/apache/texera/catalog/internal/catalog"
 )
 
-// routeCompute registers the computing unit and environment actions.
+// routeCompute registers the computing unit actions: making one from a profile, saving one as a
+// profile, and its lifecycle.
 func (s *Server) routeCompute() {
 	units := Prefix + "/computing-units"
 	s.handle("GET "+units+"/available", func(w http.ResponseWriter, r *http.Request) error {
@@ -76,24 +77,33 @@ func (s *Server) routeCompute() {
 		return nil
 	})
 
-	s.handle("POST "+Prefix+"/environments/{rid}/build", func(w http.ResponseWriter, r *http.Request) error {
+	// A unit made from a profile, and a unit saved as one.
+	s.handle("POST "+units+"/from-profile", func(w http.ResponseWriter, r *http.Request) error {
+		var body api.ComputingUnitFromProfile
+		if err := decode(r, &body); err != nil {
+			return err
+		}
+		unit, err := s.svc.UnitFromProfile(ctxOf(r), callerOf(r), body)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusCreated, catalog.Envelope(unit))
+		return nil
+	})
+	s.handle("POST "+units+"/{rid}/profile", func(w http.ResponseWriter, r *http.Request) error {
 		rid, err := ridParam(r, "rid")
 		if err != nil {
 			return err
 		}
-		var body api.BuildEnvironment
+		var body api.SaveUnitAsProfile
 		if err := decode(r, &body); err != nil {
 			return err
 		}
-		vno := 0
-		if body.Vno != nil {
-			vno = int(*body.Vno)
-		}
-		build, err := s.svc.BuildEnvironment(ctxOf(r), callerOf(r), rid, vno, uriString(body.ComputingUnit))
+		profile, err := s.svc.SaveUnitAsProfile(ctxOf(r), callerOf(r), rid, body)
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusAccepted, build)
+		writeJSON(w, http.StatusOK, catalog.Envelope(profile))
 		return nil
 	})
 }

@@ -70,7 +70,8 @@ func (fakeIdentity) SearchUsers(_ context.Context, q string, _ int) ([]ports.Use
 	return nil, nil
 }
 
-// fakeUnit is an engine: health, operators, compile, start, status, results, environments.
+// fakeUnit is an engine: health, operators, compile, start, status, results, and the
+// environment of a list of packages, which it says it installed at version 1.0.
 type fakeUnit struct {
 	*httptest.Server
 	mu          sync.Mutex
@@ -156,12 +157,19 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 		writeJSON(w, map[string]any{"schema": []any{map[string]any{"attributeName": "Species", "attributeType": "string"}, map[string]any{"attributeName": "avg", "attributeType": "double"}}, "rows": rows, "offset": offset, "total": 3})
 	})
 	mux.HandleFunc("POST /api/environments", func(w http.ResponseWriter, r *http.Request) {
-		var req map[string]any
+		var req struct {
+			Key      string   `json:"key"`
+			Packages []string `json:"packages"`
+		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		writeJSON(w, map[string]any{"rid": req["rid"], "vno": req["vno"], "status": "ready"})
+		installed := []string{"joblib==1.0"}
+		for _, p := range req.Packages {
+			installed = append(installed, strings.TrimSpace(strings.SplitN(p, ">", 2)[0])+"==1.0")
+		}
+		writeJSON(w, map[string]any{"key": req.Key, "status": "ready", "installed": installed})
 	})
-	mux.HandleFunc("GET /api/environments/{rid}/{vno}", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"rid": r.PathValue("rid"), "vno": 1, "status": "ready"})
+	mux.HandleFunc("GET /api/environments/{key}", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"key": r.PathValue("key"), "status": "ready"})
 	})
 	u.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u.mu.Lock()

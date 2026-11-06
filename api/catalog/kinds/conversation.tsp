@@ -22,7 +22,6 @@ model ConversationSpec {
   modelEndpoint?: Uri;
   @doc("The computing unit a compile or an execution started in this chat uses when the call names none; absent: the workflow's, the project's or the platform's default. A preference, not a binding: a call can always name another unit.")
   computingUnit?: Uri;
-  environment?: Uri;
   @doc("The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.")
   mcpServers?: Uri[];
 }

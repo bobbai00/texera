@@ -31,11 +31,12 @@ export function KindHeader({
       kindLabel={KINDS[ref.kind].label}
       name={name}
       meta={meta}
-      // Whoever has the resource's page open is on it, and sees who else is.
+      // Whoever has the resource's page open is on it, and sees who else is: at the top right,
+      // beside sharing, however much the page's own actions take.
       actions={
         <>
-          {mode === "page" && ref.rid && <Presence rid={ref.rid} />}
           {actions}
+          {mode === "page" && ref.rid && <Presence rid={ref.rid} />}
           {mode === "page" && ref.rid && <ShareButton ref={ref} />}
         </>
       }

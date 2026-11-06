@@ -79,7 +79,8 @@ func (s *Service) unitStatus(ctx context.Context, unit *store.Resource, spec api
 		}
 	}
 	next.ComputingNodes = nodesOf(spec, next.Phase == api.ComputingUnitStatusPhaseReady)
-	next.Environments = current.Environments
+	// What the unit installed is the catalog's record of its last build.
+	next.Installed = current.Installed
 	if string(mustJSON(next)) != string(mustJSON(current)) {
 		if r, err := s.Store.UpdateStatus(ctx, unit.RID, mustJSON(next)); err == nil {
 			*unit = *r
@@ -232,51 +233,6 @@ func (s *Service) UnitOperators(ctx context.Context, caller *auth.Caller, rid uu
 	return filtered, nil
 }
 
-// BuildEnvironment asks a unit to build an environment version in the background.
-func (s *Service) BuildEnvironment(ctx context.Context, caller *auth.Caller, rid uuid.UUID, vno int, unitName string) (*api.EnvironmentBuild, error) {
-	env, err := s.Get(ctx, caller, &environmentKind, rid)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.require(ctx, caller, authz.Use, rid); err != nil {
-		return nil, err
-	}
-	if vno <= 0 {
-		vno = env.HeadVno
-	}
-	if _, err := s.Store.GetVersion(ctx, rid, vno); err != nil {
-		return nil, NotFound("version of the environment")
-	}
-	settings := s.settingsSpec(ctx)
-	unitName = firstNonEmpty(unitName, uriString(s.projectSpec(ctx, env.ProjectRID).DefaultComputingUnit), uriString(settings.Defaults.ComputingUnit))
-	if unitName == "" {
-		return nil, Conflict("no_unit", "no computing unit to build on", nil)
-	}
-	unit, err := s.named(ctx, unitName, unitKind)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.require(ctx, caller, authz.RunOn, unit.RID); err != nil {
-		return nil, err
-	}
-	client, status, err := s.unitClient(ctx, unit)
-	if err != nil {
-		return nil, err
-	}
-	if client == nil {
-		return nil, Conflict("unit_not_ready", "the unit is "+string(status.Phase), nil)
-	}
-	req := environmentRequest(ctx, s, env, vno)
-	unitURI := URI(unit).String()
-	s.recordBuild(ctx, env, vno, unitURI, "building", "")
-	go func() {
-		bg, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
-		_ = s.ensureEnvironment(bg, client, env, vno, *req, unit)
-	}()
-	return &api.EnvironmentBuild{ComputingUnit: api.Uri(unitURI), Vno: api.Vno(vno), State: api.EnvironmentBuildStateBuilding, At: time.Now().UTC()}, nil
-}
-
 // SyncOperators mirrors a unit's operator registry into operator resources of the system
 // project: one per type, versioned by the engine that provides it. It runs at startup and
 // whenever a unit's engine changes.
@@ -310,7 +266,7 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 			spec.OutputPorts = &ports
 		}
 		if op.Requires != nil {
-			spec.Requires = &api.RuntimeSpec{Environment: op.Requires.Environment, Isolation: op.Requires.Isolation, Resources: op.Requires.Resources}
+			spec.Requires = &api.RuntimeSpec{Isolation: op.Requires.Isolation, Resources: op.Requires.Resources}
 		}
 		status := mustJSON(api.OperatorStatus{Engine: &engineID})
 		existing, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "operator", ParentRID: &project.RID, Name: op.OperatorType, Limit: 1})

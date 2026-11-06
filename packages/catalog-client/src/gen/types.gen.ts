@@ -146,17 +146,6 @@ export type Branding = {
     logoUrl?: string;
 };
 
-export type BuildEnvironment = {
-    /**
-     * The version to build; defaults to the head version.
-     */
-    vno?: Vno;
-    /**
-     * The unit to build on; defaults to the one an execution would resolve to.
-     */
-    computingUnit?: Uri;
-};
-
 /**
  * A place on the canvas: the top left corner of an operator's card.
  */
@@ -204,9 +193,17 @@ export type CommitFiles = {
 export type ComputingNodeSpec = {
     name: string;
     role: 'master' | 'worker' | 'sandbox';
+    /**
+     * The profile version the node was made from, with `@vno`; what the node has may have changed since.
+     */
+    profile?: Uri;
     cpu?: string;
     memory?: string;
     gpu?: number;
+    /**
+     * Python packages the node adds to the platform's runtime, PEP 508 lines.
+     */
+    packages?: Array<string>;
 };
 
 export type ComputingNodeStatus = {
@@ -214,6 +211,27 @@ export type ComputingNodeStatus = {
     role: 'master' | 'worker' | 'sandbox';
     ready: boolean;
     message?: string;
+};
+
+/**
+ * What the unit an execution ran on had when it ran.
+ */
+export type ComputingRecord = {
+    /**
+     * The profile version its node was made from, with `@vno`.
+     */
+    profile?: Uri;
+    cpu?: string;
+    memory?: string;
+    gpu?: number;
+    /**
+     * The packages added to the runtime, each pinned as installed when the unit says so.
+     */
+    packages?: Array<string>;
+    /**
+     * The engine's version.
+     */
+    runtime?: string;
 };
 
 /**
@@ -225,6 +243,25 @@ export type ComputingUnit = {
     metadata: ResourceMetadata;
     spec: ComputingUnitSpec;
     status?: ComputingUnitStatus;
+};
+
+/**
+ * A computing unit to make from a profile.
+ */
+export type ComputingUnitFromProfile = {
+    name: string;
+    /**
+     * The project the unit goes into; absent: the chat's project in a chat, else the caller's own.
+     */
+    parent?: Rid;
+    /**
+     * The profile, with `@vno`, or its head.
+     */
+    profile: Uri;
+    /**
+     * Wait up to this many seconds for the unit to be ready (or failed); it is returned as it is then.
+     */
+    waitSeconds?: number;
 };
 
 export type ComputingUnitPage = {
@@ -256,9 +293,9 @@ export type ComputingUnitStatus = {
     engine?: EngineStatus;
     computingNodes?: Array<ComputingNodeStatus>;
     /**
-     * Environment versions built on this unit.
+     * The packages the unit installed for its node, each pinned as installed: what an execution on it has.
      */
-    environments?: Array<Uri>;
+    installed?: Array<string>;
 };
 
 /**
@@ -298,7 +335,6 @@ export type ConversationSpec = {
      * The computing unit a compile or an execution started in this chat uses when the call names none; absent: the workflow's, the project's or the platform's default. A preference, not a binding: a call can always name another unit.
      */
     computingUnit?: Uri;
-    environment?: Uri;
     /**
      * The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.
      */
@@ -412,24 +448,6 @@ export type CreateDataset = {
     message?: string;
 };
 
-export type CreateEnvironment = {
-    name: string;
-    description?: string;
-    /**
-     * The parent; for a top-level kind a project, default the caller's home project.
-     */
-    parent?: Rid;
-    visibility?: Visibility;
-    labels?: {
-        [key: string]: string;
-    };
-    spec: EnvironmentSpec;
-    /**
-     * Recorded on the first version of a versioned kind.
-     */
-    message?: string;
-};
-
 export type CreateMcpServer = {
     name: string;
     description?: string;
@@ -496,6 +514,24 @@ export type CreateOperator = {
         [key: string]: string;
     };
     spec: OperatorSpec;
+    /**
+     * Recorded on the first version of a versioned kind.
+     */
+    message?: string;
+};
+
+export type CreateProfile = {
+    name: string;
+    description?: string;
+    /**
+     * The parent; for a top-level kind a project, default the caller's home project.
+     */
+    parent?: Rid;
+    visibility?: Visibility;
+    labels?: {
+        [key: string]: string;
+    };
+    spec: ProfileSpec;
     /**
      * Recorded on the first version of a versioned kind.
      */
@@ -688,8 +724,11 @@ export type Defaults = {
      * The template a new chat starts with when the project names none.
      */
     agentTemplate?: Uri;
-    environment?: Uri;
     computingUnit?: Uri;
+    /**
+     * The profile a new computing unit is made from unless another is chosen.
+     */
+    profile?: Uri;
     /**
      * The warehouse an execution keeps its results in when nothing else names one.
      */
@@ -761,74 +800,6 @@ export type EngineStatus = {
      */
     digest?: string;
     version?: string;
-};
-
-/**
- * The typed envelope, served by the kind routes.
- */
-export type Environment = {
-    apiVersion: 'catalog.texera.apache.org/v1';
-    kind: ResourceKind;
-    metadata: ResourceMetadata;
-    spec: EnvironmentSpec;
-    status?: EnvironmentStatus;
-};
-
-export type EnvironmentBuild = {
-    computingUnit: Uri;
-    vno: Vno;
-    state: 'building' | 'ready' | 'failed';
-    message?: string;
-    at: string;
-};
-
-export type EnvironmentPage = {
-    items: Array<Environment>;
-    /**
-     * Opaque cursor for the next page; absent on the last page.
-     */
-    nextCursor?: string;
-};
-
-export type EnvironmentSpec = {
-    python?: PythonEnvironment;
-    /**
-     * Base image for units that build images; absent means the deployment default.
-     */
-    baseImage?: string;
-};
-
-export type EnvironmentStatus = {
-    /**
-     * Builds of this environment's versions on units.
-     */
-    builds?: Array<EnvironmentBuild>;
-};
-
-/**
- * A version with typed content, served by the kind routes.
- */
-export type EnvironmentVersion = {
-    rid: Rid;
-    uri: Uri;
-    kind: ResourceKind;
-    vno: Vno;
-    contentKind: ContentKind;
-    digest: Digest;
-    content: EnvironmentSpec;
-    message?: string;
-    createdBy: Pid;
-    contributors?: Array<Pid>;
-    origin?: Origin;
-    createdAt: string;
-};
-
-export type EnvironmentVersionPage = {
-    items: Array<VersionSummary>;
-    /**
-     * Opaque cursor for the next page; absent on the last page.
-     */
-    nextCursor?: string;
 };
 
 export type Error = {
@@ -909,11 +880,11 @@ export type ExecutionSpec = {
      * The workflow version, with `@vno`.
      */
     workflow: Uri;
-    /**
-     * The environment version, with `@vno`.
-     */
-    environment?: Uri;
     computingUnit: Uri;
+    /**
+     * What the unit had when it ran: the profile its node was made from, its size and packages.
+     */
+    computing?: ComputingRecord;
     /**
      * The warehouse the execution keeps its result tables in.
      */
@@ -1560,6 +1531,84 @@ export type PrincipalPage = {
 /**
  * The typed envelope, served by the kind routes.
  */
+export type Profile = {
+    apiVersion: 'catalog.texera.apache.org/v1';
+    kind: ResourceKind;
+    metadata: ResourceMetadata;
+    spec: ProfileSpec;
+    status?: ProfileStatus;
+};
+
+export type ProfilePage = {
+    items: Array<Profile>;
+    /**
+     * Opaque cursor for the next page; absent on the last page.
+     */
+    nextCursor?: string;
+};
+
+/**
+ * What a computing node is made of.
+ */
+export type ProfileSpec = {
+    /**
+     * CPU, as Kubernetes counts it: `2`, `500m`; absent: the deployment's default.
+     */
+    cpu?: string;
+    /**
+     * Memory, as Kubernetes counts it: `4Gi`; absent: the deployment's default.
+     */
+    memory?: string;
+    /**
+     * GPUs; absent: none.
+     */
+    gpu?: number;
+    /**
+     * Python packages added to the platform's runtime, PEP 508 lines; a profile saved from a unit pins each to what was installed: `pandas==2.2.3`.
+     */
+    packages?: Array<string>;
+    /**
+     * The platform release the profile was saved on, as the unit's engine reported it.
+     */
+    runtime?: string;
+};
+
+/**
+ * A profile has no status: what it describes is its spec.
+ */
+export type ProfileStatus = {
+    [key: string]: unknown;
+};
+
+/**
+ * A version with typed content, served by the kind routes.
+ */
+export type ProfileVersion = {
+    rid: Rid;
+    uri: Uri;
+    kind: ResourceKind;
+    vno: Vno;
+    contentKind: ContentKind;
+    digest: Digest;
+    content: ProfileSpec;
+    message?: string;
+    createdBy: Pid;
+    contributors?: Array<Pid>;
+    origin?: Origin;
+    createdAt: string;
+};
+
+export type ProfileVersionPage = {
+    items: Array<VersionSummary>;
+    /**
+     * Opaque cursor for the next page; absent on the last page.
+     */
+    nextCursor?: string;
+};
+
+/**
+ * The typed envelope, served by the kind routes.
+ */
 export type Project = {
     apiVersion: 'catalog.texera.apache.org/v1';
     kind: ResourceKind;
@@ -1577,10 +1626,6 @@ export type ProjectPage = {
 };
 
 export type ProjectSpec = {
-    /**
-     * The environment an execution in this project uses when the workflow names none.
-     */
-    defaultEnvironment?: Uri;
     /**
      * The computing unit an execution in this project uses when the request and the workflow name none.
      */
@@ -1618,26 +1663,11 @@ export type PublicSettings = {
     auth: AuthSettings;
 };
 
-export type PythonEnvironment = {
-    /**
-     * Python version range, PEP 440, e.g. `>=3.12,<3.13`.
-     */
-    version?: string;
-    /**
-     * Package requirements, PEP 508 lines.
-     */
-    packages: Array<string>;
-};
-
 export type PythonOperator = {
     /**
      * The operator's Python source: a class with the engine's UDF interface.
      */
     code: string;
-    /**
-     * The environment its packages come from; absent means the execution's environment.
-     */
-    environment?: Uri;
     /**
      * The columns the code adds to each tuple, declared so the engine can type the output; input columns pass through.
      */
@@ -1687,7 +1717,7 @@ export type Resource = {
 /**
  * The kinds. The value is the singular kebab-case kind; the collection is its plural.
  */
-export type ResourceKind = 'project' | 'workflow' | 'execution' | 'dataset' | 'model' | 'environment' | 'computing-unit' | 'warehouse' | 'operator' | 'agent-template' | 'skill' | 'mcp-server' | 'conversation' | 'credential' | 'model-endpoint' | 'settings';
+export type ResourceKind = 'project' | 'workflow' | 'execution' | 'dataset' | 'model' | 'profile' | 'computing-unit' | 'warehouse' | 'operator' | 'agent-template' | 'skill' | 'mcp-server' | 'conversation' | 'credential' | 'model-endpoint' | 'settings';
 
 export type ResourceMetadata = {
     rid: Rid;
@@ -1783,10 +1813,6 @@ export type RunWorkflow = {
      */
     warehouse?: Uri;
     /**
-     * Overrides the workflow's and the project's default environment; `@vno` pins a version, else the head.
-     */
-    environment?: Uri;
-    /**
      * Inputs of this execution alone; the version itself stays as authored.
      */
     parameters?: {
@@ -1807,13 +1833,30 @@ export type RunWorkflow = {
 };
 
 export type RuntimeSpec = {
-    environment?: Rid;
     isolation?: {
         [key: string]: unknown;
     };
     resources?: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * How to save a unit as a profile.
+ */
+export type SaveUnitAsProfile = {
+    /**
+     * Save it as the next version of this profile; absent: as a new profile.
+     */
+    profile?: Uri;
+    /**
+     * The new profile's name; required for a new profile.
+     */
+    name?: string;
+    /**
+     * The project a new profile goes into; absent: the unit's, or for a unit of the platform's own the chat's project in a chat, else the caller's own.
+     */
+    parent?: Rid;
 };
 
 /**
@@ -2053,18 +2096,6 @@ export type UpdateDataset = {
     expectedHead?: Vno;
 };
 
-export type UpdateEnvironment = {
-    spec: EnvironmentSpec;
-    /**
-     * Recorded on the new version of a versioned kind.
-     */
-    message?: string;
-    /**
-     * The head version the caller saw; refused with 409 when it moved.
-     */
-    expectedHead?: Vno;
-};
-
 export type UpdateMcpServer = {
     spec: McpServerSpec;
     /**
@@ -2116,6 +2147,18 @@ export type UpdateModelEndpoint = {
 
 export type UpdateOperator = {
     spec: OperatorSpec;
+    /**
+     * Recorded on the new version of a versioned kind.
+     */
+    message?: string;
+    /**
+     * The head version the caller saw; refused with 409 when it moved.
+     */
+    expectedHead?: Vno;
+};
+
+export type UpdateProfile = {
+    spec: ProfileSpec;
     /**
      * Recorded on the new version of a versioned kind.
      */
@@ -2412,10 +2455,6 @@ export type WorkflowSpec = {
     layout?: {
         [key: string]: CanvasPoint;
     };
-    /**
-     * The environment an execution uses when the request names none.
-     */
-    defaultEnvironment?: Uri;
     /**
      * The computing unit an execution uses when the request names none.
      */
@@ -2802,6 +2841,31 @@ export type ComputingUnitsAvailableResponses = {
 
 export type ComputingUnitsAvailableResponse = ComputingUnitsAvailableResponses[keyof ComputingUnitsAvailableResponses];
 
+export type ComputingUnitsFromProfileData = {
+    body: ComputingUnitFromProfile;
+    path?: never;
+    query?: never;
+    url: '/catalog/v1/computing-units/from-profile';
+};
+
+export type ComputingUnitsFromProfileErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ComputingUnitsFromProfileError = ComputingUnitsFromProfileErrors[keyof ComputingUnitsFromProfileErrors];
+
+export type ComputingUnitsFromProfileResponses = {
+    /**
+     * The request has succeeded and a new resource has been created as a result.
+     */
+    201: ComputingUnit;
+};
+
+export type ComputingUnitsFromProfileResponse = ComputingUnitsFromProfileResponses[keyof ComputingUnitsFromProfileResponses];
+
 export type ComputingUnitsDeleteData = {
     body?: never;
     path: {
@@ -2970,6 +3034,33 @@ export type ComputingUnitsOperatorsResponses = {
 };
 
 export type ComputingUnitsOperatorsResponse = ComputingUnitsOperatorsResponses[keyof ComputingUnitsOperatorsResponses];
+
+export type ComputingUnitsSaveAsProfileData = {
+    body: SaveUnitAsProfile;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/computing-units/{rid}/profile';
+};
+
+export type ComputingUnitsSaveAsProfileErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ComputingUnitsSaveAsProfileError = ComputingUnitsSaveAsProfileErrors[keyof ComputingUnitsSaveAsProfileErrors];
+
+export type ComputingUnitsSaveAsProfileResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: Profile;
+};
+
+export type ComputingUnitsSaveAsProfileResponse = ComputingUnitsSaveAsProfileResponses[keyof ComputingUnitsSaveAsProfileResponses];
 
 export type ComputingUnitsTerminateData = {
     body?: never;
@@ -3940,235 +4031,6 @@ export type DatasetsLinkResponses = {
 };
 
 export type DatasetsLinkResponse = DatasetsLinkResponses[keyof DatasetsLinkResponses];
-
-export type EnvironmentsListData = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
-         */
-        scope?: Rid;
-        parent?: Rid;
-        project?: Rid;
-        q?: string;
-        limit?: number;
-        cursor?: string;
-    };
-    url: '/catalog/v1/environments';
-};
-
-export type EnvironmentsListErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type EnvironmentsListError = EnvironmentsListErrors[keyof EnvironmentsListErrors];
-
-export type EnvironmentsListResponses = {
-    /**
-     * A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
-     */
-    200: EnvironmentPage;
-};
-
-export type EnvironmentsListResponse = EnvironmentsListResponses[keyof EnvironmentsListResponses];
-
-export type EnvironmentsCreateData = {
-    body: CreateEnvironment;
-    path?: never;
-    query?: never;
-    url: '/catalog/v1/environments';
-};
-
-export type EnvironmentsCreateErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type EnvironmentsCreateError = EnvironmentsCreateErrors[keyof EnvironmentsCreateErrors];
-
-export type EnvironmentsCreateResponses = {
-    /**
-     * The request has succeeded and a new resource has been created as a result.
-     */
-    201: Environment;
-};
-
-export type EnvironmentsCreateResponse = EnvironmentsCreateResponses[keyof EnvironmentsCreateResponses];
-
-export type EnvironmentsDeleteData = {
-    body?: never;
-    path: {
-        rid: Rid;
-    };
-    query?: never;
-    url: '/catalog/v1/environments/{rid}';
-};
-
-export type EnvironmentsDeleteErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type EnvironmentsDeleteError = EnvironmentsDeleteErrors[keyof EnvironmentsDeleteErrors];
-
-export type EnvironmentsDeleteResponses = {
-    /**
-     * There is no content to send for this request, but the headers may be useful.
-     */
-    204: void;
-};
-
-export type EnvironmentsDeleteResponse = EnvironmentsDeleteResponses[keyof EnvironmentsDeleteResponses];
-
-export type EnvironmentsReadData = {
-    body?: never;
-    path: {
-        rid: Rid;
-    };
-    query?: never;
-    url: '/catalog/v1/environments/{rid}';
-};
-
-export type EnvironmentsReadErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type EnvironmentsReadError = EnvironmentsReadErrors[keyof EnvironmentsReadErrors];
-
-export type EnvironmentsReadResponses = {
-    /**
-     * The request has succeeded.
-     */
-    200: Environment;
-};
-
-export type EnvironmentsReadResponse = EnvironmentsReadResponses[keyof EnvironmentsReadResponses];
-
-export type EnvironmentsUpdateData = {
-    body: UpdateEnvironment;
-    headers?: {
-        'If-Match'?: string;
-    };
-    path: {
-        rid: Rid;
-    };
-    query?: never;
-    url: '/catalog/v1/environments/{rid}';
-};
-
-export type EnvironmentsUpdateErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type EnvironmentsUpdateError = EnvironmentsUpdateErrors[keyof EnvironmentsUpdateErrors];
-
-export type EnvironmentsUpdateResponses = {
-    /**
-     * The request has succeeded.
-     */
-    200: Environment;
-};
-
-export type EnvironmentsUpdateResponse = EnvironmentsUpdateResponses[keyof EnvironmentsUpdateResponses];
-
-export type EnvironmentsBuildData = {
-    body: BuildEnvironment;
-    path: {
-        rid: Rid;
-    };
-    query?: never;
-    url: '/catalog/v1/environments/{rid}/build';
-};
-
-export type EnvironmentsBuildErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type EnvironmentsBuildError = EnvironmentsBuildErrors[keyof EnvironmentsBuildErrors];
-
-export type EnvironmentsBuildResponses = {
-    /**
-     * The request has been accepted for processing, but processing has not yet completed.
-     */
-    202: EnvironmentBuild;
-};
-
-export type EnvironmentsBuildResponse = EnvironmentsBuildResponses[keyof EnvironmentsBuildResponses];
-
-export type EnvironmentsListVersionsData = {
-    body?: never;
-    path: {
-        rid: Rid;
-    };
-    query?: {
-        limit?: number;
-        cursor?: string;
-    };
-    url: '/catalog/v1/environments/{rid}/versions';
-};
-
-export type EnvironmentsListVersionsErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type EnvironmentsListVersionsError = EnvironmentsListVersionsErrors[keyof EnvironmentsListVersionsErrors];
-
-export type EnvironmentsListVersionsResponses = {
-    /**
-     * A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
-     */
-    200: EnvironmentVersionPage;
-};
-
-export type EnvironmentsListVersionsResponse = EnvironmentsListVersionsResponses[keyof EnvironmentsListVersionsResponses];
-
-export type EnvironmentsReadVersionData = {
-    body?: never;
-    path: {
-        rid: Rid;
-        vno: Vno;
-    };
-    query?: never;
-    url: '/catalog/v1/environments/{rid}/versions/{vno}';
-};
-
-export type EnvironmentsReadVersionErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type EnvironmentsReadVersionError = EnvironmentsReadVersionErrors[keyof EnvironmentsReadVersionErrors];
-
-export type EnvironmentsReadVersionResponses = {
-    /**
-     * The request has succeeded.
-     */
-    200: EnvironmentVersion;
-};
-
-export type EnvironmentsReadVersionResponse = EnvironmentsReadVersionResponses[keyof EnvironmentsReadVersionResponses];
 
 export type ExecutionsListData = {
     body?: never;
@@ -5268,6 +5130,208 @@ export type PrincipalsReadResponses = {
 };
 
 export type PrincipalsReadResponse = PrincipalsReadResponses[keyof PrincipalsReadResponses];
+
+export type ProfilesListData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         */
+        scope?: Rid;
+        parent?: Rid;
+        project?: Rid;
+        q?: string;
+        limit?: number;
+        cursor?: string;
+    };
+    url: '/catalog/v1/profiles';
+};
+
+export type ProfilesListErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ProfilesListError = ProfilesListErrors[keyof ProfilesListErrors];
+
+export type ProfilesListResponses = {
+    /**
+     * A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+     */
+    200: ProfilePage;
+};
+
+export type ProfilesListResponse = ProfilesListResponses[keyof ProfilesListResponses];
+
+export type ProfilesCreateData = {
+    body: CreateProfile;
+    path?: never;
+    query?: never;
+    url: '/catalog/v1/profiles';
+};
+
+export type ProfilesCreateErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ProfilesCreateError = ProfilesCreateErrors[keyof ProfilesCreateErrors];
+
+export type ProfilesCreateResponses = {
+    /**
+     * The request has succeeded and a new resource has been created as a result.
+     */
+    201: Profile;
+};
+
+export type ProfilesCreateResponse = ProfilesCreateResponses[keyof ProfilesCreateResponses];
+
+export type ProfilesDeleteData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/profiles/{rid}';
+};
+
+export type ProfilesDeleteErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ProfilesDeleteError = ProfilesDeleteErrors[keyof ProfilesDeleteErrors];
+
+export type ProfilesDeleteResponses = {
+    /**
+     * There is no content to send for this request, but the headers may be useful.
+     */
+    204: void;
+};
+
+export type ProfilesDeleteResponse = ProfilesDeleteResponses[keyof ProfilesDeleteResponses];
+
+export type ProfilesReadData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/profiles/{rid}';
+};
+
+export type ProfilesReadErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ProfilesReadError = ProfilesReadErrors[keyof ProfilesReadErrors];
+
+export type ProfilesReadResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: Profile;
+};
+
+export type ProfilesReadResponse = ProfilesReadResponses[keyof ProfilesReadResponses];
+
+export type ProfilesUpdateData = {
+    body: UpdateProfile;
+    headers?: {
+        'If-Match'?: string;
+    };
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/profiles/{rid}';
+};
+
+export type ProfilesUpdateErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ProfilesUpdateError = ProfilesUpdateErrors[keyof ProfilesUpdateErrors];
+
+export type ProfilesUpdateResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: Profile;
+};
+
+export type ProfilesUpdateResponse = ProfilesUpdateResponses[keyof ProfilesUpdateResponses];
+
+export type ProfilesListVersionsData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: {
+        limit?: number;
+        cursor?: string;
+    };
+    url: '/catalog/v1/profiles/{rid}/versions';
+};
+
+export type ProfilesListVersionsErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ProfilesListVersionsError = ProfilesListVersionsErrors[keyof ProfilesListVersionsErrors];
+
+export type ProfilesListVersionsResponses = {
+    /**
+     * A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+     */
+    200: ProfileVersionPage;
+};
+
+export type ProfilesListVersionsResponse = ProfilesListVersionsResponses[keyof ProfilesListVersionsResponses];
+
+export type ProfilesReadVersionData = {
+    body?: never;
+    path: {
+        rid: Rid;
+        vno: Vno;
+    };
+    query?: never;
+    url: '/catalog/v1/profiles/{rid}/versions/{vno}';
+};
+
+export type ProfilesReadVersionErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ProfilesReadVersionError = ProfilesReadVersionErrors[keyof ProfilesReadVersionErrors];
+
+export type ProfilesReadVersionResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: ProfileVersion;
+};
+
+export type ProfilesReadVersionResponse = ProfilesReadVersionResponses[keyof ProfilesReadVersionResponses];
 
 export type ProjectsListData = {
     body?: never;

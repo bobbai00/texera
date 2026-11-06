@@ -28,13 +28,12 @@ model ResolvedInput {
   sizeBytes?: int64;
 }
 
+@doc("The Python packages a unit adds to its runtime. The same packages are the same environment on a unit, built once.")
 model EnvironmentRequest {
-  rid: string;
-  vno: int32;
-  python?: {
-    version?: string;
-    packages: string[];
-  };
+  @doc("The environment's name on the unit, which the catalog derives from the packages: the same list, the same key.")
+  key: string;
+  @doc("Package requirements, PEP 508 lines.")
+  packages: string[];
 }
 
 @doc("The table the catalog named for an output port, inside the execution's namespace.")
@@ -100,10 +99,11 @@ model UnitHealth {
 }
 
 model EnvironmentBuild {
-  rid: string;
-  vno: int32;
+  key: string;
   status: "building" | "ready" | "failed";
   message?: string;
+  @doc("Once built, each package asked for as the environment has it, installed or already in the unit's runtime: `pandas==2.2.3`.")
+  installed?: string[];
 }
 
 @route("/api")
@@ -139,8 +139,8 @@ namespace Routes {
 
   @route("/environments")
   interface Environments {
-    @doc("Build (or confirm) the Python environment for an environment version on this unit.")
+    @doc("Build (or confirm) the Python environment of a list of packages on this unit.")
     @post build(@body body: EnvironmentRequest): EnvironmentBuild | Error;
-    @get @route("/{rid}/{vno}") status(@path rid: string, @path vno: int32): EnvironmentBuild | Error;
+    @get @route("/{key}") status(@path key: string): EnvironmentBuild | Error;
   }
 }

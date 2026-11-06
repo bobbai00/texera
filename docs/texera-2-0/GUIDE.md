@@ -92,22 +92,22 @@ A project you make is the one you work in from then on, and a project's page has
 this project". Names are unique per
 project and kind (a duplicate is refused with 409). Share a project and everything in it is
 shared the same way; make it public and everyone can read what is in it. A project can name
-its own defaults: the agent, the model, the computing unit, the warehouse, the environment,
-and add-on tools for all its chats.
+its own defaults: the agent, the model, the computing unit, the warehouse, and add-on tools
+for all its chats.
 
 **Built-in.** What the platform ships (the agent, its skills and MCP servers, the model
-endpoint, the default unit, warehouse and environment, the engine's operators) lives in one project,
+endpoint, the default unit and the profile it is made from, the warehouse, the engine's operators) lives in one project,
 "Built-in", and that is all that makes a resource built in. Everyone can view and use what is
 in it; nobody changes it through the app or the API, an administrator included (`409
-builtin`): it changes with a release. An administrator changes which agent, unit, warehouse,
-environment or model is the default in the settings, and a project in its own.
+builtin`): it changes with a release. An administrator changes which agent, unit, profile,
+warehouse or model is the default in the settings, and a project in its own.
 
 **The library.** Every kind has a page under its plural, linked from the sidebar: what you
-make and keep (`/workflows`, `/datasets`, `/models`, `/operators`, `/environments`,
-`/computing-units`, `/warehouses`), what happened (`/executions`, across workflows), what the agent is made
+make and keep (`/workflows`, `/datasets`, `/models`, `/operators`, `/computing-units`,
+`/profiles`, `/warehouses`), what happened (`/executions`, across workflows), what the agent is made
 of (`/agent-templates`, `/skills`, `/mcp-servers`, `/model-endpoints`, `/credentials`),
 `/projects`, and `/settings` for administrators. "New …" opens a form generated from the
-kind's schema; a new computing unit asks for its memory and CPU, a new warehouse for where it
+kind's schema; a new computing unit asks for the profile it is made from and its size, a new warehouse for where it
 keeps its tables. A resource's page has its
 spec (a form, the JSON a click away), its versions, who can access it, its lineage and the raw
 envelope; `?panel=` opens a second resource beside the first.
@@ -165,8 +165,9 @@ session; the edits stay, a run does not start, and the session keeps trying.
 **Executions.** An execution's page is the workflow as it ran, on the same canvas (the
 version it pinned, laid out from its graph, not editable): each card says how its operator
 did, as the unit reports it while the execution goes, and the results are under it, tied to
-their operators and ports the same way. "Details" has what it read, its environment and the
-record as the catalog holds it; "Lineage" its lineage. "Pause" holds a running one where it is
+their operators and ports the same way. "Details" has what it read, where it ran (the unit,
+the profile version the unit was made from, the warehouse), what the unit had (its size, each
+package as installed) and the record as the catalog holds it; "Lineage" its lineage. "Pause" holds a running one where it is
 and "Resume" continues it; "Stop" cancels a live one; "Keep" marks a finished one so the
 retention policy leaves its results alone; "Delete" removes it with its tables. The page
 follows the execution without reloading. Results live with the execution: to use them again,
@@ -198,7 +199,7 @@ Taking a grant back takes the thing off the other person's list and closes a pag
 open, within half a minute.
 
 **Settings** (administrators): branding, the defaults an execution or a chat falls back to
-(agent, environment, unit, warehouse, model endpoint), the stores a warehouse of someone's own
+(agent, unit, profile, warehouse, model endpoint), the stores a warehouse of someone's own
 may be on, and retention (section 5).
 
 ## 3. Agents
@@ -211,7 +212,8 @@ conversation at a time, on the person's behalf and with the person's own permiss
 - **Basic tools**: the platform's own MCP server, the catalog, plus `load_skill`. The catalog
   server holds every tool of the platform, because a workflow is a resource and running it is
   one of its verbs: resources with their versions, lineage and sharing, dataset files,
-  operators, computing units, and `create_workflow`, `edit_workflow`, `validate_workflow`,
+  operators, computing units and profiles (`create_computing_unit` from a profile,
+  `save_unit_as_profile`), and `create_workflow`, `edit_workflow`, `validate_workflow`,
   `run_workflow`, `get_execution`, `get_port_result`, pause and resume. The agent lists it like
   any other server; nothing is mounted behind its back.
 - **Add-ons**: any other MCP server; the platform ships the bio server (PubMed, genes,
@@ -303,8 +305,8 @@ operator nothing reads is stored anyway.
 
 **How an execution starts.** `POST /workflows/{rid}/run` goes through three phases in the catalog.
 It authorizes everything the compiled plan names before anything is written: execute on the
-workflow, run on the unit, use on the warehouse, read on the environment, every dataset file
-and custom operator, use on every credential; a refusal leaves nothing behind. It compiles the version into a plan
+workflow, run on the unit, use on the warehouse, read on every dataset file and custom
+operator, use on every credential; a refusal leaves nothing behind. It compiles the version into a plan
 that is data: the engine's logical plan with files and credentials still named by URI, the
 custom operators compiled in, and one table per output port the engine writes, named
 `<operator>_<port>` inside the execution's own namespace `e_<rid>` in its warehouse. `validate`
@@ -334,16 +336,11 @@ when the unit confirms), `.../resume` continues it, `.../cancel` ends it; a verb
 fit the phase answers 409. A workflow with an execution still going on the same unit answers
 409 to another.
 
-**Environments, custom operators, credentials.**
+**Custom operators, credentials.**
 
-- An **environment** is a Python package list (PEP 508 lines, an optional version range),
-  versioned; a unit builds it on first use (`POST /environments/{rid}/build` builds ahead).
-  An execution takes the request's environment, else the one its custom operators pin, else the
-  workflow's, the project's and the settings' defaults, in that order; a pin that disagrees
-  with the request is refused with 409.
 - A **custom operator** is a Python class with the engine's UDF interface, with its ports, its
-  properties schema, the columns it adds (`outputColumns`, so the engine can type the output)
-  and optionally the environment it pins. A workflow uses it by URI with `@vno` as the
+  properties schema and the columns it adds (`outputColumns`, so the engine can type the
+  output). It runs with the packages of the unit it runs on (section 6). A workflow uses it by URI with `@vno` as the
   `operatorType`; its instance properties reach the code as the dict `PROPS`. Deleting an
   operator a workflow version uses is refused, the dependents listed.
 - A **credential** holds a secret written once (`PUT /credentials/{rid}/secret`) and never
@@ -369,7 +366,9 @@ its credential when the secret is replaced.
 
 An execution keeps its results in the warehouse the request names (`warehouse` of `run`), else
 the workflow's (`defaultWarehouse`), the project's, the platform's, and records it
-(`spec.warehouse`); its page shows it. On a warehouse's page, "Keep <project>'s results here"
+(`spec.warehouse`); its page shows it. The bar beside Run says it before a run, `on <unit>
+(<profile> vN) · results in <warehouse>`, and picks another warehouse for the runs started
+there; an execution's card in lineage says the same. On a warehouse's page, "Keep <project>'s results here"
 makes it the project's. Whoever runs needs `use` on the warehouse (grant `user`; the
 platform's is everyone's). Reading is decided by the execution, not by the warehouse: whoever
 may read an execution reads its rows, through the catalog. A warehouse is deleted only when no
@@ -390,8 +389,8 @@ A computing unit is the engine deployment an execution goes to, and a resource: 
 static` is a unit already running at an `endpoint` (the dev stack's "local unit", started by
 `run-unit.sh`, which presents the realm's `texera-unit` client to the lake), `provider:
 kubernetes` is one the catalog starts and reconciles on the cluster (section 8): one pod of
-the engine, with the memory and CPU its master node asks for (the "New computing unit" dialog
-asks for both; changing them rolls the pod). A unit answers the catalog's client alone: there
+the engine, with the memory, CPU and GPUs its master node asks for (a GPU is an
+`nvidia.com/gpu` limit; changing the size rolls the pod). A unit answers the catalog's client alone: there
 is no route to it through the gateway and no person's token opens it; people and agents run
 through the catalog, which authorizes and compiles first. Toward the lake and the catalog a
 unit has an identity of its own, and reaches only the namespaces of the executions it ran.
@@ -405,6 +404,20 @@ applies the preference to every compile and execution the agent starts in that c
 agent need not be told, and names a unit itself only when you ask for another. A preference
 gives no right to the unit: it is passed over for someone in the chat who may not run on it.
 
+**Profiles.** A profile is what a unit's node is made of: its memory, CPU and GPUs, and the
+Python packages it adds to the platform's runtime (PEP 508 lines), versioned. A unit is made
+from a profile version ("New computing unit" proposes the settings' default profile and lets
+you change the size; `POST /computing-units/from-profile` with `waitSeconds` waits until it is
+ready): its node gets the profile's size and packages and names the version. A unit may change
+since, another size or a package added on its page, and its page says how it differs from its
+profile. A run installs the unit's packages first, once per list of packages on a unit (the
+execution is `provisioning` meanwhile), and records what the unit had in `spec.computing`: the
+profile version, the size, the runtime, each package as installed (`pandas==2.2.3`). "Save as
+profile" (`POST /computing-units/{rid}/profile`) keeps a unit for others to make units from: as
+the next version of its profile when you may change that one, or as a new profile (the
+platform's own only as new), each package pinned to what the unit installed; the unit is then
+made from what was saved.
+
 ## 7. Your own agents and tools
 
 Anything that holds a person's token can do what the person can:
@@ -413,7 +426,8 @@ Anything that holds a person's token can do what the person can:
   application/json, text/event-stream`) with one tool per operation of the contract: what
   exists (`whoami`, `search_resources`, `resolve_uri`, `get_resource`, `list_versions`,
   `get_version`, `get_lineage`, `grant_access`, `search_principals`, the dataset file tools,
-  `list_operators`, `list_computing_units`) and the verbs of a workflow and its executions
+  `list_operators`, `list_computing_units`), the verbs of a unit (`create_computing_unit` from
+  a profile, `save_unit_as_profile`) and the verbs of a workflow and its executions
   (`create_workflow`, `get_workflow`, `edit_workflow`, `validate_workflow`, `run_workflow`,
   `get_execution`, `pause_execution`, `resume_execution`, `get_port_result`). A list takes a
   `scope`, a project: it then holds that project and the built-ins. A tool that fails answers

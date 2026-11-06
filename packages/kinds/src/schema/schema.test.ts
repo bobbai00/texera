@@ -3,10 +3,11 @@ import { emptyValue, fieldType, properties, prune, specSchema } from "./schema";
 
 describe("spec schemas", () => {
   it("finds every kind's spec in the bundle and classifies its fields", () => {
-    const env = specSchema("environment");
-    expect(env).toBeDefined();
-    expect(fieldType(env?.properties?.python ?? {})).toBe("object");
-    expect(fieldType(env?.properties?.baseImage ?? {})).toBe("string");
+    const profile = specSchema("profile");
+    expect(profile).toBeDefined();
+    expect(fieldType(profile?.properties?.packages ?? {})).toBe("strings");
+    expect(fieldType(profile?.properties?.memory ?? {})).toBe("string");
+    expect(fieldType(profile?.properties?.gpu ?? {})).toBe("number");
     const mcp = specSchema("mcp-server");
     expect(fieldType(mcp?.properties?.headers ?? {})).toBe("map");
     const cred = specSchema("credential");
@@ -28,6 +29,6 @@ describe("spec schemas", () => {
   it("prunes empty optional fields but keeps required ones", () => {
     const pruned = prune({ url: "http://x", headers: {}, builtin: "", extra: undefined }, specSchema("mcp-server") ?? {});
     expect(pruned).toEqual({ url: "http://x" });
-    expect(prune({ python: { packages: [], version: "" } }, specSchema("environment") ?? {})).toEqual({ python: { packages: [] } });
+    expect(prune({ packages: [], memory: "", cpu: "2" }, specSchema("profile") ?? {})).toEqual({ cpu: "2" });
   });
 });

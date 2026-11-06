@@ -46,7 +46,7 @@ func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizePlan(ctx, caller, c, unit, nil, nil); err != nil {
+	if err := s.authorizePlan(ctx, caller, c, unit, nil); err != nil {
 		return nil, err
 	}
 	client, status, err := s.unitClient(ctx, unit)

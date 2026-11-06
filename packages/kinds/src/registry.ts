@@ -6,12 +6,12 @@ import { computingUnitKind } from "./kinds/computing-unit";
 import { conversationKind } from "./kinds/conversation";
 import { credentialKind } from "./kinds/credential";
 import { datasetKind } from "./kinds/dataset";
-import { environmentKind } from "./kinds/environment";
 import { executionKind } from "./execution/spec";
 import { mcpServerKind } from "./kinds/mcp-server";
 import { modelKind } from "./kinds/model";
 import { modelEndpointKind } from "./kinds/model-endpoint";
 import { operatorKind } from "./kinds/operator";
+import { profileKind } from "./kinds/profile";
 import { projectKind } from "./kinds/project";
 import { settingsKind } from "./kinds/settings";
 import { skillKind } from "./kinds/skill";
@@ -25,8 +25,8 @@ export const KINDS: Record<KindId, KindSpec> = {
   execution: executionKind,
   dataset: datasetKind,
   model: modelKind,
-  environment: environmentKind,
   "computing-unit": computingUnitKind,
+  profile: profileKind,
   warehouse: warehouseKind,
   operator: operatorKind,
   "agent-template": agentTemplateKind,
@@ -45,7 +45,7 @@ export const KINDS: Record<KindId, KindSpec> = {
  * the projects themselves.
  */
 export const LIBRARY_GROUPS: { title: string; kinds: KindId[] }[] = [
-  { title: "Work", kinds: ["workflow", "dataset", "model", "operator", "environment", "computing-unit", "warehouse"] },
+  { title: "Work", kinds: ["workflow", "dataset", "model", "operator", "computing-unit", "profile", "warehouse"] },
   { title: "Activity", kinds: ["execution"] },
   { title: "Agent", kinds: ["agent-template", "skill", "mcp-server", "model-endpoint", "credential"] },
   { title: "Projects", kinds: ["project"] },

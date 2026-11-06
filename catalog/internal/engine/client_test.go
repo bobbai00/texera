@@ -47,7 +47,7 @@ var everyCall = map[string]func(context.Context, *Unit) error{
 		return err
 	},
 	"EnvironmentStatus": func(c context.Context, u *Unit) error {
-		_, err := u.EnvironmentStatus(c, "r", 1)
+		_, err := u.EnvironmentStatus(c, "p0123")
 		return err
 	},
 }

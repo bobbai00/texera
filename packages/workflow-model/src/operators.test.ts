@@ -65,11 +65,11 @@ describe("operator resources", () => {
         { operatorID: "f", operatorType: "Filter", inputPorts: [{ portID: "input-0" }] },
       ],
       links: [],
-      defaultEnvironment: "texera://environments/e",
+      defaultComputingUnit: "texera://computing-units/u",
     });
     expect(spec.operators[0]).toEqual({ operatorID: "scan", operatorType: "CSVFileScan", operatorProperties: {}, inputPorts: [], outputPorts: [{ portID: "output-0" }] });
     expect(spec.operators[1]?.inputPorts).toEqual([{ portID: "input-0" }]);
-    expect(spec.defaultEnvironment).toBe("texera://environments/e");
+    expect(spec.defaultComputingUnit).toBe("texera://computing-units/u");
   });
 
   it("gives an operator that lists no ports the ones its links use, so no link is lost", () => {

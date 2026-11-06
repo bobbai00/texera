@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { workflowsRun } from "@texera/catalog-client";
-import type { Execution, ExecutionStatus } from "@texera/catalog-client/types";
+import type { ComputingUnitSpec, Execution, ExecutionStatus, ProjectSpec } from "@texera/catalog-client/types";
 import {
   Badge,
   Button,
@@ -43,7 +43,8 @@ import { useStore } from "zustand";
 import { unwrap } from "../api";
 import { executionOverlay } from "../execution/overlay";
 import { useRoom } from "../live/room";
-import { keysOf, operatorSchemasQuery, unitsQuery } from "../queries";
+import { masterOf } from "../kinds/profiles";
+import { keysOf, operatorSchemasQuery, resourceQuery, searchQuery, settingsQuery, unitsQuery } from "../queries";
 import { ResultsPanel } from "../results/ResultsPanel";
 import { ProjectScope, useScope } from "../scope";
 import { Access } from "../shell/Access";
@@ -52,6 +53,7 @@ import { Lineage } from "../shell/Lineage";
 import { metaLine } from "../shell/MetaLine";
 import { OpenError } from "../shell/OpenError";
 import { useOpenResource } from "../shell/navigation";
+import { Named } from "../shell/RanOn";
 import { Versions } from "../shell/Versions";
 import { useTellViewing } from "../shell/viewing";
 import type { KindViewProps } from "../types";
@@ -232,6 +234,15 @@ function EditorLayout({
   const view = useMemo(() => createCanvasView(), []);
   const [unitPick, setUnitPick] = useState<string | undefined>(() => defaultUnit ?? rememberedUnit());
   const unit = units?.find(u => u.metadata.uri === unitPick) ?? units?.find(u => u.status?.phase === "ready") ?? units?.[0];
+  const madeFrom = unit && masterOf(unit.spec as ComputingUnitSpec)?.profile;
+  // Where the results go: the warehouse picked here for this page's runs, else the one the
+  // workflow, its project or the platform names, as the catalog decides.
+  const { data: warehouses } = useQuery(searchQuery({ kind: "warehouse", scope }));
+  const { data: project } = useQuery({ ...resourceQuery(scope ?? ""), enabled: !!scope });
+  const { data: settings } = useQuery(settingsQuery());
+  const [warehousePick, setWarehousePick] = useState<string>();
+  const warehouse =
+    warehousePick ?? spec.defaultWarehouse ?? (project?.spec as ProjectSpec | undefined)?.defaultWarehouse ?? settings?.spec.defaults?.warehouse;
   const { data: compilation } = useQuery(compilationQuery(rid, spec, unit?.metadata.uri));
   const executions = useQuery({
     ...executionsQuery(rid),
@@ -261,7 +272,10 @@ function EditorLayout({
       const vno = (await store.getState().flush()) ?? store.getState().headVno;
       // The catalog names the execution: a name of its own, however often a version is run.
       return unwrap(
-        workflowsRun({ path: { rid }, body: { vno, computingUnit: unit.metadata.uri, ...(upTo ? { upTo } : {}) } })
+        workflowsRun({
+          path: { rid },
+          body: { vno, computingUnit: unit.metadata.uri, ...(warehousePick ? { warehouse: warehousePick } : {}), ...(upTo ? { upTo } : {}) },
+        })
       );
     },
     onSuccess: (_, upTo) => {
@@ -310,13 +324,34 @@ function EditorLayout({
         actions={
           <>
             {units && units.length > 0 && (
-              <Select
-                aria-label="Computing unit"
-                value={unit?.metadata.uri ?? null}
-                onChange={pickUnit}
-                options={units.map(u => ({ value: u.metadata.uri, label: u.metadata.name }))}
-                className="w-40"
-              />
+              // Where the run goes, said as a sentence: on a unit (its profile) · results in a warehouse.
+              <span className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground" data-run-target>
+                on
+                <Select
+                  aria-label="Computing unit"
+                  value={unit?.metadata.uri ?? null}
+                  onChange={pickUnit}
+                  options={units.map(u => ({ value: u.metadata.uri, label: u.metadata.name }))}
+                  className="w-36"
+                />
+                {madeFrom && (
+                  <span className="truncate" data-run-profile>
+                    (<Named uri={madeFrom} />)
+                  </span>
+                )}
+                {warehouses && warehouses.items.length > 0 && (
+                  <>
+                    <span className="shrink-0">· results in</span>
+                    <Select
+                      aria-label="Warehouse"
+                      value={warehouse ?? null}
+                      onChange={setWarehousePick}
+                      options={warehouses.items.map(w => ({ value: w.metadata.uri, label: w.metadata.name }))}
+                      className="w-36"
+                    />
+                  </>
+                )}
+              </span>
             )}
             {units !== undefined && !unit && (
               <Badge tone="danger">

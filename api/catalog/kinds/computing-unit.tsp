@@ -5,6 +5,7 @@ import "@typespec/rest";
 import "@typespec/openapi";
 import "../../common.tsp";
 import "../core.tsp";
+import "./profile.tsp";
 
 using Http;
 using Rest;
@@ -21,9 +22,13 @@ enum UnitProvider {
 model ComputingNodeSpec {
   name: string;
   role: "master" | "worker" | "sandbox";
+  @doc("The profile version the node was made from, with `@vno`; what the node has may have changed since.")
+  profile?: Uri;
   cpu?: string;
   memory?: string;
   gpu?: int32;
+  @doc("Python packages the node adds to the platform's runtime, PEP 508 lines.")
+  packages?: string[];
 }
 
 model ComputingNodeStatus {
@@ -68,8 +73,29 @@ model ComputingUnitStatus {
   message?: string;
   engine?: EngineStatus;
   computingNodes?: ComputingNodeStatus[];
-  @doc("Environment versions built on this unit.")
-  environments?: Uri[];
+  @doc("The packages the unit installed for its node, each pinned as installed: what an execution on it has.")
+  installed?: string[];
+}
+
+@doc("A computing unit to make from a profile.")
+model ComputingUnitFromProfile {
+  name: string;
+  @doc("The project the unit goes into; absent: the chat's project in a chat, else the caller's own.")
+  parent?: Rid;
+  @doc("The profile, with `@vno`, or its head.")
+  profile: Uri;
+  @doc("Wait up to this many seconds for the unit to be ready (or failed); it is returned as it is then.")
+  waitSeconds?: int32;
+}
+
+@doc("How to save a unit as a profile.")
+model SaveUnitAsProfile {
+  @doc("Save it as the next version of this profile; absent: as a new profile.")
+  profile?: Uri;
+  @doc("The new profile's name; required for a new profile.")
+  name?: string;
+  @doc("The project a new profile goes into; absent: the unit's, or for a unit of the platform's own the chat's project in a chat, else the caller's own.")
+  parent?: Rid;
 }
 
 @extension("x-texera-kind", #{ kind: "computing-unit", plural: "computing-units", versioned: false, content: "spec", parent: "project" })
@@ -91,6 +117,26 @@ namespace Routes {
       readOnlyHint: true,
     })
     available(...Scoped): ComputingUnit[] | Error;
+
+    @doc("Make a computing unit from a profile: one node of the profile's size with its packages, on the deployment's Kubernetes.")
+    @post
+    @route("/from-profile")
+    @extension("x-texera-permission", "create")
+    @extension("x-mcp", #{
+      tool: "create_computing_unit",
+      description: "Make a computing unit from a profile: one node of the profile's size with its Python packages. Find profiles with search_resources (kind profile). The unit goes into the chat's project unless another is named. It is pending until its engine answers: waitSeconds (up to 600) waits until it is ready, and a run on it is refused before then.",
+    })
+    fromProfile(@body body: ComputingUnitFromProfile): Created<ComputingUnit> | Error;
+
+    @doc("Save a unit as a profile: the next version of a profile the caller may change, or a new profile. Packages are saved as the unit installed them, each pinned. The unit is then made from what was saved.")
+    @post
+    @route("/{rid}/profile")
+    @extension("x-texera-permission", "read")
+    @extension("x-mcp", #{
+      tool: "save_unit_as_profile",
+      description: "Save a computing unit as a profile, so others can make a unit like it: as the next version of a profile (profile, which the caller may change), or as a new one (name). Its packages are saved pinned to the versions installed.",
+    })
+    saveAsProfile(@path rid: Rid, @body body: SaveUnitAsProfile): Profile | Error;
 
     @post
     @route("/{rid}/terminate")

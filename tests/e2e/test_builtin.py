@@ -12,7 +12,7 @@ def test_a_built_in_is_what_lives_in_the_platforms_project(alice, bob):
     project = bob.get(f"/projects/{platform}")["metadata"]
     assert project["name"] == "Built-in" and project["visibility"] == "public"
     # Bob was given nothing: every kind the platform ships is his to list and to open.
-    for plural in ("agent-templates", "skills", "mcp-servers", "model-endpoints", "credentials", "environments", "computing-units", "operators"):
+    for plural in ("agent-templates", "skills", "mcp-servers", "model-endpoints", "credentials", "profiles", "computing-units", "operators"):
         shipped = [r for r in bob.get(f"/{plural}?limit=200")["items"] if r["metadata"]["project"] == platform]
         assert shipped, f"the platform ships no {plural} bob can list"
         for r in shipped[:5]:

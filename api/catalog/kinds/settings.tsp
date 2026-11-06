@@ -20,8 +20,9 @@ model Branding {
 model Defaults {
   @doc("The template a new chat starts with when the project names none.")
   agentTemplate?: Uri;
-  environment?: Uri;
   computingUnit?: Uri;
+  @doc("The profile a new computing unit is made from unless another is chosen.")
+  profile?: Uri;
   @doc("The warehouse an execution keeps its results in when nothing else names one.")
   warehouse?: Uri;
   modelEndpoint?: Uri;

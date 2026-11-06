@@ -134,7 +134,7 @@ test("a link to something that was not shared says so on the page of every kind,
   const chat: Envelope = await alice("POST", "/conversations", { name: `not shared ${Date.now()}`, parent: project, spec: {} });
   cleanups.push(() => alice.attempt("DELETE", `/resources/${chat.metadata.rid}`));
   const alices = [...pages.filter(p => p.mine).map(p => ({ kind: p.kind, path: p.path })), { kind: "conversation", path: pathOf(chat) }];
-  expect(alices.map(p => p.kind).sort()).toEqual(["conversation", "credential", "dataset", "environment", "execution", "model", "model-endpoint", "project", "skill", "warehouse", "workflow"]);
+  expect(alices.map(p => p.kind).sort()).toEqual(["conversation", "credential", "dataset", "execution", "model", "model-endpoint", "profile", "project", "skill", "warehouse", "workflow"]);
 
   const bobs = await browserOf(browser, "bob");
   for (const at of alices) {

@@ -115,16 +115,16 @@ describe("a workflow as a live document", () => {
 });
 
 describe("what a workflow names beside its graph", () => {
-  it("is kept by the document and changes like the rest: the unit it runs on, where it keeps results, its environment", () => {
+  it("is kept by the document and changes like the rest: the unit it runs on, where it keeps results", () => {
     const named: WorkflowSpec = {
       ...base,
-      defaultEnvironment: "texera://environments/e",
+      defaultComputingUnit: "texera://computing-units/u",
       defaultWarehouse: "texera://warehouses/w",
     };
     const doc = docOf(named);
     expect(specOf(doc, named)).toEqual(named);
-    // Another warehouse, and no environment any more.
-    const { defaultEnvironment: _, ...rest } = named;
+    // Another warehouse, and no unit of its own any more.
+    const { defaultComputingUnit: _, ...rest } = named;
     applySpec(doc, { ...rest, defaultWarehouse: "texera://warehouses/other" });
     expect(specOf(replicaOf(doc), named)).toEqual({ ...rest, defaultWarehouse: "texera://warehouses/other" });
   });

@@ -23,7 +23,7 @@ enum ResourceKind {
   execution,
   dataset,
   `model`,
-  environment,
+  profile,
   computingUnit: "computing-unit",
   warehouse,
   operator,

@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { api, type Caller, cleanups, discard, editOperator, type Envelope, IRIS_CSV, operatorCard, signIn, tidyUp } from "./support";
+import { api, type Caller, cleanups, discard, editOperator, type Envelope, IRIS_CSV, operatorCard, pick, signIn, tidyUp } from "./support";
 
 // The canvas: an operator is a card that says how it is set, in one line or with every setting
 // on its own, and is edited in place, the cards under it making room; arrows are curves. Each
@@ -332,6 +332,48 @@ test("an execution shows on the workflow's canvas, a click on a card shows its r
   expect(new Set(executions.map(x => x.metadata.name)).size).toBe(3);
   expect(executions[0]?.spec.upTo).toBe("most");
   expect((await alice("GET", `/workflows/${rid}`)).metadata.head).toBe(head);
+});
+
+test("the bar says where a run goes, and it goes there: on a unit made from a profile, results in the warehouse picked", async ({ page, request }) => {
+  test.setTimeout(240_000);
+  const alice = await api(request);
+  const { project, rid } = await irisWorkflow(alice, "where it runs");
+  const lab: Envelope = await alice("POST", "/warehouses", { name: `lab ${Date.now()}`, parent: project, spec: {} });
+  cleanups.push(async () => {
+    // A warehouse goes once nothing keeps results in it: the executions first.
+    const executions = await alice("GET", `/workflows/${rid}/executions?limit=50`);
+    for (const x of executions.items as Envelope[]) await alice.attempt("DELETE", `/workflows/${rid}/executions/${x.metadata.rid}`);
+    await alice.attempt("DELETE", `/resources/${lab.metadata.rid}`);
+  });
+  const defaults = (await alice("GET", "/settings")).spec.defaults;
+  const profile = await alice("GET", defaults.profile.replace("texera://", "/"));
+  const platform = await alice("GET", defaults.warehouse.replace("texera://", "/"));
+  await signIn(page);
+  await page.goto(`/workflows/${rid}`);
+
+  // On the unit (made from its profile), results in the platform's warehouse unless another is picked.
+  const target = page.locator("[data-run-target]");
+  await expect(target.locator("[data-run-profile]")).toContainText(profile.metadata.name);
+  await expect(target.getByLabel("Warehouse")).toHaveText(platform.metadata.name);
+  await pick(page, target.getByLabel("Warehouse"), lab.metadata.name);
+  await page.screenshot({ path: "test-results/run-target.png" });
+  await page.locator("[data-run]").click();
+  await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
+  const [ran] = (await alice("GET", `/workflows/${rid}/executions?limit=1`)).items;
+  expect(ran.spec.warehouse).toBe(lab.metadata.uri);
+  expect(ran.spec.computing.profile.split("@")[0]).toBe(defaults.profile);
+
+  // Its page says where it ran and what the unit had, each package as installed.
+  await page.goto(`/workflows/${rid}/executions/${ran.metadata.rid}`);
+  const execution = page.locator("[data-execution-view]");
+  await execution.getByRole("tab", { name: "Details" }).click();
+  await expect(execution.locator("[data-execution-computing] [data-ran-on]")).toContainText(`(${profile.metadata.name} v`);
+  await expect(execution.locator("[data-execution-computing] [data-ran-on]")).toContainText(`results in ${lab.metadata.name}`);
+  await expect(execution.locator("[data-execution-packages]")).toContainText("pandas==");
+  // So does its card in lineage: the unit and the warehouse are no cards of their own there.
+  await execution.getByRole("tab", { name: "Lineage" }).click();
+  await expect(page.locator('[data-lineage-card="execution"][data-root] [data-ran-on]')).toContainText(lab.metadata.name);
+  await page.screenshot({ path: "test-results/run-target-lineage.png" });
 });
 
 test("an execution's page is the workflow as it ran, and a visualization's result is the chart it drew", async ({ page, request }) => {

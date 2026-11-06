@@ -67,18 +67,6 @@ export const zCommitFiles = z.object({
     message: z.string().optional()
 });
 
-export const zComputingNodeSpec = z.object({
-    name: z.string(),
-    role: z.enum([
-        'master',
-        'worker',
-        'sandbox'
-    ]),
-    cpu: z.string().optional(),
-    memory: z.string().optional(),
-    gpu: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional()
-});
-
 export const zComputingNodeStatus = z.object({
     name: z.string(),
     role: z.enum([
@@ -356,6 +344,22 @@ export const zPrincipalPage = z.object({
     nextCursor: z.string().optional()
 });
 
+/**
+ * What a computing node is made of.
+ */
+export const zProfileSpec = z.object({
+    cpu: z.string().optional(),
+    memory: z.string().optional(),
+    gpu: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
+    packages: z.array(z.string()).optional(),
+    runtime: z.string().optional()
+});
+
+/**
+ * A profile has no status: what it describes is its spec.
+ */
+export const zProfileStatus = z.record(z.string(), z.unknown());
+
 export const zProjectStatus = z.object({
     resources: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).optional()
 });
@@ -368,14 +372,13 @@ export const zPublicSettings = z.object({
     auth: zAuthSettings
 });
 
-export const zPythonEnvironment = z.object({
-    version: z.string().optional(),
-    packages: z.array(z.string())
+export const zPythonOperator = z.object({
+    code: z.string(),
+    outputColumns: z.array(zAttribute).optional()
 });
 
-export const zEnvironmentSpec = z.object({
-    python: zPythonEnvironment.optional(),
-    baseImage: z.string().optional()
+export const zOperatorImplementation = z.object({
+    python: zPythonOperator.optional()
 });
 
 /**
@@ -401,7 +404,7 @@ export const zResourceKind = z.enum([
     'execution',
     'dataset',
     'model',
-    'environment',
+    'profile',
     'computing-unit',
     'warehouse',
     'operator',
@@ -466,9 +469,20 @@ export const zRowPage = z.object({
 });
 
 export const zRuntimeSpec = z.object({
-    environment: zRid.optional(),
     isolation: z.record(z.string(), z.unknown()).optional(),
     resources: z.record(z.string(), z.unknown()).optional()
+});
+
+export const zOperatorSpec = z.object({
+    operatorType: z.string(),
+    displayName: z.string().optional(),
+    group: z.string().optional(),
+    description: z.string().optional(),
+    inputPorts: z.array(zOperatorPortSpec).optional(),
+    outputPorts: z.array(zOperatorPortSpec).optional(),
+    propertiesSchema: z.unknown().optional(),
+    implementation: zOperatorImplementation.optional(),
+    requires: zRuntimeSpec.optional()
 });
 
 /**
@@ -526,25 +540,6 @@ export const zUnitIdentity = z.object({
     subject: z.string()
 });
 
-export const zUnitProvider = z.enum([
-    'static',
-    'local',
-    'kubernetes'
-]);
-
-export const zComputingUnitSpec = z.object({
-    provider: zUnitProvider,
-    endpoint: z.string().optional(),
-    clientId: z.string().optional(),
-    engine: zEngineSpec.optional(),
-    computingNodes: z.array(zComputingNodeSpec).optional()
-});
-
-/**
- * A resource URI: `texera://` followed by the resource's REST path, optionally `@vno` and a subresource path, e.g. `texera://datasets/{rid}@2/files/iris.csv`.
- */
-export const zUri = z.string();
-
 export const zComputingUnitStatus = z.object({
     phase: z.enum([
         'pending',
@@ -556,14 +551,68 @@ export const zComputingUnitStatus = z.object({
     message: z.string().optional(),
     engine: zEngineStatus.optional(),
     computingNodes: z.array(zComputingNodeStatus).optional(),
-    environments: z.array(zUri).optional()
+    installed: z.array(z.string()).optional()
+});
+
+export const zUnitProvider = z.enum([
+    'static',
+    'local',
+    'kubernetes'
+]);
+
+/**
+ * A resource URI: `texera://` followed by the resource's REST path, optionally `@vno` and a subresource path, e.g. `texera://datasets/{rid}@2/files/iris.csv`.
+ */
+export const zUri = z.string();
+
+export const zComputingNodeSpec = z.object({
+    name: z.string(),
+    role: z.enum([
+        'master',
+        'worker',
+        'sandbox'
+    ]),
+    profile: zUri.optional(),
+    cpu: z.string().optional(),
+    memory: z.string().optional(),
+    gpu: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
+    packages: z.array(z.string()).optional()
+});
+
+/**
+ * What the unit an execution ran on had when it ran.
+ */
+export const zComputingRecord = z.object({
+    profile: zUri.optional(),
+    cpu: z.string().optional(),
+    memory: z.string().optional(),
+    gpu: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
+    packages: z.array(z.string()).optional(),
+    runtime: z.string().optional()
+});
+
+/**
+ * A computing unit to make from a profile.
+ */
+export const zComputingUnitFromProfile = z.object({
+    name: z.string(),
+    parent: zRid.optional(),
+    profile: zUri,
+    waitSeconds: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional()
+});
+
+export const zComputingUnitSpec = z.object({
+    provider: zUnitProvider,
+    endpoint: z.string().optional(),
+    clientId: z.string().optional(),
+    engine: zEngineSpec.optional(),
+    computingNodes: z.array(zComputingNodeSpec).optional()
 });
 
 export const zConversationSpec = z.object({
     template: zUri.optional(),
     modelEndpoint: zUri.optional(),
     computingUnit: zUri.optional(),
-    environment: zUri.optional(),
     mcpServers: z.array(zUri).optional()
 });
 
@@ -577,8 +626,8 @@ export const zConversationStatus = z.object({
 
 export const zDefaults = z.object({
     agentTemplate: zUri.optional(),
-    environment: zUri.optional(),
     computingUnit: zUri.optional(),
+    profile: zUri.optional(),
     warehouse: zUri.optional(),
     modelEndpoint: zUri.optional()
 });
@@ -618,8 +667,8 @@ export const zExecutionPort = z.object({
 
 export const zExecutionSpec = z.object({
     workflow: zUri,
-    environment: zUri.optional(),
     computingUnit: zUri,
+    computing: zComputingRecord.optional(),
     warehouse: zUri,
     inputs: z.array(zUri).optional(),
     parameters: z.record(z.string(), z.unknown()).optional(),
@@ -737,7 +786,6 @@ export const zOrigin = z.object({
 });
 
 export const zProjectSpec = z.object({
-    defaultEnvironment: zUri.optional(),
     defaultComputingUnit: zUri.optional(),
     defaultWarehouse: zUri.optional(),
     defaultAgentTemplate: zUri.optional(),
@@ -745,31 +793,18 @@ export const zProjectSpec = z.object({
     mcpServers: z.array(zUri).optional()
 });
 
-export const zPythonOperator = z.object({
-    code: z.string(),
-    environment: zUri.optional(),
-    outputColumns: z.array(zAttribute).optional()
-});
-
-export const zOperatorImplementation = z.object({
-    python: zPythonOperator.optional()
-});
-
-export const zOperatorSpec = z.object({
-    operatorType: z.string(),
-    displayName: z.string().optional(),
-    group: z.string().optional(),
-    description: z.string().optional(),
-    inputPorts: z.array(zOperatorPortSpec).optional(),
-    outputPorts: z.array(zOperatorPortSpec).optional(),
-    propertiesSchema: z.unknown().optional(),
-    implementation: zOperatorImplementation.optional(),
-    requires: zRuntimeSpec.optional()
-});
-
 export const zReplaceMessage = z.object({
     parts: z.array(zMessagePart),
     template: zUri.optional()
+});
+
+/**
+ * How to save a unit as a profile.
+ */
+export const zSaveUnitAsProfile = z.object({
+    profile: zUri.optional(),
+    name: z.string().optional(),
+    parent: zRid.optional()
 });
 
 /**
@@ -894,16 +929,6 @@ export const zCreateDataset = z.object({
     message: z.string().optional()
 });
 
-export const zCreateEnvironment = z.object({
-    name: z.string(),
-    description: z.string().optional(),
-    parent: zRid.optional(),
-    visibility: zVisibility.optional(),
-    labels: z.record(z.string(), z.string()).optional(),
-    spec: zEnvironmentSpec,
-    message: z.string().optional()
-});
-
 export const zCreateMcpServer = z.object({
     name: z.string(),
     description: z.string().optional(),
@@ -941,6 +966,16 @@ export const zCreateOperator = z.object({
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zOperatorSpec,
+    message: z.string().optional()
+});
+
+export const zCreateProfile = z.object({
+    name: z.string(),
+    description: z.string().optional(),
+    parent: zRid.optional(),
+    visibility: zVisibility.optional(),
+    labels: z.record(z.string(), z.string()).optional(),
+    spec: zProfileSpec,
     message: z.string().optional()
 });
 
@@ -995,11 +1030,6 @@ export const zAgentTemplateVersion = z.object({
     createdAt: z.iso.datetime()
 });
 
-export const zBuildEnvironment = z.object({
-    vno: zVno.optional(),
-    computingUnit: zUri.optional()
-});
-
 /**
  * A version with typed content, served by the kind routes.
  */
@@ -1011,40 +1041,6 @@ export const zDatasetVersion = z.object({
     contentKind: zContentKind,
     digest: zDigest,
     content: zManifest,
-    message: z.string().optional(),
-    createdBy: zPid,
-    contributors: z.array(zPid).optional(),
-    origin: zOrigin.optional(),
-    createdAt: z.iso.datetime()
-});
-
-export const zEnvironmentBuild = z.object({
-    computingUnit: zUri,
-    vno: zVno,
-    state: z.enum([
-        'building',
-        'ready',
-        'failed'
-    ]),
-    message: z.string().optional(),
-    at: z.iso.datetime()
-});
-
-export const zEnvironmentStatus = z.object({
-    builds: z.array(zEnvironmentBuild).optional()
-});
-
-/**
- * A version with typed content, served by the kind routes.
- */
-export const zEnvironmentVersion = z.object({
-    rid: zRid,
-    uri: zUri,
-    kind: zResourceKind,
-    vno: zVno,
-    contentKind: zContentKind,
-    digest: zDigest,
-    content: zEnvironmentSpec,
     message: z.string().optional(),
     createdBy: zPid,
     contributors: z.array(zPid).optional(),
@@ -1107,6 +1103,24 @@ export const zOperatorVersion = z.object({
     contentKind: zContentKind,
     digest: zDigest,
     content: zOperatorSpec,
+    message: z.string().optional(),
+    createdBy: zPid,
+    contributors: z.array(zPid).optional(),
+    origin: zOrigin.optional(),
+    createdAt: z.iso.datetime()
+});
+
+/**
+ * A version with typed content, served by the kind routes.
+ */
+export const zProfileVersion = z.object({
+    rid: zRid,
+    uri: zUri,
+    kind: zResourceKind,
+    vno: zVno,
+    contentKind: zContentKind,
+    digest: zDigest,
+    content: zProfileSpec,
     message: z.string().optional(),
     createdBy: zPid,
     contributors: z.array(zPid).optional(),
@@ -1215,22 +1229,6 @@ export const zDatasetPage = z.object({
 /**
  * The typed envelope, served by the kind routes.
  */
-export const zEnvironment = z.object({
-    apiVersion: z.enum(['catalog.texera.apache.org/v1']),
-    kind: zResourceKind,
-    metadata: zResourceMetadata,
-    spec: zEnvironmentSpec,
-    status: zEnvironmentStatus.optional()
-});
-
-export const zEnvironmentPage = z.object({
-    items: z.array(zEnvironment),
-    nextCursor: z.string().optional()
-});
-
-/**
- * The typed envelope, served by the kind routes.
- */
 export const zExecution = z.object({
     apiVersion: z.enum(['catalog.texera.apache.org/v1']),
     kind: zResourceKind,
@@ -1311,6 +1309,22 @@ export const zOperatorPage = z.object({
 /**
  * The typed envelope, served by the kind routes.
  */
+export const zProfile = z.object({
+    apiVersion: z.enum(['catalog.texera.apache.org/v1']),
+    kind: zResourceKind,
+    metadata: zResourceMetadata,
+    spec: zProfileSpec,
+    status: zProfileStatus.optional()
+});
+
+export const zProfilePage = z.object({
+    items: z.array(zProfile),
+    nextCursor: z.string().optional()
+});
+
+/**
+ * The typed envelope, served by the kind routes.
+ */
 export const zProject = z.object({
     apiVersion: z.enum(['catalog.texera.apache.org/v1']),
     kind: zResourceKind,
@@ -1344,7 +1358,6 @@ export const zRunWorkflow = z.object({
     vno: zVno.optional(),
     computingUnit: zUri.optional(),
     warehouse: zUri.optional(),
-    environment: zUri.optional(),
     parameters: z.record(z.string(), z.unknown()).optional(),
     waitSeconds: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     upTo: z.string().optional(),
@@ -1426,12 +1439,6 @@ export const zUpdateDataset = z.object({
     expectedHead: zVno.optional()
 });
 
-export const zUpdateEnvironment = z.object({
-    spec: zEnvironmentSpec,
-    message: z.string().optional(),
-    expectedHead: zVno.optional()
-});
-
 export const zUpdateMcpServer = z.object({
     spec: zMcpServerSpec,
     message: z.string().optional(),
@@ -1452,6 +1459,12 @@ export const zUpdateModelEndpoint = z.object({
 
 export const zUpdateOperator = z.object({
     spec: zOperatorSpec,
+    message: z.string().optional(),
+    expectedHead: zVno.optional()
+});
+
+export const zUpdateProfile = z.object({
+    spec: zProfileSpec,
     message: z.string().optional(),
     expectedHead: zVno.optional()
 });
@@ -1527,11 +1540,6 @@ export const zDatasetVersionPage = z.object({
     nextCursor: z.string().optional()
 });
 
-export const zEnvironmentVersionPage = z.object({
-    items: z.array(zVersionSummary),
-    nextCursor: z.string().optional()
-});
-
 export const zMcpServerVersionPage = z.object({
     items: z.array(zVersionSummary),
     nextCursor: z.string().optional()
@@ -1543,6 +1551,11 @@ export const zModelVersionPage = z.object({
 });
 
 export const zOperatorVersionPage = z.object({
+    items: z.array(zVersionSummary),
+    nextCursor: z.string().optional()
+});
+
+export const zProfileVersionPage = z.object({
     items: z.array(zVersionSummary),
     nextCursor: z.string().optional()
 });
@@ -1651,7 +1664,6 @@ export const zWorkflowSpec = z.object({
     operators: z.array(zWorkflowOperator),
     links: z.array(zWorkflowLink),
     layout: z.record(z.string(), zCanvasPoint).optional(),
-    defaultEnvironment: zUri.optional(),
     defaultComputingUnit: zUri.optional(),
     defaultWarehouse: zUri.optional()
 });
@@ -1864,6 +1876,13 @@ export const zComputingUnitsAvailableQuery = z.object({
  */
 export const zComputingUnitsAvailableResponse = z.array(zComputingUnit);
 
+export const zComputingUnitsFromProfileBody = zComputingUnitFromProfile;
+
+/**
+ * The request has succeeded and a new resource has been created as a result.
+ */
+export const zComputingUnitsFromProfileResponse = zComputingUnit;
+
 export const zComputingUnitsDeletePath = z.object({
     rid: zRid
 });
@@ -1929,6 +1948,17 @@ export const zComputingUnitsOperatorsQuery = z.object({
  * The request has succeeded.
  */
 export const zComputingUnitsOperatorsResponse = zOperatorTypeList;
+
+export const zComputingUnitsSaveAsProfileBody = zSaveUnitAsProfile;
+
+export const zComputingUnitsSaveAsProfilePath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zComputingUnitsSaveAsProfileResponse = zProfile;
 
 export const zComputingUnitsTerminatePath = z.object({
     rid: zRid
@@ -2304,95 +2334,6 @@ export const zDatasetsLinkPath = z.object({
  * The request has succeeded.
  */
 export const zDatasetsLinkResponse = zFileLink;
-
-export const zEnvironmentsListQuery = z.object({
-    scope: zRid.optional(),
-    parent: zRid.optional(),
-    project: zRid.optional(),
-    q: z.string().optional(),
-    limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
-    cursor: z.string().optional()
-});
-
-/**
- * A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
- */
-export const zEnvironmentsListResponse = zEnvironmentPage;
-
-export const zEnvironmentsCreateBody = zCreateEnvironment;
-
-/**
- * The request has succeeded and a new resource has been created as a result.
- */
-export const zEnvironmentsCreateResponse = zEnvironment;
-
-export const zEnvironmentsDeletePath = z.object({
-    rid: zRid
-});
-
-/**
- * There is no content to send for this request, but the headers may be useful.
- */
-export const zEnvironmentsDeleteResponse = z.void();
-
-export const zEnvironmentsReadPath = z.object({
-    rid: zRid
-});
-
-/**
- * The request has succeeded.
- */
-export const zEnvironmentsReadResponse = zEnvironment;
-
-export const zEnvironmentsUpdateBody = zUpdateEnvironment;
-
-export const zEnvironmentsUpdateHeaders = z.object({
-    'If-Match': z.string().optional()
-});
-
-export const zEnvironmentsUpdatePath = z.object({
-    rid: zRid
-});
-
-/**
- * The request has succeeded.
- */
-export const zEnvironmentsUpdateResponse = zEnvironment;
-
-export const zEnvironmentsBuildBody = zBuildEnvironment;
-
-export const zEnvironmentsBuildPath = z.object({
-    rid: zRid
-});
-
-/**
- * The request has been accepted for processing, but processing has not yet completed.
- */
-export const zEnvironmentsBuildResponse = zEnvironmentBuild;
-
-export const zEnvironmentsListVersionsPath = z.object({
-    rid: zRid
-});
-
-export const zEnvironmentsListVersionsQuery = z.object({
-    limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
-    cursor: z.string().optional()
-});
-
-/**
- * A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
- */
-export const zEnvironmentsListVersionsResponse = zEnvironmentVersionPage;
-
-export const zEnvironmentsReadVersionPath = z.object({
-    rid: zRid,
-    vno: zVno
-});
-
-/**
- * The request has succeeded.
- */
-export const zEnvironmentsReadVersionResponse = zEnvironmentVersion;
 
 export const zExecutionsListQuery = z.object({
     workflow: zRid.optional(),
@@ -2811,6 +2752,84 @@ export const zPrincipalsReadPath = z.object({
  * The request has succeeded.
  */
 export const zPrincipalsReadResponse = zPrincipal;
+
+export const zProfilesListQuery = z.object({
+    scope: zRid.optional(),
+    parent: zRid.optional(),
+    project: zRid.optional(),
+    q: z.string().optional(),
+    limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
+    cursor: z.string().optional()
+});
+
+/**
+ * A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+ */
+export const zProfilesListResponse = zProfilePage;
+
+export const zProfilesCreateBody = zCreateProfile;
+
+/**
+ * The request has succeeded and a new resource has been created as a result.
+ */
+export const zProfilesCreateResponse = zProfile;
+
+export const zProfilesDeletePath = z.object({
+    rid: zRid
+});
+
+/**
+ * There is no content to send for this request, but the headers may be useful.
+ */
+export const zProfilesDeleteResponse = z.void();
+
+export const zProfilesReadPath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zProfilesReadResponse = zProfile;
+
+export const zProfilesUpdateBody = zUpdateProfile;
+
+export const zProfilesUpdateHeaders = z.object({
+    'If-Match': z.string().optional()
+});
+
+export const zProfilesUpdatePath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zProfilesUpdateResponse = zProfile;
+
+export const zProfilesListVersionsPath = z.object({
+    rid: zRid
+});
+
+export const zProfilesListVersionsQuery = z.object({
+    limit: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
+    cursor: z.string().optional()
+});
+
+/**
+ * A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+ */
+export const zProfilesListVersionsResponse = zProfileVersionPage;
+
+export const zProfilesReadVersionPath = z.object({
+    rid: zRid,
+    vno: zVno
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zProfilesReadVersionResponse = zProfileVersion;
 
 export const zProjectsListQuery = z.object({
     scope: zRid.optional(),

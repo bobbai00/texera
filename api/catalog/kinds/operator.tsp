@@ -23,8 +23,6 @@ model OperatorPortSpec {
 model PythonOperator {
   @doc("The operator's Python source: a class with the engine's UDF interface.")
   code: string;
-  @doc("The environment its packages come from; absent means the execution's environment.")
-  environment?: Uri;
   @doc("The columns the code adds to each tuple, declared so the engine can type the output; input columns pass through.")
   outputColumns?: Attribute[];
 }

@@ -3,8 +3,8 @@
 import { type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { agentTemplatesCreate, agentTemplatesDelete, agentTemplatesList, agentTemplatesListVersions, agentTemplatesRead, agentTemplatesReadVersion, agentTemplatesUpdate, computingUnitsAvailable, computingUnitsCreate, computingUnitsDelete, computingUnitsList, computingUnitsListNodes, computingUnitsOperators, computingUnitsRead, computingUnitsReadNode, computingUnitsTerminate, computingUnitsUpdate, conversationsAppendMessage, conversationsCreate, conversationsDelete, conversationsEndTurn, conversationsList, conversationsListMessages, conversationsRead, conversationsReplaceMessage, conversationsResources, conversationsSettings, conversationsStartTurn, conversationsUpdate, credentialsCreate, credentialsDelete, credentialsLease, credentialsList, credentialsRead, credentialsSetSecret, credentialsUpdate, datasetsCommit, datasetsCreate, datasetsDelete, datasetsDownload, datasetsFiles, datasetsLink, datasetsList, datasetsListVersions, datasetsRead, datasetsReadVersion, datasetsStaged, datasetsUnstage, datasetsUpdate, datasetsUpload, environmentsBuild, environmentsCreate, environmentsDelete, environmentsList, environmentsListVersions, environmentsRead, environmentsReadVersion, environmentsUpdate, evaluationEvaluate, eventsIngest, executionsList, mcpServersCreate, mcpServersDelete, mcpServersList, mcpServersListVersions, mcpServersRead, mcpServersReadVersion, mcpServersUpdate, meGet, meUpdatePreferences, modelEndpointsCreate, modelEndpointsDelete, modelEndpointsList, modelEndpointsRead, modelEndpointsUpdate, modelsCommit, modelsCreate, modelsDelete, modelsDownload, modelsFiles, modelsLink, modelsList, modelsListVersions, modelsRead, modelsReadVersion, modelsStaged, modelsUnstage, modelsUpdate, modelsUpload, operatorsCreate, operatorsDelete, operatorsList, operatorsListVersions, operatorsRead, operatorsReadVersion, operatorsUpdate, type Options, principalsList, principalsRead, projectsChatSettings, projectsCreate, projectsDelete, projectsList, projectsRead, projectsUpdate, resourcesDelete, resourcesDependents, resourcesGrant, resourcesLineage, resourcesListGrants, resourcesListVersions, resourcesRead, resourcesReadLive, resourcesReadVersion, resourcesResolve, resourcesRevoke, resourcesSearch, resourcesUpdateMetadata, resourcesWriteLive, settingsRoutesPublic, settingsRoutesRead, settingsRoutesSweep, settingsRoutesUpdate, skillsCreate, skillsDelete, skillsList, skillsListVersions, skillsRead, skillsReadVersion, skillsUpdate, warehousesCreate, warehousesDelete, warehousesList, warehousesRead, warehousesUpdate, workflowsCancelExecution, workflowsCreate, workflowsDelete, workflowsDeleteExecution, workflowsEdit, workflowsList, workflowsListExecutions, workflowsListVersions, workflowsPauseExecution, workflowsRead, workflowsReadExecution, workflowsReadPort, workflowsReadRows, workflowsReadVersion, workflowsResumeExecution, workflowsRun, workflowsUpdate, workflowsValidate } from '../sdk.gen';
-import type { AgentTemplatesCreateData, AgentTemplatesCreateError, AgentTemplatesCreateResponse, AgentTemplatesDeleteData, AgentTemplatesDeleteError, AgentTemplatesDeleteResponse, AgentTemplatesListData, AgentTemplatesListError, AgentTemplatesListResponse, AgentTemplatesListVersionsData, AgentTemplatesListVersionsError, AgentTemplatesListVersionsResponse, AgentTemplatesReadData, AgentTemplatesReadError, AgentTemplatesReadResponse, AgentTemplatesReadVersionData, AgentTemplatesReadVersionError, AgentTemplatesReadVersionResponse, AgentTemplatesUpdateData, AgentTemplatesUpdateError, AgentTemplatesUpdateResponse, ComputingUnitsAvailableData, ComputingUnitsAvailableError, ComputingUnitsAvailableResponse, ComputingUnitsCreateData, ComputingUnitsCreateError, ComputingUnitsCreateResponse, ComputingUnitsDeleteData, ComputingUnitsDeleteError, ComputingUnitsDeleteResponse, ComputingUnitsListData, ComputingUnitsListError, ComputingUnitsListNodesData, ComputingUnitsListNodesError, ComputingUnitsListNodesResponse, ComputingUnitsListResponse, ComputingUnitsOperatorsData, ComputingUnitsOperatorsError, ComputingUnitsOperatorsResponse, ComputingUnitsReadData, ComputingUnitsReadError, ComputingUnitsReadNodeData, ComputingUnitsReadNodeError, ComputingUnitsReadNodeResponse, ComputingUnitsReadResponse, ComputingUnitsTerminateData, ComputingUnitsTerminateError, ComputingUnitsTerminateResponse, ComputingUnitsUpdateData, ComputingUnitsUpdateError, ComputingUnitsUpdateResponse, ConversationsAppendMessageData, ConversationsAppendMessageError, ConversationsAppendMessageResponse, ConversationsCreateData, ConversationsCreateError, ConversationsCreateResponse, ConversationsDeleteData, ConversationsDeleteError, ConversationsDeleteResponse, ConversationsEndTurnData, ConversationsEndTurnError, ConversationsEndTurnResponse, ConversationsListData, ConversationsListError, ConversationsListMessagesData, ConversationsListMessagesError, ConversationsListMessagesResponse, ConversationsListResponse, ConversationsReadData, ConversationsReadError, ConversationsReadResponse, ConversationsReplaceMessageData, ConversationsReplaceMessageError, ConversationsReplaceMessageResponse, ConversationsResourcesData, ConversationsResourcesError, ConversationsResourcesResponse, ConversationsSettingsData, ConversationsSettingsError, ConversationsSettingsResponse, ConversationsStartTurnData, ConversationsStartTurnError, ConversationsStartTurnResponse, ConversationsUpdateData, ConversationsUpdateError, ConversationsUpdateResponse, CredentialsCreateData, CredentialsCreateError, CredentialsCreateResponse, CredentialsDeleteData, CredentialsDeleteError, CredentialsDeleteResponse, CredentialsLeaseData, CredentialsLeaseError, CredentialsLeaseResponse, CredentialsListData, CredentialsListError, CredentialsListResponse, CredentialsReadData, CredentialsReadError, CredentialsReadResponse, CredentialsSetSecretData, CredentialsSetSecretError, CredentialsSetSecretResponse, CredentialsUpdateData, CredentialsUpdateError, CredentialsUpdateResponse, DatasetsCommitData, DatasetsCommitError, DatasetsCommitResponse, DatasetsCreateData, DatasetsCreateError, DatasetsCreateResponse, DatasetsDeleteData, DatasetsDeleteError, DatasetsDeleteResponse, DatasetsDownloadData, DatasetsDownloadError, DatasetsDownloadResponse, DatasetsFilesData, DatasetsFilesError, DatasetsFilesResponse, DatasetsLinkData, DatasetsLinkError, DatasetsLinkResponse, DatasetsListData, DatasetsListError, DatasetsListResponse, DatasetsListVersionsData, DatasetsListVersionsError, DatasetsListVersionsResponse, DatasetsReadData, DatasetsReadError, DatasetsReadResponse, DatasetsReadVersionData, DatasetsReadVersionError, DatasetsReadVersionResponse, DatasetsStagedData, DatasetsStagedError, DatasetsStagedResponse, DatasetsUnstageData, DatasetsUnstageError, DatasetsUnstageResponse, DatasetsUpdateData, DatasetsUpdateError, DatasetsUpdateResponse, DatasetsUploadData, DatasetsUploadError, DatasetsUploadResponse, EnvironmentsBuildData, EnvironmentsBuildError, EnvironmentsBuildResponse, EnvironmentsCreateData, EnvironmentsCreateError, EnvironmentsCreateResponse, EnvironmentsDeleteData, EnvironmentsDeleteError, EnvironmentsDeleteResponse, EnvironmentsListData, EnvironmentsListError, EnvironmentsListResponse, EnvironmentsListVersionsData, EnvironmentsListVersionsError, EnvironmentsListVersionsResponse, EnvironmentsReadData, EnvironmentsReadError, EnvironmentsReadResponse, EnvironmentsReadVersionData, EnvironmentsReadVersionError, EnvironmentsReadVersionResponse, EnvironmentsUpdateData, EnvironmentsUpdateError, EnvironmentsUpdateResponse, EvaluationEvaluateData, EvaluationEvaluateError, EvaluationEvaluateResponse, EventsIngestData, EventsIngestError, EventsIngestResponse, ExecutionsListData, ExecutionsListError, ExecutionsListResponse, McpServersCreateData, McpServersCreateError, McpServersCreateResponse, McpServersDeleteData, McpServersDeleteError, McpServersDeleteResponse, McpServersListData, McpServersListError, McpServersListResponse, McpServersListVersionsData, McpServersListVersionsError, McpServersListVersionsResponse, McpServersReadData, McpServersReadError, McpServersReadResponse, McpServersReadVersionData, McpServersReadVersionError, McpServersReadVersionResponse, McpServersUpdateData, McpServersUpdateError, McpServersUpdateResponse, MeGetData, MeGetError, MeGetResponse, MeUpdatePreferencesData, MeUpdatePreferencesError, MeUpdatePreferencesResponse, ModelEndpointsCreateData, ModelEndpointsCreateError, ModelEndpointsCreateResponse, ModelEndpointsDeleteData, ModelEndpointsDeleteError, ModelEndpointsDeleteResponse, ModelEndpointsListData, ModelEndpointsListError, ModelEndpointsListResponse, ModelEndpointsReadData, ModelEndpointsReadError, ModelEndpointsReadResponse, ModelEndpointsUpdateData, ModelEndpointsUpdateError, ModelEndpointsUpdateResponse, ModelsCommitData, ModelsCommitError, ModelsCommitResponse, ModelsCreateData, ModelsCreateError, ModelsCreateResponse, ModelsDeleteData, ModelsDeleteError, ModelsDeleteResponse, ModelsDownloadData, ModelsDownloadError, ModelsDownloadResponse, ModelsFilesData, ModelsFilesError, ModelsFilesResponse, ModelsLinkData, ModelsLinkError, ModelsLinkResponse, ModelsListData, ModelsListError, ModelsListResponse, ModelsListVersionsData, ModelsListVersionsError, ModelsListVersionsResponse, ModelsReadData, ModelsReadError, ModelsReadResponse, ModelsReadVersionData, ModelsReadVersionError, ModelsReadVersionResponse, ModelsStagedData, ModelsStagedError, ModelsStagedResponse, ModelsUnstageData, ModelsUnstageError, ModelsUnstageResponse, ModelsUpdateData, ModelsUpdateError, ModelsUpdateResponse, ModelsUploadData, ModelsUploadError, ModelsUploadResponse, OperatorsCreateData, OperatorsCreateError, OperatorsCreateResponse, OperatorsDeleteData, OperatorsDeleteError, OperatorsDeleteResponse, OperatorsListData, OperatorsListError, OperatorsListResponse, OperatorsListVersionsData, OperatorsListVersionsError, OperatorsListVersionsResponse, OperatorsReadData, OperatorsReadError, OperatorsReadResponse, OperatorsReadVersionData, OperatorsReadVersionError, OperatorsReadVersionResponse, OperatorsUpdateData, OperatorsUpdateError, OperatorsUpdateResponse, PrincipalsListData, PrincipalsListError, PrincipalsListResponse, PrincipalsReadData, PrincipalsReadError, PrincipalsReadResponse, ProjectsChatSettingsData, ProjectsChatSettingsError, ProjectsChatSettingsResponse, ProjectsCreateData, ProjectsCreateError, ProjectsCreateResponse, ProjectsDeleteData, ProjectsDeleteError, ProjectsDeleteResponse, ProjectsListData, ProjectsListError, ProjectsListResponse, ProjectsReadData, ProjectsReadError, ProjectsReadResponse, ProjectsUpdateData, ProjectsUpdateError, ProjectsUpdateResponse, ResourcesDeleteData, ResourcesDeleteError, ResourcesDeleteResponse, ResourcesDependentsData, ResourcesDependentsError, ResourcesDependentsResponse, ResourcesGrantData, ResourcesGrantError, ResourcesGrantResponse, ResourcesLineageData, ResourcesLineageError, ResourcesLineageResponse, ResourcesListGrantsData, ResourcesListGrantsError, ResourcesListGrantsResponse, ResourcesListVersionsData, ResourcesListVersionsError, ResourcesListVersionsResponse, ResourcesReadData, ResourcesReadError, ResourcesReadLiveData, ResourcesReadLiveError, ResourcesReadLiveResponse, ResourcesReadResponse, ResourcesReadVersionData, ResourcesReadVersionError, ResourcesReadVersionResponse, ResourcesResolveData, ResourcesResolveError, ResourcesResolveResponse, ResourcesRevokeData, ResourcesRevokeError, ResourcesRevokeResponse, ResourcesSearchData, ResourcesSearchError, ResourcesSearchResponse, ResourcesUpdateMetadataData, ResourcesUpdateMetadataError, ResourcesUpdateMetadataResponse, ResourcesWriteLiveData, ResourcesWriteLiveError, ResourcesWriteLiveResponse, SettingsRoutesPublicData, SettingsRoutesPublicError, SettingsRoutesPublicResponse, SettingsRoutesReadData, SettingsRoutesReadError, SettingsRoutesReadResponse, SettingsRoutesSweepData, SettingsRoutesSweepError, SettingsRoutesSweepResponse, SettingsRoutesUpdateData, SettingsRoutesUpdateError, SettingsRoutesUpdateResponse, SkillsCreateData, SkillsCreateError, SkillsCreateResponse, SkillsDeleteData, SkillsDeleteError, SkillsDeleteResponse, SkillsListData, SkillsListError, SkillsListResponse, SkillsListVersionsData, SkillsListVersionsError, SkillsListVersionsResponse, SkillsReadData, SkillsReadError, SkillsReadResponse, SkillsReadVersionData, SkillsReadVersionError, SkillsReadVersionResponse, SkillsUpdateData, SkillsUpdateError, SkillsUpdateResponse, WarehousesCreateData, WarehousesCreateError, WarehousesCreateResponse, WarehousesDeleteData, WarehousesDeleteError, WarehousesDeleteResponse, WarehousesListData, WarehousesListError, WarehousesListResponse, WarehousesReadData, WarehousesReadError, WarehousesReadResponse, WarehousesUpdateData, WarehousesUpdateError, WarehousesUpdateResponse, WorkflowsCancelExecutionData, WorkflowsCancelExecutionError, WorkflowsCancelExecutionResponse, WorkflowsCreateData, WorkflowsCreateError, WorkflowsCreateResponse, WorkflowsDeleteData, WorkflowsDeleteError, WorkflowsDeleteExecutionData, WorkflowsDeleteExecutionError, WorkflowsDeleteExecutionResponse, WorkflowsDeleteResponse, WorkflowsEditData, WorkflowsEditError, WorkflowsEditResponse, WorkflowsListData, WorkflowsListError, WorkflowsListExecutionsData, WorkflowsListExecutionsError, WorkflowsListExecutionsResponse, WorkflowsListResponse, WorkflowsListVersionsData, WorkflowsListVersionsError, WorkflowsListVersionsResponse, WorkflowsPauseExecutionData, WorkflowsPauseExecutionError, WorkflowsPauseExecutionResponse, WorkflowsReadData, WorkflowsReadError, WorkflowsReadExecutionData, WorkflowsReadExecutionError, WorkflowsReadExecutionResponse, WorkflowsReadPortData, WorkflowsReadPortError, WorkflowsReadPortResponse, WorkflowsReadResponse, WorkflowsReadRowsData, WorkflowsReadRowsError, WorkflowsReadRowsResponse, WorkflowsReadVersionData, WorkflowsReadVersionError, WorkflowsReadVersionResponse, WorkflowsResumeExecutionData, WorkflowsResumeExecutionError, WorkflowsResumeExecutionResponse, WorkflowsRunData, WorkflowsRunError, WorkflowsRunResponse, WorkflowsUpdateData, WorkflowsUpdateError, WorkflowsUpdateResponse, WorkflowsValidateData, WorkflowsValidateError, WorkflowsValidateResponse } from '../types.gen';
+import { agentTemplatesCreate, agentTemplatesDelete, agentTemplatesList, agentTemplatesListVersions, agentTemplatesRead, agentTemplatesReadVersion, agentTemplatesUpdate, computingUnitsAvailable, computingUnitsCreate, computingUnitsDelete, computingUnitsFromProfile, computingUnitsList, computingUnitsListNodes, computingUnitsOperators, computingUnitsRead, computingUnitsReadNode, computingUnitsSaveAsProfile, computingUnitsTerminate, computingUnitsUpdate, conversationsAppendMessage, conversationsCreate, conversationsDelete, conversationsEndTurn, conversationsList, conversationsListMessages, conversationsRead, conversationsReplaceMessage, conversationsResources, conversationsSettings, conversationsStartTurn, conversationsUpdate, credentialsCreate, credentialsDelete, credentialsLease, credentialsList, credentialsRead, credentialsSetSecret, credentialsUpdate, datasetsCommit, datasetsCreate, datasetsDelete, datasetsDownload, datasetsFiles, datasetsLink, datasetsList, datasetsListVersions, datasetsRead, datasetsReadVersion, datasetsStaged, datasetsUnstage, datasetsUpdate, datasetsUpload, evaluationEvaluate, eventsIngest, executionsList, mcpServersCreate, mcpServersDelete, mcpServersList, mcpServersListVersions, mcpServersRead, mcpServersReadVersion, mcpServersUpdate, meGet, meUpdatePreferences, modelEndpointsCreate, modelEndpointsDelete, modelEndpointsList, modelEndpointsRead, modelEndpointsUpdate, modelsCommit, modelsCreate, modelsDelete, modelsDownload, modelsFiles, modelsLink, modelsList, modelsListVersions, modelsRead, modelsReadVersion, modelsStaged, modelsUnstage, modelsUpdate, modelsUpload, operatorsCreate, operatorsDelete, operatorsList, operatorsListVersions, operatorsRead, operatorsReadVersion, operatorsUpdate, type Options, principalsList, principalsRead, profilesCreate, profilesDelete, profilesList, profilesListVersions, profilesRead, profilesReadVersion, profilesUpdate, projectsChatSettings, projectsCreate, projectsDelete, projectsList, projectsRead, projectsUpdate, resourcesDelete, resourcesDependents, resourcesGrant, resourcesLineage, resourcesListGrants, resourcesListVersions, resourcesRead, resourcesReadLive, resourcesReadVersion, resourcesResolve, resourcesRevoke, resourcesSearch, resourcesUpdateMetadata, resourcesWriteLive, settingsRoutesPublic, settingsRoutesRead, settingsRoutesSweep, settingsRoutesUpdate, skillsCreate, skillsDelete, skillsList, skillsListVersions, skillsRead, skillsReadVersion, skillsUpdate, warehousesCreate, warehousesDelete, warehousesList, warehousesRead, warehousesUpdate, workflowsCancelExecution, workflowsCreate, workflowsDelete, workflowsDeleteExecution, workflowsEdit, workflowsList, workflowsListExecutions, workflowsListVersions, workflowsPauseExecution, workflowsRead, workflowsReadExecution, workflowsReadPort, workflowsReadRows, workflowsReadVersion, workflowsResumeExecution, workflowsRun, workflowsUpdate, workflowsValidate } from '../sdk.gen';
+import type { AgentTemplatesCreateData, AgentTemplatesCreateError, AgentTemplatesCreateResponse, AgentTemplatesDeleteData, AgentTemplatesDeleteError, AgentTemplatesDeleteResponse, AgentTemplatesListData, AgentTemplatesListError, AgentTemplatesListResponse, AgentTemplatesListVersionsData, AgentTemplatesListVersionsError, AgentTemplatesListVersionsResponse, AgentTemplatesReadData, AgentTemplatesReadError, AgentTemplatesReadResponse, AgentTemplatesReadVersionData, AgentTemplatesReadVersionError, AgentTemplatesReadVersionResponse, AgentTemplatesUpdateData, AgentTemplatesUpdateError, AgentTemplatesUpdateResponse, ComputingUnitsAvailableData, ComputingUnitsAvailableError, ComputingUnitsAvailableResponse, ComputingUnitsCreateData, ComputingUnitsCreateError, ComputingUnitsCreateResponse, ComputingUnitsDeleteData, ComputingUnitsDeleteError, ComputingUnitsDeleteResponse, ComputingUnitsFromProfileData, ComputingUnitsFromProfileError, ComputingUnitsFromProfileResponse, ComputingUnitsListData, ComputingUnitsListError, ComputingUnitsListNodesData, ComputingUnitsListNodesError, ComputingUnitsListNodesResponse, ComputingUnitsListResponse, ComputingUnitsOperatorsData, ComputingUnitsOperatorsError, ComputingUnitsOperatorsResponse, ComputingUnitsReadData, ComputingUnitsReadError, ComputingUnitsReadNodeData, ComputingUnitsReadNodeError, ComputingUnitsReadNodeResponse, ComputingUnitsReadResponse, ComputingUnitsSaveAsProfileData, ComputingUnitsSaveAsProfileError, ComputingUnitsSaveAsProfileResponse, ComputingUnitsTerminateData, ComputingUnitsTerminateError, ComputingUnitsTerminateResponse, ComputingUnitsUpdateData, ComputingUnitsUpdateError, ComputingUnitsUpdateResponse, ConversationsAppendMessageData, ConversationsAppendMessageError, ConversationsAppendMessageResponse, ConversationsCreateData, ConversationsCreateError, ConversationsCreateResponse, ConversationsDeleteData, ConversationsDeleteError, ConversationsDeleteResponse, ConversationsEndTurnData, ConversationsEndTurnError, ConversationsEndTurnResponse, ConversationsListData, ConversationsListError, ConversationsListMessagesData, ConversationsListMessagesError, ConversationsListMessagesResponse, ConversationsListResponse, ConversationsReadData, ConversationsReadError, ConversationsReadResponse, ConversationsReplaceMessageData, ConversationsReplaceMessageError, ConversationsReplaceMessageResponse, ConversationsResourcesData, ConversationsResourcesError, ConversationsResourcesResponse, ConversationsSettingsData, ConversationsSettingsError, ConversationsSettingsResponse, ConversationsStartTurnData, ConversationsStartTurnError, ConversationsStartTurnResponse, ConversationsUpdateData, ConversationsUpdateError, ConversationsUpdateResponse, CredentialsCreateData, CredentialsCreateError, CredentialsCreateResponse, CredentialsDeleteData, CredentialsDeleteError, CredentialsDeleteResponse, CredentialsLeaseData, CredentialsLeaseError, CredentialsLeaseResponse, CredentialsListData, CredentialsListError, CredentialsListResponse, CredentialsReadData, CredentialsReadError, CredentialsReadResponse, CredentialsSetSecretData, CredentialsSetSecretError, CredentialsSetSecretResponse, CredentialsUpdateData, CredentialsUpdateError, CredentialsUpdateResponse, DatasetsCommitData, DatasetsCommitError, DatasetsCommitResponse, DatasetsCreateData, DatasetsCreateError, DatasetsCreateResponse, DatasetsDeleteData, DatasetsDeleteError, DatasetsDeleteResponse, DatasetsDownloadData, DatasetsDownloadError, DatasetsDownloadResponse, DatasetsFilesData, DatasetsFilesError, DatasetsFilesResponse, DatasetsLinkData, DatasetsLinkError, DatasetsLinkResponse, DatasetsListData, DatasetsListError, DatasetsListResponse, DatasetsListVersionsData, DatasetsListVersionsError, DatasetsListVersionsResponse, DatasetsReadData, DatasetsReadError, DatasetsReadResponse, DatasetsReadVersionData, DatasetsReadVersionError, DatasetsReadVersionResponse, DatasetsStagedData, DatasetsStagedError, DatasetsStagedResponse, DatasetsUnstageData, DatasetsUnstageError, DatasetsUnstageResponse, DatasetsUpdateData, DatasetsUpdateError, DatasetsUpdateResponse, DatasetsUploadData, DatasetsUploadError, DatasetsUploadResponse, EvaluationEvaluateData, EvaluationEvaluateError, EvaluationEvaluateResponse, EventsIngestData, EventsIngestError, EventsIngestResponse, ExecutionsListData, ExecutionsListError, ExecutionsListResponse, McpServersCreateData, McpServersCreateError, McpServersCreateResponse, McpServersDeleteData, McpServersDeleteError, McpServersDeleteResponse, McpServersListData, McpServersListError, McpServersListResponse, McpServersListVersionsData, McpServersListVersionsError, McpServersListVersionsResponse, McpServersReadData, McpServersReadError, McpServersReadResponse, McpServersReadVersionData, McpServersReadVersionError, McpServersReadVersionResponse, McpServersUpdateData, McpServersUpdateError, McpServersUpdateResponse, MeGetData, MeGetError, MeGetResponse, MeUpdatePreferencesData, MeUpdatePreferencesError, MeUpdatePreferencesResponse, ModelEndpointsCreateData, ModelEndpointsCreateError, ModelEndpointsCreateResponse, ModelEndpointsDeleteData, ModelEndpointsDeleteError, ModelEndpointsDeleteResponse, ModelEndpointsListData, ModelEndpointsListError, ModelEndpointsListResponse, ModelEndpointsReadData, ModelEndpointsReadError, ModelEndpointsReadResponse, ModelEndpointsUpdateData, ModelEndpointsUpdateError, ModelEndpointsUpdateResponse, ModelsCommitData, ModelsCommitError, ModelsCommitResponse, ModelsCreateData, ModelsCreateError, ModelsCreateResponse, ModelsDeleteData, ModelsDeleteError, ModelsDeleteResponse, ModelsDownloadData, ModelsDownloadError, ModelsDownloadResponse, ModelsFilesData, ModelsFilesError, ModelsFilesResponse, ModelsLinkData, ModelsLinkError, ModelsLinkResponse, ModelsListData, ModelsListError, ModelsListResponse, ModelsListVersionsData, ModelsListVersionsError, ModelsListVersionsResponse, ModelsReadData, ModelsReadError, ModelsReadResponse, ModelsReadVersionData, ModelsReadVersionError, ModelsReadVersionResponse, ModelsStagedData, ModelsStagedError, ModelsStagedResponse, ModelsUnstageData, ModelsUnstageError, ModelsUnstageResponse, ModelsUpdateData, ModelsUpdateError, ModelsUpdateResponse, ModelsUploadData, ModelsUploadError, ModelsUploadResponse, OperatorsCreateData, OperatorsCreateError, OperatorsCreateResponse, OperatorsDeleteData, OperatorsDeleteError, OperatorsDeleteResponse, OperatorsListData, OperatorsListError, OperatorsListResponse, OperatorsListVersionsData, OperatorsListVersionsError, OperatorsListVersionsResponse, OperatorsReadData, OperatorsReadError, OperatorsReadResponse, OperatorsReadVersionData, OperatorsReadVersionError, OperatorsReadVersionResponse, OperatorsUpdateData, OperatorsUpdateError, OperatorsUpdateResponse, PrincipalsListData, PrincipalsListError, PrincipalsListResponse, PrincipalsReadData, PrincipalsReadError, PrincipalsReadResponse, ProfilesCreateData, ProfilesCreateError, ProfilesCreateResponse, ProfilesDeleteData, ProfilesDeleteError, ProfilesDeleteResponse, ProfilesListData, ProfilesListError, ProfilesListResponse, ProfilesListVersionsData, ProfilesListVersionsError, ProfilesListVersionsResponse, ProfilesReadData, ProfilesReadError, ProfilesReadResponse, ProfilesReadVersionData, ProfilesReadVersionError, ProfilesReadVersionResponse, ProfilesUpdateData, ProfilesUpdateError, ProfilesUpdateResponse, ProjectsChatSettingsData, ProjectsChatSettingsError, ProjectsChatSettingsResponse, ProjectsCreateData, ProjectsCreateError, ProjectsCreateResponse, ProjectsDeleteData, ProjectsDeleteError, ProjectsDeleteResponse, ProjectsListData, ProjectsListError, ProjectsListResponse, ProjectsReadData, ProjectsReadError, ProjectsReadResponse, ProjectsUpdateData, ProjectsUpdateError, ProjectsUpdateResponse, ResourcesDeleteData, ResourcesDeleteError, ResourcesDeleteResponse, ResourcesDependentsData, ResourcesDependentsError, ResourcesDependentsResponse, ResourcesGrantData, ResourcesGrantError, ResourcesGrantResponse, ResourcesLineageData, ResourcesLineageError, ResourcesLineageResponse, ResourcesListGrantsData, ResourcesListGrantsError, ResourcesListGrantsResponse, ResourcesListVersionsData, ResourcesListVersionsError, ResourcesListVersionsResponse, ResourcesReadData, ResourcesReadError, ResourcesReadLiveData, ResourcesReadLiveError, ResourcesReadLiveResponse, ResourcesReadResponse, ResourcesReadVersionData, ResourcesReadVersionError, ResourcesReadVersionResponse, ResourcesResolveData, ResourcesResolveError, ResourcesResolveResponse, ResourcesRevokeData, ResourcesRevokeError, ResourcesRevokeResponse, ResourcesSearchData, ResourcesSearchError, ResourcesSearchResponse, ResourcesUpdateMetadataData, ResourcesUpdateMetadataError, ResourcesUpdateMetadataResponse, ResourcesWriteLiveData, ResourcesWriteLiveError, ResourcesWriteLiveResponse, SettingsRoutesPublicData, SettingsRoutesPublicError, SettingsRoutesPublicResponse, SettingsRoutesReadData, SettingsRoutesReadError, SettingsRoutesReadResponse, SettingsRoutesSweepData, SettingsRoutesSweepError, SettingsRoutesSweepResponse, SettingsRoutesUpdateData, SettingsRoutesUpdateError, SettingsRoutesUpdateResponse, SkillsCreateData, SkillsCreateError, SkillsCreateResponse, SkillsDeleteData, SkillsDeleteError, SkillsDeleteResponse, SkillsListData, SkillsListError, SkillsListResponse, SkillsListVersionsData, SkillsListVersionsError, SkillsListVersionsResponse, SkillsReadData, SkillsReadError, SkillsReadResponse, SkillsReadVersionData, SkillsReadVersionError, SkillsReadVersionResponse, SkillsUpdateData, SkillsUpdateError, SkillsUpdateResponse, WarehousesCreateData, WarehousesCreateError, WarehousesCreateResponse, WarehousesDeleteData, WarehousesDeleteError, WarehousesDeleteResponse, WarehousesListData, WarehousesListError, WarehousesListResponse, WarehousesReadData, WarehousesReadError, WarehousesReadResponse, WarehousesUpdateData, WarehousesUpdateError, WarehousesUpdateResponse, WorkflowsCancelExecutionData, WorkflowsCancelExecutionError, WorkflowsCancelExecutionResponse, WorkflowsCreateData, WorkflowsCreateError, WorkflowsCreateResponse, WorkflowsDeleteData, WorkflowsDeleteError, WorkflowsDeleteExecutionData, WorkflowsDeleteExecutionError, WorkflowsDeleteExecutionResponse, WorkflowsDeleteResponse, WorkflowsEditData, WorkflowsEditError, WorkflowsEditResponse, WorkflowsListData, WorkflowsListError, WorkflowsListExecutionsData, WorkflowsListExecutionsError, WorkflowsListExecutionsResponse, WorkflowsListResponse, WorkflowsListVersionsData, WorkflowsListVersionsError, WorkflowsListVersionsResponse, WorkflowsPauseExecutionData, WorkflowsPauseExecutionError, WorkflowsPauseExecutionResponse, WorkflowsReadData, WorkflowsReadError, WorkflowsReadExecutionData, WorkflowsReadExecutionError, WorkflowsReadExecutionResponse, WorkflowsReadPortData, WorkflowsReadPortError, WorkflowsReadPortResponse, WorkflowsReadResponse, WorkflowsReadRowsData, WorkflowsReadRowsError, WorkflowsReadRowsResponse, WorkflowsReadVersionData, WorkflowsReadVersionError, WorkflowsReadVersionResponse, WorkflowsResumeExecutionData, WorkflowsResumeExecutionError, WorkflowsResumeExecutionResponse, WorkflowsRunData, WorkflowsRunError, WorkflowsRunResponse, WorkflowsUpdateData, WorkflowsUpdateError, WorkflowsUpdateResponse, WorkflowsValidateData, WorkflowsValidateError, WorkflowsValidateResponse } from '../types.gen';
 
 /**
  * AuthZEN access evaluation.
@@ -334,6 +334,23 @@ export const computingUnitsAvailableOptions = (options?: Options<ComputingUnitsA
 });
 
 /**
+ * Make a computing unit from a profile: one node of the profile's size with its packages, on the deployment's Kubernetes.
+ */
+export const computingUnitsFromProfileMutation = (options?: Partial<Options<ComputingUnitsFromProfileData>>): UseMutationOptions<ComputingUnitsFromProfileResponse, ComputingUnitsFromProfileError, Options<ComputingUnitsFromProfileData>> => {
+    const mutationOptions: UseMutationOptions<ComputingUnitsFromProfileResponse, ComputingUnitsFromProfileError, Options<ComputingUnitsFromProfileData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await computingUnitsFromProfile({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
  * Delete the resource; refused with 409 while another resource references it.
  */
 export const computingUnitsDeleteMutation = (options?: Partial<Options<ComputingUnitsDeleteData>>): UseMutationOptions<ComputingUnitsDeleteResponse, ComputingUnitsDeleteError, Options<ComputingUnitsDeleteData>> => {
@@ -429,6 +446,23 @@ export const computingUnitsOperatorsOptions = (options: Options<ComputingUnitsOp
     },
     queryKey: computingUnitsOperatorsQueryKey(options)
 });
+
+/**
+ * Save a unit as a profile: the next version of a profile the caller may change, or a new profile. Packages are saved as the unit installed them, each pinned. The unit is then made from what was saved.
+ */
+export const computingUnitsSaveAsProfileMutation = (options?: Partial<Options<ComputingUnitsSaveAsProfileData>>): UseMutationOptions<ComputingUnitsSaveAsProfileResponse, ComputingUnitsSaveAsProfileError, Options<ComputingUnitsSaveAsProfileData>> => {
+    const mutationOptions: UseMutationOptions<ComputingUnitsSaveAsProfileResponse, ComputingUnitsSaveAsProfileError, Options<ComputingUnitsSaveAsProfileData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await computingUnitsSaveAsProfile({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
 
 export const computingUnitsTerminateMutation = (options?: Partial<Options<ComputingUnitsTerminateData>>): UseMutationOptions<ComputingUnitsTerminateResponse, ComputingUnitsTerminateError, Options<ComputingUnitsTerminateData>> => {
     const mutationOptions: UseMutationOptions<ComputingUnitsTerminateResponse, ComputingUnitsTerminateError, Options<ComputingUnitsTerminateData>> = {
@@ -1126,191 +1160,6 @@ export const datasetsLinkOptions = (options: Options<DatasetsLinkData>) => query
         return data;
     },
     queryKey: datasetsLinkQueryKey(options)
-});
-
-export const environmentsListQueryKey = (options?: Options<EnvironmentsListData>) => createQueryKey('environmentsList', options);
-
-/**
- * List the resources of this kind the caller may read.
- */
-export const environmentsListOptions = (options?: Options<EnvironmentsListData>) => queryOptions<EnvironmentsListResponse, EnvironmentsListError, EnvironmentsListResponse, ReturnType<typeof environmentsListQueryKey>>({
-    queryFn: async ({ queryKey, signal }) => {
-        const { data } = await environmentsList({
-            ...options,
-            ...queryKey[0],
-            signal,
-            throwOnError: true
-        });
-        return data;
-    },
-    queryKey: environmentsListQueryKey(options)
-});
-
-export const environmentsListInfiniteQueryKey = (options?: Options<EnvironmentsListData>): QueryKey<Options<EnvironmentsListData>> => createQueryKey('environmentsList', options, true);
-
-/**
- * List the resources of this kind the caller may read.
- */
-export const environmentsListInfiniteOptions = (options?: Options<EnvironmentsListData>) => {
-    const opts = infiniteQueryOptions<EnvironmentsListResponse, EnvironmentsListError, InfiniteData<EnvironmentsListResponse>, QueryKey<Options<EnvironmentsListData>>, string | Pick<QueryKey<Options<EnvironmentsListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
-    // @ts-ignore
-    {
-        queryFn: async ({ pageParam, queryKey, signal }) => {
-            // @ts-ignore
-            const page: Pick<QueryKey<Options<EnvironmentsListData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
-                query: {
-                    cursor: pageParam
-                }
-            };
-            const params = createInfiniteParams(queryKey, page);
-            const { data } = await environmentsList({
-                ...options,
-                ...params,
-                signal,
-                throwOnError: true
-            });
-            return data;
-        },
-        queryKey: environmentsListInfiniteQueryKey(options)
-    });
-    return opts as Omit<typeof opts, 'initialData'>;
-};
-
-export const environmentsCreateMutation = (options?: Partial<Options<EnvironmentsCreateData>>): UseMutationOptions<EnvironmentsCreateResponse, EnvironmentsCreateError, Options<EnvironmentsCreateData>> => {
-    const mutationOptions: UseMutationOptions<EnvironmentsCreateResponse, EnvironmentsCreateError, Options<EnvironmentsCreateData>> = {
-        mutationFn: async (fnOptions) => {
-            const { data } = await environmentsCreate({
-                ...options,
-                ...fnOptions,
-                throwOnError: true
-            });
-            return data;
-        }
-    };
-    return mutationOptions;
-};
-
-/**
- * Delete the resource; refused with 409 while another resource references it.
- */
-export const environmentsDeleteMutation = (options?: Partial<Options<EnvironmentsDeleteData>>): UseMutationOptions<EnvironmentsDeleteResponse, EnvironmentsDeleteError, Options<EnvironmentsDeleteData>> => {
-    const mutationOptions: UseMutationOptions<EnvironmentsDeleteResponse, EnvironmentsDeleteError, Options<EnvironmentsDeleteData>> = {
-        mutationFn: async (fnOptions) => {
-            const { data } = await environmentsDelete({
-                ...options,
-                ...fnOptions,
-                throwOnError: true
-            });
-            return data;
-        }
-    };
-    return mutationOptions;
-};
-
-export const environmentsReadQueryKey = (options: Options<EnvironmentsReadData>) => createQueryKey('environmentsRead', options);
-
-export const environmentsReadOptions = (options: Options<EnvironmentsReadData>) => queryOptions<EnvironmentsReadResponse, EnvironmentsReadError, EnvironmentsReadResponse, ReturnType<typeof environmentsReadQueryKey>>({
-    queryFn: async ({ queryKey, signal }) => {
-        const { data } = await environmentsRead({
-            ...options,
-            ...queryKey[0],
-            signal,
-            throwOnError: true
-        });
-        return data;
-    },
-    queryKey: environmentsReadQueryKey(options)
-});
-
-/**
- * Replace the spec; for a versioned kind this creates a version.
- */
-export const environmentsUpdateMutation = (options?: Partial<Options<EnvironmentsUpdateData>>): UseMutationOptions<EnvironmentsUpdateResponse, EnvironmentsUpdateError, Options<EnvironmentsUpdateData>> => {
-    const mutationOptions: UseMutationOptions<EnvironmentsUpdateResponse, EnvironmentsUpdateError, Options<EnvironmentsUpdateData>> = {
-        mutationFn: async (fnOptions) => {
-            const { data } = await environmentsUpdate({
-                ...options,
-                ...fnOptions,
-                throwOnError: true
-            });
-            return data;
-        }
-    };
-    return mutationOptions;
-};
-
-/**
- * Build a version on a unit; returns at once, the build shows in status.
- */
-export const environmentsBuildMutation = (options?: Partial<Options<EnvironmentsBuildData>>): UseMutationOptions<EnvironmentsBuildResponse, EnvironmentsBuildError, Options<EnvironmentsBuildData>> => {
-    const mutationOptions: UseMutationOptions<EnvironmentsBuildResponse, EnvironmentsBuildError, Options<EnvironmentsBuildData>> = {
-        mutationFn: async (fnOptions) => {
-            const { data } = await environmentsBuild({
-                ...options,
-                ...fnOptions,
-                throwOnError: true
-            });
-            return data;
-        }
-    };
-    return mutationOptions;
-};
-
-export const environmentsListVersionsQueryKey = (options: Options<EnvironmentsListVersionsData>) => createQueryKey('environmentsListVersions', options);
-
-export const environmentsListVersionsOptions = (options: Options<EnvironmentsListVersionsData>) => queryOptions<EnvironmentsListVersionsResponse, EnvironmentsListVersionsError, EnvironmentsListVersionsResponse, ReturnType<typeof environmentsListVersionsQueryKey>>({
-    queryFn: async ({ queryKey, signal }) => {
-        const { data } = await environmentsListVersions({
-            ...options,
-            ...queryKey[0],
-            signal,
-            throwOnError: true
-        });
-        return data;
-    },
-    queryKey: environmentsListVersionsQueryKey(options)
-});
-
-export const environmentsListVersionsInfiniteQueryKey = (options: Options<EnvironmentsListVersionsData>): QueryKey<Options<EnvironmentsListVersionsData>> => createQueryKey('environmentsListVersions', options, true);
-
-export const environmentsListVersionsInfiniteOptions = (options: Options<EnvironmentsListVersionsData>) => {
-    const opts = infiniteQueryOptions<EnvironmentsListVersionsResponse, EnvironmentsListVersionsError, InfiniteData<EnvironmentsListVersionsResponse>, QueryKey<Options<EnvironmentsListVersionsData>>, string | Pick<QueryKey<Options<EnvironmentsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
-    // @ts-ignore
-    {
-        queryFn: async ({ pageParam, queryKey, signal }) => {
-            // @ts-ignore
-            const page: Pick<QueryKey<Options<EnvironmentsListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
-                query: {
-                    cursor: pageParam
-                }
-            };
-            const params = createInfiniteParams(queryKey, page);
-            const { data } = await environmentsListVersions({
-                ...options,
-                ...params,
-                signal,
-                throwOnError: true
-            });
-            return data;
-        },
-        queryKey: environmentsListVersionsInfiniteQueryKey(options)
-    });
-    return opts as Omit<typeof opts, 'initialData'>;
-};
-
-export const environmentsReadVersionQueryKey = (options: Options<EnvironmentsReadVersionData>) => createQueryKey('environmentsReadVersion', options);
-
-export const environmentsReadVersionOptions = (options: Options<EnvironmentsReadVersionData>) => queryOptions<EnvironmentsReadVersionResponse, EnvironmentsReadVersionError, EnvironmentsReadVersionResponse, ReturnType<typeof environmentsReadVersionQueryKey>>({
-    queryFn: async ({ queryKey, signal }) => {
-        const { data } = await environmentsReadVersion({
-            ...options,
-            ...queryKey[0],
-            signal,
-            throwOnError: true
-        });
-        return data;
-    },
-    queryKey: environmentsReadVersionQueryKey(options)
 });
 
 export const executionsListQueryKey = (options?: Options<ExecutionsListData>) => createQueryKey('executionsList', options);
@@ -2156,6 +2005,174 @@ export const principalsReadOptions = (options: Options<PrincipalsReadData>) => q
         return data;
     },
     queryKey: principalsReadQueryKey(options)
+});
+
+export const profilesListQueryKey = (options?: Options<ProfilesListData>) => createQueryKey('profilesList', options);
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const profilesListOptions = (options?: Options<ProfilesListData>) => queryOptions<ProfilesListResponse, ProfilesListError, ProfilesListResponse, ReturnType<typeof profilesListQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await profilesList({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: profilesListQueryKey(options)
+});
+
+export const profilesListInfiniteQueryKey = (options?: Options<ProfilesListData>): QueryKey<Options<ProfilesListData>> => createQueryKey('profilesList', options, true);
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const profilesListInfiniteOptions = (options?: Options<ProfilesListData>) => {
+    const opts = infiniteQueryOptions<ProfilesListResponse, ProfilesListError, InfiniteData<ProfilesListResponse>, QueryKey<Options<ProfilesListData>>, string | Pick<QueryKey<Options<ProfilesListData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ProfilesListData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await profilesList({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: profilesListInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const profilesCreateMutation = (options?: Partial<Options<ProfilesCreateData>>): UseMutationOptions<ProfilesCreateResponse, ProfilesCreateError, Options<ProfilesCreateData>> => {
+    const mutationOptions: UseMutationOptions<ProfilesCreateResponse, ProfilesCreateError, Options<ProfilesCreateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await profilesCreate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const profilesDeleteMutation = (options?: Partial<Options<ProfilesDeleteData>>): UseMutationOptions<ProfilesDeleteResponse, ProfilesDeleteError, Options<ProfilesDeleteData>> => {
+    const mutationOptions: UseMutationOptions<ProfilesDeleteResponse, ProfilesDeleteError, Options<ProfilesDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await profilesDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const profilesReadQueryKey = (options: Options<ProfilesReadData>) => createQueryKey('profilesRead', options);
+
+export const profilesReadOptions = (options: Options<ProfilesReadData>) => queryOptions<ProfilesReadResponse, ProfilesReadError, ProfilesReadResponse, ReturnType<typeof profilesReadQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await profilesRead({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: profilesReadQueryKey(options)
+});
+
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const profilesUpdateMutation = (options?: Partial<Options<ProfilesUpdateData>>): UseMutationOptions<ProfilesUpdateResponse, ProfilesUpdateError, Options<ProfilesUpdateData>> => {
+    const mutationOptions: UseMutationOptions<ProfilesUpdateResponse, ProfilesUpdateError, Options<ProfilesUpdateData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await profilesUpdate({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const profilesListVersionsQueryKey = (options: Options<ProfilesListVersionsData>) => createQueryKey('profilesListVersions', options);
+
+export const profilesListVersionsOptions = (options: Options<ProfilesListVersionsData>) => queryOptions<ProfilesListVersionsResponse, ProfilesListVersionsError, ProfilesListVersionsResponse, ReturnType<typeof profilesListVersionsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await profilesListVersions({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: profilesListVersionsQueryKey(options)
+});
+
+export const profilesListVersionsInfiniteQueryKey = (options: Options<ProfilesListVersionsData>): QueryKey<Options<ProfilesListVersionsData>> => createQueryKey('profilesListVersions', options, true);
+
+export const profilesListVersionsInfiniteOptions = (options: Options<ProfilesListVersionsData>) => {
+    const opts = infiniteQueryOptions<ProfilesListVersionsResponse, ProfilesListVersionsError, InfiniteData<ProfilesListVersionsResponse>, QueryKey<Options<ProfilesListVersionsData>>, string | Pick<QueryKey<Options<ProfilesListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ProfilesListVersionsData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    cursor: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await profilesListVersions({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: profilesListVersionsInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const profilesReadVersionQueryKey = (options: Options<ProfilesReadVersionData>) => createQueryKey('profilesReadVersion', options);
+
+export const profilesReadVersionOptions = (options: Options<ProfilesReadVersionData>) => queryOptions<ProfilesReadVersionResponse, ProfilesReadVersionError, ProfilesReadVersionResponse, ReturnType<typeof profilesReadVersionQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await profilesReadVersion({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: profilesReadVersionQueryKey(options)
 });
 
 export const projectsListQueryKey = (options?: Options<ProjectsListData>) => createQueryKey('projectsList', options);

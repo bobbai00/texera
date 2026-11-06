@@ -50,7 +50,7 @@ func TestABuiltInIsWhatLivesInThePlatformsProject(t *testing.T) {
 	}
 
 	// Bob was given nothing. What the platform ships is his to see, in every list and by itself.
-	for _, plural := range []string{"agent-templates", "skills", "mcp-servers", "model-endpoints", "credentials", "environments", "computing-units"} {
+	for _, plural := range []string{"agent-templates", "skills", "mcp-servers", "model-endpoints", "credentials", "profiles", "computing-units"} {
 		var page api.ResourcePage
 		h.mustJSON("bob", "GET", p+"/"+plural+"?limit=200", nil, &page)
 		if len(page.Items) == 0 {

@@ -65,8 +65,6 @@ model WorkflowSpec {
   links: WorkflowLink[];
   @doc("Where each operator's card sits on the canvas, by operator. It is the app's: nothing that runs the workflow reads it, a move alone makes no version, a version keeps the places it was made with, and an operator with no place is placed beside what it connects to. A spec written without it keeps the places of the operators it kept.")
   layout?: Record<CanvasPoint>;
-  @doc("The environment an execution uses when the request names none.")
-  defaultEnvironment?: Uri;
   @doc("The computing unit an execution uses when the request names none.")
   defaultComputingUnit?: Uri;
   @doc("The warehouse an execution keeps its results in when the request names none.")
@@ -129,8 +127,6 @@ model RunWorkflow {
   computingUnit?: Uri;
   @doc("Overrides the workflow's and the project's default warehouse: where the execution keeps its results.")
   warehouse?: Uri;
-  @doc("Overrides the workflow's and the project's default environment; `@vno` pins a version, else the head.")
-  environment?: Uri;
   @doc("Inputs of this execution alone; the version itself stays as authored.")
   parameters?: Record<unknown>;
   @doc("Wait up to this many seconds for the execution to finish before returning.")

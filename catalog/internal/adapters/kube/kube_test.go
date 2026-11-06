@@ -97,6 +97,19 @@ func TestEndpointReconcilesAndTerminateDeletes(t *testing.T) {
 	if _, err := p.Endpoint(ctx, rid, changed, identity); err != nil || updates() != 1 {
 		t.Fatalf("the same spec again is not an update: %v (%d updates)", err, updates())
 	}
+	// A GPU is reserved by its limit; asking for one is a change like any other.
+	gpus := int32(1)
+	(*changed.ComputingNodes)[0].Gpu = &gpus
+	if _, err := p.Endpoint(ctx, rid, changed, identity); err != nil || updates() != 2 {
+		t.Fatalf("a GPU more is an update: %v (%d updates)", err, updates())
+	}
+	d, err = client.AppsV1().Deployments("texera2").Get(ctx, "unit-"+rid, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Spec.Template.Spec.Containers[0].Resources.Limits[gpuResource]; got.String() != "1" {
+		t.Fatalf("the GPU the node asks for: %v", d.Spec.Template.Spec.Containers[0].Resources.Limits)
+	}
 	if _, err := p.Endpoint(ctx, rid, api.ComputingUnitSpec{Provider: api.UnitProviderStatic}, identity); err == nil {
 		t.Fatal("a static spec is not this provider's")
 	}

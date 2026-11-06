@@ -18,7 +18,7 @@
 -->
 ---
 name: python-udf
-description: Compute what the built-in operators cannot with a PythonUDFV2 operator - the pytexera interface (tuple, table and source operators), extra output columns, pandas, and Environments for extra packages.
+description: Compute what the built-in operators cannot with a PythonUDFV2 operator - the pytexera interface (tuple, table and source operators), extra output columns, pandas, and the packages a computing unit adds.
 ---
 
 # Python UDF operators
@@ -34,7 +34,7 @@ description: Compute what the built-in operators cannot with a PythonUDFV2 opera
 
 - `outputColumns` declares every column the code adds that the input lacks (`string`, `integer`, `long`, `double`, `boolean`, `timestamp`); with `retainInputColumns` `true` the output is the input columns plus these.
 - `workers` `1` keeps row order and state simple.
-- `defaultEnv` `true` runs in the unit's environment (pandas, numpy, pyarrow). For other packages, run the workflow with an environment resource that lists them (`run_workflow`'s `environment`, a `texera://environments/<rid>` URI) and keep `defaultEnv` `true`.
+- `defaultEnv` `true` runs with the packages of the unit it runs on: the platform's (pandas, numpy, pyarrow) and those the unit's profile adds. For another package, run on a unit that has it: `search_resources` with kind `profile` finds a profile that lists it, `create_computing_unit` makes a unit from that profile, and `run_workflow`'s `computingUnit` names the unit. Keep `defaultEnv` `true`. If no profile has the package, ask the person to add it to a unit or a profile.
 
 ## Code
 

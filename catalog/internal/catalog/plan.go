@@ -253,8 +253,6 @@ type compiled struct {
 	Custom map[int]customOp
 	// Operators are the custom operator versions compiled in, as URIs with @vno.
 	Operators []string
-	// Pins are the environments the custom operators pin, as URIs with @vno.
-	Pins []string
 	// Outputs are the execution's tables, one per output port, named by the catalog.
 	Outputs []api.PortTable
 }
@@ -359,7 +357,7 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 		operatorType := op.OperatorType
 		if uri.Is(operatorType) {
 			// A custom operator's own properties go to its code as PROPS, not to the engine.
-			compiledOp, code, pin, version, err := s.compileCustomOperator(ctx, operatorType, props)
+			compiledOp, code, version, err := s.compileCustomOperator(ctx, operatorType, props)
 			if err != nil {
 				return nil, err
 			}
@@ -367,9 +365,6 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 			logical = compiledOp
 			out.Custom[index] = customOp{Code: code, Props: props}
 			out.Operators = appendUnique(out.Operators, version)
-			if pin != "" {
-				out.Pins = appendUnique(out.Pins, pin)
-			}
 		} else {
 			logical = props
 		}
@@ -475,20 +470,19 @@ func (s *Service) fileExists(ctx context.Context, ref uri.Ref) error {
 }
 
 // compileCustomOperator turns a custom operator version into the properties of the engine's
-// Python UDF operator; it also returns the code, the environment the operator pins (as a
-// URI with @vno, "" for none) and the version URI compiled.
-func (s *Service) compileCustomOperator(ctx context.Context, name string, instance map[string]any) (map[string]any, string, string, string, error) {
+// Python UDF operator; it also returns the code and the version URI compiled.
+func (s *Service) compileCustomOperator(ctx context.Context, name string, instance map[string]any) (map[string]any, string, string, error) {
 	ref, err := uri.Parse(name)
 	if err != nil || ref.Kind.Name != "operator" {
-		return nil, "", "", "", Invalid("operatorType "+name+" is not an operator URI", nil)
+		return nil, "", "", Invalid("operatorType "+name+" is not an operator URI", nil)
 	}
 	rid, err := uuid.Parse(ref.Rid)
 	if err != nil {
-		return nil, "", "", "", Invalid("operatorType "+name+": bad id", nil)
+		return nil, "", "", Invalid("operatorType "+name+": bad id", nil)
 	}
 	r, err := s.Store.GetResource(ctx, rid)
 	if err != nil || r.Kind != "operator" {
-		return nil, "", "", "", NotFound("operator " + ref.Rid)
+		return nil, "", "", NotFound("operator " + ref.Rid)
 	}
 	vno := ref.Vno
 	if vno == 0 {
@@ -496,21 +490,14 @@ func (s *Service) compileCustomOperator(ctx context.Context, name string, instan
 	}
 	v, err := s.Store.GetVersion(ctx, rid, vno)
 	if err != nil {
-		return nil, "", "", "", NotFound(fmt.Sprintf("version %d of operator %s", vno, r.Name))
+		return nil, "", "", NotFound(fmt.Sprintf("version %d of operator %s", vno, r.Name))
 	}
 	var spec api.OperatorSpec
 	if err := json.Unmarshal(v.Content, &spec); err != nil {
-		return nil, "", "", "", err
+		return nil, "", "", err
 	}
 	if spec.Implementation == nil || spec.Implementation.Python == nil || strings.TrimSpace(spec.Implementation.Python.Code) == "" {
-		return nil, "", "", "", Invalid(name+" has no Python implementation", nil)
-	}
-	pin := ""
-	if spec.Implementation.Python.Environment != nil && *spec.Implementation.Python.Environment != "" {
-		pin, err = s.versionURI(ctx, string(*spec.Implementation.Python.Environment), "environment")
-		if err != nil {
-			return nil, "", "", "", Invalid(fmt.Sprintf("%s pins %s: %v", name, *spec.Implementation.Python.Environment, err), nil)
-		}
+		return nil, "", "", Invalid(name+" has no Python implementation", nil)
 	}
 	// The engine's Python operator keeps the input columns and needs the added ones declared.
 	columns := []api.Attribute{}
@@ -519,7 +506,7 @@ func (s *Service) compileCustomOperator(ctx context.Context, name string, instan
 	}
 	code := spec.Implementation.Python.Code
 	props := map[string]any{"code": customHeader(instance) + code, "workers": 1, "retainInputColumns": true, "defaultEnv": true, "outputColumns": columns}
-	return props, code, pin, URI(r).WithVersion(vno).String(), nil
+	return props, code, URI(r).WithVersion(vno).String(), nil
 }
 
 // versionURI pins a resource URI to a version: the one it names, else the head.
@@ -547,20 +534,15 @@ func (s *Service) versionURI(ctx context.Context, name, kind string) (string, er
 }
 
 // authorizePlan is the one authorization pass of an execution or a dry run, before anything is
-// written: running on the unit, reading the environment, every dataset and every custom
+// written: running on the unit, using the warehouse, reading every dataset and every custom
 // operator the plan names, using every credential.
-func (s *Service) authorizePlan(ctx context.Context, caller *auth.Caller, c *compiled, unit, warehouse, env *store.Resource) error {
+func (s *Service) authorizePlan(ctx context.Context, caller *auth.Caller, c *compiled, unit, warehouse *store.Resource) error {
 	if err := s.require(ctx, caller, authz.RunOn, unit.RID); err != nil {
 		return err
 	}
 	// A dry run keeps no results and names no warehouse.
 	if warehouse != nil {
 		if err := s.require(ctx, caller, authz.Use, warehouse.RID); err != nil {
-			return err
-		}
-	}
-	if env != nil {
-		if err := s.require(ctx, caller, authz.Read, env.RID); err != nil {
 			return err
 		}
 	}
@@ -594,39 +576,6 @@ func (s *Service) authorizePlan(ctx context.Context, caller *auth.Caller, c *com
 		}
 	}
 	return nil
-}
-
-// resolveEnvironment settles the execution's environment, which is one: the one the request names;
-// else the one the custom operators pin, when they agree; else the defaults of the workflow,
-// the project and the settings. A pin that disagrees with the request or with another pin
-// is refused.
-func (s *Service) resolveEnvironment(ctx context.Context, requested, fallback string, pins []string) (*store.Resource, int, error) {
-	name := requested
-	if name == "" && len(pins) > 0 {
-		name = pins[0]
-	}
-	if name == "" {
-		name = fallback
-	}
-	if name == "" {
-		return nil, 0, nil
-	}
-	pinned, err := s.versionURI(ctx, name, "environment")
-	if err != nil {
-		return nil, 0, NotFound("environment " + name)
-	}
-	for _, pin := range pins {
-		if pin != pinned {
-			return nil, 0, Conflict("environment", fmt.Sprintf("the execution's environment %s differs from %s, which a custom operator pins", pinned, pin), nil)
-		}
-	}
-	ref, _ := uri.Parse(pinned)
-	rid, _ := uuid.Parse(ref.Rid)
-	env, err := s.Store.GetResource(ctx, rid)
-	if err != nil {
-		return nil, 0, NotFound("environment " + name)
-	}
-	return env, ref.Vno, nil
 }
 
 // bindInputs presigns every input into a copy of the plan the engine can read.

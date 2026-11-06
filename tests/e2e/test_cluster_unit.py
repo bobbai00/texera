@@ -9,16 +9,7 @@ import pytest
 
 from texera_e2e import kube
 from texera_e2e import workflows as w
-
-
-def wait_ready(api, rid: str, seconds: int = 600) -> tuple[str, float]:
-    phase, started = None, time.time()
-    while time.time() - started < seconds:
-        phase = api.get(f"/computing-units/{rid}")["status"]["phase"]
-        if phase == "ready":
-            break
-        time.sleep(5)
-    return phase, time.time() - started
+from texera_e2e.units import wait_ready
 
 
 @pytest.mark.cluster

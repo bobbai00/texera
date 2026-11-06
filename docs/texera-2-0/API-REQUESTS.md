@@ -122,19 +122,19 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    unit with an execution on it (pending, provisioning or running) answers 409 until it is over.
    A static unit's identity follows its `clientId`.
 8. **The unit's doors.** A unit's API answers the catalog's own client alone (start, cancel,
-   compile, build, results, environments); people and agents reach a unit through the
+   compile, results, and the environment of a list of packages); people and agents reach a unit through the
    catalog, which authorizes and compiles first, and the gateway has no route to units. On the
    way back a unit reports as itself, with the client it was given for the lake, and
    `POST /lineage/v1/events` takes an execution's events from the unit that runs it alone: a
    unit's token is neither a person nor the service, and it may do nothing else.
 9. **Running a workflow, in three phases.** `POST /workflows/{rid}/run` authorizes first
    (execute on the workflow, then, on the compiled plan, run on the unit, use on the warehouse, read on every
-   dataset, operator and environment it names, use on every credential; a refusal leaves nothing behind), compiles
+   dataset and operator it names, use on every credential; a refusal leaves nothing behind), compiles
    once (`validate` returns the same plan as `plan`), and materializes: the execution is
    stored with `spec.plan` (URIs only, one table per output port named by the catalog, no
    secret, no URL) and `spec.warehouse`, its namespace is opened there, and a bound copy with presigned inputs and
-   leased secrets goes to the engine. A custom operator's pinned environment is the
-   execution's when the request names none, and a different one is refused with 409. Results
+   leased secrets goes to the engine. The unit installs its packages first (the profile's,
+   as the unit has them) and the execution records what the unit had (`spec.computing`). Results
    live with the execution: there is no save-as-dataset; the label `texera.keep` on an
    execution keeps its results past the retention policy.
 10. **The catalog names the output tables.** The plan holds one table per output port the

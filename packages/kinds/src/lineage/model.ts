@@ -23,6 +23,10 @@ export interface ExecutionFacts {
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
+  /** Where it ran and kept its results: the unit, the profile version the unit was made from, the warehouse. */
+  unit?: string;
+  profile?: string;
+  warehouse?: string;
 }
 
 export interface LineageNode {

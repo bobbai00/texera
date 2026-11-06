@@ -364,19 +364,6 @@
       ],
       "type": "object"
     },
-    "BuildEnvironment": {
-      "properties": {
-        "computingUnit": {
-          "$ref": "#/$defs/Uri",
-          "description": "The unit to build on; defaults to the one an execution would resolve to."
-        },
-        "vno": {
-          "$ref": "#/$defs/Vno",
-          "description": "The version to build; defaults to the head version."
-        }
-      },
-      "type": "object"
-    },
     "CanvasPoint": {
       "description": "A place on the canvas: the top left corner of an operator's card.",
       "properties": {
@@ -474,6 +461,17 @@
         "name": {
           "type": "string"
         },
+        "packages": {
+          "description": "Python packages the node adds to the platform's runtime, PEP 508 lines.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "profile": {
+          "$ref": "#/$defs/Uri",
+          "description": "The profile version the node was made from, with `@vno`; what the node has may have changed since."
+        },
         "role": {
           "enum": [
             "master",
@@ -516,6 +514,37 @@
       ],
       "type": "object"
     },
+    "ComputingRecord": {
+      "description": "What the unit an execution ran on had when it ran.",
+      "properties": {
+        "cpu": {
+          "type": "string"
+        },
+        "gpu": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "memory": {
+          "type": "string"
+        },
+        "packages": {
+          "description": "The packages added to the runtime, each pinned as installed when the unit says so.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "profile": {
+          "$ref": "#/$defs/Uri",
+          "description": "The profile version its node was made from, with `@vno`."
+        },
+        "runtime": {
+          "description": "The engine's version.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "ComputingUnit": {
       "description": "The typed envelope, served by the kind routes.",
       "properties": {
@@ -552,6 +581,32 @@
         "plural": "computing-units",
         "versioned": false
       }
+    },
+    "ComputingUnitFromProfile": {
+      "description": "A computing unit to make from a profile.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The project the unit goes into; absent: the chat's project in a chat, else the caller's own."
+        },
+        "profile": {
+          "$ref": "#/$defs/Uri",
+          "description": "The profile, with `@vno`, or its head."
+        },
+        "waitSeconds": {
+          "description": "Wait up to this many seconds for the unit to be ready (or failed); it is returned as it is then.",
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "profile"
+      ],
+      "type": "object"
     },
     "ComputingUnitPage": {
       "properties": {
@@ -610,15 +665,15 @@
         "engine": {
           "$ref": "#/$defs/EngineStatus"
         },
-        "environments": {
-          "description": "Environment versions built on this unit.",
-          "items": {
-            "$ref": "#/$defs/Uri"
-          },
-          "type": "array"
-        },
         "identity": {
           "$ref": "#/$defs/UnitIdentity"
+        },
+        "installed": {
+          "description": "The packages the unit installed for its node, each pinned as installed: what an execution on it has.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "message": {
           "type": "string"
@@ -707,9 +762,6 @@
         "computingUnit": {
           "$ref": "#/$defs/Uri",
           "description": "The computing unit a compile or an execution started in this chat uses when the call names none; absent: the workflow's, the project's or the platform's default. A preference, not a binding: a call can always name another unit."
-        },
-        "environment": {
-          "$ref": "#/$defs/Uri"
         },
         "mcpServers": {
           "description": "The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.",
@@ -935,41 +987,6 @@
       ],
       "type": "object"
     },
-    "CreateEnvironment": {
-      "properties": {
-        "description": {
-          "type": "string"
-        },
-        "labels": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "message": {
-          "description": "Recorded on the first version of a versioned kind.",
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "parent": {
-          "$ref": "#/$defs/Rid",
-          "description": "The parent; for a top-level kind a project, default the caller's home project."
-        },
-        "spec": {
-          "$ref": "#/$defs/EnvironmentSpec"
-        },
-        "visibility": {
-          "$ref": "#/$defs/Visibility"
-        }
-      },
-      "required": [
-        "name",
-        "spec"
-      ],
-      "type": "object"
-    },
     "CreateMcpServer": {
       "properties": {
         "description": {
@@ -1099,6 +1116,41 @@
         },
         "spec": {
           "$ref": "#/$defs/OperatorSpec"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "CreateProfile": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "message": {
+          "description": "Recorded on the first version of a versioned kind.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The parent; for a top-level kind a project, default the caller's home project."
+        },
+        "spec": {
+          "$ref": "#/$defs/ProfileSpec"
         },
         "visibility": {
           "$ref": "#/$defs/Visibility"
@@ -1540,11 +1592,12 @@
         "computingUnit": {
           "$ref": "#/$defs/Uri"
         },
-        "environment": {
-          "$ref": "#/$defs/Uri"
-        },
         "modelEndpoint": {
           "$ref": "#/$defs/Uri"
+        },
+        "profile": {
+          "$ref": "#/$defs/Uri",
+          "description": "The profile a new computing unit is made from unless another is chosen."
         },
         "warehouse": {
           "$ref": "#/$defs/Uri",
@@ -1654,192 +1707,6 @@
           "type": "string"
         }
       },
-      "type": "object"
-    },
-    "Environment": {
-      "description": "The typed envelope, served by the kind routes.",
-      "properties": {
-        "apiVersion": {
-          "enum": [
-            "catalog.texera.apache.org/v1"
-          ],
-          "type": "string"
-        },
-        "kind": {
-          "$ref": "#/$defs/ResourceKind"
-        },
-        "metadata": {
-          "$ref": "#/$defs/ResourceMetadata"
-        },
-        "spec": {
-          "$ref": "#/$defs/EnvironmentSpec"
-        },
-        "status": {
-          "$ref": "#/$defs/EnvironmentStatus"
-        }
-      },
-      "required": [
-        "apiVersion",
-        "kind",
-        "metadata",
-        "spec"
-      ],
-      "type": "object",
-      "x-texera-kind": {
-        "content": "spec",
-        "kind": "environment",
-        "parent": "project",
-        "plural": "environments",
-        "versioned": true
-      }
-    },
-    "EnvironmentBuild": {
-      "properties": {
-        "at": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "computingUnit": {
-          "$ref": "#/$defs/Uri"
-        },
-        "message": {
-          "type": "string"
-        },
-        "state": {
-          "enum": [
-            "building",
-            "ready",
-            "failed"
-          ],
-          "type": "string"
-        },
-        "vno": {
-          "$ref": "#/$defs/Vno"
-        }
-      },
-      "required": [
-        "computingUnit",
-        "vno",
-        "state",
-        "at"
-      ],
-      "type": "object"
-    },
-    "EnvironmentPage": {
-      "properties": {
-        "items": {
-          "items": {
-            "$ref": "#/$defs/Environment"
-          },
-          "type": "array"
-        },
-        "nextCursor": {
-          "description": "Opaque cursor for the next page; absent on the last page.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "items"
-      ],
-      "type": "object"
-    },
-    "EnvironmentSpec": {
-      "properties": {
-        "baseImage": {
-          "description": "Base image for units that build images; absent means the deployment default.",
-          "type": "string"
-        },
-        "python": {
-          "$ref": "#/$defs/PythonEnvironment"
-        }
-      },
-      "type": "object"
-    },
-    "EnvironmentStatus": {
-      "properties": {
-        "builds": {
-          "description": "Builds of this environment's versions on units.",
-          "items": {
-            "$ref": "#/$defs/EnvironmentBuild"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "EnvironmentVersion": {
-      "description": "A version with typed content, served by the kind routes.",
-      "properties": {
-        "content": {
-          "$ref": "#/$defs/EnvironmentSpec"
-        },
-        "contentKind": {
-          "$ref": "#/$defs/ContentKind"
-        },
-        "contributors": {
-          "items": {
-            "$ref": "#/$defs/Pid"
-          },
-          "type": "array"
-        },
-        "createdAt": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "createdBy": {
-          "$ref": "#/$defs/Pid"
-        },
-        "digest": {
-          "$ref": "#/$defs/Digest"
-        },
-        "kind": {
-          "$ref": "#/$defs/ResourceKind"
-        },
-        "message": {
-          "type": "string"
-        },
-        "origin": {
-          "$ref": "#/$defs/Origin"
-        },
-        "rid": {
-          "$ref": "#/$defs/Rid"
-        },
-        "uri": {
-          "$ref": "#/$defs/Uri"
-        },
-        "vno": {
-          "$ref": "#/$defs/Vno"
-        }
-      },
-      "required": [
-        "rid",
-        "uri",
-        "kind",
-        "vno",
-        "contentKind",
-        "digest",
-        "content",
-        "createdBy",
-        "createdAt"
-      ],
-      "type": "object"
-    },
-    "EnvironmentVersionPage": {
-      "properties": {
-        "items": {
-          "items": {
-            "$ref": "#/$defs/VersionSummary"
-          },
-          "type": "array"
-        },
-        "nextCursor": {
-          "description": "Opaque cursor for the next page; absent on the last page.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "items"
-      ],
       "type": "object"
     },
     "Error": {
@@ -2009,12 +1876,12 @@
     },
     "ExecutionSpec": {
       "properties": {
+        "computing": {
+          "$ref": "#/$defs/ComputingRecord",
+          "description": "What the unit had when it ran: the profile its node was made from, its size and packages."
+        },
         "computingUnit": {
           "$ref": "#/$defs/Uri"
-        },
-        "environment": {
-          "$ref": "#/$defs/Uri",
-          "description": "The environment version, with `@vno`."
         },
         "inputs": {
           "description": "The dataset file versions the execution reads, resolved at start.",
@@ -3452,6 +3319,170 @@
       ],
       "type": "object"
     },
+    "Profile": {
+      "description": "The typed envelope, served by the kind routes.",
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "catalog.texera.apache.org/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/ProfileSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/ProfileStatus"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "x-texera-kind": {
+        "content": "spec",
+        "kind": "profile",
+        "parent": "project",
+        "plural": "profiles",
+        "versioned": true
+      }
+    },
+    "ProfilePage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Profile"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ProfileSpec": {
+      "description": "What a computing node is made of.",
+      "properties": {
+        "cpu": {
+          "description": "CPU, as Kubernetes counts it: `2`, `500m`; absent: the deployment's default.",
+          "type": "string"
+        },
+        "gpu": {
+          "description": "GPUs; absent: none.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "memory": {
+          "description": "Memory, as Kubernetes counts it: `4Gi`; absent: the deployment's default.",
+          "type": "string"
+        },
+        "packages": {
+          "description": "Python packages added to the platform's runtime, PEP 508 lines; a profile saved from a unit pins each to what was installed: `pandas==2.2.3`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "runtime": {
+          "description": "The platform release the profile was saved on, as the unit's engine reported it.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ProfileStatus": {
+      "description": "A profile has no status: what it describes is its spec.",
+      "type": "object"
+    },
+    "ProfileVersion": {
+      "description": "A version with typed content, served by the kind routes.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/ProfileSpec"
+        },
+        "contentKind": {
+          "$ref": "#/$defs/ContentKind"
+        },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/Pid"
+          },
+          "type": "array"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/Pid"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "vno": {
+          "$ref": "#/$defs/Vno"
+        }
+      },
+      "required": [
+        "rid",
+        "uri",
+        "kind",
+        "vno",
+        "contentKind",
+        "digest",
+        "content",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "ProfileVersionPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/VersionSummary"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor for the next page; absent on the last page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
     "Project": {
       "description": "The typed envelope, served by the kind routes.",
       "properties": {
@@ -3516,10 +3547,6 @@
           "$ref": "#/$defs/Uri",
           "description": "The computing unit an execution in this project uses when the request and the workflow name none."
         },
-        "defaultEnvironment": {
-          "$ref": "#/$defs/Uri",
-          "description": "The environment an execution in this project uses when the workflow names none."
-        },
         "defaultModelEndpoint": {
           "$ref": "#/$defs/Uri",
           "description": "The model endpoint the agent uses in a chat of this project when the chat names none; absent: the agent's own."
@@ -3564,34 +3591,11 @@
       ],
       "type": "object"
     },
-    "PythonEnvironment": {
-      "properties": {
-        "packages": {
-          "description": "Package requirements, PEP 508 lines.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "version": {
-          "description": "Python version range, PEP 440, e.g. `\u003e=3.12,\u003c3.13`.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "packages"
-      ],
-      "type": "object"
-    },
     "PythonOperator": {
       "properties": {
         "code": {
           "description": "The operator's Python source: a class with the engine's UDF interface.",
           "type": "string"
-        },
-        "environment": {
-          "$ref": "#/$defs/Uri",
-          "description": "The environment its packages come from; absent means the execution's environment."
         },
         "outputColumns": {
           "description": "The columns the code adds to each tuple, declared so the engine can type the output; input columns pass through.",
@@ -3693,7 +3697,7 @@
         "execution",
         "dataset",
         "model",
-        "environment",
+        "profile",
         "computing-unit",
         "warehouse",
         "operator",
@@ -3874,10 +3878,6 @@
           "$ref": "#/$defs/Uri",
           "description": "Overrides the workflow's and the project's default unit."
         },
-        "environment": {
-          "$ref": "#/$defs/Uri",
-          "description": "Overrides the workflow's and the project's default environment; `@vno` pins a version, else the head."
-        },
         "name": {
           "description": "The execution's name, which no other execution of the workflow has. Without one the catalog names it by its start, `execution \u003cUTC time\u003e`, and numbers the name when two start within a second.",
           "type": "string"
@@ -3909,9 +3909,6 @@
     },
     "RuntimeSpec": {
       "properties": {
-        "environment": {
-          "$ref": "#/$defs/Rid"
-        },
         "isolation": {
           "additionalProperties": {},
           "type": "object"
@@ -3919,6 +3916,24 @@
         "resources": {
           "additionalProperties": {},
           "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "SaveUnitAsProfile": {
+      "description": "How to save a unit as a profile.",
+      "properties": {
+        "name": {
+          "description": "The new profile's name; required for a new profile.",
+          "type": "string"
+        },
+        "parent": {
+          "$ref": "#/$defs/Rid",
+          "description": "The project a new profile goes into; absent: the unit's, or for a unit of the platform's own the chat's project in a chat, else the caller's own."
+        },
+        "profile": {
+          "$ref": "#/$defs/Uri",
+          "description": "Save it as the next version of this profile; absent: as a new profile."
         }
       },
       "type": "object"
@@ -4408,25 +4423,6 @@
       ],
       "type": "object"
     },
-    "UpdateEnvironment": {
-      "properties": {
-        "expectedHead": {
-          "$ref": "#/$defs/Vno",
-          "description": "The head version the caller saw; refused with 409 when it moved."
-        },
-        "message": {
-          "description": "Recorded on the new version of a versioned kind.",
-          "type": "string"
-        },
-        "spec": {
-          "$ref": "#/$defs/EnvironmentSpec"
-        }
-      },
-      "required": [
-        "spec"
-      ],
-      "type": "object"
-    },
     "UpdateMcpServer": {
       "properties": {
         "expectedHead": {
@@ -4520,6 +4516,25 @@
         },
         "spec": {
           "$ref": "#/$defs/OperatorSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "UpdateProfile": {
+      "properties": {
+        "expectedHead": {
+          "$ref": "#/$defs/Vno",
+          "description": "The head version the caller saw; refused with 409 when it moved."
+        },
+        "message": {
+          "description": "Recorded on the new version of a versioned kind.",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/ProfileSpec"
         }
       },
       "required": [
@@ -5059,10 +5074,6 @@
         "defaultComputingUnit": {
           "$ref": "#/$defs/Uri",
           "description": "The computing unit an execution uses when the request names none."
-        },
-        "defaultEnvironment": {
-          "$ref": "#/$defs/Uri",
-          "description": "The environment an execution uses when the request names none."
         },
         "defaultWarehouse": {
           "$ref": "#/$defs/Uri",

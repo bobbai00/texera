@@ -10,6 +10,7 @@ import type { Execution, ExecutionStatus } from "@texera/catalog-client/types";
 import {
   Badge,
   Button,
+  Chip,
   EmptyState,
   ErrorNote,
   formatDuration,
@@ -38,6 +39,7 @@ import {
 import { useCallback, useMemo, useState } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { unwrap } from "../api";
+import { sizeLabel } from "../kinds/profiles";
 import { operatorSchemasQuery } from "../queries";
 import { ResultsPanel } from "../results/ResultsPanel";
 import { ProjectScope, useScope } from "../scope";
@@ -47,6 +49,7 @@ import { KindHeader } from "../shell/KindHeader";
 import { Lineage } from "../shell/Lineage";
 import { useOpenResource } from "../shell/navigation";
 import { OpenError } from "../shell/OpenError";
+import { RanOn } from "../shell/RanOn";
 import type { KindViewProps } from "../types";
 import { parseUri } from "../uri";
 import { useWatch } from "../watch";
@@ -251,12 +254,25 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
               </div>
             )}
           </section>
-          {x.spec.environment && (
-            <section className="space-y-2">
-              <SectionTitle>Environment</SectionTitle>
-              <UriChip uri={x.spec.environment} emphasis />
-            </section>
-          )}
+          <section className="space-y-2" data-execution-computing>
+            <SectionTitle>Ran</SectionTitle>
+            <p className="text-sm">
+              <RanOn unit={x.spec.computingUnit} profile={x.spec.computing?.profile} warehouse={x.spec.warehouse} />
+            </p>
+            {x.spec.computing && (
+              <p className="text-sm text-muted-foreground">
+                {[sizeLabel(x.spec.computing), x.spec.computing.runtime ? `runtime ${x.spec.computing.runtime}` : ""].filter(Boolean).join(" · ") ||
+                  "The unit reserved nothing of its own."}
+              </p>
+            )}
+            {!!x.spec.computing?.packages?.length && (
+              <div className="flex flex-wrap gap-1.5" data-execution-packages>
+                {x.spec.computing.packages.map(p => (
+                  <Chip key={p}>{p}</Chip>
+                ))}
+              </div>
+            )}
+          </section>
           <section className="space-y-2">
             <SectionTitle>As the catalog has it</SectionTitle>
             <JsonBlock value={x} />

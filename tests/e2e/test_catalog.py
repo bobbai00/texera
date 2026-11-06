@@ -120,12 +120,12 @@ def test_the_mcp_server(alice, anon, project):
     status, init = alice.mcp("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "e2e", "version": "0"}})
     assert status == 200 and init["result"]["serverInfo"]["name"] == "texera-catalog"
     # One server holds every tool: what exists (resources, dataset files, operators, units,
-    # people, sharing) and the verbs of a workflow and its executions.
+    # people, sharing), the verbs of a unit and those of a workflow and its executions.
     _, listed = alice.mcp("tools/list")
     assert {t["name"] for t in listed["result"]["tools"]} == {
         "search_resources", "resolve_uri", "get_resource", "list_versions", "get_version", "get_lineage", "grant_access",
         "search_principals", "whoami", "list_dataset_files", "read_dataset_file", "commit_dataset_version",
-        "list_operators", "list_computing_units",
+        "list_operators", "list_computing_units", "create_computing_unit", "save_unit_as_profile",
         "create_workflow", "get_workflow", "edit_workflow", "validate_workflow", "run_workflow",
         "get_execution", "pause_execution", "resume_execution", "get_port_result"}
     # There is no second server: the address the dataflow server had answers nothing.

@@ -30,8 +30,8 @@ Bob) goes through a guard fixture that puts it back.
 | Running a workflow in three phases: the dry run's plan is the execution's, stored without secrets; the tables the catalog named, ports, rows, lineage; the keep mark (acceptance 3, 4 at the API) | `test_run.py` | | 15 s |
 | Results kept per execution, through later executions and the unit's idle release; an execution deleted with its tables | `test_results.py` | slow | 1 min |
 | Old results expire under the retention policy; the record stays; a kept execution does not expire | `test_results.py` | destructive | 20 s |
-| A Python UDF fails without its environment and completes with it | `test_environment.py` | slow | 2 min |
-| A custom operator as a resource, used by URI, pinned environment, deletion refused while referenced (acceptance 5) | `test_operator.py` | slow | 2 min |
+| A unit made from a profile has its packages: a UDF that imports one fails on the platform's unit and completes there; the execution records the profile version and each package as installed; the unit saved as the profile's next version and as a new one, its packages pinned | `test_profile.py` | cluster, slow | 3 min |
+| A custom operator as a resource, used by URI and run, deletion refused while referenced (acceptance 5) | `test_operator.py` | slow | 1 min |
 | A project shared with a viewer: reads, runs, nothing more; revoked (acceptance 6) | `test_sharing.py` | | 20 s |
 | What others shared with a person is one list whatever its kind and project (a project, a chat, a workflow, a dataset), not what is inside a project they were given; a grant taken back takes the thing off it | `test_sharing.py` | | 5 s |
 | A watch ends when what let the watcher read is taken back, on the project the resource lives in, though nothing about the resource changed | `test_sharing.py` | | 20 s |
@@ -58,6 +58,7 @@ Bob) goes through a guard fixture that puts it back.
 | The Texera Agent builds, runs, edits and reruns through a chat that stores nothing; what it makes is in the chat's project, and every answer records its agent version, model and servers (acceptance 3, 9) | `test_agents.py` | model, slow | 2 min, about 30 model calls |
 | One agent, one chat: it consults the bio tools for research ideas, analyzes the person's data from an execution, and shares it with Bob, with no handoff (acceptance 10, 11) | `test_agents.py` | model, slow | 3 min, about 40 model calls |
 | The agent's executions go to the unit the chat prefers, without being told | `test_agents.py` | model, slow | 1 min, about 10 model calls |
+| Asked to, the agent makes a unit from a profile, runs on it and keeps the results in the warehouse it was told | `test_agents.py` | model, cluster, slow | 3 min, about 15 model calls |
 | Bob, an editor of Alice's chat, asks the analyst; the question and the answer are his turn, and Alice reads them | `test_agents.py` | model, slow | 30 s, a few model calls |
 
 Markers gate what runs: `model`, `cluster`, `local` and `destructive` tests are skipped unless
@@ -74,7 +75,9 @@ view the dialog and the chat box ask which project and make nothing until told),
 collapsed to a rail that lies over nothing, a
 chat's model, unit and add-ons chosen in its box, a turn that fails and says why across a
 reload, a long first answer that ends up on screen, the operator page with its versions and
-sharing, a computing unit made with a size, a warehouse made from its page and kept as its
+sharing, a computing unit made from a profile with a size of its own (its page says how it
+differs from the profile, and a package added there is saved on it), the platform's unit
+saved as a profile of one's own in the project one works in, a warehouse made from its page and kept as its
 project's (the dialog asks where it keeps its tables; an execution's page names it and shows
 the rows; it stays while results are in it), an execution's lineage and its keep mark, two
 people in one chat (the other's messages and turn arrive live, under their name), an
@@ -97,7 +100,10 @@ port, the same version is run again from the page as an execution with a name of
 a run up to one operator runs only what leads to it and changes no version; an execution's
 page is the workflow as it ran, and a visualization's result is the chart it drew, whole, not
 a table of its HTML; "Tidy up" lays a workflow out so a join stands between its branches
-and no card lies on an arrow, and makes no version.
+and no card lies on an arrow, and makes no version; the bar beside Run says where a run goes
+(the unit, the profile it is made from, the warehouse), a warehouse picked there is where the
+run keeps its results, and the execution's page and its lineage card say so, with each
+package as installed.
 
 `lineage.spec.ts`: a workflow's lineage as a graph at its two levels: the dataset, the
 workflow and its executions as cards with the arrows' words, then the file, the version that
@@ -174,5 +180,5 @@ removal against S3 on the stack (tested in memory); contract suites for the Lake
 Keycloak-workloads adapters (covered end to end by the lake scenario); CI (the gate runs by
 hand). One difference between the targets: the cluster's unit image runs Python 3.10, where a
 failed UDF cannot name its missing module (the engine's error notes need 3.11), so the
-environment and operator scenarios accept a bare `ModuleNotFoundError` there. The known
+profile scenario accepts a bare `ModuleNotFoundError` there. The known
 limits of the system itself are in the handoff.

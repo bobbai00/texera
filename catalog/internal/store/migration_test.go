@@ -138,6 +138,73 @@ func TestThePlacesAPersonKeptForACanvasAreDropped(t *testing.T) {
 	}
 }
 
+// An environment becomes a profile: its packages are the profile's, in every version; what
+// named an environment (a default, a chat's choice, a custom operator's pin, the builds a unit
+// kept) goes; a reference to it names the profile.
+func TestAnEnvironmentBecomesAProfile(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	alice := user(t, st, "alice")
+	home := project(t, st, alice, "alice's home")
+	create := func(kind, spec, status string, versioned bool) *store.Resource {
+		t.Helper()
+		in := store.NewResource{Kind: kind, Name: kind, ParentRID: &home.RID, ProjectRID: &home.RID, OwnerPID: alice.PID, CreatedByPID: alice.PID, Visibility: "private", Spec: json.RawMessage(spec)}
+		if status != "" {
+			in.Status = json.RawMessage(status)
+		}
+		if versioned {
+			in.Versioned, in.ContentKind, in.Content = true, "spec", json.RawMessage(spec)
+		}
+		r, _, err := st.CreateResource(ctx, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	env := create("environment", `{"python": {"version": ">=3.12", "packages": ["pandas", "humanize"]}}`, `{"builds": 1}`, true)
+	workflow := create("workflow", `{"operators": [], "links": [], "defaultEnvironment": "texera://environments/x", "defaultWarehouse": "texera://warehouses/y"}`, "", true)
+	chat := create("conversation", `{"environment": "texera://environments/x", "computingUnit": "texera://computing-units/u"}`, "", false)
+	operator := create("operator", `{"operatorType": "O", "implementation": {"python": {"code": "pass", "environment": "texera://environments/x"}}}`, "", true)
+	unit := create("computing-unit", `{"provider": "local"}`, `{"phase": "running", "environments": {"x": "ready"}}`, false)
+	from := "texera://workflows/" + workflow.RID.String()
+	if err := st.AddEdges(ctx, []store.Edge{{From: from, Relation: "references", To: "texera://environments/" + env.RID.String(), FromRID: workflow.RID, ToRID: &env.RID}}); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, "migrations/0007_profiles.sql")
+
+	get := func(r *store.Resource) *store.Resource {
+		t.Helper()
+		got, err := st.GetResource(ctx, r.RID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	profile := get(env)
+	if profile.Kind != "profile" || string(compact(t, profile.Spec)) != `{"packages":["pandas","humanize"]}` || profile.Status != nil {
+		t.Errorf("the environment is a profile: %s %s %s", profile.Kind, profile.Spec, profile.Status)
+	}
+	if v, err := st.GetVersion(ctx, env.RID, 1); err != nil || string(compact(t, v.Content)) != `{"packages":["pandas","humanize"]}` {
+		t.Errorf("its version: %v", err)
+	}
+	for r, want := range map[*store.Resource]string{
+		workflow: `{"defaultWarehouse":"texera://warehouses/y","links":[],"operators":[]}`,
+		chat:     `{"computingUnit":"texera://computing-units/u"}`,
+		operator: `{"implementation":{"python":{"code":"pass"}},"operatorType":"O"}`,
+	} {
+		if got := string(compact(t, get(r).Spec)); got != want {
+			t.Errorf("%s: %s, want %s", r.Kind, got, want)
+		}
+	}
+	if got := string(compact(t, get(unit).Status)); got != `{"phase":"running"}` {
+		t.Errorf("the unit keeps no builds: %s", got)
+	}
+	edges, err := st.EdgesFrom(ctx, from, nil)
+	if err != nil || len(edges) != 1 || edges[0].To != "texera://profiles/"+env.RID.String() {
+		t.Errorf("the reference names the profile: %+v %v", edges, err)
+	}
+}
+
 func mustMarshal(t *testing.T, v any) string {
 	t.Helper()
 	out, err := json.Marshal(v)

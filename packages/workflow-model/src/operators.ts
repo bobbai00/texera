@@ -87,7 +87,6 @@ export function normalizeSpec(content: unknown): WorkflowSpec {
   return {
     operators: operators.map(op => withPorts(op, links)),
     links,
-    ...(typeof content.defaultEnvironment === "string" ? { defaultEnvironment: content.defaultEnvironment } : {}),
     ...(typeof content.defaultComputingUnit === "string" ? { defaultComputingUnit: content.defaultComputingUnit } : {}),
     ...(typeof content.defaultWarehouse === "string" ? { defaultWarehouse: content.defaultWarehouse } : {}),
     ...(isRecord(content.layout) ? { layout: content.layout as Positions } : {}),

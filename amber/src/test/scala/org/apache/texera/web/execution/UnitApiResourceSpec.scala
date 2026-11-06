@@ -333,10 +333,29 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
     UnitApiResource.isVisualization(table.getAttributes) shouldBe false
   }
 
-  "EnvironmentManager.nameOf" should "make a filesystem-safe, version-specific name" in {
-    val name = EnvironmentManager.nameOf("e6325d76-7bcf-442c-b926-1c9175ae42d8", 3)
-    name shouldBe "env-e6325d767bcf442cb9261c9175ae42d8-v3"
+  "EnvironmentManager" should "refuse a key that is not a plain name" in {
     EnvironmentManager.getPythonBin("../escape") shouldBe None
+    EnvironmentManager.ensure("../escape", List("humanize")) shouldBe
+      EnvironmentManager.Failed("invalid environment key ../escape")
+    EnvironmentManager.status("../escape") shouldBe None
+  }
+
+  it should "read the packages an environment has from what its interpreter printed" in {
+    val printed =
+      "WARNING: a notice on the way\npandas==2.2.3\n\nscikit-learn==1.5.2\npandas==2.2.3\n"
+    EnvironmentManager.pinnedFrom(printed) shouldBe List("pandas==2.2.3", "scikit-learn==1.5.2")
+  }
+
+  "an environment's build" should "say its state, with the packages once it is built" in {
+    UnitApiResource.environmentBuild(
+      "p01",
+      EnvironmentManager.Ready(List("humanize==4.11.0"))
+    ) shouldBe
+      EnvironmentBuild("p01", "ready", None, Some(List("humanize==4.11.0")))
+    UnitApiResource.environmentBuild("p01", EnvironmentManager.Building) shouldBe
+      EnvironmentBuild("p01", "building", None, None)
+    UnitApiResource.environmentBuild("p01", EnvironmentManager.Failed("no such package")) shouldBe
+      EnvironmentBuild("p01", "failed", Some("no such package"), None)
   }
 
   "OperatorRows" should "count the rows read over every input port and put out over every output port" in {

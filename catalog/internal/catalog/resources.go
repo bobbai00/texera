@@ -335,7 +335,7 @@ func (s *Service) UpdateSpec(ctx context.Context, caller *auth.Caller, k kinds.K
 	if err != nil {
 		return nil, nil, wrap(err, k.Name)
 	}
-	if err := s.afterUpdate(ctx, updated); err != nil {
+	if err := s.afterUpdate(ctx, r, updated); err != nil {
 		return nil, nil, err
 	}
 	return updated, v, nil

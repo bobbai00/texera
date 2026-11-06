@@ -10,8 +10,8 @@ import (
 )
 
 // Running a workflow authorizes before anything is written, compiles once (the same plan a
-// dry run returns) and stores the execution with its plan; a custom operator's pinned
-// environment is honoured; a kept execution survives the retention policy.
+// dry run returns) and stores the execution with its plan and what the unit had; a kept
+// execution survives the retention policy.
 func TestRunInThreePhases(t *testing.T) {
 	h := newHarness(t)
 	ds := h.create("alice", "datasets", "iris", map[string]any{"format": "csv"})
@@ -87,30 +87,27 @@ func TestRunInThreePhases(t *testing.T) {
 		t.Fatalf("the catalog names the output tables: %+v", execSpec.Plan.Outputs)
 	}
 
-	// A custom operator pins an environment: an execution that names none takes it, one that names another is refused.
-	env := h.create("alice", "environments", "pinned", map[string]any{"python": map[string]any{"packages": []string{"humanize"}}})
-	other := h.create("alice", "environments", "other", map[string]any{"python": map[string]any{"packages": []string{"numpy"}}})
-	pinned := h.create("alice", "operators", "pinned op", map[string]any{
-		"operatorType": "Pinned", "inputPorts": []any{map[string]any{"portID": "input-0"}}, "outputPorts": []any{map[string]any{"portID": "output-0"}},
-		"implementation": map[string]any{"python": map[string]any{"code": "class Pinned:\n    pass\n", "environment": string(env.Metadata.Uri)}},
-	})
-	spec2 := map[string]any{
-		"operators": []any{
-			map[string]any{"operatorID": "scan", "operatorType": "CSVFileScan", "operatorProperties": map[string]any{"fileName": fileURI}},
-			map[string]any{"operatorID": "pin", "operatorType": string(pinned.Metadata.Uri) + "@1", "viewResult": true, "operatorProperties": map[string]any{}},
-		},
-		"links": []any{map[string]any{"linkID": "l1", "source": map[string]any{"operatorID": "scan", "portID": "output-0"}, "target": map[string]any{"operatorID": "pin", "portID": "input-0"}}},
+	// What the unit had is part of what ran: the profile its node was made from, and its
+	// packages pinned as the unit installed them; the unit keeps what it installed.
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		h.mustJSON("alice", "GET", p+"/workflows/"+rid(wf)+"/executions/"+rid(exec), nil, &exec)
+		mustDecode(t, exec.Spec, &execSpec)
+		if execSpec.Computing != nil && execSpec.Computing.Packages != nil && strings.Contains(strings.Join(*execSpec.Computing.Packages, ","), "==") {
+			break
+		}
 	}
-	wf2 := h.create("alice", "workflows", "pinned run", spec2)
-	var run2 envelope
-	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf2)+"/run", map[string]any{"name": "takes the pin"}, &run2)
-	mustDecode(t, run2.Spec, &execSpec)
-	if execSpec.Environment == nil || string(*execSpec.Environment) != string(env.Metadata.Uri)+"@1" {
-		t.Fatalf("the execution takes the operator's environment: %v", execSpec.Environment)
+	if c := execSpec.Computing; c == nil || c.Profile == nil || !strings.Contains(string(*c.Profile), "/profiles/") || !strings.HasSuffix(string(*c.Profile), "@1") {
+		t.Fatalf("the execution names the profile its unit was made from: %+v", execSpec.Computing)
 	}
-	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf2)+"/executions/"+rid(run2)+"/cancel", map[string]any{}, nil)
-	if status, body := h.do("alice", "POST", p+"/workflows/"+rid(wf2)+"/run", map[string]any{"name": "wrong env", "environment": string(other.Metadata.Uri)}); status != http.StatusConflict {
-		t.Fatalf("an execution with another environment is refused: %d %s", status, body)
+	if got := strings.Join(*execSpec.Computing.Packages, ","); got != "numpy==1.0,pandas==1.0,scikit-learn==1.0" {
+		t.Fatalf("the packages it ran with, as installed: %s", got)
+	}
+	var unit envelope
+	h.mustJSON("alice", "GET", p+"/computing-units/"+strings.TrimPrefix(string(execSpec.ComputingUnit), "texera://computing-units/"), nil, &unit)
+	var unitStatus api.ComputingUnitStatus
+	mustDecode(t, unit.Status, &unitStatus)
+	if unitStatus.Installed == nil || !strings.Contains(strings.Join(*unitStatus.Installed, ","), "joblib==1.0") {
+		t.Fatalf("the unit keeps what it installed, dependencies too: %+v", unitStatus.Installed)
 	}
 
 	// A kept execution survives the retention policy.

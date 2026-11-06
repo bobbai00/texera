@@ -40,7 +40,7 @@ namespace Routes {
     @extension("x-texera-permission", "list")
     @extension("x-mcp", #{
       tool: "search_resources",
-      description: "Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, environments, operators, conversations. Filter by kind or text. In a chat a search covers the chat's project and the built-ins; pass scope to look in another project (kind project lists them all). Pass shared=true for what other people shared with the person.",
+      description: "Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, profiles, operators, conversations. Filter by kind or text. In a chat a search covers the chat's project and the built-ins; pass scope to look in another project (kind project lists them all). Pass shared=true for what other people shared with the person.",
       readOnlyHint: true,
     })
     search(

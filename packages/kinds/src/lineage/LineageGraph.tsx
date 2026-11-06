@@ -34,6 +34,7 @@ import { edgeOptions } from "../shell/canvas";
 import { KindIcon } from "../shell/KindIcon";
 import { useOpenResource } from "../shell/navigation";
 import { whyNot } from "../shell/OpenError";
+import { RanOn } from "../shell/RanOn";
 import type { ResourceRef } from "../types";
 import { uriOf } from "../uri";
 import { type LabelPlace, layoutLineage, placeLabels } from "./layout";
@@ -74,6 +75,7 @@ function Frame({
   icon,
   name,
   line,
+  more,
   title,
   onOpen,
   muted,
@@ -84,6 +86,8 @@ function Frame({
   icon: ReactNode;
   name: ReactNode;
   line: ReactNode;
+  /** A third line, for a card that says more: where an execution ran. */
+  more?: ReactNode;
   title?: string;
   onOpen?: () => void;
   muted?: boolean;
@@ -95,6 +99,7 @@ function Frame({
       <span className="min-w-0 flex-1 text-left">
         <span className={cn("block truncate text-sm font-medium", muted && "text-muted-foreground")}>{name}</span>
         <span className="block truncate text-xs text-muted-foreground">{line}</span>
+        {more && <span className="block truncate text-xs">{more}</span>}
       </span>
     </>
   );
@@ -213,6 +218,7 @@ function ExecutionCard({ card, level }: { card: LineageNode; level: Level }) {
           {line}
         </>
       }
+      more={x && <RanOn unit={x.unit} profile={x.profile} warehouse={x.warehouse} className="block" />}
       title={[
         x?.name,
         `Execution · ${line}`,

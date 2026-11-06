@@ -105,7 +105,7 @@ func (s *Server) routeWorkflows() {
 		if err := decode(r, &body); err != nil {
 			return err
 		}
-		in := catalog.RunInput{ComputingUnit: uriString(body.ComputingUnit), Warehouse: uriString(body.Warehouse), Environment: uriString(body.Environment)}
+		in := catalog.RunInput{ComputingUnit: uriString(body.ComputingUnit), Warehouse: uriString(body.Warehouse)}
 		if body.Vno != nil {
 			in.Vno = int(*body.Vno)
 		}

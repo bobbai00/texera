@@ -343,6 +343,34 @@ paths:
         description: List the computing units the caller can run workflows on, with status. An execution that names no unit runs on the chat's, else the workflow's, the project's or the platform's default.
         readOnlyHint: true
       x-texera-permission: list
+  /catalog/v1/computing-units/from-profile:
+    post:
+      operationId: ComputingUnits_fromProfile
+      description: "Make a computing unit from a profile: one node of the profile's size with its packages, on the deployment's Kubernetes."
+      parameters: []
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created as a result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComputingUnit'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComputingUnitFromProfile'
+      x-mcp:
+        tool: create_computing_unit
+        description: "Make a computing unit from a profile: one node of the profile's size with its Python packages. Find profiles with search_resources (kind profile). The unit goes into the chat's project unless another is named. It is pending until its engine answers: waitSeconds (up to 600) waits until it is ready, and a run on it is refused before then."
+      x-texera-permission: create
   /catalog/v1/computing-units/{rid}:
     get:
       operationId: ComputingUnits_read
@@ -508,6 +536,39 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-texera-permission: run_on
+  /catalog/v1/computing-units/{rid}/profile:
+    post:
+      operationId: ComputingUnits_saveAsProfile
+      description: 'Save a unit as a profile: the next version of a profile the caller may change, or a new profile. Packages are saved as the unit installed them, each pinned. The unit is then made from what was saved.'
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveUnitAsProfile'
+      x-mcp:
+        tool: save_unit_as_profile
+        description: 'Save a computing unit as a profile, so others can make a unit like it: as the next version of a profile (profile, which the caller may change), or as a new one (name). Its packages are saved pinned to the versions installed.'
+      x-texera-permission: read
   /catalog/v1/computing-units/{rid}/terminate:
     post:
       operationId: ComputingUnits_terminate
@@ -1547,250 +1608,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FileLink'
-        default:
-          description: An unexpected error response.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      x-texera-permission: read
-  /catalog/v1/environments:
-    get:
-      operationId: Environments_list
-      description: List the resources of this kind the caller may read.
-      parameters:
-        - $ref: '#/components/parameters/Scoped'
-        - name: parent
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/Rid'
-          explode: false
-        - name: project
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/Rid'
-          explode: false
-        - name: q
-          in: query
-          required: false
-          schema:
-            type: string
-          explode: false
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int32
-          explode: false
-        - name: cursor
-          in: query
-          required: false
-          schema:
-            type: string
-          explode: false
-      responses:
-        '200':
-          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EnvironmentPage'
-        default:
-          description: An unexpected error response.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      x-texera-permission: list
-    post:
-      operationId: Environments_create
-      parameters: []
-      responses:
-        '201':
-          description: The request has succeeded and a new resource has been created as a result.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Environment'
-        default:
-          description: An unexpected error response.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateEnvironment'
-      x-texera-permission: create
-  /catalog/v1/environments/{rid}:
-    get:
-      operationId: Environments_read
-      parameters:
-        - name: rid
-          in: path
-          required: true
-          schema:
-            $ref: '#/components/schemas/Rid'
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Environment'
-        default:
-          description: An unexpected error response.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      x-texera-permission: read
-    put:
-      operationId: Environments_update
-      description: Replace the spec; for a versioned kind this creates a version.
-      parameters:
-        - name: rid
-          in: path
-          required: true
-          schema:
-            $ref: '#/components/schemas/Rid'
-        - name: If-Match
-          in: header
-          required: false
-          schema:
-            type: string
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Environment'
-        default:
-          description: An unexpected error response.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateEnvironment'
-      x-texera-permission: write
-    delete:
-      operationId: Environments_delete
-      description: Delete the resource; refused with 409 while another resource references it.
-      parameters:
-        - name: rid
-          in: path
-          required: true
-          schema:
-            $ref: '#/components/schemas/Rid'
-      responses:
-        '204':
-          description: 'There is no content to send for this request, but the headers may be useful. '
-        default:
-          description: An unexpected error response.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      x-texera-permission: delete
-  /catalog/v1/environments/{rid}/build:
-    post:
-      operationId: Environments_build
-      description: Build a version on a unit; returns at once, the build shows in status.
-      parameters:
-        - name: rid
-          in: path
-          required: true
-          schema:
-            $ref: '#/components/schemas/Rid'
-      responses:
-        '202':
-          description: The request has been accepted for processing, but processing has not yet completed.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EnvironmentBuild'
-        default:
-          description: An unexpected error response.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/BuildEnvironment'
-      x-texera-permission: read
-  /catalog/v1/environments/{rid}/versions:
-    get:
-      operationId: Environments_listVersions
-      parameters:
-        - name: rid
-          in: path
-          required: true
-          schema:
-            $ref: '#/components/schemas/Rid'
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int32
-          explode: false
-        - name: cursor
-          in: query
-          required: false
-          schema:
-            type: string
-          explode: false
-      responses:
-        '200':
-          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EnvironmentVersionPage'
-        default:
-          description: An unexpected error response.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      x-texera-permission: read
-  /catalog/v1/environments/{rid}/versions/{vno}:
-    get:
-      operationId: Environments_readVersion
-      parameters:
-        - name: rid
-          in: path
-          required: true
-          schema:
-            $ref: '#/components/schemas/Rid'
-        - name: vno
-          in: path
-          required: true
-          schema:
-            $ref: '#/components/schemas/Vno'
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EnvironmentVersion'
         default:
           description: An unexpected error response.
           content:
@@ -3010,6 +2827,220 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-texera-permission: self
+  /catalog/v1/profiles:
+    get:
+      operationId: Profiles_list
+      description: List the resources of this kind the caller may read.
+      parameters:
+        - $ref: '#/components/parameters/Scoped'
+        - name: parent
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: project
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Rid'
+          explode: false
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfilePage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: list
+    post:
+      operationId: Profiles_create
+      parameters: []
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created as a result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProfile'
+      x-texera-permission: create
+  /catalog/v1/profiles/{rid}:
+    get:
+      operationId: Profiles_read
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: read
+    put:
+      operationId: Profiles_update
+      description: Replace the spec; for a versioned kind this creates a version.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfile'
+      x-texera-permission: write
+    delete:
+      operationId: Profiles_delete
+      description: Delete the resource; refused with 409 while another resource references it.
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: delete
+  /catalog/v1/profiles/{rid}/versions:
+    get:
+      operationId: Profiles_listVersions
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+      responses:
+        '200':
+          description: A 200 response carrying T; used where a union with Error would otherwise be ambiguous.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersionPage'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: read
+  /catalog/v1/profiles/{rid}/versions/{vno}:
+    get:
+      operationId: Profiles_readVersion
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+        - name: vno
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Vno'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: read
   /catalog/v1/projects:
     get:
       operationId: Projects_list
@@ -3255,7 +3286,7 @@ paths:
                 $ref: '#/components/schemas/Error'
       x-mcp:
         tool: search_resources
-        description: "Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, environments, operators, conversations. Filter by kind or text. In a chat a search covers the chat's project and the built-ins; pass scope to look in another project (kind project lists them all). Pass shared=true for what other people shared with the person."
+        description: "Search the catalog for resources the caller can read: workflows, datasets, executions, agent templates, skills, MCP servers, computing units, profiles, operators, conversations. Filter by kind or text. In a chat a search covers the chat's project and the built-ins; pass scope to look in another project (kind project lists them all). Pass shared=true for what other people shared with the person."
         readOnlyHint: true
       x-texera-permission: list
   /catalog/v1/resources/resolve:
@@ -5039,17 +5070,6 @@ components:
           type: string
         logoUrl:
           type: string
-    BuildEnvironment:
-      type: object
-      properties:
-        vno:
-          allOf:
-            - $ref: '#/components/schemas/Vno'
-          description: The version to build; defaults to the head version.
-        computingUnit:
-          allOf:
-            - $ref: '#/components/schemas/Uri'
-          description: The unit to build on; defaults to the one an execution would resolve to.
     CanvasPoint:
       type: object
       required:
@@ -5125,6 +5145,10 @@ components:
             - master
             - worker
             - sandbox
+        profile:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: The profile version the node was made from, with `@vno`; what the node has may have changed since.
         cpu:
           type: string
         memory:
@@ -5132,6 +5156,11 @@ components:
         gpu:
           type: integer
           format: int32
+        packages:
+          type: array
+          items:
+            type: string
+          description: Python packages the node adds to the platform's runtime, PEP 508 lines.
     ComputingNodeStatus:
       type: object
       required:
@@ -5151,6 +5180,29 @@ components:
           type: boolean
         message:
           type: string
+    ComputingRecord:
+      type: object
+      properties:
+        profile:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: The profile version its node was made from, with `@vno`.
+        cpu:
+          type: string
+        memory:
+          type: string
+        gpu:
+          type: integer
+          format: int32
+        packages:
+          type: array
+          items:
+            type: string
+          description: The packages added to the runtime, each pinned as installed when the unit says so.
+        runtime:
+          type: string
+          description: The engine's version.
+      description: What the unit an execution ran on had when it ran.
     ComputingUnit:
       type: object
       required:
@@ -5178,6 +5230,27 @@ components:
         versioned: false
         content: spec
         parent: project
+    ComputingUnitFromProfile:
+      type: object
+      required:
+        - name
+        - profile
+      properties:
+        name:
+          type: string
+        parent:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: "The project the unit goes into; absent: the chat's project in a chat, else the caller's own."
+        profile:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: The profile, with `@vno`, or its head.
+        waitSeconds:
+          type: integer
+          format: int32
+          description: Wait up to this many seconds for the unit to be ready (or failed); it is returned as it is then.
+      description: A computing unit to make from a profile.
     ComputingUnitPage:
       type: object
       required:
@@ -5231,11 +5304,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ComputingNodeStatus'
-        environments:
+        installed:
           type: array
           items:
-            $ref: '#/components/schemas/Uri'
-          description: Environment versions built on this unit.
+            type: string
+          description: 'The packages the unit installed for its node, each pinned as installed: what an execution on it has.'
     ContentKind:
       type: string
       enum:
@@ -5297,8 +5370,6 @@ components:
           allOf:
             - $ref: '#/components/schemas/Uri'
           description: "The computing unit a compile or an execution started in this chat uses when the call names none; absent: the workflow's, the project's or the platform's default. A preference, not a binding: a call can always name another unit."
-        environment:
-          $ref: '#/components/schemas/Uri'
         mcpServers:
           type: array
           items:
@@ -5452,31 +5523,6 @@ components:
         message:
           type: string
           description: Recorded on the first version of a versioned kind.
-    CreateEnvironment:
-      type: object
-      required:
-        - name
-        - spec
-      properties:
-        name:
-          type: string
-        description:
-          type: string
-        parent:
-          allOf:
-            - $ref: '#/components/schemas/Rid'
-          description: The parent; for a top-level kind a project, default the caller's home project.
-        visibility:
-          $ref: '#/components/schemas/Visibility'
-        labels:
-          type: object
-          additionalProperties:
-            type: string
-        spec:
-          $ref: '#/components/schemas/EnvironmentSpec'
-        message:
-          type: string
-          description: Recorded on the first version of a versioned kind.
     CreateMcpServer:
       type: object
       required:
@@ -5574,6 +5620,31 @@ components:
             type: string
         spec:
           $ref: '#/components/schemas/OperatorSpec'
+        message:
+          type: string
+          description: Recorded on the first version of a versioned kind.
+    CreateProfile:
+      type: object
+      required:
+        - name
+        - spec
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        parent:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: The parent; for a top-level kind a project, default the caller's home project.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        spec:
+          $ref: '#/components/schemas/ProfileSpec'
         message:
           type: string
           description: Recorded on the first version of a versioned kind.
@@ -5883,10 +5954,12 @@ components:
           allOf:
             - $ref: '#/components/schemas/Uri'
           description: The template a new chat starts with when the project names none.
-        environment:
-          $ref: '#/components/schemas/Uri'
         computingUnit:
           $ref: '#/components/schemas/Uri'
+        profile:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: The profile a new computing unit is made from unless another is chosen.
         warehouse:
           allOf:
             - $ref: '#/components/schemas/Uri'
@@ -5969,137 +6042,6 @@ components:
           description: The digest of the engine image that is running; operator versions are keyed by it.
         version:
           type: string
-    Environment:
-      type: object
-      required:
-        - apiVersion
-        - kind
-        - metadata
-        - spec
-      properties:
-        apiVersion:
-          type: string
-          enum:
-            - catalog.texera.apache.org/v1
-        kind:
-          $ref: '#/components/schemas/ResourceKind'
-        metadata:
-          $ref: '#/components/schemas/ResourceMetadata'
-        spec:
-          $ref: '#/components/schemas/EnvironmentSpec'
-        status:
-          $ref: '#/components/schemas/EnvironmentStatus'
-      description: The typed envelope, served by the kind routes.
-      x-texera-kind:
-        kind: environment
-        plural: environments
-        versioned: true
-        content: spec
-        parent: project
-    EnvironmentBuild:
-      type: object
-      required:
-        - computingUnit
-        - vno
-        - state
-        - at
-      properties:
-        computingUnit:
-          $ref: '#/components/schemas/Uri'
-        vno:
-          $ref: '#/components/schemas/Vno'
-        state:
-          type: string
-          enum:
-            - building
-            - ready
-            - failed
-        message:
-          type: string
-        at:
-          type: string
-          format: date-time
-    EnvironmentPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Environment'
-        nextCursor:
-          type: string
-          description: Opaque cursor for the next page; absent on the last page.
-    EnvironmentSpec:
-      type: object
-      properties:
-        python:
-          $ref: '#/components/schemas/PythonEnvironment'
-        baseImage:
-          type: string
-          description: Base image for units that build images; absent means the deployment default.
-    EnvironmentStatus:
-      type: object
-      properties:
-        builds:
-          type: array
-          items:
-            $ref: '#/components/schemas/EnvironmentBuild'
-          description: Builds of this environment's versions on units.
-    EnvironmentVersion:
-      type: object
-      required:
-        - rid
-        - uri
-        - kind
-        - vno
-        - contentKind
-        - digest
-        - content
-        - createdBy
-        - createdAt
-      properties:
-        rid:
-          $ref: '#/components/schemas/Rid'
-        uri:
-          $ref: '#/components/schemas/Uri'
-        kind:
-          $ref: '#/components/schemas/ResourceKind'
-        vno:
-          $ref: '#/components/schemas/Vno'
-        contentKind:
-          $ref: '#/components/schemas/ContentKind'
-        digest:
-          $ref: '#/components/schemas/Digest'
-        content:
-          $ref: '#/components/schemas/EnvironmentSpec'
-        message:
-          type: string
-        createdBy:
-          $ref: '#/components/schemas/Pid'
-        contributors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Pid'
-        origin:
-          $ref: '#/components/schemas/Origin'
-        createdAt:
-          type: string
-          format: date-time
-      description: A version with typed content, served by the kind routes.
-    EnvironmentVersionPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/VersionSummary'
-        nextCursor:
-          type: string
-          description: Opaque cursor for the next page; absent on the last page.
     Error:
       type: object
       required:
@@ -6232,12 +6174,12 @@ components:
           allOf:
             - $ref: '#/components/schemas/Uri'
           description: The workflow version, with `@vno`.
-        environment:
-          allOf:
-            - $ref: '#/components/schemas/Uri'
-          description: The environment version, with `@vno`.
         computingUnit:
           $ref: '#/components/schemas/Uri'
+        computing:
+          allOf:
+            - $ref: '#/components/schemas/ComputingRecord'
+          description: 'What the unit had when it ran: the profile its node was made from, its size and packages.'
         warehouse:
           allOf:
             - $ref: '#/components/schemas/Uri'
@@ -7264,6 +7206,123 @@ components:
         nextCursor:
           type: string
           description: Opaque cursor for the next page; absent on the last page.
+    Profile:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - catalog.texera.apache.org/v1
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        metadata:
+          $ref: '#/components/schemas/ResourceMetadata'
+        spec:
+          $ref: '#/components/schemas/ProfileSpec'
+        status:
+          $ref: '#/components/schemas/ProfileStatus'
+      description: The typed envelope, served by the kind routes.
+      x-texera-kind:
+        kind: profile
+        plural: profiles
+        versioned: true
+        content: spec
+        parent: project
+    ProfilePage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Profile'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
+    ProfileSpec:
+      type: object
+      properties:
+        cpu:
+          type: string
+          description: "CPU, as Kubernetes counts it: `2`, `500m`; absent: the deployment's default."
+        memory:
+          type: string
+          description: "Memory, as Kubernetes counts it: `4Gi`; absent: the deployment's default."
+        gpu:
+          type: integer
+          format: int32
+          description: 'GPUs; absent: none.'
+        packages:
+          type: array
+          items:
+            type: string
+          description: "Python packages added to the platform's runtime, PEP 508 lines; a profile saved from a unit pins each to what was installed: `pandas==2.2.3`."
+        runtime:
+          type: string
+          description: The platform release the profile was saved on, as the unit's engine reported it.
+      description: What a computing node is made of.
+    ProfileStatus:
+      type: object
+      description: 'A profile has no status: what it describes is its spec.'
+    ProfileVersion:
+      type: object
+      required:
+        - rid
+        - uri
+        - kind
+        - vno
+        - contentKind
+        - digest
+        - content
+        - createdBy
+        - createdAt
+      properties:
+        rid:
+          $ref: '#/components/schemas/Rid'
+        uri:
+          $ref: '#/components/schemas/Uri'
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        vno:
+          $ref: '#/components/schemas/Vno'
+        contentKind:
+          $ref: '#/components/schemas/ContentKind'
+        digest:
+          $ref: '#/components/schemas/Digest'
+        content:
+          $ref: '#/components/schemas/ProfileSpec'
+        message:
+          type: string
+        createdBy:
+          $ref: '#/components/schemas/Pid'
+        contributors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pid'
+        origin:
+          $ref: '#/components/schemas/Origin'
+        createdAt:
+          type: string
+          format: date-time
+      description: A version with typed content, served by the kind routes.
+    ProfileVersionPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/VersionSummary'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page.
     Project:
       type: object
       required:
@@ -7305,10 +7364,6 @@ components:
     ProjectSpec:
       type: object
       properties:
-        defaultEnvironment:
-          allOf:
-            - $ref: '#/components/schemas/Uri'
-          description: The environment an execution in this project uses when the workflow names none.
         defaultComputingUnit:
           allOf:
             - $ref: '#/components/schemas/Uri'
@@ -7348,19 +7403,6 @@ components:
         auth:
           $ref: '#/components/schemas/AuthSettings'
       description: What the app needs before anyone has logged in.
-    PythonEnvironment:
-      type: object
-      required:
-        - packages
-      properties:
-        version:
-          type: string
-          description: Python version range, PEP 440, e.g. `>=3.12,<3.13`.
-        packages:
-          type: array
-          items:
-            type: string
-          description: Package requirements, PEP 508 lines.
     PythonOperator:
       type: object
       required:
@@ -7369,10 +7411,6 @@ components:
         code:
           type: string
           description: "The operator's Python source: a class with the engine's UDF interface."
-        environment:
-          allOf:
-            - $ref: '#/components/schemas/Uri'
-          description: The environment its packages come from; absent means the execution's environment.
         outputColumns:
           type: array
           items:
@@ -7443,7 +7481,7 @@ components:
         - execution
         - dataset
         - model
-        - environment
+        - profile
         - computing-unit
         - warehouse
         - operator
@@ -7590,10 +7628,6 @@ components:
           allOf:
             - $ref: '#/components/schemas/Uri'
           description: "Overrides the workflow's and the project's default warehouse: where the execution keeps its results."
-        environment:
-          allOf:
-            - $ref: '#/components/schemas/Uri'
-          description: Overrides the workflow's and the project's default environment; `@vno` pins a version, else the head.
         parameters:
           type: object
           additionalProperties: {}
@@ -7611,14 +7645,27 @@ components:
     RuntimeSpec:
       type: object
       properties:
-        environment:
-          $ref: '#/components/schemas/Rid'
         isolation:
           type: object
           additionalProperties: {}
         resources:
           type: object
           additionalProperties: {}
+    SaveUnitAsProfile:
+      type: object
+      properties:
+        profile:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: 'Save it as the next version of this profile; absent: as a new profile.'
+        name:
+          type: string
+          description: The new profile's name; required for a new profile.
+        parent:
+          allOf:
+            - $ref: '#/components/schemas/Rid'
+          description: "The project a new profile goes into; absent: the unit's, or for a unit of the platform's own the chat's project in a chat, else the caller's own."
+      description: How to save a unit as a profile.
     ServerSetting:
       type: object
       required:
@@ -7969,20 +8016,6 @@ components:
           allOf:
             - $ref: '#/components/schemas/Vno'
           description: The head version the caller saw; refused with 409 when it moved.
-    UpdateEnvironment:
-      type: object
-      required:
-        - spec
-      properties:
-        spec:
-          $ref: '#/components/schemas/EnvironmentSpec'
-        message:
-          type: string
-          description: Recorded on the new version of a versioned kind.
-        expectedHead:
-          allOf:
-            - $ref: '#/components/schemas/Vno'
-          description: The head version the caller saw; refused with 409 when it moved.
     UpdateMcpServer:
       type: object
       required:
@@ -8049,6 +8082,20 @@ components:
       properties:
         spec:
           $ref: '#/components/schemas/OperatorSpec'
+        message:
+          type: string
+          description: Recorded on the new version of a versioned kind.
+        expectedHead:
+          allOf:
+            - $ref: '#/components/schemas/Vno'
+          description: The head version the caller saw; refused with 409 when it moved.
+    UpdateProfile:
+      type: object
+      required:
+        - spec
+      properties:
+        spec:
+          $ref: '#/components/schemas/ProfileSpec'
         message:
           type: string
           description: Recorded on the new version of a versioned kind.
@@ -8460,10 +8507,6 @@ components:
           additionalProperties:
             $ref: '#/components/schemas/CanvasPoint'
           description: "Where each operator's card sits on the canvas, by operator. It is the app's: nothing that runs the workflow reads it, a move alone makes no version, a version keeps the places it was made with, and an operator with no place is placed beside what it connects to. A spec written without it keeps the places of the operators it kept."
-        defaultEnvironment:
-          allOf:
-            - $ref: '#/components/schemas/Uri'
-          description: The environment an execution uses when the request names none.
         defaultComputingUnit:
           allOf:
             - $ref: '#/components/schemas/Uri'

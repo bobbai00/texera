@@ -2,8 +2,9 @@
 runs, edits and reruns a workflow over the iris file; in one chat it grounds a research question
 with the bio tools, analyzes the person's data and shares it with Bob through the catalog
 server, with nobody to hand the chat to; it works in the chat's project; and its executions go
-to the computing unit the chat prefers without being told. A chat stores no agent, model or
-unit unless one was chosen. Acceptance items 3, 9, 10 and 11. Outcomes are asserted in the
+to the computing unit the chat prefers without being told; asked to, it makes a unit from a
+profile and keeps a run's results in a warehouse of the person's choosing. A chat stores no
+agent, model or unit unless one was chosen. Acceptance items 3, 9, 10 and 11. Outcomes are asserted in the
 catalog, never the wording."""
 import itertools
 
@@ -114,6 +115,37 @@ def test_the_agents_runs_go_to_the_chats_unit(alice, project, my_iris):
     assert runs, "the agent ran a workflow"
     assert {r["spec"]["computingUnit"] for r in runs} == {mine}, "every execution of the chat is on the chat's unit"
     assert any(r["status"]["phase"] == "completed" for r in runs)
+
+
+@pytest.mark.model
+@pytest.mark.cluster
+@pytest.mark.slow
+def test_the_agent_makes_a_unit_from_a_profile_and_keeps_results_where_asked(alice, project, my_iris):
+    """The agent works with the platform's resources as a person does: it makes a computing unit
+    from a profile, runs a workflow on it, and keeps the results in the warehouse it is asked for."""
+    name = my_iris["metadata"]["name"]
+    lab = alice.create("warehouses", f"lab results {project[:8]}", {}, project=project)
+    profile = alice.get("/settings")["spec"]["defaults"]["profile"]
+    profile_name = alice.get(profile.replace("texera://", "/"))["metadata"]["name"]
+    crid = chat.conversation(alice, "a unit of its own", project)
+    turn = chat.say(alice, crid, (
+        f"Make a new computing unit named 'petal unit' from the profile {profile_name} and wait until it is ready. "
+        f"Then, using the dataset named {name} in my catalog, build a workflow that computes the average petal length per species, "
+        f"and run it on that new unit, keeping its results in the warehouse named '{lab['metadata']['name']}'. Report the numbers."
+    ))
+    assert turn.outcome == "success", turn.errors
+    made = alice.get(f"/conversations/{crid}/resources")
+    units = [r for r in made if r["kind"] == "computing-unit"]
+    assert len(units) == 1, [r["metadata"]["name"] for r in units]
+    unit = units[0]
+    try:
+        assert unit["spec"]["computingNodes"][0]["profile"].split("@")[0] == profile, unit["spec"]
+        runs = [r for r in made if r["kind"] == "execution" and r["spec"]["computingUnit"] == unit["metadata"]["uri"]]
+        assert any(r["status"]["phase"] == "completed" for r in runs), [(r["metadata"]["name"], r["status"]["phase"]) for r in runs]
+        assert {r["spec"]["warehouse"] for r in runs} == {lab["metadata"]["uri"]}, "every run on it kept its results where asked"
+        assert all(r["spec"]["computing"]["profile"].split("@")[0] == profile for r in runs), "each run records the profile"
+    finally:
+        alice.post(f"/computing-units/{unit['metadata']['rid']}/terminate", {})
 
 
 @pytest.mark.model

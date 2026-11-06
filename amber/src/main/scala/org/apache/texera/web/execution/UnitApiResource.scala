@@ -96,11 +96,9 @@ case class ResolvedInput(
     sizeBytes: Option[Long]
 )
 
+/** The Python packages a unit adds to its runtime, under the key the catalog derives from them. */
 @JsonIgnoreProperties(ignoreUnknown = true)
-case class PythonEnvironmentRequest(version: Option[String], packages: List[String])
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-case class EnvironmentRequest(rid: String, vno: Int, python: Option[PythonEnvironmentRequest])
+case class EnvironmentRequest(key: String, packages: List[String])
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 case class OutputTable(opid: String, port: String, table: String)
@@ -202,7 +200,12 @@ case class RowPage(
     total: Option[Long]
 )
 
-case class EnvironmentBuild(rid: String, vno: Int, status: String, message: Option[String])
+case class EnvironmentBuild(
+    key: String,
+    status: String,
+    message: Option[String],
+    installed: Option[List[String]]
+)
 
 case class UnitHealth(status: String, version: Option[String])
 
@@ -343,6 +346,16 @@ object UnitApiResource {
       all.groups.map(g => objectMapper.valueToTree[JsonNode](g))
     )
 
+  /** api/engine.tsp EnvironmentBuild: an environment's state, the packages once built. */
+  def environmentBuild(key: String, status: EnvironmentManager.Status): EnvironmentBuild =
+    status match {
+      case EnvironmentManager.Ready(installed) =>
+        EnvironmentBuild(key, "ready", None, Some(installed))
+      case EnvironmentManager.Building => EnvironmentBuild(key, "building", None, None)
+      case EnvironmentManager.Failed(message) =>
+        EnvironmentBuild(key, "failed", Some(message), None)
+    }
+
   def isTerminal(state: WorkflowAggregatedState): Boolean =
     state == COMPLETED || state == FAILED || state == KILLED || state == TERMINATED
 
@@ -414,36 +427,19 @@ class UnitApiResource extends LazyLogging {
   @POST
   @Path("/environments")
   @RolesAllowed(Array("SERVICE"))
-  def buildEnvironment(request: EnvironmentRequest): EnvironmentBuild = {
-    val name = EnvironmentManager.nameOf(request.rid, request.vno)
-    val status = EnvironmentManager.ensure(name, request.python.map(_.packages).getOrElse(Nil))
-    environmentBuild(request.rid, request.vno, status)
-  }
+  def buildEnvironment(request: EnvironmentRequest): EnvironmentBuild =
+    UnitApiResource.environmentBuild(
+      request.key,
+      EnvironmentManager.ensure(request.key, request.packages)
+    )
 
   @GET
-  @Path("/environments/{rid}/{vno}")
+  @Path("/environments/{key}")
   @RolesAllowed(Array("SERVICE"))
-  def environmentStatus(
-      @PathParam("rid") rid: String,
-      @PathParam("vno") vno: Int
-  ): EnvironmentBuild = {
-    val name = EnvironmentManager.nameOf(rid, vno)
-    EnvironmentManager.status(name) match {
-      case Some(status) => environmentBuild(rid, vno, status)
+  def environmentStatus(@PathParam("key") key: String): EnvironmentBuild =
+    EnvironmentManager.status(key) match {
+      case Some(status) => UnitApiResource.environmentBuild(key, status)
       case None         => throw new WebApplicationException(Response.Status.NOT_FOUND)
-    }
-  }
-
-  private def environmentBuild(
-      rid: String,
-      vno: Int,
-      status: EnvironmentManager.Status
-  ): EnvironmentBuild =
-    status match {
-      case EnvironmentManager.Ready     => EnvironmentBuild(rid, vno, "ready", None)
-      case EnvironmentManager.Building  => EnvironmentBuild(rid, vno, "building", None)
-      case f: EnvironmentManager.Failed => EnvironmentBuild(rid, vno, "failed", Some(f.message))
-      case _                            => EnvironmentBuild(rid, vno, "failed", Some("unknown"))
     }
 
   @POST
@@ -462,20 +458,18 @@ class UnitApiResource extends LazyLogging {
     }
     val reporter =
       new LineageReporter(request.reporting.lineageUrl, () => UnitIdentity.token(), request.eid)
-    // Environment: build (or confirm) the venv and point every Python UDF at it.
+    // The unit's packages: build (or confirm) their venv and point every Python UDF at it.
     val planNode = request.logicalPlan.deepCopy[JsonNode]()
     request.environment.foreach { env =>
-      val packages = env.python.map(_.packages).getOrElse(Nil)
-      val name = EnvironmentManager.nameOf(env.rid, env.vno)
-      EnvironmentManager.ensure(name, packages) match {
-        case f: EnvironmentManager.Failed =>
-          reporter.runStatus("failed", Some(s"environment ${env.rid}@${env.vno}: ${f.message}"))
+      EnvironmentManager.ensure(env.key, env.packages) match {
+        case EnvironmentManager.Failed(message) =>
+          reporter.runStatus("failed", Some(s"installing ${env.packages.mkString(", ")}: $message"))
           reporter.close()
           throw new WebApplicationException(
-            s"environment build failed: ${f.message}",
+            s"environment build failed: $message",
             Response.Status.BAD_REQUEST
           )
-        case _ => applyEnvironment(planNode, name)
+        case _ => applyEnvironment(planNode, env.key)
       }
     }
     val plan = objectMapper.treeToValue(planNode, classOf[LogicalPlanPojo])

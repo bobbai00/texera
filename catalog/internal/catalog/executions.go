@@ -26,7 +26,6 @@ type RunInput struct {
 	Vno           int
 	ComputingUnit string
 	Warehouse     string
-	Environment   string
 	Parameters    map[string]any
 	WaitSeconds   int
 	Name          string
@@ -35,16 +34,15 @@ type RunInput struct {
 }
 
 var (
-	workflowKind, _    = kinds.ByName("workflow")
-	executionKind, _   = kinds.ByName("execution")
-	datasetKind, _     = kinds.ByName("dataset")
-	unitKind, _        = kinds.ByName("computing-unit")
-	environmentKind, _ = kinds.ByName("environment")
+	workflowKind, _  = kinds.ByName("workflow")
+	executionKind, _ = kinds.ByName("execution")
+	datasetKind, _   = kinds.ByName("dataset")
+	unitKind, _      = kinds.ByName("computing-unit")
 )
 
 // Run starts an execution of a workflow version in three phases. Authorize: the caller may
-// execute the workflow and, once the plan is compiled, run on the unit, read every dataset,
-// operator and environment it names and use every credential; nothing is written before that
+// execute the workflow and, once the plan is compiled, run on the unit, read every dataset
+// and operator it names and use every credential; nothing is written before that
 // passes. Compile: the version becomes a plan that is data, the same one a dry run returns.
 // Materialize: the execution is stored with its plan, its namespace is opened in the lake,
 // the inputs are presigned and the credentials leased into a copy of the plan that goes to the
@@ -98,12 +96,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	if err != nil {
 		return nil, err
 	}
-	fallback := firstNonEmpty(uriString(spec.DefaultEnvironment), uriString(project.DefaultEnvironment), uriString(settings.Defaults.Environment))
-	env, envVno, err := s.resolveEnvironment(ctx, in.Environment, fallback, c.Pins)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.authorizePlan(ctx, caller, c, unit, warehouse, env); err != nil {
+	if err := s.authorizePlan(ctx, caller, c, unit, warehouse); err != nil {
 		return nil, err
 	}
 	client, status, err := s.unitClient(ctx, unit)
@@ -126,11 +119,9 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	rid := uuid.New()
 	namespace := executionNamespace(rid)
 	plan := c.apiPlan(namespace)
-	execSpec := api.ExecutionSpec{Workflow: api.Uri(URI(wf).WithVersion(version.Vno).String()), ComputingUnit: api.Uri(unitURI), Warehouse: api.Uri(URI(warehouse).String()), Plan: &plan}
-	if env != nil {
-		e := api.Uri(URI(env).WithVersion(envVno).String())
-		execSpec.Environment = &e
-	}
+	// What the unit has is part of what ran: the profile its node was made from, its size and
+	// its packages.
+	execSpec := api.ExecutionSpec{Workflow: api.Uri(URI(wf).WithVersion(version.Vno).String()), ComputingUnit: api.Uri(unitURI), Warehouse: api.Uri(URI(warehouse).String()), Plan: &plan, Computing: computingRecord(unit)}
 	if inputs := c.inputURIs(); len(inputs) > 0 {
 		uris := make([]api.Uri, len(inputs))
 		for i, u := range inputs {
@@ -223,10 +214,11 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 		params := in.Parameters
 		req.Parameters = &params
 	}
-	if env != nil {
-		req.Environment = environmentRequest(ctx, s, env, envVno)
-	}
-	go s.drive(exec.RID, client, req, env, envVno, unit)
+	// The unit's packages: installed once on the unit for this list, before the run starts.
+	var unitSpec api.ComputingUnitSpec
+	_ = json.Unmarshal(unit.Spec, &unitSpec)
+	req.Environment = environmentFor(masterOf(&unitSpec))
+	go s.drive(exec.RID, client, req, unit)
 
 	if in.WaitSeconds > 0 {
 		return s.waitForExecution(ctx, exec.RID, time.Duration(in.WaitSeconds)*time.Second)
@@ -253,25 +245,8 @@ func createNumbered(base string, create func(name string) (*store.Resource, erro
 	}
 }
 
-func environmentRequest(ctx context.Context, s *Service, env *store.Resource, vno int) *engine.EnvironmentRequest {
-	v, err := s.Store.GetVersion(ctx, env.RID, vno)
-	if err != nil {
-		return nil
-	}
-	var spec api.EnvironmentSpec
-	_ = json.Unmarshal(v.Content, &spec)
-	req := &engine.EnvironmentRequest{Rid: env.RID.String(), Vno: int32(vno)}
-	if spec.Python != nil {
-		req.Python = &struct {
-			Packages []string `json:"packages"`
-			Version  *string  `json:"version,omitempty"`
-		}{Packages: spec.Python.Packages, Version: spec.Python.Version}
-	}
-	return req
-}
-
-// drive builds the environment and starts the execution; failures become its status.
-func (s *Service) drive(execRID uuid.UUID, client *engine.Unit, req engine.ExecutionStartRequest, env *store.Resource, envVno int, unit *store.Resource) {
+// drive installs the unit's packages and starts the execution; failures become its status.
+func (s *Service) drive(execRID uuid.UUID, client *engine.Unit, req engine.ExecutionStartRequest, unit *store.Resource) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	fail := func(msg string) {
@@ -279,72 +254,18 @@ func (s *Service) drive(execRID uuid.UUID, client *engine.Unit, req engine.Execu
 	}
 	if req.Environment != nil {
 		s.setPhase(ctx, execRID, api.ExecutionPhaseProvisioning, nil)
-		if err := s.ensureEnvironment(ctx, client, env, envVno, *req.Environment, unit); err != nil {
-			fail("environment: " + err.Error())
+		installed, err := s.buildEnvironment(ctx, client, *req.Environment)
+		if err != nil {
+			fail("the unit's packages: " + err.Error())
 			return
 		}
+		s.recordInstalled(ctx, unit.RID, execRID, req.Environment.Packages, installed)
 	}
 	if _, err := client.Start(ctx, req); err != nil {
 		fail("start: " + err.Error())
 		return
 	}
 	s.setPhase(ctx, execRID, api.ExecutionPhaseRunning, nil)
-}
-
-// ensureEnvironment asks the unit to build the environment version and waits for it.
-func (s *Service) ensureEnvironment(ctx context.Context, client *engine.Unit, env *store.Resource, vno int, req engine.EnvironmentRequest, unit *store.Resource) error {
-	record := func(state, message string) {
-		s.recordBuild(ctx, env, vno, URI(unit).String(), state, message)
-	}
-	build, err := client.BuildEnvironment(ctx, req)
-	if err != nil {
-		record("failed", err.Error())
-		return err
-	}
-	record(string(build.Status), deref(build.Message))
-	for build.Status == engine.EnvironmentBuildStatusBuilding {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(3 * time.Second):
-		}
-		build, err = client.EnvironmentStatus(ctx, req.Rid, req.Vno)
-		if err != nil {
-			record("failed", err.Error())
-			return err
-		}
-		record(string(build.Status), deref(build.Message))
-	}
-	if build.Status == engine.EnvironmentBuildStatusFailed {
-		return fmt.Errorf("build failed: %s", deref(build.Message))
-	}
-	return nil
-}
-
-// recordBuild keeps the environment's builds in its status, one entry per unit and version.
-func (s *Service) recordBuild(ctx context.Context, env *store.Resource, vno int, unitURI, state, message string) {
-	r, err := s.Store.GetResource(ctx, env.RID)
-	if err != nil {
-		return
-	}
-	var status api.EnvironmentStatus
-	_ = json.Unmarshal(r.Status, &status)
-	builds := []api.EnvironmentBuild{}
-	if status.Builds != nil {
-		for _, b := range *status.Builds {
-			if string(b.ComputingUnit) == unitURI && int(b.Vno) == vno {
-				continue
-			}
-			builds = append(builds, b)
-		}
-	}
-	entry := api.EnvironmentBuild{ComputingUnit: api.Uri(unitURI), Vno: api.Vno(vno), State: api.EnvironmentBuildState(state), At: time.Now().UTC()}
-	if message != "" {
-		entry.Message = &message
-	}
-	builds = append(builds, entry)
-	status.Builds = &builds
-	_, _ = s.Store.UpdateStatus(ctx, env.RID, mustJSON(status))
 }
 
 // statusLocks serialize status updates per execution, since the unit's events arrive concurrently.

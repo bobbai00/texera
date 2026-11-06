@@ -101,7 +101,7 @@ func shippedAgent() (shipped, error) {
 }
 
 // Seed creates the platform principal, the system project, the settings, and the built-in
-// resources: the dev stack's unit, the default environment, the catalog's MCP server and the
+// resources: the dev stack's unit and the profile it is made from, the catalog's MCP server and the
 // bio add-on, the credentials and the model endpoint, the shipped skills and the agent. It
 // makes the platform's project what this release ships: a built-in whose shipped spec changed
 // gets a new version authored by the platform, and one an older release shipped is removed.
@@ -134,9 +134,22 @@ func (s *Service) Seed(ctx context.Context) error {
 		return r, err
 	}
 
-	var unitURI, envURI string
+	// The platform's profile: a node of 2 GB with the Python libraries most analyses use. The
+	// deployment's unit is made from it.
+	memory, packages := "2Gi", []string{"pandas", "numpy", "scikit-learn"}
+	profile, err := ensure("profile", "python-default", "2 GB with pandas, numpy and scikit-learn", api.ProfileSpec{Memory: &memory, Packages: &packages}, nil)
+	if err != nil {
+		return err
+	}
+	madeFrom := api.Uri(URI(profile).WithVersion(profile.HeadVno).String())
+
+	var unitURI string
 	if s.Config.StaticUnitEndpoint != "" {
-		spec := api.ComputingUnitSpec{Provider: api.UnitProviderStatic, Endpoint: &s.Config.StaticUnitEndpoint}
+		spec := api.ComputingUnitSpec{
+			Provider:       api.UnitProviderStatic,
+			Endpoint:       &s.Config.StaticUnitEndpoint,
+			ComputingNodes: &[]api.ComputingNodeSpec{{Name: "master", Role: api.ComputingNodeSpecRoleMaster, Profile: &madeFrom, Memory: &memory, Packages: &packages}},
+		}
 		if s.Config.StaticUnitClientID != "" {
 			spec.ClientId = &s.Config.StaticUnitClientID
 		}
@@ -172,12 +185,6 @@ func (s *Service) Seed(ctx context.Context) error {
 	} else if n > 0 {
 		s.Log.Info("executions given their warehouse", "executions", n)
 	}
-	env, err := ensure("environment", "python-default", "Python with pandas, numpy and scikit-learn",
-		api.EnvironmentSpec{Python: &api.PythonEnvironment{Packages: []string{"pandas", "numpy", "scikit-learn"}}}, nil)
-	if err != nil {
-		return err
-	}
-	envURI = URI(env).String()
 
 	catalogMcp, err := ensure("mcp-server", "catalog", "The Texera MCP server: every resource with its versions, lineage and sharing, dataset files, operators, computing units, and building and running workflows",
 		api.McpServerSpec{Url: s.ownMcpURL()}, nil)
@@ -260,7 +267,7 @@ func (s *Service) Seed(ctx context.Context) error {
 		return err
 	}
 
-	settings := api.SettingsSpec{Branding: api.Branding{Name: s.Config.BrandName}, Defaults: api.Defaults{AgentTemplate: uriPtr(URI(agent).String()), Environment: uriPtr(envURI), ModelEndpoint: uriPtr(URI(model).String()), Warehouse: uriPtr(URI(warehouse).String())}}
+	settings := api.SettingsSpec{Branding: api.Branding{Name: s.Config.BrandName}, Defaults: api.Defaults{AgentTemplate: uriPtr(URI(agent).String()), ModelEndpoint: uriPtr(URI(model).String()), Profile: uriPtr(URI(profile).String()), Warehouse: uriPtr(URI(warehouse).String())}}
 	if unitURI != "" {
 		settings.Defaults.ComputingUnit = uriPtr(unitURI)
 	}
@@ -301,7 +308,7 @@ func (s *Service) retire(ctx context.Context, project *store.Resource, platform 
 // The platform's project: what it is called and what it says it holds.
 const (
 	systemProjectName        = "Built-in"
-	systemProjectDescription = "What the platform ships: the agent, its skills and MCP servers, the model endpoint, the default computing unit and environment, and the engine's operators. Everyone can use them; they change with a release."
+	systemProjectDescription = "What the platform ships: the agent, its skills and MCP servers, the model endpoint, the default computing unit and its profile, and the engine's operators. Everyone can use them; they change with a release."
 )
 
 // ensureSystemProject returns the platform's project, creating it at the first start. It is
@@ -415,8 +422,8 @@ func (s *Service) ensureSettings(ctx context.Context, caller *auth.Caller, spec 
 			}
 		}
 		fill(&current.Defaults.AgentTemplate, spec.Defaults.AgentTemplate)
-		fill(&current.Defaults.Environment, spec.Defaults.Environment)
 		fill(&current.Defaults.ComputingUnit, spec.Defaults.ComputingUnit)
+		fill(&current.Defaults.Profile, spec.Defaults.Profile)
 		fill(&current.Defaults.Warehouse, spec.Defaults.Warehouse)
 		fill(&current.Defaults.ModelEndpoint, spec.Defaults.ModelEndpoint)
 		if changed {

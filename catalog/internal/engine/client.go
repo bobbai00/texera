@@ -178,15 +178,15 @@ func (u *Unit) Result(ctx context.Context, eid, opid, port, table, namespace, wa
 	return &page, nil
 }
 
-// BuildEnvironment asks the unit to build an environment version.
+// BuildEnvironment asks the unit to build the environment of a list of packages.
 func (u *Unit) BuildEnvironment(ctx context.Context, req EnvironmentRequest) (*EnvironmentBuild, error) {
 	resp, err := u.client.EnvironmentsBuild(ctx, req)
 	return decode[EnvironmentBuild](resp, err)
 }
 
-// EnvironmentStatus reads the state of an environment build on the unit.
-func (u *Unit) EnvironmentStatus(ctx context.Context, rid string, vno int32) (*EnvironmentBuild, error) {
-	resp, err := u.client.EnvironmentsStatus(ctx, rid, vno)
+// EnvironmentStatus reads the state of an environment build on the unit, by its key.
+func (u *Unit) EnvironmentStatus(ctx context.Context, key string) (*EnvironmentBuild, error) {
+	resp, err := u.client.EnvironmentsStatus(ctx, key)
 	return decode[EnvironmentBuild](resp, err)
 }
 

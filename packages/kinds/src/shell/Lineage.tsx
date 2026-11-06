@@ -21,6 +21,9 @@ const factsOf = (x: Execution | Resource): ExecutionFacts => {
     createdAt: x.metadata.createdAt,
     ...(status?.startedAt ? { startedAt: status.startedAt } : {}),
     ...(status?.finishedAt ? { finishedAt: status.finishedAt } : {}),
+    ...(spec.computingUnit ? { unit: spec.computingUnit } : {}),
+    ...(spec.computing?.profile ? { profile: spec.computing.profile } : {}),
+    ...(spec.warehouse ? { warehouse: spec.warehouse } : {}),
   };
 };
 

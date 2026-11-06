@@ -51,6 +51,10 @@ func (s *Service) prepareSpec(ctx context.Context, caller *auth.Caller, k kinds.
 			return nil, err
 		}
 	}
+	if k.Name == "computing-unit" {
+		// A node made from a profile is what the profile says, where it says nothing itself.
+		return s.nodesFromProfiles(ctx, caller, normalized)
+	}
 	return normalized, nil
 }
 
@@ -158,17 +162,24 @@ func (s *Service) beforeUpdate(ctx context.Context, r *store.Resource, spec json
 }
 
 // afterUpdate applies a changed spec outside the store: a provisioned unit rolls to it at
-// once, a static unit's identity follows its client, a warehouse's key reaches the lake.
-func (s *Service) afterUpdate(ctx context.Context, r *store.Resource) error {
+// once, a static unit's identity follows its client, a warehouse's key reaches the lake. A
+// unit given other packages has none of them installed until a run installs them.
+func (s *Service) afterUpdate(ctx context.Context, before, r *store.Resource) error {
 	if r.Kind == "warehouse" {
 		return s.provisionWarehouse(ctx, r)
 	}
 	if r.Kind != "computing-unit" {
 		return nil
 	}
-	var spec api.ComputingUnitSpec
+	var was, spec api.ComputingUnitSpec
+	_ = json.Unmarshal(before.Spec, &was)
 	if err := json.Unmarshal(r.Spec, &spec); err != nil {
 		return err
+	}
+	if environmentKey(&was) != environmentKey(&spec) {
+		if err := s.forgetInstalled(ctx, r); err != nil {
+			return err
+		}
 	}
 	switch spec.Provider {
 	case api.UnitProviderKubernetes:

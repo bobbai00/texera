@@ -30,7 +30,7 @@ paths:
   /api/environments:
     post:
       operationId: Environments_build
-      description: Build (or confirm) the Python environment for an environment version on this unit.
+      description: Build (or confirm) the Python environment of a list of packages on this unit.
       parameters: []
       responses:
         '200':
@@ -51,21 +51,15 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/EnvironmentRequest'
-  /api/environments/{rid}/{vno}:
+  /api/environments/{key}:
     get:
       operationId: Environments_status
       parameters:
-        - name: rid
+        - name: key
           in: path
           required: true
           schema:
             type: string
-        - name: vno
-          in: path
-          required: true
-          schema:
-            type: integer
-            format: int32
       responses:
         '200':
           description: The request has succeeded.
@@ -334,15 +328,11 @@ components:
     EnvironmentBuild:
       type: object
       required:
-        - rid
-        - vno
+        - key
         - status
       properties:
-        rid:
+        key:
           type: string
-        vno:
-          type: integer
-          format: int32
         status:
           type: string
           enum:
@@ -351,28 +341,26 @@ components:
             - failed
         message:
           type: string
+        installed:
+          type: array
+          items:
+            type: string
+          description: "Once built, each package asked for as the environment has it, installed or already in the unit's runtime: `pandas==2.2.3`."
     EnvironmentRequest:
       type: object
       required:
-        - rid
-        - vno
+        - key
+        - packages
       properties:
-        rid:
+        key:
           type: string
-        vno:
-          type: integer
-          format: int32
-        python:
-          type: object
-          properties:
-            version:
-              type: string
-            packages:
-              type: array
-              items:
-                type: string
-          required:
-            - packages
+          description: "The environment's name on the unit, which the catalog derives from the packages: the same list, the same key."
+        packages:
+          type: array
+          items:
+            type: string
+          description: Package requirements, PEP 508 lines.
+      description: The Python packages a unit adds to its runtime. The same packages are the same environment on a unit, built once.
     Error:
       type: object
       required:
@@ -616,9 +604,6 @@ components:
             $ref: '#/components/schemas/OutputTable'
           description: One table per output port, named by the catalog; the engine writes each port's result under its name and reports it as `namespace.table`.
       description: Where an execution's results go in the lake. The unit knows the lake's address from its own configuration; the catalog names the warehouse and the namespace.
-    Rid:
-      type: string
-      description: Resource id, a UUID.
     RowPage:
       type: object
       required:
@@ -646,8 +631,6 @@ components:
     RuntimeSpec:
       type: object
       properties:
-        environment:
-          $ref: '#/components/schemas/Rid'
         isolation:
           type: object
           additionalProperties: {}

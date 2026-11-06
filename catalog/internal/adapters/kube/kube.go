@@ -39,6 +39,8 @@ const (
 	keyClientSecret = "client-secret"
 	envClientID     = "STORAGE_ICEBERG_CATALOG_REST_CLIENT_ID"
 	envClientSecret = "STORAGE_ICEBERG_CATALOG_REST_CLIENT_SECRET"
+	// The GPUs a node reserves, as NVIDIA's device plugin names them.
+	gpuResource corev1.ResourceName = "nvidia.com/gpu"
 )
 
 // Options configure the units the adapter creates.
@@ -171,8 +173,8 @@ func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.De
 	if spec.Engine != nil && spec.Engine.Image != nil && *spec.Engine.Image != "" {
 		image = *spec.Engine.Image
 	}
-	requests := corev1.ResourceList{}
-	memory, cpu := p.opts.Memory, ""
+	requests, limits := corev1.ResourceList{}, corev1.ResourceList{}
+	memory, cpu, gpu := p.opts.Memory, "", int32(0)
 	if spec.ComputingNodes != nil {
 		for _, n := range *spec.ComputingNodes {
 			if n.Role == api.ComputingNodeSpecRoleMaster {
@@ -181,6 +183,9 @@ func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.De
 				}
 				if n.Cpu != nil && *n.Cpu != "" {
 					cpu = *n.Cpu
+				}
+				if n.Gpu != nil {
+					gpu = *n.Gpu
 				}
 			}
 		}
@@ -192,6 +197,12 @@ func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.De
 		if q, err := resource.ParseQuantity(cpu); err == nil {
 			requests[corev1.ResourceCPU] = q
 		}
+	}
+	// A GPU is an extended resource: reserved by its limit, which is also its request.
+	if gpu > 0 {
+		limits[gpuResource] = *resource.NewQuantity(int64(gpu), resource.DecimalSI)
+	} else {
+		limits = nil
 	}
 	env := []corev1.EnvVar{{Name: "TEXERA_UNIT_PORT", Value: fmt.Sprint(port)}}
 	for k, v := range p.opts.Env {
@@ -226,7 +237,7 @@ func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.De
 							PeriodSeconds:    5,
 							FailureThreshold: 60,
 						},
-						Resources: corev1.ResourceRequirements{Requests: requests},
+						Resources: corev1.ResourceRequirements{Requests: requests, Limits: limits},
 					}},
 				},
 			},
@@ -245,6 +256,7 @@ func drifted(existing, desired *appsv1.Deployment) bool {
 	for i := range want {
 		if have[i].Image != want[i].Image ||
 			!apiequality.Semantic.DeepEqual(have[i].Resources.Requests, want[i].Resources.Requests) ||
+			!apiequality.Semantic.DeepEqual(have[i].Resources.Limits, want[i].Resources.Limits) ||
 			!apiequality.Semantic.DeepEqual(have[i].Env, want[i].Env) {
 			return true
 		}

@@ -37,6 +37,19 @@ class ProcessTupleOperator(UDFOperatorV2):
         yield tuple_
 '''
 
+# The same rank without a package the platform lacks.
+UDF_ORDINAL = '''from pytexera import *
+
+
+class ProcessTupleOperator(UDFOperatorV2):
+    @overrides
+    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+        n = int(tuple_["Id"])
+        suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+        tuple_["rank"] = f"{n}{suffix}"
+        yield tuple_
+'''
+
 UDF_AUTHED = '''from pytexera import *
 
 

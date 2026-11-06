@@ -33,7 +33,6 @@ model Error {
 }
 
 model RuntimeSpec {
-  environment?: Rid;
   isolation?: Record<unknown>;
   resources?: Record<unknown>;
 }

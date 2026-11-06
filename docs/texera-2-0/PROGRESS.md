@@ -2,6 +2,52 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-06 (session 12, part C): computing profiles replace environments; where a run goes, said at Run and in lineage
+
+Part C of the work the user decided on Nov 6. Their words: "maybe we call it a 'computing
+profile'", "the profile is on node of that unit, i.e. how many cpu / gpu / memory, how many
+additional packages", "whever save that unit as profile then create version or new profile",
+"go with minimum clean design"; and, before starting, that the agent must still be able to
+make a unit from a profile and pick the warehouse a run keeps its results in, and work on the
+same canvas as a person.
+
+What was decided:
+- **A profile is what a node is made of**: memory, CPU, GPUs and the Python packages it adds
+  to the platform's runtime, versioned. It replaces the environment kind; nothing chooses
+  packages per run any more (no workflow, project, settings, chat or operator environment).
+- **A unit is made from a profile version and may change since**; its page says how it
+  differs. **Saving makes the version**: "Save as profile" is the next version of its profile
+  (when the person may change it) or a new profile, packages pinned to what the unit installed.
+- **An execution records what the unit had**: the profile version, the size, the runtime, each
+  package as installed (`spec.computing`).
+- **Where a run goes is said in words**: `on <unit> (<profile> vN) · results in <warehouse>`
+  beside Run, with the warehouse to pick, on the execution's page and on its lineage card.
+
+Done:
+- **The contract**: kind `profile` (`ProfileSpec`); a node names its `profile` and lists its
+  `packages`; a unit's status says what it `installed`; `POST /computing-units/from-profile`
+  (`create_computing_unit`, with `waitSeconds`) and `POST /computing-units/{rid}/profile`
+  (`save_unit_as_profile`); `ExecutionSpec.computing`; settings `defaults.profile`. Gone:
+  `environment` (kind, routes, every field that named one), `RuntimeSpec.environment`.
+- **The catalog** (`profiles.go`): a unit's spec gets its node from the profile it names where
+  the node says nothing, the version pinned; a run asks the unit for the environment of its
+  packages, keyed by the list (the same list is one environment on a unit, built once), waits
+  for it in `provisioning`, and records what was installed in the unit's status and the
+  execution's record; a unit given other packages forgets what it installed. Saving a unit as
+  a profile makes the next version of a profile or a new one (the platform's only as new),
+  and moves the unit to it when the caller may change the unit. The seed ships
+  `python-default` (2 GB, pandas, numpy, scikit-learn), the unit made from it, and the default.
+- **The engine**: `EnvironmentManager` keyed by that list, tries a failed build again, and
+  answers each asked package as the environment has it, installed or already in the runtime.
+- **Kubernetes**: a node's GPUs are reserved (`nvidia.com/gpu`).
+- **The migration** (`0007_profiles.sql`): an environment becomes a profile with its packages,
+  in every version; what named one goes; a reference to one names the profile.
+- **The app**: the profile kind; the unit's "Node" tab (made from, how it differs, size and
+  packages to change, "Save as profile"); "New computing unit" from a profile; the Run bar's
+  sentence and warehouse picker; the execution's "Ran" section; the lineage card's third line.
+- **The agent**: its Python skill and the server's instructions say to make a unit from a
+  profile that has a package, and to wait for it.
+
 ## 2026-11-06 (session 12, part B): where operators sit, in versions; one layout for every graph; people and the agent on one canvas
 
 Part B of the canvas work the user decided on Nov 6. Their words on the layout: "I am

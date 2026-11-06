@@ -45,20 +45,25 @@ func Handler(api http.Handler, resolver *texauth.Resolver, publicURL string, log
 
 // instructions is what the server tells a client about itself: every tool, by what it is for.
 const instructions = `The Texera catalog: every resource and what can be done with it. A resource (a workflow, dataset,
-execution, skill, MCP server, computing unit, warehouse, environment, operator, conversation,
+execution, skill, MCP server, computing unit, profile, warehouse, operator, conversation,
 credential or model endpoint) has a texera:// URI, versions, grants and lineage. whoami says who is calling.
 search_resources finds things by kind, project or text; resolve_uri and get_resource read one;
 list_versions and get_version read history; get_lineage shows where a version came from and what
 was made from it; grant_access shares a resource with a principal found by search_principals.
 Datasets are versioned files: list_dataset_files and read_dataset_file look at a version,
 commit_dataset_version makes one. list_operators, with q, gives an operator's property schema
-and ports; list_computing_units the units the caller may run on.
+and ports; list_computing_units the units the caller may run on. A profile is what a unit's node
+is made of, its size and the Python packages it adds: create_computing_unit makes a unit from a
+profile (search_resources with kind profile lists them; waitSeconds waits until it is ready, and
+a run on a unit that is not is refused), and save_unit_as_profile saves a unit, its packages
+pinned as installed, as the next version of a profile or a new one.
 A workflow is a dataflow graph of operators that runs on a computing unit and keeps its results
 in a warehouse; every edit is a version, and running it makes an execution with lineage. create_workflow takes a spec {operators,
 links} where a scan's fileName is texera://datasets/<rid>@<vno>/files/<path>; get_workflow reads
 it; edit_workflow applies an RFC 6902 patch as a new version; validate_workflow compiles it,
-until it reports ok; run_workflow with waitSeconds starts an execution and get_port_result reads
-its rows: results live with the execution. get_execution follows one that is still going;
+until it reports ok; run_workflow with waitSeconds starts an execution (on the computing unit and
+in the warehouse it names, else the defaults; upTo runs only what leads to one operator) and
+get_port_result reads its rows: results live with the execution. get_execution follows one that is still going;
 pause_execution and resume_execution hold and continue it.`
 
 // maxToolTextBytes bounds what a tool returns to a model.

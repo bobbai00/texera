@@ -1,7 +1,7 @@
 # Texera frontend
 
 The one React app of Texera 2.0: a chat-first workspace where every kind of the catalog
-(workflows, executions, datasets, models, operators, environments, computing units,
+(workflows, executions, datasets, models, operators, computing units, profiles,
 warehouses, agents, skills, MCP servers, model endpoints, credentials, projects, settings) is
 a card, a side panel
 and a page. It talks to the catalog through the generated client and to agents through AG-UI;
@@ -194,7 +194,8 @@ execution, an execution's results folded in, parallel arrows merged) and "Data f
 versions, executions and one card per result). Data runs left to right, so `used`,
 `references`, `derivedFrom` and `reused` are drawn the reverse of how they are stored; an arrow
 is dashed when a spec only names the thing. A workflow's two most recent executions are cards
-and earlier ones fold into one. `layout.ts` is a layered layout with no dependency.
+and earlier ones fold into one. `layout.ts` places the cards with the app's one layered layout
+(`layered` in `workflow-model`, on dagre) and the words of the arrows.
 
 ## Projects and built-ins
 
@@ -277,4 +278,6 @@ a failure.
 - The access token stays in memory (oidc-client-ts, sessionStorage for the tab); it goes in the
   `Authorization` header and nowhere else.
 - Workflow-produced HTML renders only inside the opaque-origin `SandboxedFrame`.
-- Apache-2.0, MIT and BSD dependencies only, pinned.
+- Apache-2.0, MIT and BSD dependencies only, pinned. A release lists what the build ships in a
+  LICENSE-binary, which this app does not have yet: `@dagrejs/dagre` and `@dagrejs/graphlib`
+  (MIT) are among what it will list.

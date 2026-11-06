@@ -92,23 +92,23 @@ type EngineCompileRequest struct {
 
 // EnvironmentBuild defines model for EnvironmentBuild.
 type EnvironmentBuild struct {
-	Message *string                `json:"message,omitempty"`
-	Rid     string                 `json:"rid"`
-	Status  EnvironmentBuildStatus `json:"status"`
-	Vno     int32                  `json:"vno"`
+	// Installed Once built, each package asked for as the environment has it, installed or already in the unit's runtime: `pandas==2.2.3`.
+	Installed *[]string              `json:"installed,omitempty"`
+	Key       string                 `json:"key"`
+	Message   *string                `json:"message,omitempty"`
+	Status    EnvironmentBuildStatus `json:"status"`
 }
 
 // EnvironmentBuildStatus defines model for EnvironmentBuild.Status.
 type EnvironmentBuildStatus string
 
-// EnvironmentRequest defines model for EnvironmentRequest.
+// EnvironmentRequest The Python packages a unit adds to its runtime. The same packages are the same environment on a unit, built once.
 type EnvironmentRequest struct {
-	Python *struct {
-		Packages []string `json:"packages"`
-		Version  *string  `json:"version,omitempty"`
-	} `json:"python,omitempty"`
-	Rid string `json:"rid"`
-	Vno int32  `json:"vno"`
+	// Key The environment's name on the unit, which the catalog derives from the packages: the same list, the same key.
+	Key string `json:"key"`
+
+	// Packages Package requirements, PEP 508 lines.
+	Packages []string `json:"packages"`
 }
 
 // Error defines model for Error.
@@ -126,8 +126,10 @@ type ExecutionAck struct {
 
 // ExecutionStartRequest defines model for ExecutionStartRequest.
 type ExecutionStartRequest struct {
-	Actor       string              `json:"actor"`
-	Eid         string              `json:"eid"`
+	Actor string `json:"actor"`
+	Eid   string `json:"eid"`
+
+	// Environment The Python packages a unit adds to its runtime. The same packages are the same environment on a unit, built once.
 	Environment *EnvironmentRequest `json:"environment,omitempty"`
 	Inputs      *[]ResolvedInput    `json:"inputs,omitempty"`
 
@@ -243,9 +245,6 @@ type ResultStore struct {
 	Warehouse string `json:"warehouse"`
 }
 
-// Rid Resource id, a UUID.
-type Rid = string
-
 // RowPage defines model for RowPage.
 type RowPage struct {
 	Offset int64 `json:"offset"`
@@ -260,10 +259,8 @@ type RowPage struct {
 
 // RuntimeSpec defines model for RuntimeSpec.
 type RuntimeSpec struct {
-	// Environment Resource id, a UUID.
-	Environment *Rid                    `json:"environment,omitempty"`
-	Isolation   *map[string]interface{} `json:"isolation,omitempty"`
-	Resources   *map[string]interface{} `json:"resources,omitempty"`
+	Isolation *map[string]interface{} `json:"isolation,omitempty"`
+	Resources *map[string]interface{} `json:"resources,omitempty"`
 }
 
 // UnitHealth defines model for UnitHealth.
@@ -375,17 +372,17 @@ type ClientInterface interface {
 	// EnvironmentsBuildWithBody performs a POST /api/environments (the `EnvironmentsBuild` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Build (or confirm) the Python environment for an environment version on this unit.
+	// Build (or confirm) the Python environment of a list of packages on this unit.
 	EnvironmentsBuildWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// EnvironmentsBuild performs a POST /api/environments (the `EnvironmentsBuild` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Build (or confirm) the Python environment for an environment version on this unit.
+	// Build (or confirm) the Python environment of a list of packages on this unit.
 	EnvironmentsBuild(ctx context.Context, body EnvironmentsBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EnvironmentsStatus performs a GET /api/environments/{rid}/{vno} (the `EnvironmentsStatus` operationId) request.
-	EnvironmentsStatus(ctx context.Context, rid string, vno int32, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// EnvironmentsStatus performs a GET /api/environments/{key} (the `EnvironmentsStatus` operationId) request.
+	EnvironmentsStatus(ctx context.Context, key string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecutionsStartWithBody performs a POST /api/executions (the `ExecutionsStart` operationId) request,
 	// with any type of body and a specified content type.
@@ -458,7 +455,7 @@ func (c *Client) CompileCompile(ctx context.Context, body CompileCompileJSONRequ
 // EnvironmentsBuildWithBody performs a POST /api/environments (the `EnvironmentsBuild` operationId) request,
 // with any type of body and a specified content type.
 //
-// Build (or confirm) the Python environment for an environment version on this unit.
+// Build (or confirm) the Python environment of a list of packages on this unit.
 func (c *Client) EnvironmentsBuildWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEnvironmentsBuildRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -474,7 +471,7 @@ func (c *Client) EnvironmentsBuildWithBody(ctx context.Context, contentType stri
 // EnvironmentsBuild performs a POST /api/environments (the `EnvironmentsBuild` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Build (or confirm) the Python environment for an environment version on this unit.
+// Build (or confirm) the Python environment of a list of packages on this unit.
 func (c *Client) EnvironmentsBuild(ctx context.Context, body EnvironmentsBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEnvironmentsBuildRequest(c.Server, body)
 	if err != nil {
@@ -487,9 +484,9 @@ func (c *Client) EnvironmentsBuild(ctx context.Context, body EnvironmentsBuildJS
 	return c.Client.Do(req)
 }
 
-// EnvironmentsStatus performs a GET /api/environments/{rid}/{vno} (the `EnvironmentsStatus` operationId) request.
-func (c *Client) EnvironmentsStatus(ctx context.Context, rid string, vno int32, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewEnvironmentsStatusRequest(c.Server, rid, vno)
+// EnvironmentsStatus performs a GET /api/environments/{key} (the `EnvironmentsStatus` operationId) request.
+func (c *Client) EnvironmentsStatus(ctx context.Context, key string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEnvironmentsStatusRequest(c.Server, key)
 	if err != nil {
 		return nil, err
 	}
@@ -710,19 +707,12 @@ func NewEnvironmentsBuildRequestWithBody(server string, contentType string, body
 }
 
 // NewEnvironmentsStatusRequest constructs an http.Request for the EnvironmentsStatus method
-func NewEnvironmentsStatusRequest(server string, rid string, vno int32) (*http.Request, error) {
+func NewEnvironmentsStatusRequest(server string, key string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "rid", rid, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "vno", vno, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int32"})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "key", key, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -732,7 +722,7 @@ func NewEnvironmentsStatusRequest(server string, rid string, vno int32) (*http.R
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/api/environments/%s/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/api/environments/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1160,7 +1150,7 @@ type ClientWithResponsesInterface interface {
 	// EnvironmentsBuildWithBodyWithResponse performs a POST /api/environments (the `EnvironmentsBuild` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Build (or confirm) the Python environment for an environment version on this unit.
+	// Build (or confirm) the Python environment of a list of packages on this unit.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	EnvironmentsBuildWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnvironmentsBuildResponse, error)
@@ -1168,13 +1158,13 @@ type ClientWithResponsesInterface interface {
 	// EnvironmentsBuildWithResponse performs a POST /api/environments (the `EnvironmentsBuild` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Build (or confirm) the Python environment for an environment version on this unit.
+	// Build (or confirm) the Python environment of a list of packages on this unit.
 	EnvironmentsBuildWithResponse(ctx context.Context, body EnvironmentsBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*EnvironmentsBuildResponse, error)
 
-	// EnvironmentsStatusWithResponse performs a GET /api/environments/{rid}/{vno} (the `EnvironmentsStatus` operationId) request.
+	// EnvironmentsStatusWithResponse performs a GET /api/environments/{key} (the `EnvironmentsStatus` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	EnvironmentsStatusWithResponse(ctx context.Context, rid string, vno int32, reqEditors ...RequestEditorFn) (*EnvironmentsStatusResponse, error)
+	EnvironmentsStatusWithResponse(ctx context.Context, key string, reqEditors ...RequestEditorFn) (*EnvironmentsStatusResponse, error)
 
 	// ExecutionsStartWithBodyWithResponse performs a POST /api/executions (the `ExecutionsStart` operationId) request,
 	// with any type of body and a specified content type.
@@ -1778,7 +1768,7 @@ func (c *ClientWithResponses) CompileCompileWithResponse(ctx context.Context, bo
 // EnvironmentsBuildWithBodyWithResponse performs a POST /api/environments (the `EnvironmentsBuild` operationId) request,
 // with any type of body and a specified content type.
 //
-// Build (or confirm) the Python environment for an environment version on this unit.
+// Build (or confirm) the Python environment of a list of packages on this unit.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) EnvironmentsBuildWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnvironmentsBuildResponse, error) {
@@ -1792,7 +1782,7 @@ func (c *ClientWithResponses) EnvironmentsBuildWithBodyWithResponse(ctx context.
 // EnvironmentsBuildWithResponse performs a POST /api/environments (the `EnvironmentsBuild` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Build (or confirm) the Python environment for an environment version on this unit.
+// Build (or confirm) the Python environment of a list of packages on this unit.
 func (c *ClientWithResponses) EnvironmentsBuildWithResponse(ctx context.Context, body EnvironmentsBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*EnvironmentsBuildResponse, error) {
 	rsp, err := c.EnvironmentsBuild(ctx, body, reqEditors...)
 	if err != nil {
@@ -1801,11 +1791,11 @@ func (c *ClientWithResponses) EnvironmentsBuildWithResponse(ctx context.Context,
 	return ParseEnvironmentsBuildResponse(rsp)
 }
 
-// EnvironmentsStatusWithResponse performs a GET /api/environments/{rid}/{vno} (the `EnvironmentsStatus` operationId) request.
+// EnvironmentsStatusWithResponse performs a GET /api/environments/{key} (the `EnvironmentsStatus` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) EnvironmentsStatusWithResponse(ctx context.Context, rid string, vno int32, reqEditors ...RequestEditorFn) (*EnvironmentsStatusResponse, error) {
-	rsp, err := c.EnvironmentsStatus(ctx, rid, vno, reqEditors...)
+func (c *ClientWithResponses) EnvironmentsStatusWithResponse(ctx context.Context, key string, reqEditors ...RequestEditorFn) (*EnvironmentsStatusResponse, error) {
+	rsp, err := c.EnvironmentsStatus(ctx, key, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

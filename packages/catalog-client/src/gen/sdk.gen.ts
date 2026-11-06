@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AgentTemplatesCreateData, AgentTemplatesCreateErrors, AgentTemplatesCreateResponses, AgentTemplatesDeleteData, AgentTemplatesDeleteErrors, AgentTemplatesDeleteResponses, AgentTemplatesListData, AgentTemplatesListErrors, AgentTemplatesListResponses, AgentTemplatesListVersionsData, AgentTemplatesListVersionsErrors, AgentTemplatesListVersionsResponses, AgentTemplatesReadData, AgentTemplatesReadErrors, AgentTemplatesReadResponses, AgentTemplatesReadVersionData, AgentTemplatesReadVersionErrors, AgentTemplatesReadVersionResponses, AgentTemplatesUpdateData, AgentTemplatesUpdateErrors, AgentTemplatesUpdateResponses, ComputingUnitsAvailableData, ComputingUnitsAvailableErrors, ComputingUnitsAvailableResponses, ComputingUnitsCreateData, ComputingUnitsCreateErrors, ComputingUnitsCreateResponses, ComputingUnitsDeleteData, ComputingUnitsDeleteErrors, ComputingUnitsDeleteResponses, ComputingUnitsListData, ComputingUnitsListErrors, ComputingUnitsListNodesData, ComputingUnitsListNodesErrors, ComputingUnitsListNodesResponses, ComputingUnitsListResponses, ComputingUnitsOperatorsData, ComputingUnitsOperatorsErrors, ComputingUnitsOperatorsResponses, ComputingUnitsReadData, ComputingUnitsReadErrors, ComputingUnitsReadNodeData, ComputingUnitsReadNodeErrors, ComputingUnitsReadNodeResponses, ComputingUnitsReadResponses, ComputingUnitsTerminateData, ComputingUnitsTerminateErrors, ComputingUnitsTerminateResponses, ComputingUnitsUpdateData, ComputingUnitsUpdateErrors, ComputingUnitsUpdateResponses, ConversationsAppendMessageData, ConversationsAppendMessageErrors, ConversationsAppendMessageResponses, ConversationsCreateData, ConversationsCreateErrors, ConversationsCreateResponses, ConversationsDeleteData, ConversationsDeleteErrors, ConversationsDeleteResponses, ConversationsEndTurnData, ConversationsEndTurnErrors, ConversationsEndTurnResponses, ConversationsListData, ConversationsListErrors, ConversationsListMessagesData, ConversationsListMessagesErrors, ConversationsListMessagesResponses, ConversationsListResponses, ConversationsReadData, ConversationsReadErrors, ConversationsReadResponses, ConversationsReplaceMessageData, ConversationsReplaceMessageErrors, ConversationsReplaceMessageResponses, ConversationsResourcesData, ConversationsResourcesErrors, ConversationsResourcesResponses, ConversationsSettingsData, ConversationsSettingsErrors, ConversationsSettingsResponses, ConversationsStartTurnData, ConversationsStartTurnErrors, ConversationsStartTurnResponses, ConversationsUpdateData, ConversationsUpdateErrors, ConversationsUpdateResponses, CredentialsCreateData, CredentialsCreateErrors, CredentialsCreateResponses, CredentialsDeleteData, CredentialsDeleteErrors, CredentialsDeleteResponses, CredentialsLeaseData, CredentialsLeaseErrors, CredentialsLeaseResponses, CredentialsListData, CredentialsListErrors, CredentialsListResponses, CredentialsReadData, CredentialsReadErrors, CredentialsReadResponses, CredentialsSetSecretData, CredentialsSetSecretErrors, CredentialsSetSecretResponses, CredentialsUpdateData, CredentialsUpdateErrors, CredentialsUpdateResponses, DatasetsCommitData, DatasetsCommitErrors, DatasetsCommitResponses, DatasetsCreateData, DatasetsCreateErrors, DatasetsCreateResponses, DatasetsDeleteData, DatasetsDeleteErrors, DatasetsDeleteResponses, DatasetsDownloadData, DatasetsDownloadErrors, DatasetsDownloadResponses, DatasetsFilesData, DatasetsFilesErrors, DatasetsFilesResponses, DatasetsLinkData, DatasetsLinkErrors, DatasetsLinkResponses, DatasetsListData, DatasetsListErrors, DatasetsListResponses, DatasetsListVersionsData, DatasetsListVersionsErrors, DatasetsListVersionsResponses, DatasetsReadData, DatasetsReadErrors, DatasetsReadResponses, DatasetsReadVersionData, DatasetsReadVersionErrors, DatasetsReadVersionResponses, DatasetsStagedData, DatasetsStagedErrors, DatasetsStagedResponses, DatasetsUnstageData, DatasetsUnstageErrors, DatasetsUnstageResponses, DatasetsUpdateData, DatasetsUpdateErrors, DatasetsUpdateResponses, DatasetsUploadData, DatasetsUploadErrors, DatasetsUploadResponses, EnvironmentsBuildData, EnvironmentsBuildErrors, EnvironmentsBuildResponses, EnvironmentsCreateData, EnvironmentsCreateErrors, EnvironmentsCreateResponses, EnvironmentsDeleteData, EnvironmentsDeleteErrors, EnvironmentsDeleteResponses, EnvironmentsListData, EnvironmentsListErrors, EnvironmentsListResponses, EnvironmentsListVersionsData, EnvironmentsListVersionsErrors, EnvironmentsListVersionsResponses, EnvironmentsReadData, EnvironmentsReadErrors, EnvironmentsReadResponses, EnvironmentsReadVersionData, EnvironmentsReadVersionErrors, EnvironmentsReadVersionResponses, EnvironmentsUpdateData, EnvironmentsUpdateErrors, EnvironmentsUpdateResponses, EvaluationEvaluateData, EvaluationEvaluateErrors, EvaluationEvaluateResponses, EventsIngestData, EventsIngestErrors, EventsIngestResponses, ExecutionsListData, ExecutionsListErrors, ExecutionsListResponses, McpServersCreateData, McpServersCreateErrors, McpServersCreateResponses, McpServersDeleteData, McpServersDeleteErrors, McpServersDeleteResponses, McpServersListData, McpServersListErrors, McpServersListResponses, McpServersListVersionsData, McpServersListVersionsErrors, McpServersListVersionsResponses, McpServersReadData, McpServersReadErrors, McpServersReadResponses, McpServersReadVersionData, McpServersReadVersionErrors, McpServersReadVersionResponses, McpServersUpdateData, McpServersUpdateErrors, McpServersUpdateResponses, MeGetData, MeGetErrors, MeGetResponses, MeUpdatePreferencesData, MeUpdatePreferencesErrors, MeUpdatePreferencesResponses, ModelEndpointsCreateData, ModelEndpointsCreateErrors, ModelEndpointsCreateResponses, ModelEndpointsDeleteData, ModelEndpointsDeleteErrors, ModelEndpointsDeleteResponses, ModelEndpointsListData, ModelEndpointsListErrors, ModelEndpointsListResponses, ModelEndpointsReadData, ModelEndpointsReadErrors, ModelEndpointsReadResponses, ModelEndpointsUpdateData, ModelEndpointsUpdateErrors, ModelEndpointsUpdateResponses, ModelsCommitData, ModelsCommitErrors, ModelsCommitResponses, ModelsCreateData, ModelsCreateErrors, ModelsCreateResponses, ModelsDeleteData, ModelsDeleteErrors, ModelsDeleteResponses, ModelsDownloadData, ModelsDownloadErrors, ModelsDownloadResponses, ModelsFilesData, ModelsFilesErrors, ModelsFilesResponses, ModelsLinkData, ModelsLinkErrors, ModelsLinkResponses, ModelsListData, ModelsListErrors, ModelsListResponses, ModelsListVersionsData, ModelsListVersionsErrors, ModelsListVersionsResponses, ModelsReadData, ModelsReadErrors, ModelsReadResponses, ModelsReadVersionData, ModelsReadVersionErrors, ModelsReadVersionResponses, ModelsStagedData, ModelsStagedErrors, ModelsStagedResponses, ModelsUnstageData, ModelsUnstageErrors, ModelsUnstageResponses, ModelsUpdateData, ModelsUpdateErrors, ModelsUpdateResponses, ModelsUploadData, ModelsUploadErrors, ModelsUploadResponses, OperatorsCreateData, OperatorsCreateErrors, OperatorsCreateResponses, OperatorsDeleteData, OperatorsDeleteErrors, OperatorsDeleteResponses, OperatorsListData, OperatorsListErrors, OperatorsListResponses, OperatorsListVersionsData, OperatorsListVersionsErrors, OperatorsListVersionsResponses, OperatorsReadData, OperatorsReadErrors, OperatorsReadResponses, OperatorsReadVersionData, OperatorsReadVersionErrors, OperatorsReadVersionResponses, OperatorsUpdateData, OperatorsUpdateErrors, OperatorsUpdateResponses, PrincipalsListData, PrincipalsListErrors, PrincipalsListResponses, PrincipalsReadData, PrincipalsReadErrors, PrincipalsReadResponses, ProjectsChatSettingsData, ProjectsChatSettingsErrors, ProjectsChatSettingsResponses, ProjectsCreateData, ProjectsCreateErrors, ProjectsCreateResponses, ProjectsDeleteData, ProjectsDeleteErrors, ProjectsDeleteResponses, ProjectsListData, ProjectsListErrors, ProjectsListResponses, ProjectsReadData, ProjectsReadErrors, ProjectsReadResponses, ProjectsUpdateData, ProjectsUpdateErrors, ProjectsUpdateResponses, ResourcesDeleteData, ResourcesDeleteErrors, ResourcesDeleteResponses, ResourcesDependentsData, ResourcesDependentsErrors, ResourcesDependentsResponses, ResourcesGrantData, ResourcesGrantErrors, ResourcesGrantResponses, ResourcesLineageData, ResourcesLineageErrors, ResourcesLineageResponses, ResourcesListGrantsData, ResourcesListGrantsErrors, ResourcesListGrantsResponses, ResourcesListVersionsData, ResourcesListVersionsErrors, ResourcesListVersionsResponses, ResourcesReadData, ResourcesReadErrors, ResourcesReadLiveData, ResourcesReadLiveErrors, ResourcesReadLiveResponses, ResourcesReadResponses, ResourcesReadVersionData, ResourcesReadVersionErrors, ResourcesReadVersionResponses, ResourcesResolveData, ResourcesResolveErrors, ResourcesResolveResponses, ResourcesRevokeData, ResourcesRevokeErrors, ResourcesRevokeResponses, ResourcesSearchData, ResourcesSearchErrors, ResourcesSearchResponses, ResourcesUpdateMetadataData, ResourcesUpdateMetadataErrors, ResourcesUpdateMetadataResponses, ResourcesWriteLiveData, ResourcesWriteLiveErrors, ResourcesWriteLiveResponses, SettingsRoutesPublicData, SettingsRoutesPublicErrors, SettingsRoutesPublicResponses, SettingsRoutesReadData, SettingsRoutesReadErrors, SettingsRoutesReadResponses, SettingsRoutesSweepData, SettingsRoutesSweepErrors, SettingsRoutesSweepResponses, SettingsRoutesUpdateData, SettingsRoutesUpdateErrors, SettingsRoutesUpdateResponses, SkillsCreateData, SkillsCreateErrors, SkillsCreateResponses, SkillsDeleteData, SkillsDeleteErrors, SkillsDeleteResponses, SkillsListData, SkillsListErrors, SkillsListResponses, SkillsListVersionsData, SkillsListVersionsErrors, SkillsListVersionsResponses, SkillsReadData, SkillsReadErrors, SkillsReadResponses, SkillsReadVersionData, SkillsReadVersionErrors, SkillsReadVersionResponses, SkillsUpdateData, SkillsUpdateErrors, SkillsUpdateResponses, WarehousesCreateData, WarehousesCreateErrors, WarehousesCreateResponses, WarehousesDeleteData, WarehousesDeleteErrors, WarehousesDeleteResponses, WarehousesListData, WarehousesListErrors, WarehousesListResponses, WarehousesReadData, WarehousesReadErrors, WarehousesReadResponses, WarehousesUpdateData, WarehousesUpdateErrors, WarehousesUpdateResponses, WorkflowsCancelExecutionData, WorkflowsCancelExecutionErrors, WorkflowsCancelExecutionResponses, WorkflowsCreateData, WorkflowsCreateErrors, WorkflowsCreateResponses, WorkflowsDeleteData, WorkflowsDeleteErrors, WorkflowsDeleteExecutionData, WorkflowsDeleteExecutionErrors, WorkflowsDeleteExecutionResponses, WorkflowsDeleteResponses, WorkflowsEditData, WorkflowsEditErrors, WorkflowsEditResponses, WorkflowsListData, WorkflowsListErrors, WorkflowsListExecutionsData, WorkflowsListExecutionsErrors, WorkflowsListExecutionsResponses, WorkflowsListResponses, WorkflowsListVersionsData, WorkflowsListVersionsErrors, WorkflowsListVersionsResponses, WorkflowsPauseExecutionData, WorkflowsPauseExecutionErrors, WorkflowsPauseExecutionResponses, WorkflowsReadData, WorkflowsReadErrors, WorkflowsReadExecutionData, WorkflowsReadExecutionErrors, WorkflowsReadExecutionResponses, WorkflowsReadPortData, WorkflowsReadPortErrors, WorkflowsReadPortResponses, WorkflowsReadResponses, WorkflowsReadRowsData, WorkflowsReadRowsErrors, WorkflowsReadRowsResponses, WorkflowsReadVersionData, WorkflowsReadVersionErrors, WorkflowsReadVersionResponses, WorkflowsResumeExecutionData, WorkflowsResumeExecutionErrors, WorkflowsResumeExecutionResponses, WorkflowsRunData, WorkflowsRunErrors, WorkflowsRunResponses, WorkflowsUpdateData, WorkflowsUpdateErrors, WorkflowsUpdateResponses, WorkflowsValidateData, WorkflowsValidateErrors, WorkflowsValidateResponses } from './types.gen';
+import type { AgentTemplatesCreateData, AgentTemplatesCreateErrors, AgentTemplatesCreateResponses, AgentTemplatesDeleteData, AgentTemplatesDeleteErrors, AgentTemplatesDeleteResponses, AgentTemplatesListData, AgentTemplatesListErrors, AgentTemplatesListResponses, AgentTemplatesListVersionsData, AgentTemplatesListVersionsErrors, AgentTemplatesListVersionsResponses, AgentTemplatesReadData, AgentTemplatesReadErrors, AgentTemplatesReadResponses, AgentTemplatesReadVersionData, AgentTemplatesReadVersionErrors, AgentTemplatesReadVersionResponses, AgentTemplatesUpdateData, AgentTemplatesUpdateErrors, AgentTemplatesUpdateResponses, ComputingUnitsAvailableData, ComputingUnitsAvailableErrors, ComputingUnitsAvailableResponses, ComputingUnitsCreateData, ComputingUnitsCreateErrors, ComputingUnitsCreateResponses, ComputingUnitsDeleteData, ComputingUnitsDeleteErrors, ComputingUnitsDeleteResponses, ComputingUnitsFromProfileData, ComputingUnitsFromProfileErrors, ComputingUnitsFromProfileResponses, ComputingUnitsListData, ComputingUnitsListErrors, ComputingUnitsListNodesData, ComputingUnitsListNodesErrors, ComputingUnitsListNodesResponses, ComputingUnitsListResponses, ComputingUnitsOperatorsData, ComputingUnitsOperatorsErrors, ComputingUnitsOperatorsResponses, ComputingUnitsReadData, ComputingUnitsReadErrors, ComputingUnitsReadNodeData, ComputingUnitsReadNodeErrors, ComputingUnitsReadNodeResponses, ComputingUnitsReadResponses, ComputingUnitsSaveAsProfileData, ComputingUnitsSaveAsProfileErrors, ComputingUnitsSaveAsProfileResponses, ComputingUnitsTerminateData, ComputingUnitsTerminateErrors, ComputingUnitsTerminateResponses, ComputingUnitsUpdateData, ComputingUnitsUpdateErrors, ComputingUnitsUpdateResponses, ConversationsAppendMessageData, ConversationsAppendMessageErrors, ConversationsAppendMessageResponses, ConversationsCreateData, ConversationsCreateErrors, ConversationsCreateResponses, ConversationsDeleteData, ConversationsDeleteErrors, ConversationsDeleteResponses, ConversationsEndTurnData, ConversationsEndTurnErrors, ConversationsEndTurnResponses, ConversationsListData, ConversationsListErrors, ConversationsListMessagesData, ConversationsListMessagesErrors, ConversationsListMessagesResponses, ConversationsListResponses, ConversationsReadData, ConversationsReadErrors, ConversationsReadResponses, ConversationsReplaceMessageData, ConversationsReplaceMessageErrors, ConversationsReplaceMessageResponses, ConversationsResourcesData, ConversationsResourcesErrors, ConversationsResourcesResponses, ConversationsSettingsData, ConversationsSettingsErrors, ConversationsSettingsResponses, ConversationsStartTurnData, ConversationsStartTurnErrors, ConversationsStartTurnResponses, ConversationsUpdateData, ConversationsUpdateErrors, ConversationsUpdateResponses, CredentialsCreateData, CredentialsCreateErrors, CredentialsCreateResponses, CredentialsDeleteData, CredentialsDeleteErrors, CredentialsDeleteResponses, CredentialsLeaseData, CredentialsLeaseErrors, CredentialsLeaseResponses, CredentialsListData, CredentialsListErrors, CredentialsListResponses, CredentialsReadData, CredentialsReadErrors, CredentialsReadResponses, CredentialsSetSecretData, CredentialsSetSecretErrors, CredentialsSetSecretResponses, CredentialsUpdateData, CredentialsUpdateErrors, CredentialsUpdateResponses, DatasetsCommitData, DatasetsCommitErrors, DatasetsCommitResponses, DatasetsCreateData, DatasetsCreateErrors, DatasetsCreateResponses, DatasetsDeleteData, DatasetsDeleteErrors, DatasetsDeleteResponses, DatasetsDownloadData, DatasetsDownloadErrors, DatasetsDownloadResponses, DatasetsFilesData, DatasetsFilesErrors, DatasetsFilesResponses, DatasetsLinkData, DatasetsLinkErrors, DatasetsLinkResponses, DatasetsListData, DatasetsListErrors, DatasetsListResponses, DatasetsListVersionsData, DatasetsListVersionsErrors, DatasetsListVersionsResponses, DatasetsReadData, DatasetsReadErrors, DatasetsReadResponses, DatasetsReadVersionData, DatasetsReadVersionErrors, DatasetsReadVersionResponses, DatasetsStagedData, DatasetsStagedErrors, DatasetsStagedResponses, DatasetsUnstageData, DatasetsUnstageErrors, DatasetsUnstageResponses, DatasetsUpdateData, DatasetsUpdateErrors, DatasetsUpdateResponses, DatasetsUploadData, DatasetsUploadErrors, DatasetsUploadResponses, EvaluationEvaluateData, EvaluationEvaluateErrors, EvaluationEvaluateResponses, EventsIngestData, EventsIngestErrors, EventsIngestResponses, ExecutionsListData, ExecutionsListErrors, ExecutionsListResponses, McpServersCreateData, McpServersCreateErrors, McpServersCreateResponses, McpServersDeleteData, McpServersDeleteErrors, McpServersDeleteResponses, McpServersListData, McpServersListErrors, McpServersListResponses, McpServersListVersionsData, McpServersListVersionsErrors, McpServersListVersionsResponses, McpServersReadData, McpServersReadErrors, McpServersReadResponses, McpServersReadVersionData, McpServersReadVersionErrors, McpServersReadVersionResponses, McpServersUpdateData, McpServersUpdateErrors, McpServersUpdateResponses, MeGetData, MeGetErrors, MeGetResponses, MeUpdatePreferencesData, MeUpdatePreferencesErrors, MeUpdatePreferencesResponses, ModelEndpointsCreateData, ModelEndpointsCreateErrors, ModelEndpointsCreateResponses, ModelEndpointsDeleteData, ModelEndpointsDeleteErrors, ModelEndpointsDeleteResponses, ModelEndpointsListData, ModelEndpointsListErrors, ModelEndpointsListResponses, ModelEndpointsReadData, ModelEndpointsReadErrors, ModelEndpointsReadResponses, ModelEndpointsUpdateData, ModelEndpointsUpdateErrors, ModelEndpointsUpdateResponses, ModelsCommitData, ModelsCommitErrors, ModelsCommitResponses, ModelsCreateData, ModelsCreateErrors, ModelsCreateResponses, ModelsDeleteData, ModelsDeleteErrors, ModelsDeleteResponses, ModelsDownloadData, ModelsDownloadErrors, ModelsDownloadResponses, ModelsFilesData, ModelsFilesErrors, ModelsFilesResponses, ModelsLinkData, ModelsLinkErrors, ModelsLinkResponses, ModelsListData, ModelsListErrors, ModelsListResponses, ModelsListVersionsData, ModelsListVersionsErrors, ModelsListVersionsResponses, ModelsReadData, ModelsReadErrors, ModelsReadResponses, ModelsReadVersionData, ModelsReadVersionErrors, ModelsReadVersionResponses, ModelsStagedData, ModelsStagedErrors, ModelsStagedResponses, ModelsUnstageData, ModelsUnstageErrors, ModelsUnstageResponses, ModelsUpdateData, ModelsUpdateErrors, ModelsUpdateResponses, ModelsUploadData, ModelsUploadErrors, ModelsUploadResponses, OperatorsCreateData, OperatorsCreateErrors, OperatorsCreateResponses, OperatorsDeleteData, OperatorsDeleteErrors, OperatorsDeleteResponses, OperatorsListData, OperatorsListErrors, OperatorsListResponses, OperatorsListVersionsData, OperatorsListVersionsErrors, OperatorsListVersionsResponses, OperatorsReadData, OperatorsReadErrors, OperatorsReadResponses, OperatorsReadVersionData, OperatorsReadVersionErrors, OperatorsReadVersionResponses, OperatorsUpdateData, OperatorsUpdateErrors, OperatorsUpdateResponses, PrincipalsListData, PrincipalsListErrors, PrincipalsListResponses, PrincipalsReadData, PrincipalsReadErrors, PrincipalsReadResponses, ProfilesCreateData, ProfilesCreateErrors, ProfilesCreateResponses, ProfilesDeleteData, ProfilesDeleteErrors, ProfilesDeleteResponses, ProfilesListData, ProfilesListErrors, ProfilesListResponses, ProfilesListVersionsData, ProfilesListVersionsErrors, ProfilesListVersionsResponses, ProfilesReadData, ProfilesReadErrors, ProfilesReadResponses, ProfilesReadVersionData, ProfilesReadVersionErrors, ProfilesReadVersionResponses, ProfilesUpdateData, ProfilesUpdateErrors, ProfilesUpdateResponses, ProjectsChatSettingsData, ProjectsChatSettingsErrors, ProjectsChatSettingsResponses, ProjectsCreateData, ProjectsCreateErrors, ProjectsCreateResponses, ProjectsDeleteData, ProjectsDeleteErrors, ProjectsDeleteResponses, ProjectsListData, ProjectsListErrors, ProjectsListResponses, ProjectsReadData, ProjectsReadErrors, ProjectsReadResponses, ProjectsUpdateData, ProjectsUpdateErrors, ProjectsUpdateResponses, ResourcesDeleteData, ResourcesDeleteErrors, ResourcesDeleteResponses, ResourcesDependentsData, ResourcesDependentsErrors, ResourcesDependentsResponses, ResourcesGrantData, ResourcesGrantErrors, ResourcesGrantResponses, ResourcesLineageData, ResourcesLineageErrors, ResourcesLineageResponses, ResourcesListGrantsData, ResourcesListGrantsErrors, ResourcesListGrantsResponses, ResourcesListVersionsData, ResourcesListVersionsErrors, ResourcesListVersionsResponses, ResourcesReadData, ResourcesReadErrors, ResourcesReadLiveData, ResourcesReadLiveErrors, ResourcesReadLiveResponses, ResourcesReadResponses, ResourcesReadVersionData, ResourcesReadVersionErrors, ResourcesReadVersionResponses, ResourcesResolveData, ResourcesResolveErrors, ResourcesResolveResponses, ResourcesRevokeData, ResourcesRevokeErrors, ResourcesRevokeResponses, ResourcesSearchData, ResourcesSearchErrors, ResourcesSearchResponses, ResourcesUpdateMetadataData, ResourcesUpdateMetadataErrors, ResourcesUpdateMetadataResponses, ResourcesWriteLiveData, ResourcesWriteLiveErrors, ResourcesWriteLiveResponses, SettingsRoutesPublicData, SettingsRoutesPublicErrors, SettingsRoutesPublicResponses, SettingsRoutesReadData, SettingsRoutesReadErrors, SettingsRoutesReadResponses, SettingsRoutesSweepData, SettingsRoutesSweepErrors, SettingsRoutesSweepResponses, SettingsRoutesUpdateData, SettingsRoutesUpdateErrors, SettingsRoutesUpdateResponses, SkillsCreateData, SkillsCreateErrors, SkillsCreateResponses, SkillsDeleteData, SkillsDeleteErrors, SkillsDeleteResponses, SkillsListData, SkillsListErrors, SkillsListResponses, SkillsListVersionsData, SkillsListVersionsErrors, SkillsListVersionsResponses, SkillsReadData, SkillsReadErrors, SkillsReadResponses, SkillsReadVersionData, SkillsReadVersionErrors, SkillsReadVersionResponses, SkillsUpdateData, SkillsUpdateErrors, SkillsUpdateResponses, WarehousesCreateData, WarehousesCreateErrors, WarehousesCreateResponses, WarehousesDeleteData, WarehousesDeleteErrors, WarehousesDeleteResponses, WarehousesListData, WarehousesListErrors, WarehousesListResponses, WarehousesReadData, WarehousesReadErrors, WarehousesReadResponses, WarehousesUpdateData, WarehousesUpdateErrors, WarehousesUpdateResponses, WorkflowsCancelExecutionData, WorkflowsCancelExecutionErrors, WorkflowsCancelExecutionResponses, WorkflowsCreateData, WorkflowsCreateErrors, WorkflowsCreateResponses, WorkflowsDeleteData, WorkflowsDeleteErrors, WorkflowsDeleteExecutionData, WorkflowsDeleteExecutionErrors, WorkflowsDeleteExecutionResponses, WorkflowsDeleteResponses, WorkflowsEditData, WorkflowsEditErrors, WorkflowsEditResponses, WorkflowsListData, WorkflowsListErrors, WorkflowsListExecutionsData, WorkflowsListExecutionsErrors, WorkflowsListExecutionsResponses, WorkflowsListResponses, WorkflowsListVersionsData, WorkflowsListVersionsErrors, WorkflowsListVersionsResponses, WorkflowsPauseExecutionData, WorkflowsPauseExecutionErrors, WorkflowsPauseExecutionResponses, WorkflowsReadData, WorkflowsReadErrors, WorkflowsReadExecutionData, WorkflowsReadExecutionErrors, WorkflowsReadExecutionResponses, WorkflowsReadPortData, WorkflowsReadPortErrors, WorkflowsReadPortResponses, WorkflowsReadResponses, WorkflowsReadRowsData, WorkflowsReadRowsErrors, WorkflowsReadRowsResponses, WorkflowsReadVersionData, WorkflowsReadVersionErrors, WorkflowsReadVersionResponses, WorkflowsResumeExecutionData, WorkflowsResumeExecutionErrors, WorkflowsResumeExecutionResponses, WorkflowsRunData, WorkflowsRunErrors, WorkflowsRunResponses, WorkflowsUpdateData, WorkflowsUpdateErrors, WorkflowsUpdateResponses, WorkflowsValidateData, WorkflowsValidateErrors, WorkflowsValidateResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -119,6 +119,19 @@ export const computingUnitsAvailable = <ThrowOnError extends boolean = false>(op
 });
 
 /**
+ * Make a computing unit from a profile: one node of the profile's size with its packages, on the deployment's Kubernetes.
+ */
+export const computingUnitsFromProfile = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsFromProfileData, ThrowOnError>): RequestResult<ComputingUnitsFromProfileResponses, ComputingUnitsFromProfileErrors, ThrowOnError> => (options.client ?? client).post<ComputingUnitsFromProfileResponses, ComputingUnitsFromProfileErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/computing-units/from-profile',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Delete the resource; refused with 409 while another resource references it.
  */
 export const computingUnitsDelete = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsDeleteData, ThrowOnError>): RequestResult<ComputingUnitsDeleteResponses, ComputingUnitsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ComputingUnitsDeleteResponses, ComputingUnitsDeleteErrors, ThrowOnError>({
@@ -165,6 +178,19 @@ export const computingUnitsOperators = <ThrowOnError extends boolean = false>(op
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/computing-units/{rid}/operators',
     ...options
+});
+
+/**
+ * Save a unit as a profile: the next version of a profile the caller may change, or a new profile. Packages are saved as the unit installed them, each pinned. The unit is then made from what was saved.
+ */
+export const computingUnitsSaveAsProfile = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsSaveAsProfileData, ThrowOnError>): RequestResult<ComputingUnitsSaveAsProfileResponses, ComputingUnitsSaveAsProfileErrors, ThrowOnError> => (options.client ?? client).post<ComputingUnitsSaveAsProfileResponses, ComputingUnitsSaveAsProfileErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/computing-units/{rid}/profile',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
 
 export const computingUnitsTerminate = <ThrowOnError extends boolean = false>(options: Options<ComputingUnitsTerminateData, ThrowOnError>): RequestResult<ComputingUnitsTerminateResponses, ComputingUnitsTerminateErrors, ThrowOnError> => (options.client ?? client).post<ComputingUnitsTerminateResponses, ComputingUnitsTerminateErrors, ThrowOnError>({
@@ -484,78 +510,6 @@ export const datasetsDownload = <ThrowOnError extends boolean = false>(options: 
 export const datasetsLink = <ThrowOnError extends boolean = false>(options: Options<DatasetsLinkData, ThrowOnError>): RequestResult<DatasetsLinkResponses, DatasetsLinkErrors, ThrowOnError> => (options.client ?? client).get<DatasetsLinkResponses, DatasetsLinkErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/datasets/{rid}/versions/{vno}/links/{path}',
-    ...options
-});
-
-/**
- * List the resources of this kind the caller may read.
- */
-export const environmentsList = <ThrowOnError extends boolean = false>(options?: Options<EnvironmentsListData, ThrowOnError>): RequestResult<EnvironmentsListResponses, EnvironmentsListErrors, ThrowOnError> => (options?.client ?? client).get<EnvironmentsListResponses, EnvironmentsListErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/environments',
-    ...options
-});
-
-export const environmentsCreate = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsCreateData, ThrowOnError>): RequestResult<EnvironmentsCreateResponses, EnvironmentsCreateErrors, ThrowOnError> => (options.client ?? client).post<EnvironmentsCreateResponses, EnvironmentsCreateErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/environments',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Delete the resource; refused with 409 while another resource references it.
- */
-export const environmentsDelete = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsDeleteData, ThrowOnError>): RequestResult<EnvironmentsDeleteResponses, EnvironmentsDeleteErrors, ThrowOnError> => (options.client ?? client).delete<EnvironmentsDeleteResponses, EnvironmentsDeleteErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/environments/{rid}',
-    ...options
-});
-
-export const environmentsRead = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsReadData, ThrowOnError>): RequestResult<EnvironmentsReadResponses, EnvironmentsReadErrors, ThrowOnError> => (options.client ?? client).get<EnvironmentsReadResponses, EnvironmentsReadErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/environments/{rid}',
-    ...options
-});
-
-/**
- * Replace the spec; for a versioned kind this creates a version.
- */
-export const environmentsUpdate = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsUpdateData, ThrowOnError>): RequestResult<EnvironmentsUpdateResponses, EnvironmentsUpdateErrors, ThrowOnError> => (options.client ?? client).put<EnvironmentsUpdateResponses, EnvironmentsUpdateErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/environments/{rid}',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Build a version on a unit; returns at once, the build shows in status.
- */
-export const environmentsBuild = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsBuildData, ThrowOnError>): RequestResult<EnvironmentsBuildResponses, EnvironmentsBuildErrors, ThrowOnError> => (options.client ?? client).post<EnvironmentsBuildResponses, EnvironmentsBuildErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/environments/{rid}/build',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-export const environmentsListVersions = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsListVersionsData, ThrowOnError>): RequestResult<EnvironmentsListVersionsResponses, EnvironmentsListVersionsErrors, ThrowOnError> => (options.client ?? client).get<EnvironmentsListVersionsResponses, EnvironmentsListVersionsErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/environments/{rid}/versions',
-    ...options
-});
-
-export const environmentsReadVersion = <ThrowOnError extends boolean = false>(options: Options<EnvironmentsReadVersionData, ThrowOnError>): RequestResult<EnvironmentsReadVersionResponses, EnvironmentsReadVersionErrors, ThrowOnError> => (options.client ?? client).get<EnvironmentsReadVersionResponses, EnvironmentsReadVersionErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/catalog/v1/environments/{rid}/versions/{vno}',
     ...options
 });
 
@@ -889,6 +843,65 @@ export const principalsList = <ThrowOnError extends boolean = false>(options?: O
 export const principalsRead = <ThrowOnError extends boolean = false>(options: Options<PrincipalsReadData, ThrowOnError>): RequestResult<PrincipalsReadResponses, PrincipalsReadErrors, ThrowOnError> => (options.client ?? client).get<PrincipalsReadResponses, PrincipalsReadErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/catalog/v1/principals/{pid}',
+    ...options
+});
+
+/**
+ * List the resources of this kind the caller may read.
+ */
+export const profilesList = <ThrowOnError extends boolean = false>(options?: Options<ProfilesListData, ThrowOnError>): RequestResult<ProfilesListResponses, ProfilesListErrors, ThrowOnError> => (options?.client ?? client).get<ProfilesListResponses, ProfilesListErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/profiles',
+    ...options
+});
+
+export const profilesCreate = <ThrowOnError extends boolean = false>(options: Options<ProfilesCreateData, ThrowOnError>): RequestResult<ProfilesCreateResponses, ProfilesCreateErrors, ThrowOnError> => (options.client ?? client).post<ProfilesCreateResponses, ProfilesCreateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/profiles',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete the resource; refused with 409 while another resource references it.
+ */
+export const profilesDelete = <ThrowOnError extends boolean = false>(options: Options<ProfilesDeleteData, ThrowOnError>): RequestResult<ProfilesDeleteResponses, ProfilesDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ProfilesDeleteResponses, ProfilesDeleteErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/profiles/{rid}',
+    ...options
+});
+
+export const profilesRead = <ThrowOnError extends boolean = false>(options: Options<ProfilesReadData, ThrowOnError>): RequestResult<ProfilesReadResponses, ProfilesReadErrors, ThrowOnError> => (options.client ?? client).get<ProfilesReadResponses, ProfilesReadErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/profiles/{rid}',
+    ...options
+});
+
+/**
+ * Replace the spec; for a versioned kind this creates a version.
+ */
+export const profilesUpdate = <ThrowOnError extends boolean = false>(options: Options<ProfilesUpdateData, ThrowOnError>): RequestResult<ProfilesUpdateResponses, ProfilesUpdateErrors, ThrowOnError> => (options.client ?? client).put<ProfilesUpdateResponses, ProfilesUpdateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/profiles/{rid}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const profilesListVersions = <ThrowOnError extends boolean = false>(options: Options<ProfilesListVersionsData, ThrowOnError>): RequestResult<ProfilesListVersionsResponses, ProfilesListVersionsErrors, ThrowOnError> => (options.client ?? client).get<ProfilesListVersionsResponses, ProfilesListVersionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/profiles/{rid}/versions',
+    ...options
+});
+
+export const profilesReadVersion = <ThrowOnError extends boolean = false>(options: Options<ProfilesReadVersionData, ThrowOnError>): RequestResult<ProfilesReadVersionResponses, ProfilesReadVersionErrors, ThrowOnError> => (options.client ?? client).get<ProfilesReadVersionResponses, ProfilesReadVersionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/catalog/v1/profiles/{rid}/versions/{vno}',
     ...options
 });
 

@@ -15,7 +15,7 @@ namespace Texera.Catalog;
 
 enum ExecutionPhase {
   pending,
-  @doc("The environment is being built on the unit.") provisioning,
+  @doc("The unit is installing its packages.") provisioning,
   running,
   @doc("Paused on the unit; resume continues it.") paused,
   completed,
@@ -45,12 +45,25 @@ model ExecutionPlan {
   logicalPlan: unknown;
 }
 
+@doc("What the unit an execution ran on had when it ran.")
+model ComputingRecord {
+  @doc("The profile version its node was made from, with `@vno`.")
+  profile?: Uri;
+  cpu?: string;
+  memory?: string;
+  gpu?: int32;
+  @doc("The packages added to the runtime, each pinned as installed when the unit says so.")
+  packages?: string[];
+  @doc("The engine's version.")
+  runtime?: string;
+}
+
 model ExecutionSpec {
   @doc("The workflow version, with `@vno`.")
   workflow: Uri;
-  @doc("The environment version, with `@vno`.")
-  environment?: Uri;
   computingUnit: Uri;
+  @doc("What the unit had when it ran: the profile its node was made from, its size and packages.")
+  computing?: ComputingRecord;
   @doc("The warehouse the execution keeps its result tables in.")
   warehouse: Uri;
   @doc("The dataset file versions the execution reads, resolved at start.")

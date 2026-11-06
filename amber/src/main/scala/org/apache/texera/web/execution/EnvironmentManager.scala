@@ -28,86 +28,102 @@ import scala.jdk.CollectionConverters._
 import scala.util.Try
 
 /**
-  * Python environments on this unit, one virtual environment per environment version from the
-  * catalog. Built on first use with the unit's own Python; no database involved.
+  * Python environments on this unit, one virtual environment per list of packages, named by the
+  * key the catalog derives from the list: the same packages are the same environment, built
+  * once. Built on first use with the unit's own Python; no database involved.
   *
-  * Layout: `<root>/<name>/venv` where `name` is `env-<rid>-v<vno>`.
+  * Layout: `<root>/<key>/venv`.
   */
 object EnvironmentManager extends LazyLogging {
   sealed trait Status
   case object Building extends Status
-  case object Ready extends Status
-  final case class Failed(message: String) extends Failed.Base
-  object Failed { trait Base extends Status }
+
+  /** Built: each package asked for, pinned as the environment has it (`pandas==2.2.3`). */
+  final case class Ready(installed: List[String]) extends Status
+  final case class Failed(message: String) extends Status
 
   private val root: Path =
     Paths.get(sys.env.getOrElse("TEXERA_ENV_ROOT", "/tmp/texera-environments"))
   private val statuses = new TrieMap[String, Status]()
   private val SafeName = "^[A-Za-z0-9_.-]{1,120}$".r
+  private val Pin = "^[A-Za-z0-9][A-Za-z0-9._-]*==\\S+$".r
 
-  def nameOf(rid: String, vno: Int): String = s"env-${rid.replaceAll("[^A-Za-z0-9]", "")}-v$vno"
-
-  def status(name: String): Option[Status] = statuses.get(name)
+  def status(key: String): Option[Status] = statuses.get(key)
 
   /** The Python binary of a ready environment, if it exists. */
-  def getPythonBin(name: String): Option[Path] = {
-    if (SafeName.findFirstIn(name).isEmpty) return None
-    val bin = pythonBinOf(name)
+  def getPythonBin(key: String): Option[Path] = {
+    if (SafeName.findFirstIn(key).isEmpty) return None
+    val bin = pythonBinOf(key)
     if (Files.isExecutable(bin)) Some(bin.toAbsolutePath) else None
   }
 
   /** Where an environment's interpreter lives, built or not. */
-  private[texera] def pythonBinOf(name: String): Path =
-    venvDir(name).resolve("bin").resolve("python")
+  private[texera] def pythonBinOf(key: String): Path =
+    venvDir(key).resolve("bin").resolve("python")
 
-  private def venvDir(name: String): Path = root.resolve(name).resolve("venv")
+  private def venvDir(key: String): Path = root.resolve(key).resolve("venv")
 
   /**
     * Builds the environment synchronously: creates the venv with the unit's Python and installs
-    * the packages with pip. Idempotent; a second call returns the existing status.
+    * the packages. A built or building environment is answered as it is; a failed one is tried
+    * again.
     */
-  def ensure(name: String, packages: Seq[String]): Status = {
-    if (SafeName.findFirstIn(name).isEmpty) return Failed(s"invalid environment name $name")
-    statuses.get(name) match {
-      case Some(Ready)          => return Ready
-      case Some(Building)       => return Building
-      case Some(f: Failed.Base) => return f
-      case None                 =>
+  def ensure(key: String, packages: Seq[String]): Status = {
+    if (SafeName.findFirstIn(key).isEmpty) return Failed(s"invalid environment key $key")
+    statuses.putIfAbsent(key, Building) match {
+      case None                                                            =>
+      case Some(failed: Failed) if statuses.replace(key, failed, Building) =>
+      case Some(status)                                                    => return status
     }
-    statuses.put(name, Building)
-    val result = Try {
-      val dir = venvDir(name)
-      Files.createDirectories(dir.getParent)
-      val python = dir.resolve("bin").resolve("python")
-      if (!Files.isExecutable(python)) {
-        run(Seq(PythonUtils.getPythonExecutable, "-m", "venv", dir.toString))
-        layerOnBase(python)
-      }
-      val cleaned = packages.map(_.trim).filter(_.nonEmpty)
-      if (cleaned.nonEmpty) {
-        val uv = sys.env.get("TEXERA_UV").orElse(which("uv"))
-        uv match {
-          case Some(bin) =>
-            run(Seq(bin, "pip", "install", "--quiet", "--python", python.toString) ++ cleaned)
-          case None =>
-            run(
-              Seq(
-                python.toString,
-                "-m",
-                "pip",
-                "install",
-                "--quiet",
-                "--disable-pip-version-check"
-              ) ++ cleaned
-            )
-        }
-      }
-    }
-    val status = result.fold(e => Failed(Option(e.getMessage).getOrElse(e.toString)), _ => Ready)
-    statuses.put(name, status)
-    logger.info(s"environment $name: $status")
+    val status = Try(build(key, packages.map(_.trim).filter(_.nonEmpty)))
+      .fold(e => Failed(Option(e.getMessage).getOrElse(e.toString)), Ready)
+    statuses.put(key, status)
+    logger.info(s"environment $key: $status")
     status
   }
+
+  private def build(key: String, packages: Seq[String]): List[String] = {
+    val python = pythonBinOf(key)
+    if (!Files.isExecutable(python)) {
+      val dir = venvDir(key)
+      Files.createDirectories(dir.getParent)
+      run(Seq(PythonUtils.getPythonExecutable, "-m", "venv", dir.toString))
+      layerOnBase(python)
+    }
+    if (packages.nonEmpty) {
+      sys.env.get("TEXERA_UV").orElse(which("uv")) match {
+        case Some(uv) =>
+          run(Seq(uv, "pip", "install", "--quiet", "--python", python.toString) ++ packages)
+        case None =>
+          run(
+            Seq(python.toString, "-m", "pip", "install", "--quiet", "--disable-pip-version-check")
+              ++ packages
+          )
+      }
+    }
+    pinnedFrom(capture(Seq(python.toString, "-c", Installed) ++ packages))
+  }
+
+  /**
+    * Prints each requirement it is given as the interpreter has it, `name==version`: installed
+    * in the environment, or already in the unit's base. A requirement that names no package it
+    * finds (a URL, say) is left out.
+    */
+  private val Installed =
+    """import importlib.metadata as m, re, sys
+      |for requirement in sys.argv[1:]:
+      |    name = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", requirement.strip())
+      |    try:
+      |        found = m.distribution(name.group()) if name else None
+      |    except m.PackageNotFoundError:
+      |        found = None
+      |    if found:
+      |        print(found.metadata["Name"] + "==" + found.version)
+      |""".stripMargin
+
+  /** The pins in what the interpreter printed, once each, in order; anything else is dropped. */
+  private[execution] def pinnedFrom(output: String): List[String] =
+    output.split("\n").map(_.trim).filter(Pin.matches).distinct.toList
 
   /**
     * Makes the unit's base interpreter packages (the engine's Python runtime and the default

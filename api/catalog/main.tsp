@@ -23,7 +23,7 @@ import "./kinds/workflow.tsp";
 import "./kinds/execution.tsp";
 import "./kinds/dataset.tsp";
 import "./kinds/model.tsp";
-import "./kinds/environment.tsp";
+import "./kinds/profile.tsp";
 import "./kinds/computing-unit.tsp";
 import "./kinds/warehouse.tsp";
 import "./kinds/operator.tsp";
