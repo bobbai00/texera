@@ -35,7 +35,7 @@ import java.util.concurrent.Executors
   *  - run.runId is the catalog's execution id; job.namespace is "texera".
   *  - Run-level events: job.name == eid, run.facets.texera_execution = {status, error?}.
   *  - Operator-level events: job.name == "eid/opid", run.facets.texera_operator = {opid, state,
-  *    tuples?, error?}, outputs[] named "eid/opid/port" with facets.texera_port, inputs[] named
+  *    rowsIn?, rowsOut?, error?}, outputs[] named "eid/opid/port" with facets.texera_port, inputs[] named
   *    "fromEid/fromOpid/fromPort".
   */
 final class LineageReporter(lineageUrl: String, token: () => String, eid: String)
@@ -78,7 +78,7 @@ final class LineageReporter(lineageUrl: String, token: () => String, eid: String
   def operator(
       opid: String,
       state: String,
-      tuples: Option[Long],
+      rows: Option[OperatorRows],
       error: Option[String],
       outputs: Seq[OutputPort],
       inputs: Seq[PortRef],
@@ -87,7 +87,10 @@ final class LineageReporter(lineageUrl: String, token: () => String, eid: String
     val facet = objectMapper.createObjectNode()
     facet.put("opid", opid)
     facet.put("state", state)
-    tuples.foreach(facet.put("tuples", _))
+    rows.foreach { r =>
+      facet.put("rowsIn", r.in)
+      facet.put("rowsOut", r.out)
+    }
     error.foreach(e =>
       facet.set[ObjectNode]("error", objectMapper.createObjectNode().put("message", e))
     )

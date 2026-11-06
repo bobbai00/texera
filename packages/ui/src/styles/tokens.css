@@ -181,6 +181,19 @@
   --xy-background-pattern-dots-color-default: color-mix(in oklch, var(--edge) 45%, transparent);
 }
 
+/* Something at work: a short bar that runs along the bottom edge of what is working. */
+@keyframes working {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+@utility animate-working {
+  animation: working 1.4s ease-in-out infinite;
+}
+
 /* Thin, theme-aware scrollbars. */
 @utility scrollbar-thin {
   scrollbar-width: thin;

@@ -1,9 +1,20 @@
 // An operator on the canvas: a card. It says what the operator is and how it is set, in one
 // line or with each setting on a line of its own, as the viewer chooses; it opens to edit the
-// settings in place; and it says where the operator stands in the execution on screen: its
-// state, the rows it put out, and which of its results can be read.
+// settings in place. Two buttons are the operator's own: the eye keeps its result on every run,
+// and the run button runs up to it. In an execution the card says where the operator stands
+// and the rows it read and put out, and the ports whose result is kept are lit.
 
-import { Button, cn, formatNumber, Skeleton, Tooltip } from "@texera/ui";
+import {
+  Button,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuTrigger,
+  cn,
+  DropdownMenuItem,
+  formatNumber,
+  Skeleton,
+  Tooltip,
+} from "@texera/ui";
 import {
   deleteOperators,
   describeProperties,
@@ -18,21 +29,21 @@ import { Handle, type NodeProps, Position } from "@xyflow/react";
 import {
   AlertTriangle,
   Check,
-  ChevronDown,
-  ChevronUp,
   Clock,
   Eye,
   EyeOff,
   Loader2,
   Pause,
   Pencil,
-  Table2,
+  Play,
+  Power,
+  Square,
   Trash2,
   X,
 } from "lucide-react";
-import { memo, useMemo } from "react";
+import { memo, type ReactElement, useMemo } from "react";
 import { useStore } from "zustand";
-import { type Canvas, portKey, useCanvas } from "./canvas-view";
+import { type Canvas, useCanvas } from "./canvas-view";
 import type { EditorStore } from "./editor";
 import { PropertyForm } from "./PropertyForm";
 
@@ -51,6 +62,7 @@ const STATUS: Record<OperatorStatus, { word: string; icon: typeof Check; tone: s
   paused: { word: "Paused", icon: Pause, tone: "text-warning", card: "border-warning" },
   completed: { word: "Done", icon: Check, tone: "text-success", card: "" },
   failed: { word: "Failed", icon: X, tone: "text-destructive", card: "border-destructive" },
+  stopped: { word: "Stopped", icon: Square, tone: "text-muted-foreground", card: "" },
 };
 
 /** The operator's name on its card: the one a person gave it, else its type's own. */
@@ -73,7 +85,7 @@ export const OperatorNode = memo(function OperatorNode(props: NodeProps<Operator
 });
 
 function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { canvas: Canvas }) {
-  const detailed = useStore(canvas.view, s => (s.density === "detailed") !== s.flipped.has(id));
+  const detailed = useStore(canvas.view, s => s.density === "detailed");
   const editing = useStore(canvas.view, s => s.editing === id);
   const shown = useStore(canvas.view, s =>
     s.result?.startsWith(`${id}:`) ? s.result.slice(id.length + 1) : undefined
@@ -84,8 +96,7 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
     () => (schema ? describeProperties(schema.jsonSchema, data.properties) : []),
     [schema, data.properties]
   );
-  const editable = canvas.editor !== undefined && !readonly;
-  const { view } = canvas;
+  const editor = readonly ? undefined : canvas.editor;
   const title = titleOf(data, schema?.userFriendlyName);
   // Under the name: the settings in one line; with each on its own line below, the type instead.
   const under =
@@ -94,28 +105,29 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
         ? ""
         : (schema?.userFriendlyName ?? "")
       : summarize(lines);
-  const status = data.status ? STATUS[data.status] : undefined;
   const ports = Math.max(data.inputs.length, data.outputs.length);
 
-  return (
+  const card = (
     <div
       className={cn(
         "group relative rounded-xl border bg-card text-card-foreground shadow-sm transition-[box-shadow,border-color]",
-        editing ? "w-88 shadow-lg" : "w-62",
+        // Open, it stays within its column: the cards beside it and the arrows between are not covered.
+        editing ? "w-74 shadow-lg" : "w-62",
         data.disabled && "border-dashed",
-        status?.card,
-        data.error && !status && "border-destructive/60",
+        data.status && STATUS[data.status].card,
+        data.error && !data.status && "border-destructive/60",
         selected && !shown && "border-primary ring-2 ring-primary/25",
-        // The card whose result is on screen: the line from the result's tab ends here.
+        // The card whose result is on screen.
         shown !== undefined && "border-primary ring-2 ring-primary/60"
       )}
       style={{ minHeight: HANDLE_TOP * 2 + Math.max(0, ports - 1) * HANDLE_STEP }}
+      data-selected={selected ? "true" : "false"}
       data-operator-type={data.operatorType}
       data-operator-status={data.status ?? ""}
       data-operator-view={editing ? "editing" : detailed ? "detailed" : "compact"}
       data-result-shown={shown ?? ""}>
-      {editing && canvas.editor ? (
-        <Editor id={id} editor={canvas.editor} canvas={canvas} />
+      {editing && editor ? (
+        <Editor id={id} editor={editor} canvas={canvas} data={data} />
       ) : (
         <>
           <div className={cn("flex items-center gap-2.5 px-3 py-2.5", data.disabled && "opacity-60")}>
@@ -125,11 +137,6 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
                 <span className="truncate text-sm leading-5 font-medium" title={title}>
                   {title}
                 </span>
-                {data.keepsResult && (
-                  <Tooltip content="Its result is kept after an execution">
-                    <Table2 className="size-3.5 shrink-0 text-muted-foreground" aria-label="Result kept" />
-                  </Tooltip>
-                )}
                 {data.disabled && (
                   <span className="shrink-0 rounded border px-1 text-xs text-muted-foreground">Off</span>
                 )}
@@ -140,36 +147,7 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
                 </div>
               )}
             </div>
-            <div
-              className={cn(
-                "nodrag absolute top-1.5 right-1.5 flex items-center rounded-md border bg-card opacity-0 shadow-xs transition-opacity group-hover:opacity-100 focus-within:opacity-100",
-                selected && "opacity-100"
-              )}>
-              {lines.length > 0 && (
-                <Tooltip content={detailed ? "Show the settings in one line" : "Show every setting"}>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={detailed ? "Show less" : "Show more"}
-                    onClick={() => view.getState().flip(id)}
-                    data-operator-flip>
-                    {detailed ? <ChevronUp /> : <ChevronDown />}
-                  </Button>
-                </Tooltip>
-              )}
-              {editable && (
-                <Tooltip content="Edit the settings here">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="Edit operator"
-                    onClick={() => view.getState().edit(id)}
-                    data-operator-edit>
-                    <Pencil />
-                  </Button>
-                </Tooltip>
-              )}
-            </div>
+            <Actions id={id} data={data} canvas={canvas} editor={editor} />
           </div>
           {detailed && lines.length > 0 && <Settings lines={lines} />}
         </>
@@ -183,40 +161,7 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
           <span className={cn("min-w-0 [overflow-wrap:anywhere]", !editing && "line-clamp-2")}>{data.error}</span>
         </p>
       )}
-      {status && (
-        <div
-          className="flex items-center gap-1.5 rounded-b-xl border-t bg-muted/40 px-3 py-1.5 text-xs"
-          data-operator-execution>
-          <status.icon className={cn("size-3.5 shrink-0", status.tone, data.status === "running" && "animate-spin")} />
-          <span className={cn("font-medium", status.tone)}>{status.word}</span>
-          {data.rows !== undefined && (
-            <span className="text-muted-foreground tabular-nums" data-operator-rows>
-              · {formatNumber(data.rows)} {data.rows === 1 ? "row" : "rows"}
-            </span>
-          )}
-          <span className="nodrag ml-auto flex items-center gap-1">
-            {(data.results ?? []).map(port => {
-              const on = shown === port;
-              return (
-                <button
-                  key={port}
-                  type="button"
-                  onClick={() => view.getState().show(on ? null : portKey(id, port))}
-                  aria-pressed={on}
-                  title={on ? "Its result is on screen below" : "Show this result below"}
-                  data-operator-result={port}
-                  className={cn(
-                    "inline-flex h-5 items-center gap-1 rounded-md px-1.5 font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40",
-                    on ? "bg-primary text-primary-foreground" : "text-primary hover:bg-primary/10"
-                  )}>
-                  <Table2 className="size-3.5" />
-                  {data.outputs.length > 1 ? (data.outputs.find(o => o.id === port)?.label ?? port) : "Result"}
-                </button>
-              );
-            })}
-          </span>
-        </div>
-      )}
+      {data.status && <Progress status={data.status} rowsIn={data.rowsIn} rowsOut={data.rowsOut} />}
       {data.inputs.map((p, i) => (
         <Handle
           key={p.id}
@@ -228,17 +173,170 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
           title={p.label}
         />
       ))}
-      {data.outputs.map((p, i) => (
-        <Handle
-          key={p.id}
-          id={p.id}
-          type="source"
-          position={Position.Right}
-          style={{ top: HANDLE_TOP + i * HANDLE_STEP }}
-          className={cn("!size-3 !border-2 !border-card", shown === p.id ? "!bg-primary" : "!bg-edge")}
-          title={p.label}
+      {data.outputs.map((p, i) => {
+        // A port whose result is kept is lit; the one whose result is on screen, more.
+        const result = shown === p.id ? "shown" : data.results?.includes(p.id) ? "kept" : "";
+        return (
+          <Handle
+            key={p.id}
+            id={p.id}
+            type="source"
+            position={Position.Right}
+            style={{ top: HANDLE_TOP + i * HANDLE_STEP }}
+            className={cn(
+              "!border-2 !border-card",
+              result === "shown"
+                ? "!size-3.5 !bg-primary shadow-[0_0_0_4px_color-mix(in_oklch,var(--primary)_30%,transparent)]"
+                : result === "kept"
+                  ? "!size-3 !bg-primary"
+                  : "!size-3 !bg-edge"
+            )}
+            title={result ? `${p.label ?? "Result"}: kept` : p.label}
+            data-result={result}
+          />
+        );
+      })}
+    </div>
+  );
+  return editor ? <Menu id={id} disabled={data.disabled === true} editor={editor} card={card} /> : card;
+}
+
+/**
+ * The operator's own buttons: the eye, which keeps its result on every run, and a run up to
+ * it. The eye stays in sight while it is on; the rest show when the card is pointed at or picked.
+ */
+function Actions({
+  id,
+  data,
+  canvas,
+  editor,
+  editing = false,
+}: {
+  id: string;
+  data: OperatorNodeType["data"];
+  canvas: Canvas;
+  editor?: EditorStore;
+  editing?: boolean;
+}) {
+  const keeps = data.keepsResult;
+  // Shown only when the card is pointed at, picked or focused: until then they take no room
+  // from the operator's name.
+  const onDemand =
+    "hidden group-hover:inline-flex group-focus-within:inline-flex group-data-[selected=true]:inline-flex";
+  if (!editor)
+    return keeps ? (
+      <Eye className="size-3.5 shrink-0 text-primary" aria-label="Its result is kept" data-operator-eye="on" />
+    ) : null;
+  return (
+    <div className="nodrag flex shrink-0 items-center">
+      {canvas.run && !data.disabled && (
+        <Tooltip content="Run up to here, and show its result">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className={cn(!editing && onDemand)}
+            aria-label="Run up to here"
+            onClick={() => canvas.run?.(id)}
+            data-operator-run>
+            <Play />
+          </Button>
+        </Tooltip>
+      )}
+      <Tooltip content={keeps ? "Its result is kept on every run" : "Keep its result on every run"}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className={cn(keeps ? "text-primary" : cn("text-muted-foreground", !editing && onDemand))}
+          aria-label={keeps ? "Stop keeping its result" : "Keep its result"}
+          aria-pressed={keeps}
+          onClick={() => editor.getState().edit(s => updateOperator(s, id, o => ({ ...o, viewResult: !o.viewResult })))}
+          data-operator-eye={keeps ? "on" : "off"}>
+          {keeps ? <Eye /> : <EyeOff />}
+        </Button>
+      </Tooltip>
+      {!editing && (
+        <Tooltip content="Edit its settings here">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className={onDemand}
+            aria-label="Edit operator"
+            onClick={() => canvas.view.getState().edit(id)}
+            data-operator-edit>
+            <Pencil />
+          </Button>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+/** What else can be done to an operator, on a right click: turn it off or on, delete it. */
+function Menu({
+  id,
+  disabled,
+  editor,
+  card,
+}: {
+  id: string;
+  disabled: boolean;
+  editor: EditorStore;
+  card: ReactElement;
+}) {
+  const { edit, select } = editor.getState();
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger>{card}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <DropdownMenuItem
+          onClick={() => edit(s => updateOperator(s, id, o => ({ ...o, isDisabled: !o.isDisabled })))}
+          data-operator-menu="power">
+          <Power /> {disabled ? "Turn on" : "Turn off"}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="text-destructive"
+          onClick={() => {
+            select(null);
+            edit(s => deleteOperators(s, [id]));
+          }}
+          data-operator-menu="delete">
+          <Trash2 /> Delete
+        </DropdownMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+/**
+ * Where the operator stands in the execution on screen: waiting is quiet; running is plain to
+ * see, a bar moving along the card's edge while the rows it read and put out count up.
+ */
+function Progress({ status, rowsIn, rowsOut }: { status: OperatorStatus; rowsIn?: number; rowsOut?: number }) {
+  const { word, icon: StatusIcon, tone } = STATUS[status];
+  // An operator that reads nothing (a source) says what it put out; any other, what it read too.
+  const rows =
+    rowsOut === undefined
+      ? undefined
+      : rowsIn
+        ? `${formatNumber(rowsIn)} → ${formatNumber(rowsOut)} rows`
+        : `${formatNumber(rowsOut)} ${rowsOut === 1 ? "row" : "rows"}`;
+  return (
+    <div
+      className="relative flex items-center gap-1.5 overflow-hidden rounded-b-xl border-t bg-muted/40 px-3 py-1.5 text-xs"
+      data-operator-execution>
+      <StatusIcon className={cn("size-3.5 shrink-0", tone, status === "running" && "animate-spin")} />
+      <span className={cn("font-medium", tone)}>{word}</span>
+      {rows && (
+        <span className="ml-auto text-muted-foreground tabular-nums" data-operator-rows>
+          {rows}
+        </span>
+      )}
+      {status === "running" && (
+        <span
+          className="absolute bottom-0 left-0 h-0.5 w-1/3 animate-working rounded-full bg-primary"
+          data-operator-working
         />
-      ))}
+      )}
     </div>
   );
 }
@@ -334,16 +432,25 @@ function Settings({ lines }: { lines: PropertyLine[] }) {
 }
 
 /**
- * The operator open in its card: its name, whether it runs and keeps its result, and its
- * settings as a form. Every change goes into the workflow as it is made; closing the card
+ * The operator open in its card: its name and its settings as a form, with the operator's own
+ * buttons beside the name. Every change goes into the workflow as it is made; closing the card
  * saves nothing more.
  */
-function Editor({ id, editor, canvas }: { id: string; editor: EditorStore; canvas: Canvas }) {
+function Editor({
+  id,
+  editor,
+  canvas,
+  data,
+}: {
+  id: string;
+  editor: EditorStore;
+  canvas: Canvas;
+  data: OperatorNodeType["data"];
+}) {
   const operator = useStore(editor, s => s.spec.operators.find(o => o.operatorID === id));
   if (!operator) return null;
   const schema = canvas.schemas?.get(operator.operatorType);
-  const { edit, select } = editor.getState();
-  const close = () => canvas.view.getState().edit(null);
+  const { edit } = editor.getState();
   return (
     // Typing, selecting and scrolling inside the form are the form's, not the canvas's.
     <div className="nodrag nopan nowheel cursor-default" data-operator-editor={operator.operatorType}>
@@ -363,45 +470,7 @@ function Editor({ id, editor, canvas }: { id: string; editor: EditorStore; canva
             </div>
           )}
         </div>
-        <Tooltip
-          content={
-            operator.viewResult
-              ? "Its result is kept: readable after the execution"
-              : "Keep this operator's result after the execution"
-          }>
-          <Button
-            variant={operator.viewResult ? "secondary" : "ghost"}
-            size="icon-sm"
-            aria-label={operator.viewResult ? "Stop keeping the result" : "Keep the result"}
-            onClick={() => edit(s => updateOperator(s, id, o => ({ ...o, viewResult: !o.viewResult })))}>
-            <Table2 />
-          </Button>
-        </Tooltip>
-        <Tooltip
-          content={
-            operator.isDisabled ? "Off: left out of executions. Turn it on" : "Turn it off: leave it out of executions"
-          }>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={operator.isDisabled ? "Enable operator" : "Disable operator"}
-            onClick={() => edit(s => updateOperator(s, id, o => ({ ...o, isDisabled: !o.isDisabled })))}>
-            {operator.isDisabled ? <EyeOff /> : <Eye />}
-          </Button>
-        </Tooltip>
-        <Tooltip content="Delete operator">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Delete operator"
-            onClick={() => {
-              close();
-              select(null);
-              edit(s => deleteOperators(s, [id]));
-            }}>
-            <Trash2 />
-          </Button>
-        </Tooltip>
+        <Actions id={id} data={data} canvas={canvas} editor={editor} editing />
       </div>
       <form className="scrollbar-thin max-h-96 overflow-y-auto p-3" onSubmit={e => e.preventDefault()}>
         {schema ? (
@@ -416,7 +485,7 @@ function Editor({ id, editor, canvas }: { id: string; editor: EditorStore; canva
         )}
       </form>
       <div className="flex justify-end border-t px-3 py-2">
-        <Button size="sm" onClick={close} data-operator-done>
+        <Button size="sm" onClick={() => canvas.view.getState().edit(null)} data-operator-done>
           <Check /> Done
         </Button>
       </div>

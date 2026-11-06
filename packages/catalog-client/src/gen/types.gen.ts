@@ -921,6 +921,10 @@ export type ExecutionSpec = {
      * The compiled plan the execution was started with.
      */
     plan?: ExecutionPlan;
+    /**
+     * The operator the execution was run up to: only what leads to it ran, and its result was kept.
+     */
+    upTo?: string;
 };
 
 export type ExecutionStatus = {
@@ -1373,7 +1377,14 @@ export type OperatorPortSpec = {
 
 export type OperatorRunStatus = {
     state: string;
-    tuples?: number;
+    /**
+     * Rows the operator has read so far, over all its input ports.
+     */
+    rowsIn?: number;
+    /**
+     * Rows the operator has put out so far, over all its output ports.
+     */
+    rowsOut?: number;
     error?: unknown;
     /**
      * The computing node that ran it.
@@ -1777,6 +1788,10 @@ export type RunWorkflow = {
      * Wait up to this many seconds for the execution to finish before returning.
      */
     waitSeconds?: number;
+    /**
+     * Run up to this operator: only the operators it reads from, directly or not, and itself. Its result is kept; the workflow does not change.
+     */
+    upTo?: string;
     /**
      * The execution's name, which no other execution of the workflow has. Without one the catalog names it by its start, `execution <UTC time>`, and numbers the name when two start within a second.
      */

@@ -87,12 +87,14 @@ about in a project of their own, work in that project, and remove it at the end 
 chat made, as the pytest scenarios do; a wiped stack has no iris to find otherwise.
 
 `canvas.spec.ts`, the canvas: an operator is a card that says its settings in words, in one
-line or each on its own for the canvas or for one card, and is edited in place with no panel
-beside it; the arrows are curves; a workflow too large to see at once offers a map, which
-lies over the canvas only once the viewer opens it and stays as they left it; a run stays on
-the workflow's page, where each card says how its operator did and each result has a tab that
-a line joins to the output port it came out of, also after the canvas is moved, and the same
-version is run again from the page, as an execution with a name of its own; an execution's
+line or each on its own, keeps its result at a click on its eye (in the workflow), and is
+edited in place with no panel beside it, the card under it making room; a right click turns
+it off and deletes it; the arrows are curves; a workflow too large to see at once offers a map,
+which lies over the canvas only once the viewer opens it and stays as they left it; a run
+stays on the workflow's page, where each card says how its operator did and the rows it read
+and put out, only kept results have tabs, a click on a card shows its result and lights its
+port, the same version is run again from the page as an execution with a name of its own, and
+a run up to one operator runs only what leads to it and changes no version; an execution's
 page is the workflow as it ran, and a visualization's result is the chart it drew, whole, not
 a table of its HTML.
 

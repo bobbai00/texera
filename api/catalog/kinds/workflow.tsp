@@ -127,6 +127,8 @@ model RunWorkflow {
   parameters?: Record<unknown>;
   @doc("Wait up to this many seconds for the execution to finish before returning.")
   waitSeconds?: int32;
+  @doc("Run up to this operator: only the operators it reads from, directly or not, and itself. Its result is kept; the workflow does not change.")
+  upTo?: string;
   @doc("The execution's name, which no other execution of the workflow has. Without one the catalog names it by its start, `execution <UTC time>`, and numbers the name when two start within a second.")
   name?: string;
 }

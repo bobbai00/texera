@@ -2,10 +2,12 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import { api, type Caller, cleanups, discard, editOperator, type Envelope, IRIS_CSV, operatorCard, signIn, tidyUp } from "./support";
 
 // The canvas: an operator is a card that says how it is set, in one line or with every setting
-// on its own, and is edited in place; arrows are curves. An execution shows on the canvas of
-// the workflow that ran: each card says where its operator stands and how many rows it put
-// out, and under the canvas each result has a tab that a line joins to the port it came out
-// of. A visualization's result is the chart it drew.
+// on its own, and is edited in place, the cards under it making room; arrows are curves. Each
+// card has the operator's own two buttons: the eye keeps its result on every run, and the run
+// button runs up to it. An execution shows on the canvas of the workflow that ran: each card
+// says where its operator stands and the rows it read and put out; under the canvas each kept
+// result has a tab; a click on a card shows its result and lights the port it came out of. A
+// visualization's result is the chart it drew.
 
 test.afterEach(tidyUp);
 
@@ -13,7 +15,7 @@ test.afterEach(tidyUp);
  * A project of alice's with the iris flowers and a workflow over them: scan, average per
  * species, and a chart of it when asked. The average's result is kept; the scan's when asked.
  */
-async function irisWorkflow(alice: Caller, label: string, { chart = false, keepScan = false } = {}) {
+async function irisWorkflow(alice: Caller, label: string, { chart = false, keepScan = false, beside = false } = {}) {
   const stamp = Date.now();
   const project: Envelope = await alice("POST", "/projects", { name: `${label} ${stamp}`, spec: {} });
   const dataset: Envelope = await alice("POST", "/datasets", { name: "iris", parent: project.metadata.rid, spec: { format: "csv" } });
@@ -25,8 +27,10 @@ async function irisWorkflow(alice: Caller, label: string, { chart = false, keepS
       { operatorID: "scan", operatorType: "CSVFileScan", viewResult: keepScan, operatorProperties: { fileName: `${dataset.metadata.uri}@1/files/iris.csv`, fileEncoding: "UTF_8", hasHeader: true } },
       { operatorID: "avg", operatorType: "Aggregate", viewResult: true, operatorProperties: { groupByKeys: ["Species"], aggregations: [{ aggFunction: "average", attribute: "PetalLengthCm", "result attribute": "avg" }] } },
       ...(chart ? [{ operatorID: "chart", operatorType: "BarChart", viewResult: true, operatorProperties: { fields: "Species", value: "avg", horizontalOrientation: false } }] : []),
+      // Another reader of the scan, laid out under avg in the same column.
+      ...(beside ? [{ operatorID: "most", operatorType: "Aggregate", operatorProperties: { groupByKeys: ["Species"], aggregations: [{ aggFunction: "max", attribute: "PetalLengthCm", "result attribute": "most" }] } }] : []),
     ],
-    links: [link("l1", "scan", "avg"), ...(chart ? [link("l2", "avg", "chart")] : [])],
+    links: [link("l1", "scan", "avg"), ...(chart ? [link("l2", "avg", "chart")] : []), ...(beside ? [link("l3", "scan", "most")] : [])],
   };
   const workflow: Envelope = await alice("POST", "/workflows", { name: `${label} ${stamp}`, parent: project.metadata.rid, spec });
   cleanups.push(async () => {
@@ -36,10 +40,11 @@ async function irisWorkflow(alice: Caller, label: string, { chart = false, keepS
   return { project: project.metadata.rid, rid: workflow.metadata.rid, name: workflow.metadata.name };
 }
 
-const middle = async (of: Locator) => {
-  const box = await of.boundingBox();
-  return { x: (box?.x ?? 0) + (box?.width ?? 0) / 2, y: (box?.y ?? 0) + (box?.height ?? 0) / 2 };
-};
+/** The output port of an operator, as its card draws it. */
+const portOf = (page: Page, operator: string) => operatorCard(page, operator).locator(".react-flow__handle.source").first();
+
+/** Where a thing is on screen. */
+const box = async (of: Locator) => (await of.boundingBox()) as { x: number; y: number; width: number; height: number };
 
 /** Whether two things on the page lie over each other. */
 async function overlap(a: Locator, b: Locator) {
@@ -48,20 +53,18 @@ async function overlap(a: Locator, b: Locator) {
   return p.x < q.x + q.width && p.x + p.width > q.x && p.y < q.y + q.height && p.y + p.height > q.y;
 }
 
-/** How far the line from the result on screen ends from the output port it is drawn to. */
-async function gapToPort(page: Page, operator: string) {
-  const end = await middle(page.locator("[data-result-connector] circle").last());
-  const port = await middle(operatorCard(page, operator).locator(".react-flow__handle.source"));
-  return Math.hypot(end.x - port.x, end.y - port.y);
-}
+/** The operators of a workflow as the catalog has it now. */
+const operatorsOf = async (alice: Caller, rid: string) =>
+  (await alice("GET", `/workflows/${rid}`)).spec.operators as { operatorID: string; customDisplayName?: string; viewResult?: boolean; isDisabled?: boolean }[];
 
-test("an operator is a card that says its settings, shows all of them when asked, and is edited in place", async ({ page, request }) => {
+test("an operator is a card that says its settings, keeps its result at a click on its eye, and is edited in place", async ({ page, request }) => {
   const alice = await api(request);
-  const { rid } = await irisWorkflow(alice, "cards");
+  const { rid } = await irisWorkflow(alice, "cards", { beside: true });
   await signIn(page);
   await page.goto(`/workflows/${rid}`);
   const scan = operatorCard(page, "scan");
   const avg = operatorCard(page, "avg");
+  const most = operatorCard(page, "most");
   await expect(avg).toBeVisible();
 
   // In one line: the operator's name, and its settings as a person would say them. A file is
@@ -74,37 +77,63 @@ test("an operator is a card that says its settings, shows all of them when asked
   // The arrow between them is a curve.
   await expect(page.locator(".react-flow__edge-path").first()).toHaveAttribute("d", /C/);
 
-  // Every setting on a line of its own, for the whole canvas, as the viewer chooses.
+  // Every setting on a line of its own, for the whole canvas, as the viewer chooses; the choice
+  // is kept for the next visit.
   await page.locator('[data-segment="detailed"]').click();
   await expect(page.locator("[data-workflow-canvas]")).toHaveAttribute("data-density", "detailed");
   await expect(avg.locator("[data-operator-settings]")).toContainText("Group By Keys");
-  await expect(avg.locator("[data-operator-settings]")).toContainText("Species");
   await expect(scan.locator("[data-operator-settings]")).toContainText("iris.csv");
   await page.screenshot({ path: "test-results/canvas-detailed.png" });
-  // One card can say less than the rest, and the choice is kept for the next visit.
-  await avg.hover();
-  await avg.locator("[data-operator-flip]").click();
-  await expect(avg.locator("[data-operator-settings]")).toHaveCount(0);
-  await expect(scan.locator("[data-operator-settings]")).toBeVisible();
   await page.reload();
   await expect(page.locator("[data-workflow-canvas]")).toHaveAttribute("data-density", "detailed");
   await page.locator('[data-segment="compact"]').click();
 
-  // Edited where it is: the card opens into its form. No panel opens beside the canvas.
+  // The eye: avg keeps its result, and says so without being pointed at; scan does not, and its
+  // eye shows only when the card is pointed at. A click turns it on or off, in the workflow.
+  await expect(avg.locator("[data-operator-eye]")).toHaveAttribute("data-operator-eye", "on");
+  await expect(avg.locator("[data-operator-eye]")).toBeVisible();
+  await expect(scan.locator("[data-operator-eye]")).toBeHidden();
+  // Until then the name has the card's whole width.
+  await expect(scan.locator("[data-operator-run]")).toBeHidden();
+  await scan.hover();
+  await expect(scan.locator("[data-operator-eye]")).toBeVisible();
+  await scan.locator("[data-operator-eye]").click();
+  await expect(scan.locator("[data-operator-eye]")).toHaveAttribute("data-operator-eye", "on");
+  await expect.poll(async () => (await operatorsOf(alice, rid)).find(o => o.operatorID === "scan")?.viewResult, { timeout: 20_000 }).toBe(true);
+  await scan.locator("[data-operator-eye]").click();
+  await expect.poll(async () => (await operatorsOf(alice, rid)).find(o => o.operatorID === "scan")?.viewResult ?? false, { timeout: 20_000 }).toBe(false);
+
+  // Edited where it is: the card opens into its form, within its column; no panel opens beside
+  // the canvas. The card under it makes room, and goes back when the card closes.
+  const under = await box(most);
   const editor = await editOperator(page, "avg");
   await expect(avg.locator("[data-operator-view]")).toHaveAttribute("data-operator-view", "editing");
   await expect(page.locator("[data-property-panel]")).toHaveCount(0);
+  expect((await box(avg)).width).toBeLessThanOrEqual(300);
+  await expect.poll(() => overlap(avg, most)).toBe(false);
+  expect((await box(most)).y).toBeGreaterThan(under.y);
   await editor.getByLabel("Operator name").fill("mean petal");
   await page.screenshot({ path: "test-results/canvas-editing.png" });
   await page.locator("[data-operator-done]").click();
   await expect(avg.locator("[data-operator-editor]")).toHaveCount(0);
   await expect(avg).toContainText("mean petal");
-  await expect.poll(async () => ((await alice("GET", `/workflows/${rid}`)).spec.operators as { operatorID: string; customDisplayName?: string }[]).find(o => o.operatorID === "avg")?.customDisplayName, { timeout: 20_000 }).toBe("mean petal");
+  await expect.poll(async () => Math.round((await box(most)).y)).toBe(Math.round(under.y));
+  await expect.poll(async () => (await operatorsOf(alice, rid)).find(o => o.operatorID === "avg")?.customDisplayName, { timeout: 20_000 }).toBe("mean petal");
   // A double click opens a card as its pencil does, and Escape closes it.
   await scan.dblclick({ position: { x: 60, y: 14 } });
   await expect(scan.locator("[data-operator-editor]")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(scan.locator("[data-operator-editor]")).toHaveCount(0);
+
+  // What else can be done to an operator is on a right click: turn it off and on, delete it.
+  await most.click({ button: "right" });
+  await page.locator('[data-operator-menu="power"]').click();
+  await expect(most).toContainText("Off");
+  await expect.poll(async () => (await operatorsOf(alice, rid)).find(o => o.operatorID === "most")?.isDisabled, { timeout: 20_000 }).toBe(true);
+  await most.click({ button: "right" });
+  await page.locator('[data-operator-menu="delete"]').click();
+  await expect(most).toHaveCount(0);
+  await expect.poll(async () => (await operatorsOf(alice, rid)).map(o => o.operatorID).sort(), { timeout: 20_000 }).toEqual(["avg", "scan"]);
 });
 
 test("a workflow too large to see at once offers a map, which lies over the canvas only once the viewer opens it", async ({ page, request }) => {
@@ -169,73 +198,59 @@ test("a workflow too large to see at once offers a map, which lies over the canv
   await expect(map).toHaveCount(0);
 });
 
-test("an execution shows on the workflow's canvas, and each result is joined to the operator and port it came out of", async ({ page, request }) => {
-  test.setTimeout(240_000);
+test("an execution shows on the workflow's canvas, a click on a card shows its result, and a run can go up to one operator", async ({ page, request }) => {
+  test.setTimeout(300_000);
   const alice = await api(request);
-  const { rid } = await irisWorkflow(alice, "run on canvas", { keepScan: true });
+  const { rid } = await irisWorkflow(alice, "run on canvas", { keepScan: true, beside: true });
   await signIn(page);
   await page.goto(`/workflows/${rid}`);
   const scan = operatorCard(page, "scan");
   const avg = operatorCard(page, "avg");
+  const most = operatorCard(page, "most");
   await expect(avg).toBeVisible();
   // Before any execution a card says nothing of one, and there are no results to show.
   await expect(avg.locator("[data-operator-execution]")).toHaveCount(0);
   await expect(page.locator("[data-results]")).toHaveCount(0);
 
-  // Run: the page stays where it is, and the cards say how each operator did.
+  // Run: the page stays where it is, and the cards say how each operator did: the rows a source
+  // put out, the rows any other read and put out.
   await page.locator("[data-run]").click();
   await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
   await expect(scan.locator("[data-operator-status]")).toHaveAttribute("data-operator-status", "completed");
-  await expect(scan.locator("[data-operator-rows]")).toContainText("150 rows");
-  await expect(avg.locator("[data-operator-rows]")).toContainText("3 rows");
+  await expect(scan.locator("[data-operator-rows]")).toHaveText("150 rows");
+  await expect(avg.locator("[data-operator-rows]")).toHaveText("150 → 3 rows");
 
-  // The results are under the canvas, one tab per operator that has one. The one on screen is
-  // the kept result, and a line joins its tab to the output port it came out of.
+  // The results kept are under the canvas: scan's and avg's, which have their eye on, and most's,
+  // which nothing reads from. One tab each; there is no line from a tab to its port.
   const results = page.locator("[data-results]");
-  await expect(results.locator('[data-result-tab="avg:output-0"]')).toHaveAttribute("aria-selected", "true");
-  await expect(results.locator("[data-port-rows]")).toContainText("Iris-setosa");
-  await expect(avg.locator("[data-result-shown]")).toHaveAttribute("data-result-shown", "output-0");
-  await expect(page.locator("[data-result-connector]")).toHaveAttribute("data-result-connector", "avg:output-0");
-  await expect.poll(() => gapToPort(page, "avg")).toBeLessThan(12);
-  await page.screenshot({ path: "test-results/canvas-results.png" });
-
-  // A card's own result button puts that result on screen, and the line moves with it.
-  await scan.locator('[data-operator-result="output-0"]').click();
+  await expect(results.locator("[data-result-tab]")).toHaveCount(3);
+  await expect(page.locator("[data-result-connector]")).toHaveCount(0);
+  // A click on a card shows its result, rings the card and lights the port it came out of.
+  await scan.click();
   await expect(results.locator('[data-result-tab="scan:output-0"]')).toHaveAttribute("aria-selected", "true");
   await expect(results.locator("[data-port-rows]")).toContainText("SepalLengthCm");
-  await expect(page.locator("[data-result-connector]")).toHaveAttribute("data-result-connector", "scan:output-0");
-  await expect.poll(() => gapToPort(page, "scan")).toBeLessThan(12);
+  await expect(scan.locator("[data-result-shown]")).toHaveAttribute("data-result-shown", "output-0");
+  await expect(portOf(page, "scan")).toHaveAttribute("data-result", "shown");
+  await expect(portOf(page, "avg")).toHaveAttribute("data-result", "kept");
+  await page.screenshot({ path: "test-results/canvas-results.png" });
+  // And a tab puts its operator's card in the ring and lights its port.
+  await results.locator('[data-result-tab="avg:output-0"]').click();
+  await expect(avg.locator("[data-result-shown]")).toHaveAttribute("data-result-shown", "output-0");
+  await expect(portOf(page, "avg")).toHaveAttribute("data-result", "shown");
+  await expect(portOf(page, "scan")).toHaveAttribute("data-result", "kept");
+  await expect(results.locator("[data-port-rows]")).toContainText("Iris-setosa");
   // More rows than a page holds: the way to the next page stands clear of the button of the
   // chat beside the page, which floats over that corner.
+  await scan.click();
   const next = results.getByLabel("Next page");
   await expect(next).toBeVisible();
   expect(await overlap(next, page.locator("[data-chat-dock-button]"))).toBe(false);
   await next.click();
   await expect(results.getByText("2 / 3")).toBeVisible();
-  // And a tab puts its operator's card in the ring.
-  await results.locator('[data-result-tab="avg:output-0"]').click();
-  await expect(avg.locator("[data-result-shown]")).toHaveAttribute("data-result-shown", "output-0");
-
-  // The line follows the canvas as it is moved.
-  const canvas = (await page.locator("[data-workflow-canvas] .react-flow__pane").boundingBox()) as { x: number; y: number; width: number; height: number };
-  await page.mouse.move(canvas.x + 40, canvas.y + canvas.height - 30);
-  await page.mouse.down();
-  await page.mouse.move(canvas.x + 120, canvas.y + canvas.height - 70, { steps: 6 });
-  await page.mouse.up();
-  await expect.poll(() => gapToPort(page, "avg")).toBeLessThan(12);
-
-  // While a card is open its form is what is looked at: the line is not drawn across it, and
-  // is back when the card closes.
-  await editOperator(page, "scan");
-  await expect(page.locator("[data-result-connector]")).toHaveCount(0);
-  await page.locator("[data-operator-done]").click();
-  await expect(page.locator("[data-result-connector]")).toHaveAttribute("data-result-connector", "avg:output-0");
-  await expect.poll(() => gapToPort(page, "avg")).toBeLessThan(12);
 
   // The results fold away and come back.
   await page.getByLabel("Hide the results").click();
   await expect(results).toHaveCount(0);
-  await expect(page.locator("[data-result-connector]")).toHaveCount(0);
   await page.locator("[data-show-results]").click();
   await expect(results.locator("[data-port-rows]")).toBeVisible();
 
@@ -245,10 +260,25 @@ test("an execution shows on the workflow's canvas, and each result is joined to 
   await page.locator("[data-run]").click();
   await expect.poll(() => page.locator("[data-results]").getAttribute("data-results"), { timeout: 30_000 }).not.toBe(first);
   await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
-  await expect(avg.locator("[data-operator-rows]")).toContainText("3 rows");
-  const executions = (await alice("GET", `/workflows/${rid}/executions?limit=10`)).items as { metadata: { name: string } }[];
-  expect(executions).toHaveLength(2);
-  expect(new Set(executions.map(x => x.metadata.name)).size).toBe(2);
+  await expect(avg.locator("[data-operator-rows]")).toHaveText("150 → 3 rows");
+
+  // Run up to most, from its card: only what leads to it runs, its result is on screen, and the
+  // workflow is as it was.
+  const head = (await alice("GET", `/workflows/${rid}`)).metadata.head;
+  await most.hover();
+  await most.locator("[data-operator-run]").click();
+  await expect.poll(() => page.locator("[data-results]").getAttribute("data-results"), { timeout: 30_000 }).not.toBe(first);
+  await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
+  await expect(most.locator("[data-operator-status]")).toHaveAttribute("data-operator-status", "completed");
+  await expect(avg.locator("[data-operator-execution]")).toHaveCount(0);
+  await expect(results.locator('[data-result-tab="most:output-0"]')).toHaveAttribute("aria-selected", "true");
+  await expect(results.locator('[data-result-tab="avg:output-0"]')).toHaveCount(0);
+  await expect(results.locator("[data-port-rows]")).toContainText("most");
+  const executions = (await alice("GET", `/workflows/${rid}/executions?limit=10`)).items as { metadata: { name: string }; spec: { upTo?: string } }[];
+  expect(executions).toHaveLength(3);
+  expect(new Set(executions.map(x => x.metadata.name)).size).toBe(3);
+  expect(executions[0]?.spec.upTo).toBe("most");
+  expect((await alice("GET", `/workflows/${rid}`)).metadata.head).toBe(head);
 });
 
 test("an execution's page is the workflow as it ran, and a visualization's result is the chart it drew", async ({ page, request }) => {
@@ -264,7 +294,7 @@ test("an execution's page is the workflow as it ran, and a visualization's resul
   // The workflow as it ran, each card saying how its operator did.
   await expect(operatorCard(page, "chart")).toBeVisible();
   await expect(stage.locator("[data-workflow-canvas]")).toHaveAttribute("data-editable", "false");
-  await expect(operatorCard(page, "avg").locator("[data-operator-rows]")).toContainText("3 rows");
+  await expect(operatorCard(page, "avg").locator("[data-operator-rows]")).toHaveText("150 → 3 rows");
   await expect(operatorCard(page, "scan").locator("[data-operator-edit]")).toHaveCount(0);
 
   // The result on screen is the last one kept: the chart. It is a picture, not a table of its
@@ -276,7 +306,7 @@ test("an execution's page is the workflow as it ran, and a visualization's resul
   await expect(stage.locator("[data-port-rows]")).toHaveCount(0);
   // What the operator drew is in the frame, whole.
   await expect(page.frameLocator("[data-port-chart] iframe").locator(".plotly-graph-div")).toHaveCount(1, { timeout: 30_000 });
-  await expect.poll(() => gapToPort(page, "chart")).toBeLessThan(12);
+  await expect(portOf(page, "chart")).toHaveAttribute("data-result", "shown");
   await page.screenshot({ path: "test-results/execution-chart.png" });
 
   // Another tab and back, right after the cards changed size: the canvas is still there to see.
@@ -294,9 +324,10 @@ test("an execution's page is the workflow as it ran, and a visualization's resul
   await expect(operatorCard(page, "chart")).toBeInViewport();
   expect(noPlace).toEqual([]);
 
-  // The table it was drawn from is one tab away, joined to its own operator.
-  await stage.locator('[data-result-tab="avg:output-0"]').click();
+  // The table it was drawn from is a click on its card away, its port lit.
+  await operatorCard(page, "avg").click();
+  await expect(stage.locator('[data-result-tab="avg:output-0"]')).toHaveAttribute("aria-selected", "true");
   await expect(stage.locator('[data-result-tab="avg:output-0"]')).toHaveAttribute("data-result-kind", "table");
   await expect(stage.locator("[data-port-rows]")).toContainText("Iris-virginica");
-  await expect.poll(() => gapToPort(page, "avg")).toBeLessThan(12);
+  await expect(portOf(page, "avg")).toHaveAttribute("data-result", "shown");
 });

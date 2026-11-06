@@ -221,6 +221,19 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    writes them; what a page holds then is what is there at that moment. The app reads the
    result on screen again as the port reports more rows, and reads it once when the
    execution is over.
+20. **What a run keeps.** A result is a port the plan keeps a table for: the ports of the
+   operators marked `viewResult` (the eye), of the operators nothing reads from, and of the
+   operator a run went up to. The engine stores other ports for its own schedule; the catalog
+   lists none of them in `status.ports`, and their rows are refused (`404`, "no result is kept
+   for ..."), never asked of the unit.
+21. **A run up to an operator.** `RunWorkflow.upTo` runs only that operator and what it reads
+   from, directly or not; nothing reads from it there, so its result is kept. The workflow does
+   not change; the execution records `spec.upTo`. An operator that is not in the version or is
+   turned off is refused (`400`).
+22. **Rows in and rows out.** An operator's status says the rows it has read (`rowsIn`, over
+   all its input ports) and put out (`rowsOut`, over all its output ports) so far; the unit
+   reports both with its state, about once a second. They replace `tuples`, which was the rows
+   put out.
 
 ## catalog and its tools
 

@@ -252,6 +252,52 @@ const credentialPrefix = uri.Scheme + "credentials/"
 
 // compile turns a workflow spec into a plan, reading only what the store holds: no permission
 // is checked here (authorizePlan does that, on what compile found) and nothing is written.
+// upTo is the part of a workflow a run up to an operator runs: the operator and everything it
+// reads from, directly or not, with the links between them. Nothing reads from the operator
+// there, so its result is kept by the rule that keeps the result of an operator nothing reads
+// from.
+func upTo(spec api.WorkflowSpec, operatorID string) (api.WorkflowSpec, error) {
+	byID := map[string]api.WorkflowOperator{}
+	for _, op := range spec.Operators {
+		byID[op.OperatorID] = op
+	}
+	target, ok := byID[operatorID]
+	if !ok {
+		return spec, Invalid(fmt.Sprintf("no operator %s in this version", operatorID), map[string]any{"field": "upTo"})
+	}
+	if target.IsDisabled != nil && *target.IsDisabled {
+		return spec, Invalid(fmt.Sprintf("operator %s is turned off", operatorID), map[string]any{"field": "upTo"})
+	}
+	inputs := map[string][]string{}
+	for _, l := range spec.Links {
+		inputs[l.Target.OperatorID] = append(inputs[l.Target.OperatorID], l.Source.OperatorID)
+	}
+	keep := map[string]bool{}
+	for next := []string{operatorID}; len(next) > 0; {
+		id := next[len(next)-1]
+		next = next[:len(next)-1]
+		if keep[id] {
+			continue
+		}
+		keep[id] = true
+		next = append(next, inputs[id]...)
+	}
+	part := spec
+	part.Operators = nil
+	part.Links = nil
+	for _, op := range spec.Operators {
+		if keep[op.OperatorID] {
+			part.Operators = append(part.Operators, op)
+		}
+	}
+	for _, l := range spec.Links {
+		if keep[l.Source.OperatorID] && keep[l.Target.OperatorID] {
+			part.Links = append(part.Links, l)
+		}
+	}
+	return part, nil
+}
+
 func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled, error) {
 	defaultPorts(&spec)
 	if err := validateGraph(&spec); err != nil {

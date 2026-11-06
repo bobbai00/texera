@@ -276,8 +276,8 @@ func TestWatchFollowsAnExecutionAndItsControls(t *testing.T) {
 			t.Fatalf("event: %d %s", status, data)
 		}
 	}
-	operator := func(opid, state string, tuples int) map[string]any {
-		return map[string]any{"texera_operator": map[string]any{"opid": opid, "state": state, "tuples": tuples}}
+	operator := func(opid, state string, rowsOut int) map[string]any {
+		return map[string]any{"texera_operator": map[string]any{"opid": opid, "state": state, "rowsOut": rowsOut}}
 	}
 	scanOf := func(e envelope) map[string]any {
 		ops, _ := field(e, "operators").(map[string]any)
@@ -285,7 +285,7 @@ func TestWatchFollowsAnExecutionAndItsControls(t *testing.T) {
 		return scan
 	}
 	report(rid(exec)+"/scan", "RUNNING", operator("scan", "Running", 5))
-	progressed := nextResource(t, ch, func(e envelope) bool { return scanOf(e)["tuples"] == float64(5) })
+	progressed := nextResource(t, ch, func(e envelope) bool { return scanOf(e)["rowsOut"] == float64(5) })
 	if scanOf(progressed)["state"] != "Running" {
 		t.Fatalf("progress: %v", progressed.Status)
 	}
@@ -323,7 +323,7 @@ func TestWatchFollowsAnExecutionAndItsControls(t *testing.T) {
 	nextResource(t, ch, func(e envelope) bool { return field(e, "phase") == "completed" })
 	report(rid(exec)+"/scan", "RUNNING", operator("scan", "Running", 1))
 	h.mustJSON("alice", "GET", execPath, nil, &exec)
-	if scanOf(exec)["tuples"] != float64(7) || scanOf(exec)["state"] != "Completed" {
+	if scanOf(exec)["rowsOut"] != float64(7) || scanOf(exec)["state"] != "Completed" {
 		t.Fatalf("late progress ignored: %v", exec.Status)
 	}
 	if status, _ := h.do("alice", "POST", execPath+"/pause", nil); status != http.StatusConflict {

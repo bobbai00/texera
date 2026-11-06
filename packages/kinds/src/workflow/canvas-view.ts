@@ -37,15 +37,12 @@ export interface CanvasViewState {
   density: Density;
   /** Whether the map of a workflow too large to see at once is open. It lies over the canvas, so it is closed until asked for. */
   map: boolean;
-  /** The cards that say more, or less, than the canvas's choice. */
-  flipped: ReadonlySet<string>;
   /** The operator whose settings are open in its card. */
   editing: string | null;
   /** The result on screen under the canvas, by its port's key. */
   result: string | null;
   setDensity: (density: Density) => void;
   setMap: (open: boolean) => void;
-  flip: (operatorID: string) => void;
   edit: (operatorID: string | null) => void;
   show: (result: string | null) => void;
 }
@@ -56,24 +53,16 @@ export function createCanvasView(): CanvasView {
   return createStore<CanvasViewState>()(set => ({
     density: remembered(DENSITY_KEY) === "detailed" ? "detailed" : "compact",
     map: remembered(MAP_KEY) === "open",
-    flipped: new Set(),
     editing: null,
     result: null,
     setDensity: density => {
       remember(DENSITY_KEY, density);
-      // The choice is for every card: the ones flipped against the last choice follow it.
-      set({ density, flipped: new Set() });
+      set({ density });
     },
     setMap: open => {
       remember(MAP_KEY, open ? "open" : "closed");
       set({ map: open });
     },
-    flip: operatorID =>
-      set(s => {
-        const flipped = new Set(s.flipped);
-        if (!flipped.delete(operatorID)) flipped.add(operatorID);
-        return { flipped };
-      }),
     edit: operatorID => set({ editing: operatorID }),
     show: result => set({ result }),
   }));
@@ -88,6 +77,8 @@ export interface Canvas {
   editor?: EditorStore;
   /** What the compiler says of the workflow on screen: the columns each operator reads. */
   compilation?: Compilation;
+  /** Runs the workflow up to an operator; absent where nothing can be run from the canvas. */
+  run?: (operatorID: string) => void;
   /** A small picture of a workflow (the card of one in a chat): an operator is its icon with its name under it. */
   picture?: boolean;
 }

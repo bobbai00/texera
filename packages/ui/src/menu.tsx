@@ -1,6 +1,7 @@
 // Menus wrap Base UI, so keyboard handling, focus management and ARIA come from a
 // maintained library rather than this codebase.
 
+import { ContextMenu as BaseContextMenu } from "@base-ui/react/context-menu";
 import { Menu } from "@base-ui/react/menu";
 import { Check } from "lucide-react";
 import type { ComponentProps, ReactElement, ReactNode } from "react";
@@ -35,6 +36,29 @@ export function DropdownMenuContent({
         </Menu.Popup>
       </Menu.Positioner>
     </Menu.Portal>
+  );
+}
+
+/** A menu that opens where something is right-clicked; its items are `DropdownMenuItem`s. */
+export const ContextMenu = BaseContextMenu.Root;
+
+export function ContextMenuTrigger({ children }: { children: ReactElement }) {
+  return <BaseContextMenu.Trigger render={children} />;
+}
+
+export function ContextMenuContent({ className, children }: { className?: string; children: ReactNode }) {
+  return (
+    <BaseContextMenu.Portal>
+      <BaseContextMenu.Positioner className="z-50">
+        <BaseContextMenu.Popup
+          className={cn(
+            "min-w-40 overflow-hidden rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg outline-none",
+            className
+          )}>
+          {children}
+        </BaseContextMenu.Popup>
+      </BaseContextMenu.Positioner>
+    </BaseContextMenu.Portal>
   );
 }
 

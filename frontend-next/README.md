@@ -147,11 +147,15 @@ A workflow, and an execution of one, are shown on one canvas (`packages/kinds/sr
   in words (`describeProperties` in `workflow-model/summary.ts`: a file by its name, a list of
   conditions as written, code by its length, defaults left out), in one line or with each
   setting on a line. How much the cards say is the viewer's choice (`canvas-view.ts`:
-  "Compact | Detailed" for the canvas, a chevron for one card), kept in the browser, never in
-  the workflow.
+  "Compact | Detailed" for the canvas), kept in the browser, never in the workflow.
+- **The operator's own buttons** are on its card: the eye (`viewResult`, its result kept on
+  every run; in sight while on) and a run up to it (`upTo` on a run). Turning it off and
+  deleting it are on a right click.
 - **It is edited in place.** The pencil, or a double click, opens the card into the
-  operator's form (`PropertyForm.tsx`); every change goes into the workflow as it is made.
-  There is no panel beside the canvas. The list of operators opens from "Add operator".
+  operator's form (`PropertyForm.tsx`; code a few lines in the card and all of it in a larger
+  editor); every change goes into the workflow as it is made. The open card stays within its
+  column and the cards under it are drawn lower while it is open (`room.ts`). There is no
+  panel beside the canvas. The list of operators opens from "Add operator".
 - **Places are for cards that say one line** (`workflow-model/layout.ts`). Cards that say
   more are taller, so while they do the rows are drawn further apart by one factor for the
   canvas (`density.tsx`); nothing is moved in the workflow. The canvas opens at a size its
@@ -161,15 +165,16 @@ A workflow, and an execution of one, are shown on one canvas (`packages/kinds/sr
   corner; a workflow of a dozen operators or more has a map, which the viewer opens from a
   button there and which stays as they left it (`canvas-view.ts`).
 - **An execution shows on the cards** (`execution/overlay.ts`): where each operator stands,
-  its rows, why it failed, and which of its results can be read. The workflow's page shows its
-  latest execution; an execution's page shows the version that ran (`WorkflowCanvas.tsx` with
-  a view), laid out from its graph.
+  the rows it read and put out, why it failed, and which of its results are kept. A running
+  card has a moving bar; an arrow moves while its operator runs and has put rows out. The
+  workflow's page shows its latest execution; an execution's page shows the version that ran
+  (`WorkflowCanvas.tsx` with a view), laid out from its graph.
 - **Results are tied to where they came from** (`results/`). Under the canvas one tab per
-  output port that holds a result; the one on screen rings its operator's card, and
-  `Connector.tsx` draws a line from the tab to the port, measured again whenever either end
-  may have moved. A result whose one column is `html-content` is what a visualization operator
-  drew and is shown as that page in `SandboxedFrame`; the unit serves such a cell whole and
-  cuts any other long string for a table's cell.
+  output port whose result is kept (a port the catalog keeps a table for); a click on a card
+  shows its result, rings the card and lights the port it came out of. A result whose one
+  column is `html-content` is what a visualization operator drew and is shown as that page in
+  `SandboxedFrame`; the unit serves such a cell whole and cuts any other long string for a
+  table's cell.
 - **Every graph draws its arrows the same way** (`shell/canvas.ts`, the `--edge` token): the
   canvas and the lineage graph.
 

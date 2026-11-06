@@ -160,9 +160,14 @@ type ExecutionStatus string
 
 // OperatorRun defines model for OperatorRun.
 type OperatorRun struct {
-	Error  interface{} `json:"error,omitempty"`
-	State  string      `json:"state"`
-	Tuples *int64      `json:"tuples,omitempty"`
+	Error interface{} `json:"error,omitempty"`
+
+	// RowsIn Rows the operator has read so far, over all its input ports.
+	RowsIn *int64 `json:"rowsIn,omitempty"`
+
+	// RowsOut Rows the operator has put out so far, over all its output ports.
+	RowsOut *int64 `json:"rowsOut,omitempty"`
+	State   string `json:"state"`
 }
 
 // OperatorType An operator type from the registry, with its JSON Schema for properties.

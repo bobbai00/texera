@@ -1,5 +1,6 @@
 import type { ExecutionSpec, ExecutionStatus } from "@texera/catalog-client/types";
 import { formatDuration } from "@texera/ui";
+import { keptResult } from "./overlay";
 import { PlayCircle } from "lucide-react";
 import { lazy } from "react";
 import type { KindSpec } from "../types";
@@ -18,7 +19,13 @@ export const executionKind: KindSpec = {
     const spec = r.spec as Partial<ExecutionSpec>;
     const status = r.status as ExecutionStatus | undefined;
     const vno = spec.workflow?.split("@")[1];
-    const ports = status?.ports?.length ?? 0;
-    return [status?.phase ?? "", vno ? `workflow v${vno}` : "", `${ports} result${ports === 1 ? "" : "s"}`, formatDuration(status?.startedAt, status?.finishedAt)].filter(Boolean);
+    const ports = (status?.ports ?? []).filter(keptResult).length;
+    return [
+      status?.phase ?? "",
+      vno ? `workflow v${vno}` : "",
+      spec.upTo ? `up to ${spec.upTo}` : "",
+      `${ports} result${ports === 1 ? "" : "s"}`,
+      formatDuration(status?.startedAt, status?.finishedAt),
+    ].filter(Boolean);
   },
 };

@@ -84,7 +84,10 @@ enum ExecutionStatus {
 
 model OperatorRun {
   state: string;
-  tuples?: int64;
+  @doc("Rows the operator has read so far, over all its input ports.")
+  rowsIn?: int64;
+  @doc("Rows the operator has put out so far, over all its output ports.")
+  rowsOut?: int64;
   error?: unknown;
 }
 

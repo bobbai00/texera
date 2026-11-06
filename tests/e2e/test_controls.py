@@ -48,8 +48,10 @@ def test_a_run_is_watched_paused_and_resumed(alice, bob, project, iris, unit):
     # The execution goes; the unit's progress reports reach the watcher operator by operator.
     running = watch.until(lambda r: phase(r) == "running", timeout=120)
     assert running["kind"] == "execution"
-    progressed = watch.until(lambda r: (r["status"].get("operators") or {}).get("slow", {}).get("tuples", 0) > 0, timeout=60)
+    progressed = watch.until(lambda r: (r["status"].get("operators") or {}).get("slow", {}).get("rowsOut", 0) > 0, timeout=60)
     assert progressed["status"]["operators"]["slow"]["state"] in ("Running", "Paused", "Pausing")
+    # What it read is said beside what it put out: the slow operator reads every row it puts out.
+    assert progressed["status"]["operators"]["slow"]["rowsIn"] >= progressed["status"]["operators"]["slow"]["rowsOut"]
 
     # Pause: the catalog forwards it and reports what the unit says, not what was asked.
     assert bob.status("POST", f"{path}/pause") in (403, 404), "only a reader of the execution controls it"
@@ -58,8 +60,8 @@ def test_a_run_is_watched_paused_and_resumed(alice, bob, project, iris, unit):
     paused = watch.until(lambda r: phase(r) == "paused", timeout=30)
     assert alice.get(path)["status"]["phase"] == "paused"
     assert alice.status("POST", f"{path}/pause") == 409
-    tuples = paused["status"]["operators"]["slow"].get("tuples", 0)
-    assert tuples < 150, "paused before the end"
+    put_out = paused["status"]["operators"]["slow"].get("rowsOut", 0)
+    assert put_out < 150, "paused before the end"
 
     # Resume: it runs to completion, with every row.
     alice.post(f"{path}/resume")

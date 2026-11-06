@@ -654,13 +654,16 @@ test("an execution's page follows it as it goes, and pauses and resumes it", asy
   const execution = page.locator("[data-execution-view]");
   await expect(execution.locator("[data-phase]")).toHaveText("running", { timeout: 90_000 });
   // The canvas shows the workflow as it runs: each operator's card says where it stands and
-  // how many rows it has put out, as the unit reports them, with no reload.
+  // the rows it has read and put out, as the unit reports them, with no reload. A running
+  // operator is plain to see: a bar moves along its card, and the arrow into it moves.
   const slow = operatorCard(page, "slow").locator("[data-operator-status]");
   await expect(slow).toHaveAttribute("data-operator-status", "running", { timeout: 30_000 });
   await expect(slow.locator("[data-operator-rows]")).toBeVisible({ timeout: 30_000 });
+  await expect(slow.locator("[data-operator-working]")).toBeVisible();
   await execution.locator("[data-pause-execution]").click();
   await expect(execution.locator("[data-phase]")).toHaveText("paused", { timeout: 30_000 });
   await expect(slow).toHaveAttribute("data-operator-status", "paused", { timeout: 30_000 });
+  await expect(slow.locator("[data-operator-working]")).toHaveCount(0);
   await page.screenshot({ path: "test-results/paused-execution.png", fullPage: true });
   await execution.locator("[data-resume-execution]").click();
   await expect(execution.locator("[data-phase]")).toHaveText("running", { timeout: 30_000 });

@@ -23,6 +23,7 @@ import {
   Panel,
   ReactFlow,
   useEdgesState,
+  useStore as useFlowStore,
   useNodesInitialized,
   useNodesState,
   useReactFlow,
@@ -35,13 +36,14 @@ import { useStore } from "zustand";
 import { operatorSchemasQuery } from "../queries";
 import { useScope } from "../scope";
 import { edgeOptions } from "../shell/canvas";
-import { CanvasContext, type CanvasView } from "./canvas-view";
+import { CanvasContext, type CanvasView, portKey } from "./canvas-view";
 import { CanvasControls } from "./controls";
 import { DensityToggle, spread, unspread, useRowSpread } from "./density";
 import type { EditorStore } from "./editor";
 import { useFollow, useFrame, useReframe } from "./framing";
 import { nodeTypes } from "./OperatorNode";
 import { OPERATOR_DRAG_TYPE, OperatorPalette } from "./OperatorPalette";
+import { roomFor } from "./room";
 
 const FIT_UP_TO = 60;
 const EDITOR_VIEWPORT = { x: 40, y: 40, zoom: 1 };
@@ -56,12 +58,15 @@ export function EditorCanvas({
   view,
   overlay,
   compilation,
+  onRunTo,
   className,
 }: {
   store: EditorStore;
   view: CanvasView;
   overlay?: Record<string, OperatorOverlay>;
   compilation?: Compilation;
+  /** Runs the workflow up to an operator; without it, a card has no run button. */
+  onRunTo?: (operatorID: string) => void;
   className?: string;
 }) {
   const spec = useStore(store, s => s.spec);
@@ -103,11 +108,27 @@ export function EditorCanvas({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [editing, view]);
-  const flow = useMemo(() => toFlow(spec, spread(positions, k), overlay), [spec, positions, k, overlay]);
+  // The card open for editing, as it is drawn: the cards under it make room for it.
+  const openWidth = useFlowStore(s => (editing ? (s.nodeLookup.get(editing)?.measured.width ?? 0) : 0));
+  const openHeight = useFlowStore(s => (editing ? (s.nodeLookup.get(editing)?.measured.height ?? 0) : 0));
+  const drawn = useMemo(() => spread(positions, k), [positions, k]);
+  const room = useMemo(
+    () => (editing ? roomFor(drawn, { id: editing, width: openWidth, height: openHeight }) : {}),
+    [drawn, editing, openWidth, openHeight]
+  );
+  const flow = useMemo(() => {
+    const placed = Object.fromEntries(
+      Object.entries(drawn).map(([id, p]) => [id, room[id] ? { x: p.x, y: p.y + room[id] } : p])
+    );
+    return toFlow(spec, placed, overlay);
+  }, [spec, drawn, room, overlay]);
   const [nodes, setNodes, onNodesChange] = useNodesState<OperatorNode>(flow.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(flow.edges);
   const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
-  const canvas = useMemo(() => ({ view, schemas, editor: store, compilation }), [view, schemas, store, compilation]);
+  const canvas = useMemo(
+    () => ({ view, schemas, editor: store, compilation, run: readonly ? undefined : onRunTo }),
+    [view, schemas, store, compilation, readonly, onRunTo]
+  );
 
   // The store is the truth of the workflow; React Flow keeps what it measured, what is being
   // dragged and what is picked. The store's pick is put onto the canvas only when the store
@@ -242,7 +263,11 @@ export function EditorCanvas({
             onNodeDragStop={(_, __, dragged) =>
               store
                 .getState()
-                .move(Object.fromEntries(dragged.map(n => [n.id, unspread({ x: n.position.x, y: n.position.y }, k)])))
+                .move(
+                  Object.fromEntries(
+                    dragged.map(n => [n.id, unspread({ x: n.position.x, y: n.position.y - (room[n.id] ?? 0) }, k)])
+                  )
+                )
             }
             onNodesDelete={deleted =>
               edit(cur =>
@@ -261,6 +286,11 @@ export function EditorCanvas({
               )
             }
             onSelectionChange={onSelectionChange}
+            // A click on a card shows its result, when the execution on screen kept one.
+            onNodeClick={(_, node) => {
+              const port = node.data.results?.[0];
+              if (port) view.getState().show(portKey(node.id, port));
+            }}
             // A double click on a card opens it for editing, as its pencil does.
             onNodeDoubleClick={readonly ? undefined : (_, node) => view.getState().edit(node.id)}
             // A click on the empty canvas closes the card that is open.

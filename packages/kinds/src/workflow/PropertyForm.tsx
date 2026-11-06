@@ -1,5 +1,5 @@
 import type { Attribute } from "@texera/catalog-client/types";
-import { Button, Chip, Input, NativeSelect, Textarea, cn } from "@texera/ui";
+import { Button, Chip, cn, DialogContent, DialogRoot, Input, NativeSelect, Textarea } from "@texera/ui";
 import {
   choices,
   fieldKind,
@@ -11,7 +11,7 @@ import {
   resolve,
   setValue,
 } from "@texera/workflow-model";
-import { Plus, Trash2 } from "lucide-react";
+import { Maximize2, Plus, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
 import { CredentialPicker } from "./CredentialPicker";
 import { DatasetFilePicker } from "./DatasetFilePicker";
@@ -170,13 +170,11 @@ function Field({
         );
       case "code":
         return (
-          <Textarea
+          <CodeField
             id={id}
             value={typeof value === "string" ? value : String(schema.default ?? "")}
+            onChange={onChange}
             disabled={ctx.disabled}
-            spellCheck={false}
-            onChange={e => onChange(e.target.value)}
-            className="h-72 bg-muted/30 font-mono text-2xs leading-relaxed"
           />
         );
       case "textarea":
@@ -472,5 +470,46 @@ function JsonField({
       />
       {bad && <p className="text-2xs text-destructive">Not valid JSON.</p>}
     </>
+  );
+}
+
+/**
+ * Code, edited in a card: a few lines where the card is, and the whole of it in a larger
+ * editor, so a long script does not make the card cover the canvas.
+ */
+function CodeField({
+  id,
+  value,
+  onChange,
+  disabled,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const code = (className: string, props: { id?: string; "aria-label"?: string }) => (
+    <Textarea
+      {...props}
+      value={value}
+      disabled={disabled}
+      spellCheck={false}
+      onChange={e => onChange(e.target.value)}
+      className={cn("bg-muted/30 font-mono text-2xs leading-relaxed", className)}
+    />
+  );
+  return (
+    <div className="space-y-1.5">
+      {code("h-28", { id })}
+      <Button variant="outline" size="xs" onClick={() => setOpen(true)} data-code-open>
+        <Maximize2 /> Open larger
+      </Button>
+      <DialogRoot open={open} onOpenChange={setOpen}>
+        <DialogContent title="Code" className="max-w-4xl">
+          {code("h-[60vh]", { "aria-label": "Code" })}
+        </DialogContent>
+      </DialogRoot>
+    </div>
   );
 }

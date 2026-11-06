@@ -1,6 +1,6 @@
-// An execution as a canvas shows it: what each operator's card says (its state, its rows, why
-// it failed, which of its results can be read), which result is on screen when nobody chose
-// one, and whether a result is a table or a picture.
+// An execution as a canvas shows it: what each operator's card says (its state, the rows it
+// read and put out, why it failed, which of its results are kept), which result is on screen
+// when nobody chose one, and whether a result is a table or a picture.
 
 import type { Attribute, ExecutionStatus, PortSummary } from "@texera/catalog-client/types";
 import { type OperatorOverlay, statusOf } from "@texera/workflow-model";
@@ -20,13 +20,14 @@ export function executionOverlay(status: ExecutionStatus | undefined): Record<st
     const error = wordsOf(operator.error);
     overlay[id] = {
       status: statusOf(operator.state),
-      ...(operator.tuples !== undefined ? { rows: operator.tuples } : {}),
+      ...(operator.rowsIn !== undefined ? { rowsIn: operator.rowsIn } : {}),
+      ...(operator.rowsOut !== undefined ? { rowsOut: operator.rowsOut } : {}),
       ...(error ? { error } : {}),
     };
   }
   // The rows of an expired execution are gone; what its cards say of it stays.
   if (!status?.resultsExpiredAt)
-    for (const port of status?.ports ?? []) {
+    for (const port of (status?.ports ?? []).filter(keptResult)) {
       const of = overlay[port.operatorID] ?? {};
       overlay[port.operatorID] = { ...of, results: [...(of.results ?? []), port.portID] };
     }
@@ -34,15 +35,17 @@ export function executionOverlay(status: ExecutionStatus | undefined): Record<st
 }
 
 /**
- * Whether the catalog keeps a table for a port's result. Such a result is read from the
- * warehouse whenever; any other is the unit's own and is there while the unit that ran the
- * execution still holds it.
+ * Whether a port's result is kept: the catalog keeps a table for it in the execution's
+ * warehouse. An execution of an earlier release may list a port the engine stored for its own
+ * schedule; that is no result.
  */
-export const keptResult = (port: PortSummary) => port.table !== undefined && !port.table.startsWith("vfs:");
+export function keptResult(port: PortSummary): boolean {
+  return port.table !== undefined && !port.table.startsWith("vfs:");
+}
 
-/** The result on screen when nobody chose one: the last one kept, else the last. */
+/** The result on screen when nobody chose one: the last one kept. */
 export function defaultResult(ports: PortSummary[]): string | null {
-  const port = ports.findLast(keptResult) ?? ports.at(-1);
+  const port = ports.findLast(keptResult);
   return port ? portKey(port.operatorID, port.portID) : null;
 }
 

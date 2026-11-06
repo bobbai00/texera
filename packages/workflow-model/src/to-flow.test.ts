@@ -35,10 +35,10 @@ describe("toFlow", () => {
     const { nodes } = toFlow(
       spec([op("a", "Filter", 1, 1, { customDisplayName: "Orders in 2026" }), op("b", "texera://operators/x@1", 1, 1)]),
       {},
-      { a: { status: "completed", rows: 12 }, b: { error: "boom" } }
+      { a: { status: "completed", rowsIn: 20, rowsOut: 12 }, b: { error: "boom" } }
     );
     expect(nodes[0]?.data.label).toBe("Orders in 2026");
-    expect(nodes[0]?.data).toMatchObject({ status: "completed", rows: 12 });
+    expect(nodes[0]?.data).toMatchObject({ status: "completed", rowsIn: 20, rowsOut: 12 });
     expect(nodes[1]?.data.label).toBe("Custom operator");
     expect(nodes[1]?.data.error).toBe("boom");
   });
@@ -62,7 +62,7 @@ describe("toFlow", () => {
     expect(nodes[1]?.data.results).toBeUndefined();
   });
 
-  it("says where an operator stands in the execution: waiting, running, paused, done or failed", () => {
+  it("says where an operator stands in the execution: waiting, running, paused, done, failed or stopped", () => {
     expect(statusOf("Uninitialized")).toBe("waiting");
     expect(statusOf("Ready")).toBe("waiting");
     expect(statusOf("RUNNING")).toBe("running");
@@ -70,21 +70,29 @@ describe("toFlow", () => {
     expect(statusOf("Paused")).toBe("paused");
     expect(statusOf("Completed")).toBe("completed");
     expect(statusOf("Failed")).toBe("failed");
-    expect(statusOf("Killed")).toBe("failed");
+    // Stopped by the run's end before it finished: not the operator's own failure.
+    expect(statusOf("Killed")).toBe("stopped");
+    expect(statusOf("Terminated")).toBe("stopped");
     expect(statusOf("something else")).toBeUndefined();
     expect(statusOf(undefined)).toBeUndefined();
   });
 
-  it("moves along the arrows out of an operator that is running", () => {
+  it("moves along an arrow only while rows go along it: out of a running operator that has put some out", () => {
     const links = [
       { linkID: "l1", source: { operatorID: "a", portID: "output-0" }, target: { operatorID: "b", portID: "input-0" } },
       { linkID: "l2", source: { operatorID: "b", portID: "output-0" }, target: { operatorID: "c", portID: "input-0" } },
+      { linkID: "l3", source: { operatorID: "c", portID: "output-0" }, target: { operatorID: "d", portID: "input-0" } },
     ];
     const { edges } = toFlow(
-      spec([op("a", "Scan", 0, 1), op("b", "Filter", 1, 1), op("c", "Limit", 1, 1)], links),
+      spec([op("a", "Scan", 0, 1), op("b", "Aggregate", 1, 1), op("c", "Limit", 1, 1), op("d", "Limit", 1, 1)], links),
       {},
-      { a: { status: "running" }, b: { status: "waiting" } }
+      // a puts rows out; b is reading them and has put out nothing yet; c is done.
+      {
+        a: { status: "running", rowsOut: 40 },
+        b: { status: "running", rowsIn: 40, rowsOut: 0 },
+        c: { status: "completed", rowsOut: 3 },
+      }
     );
-    expect(edges.map(e => e.animated ?? false)).toEqual([true, false]);
+    expect(edges.map(e => e.animated ?? false)).toEqual([true, false, false]);
   });
 });

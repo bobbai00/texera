@@ -1,7 +1,7 @@
 // The results of an execution, under the canvas of the workflow that ran. One tab per output
-// port that holds a result, named after its operator; the tab on screen is the one the canvas
-// points at (the operator's card is ringed and a line joins the tab to its port). A result is
-// a table, or the picture a visualization operator drew.
+// port whose result is kept, named after its operator; the result on screen is the one the
+// canvas points at (its operator's card is ringed and the port it came out of is lit). A
+// result is a table, or the picture a visualization operator drew.
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { Execution, PortSummary } from "@texera/catalog-client/types";
@@ -9,7 +9,7 @@ import { Button, cn, DataTable, EmptyState, ErrorNote, formatNumber, SandboxedFr
 import { BarChart3, ChevronLeft, ChevronRight, Table2 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { useStore } from "zustand";
-import { defaultResult, isChart } from "../execution/overlay";
+import { defaultResult, isChart, keptResult } from "../execution/overlay";
 import { isLive, PAGE_SIZE, rowsQuery } from "../execution/queries";
 import { type CanvasView, portKey } from "../workflow/canvas-view";
 
@@ -43,7 +43,7 @@ export function ResultsPanel({
   className?: string;
 }) {
   const eid = execution.metadata.rid;
-  const ports = execution.status?.resultsExpiredAt ? [] : (execution.status?.ports ?? []);
+  const ports = execution.status?.resultsExpiredAt ? [] : (execution.status?.ports ?? []).filter(keptResult);
   const chosen = useStore(view, s => s.result);
   const fallback = defaultResult(ports);
   const active =
@@ -79,7 +79,7 @@ export function ResultsPanel({
             <span className="px-1.5 py-1 text-xs text-muted-foreground">
               {execution.status?.resultsExpiredAt
                 ? "The results expired under the retention policy."
-                : "No results yet."}
+                : "No result is kept: turn on an operator's eye, or run up to it."}
             </span>
           )}
         </div>
@@ -160,15 +160,8 @@ function PortResult({
   const [page, setPage] = useState(1);
   const { data, error, isPending } = useQuery(pageOf(workflow, eid, port, page, live));
   if (error) {
-    if ((error as { status?: number }).status === 404)
-      return (
-        <EmptyState className="py-8">
-          {live
-            ? "Nothing to read yet."
-            : // A result the catalog names no table for is the unit's own: gone once that unit restarted.
-              'This result is no longer there: it was not kept, and the computing unit that held it has restarted. Turn on "Keep the result" on the operator and run again to read it later.'}
-        </EmptyState>
-      );
+    if (live && (error as { status?: number }).status === 404)
+      return <EmptyState className="py-8">Nothing to read yet.</EmptyState>;
     return <ErrorNote error={error} prefix="Could not load the result" className="m-3" />;
   }
   if (isPending) return <Skeleton className="m-3 h-32" />;

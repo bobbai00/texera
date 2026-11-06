@@ -56,7 +56,8 @@ import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.executionruntimestate.{
   ExecutionConsoleStore,
   ExecutionMetadataStore,
-  ExecutionStatsStore
+  ExecutionStatsStore,
+  OperatorStatistics
 }
 import org.apache.texera.amber.operator.metadata.{AllOperatorMetadata, OperatorMetadataGenerator}
 import org.apache.texera.amber.util.JSONUtils.objectMapper
@@ -148,7 +149,23 @@ case class ExecutionStartRequest(
 
 case class ExecutionAck(eid: String, accepted: Boolean)
 
-case class OperatorRun(state: String, tuples: Option[Long], error: Option[JsonNode])
+case class OperatorRun(
+    state: String,
+    rowsIn: Option[Long],
+    rowsOut: Option[Long],
+    error: Option[JsonNode]
+)
+
+/** Rows an operator has read and put out so far, over all its ports. */
+final case class OperatorRows(in: Long, out: Long)
+
+object OperatorRows {
+  def of(statistics: OperatorStatistics): OperatorRows =
+    OperatorRows(
+      statistics.inputMetrics.map(_.tupleMetrics.count).sum,
+      statistics.outputMetrics.map(_.tupleMetrics.count).sum
+    )
+}
 
 case class PortResult(
     opid: String,
@@ -283,6 +300,24 @@ object UnitApiResource {
       case WorkflowAggregatedState.UNINITIALIZED | WorkflowAggregatedState.READY => "pending"
       case WorkflowAggregatedState.PAUSED                                        => "paused"
       case _                                                                     => "running"
+    }
+
+  /**
+    * An operator's state once its run is over: no operator is still going. Its own last state
+    * when that is final; a state the run's statistics had not caught up with yet is said as the
+    * run ended it: completed when the run completed (every operator of a completed run
+    * completed), failed for the operator the run failed on, killed for any other.
+    */
+  def settledState(
+      last: WorkflowAggregatedState,
+      run: WorkflowAggregatedState,
+      failed: Boolean
+  ): WorkflowAggregatedState =
+    last match {
+      case COMPLETED | FAILED | KILLED | TERMINATED => last
+      case _ if run == COMPLETED                    => COMPLETED
+      case _ if failed                              => FAILED
+      case _                                        => KILLED
     }
 
   /** The operator registry in the contract's shape, computed once. */
@@ -506,7 +541,7 @@ class UnitApiResource extends LazyLogging {
             reporter.operator(
               opid,
               Utils.aggregatedStateToString(m.operatorState),
-              Some(m.operatorStatistics.outputMetrics.map(_.tupleMetrics.count).sum),
+              Some(OperatorRows.of(m.operatorStatistics)),
               None,
               Seq.empty,
               Seq.empty,
@@ -539,10 +574,15 @@ class UnitApiResource extends LazyLogging {
         plan.operators.foreach { op =>
           val opid = op.operatorIdentifier.id
           val metrics = stats.operatorInfo.get(opid)
-          val opState = metrics
-            .map(m => Utils.aggregatedStateToString(m.operatorState))
-            .getOrElse("Uninitialized")
-          val tuples = metrics.map(_.operatorStatistics.outputMetrics.map(_.tupleMetrics.count).sum)
+          val opError = state.fatalErrors.find(_.operatorId == opid).map(_.message)
+          val opState = Utils.aggregatedStateToString(
+            UnitApiResource.settledState(
+              metrics.map(_.operatorState).getOrElse(WorkflowAggregatedState.UNINITIALIZED),
+              state.state,
+              opError.isDefined
+            )
+          )
+          val rows = metrics.map(m => OperatorRows.of(m.operatorStatistics))
           val outputs = record.toList.flatMap(_.portResults.toList).flatMap {
             case (globalPortId, uri) =>
               val components = org.apache.texera.amber.core.storage.VFSURIFactory.decodeURI(uri)
@@ -566,8 +606,7 @@ class UnitApiResource extends LazyLogging {
           val inputs = plan.links
             .filter(_.toOpId.id == opid)
             .map(l => reporter.PortRef(l.fromOpId.id, s"output-${l.fromPortId.id}"))
-          val opError = state.fatalErrors.find(_.operatorId == opid).map(_.message)
-          reporter.operator(opid, opState, tuples, opError, outputs, inputs, terminal = true)
+          reporter.operator(opid, opState, rows, opError, outputs, inputs, terminal = true)
         }
         val error = state.fatalErrors.headOption.map(e => s"${e.message}\n${e.details}".trim)
         reporter.runStatus(statusOf(state.state), error)
@@ -638,9 +677,11 @@ class UnitApiResource extends LazyLogging {
     val stats = executionService.executionStateStore.statsStore.getState
     val operators = stats.operatorInfo.map {
       case (opid, m) =>
+        val rows = OperatorRows.of(m.operatorStatistics)
         opid -> OperatorRun(
           Utils.aggregatedStateToString(m.operatorState),
-          Some(m.operatorStatistics.outputMetrics.map(_.tupleMetrics.count).sum),
+          Some(rows.in),
+          Some(rows.out),
           None
         )
     }

@@ -47,7 +47,7 @@ A scan reads a dataset file through its URI `texera://datasets/<dataset rid>@<ve
 1. `create_workflow` with the whole plan as `spec` (plus a `name`), or `edit_workflow` on an existing workflow.
 2. `validate_workflow`: it compiles the plan on the unit and returns each operator's output schema per port and the errors per operator. Fix every error, then validate again. The schemas give the exact column names and types the next operator sees.
 3. `run_workflow` with `waitSeconds` (120 for small data) so the execution comes back with `status.phase`, the operators' states and the port results it kept (`status.ports`). A failed execution names the operator and the error: fix the plan (a new version) and run again.
-4. `get_port_result` with the workflow rid, the execution rid (`eid`), the `operatorID` and the `portID` for the rows you need, paged; only operators with `viewResult` keep rows.
+4. `get_port_result` with the workflow rid, the execution rid (`eid`), the `operatorID` and the `portID` for the rows you need, paged. A run keeps the rows of the operators with `viewResult`, of the operators nothing reads from, and of the operator it went up to: `run_workflow` with `upTo` runs only what leads to that operator and keeps its rows, without changing the workflow.
 
 Every `create_workflow` and `edit_workflow` makes a new version; an execution names the version it ran. Reuse the workflow rid from the turn state; never invent ids.
 

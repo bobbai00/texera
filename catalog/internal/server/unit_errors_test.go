@@ -101,8 +101,7 @@ func TestRowsOfALiveExecutionAreEmptyUntilItsTableIsWritten(t *testing.T) {
 func TestAPortThePlanDoesNotNameIsNotFoundEvenWhileTheExecutionGoes(t *testing.T) {
 	h := newHarness(t)
 	execPath, _ := anExecution(t, h)
-	h.unit.refusing("/results/nosuch/output-0", http.StatusNotFound, "no result for nosuch/output-0")
-	wantError(t, h, "GET", execPath+"/operators/nosuch/ports/output-0/rows", nil, http.StatusNotFound, "not_found", "no result for nosuch/output-0")
+	wantError(t, h, "GET", execPath+"/operators/nosuch/ports/output-0/rows", nil, http.StatusNotFound, "not_found", "no result is kept for nosuch/output-0")
 }
 
 func TestAnEngineFailureWhileAnExecutionGoesIsNotHiddenAsEmpty(t *testing.T) {

@@ -30,6 +30,8 @@ type RunInput struct {
 	Parameters    map[string]any
 	WaitSeconds   int
 	Name          string
+	// UpTo, when set, runs only what leads to this operator, and keeps its result.
+	UpTo string
 }
 
 var (
@@ -65,6 +67,11 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 	if len(spec.Operators) == 0 {
 		return nil, Invalid("the workflow has no operators", nil)
+	}
+	if in.UpTo != "" {
+		if spec, err = upTo(spec, in.UpTo); err != nil {
+			return nil, err
+		}
 	}
 	project := s.projectSpec(ctx, wf.ProjectRID)
 	settings := s.settingsSpec(ctx)
@@ -133,6 +140,9 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 	if len(in.Parameters) > 0 {
 		execSpec.Parameters = &in.Parameters
+	}
+	if in.UpTo != "" {
+		execSpec.UpTo = &in.UpTo
 	}
 	// The ports are known from the plan: their tables exist in the status before the execution writes
 	// a row, and the unit may only ever report those.
@@ -613,16 +623,20 @@ func (s *Service) Rows(ctx context.Context, caller *auth.Caller, workflowRID, ei
 	if at := resultsExpired(r); at != nil {
 		return nil, Gone("the execution's results", *at)
 	}
+	// A result is what the plan keeps a table for; any other port's rows are nobody's to read.
+	table := plannedTable(r, operatorID, portID)
+	if table == "" {
+		return nil, NotFound(fmt.Sprintf("no result is kept for %s/%s", operatorID, portID))
+	}
 	client, err := s.executionUnit(ctx, caller, r)
 	if err != nil {
 		return nil, err
 	}
-	table := plannedTable(r, operatorID, portID)
 	page, err := client.Result(ctx, eid.String(), operatorID, portID, table, executionNamespace(eid), s.warehouseOf(ctx, r), offset, limit)
 	if err != nil {
 		// A port the plan names has no table until the execution writes it: nothing to read yet.
 		var refused *engine.UnitError
-		if table != "" && errors.As(err, &refused) && refused.Status == http.StatusNotFound && !finished(r) {
+		if errors.As(err, &refused) && refused.Status == http.StatusNotFound && !finished(r) {
 			return &engine.RowPage{Offset: offset, Rows: [][]any{}, Schema: []engine.Attribute{}}, nil
 		}
 		return nil, UnitFailed(err)

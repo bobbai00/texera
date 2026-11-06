@@ -19,7 +19,13 @@
 
 package org.apache.texera.web.execution
 
+import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
+import org.apache.texera.amber.engine.architecture.worker.statistics.{
+  PortTupleMetricsMapping,
+  TupleMetrics
+}
+import org.apache.texera.amber.engine.common.executionruntimestate.OperatorStatistics
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -331,5 +337,34 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
     val name = EnvironmentManager.nameOf("e6325d76-7bcf-442c-b926-1c9175ae42d8", 3)
     name shouldBe "env-e6325d767bcf442cb9261c9175ae42d8-v3"
     EnvironmentManager.getPythonBin("../escape") shouldBe None
+  }
+
+  "OperatorRows" should "count the rows read over every input port and put out over every output port" in {
+    def ports(counts: Long*): Seq[PortTupleMetricsMapping] =
+      counts.zipWithIndex.map {
+        case (n, i) => PortTupleMetricsMapping(PortIdentity(i), TupleMetrics(n, n * 10))
+      }
+    OperatorRows.of(
+      OperatorStatistics(inputMetrics = ports(3, 4), outputMetrics = ports(5))
+    ) shouldBe OperatorRows(7, 5)
+    // An operator that has not started has read nothing and put out nothing.
+    OperatorRows.of(OperatorStatistics()) shouldBe OperatorRows(0, 0)
+  }
+
+  "settledState" should "say no operator is still going once its run is over" in {
+    import WorkflowAggregatedState._
+    // Its own last state, when that is final.
+    UnitApiResource.settledState(COMPLETED, FAILED, failed = false) shouldBe COMPLETED
+    UnitApiResource.settledState(FAILED, KILLED, failed = true) shouldBe FAILED
+    UnitApiResource.settledState(KILLED, KILLED, failed = false) shouldBe KILLED
+    // A state the run's statistics had not caught up with: every operator of a completed run
+    // completed.
+    UnitApiResource.settledState(RUNNING, COMPLETED, failed = false) shouldBe COMPLETED
+    UnitApiResource.settledState(READY, COMPLETED, failed = false) shouldBe COMPLETED
+    // In a run that failed or was stopped: the operator that failed failed, the others were stopped.
+    UnitApiResource.settledState(RUNNING, FAILED, failed = true) shouldBe FAILED
+    UnitApiResource.settledState(RUNNING, FAILED, failed = false) shouldBe KILLED
+    UnitApiResource.settledState(UNINITIALIZED, KILLED, failed = false) shouldBe KILLED
+    UnitApiResource.settledState(PAUSED, KILLED, failed = false) shouldBe KILLED
   }
 }

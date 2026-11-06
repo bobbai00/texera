@@ -116,11 +116,14 @@ envelope; `?panel=` opens a second resource beside the first.
 custom operators of the workflow's project, by URI) joined by arrows. An operator is a card:
 its name, and its settings in one line as a person would say them (a file by its name, a
 filter as `medal = Gold`). "Compact | Detailed" at the top of the canvas chooses how much every
-card says, and a card can be opened or closed on its own; "Detailed" lists each setting on a
-line. The pencil on a card (or a double click) opens the card into its form, where the
-operator is renamed, set (properties from its JSON Schema), switched off, told to keep its
-result, or deleted; nothing opens beside the canvas. "Add operator" opens the list of
-operators; a workflow with none opens with it. A workflow of a dozen operators or more has a
+card says; "Detailed" lists each setting on a line. A card has the operator's own two buttons:
+the eye keeps its result on every run (it stays in sight while it is on), and the run button
+runs up to it. The pencil on a card (or a double click) opens the card into its form, where
+the operator is renamed and set (properties from its JSON Schema; code a few lines in the card
+and all of it in a larger editor); the open card stays within its column and the cards under
+it move down while it is open. A right click turns an operator off or on, or deletes it.
+Nothing opens beside the canvas. "Add operator" opens the list of operators; a workflow with
+none opens with it. A workflow of a dozen operators or more has a
 map button with the zoom buttons; the map opens over a corner of the canvas and stays open or
 closed as you left it. A file property takes a dataset file URI,
 `texera://datasets/{rid}@{vno}/files/{path}`. The editor compiles as you edit, on a unit, and
@@ -128,14 +131,19 @@ a card says what is wrong with its operator. Every save is a version; an executi
 version it ran.
 
 **An execution on the canvas.** "Run" starts an execution and the page stays where it is:
-each card says where its operator stands (waiting, running, paused, done, failed, with the
-reason when it failed) and how many rows it has put out, second by second. Under the canvas
-are the results, one tab per output port that holds one, named after its operator. The result
-on screen is tied to where it came from: its operator's card is ringed and a line runs from
-the tab to the output port, following the canvas as it moves; a card's "Result" button puts
-its result on screen, and a tab brings its operator into view. A result is a table (paged
-rows), or, for a visualization operator, the chart it drew. The results fold away; "Execution"
-opens the execution's own page beside the workflow.
+each card says where its operator stands (waiting, running, paused, done, failed with the
+reason, or stopped when the run ended before it finished) and the rows it has read and put
+out, second by second; a running card
+has a bar moving along its edge, and an arrow moves while rows go along it. The bar over the
+results says how far the execution is ("3 of 7 done") and for how long. A run keeps the
+results of the operators whose eye is on, of the operators nothing reads from, and of the
+operator a run was asked to go up to; under the canvas is one tab for each, named after its
+operator. A click on a card puts its result on screen: its card is ringed and the port it came
+out of is lit (a port whose result is kept is lit too); a tab brings its operator into view. A
+run up to an operator (its run button) runs only what leads to it and shows its result; the
+workflow does not change. A result is a table (paged rows), or, for a visualization operator,
+the chart it drew. The results fold away; "Execution" opens the execution's own page beside the
+workflow.
 
 **A workflow edited together.** Everyone who may change a workflow edits the same document at
 once: an operator one person adds, a property they change or a place they drag an operator to

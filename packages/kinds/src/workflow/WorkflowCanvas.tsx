@@ -26,7 +26,7 @@ import { useStore } from "zustand";
 import { operatorSchemasQuery } from "../queries";
 import { useScope } from "../scope";
 import { edgeOptions } from "../shell/canvas";
-import { CanvasContext, type CanvasView, createCanvasView } from "./canvas-view";
+import { CanvasContext, type CanvasView, createCanvasView, portKey } from "./canvas-view";
 import { CanvasControls } from "./controls";
 import { DensityToggle, spread, useRowSpread } from "./density";
 import { useFollow, useFrame, useReframe } from "./framing";
@@ -124,6 +124,11 @@ function Shown({ spec, overlay, view: shared, className }: Props) {
           panOnDrag
           onMoveStart={event => {
             if (event) userMoved.current = true;
+          }}
+          // A click on a card shows its result, when the execution kept one.
+          onNodeClick={(_, node) => {
+            const port = node.data.results?.[0];
+            if (shared && port) view.getState().show(portKey(node.id, port));
           }}
           fitView={shared === undefined}
           fitViewOptions={PICTURE_FIT}

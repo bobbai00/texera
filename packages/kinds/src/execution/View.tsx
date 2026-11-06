@@ -35,11 +35,10 @@ import {
   Trash2,
   Workflow,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { unwrap } from "../api";
 import { operatorSchemasQuery } from "../queries";
-import { ResultConnector } from "../results/Connector";
 import { ResultsPanel } from "../results/ResultsPanel";
 import { ProjectScope, useScope } from "../scope";
 import { UriChip } from "../shell/Chips";
@@ -270,11 +269,9 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
 
 /**
  * The workflow version the execution ran, laid out from its graph, with the results under it.
- * The canvas and the results are one stage: the line from a result to its port is drawn over
- * both.
+ * A click on a card shows its result; the port the result on screen came out of is lit.
  */
 function Ran({ execution, workflow }: { execution: Execution; workflow: string }) {
-  const stage = useRef<HTMLDivElement>(null);
   const view = useMemo(() => createCanvasView(), []);
   const vno = parseUri(execution.spec.workflow)?.ref.vno;
   const { data: spec, error } = useQuery({ ...versionSpecQuery(workflow, vno ?? 0), enabled: vno !== undefined });
@@ -297,7 +294,7 @@ function Ran({ execution, workflow }: { execution: Execution; workflow: string }
   if (spec.operators.length === 0) return <EmptyState>The workflow had no operators.</EmptyState>;
   return (
     <ReactFlowProvider>
-      <div ref={stage} className="relative flex min-h-0 flex-1 flex-col" data-execution-stage>
+      <div className="relative flex min-h-0 flex-1 flex-col" data-execution-stage>
         <Group orientation="vertical" className="min-h-0 flex-1">
           <Panel id="canvas" minSize="20%">
             <WorkflowCanvas provided spec={spec} overlay={overlay} view={view} className="h-full bg-canvas" />
@@ -307,7 +304,6 @@ function Ran({ execution, workflow }: { execution: Execution; workflow: string }
             {results}
           </Panel>
         </Group>
-        <ResultConnector container={stage} view={view} />
       </div>
     </ReactFlowProvider>
   );

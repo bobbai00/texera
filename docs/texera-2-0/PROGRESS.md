@@ -2,6 +2,62 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-06 (session 12, on the Mac): the canvas, part A: what a run keeps, a run up to an operator, a status that can be read
+
+After trying the polish of session 11, the user asked for changes, and decided them in
+discussion before any code: no line from a result to its port, the port lit instead and a
+click on an operator showing its result; on each operator only "eyes (toggle on or off) and run
+button, click then it will run to there"; the rule for what a run keeps, as proposed ("i
+agree with your rules"); editing as I judged most elegant; a status where running cannot be
+mistaken for waiting. Then "ok go ahead ... with proper checkpoint after you done and tested
+something completely". This is the first of three parts (A: the canvas and its results; B:
+the layout and people together; C: computing profiles), each committed when done and tested.
+The run-twice fix of session 11 went first, as its own commit.
+
+What was decided:
+- **A run keeps the results of the operators with their eye on, of the operators nothing reads
+  from, and of the operator it went up to.** Nothing else is a result. Before, the engine's own
+  stores for its schedule were listed too, read from the unit's memory, and gone when the unit
+  restarted: the "result not available" the user saw.
+- **The eye is Texera's "view result"**, in the workflow, one click on the card; the run button
+  runs up to the operator and changes nothing in the workflow. Turning off and deleting are on a
+  right click.
+- **A card opened for editing stays within its column; the cards under it make room.**
+
+Done:
+- **The catalog** (`plan.go` `upTo`, `executions.go`, `lineage.go`). `RunWorkflow.upTo` runs the
+  operator and everything it reads from; the execution records it (`spec.upTo`). A port the
+  plan keeps no table for is not listed in `status.ports`, and its rows are refused without
+  asking the unit. What the unit reports of a port is put onto what the plan said of it, so a
+  report without a table no longer drops the table's name.
+- **Rows in and out.** An operator's status says `rowsIn` and `rowsOut` (they replace
+  `tuples`); the unit counts both in one place (`OperatorRows`).
+- **The card** (`OperatorNode.tsx`). The eye stays in sight while it is on; the run, the eye
+  when off and the pencil appear when the card is pointed at, picked or focused, and take no
+  room until then. The per-card "show more" is gone: how much cards say is the canvas's choice.
+  A running card has a bar moving along its edge and its rows count up ("150 → 3 rows"); an
+  arrow moves while its operator runs and has put rows out (`to-flow.ts`). A port whose result
+  is kept is lit, the one on screen more. The bar over the results says "3 of 7 done" and for
+  how long.
+- **Editing** (`room.ts`, `EditorCanvas.tsx`, `PropertyForm.tsx`). The open card is as wide as
+  its column allows; the cards under it in its band are drawn lower while it is open and go back
+  when it closes; nothing moves in the workflow. Code is a few lines in the card and all of it
+  in a larger editor.
+- **Results** (`ResultsPanel.tsx`). Only kept results have tabs; a click on a card shows its
+  result; `Connector.tsx` is deleted.
+- The agent's skills say which results a run keeps and how to run up to an operator; its
+  `run_workflow` tool has `upTo` from the contract.
+
+Found on the way and fixed:
+- **A completed execution could leave an operator "Running".** The unit's last report read the
+  operators' states from statistics that had not caught up with the run's end; once in a few
+  runs the last operator stayed "Running" for good, which the new bar made plain. The last
+  report now says each operator's state as the run ended it (`settledState`): its own final
+  state, else completed when the run completed, failed for the operator it failed on, and
+  killed for any other, which the app shows as "Stopped", not as a failure.
+- **The hidden buttons of a card took room from its name**, cutting "CSV File Scan" short on
+  every card. Found in the test's screenshots.
+
 ## 2026-11-05 (session 11, later): a workflow can be run again
 
 Reported after the polish was pushed: "Could not start the execution: conflict:

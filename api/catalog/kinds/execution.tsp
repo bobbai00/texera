@@ -58,11 +58,16 @@ model ExecutionSpec {
   parameters?: Record<unknown>;
   @doc("The compiled plan the execution was started with.")
   plan?: ExecutionPlan;
+  @doc("The operator the execution was run up to: only what leads to it ran, and its result was kept.")
+  upTo?: string;
 }
 
 model OperatorRunStatus {
   state: string;
-  tuples?: int64;
+  @doc("Rows the operator has read so far, over all its input ports.")
+  rowsIn?: int64;
+  @doc("Rows the operator has put out so far, over all its output ports.")
+  rowsOut?: int64;
   error?: unknown;
   @doc("The computing node that ran it.")
   computingNode?: string;

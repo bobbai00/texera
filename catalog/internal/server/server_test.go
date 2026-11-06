@@ -344,7 +344,7 @@ func TestExecutionResultsAndLineage(t *testing.T) {
 	if status, body := h.do("unit", "POST", "/lineage/v1/events", foreign); status != http.StatusBadRequest {
 		t.Fatalf("a table outside the plan is refused: %d %s", status, body)
 	}
-	event(rid(exec)+"/agg", "COMPLETE", map[string]any{"texera_operator": map[string]any{"opid": "agg", "state": "Completed", "tuples": 3}},
+	event(rid(exec)+"/agg", "COMPLETE", map[string]any{"texera_operator": map[string]any{"opid": "agg", "state": "Completed", "rowsIn": 2, "rowsOut": 3}},
 		map[string]any{"texera_port": map[string]any{"table": namespace + ".agg_output_0", "snapshot": "5566", "tupleCount": 3, "bytes": 120, "hash": "ab12"}}, []string{rid(exec) + "/agg/output-0"})
 	event(rid(exec), "COMPLETE", map[string]any{"texera_execution": map[string]any{"status": "completed"}}, nil, nil)
 	var done envelope

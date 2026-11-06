@@ -12,6 +12,7 @@ import {
   TabPanel,
   Tabs,
   TabsList,
+  formatDuration,
   timeAgo,
 } from "@texera/ui";
 import {
@@ -36,14 +37,13 @@ import {
   Users,
   Workflow,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { useStore } from "zustand";
 import { unwrap } from "../api";
 import { executionOverlay } from "../execution/overlay";
 import { useRoom } from "../live/room";
 import { keysOf, operatorSchemasQuery, unitsQuery } from "../queries";
-import { ResultConnector } from "../results/Connector";
 import { ResultsPanel } from "../results/ResultsPanel";
 import { ProjectScope, useScope } from "../scope";
 import { Access } from "../shell/Access";
@@ -57,7 +57,7 @@ import { useTellViewing } from "../shell/viewing";
 import type { KindViewProps } from "../types";
 import { uriOf } from "../uri";
 import { useWatch } from "../watch";
-import { createCanvasView } from "./canvas-view";
+import { createCanvasView, portKey } from "./canvas-view";
 import { fixedDocument, liveDocument, type WorkflowDocument } from "./document";
 import { createEditorStore, type EditorStore } from "./editor";
 import { EditorCanvas } from "./EditorCanvas";
@@ -244,8 +244,6 @@ function EditorLayout({
   const overlay = useMemo(() => overlayFor(spec, compilation, latest?.status), [spec, compilation, latest?.status]);
   const { beside } = useOpenResource();
   const live = latest !== undefined && LIVE.has(latest.status?.phase ?? "pending");
-  // The canvas and the results under it, which the line from a result to its port is drawn over.
-  const stage = useRef<HTMLDivElement>(null);
   const nameOf = useCallback(
     (operatorID: string) => {
       const op = spec.operators.find(o => o.operatorID === operatorID);
@@ -255,23 +253,29 @@ function EditorLayout({
     [spec, schemas]
   );
 
+  // Runs the workflow, or up to one operator: only what leads to it, and its result is kept.
   const run = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (upTo: string | undefined) => {
       if (!unit) throw new Error("No computing unit is available.");
       // What runs is the version the session has just saved: exactly what is on screen.
       const vno = (await store.getState().flush()) ?? store.getState().headVno;
       // The catalog names the execution: a name of its own, however often a version is run.
-      return unwrap(workflowsRun({ path: { rid }, body: { vno, computingUnit: unit.metadata.uri } }));
+      return unwrap(
+        workflowsRun({ path: { rid }, body: { vno, computingUnit: unit.metadata.uri, ...(upTo ? { upTo } : {}) } })
+      );
     },
-    onSuccess: () => {
+    onSuccess: (_, upTo) => {
       // The execution shows where it runs: on the cards of this canvas, its results under it.
       queryClient.invalidateQueries({ queryKey: [{ _id: "workflowsListExecutions", path: { rid } }] });
       queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
-      view.getState().show(null);
+      // A run up to an operator was asked for its result: that is the one on screen.
+      const port = upTo && store.getState().spec.operators.find(o => o.operatorID === upTo)?.outputPorts?.[0]?.portID;
+      view.getState().show(upTo && port ? portKey(upTo, port) : null);
       setResultsOpen(true);
       setTab("canvas");
     },
   });
+  const runTo = useCallback((operatorID: string) => run.mutate(operatorID), [run.mutate]);
 
   const pickUnit = (u: string) => {
     setUnitPick(u);
@@ -324,7 +328,11 @@ function EditorLayout({
                 <Loader2 className="size-3 animate-spin" /> {latest.status?.phase}
               </Badge>
             )}
-            <Button size="sm" onClick={() => run.mutate()} disabled={!unit || run.isPending || spec.operators.length === 0 || pinned} data-run>
+            <Button
+              size="sm"
+              onClick={() => run.mutate(undefined)}
+              disabled={!unit || run.isPending || spec.operators.length === 0 || pinned}
+              data-run>
               {run.isPending ? <Loader2 className="animate-spin" /> : <Play />} Run
             </Button>
           </>
@@ -356,7 +364,7 @@ function EditorLayout({
           </Tab>
         </TabsList>
         <TabPanel value="canvas" className="flex min-h-0 flex-1" keepMounted>
-          <div ref={stage} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             {latest && resultsOpen ? (
               <Group orientation="vertical" className="min-h-0 flex-1">
                 <Panel id="canvas" minSize="25%">
@@ -365,6 +373,7 @@ function EditorLayout({
                     view={view}
                     overlay={overlay}
                     compilation={compilation}
+                    onRunTo={pinned ? undefined : runTo}
                     className="flex h-full min-w-0"
                   />
                 </Panel>
@@ -393,6 +402,7 @@ function EditorLayout({
                   view={view}
                   overlay={overlay}
                   compilation={compilation}
+                  onRunTo={pinned ? undefined : runTo}
                   className="flex min-h-0 min-w-0 flex-1"
                 />
                 {latest && (
@@ -406,7 +416,6 @@ function EditorLayout({
                 )}
               </>
             )}
-            {latest && resultsOpen && <ResultConnector container={stage} view={view} />}
           </div>
         </TabPanel>
         <TabPanel value="executions" className="scrollbar-thin overflow-y-auto">
@@ -436,7 +445,14 @@ function LatestExecution({
   onOpen: () => void;
   onHide: () => void;
 }) {
-  const phase = execution.status?.phase ?? "pending";
+  const status = execution.status;
+  const phase = status?.phase ?? "pending";
+  const operators = Object.values(status?.operators ?? {});
+  const done = operators.filter(o => o.state.toLowerCase() === "completed").length;
+  // While it goes: how far it is and for how long; once over: when it ran.
+  const progress = LIVE.has(phase)
+    ? [operators.length ? `${done} of ${operators.length} done` : "", formatDuration(status?.startedAt, undefined)]
+    : [timeAgo(execution.metadata.createdAt)];
   return (
     <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground" data-latest-execution={phase}>
       <Badge
@@ -445,7 +461,9 @@ function LatestExecution({
         {LIVE.has(phase) && <Loader2 className="size-3 animate-spin" />}
         {phase}
       </Badge>
-      <span className="hidden max-w-56 truncate lg:inline">{timeAgo(execution.metadata.createdAt)}</span>
+      <span className="hidden max-w-56 truncate tabular-nums lg:inline" data-execution-progress>
+        {progress.filter(Boolean).join(" · ")}
+      </span>
       <Button
         variant="ghost"
         size="xs"

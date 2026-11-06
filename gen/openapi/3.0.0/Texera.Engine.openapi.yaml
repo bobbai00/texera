@@ -475,9 +475,14 @@ components:
       properties:
         state:
           type: string
-        tuples:
+        rowsIn:
           type: integer
           format: int64
+          description: Rows the operator has read so far, over all its input ports.
+        rowsOut:
+          type: integer
+          format: int64
+          description: Rows the operator has put out so far, over all its output ports.
         error: {}
     OperatorType:
       type: object

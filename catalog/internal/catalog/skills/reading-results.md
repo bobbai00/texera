@@ -23,7 +23,7 @@ description: Read, check and report computed results - what run_workflow and get
 
 # Reading results
 
-`run_workflow` with `waitSeconds` returns the execution: `status.phase` (`completed` or `failed`), `status.operators` with each operator's state and tuple count, and `status.ports` with the results it kept (operatorID, portID, row count). `get_port_result` returns a page of rows with the schema; use `limit` and `offset` for more, and read only the operators whose rows the answer needs.
+`run_workflow` with `waitSeconds` returns the execution: `status.phase` (`completed` or `failed`), `status.operators` with each operator's state and the rows it read and put out (`rowsIn`, `rowsOut`), and `status.ports` with the results it kept (operatorID, portID, row count): the operators with `viewResult`, the operators nothing reads from, and the operator a run went up to. No other port has rows to read. `get_port_result` returns a page of rows with the schema; use `limit` and `offset` for more, and read only the operators whose rows the answer needs.
 
 - A page is not the table. A count, a sum, a mean, a top-k: compute it in an operator (Aggregate; Sort then Limit) and read that result. Never derive it from a sample of rows, and never from memory.
 - Every final quantity, ratios and differences included, is computed by an operator and read back. Do not calculate it mentally from retrieved inputs. Keep the engine's precision and round only when presenting.

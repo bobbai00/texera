@@ -115,6 +115,9 @@ func (s *Server) routeWorkflows() {
 		if body.Name != nil {
 			in.Name = *body.Name
 		}
+		if body.UpTo != nil {
+			in.UpTo = *body.UpTo
+		}
 		if body.Parameters != nil {
 			in.Parameters = *body.Parameters
 		}

@@ -1,18 +1,20 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { Positions, WorkflowSpec } from "./types";
 
-/** Where an operator stands in an execution. */
-export type OperatorStatus = "waiting" | "running" | "paused" | "completed" | "failed";
+/** Where an operator stands in an execution; stopped is ended by the run's end before it finished. */
+export type OperatorStatus = "waiting" | "running" | "paused" | "completed" | "failed" | "stopped";
 
 /** What a card shows of an execution and of the compiler, per operator. */
 export interface OperatorOverlay {
   /** The operator's state in the execution on screen, if any. */
   status?: OperatorStatus;
+  /** Rows the operator has read in that execution. */
+  rowsIn?: number;
   /** Rows the operator has put out in that execution. */
-  rows?: number;
+  rowsOut?: number;
   /** Why it failed, or what the compiler says is wrong with it. */
   error?: string;
-  /** The output ports whose result the execution on screen holds. */
+  /** The output ports whose result the execution on screen keeps. */
   results?: string[];
 }
 
@@ -33,6 +35,8 @@ export type OperatorNode = Node<OperatorNodeData, "operator">;
 /** The label of an operator on the canvas: its custom name, else its type (a custom operator by its short name). */
 export const operatorLabel = (op: { operatorType: string; customDisplayName?: string }) =>
   op.customDisplayName || (op.operatorType.startsWith("texera://") ? "Custom operator" : op.operatorType);
+
+const flowsOut = (o: OperatorOverlay | undefined) => o?.status === "running" && (o.rowsOut ?? 0) > 0;
 
 /** Maps the spec onto React Flow nodes and edges. Pure. */
 export function toFlow(
@@ -61,8 +65,8 @@ export function toFlow(
     sourceHandle: l.source.portID,
     target: l.target.operatorID,
     targetHandle: l.target.portID,
-    // Rows are on their way along the arrows out of an operator that is running.
-    ...(overlay[l.source.operatorID]?.status === "running" ? { animated: true } : {}),
+    // Rows go along an arrow while the operator it leaves runs and puts rows out.
+    ...(flowsOut(overlay[l.source.operatorID]) ? { animated: true } : {}),
   }));
   return { nodes, edges };
 }
@@ -78,7 +82,8 @@ export const STATUS_OF: Record<string, OperatorStatus> = {
   paused: "paused",
   completed: "completed",
   failed: "failed",
-  killed: "failed",
+  killed: "stopped",
+  terminated: "stopped",
 };
 
 export const statusOf = (state: string | undefined): OperatorStatus | undefined =>

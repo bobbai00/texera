@@ -6241,6 +6241,9 @@ components:
           allOf:
             - $ref: '#/components/schemas/ExecutionPlan'
           description: The compiled plan the execution was started with.
+        upTo:
+          type: string
+          description: 'The operator the execution was run up to: only what leads to it ran, and its result was kept.'
     ExecutionStatus:
       type: object
       required:
@@ -6998,9 +7001,14 @@ components:
       properties:
         state:
           type: string
-        tuples:
+        rowsIn:
           type: integer
           format: int64
+          description: Rows the operator has read so far, over all its input ports.
+        rowsOut:
+          type: integer
+          format: int64
+          description: Rows the operator has put out so far, over all its output ports.
         error: {}
         computingNode:
           type: string
@@ -7581,6 +7589,9 @@ components:
           type: integer
           format: int32
           description: Wait up to this many seconds for the execution to finish before returning.
+        upTo:
+          type: string
+          description: 'Run up to this operator: only the operators it reads from, directly or not, and itself. Its result is kept; the workflow does not change.'
         name:
           type: string
           description: The execution's name, which no other execution of the workflow has. Without one the catalog names it by its start, `execution <UTC time>`, and numbers the name when two start within a second.

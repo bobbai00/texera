@@ -284,7 +284,8 @@ export const zOperatorPortSpec = z.object({
 
 export const zOperatorRunStatus = z.object({
     state: z.string(),
-    tuples: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).optional(),
+    rowsIn: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).optional(),
+    rowsOut: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).optional(),
     error: z.unknown().optional(),
     computingNode: z.string().optional()
 });
@@ -614,7 +615,8 @@ export const zExecutionSpec = z.object({
     warehouse: zUri,
     inputs: z.array(zUri).optional(),
     parameters: z.record(z.string(), z.unknown()).optional(),
-    plan: zExecutionPlan.optional()
+    plan: zExecutionPlan.optional(),
+    upTo: z.string().optional()
 });
 
 export const zLeaseRequest = z.object({
@@ -1337,6 +1339,7 @@ export const zRunWorkflow = z.object({
     environment: zUri.optional(),
     parameters: z.record(z.string(), z.unknown()).optional(),
     waitSeconds: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
+    upTo: z.string().optional(),
     name: z.string().optional()
 });
 

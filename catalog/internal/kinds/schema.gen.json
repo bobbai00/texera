@@ -2013,6 +2013,10 @@
           "$ref": "#/$defs/ExecutionPlan",
           "description": "The compiled plan the execution was started with."
         },
+        "upTo": {
+          "description": "The operator the execution was run up to: only what leads to it ran, and its result was kept.",
+          "type": "string"
+        },
         "warehouse": {
           "$ref": "#/$defs/Uri",
           "description": "The warehouse the execution keeps its result tables in."
@@ -3077,12 +3081,18 @@
           "type": "string"
         },
         "error": {},
-        "state": {
-          "type": "string"
-        },
-        "tuples": {
+        "rowsIn": {
+          "description": "Rows the operator has read so far, over all its input ports.",
           "format": "int64",
           "type": "integer"
+        },
+        "rowsOut": {
+          "description": "Rows the operator has put out so far, over all its output ports.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "state": {
+          "type": "string"
         }
       },
       "required": [
@@ -3858,6 +3868,10 @@
           "additionalProperties": {},
           "description": "Inputs of this execution alone; the version itself stays as authored.",
           "type": "object"
+        },
+        "upTo": {
+          "description": "Run up to this operator: only the operators it reads from, directly or not, and itself. Its result is kept; the workflow does not change.",
+          "type": "string"
         },
         "vno": {
           "$ref": "#/$defs/Vno",

@@ -116,11 +116,7 @@ func (s *Service) applyOperatorEvent(ctx context.Context, exec *store.Resource, 
 			operatorID = id
 		}
 		state, _ := to["state"].(string)
-		opState = &api.OperatorRunStatus{State: state}
-		if t, ok := to["tuples"].(float64); ok {
-			n := int64(t)
-			opState.Tuples = &n
-		}
+		opState = &api.OperatorRunStatus{State: state, RowsIn: intPtr(to["rowsIn"]), RowsOut: intPtr(to["rowsOut"])}
 		if e, ok := to["error"]; ok && e != nil {
 			opState.Error = &e
 		}
@@ -143,11 +139,15 @@ func (s *Service) applyOperatorEvent(ctx context.Context, exec *store.Resource, 
 					p.Hash = strPtr(tp["hash"])
 				}
 			}
-			// The unit writes where the plan says: a table the plan does not name is refused.
-			if p.Table != nil {
-				if planned := plannedTable(exec, operatorID, portID); planned != "" && *p.Table != executionNamespace(exec.RID)+"."+planned {
-					return Invalid(fmt.Sprintf("port %s/%s reported table %s, the plan names %s.%s", operatorID, portID, *p.Table, executionNamespace(exec.RID), planned), nil)
-				}
+			// A result is a port the plan keeps a table for: the engine stores others for its own
+			// schedule, and those are no result. The unit writes where the plan says: a table the
+			// plan does not name is refused.
+			planned := plannedTable(exec, operatorID, portID)
+			if planned == "" {
+				continue
+			}
+			if p.Table != nil && *p.Table != executionNamespace(exec.RID)+"."+planned {
+				return Invalid(fmt.Sprintf("port %s/%s reported table %s, the plan names %s.%s", operatorID, portID, *p.Table, executionNamespace(exec.RID), planned), nil)
 			}
 			ports = append(ports, p)
 			portURI := execURI + "/operators/" + operatorID + "/ports/" + portID
@@ -202,18 +202,22 @@ func (s *Service) applyOperatorEvent(ctx context.Context, exec *store.Resource, 
 			}
 			(*st.Operators)[operatorID] = *opState
 		}
+		// What the unit reports of a port goes onto what the catalog knew of it from the plan.
 		for _, p := range ports {
-			existing := []api.PortSummary{}
+			merged := []api.PortSummary{}
+			found := false
 			if st.Ports != nil {
 				for _, e := range *st.Ports {
 					if e.OperatorID == p.OperatorID && e.PortID == p.PortID {
-						continue
+						e, found = reportedOn(e, p), true
 					}
-					existing = append(existing, e)
+					merged = append(merged, e)
 				}
 			}
-			existing = append(existing, p)
-			st.Ports = &existing
+			if !found {
+				merged = append(merged, p)
+			}
+			st.Ports = &merged
 		}
 	}); err != nil {
 		return err
@@ -224,6 +228,30 @@ func (s *Service) applyOperatorEvent(ctx context.Context, exec *store.Resource, 
 		}
 	}
 	return nil
+}
+
+// reportedOn is what the catalog knows of a port once the unit reported on it: what the unit
+// said, over what was known before.
+func reportedOn(known, reported api.PortSummary) api.PortSummary {
+	if reported.Table != nil {
+		known.Table = reported.Table
+	}
+	if reported.Snapshot != nil {
+		known.Snapshot = reported.Snapshot
+	}
+	if reported.Rows != nil {
+		known.Rows = reported.Rows
+	}
+	if reported.Bytes != nil {
+		known.Bytes = reported.Bytes
+	}
+	if reported.Hash != nil {
+		known.Hash = reported.Hash
+	}
+	if reported.Schema != nil {
+		known.Schema = reported.Schema
+	}
+	return known
 }
 
 func strPtr(v any) *string {

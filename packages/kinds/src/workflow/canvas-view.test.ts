@@ -7,19 +7,13 @@ describe("how a canvas is looked at", () => {
   it("starts with every card saying its settings in one line, nothing open and no result on screen", () => {
     const view = createCanvasView().getState();
     expect(view).toMatchObject({ density: "compact", editing: null, result: null });
-    expect(view.flipped.size).toBe(0);
   });
 
-  it("lets one card say more or less than the rest, until the choice for all changes", () => {
+  it("says as much on every card as the viewer chose, and remembers the choice", () => {
     const view = createCanvasView();
-    view.getState().flip("avg");
-    expect(view.getState().flipped.has("avg")).toBe(true);
-    view.getState().flip("avg");
-    expect(view.getState().flipped.has("avg")).toBe(false);
-    view.getState().flip("scan");
     view.getState().setDensity("detailed");
     expect(view.getState().density).toBe("detailed");
-    expect(view.getState().flipped.size).toBe(0);
+    expect(createCanvasView().getState().density).toBe("detailed");
     view.getState().setDensity("compact");
   });
 
