@@ -58,7 +58,10 @@ Resource Graph", each of which now carries a dated status under its Plan heading
   the project's runs stored, through the engine's `stored` source (`reuse.go`, `Stored.scala`).
 - Profiles Small, Medium, Large, ML and GPU, each saying whether this deployment can start it.
 - The resource graph beside a chat that started work: `GET /conversations/{rid}/graph`
-  (`chat_graph.go`) and `packages/kinds/src/graph/`.
+  (`chat_graph.go`) and `packages/kinds/src/graph/`, with a strip of the outside MCP servers the
+  agent consulted (a tool call records its server).
+- A function that samples without a seed, reads the clock or calls out says
+  `@returns(..., nondeterministic=True)`; no run reuses its rows or those after it.
 - Skills: texera-workflows, python-udf, reading-results, computing-units, exploring-resources,
   using-models (`catalog/internal/catalog/skills/`).
 - A diabetes research team's project from public data, with a scientist's session through the
@@ -152,11 +155,13 @@ the resource event stream with the group chat and the execution controls built o
 canvas as a shared document with a live service beside the runtime, a reply reaching the
 other members of a chat as it is written (the runtime rewrites the message every 400 ms), and
 on Nov 6 the fixes that using it found (session 14 in `PROGRESS.md`: names as labels, refusals
-that say what is missing, the results window, resource control on every page). Designed and
-not built: the resource graph beside the chat (the Claude Doc "Texera 2.0: The Resource
-Graph", https://claude.ai/artifact/HKWSujDmAbLpRHM7JEkQ9Z, phases G1 to G5), and simpler
-operators with runtimes, parallelism and caching (the Claude Doc "Texera 2.0: Operators,
-Runtimes and Caching", https://claude.ai/artifact/YTxrrUqJfphVt6Sa5zv15v, phases E0 to E6).
+that say what is missing, the results window, resource control on every page). Built on Nov 7
+from two designs: the resource graph beside the chat (the Claude Doc "Texera 2.0: The Resource
+Graph", https://claude.ai/artifact/HKWSujDmAbLpRHM7JEkQ9Z, G1 to G4) and simpler operators with
+runtimes and caching (the Claude Doc "Texera 2.0: Operators, Runtimes and Caching",
+https://claude.ai/artifact/YTxrrUqJfphVt6Sa5zv15v, E0 to E4, E5 in part). Left of those plans:
+E5's range sort, broadcast join and Parquet benchmark; E6, R; environment images for the ML
+profiles; a stored source reading another unit's tables where the lake does not let that unit.
 Nearest gaps: steps 4 and 5 of that note; a turn that outlives the request of the person who
 asked, with a stop any member can use; other people's cursors and selections on the canvas;
 text merged inside a property (a Python operator's code is last write wins); a grant to a

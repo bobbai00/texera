@@ -2,6 +2,43 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-07 (session 15, part 3): the graph's last pieces, nondeterministic functions, kind
+
+- A plan in the chat floating over a page offers Open graph, which opens the chat with its graph.
+- The graph orders each column by what its nodes connect to (new nodes go next to their
+  neighbours; placed nodes stay put), and draws uses and runs-on arrows faintly until one of
+  their ends is chosen.
+- A tool call records the MCP server its tool came from (`MessagePart.server`; the runtime
+  knows each mounted tool's server). The graph lists the outside servers the agent consulted,
+  in the order it first did, each with its calls; the platform's own server is left out. Above
+  the graph a strip says "Consulted: biomcp 2 calls", and a click lists what each call asked.
+- A Python function that may give other rows for the same input says
+  `@returns(..., nondeterministic=True)`. The catalog reads the mark from the code into
+  `implementation.python.nondeterministic`; a plan then neither fingerprints, keeps nor reuses
+  that function's rows or those of anything after it. The python-udf and texera-workflows
+  skills say when to use it; an operator's facts show it.
+- The diabetes scenario has a sixth question that reads the literature and the data: given the
+  consensus target for time in range, cite the paper and count the adolescents who meet it. Run
+  through the real model: two PubMed searches (Battelino 2019), a workflow over the CGM
+  readings, and a graph with the dataset, the workflow, the unit, the table and "consulted
+  biomcp: 2 calls". The per-participant time in range matches pandas over the same file (one of
+  seven above 70%); the model's table had one reading count wrong, which it corrected in its
+  text.
+
+Verified: catalog `go test ./...` (the graph's sources: two PubMed calls listed, the catalog's
+own server and start_work left out; a sampling function run twice reuses nothing, and the test
+fails without the mark); runtime 103; pytexera udf 93; frontend vitest 291; e2e test_reuse and
+test_functions on the dev stack (5); Playwright graph.spec on the dev stack (the strip and its
+list); the full Playwright suite on the dev stack (63 passed, 5 that need the model skipped).
+Kind, rebuilt from these commits with `k8s.sh up` and checked with `k8s.sh check`: the scenarios
+on the cluster pass, and Playwright on the cluster 63 passed, 5 skipped. (An earlier kind run,
+from before these commits, failed the graph test because its images predated the strip, and once
+failed a dock test that passed on a rerun.)
+
+Not done: the stored source reads another unit's tables only where the lake lets that unit (a run
+that cannot read one makes it again); environment images for the ML profiles (PyTorch installs
+on first use); E5's range sort, broadcast join and the Parquet benchmark; E6, R.
+
 ## 2026-11-07 (session 15, part 2): caching from lineage, the profile ladder, the resource graph
 
 - E3, caching from lineage: every port a run stores carries the fingerprint of the work that
