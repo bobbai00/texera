@@ -26,40 +26,52 @@ def with_operator(file_uri: str, operator_type: str, properties: dict | None = N
     return {"operators": [scan(file_uri), op], "links": [link("scan", opid)]}
 
 
-UDF_RANK = '''from pytexera import *
-import humanize
+# Each iris row's Id as an ordinal, by humanize: a package the platform's units lack.
+RANK = '''import humanize
+import pandas as pd
 
 
-class ProcessTupleOperator(UDFOperatorV2):
-    @overrides
-    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
-        tuple_["rank"] = humanize.ordinal(int(tuple_["Id"]))
-        yield tuple_
+@returns(Id=int, rank=str)
+def humanize_rank(rows: pd.DataFrame) -> pd.DataFrame:
+    """Each row's Id as an ordinal, by humanize."""
+    return pd.DataFrame({"Id": rows["Id"], "rank": [humanize.ordinal(int(n)) for n in rows["Id"]]})
 '''
 
 # The same rank without a package the platform lacks.
-UDF_ORDINAL = '''from pytexera import *
+ORDINAL = '''import pandas as pd
 
 
-class ProcessTupleOperator(UDFOperatorV2):
-    @overrides
-    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
-        n = int(tuple_["Id"])
-        suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-        tuple_["rank"] = f"{n}{suffix}"
-        yield tuple_
+def _ordinal(n: int) -> str:
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+@returns(Id=int, rank=str)
+def ordinal_rank(rows: pd.DataFrame) -> pd.DataFrame:
+    """Each row's Id as an ordinal: 1st, 2nd, 3rd."""
+    return pd.DataFrame({"Id": rows["Id"], "rank": [_ordinal(int(n)) for n in rows["Id"]]})
 '''
 
-UDF_AUTHED = '''from pytexera import *
+# Each row with the end of the secret it gets as its Credential setting, and a label.
+AUTHED = '''import pandas as pd
 
 
-class ProcessTupleOperator(UDFOperatorV2):
-    @overrides
-    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
-        tuple_["auth"] = PROPS["apiKey"][-4:]
-        tuple_["label"] = PROPS.get("label", "")
-        yield tuple_
+@returns(Id=int, auth=str, label=str)
+def authed_tag(rows: pd.DataFrame, *, apiKey: Credential, label: str = "") -> pd.DataFrame:
+    """Each row with the end of the key it was given, and a label."""
+    return pd.DataFrame({"Id": rows["Id"], "auth": apiKey[-4:], "label": label})
 '''
+
+
+def function_operator(api: Api, project: str, name: str, code: str, description: str | None = None) -> dict:
+    """Saves code whose one function under @returns is an operator of the project."""
+    more = {"description": description} if description else {}
+    return api.create("operators", name, {"implementation": {"python": {"code": code}}}, project=project, **more)
+
+
+def at_head(operator: dict) -> str:
+    """The operator's URI at its newest version, as a workflow names it."""
+    return f"{operator['metadata']['uri']}@{operator['metadata']['head']}"
 
 
 def run(api: Api, rid: str, name: str = "run", wait: int = 240, **more) -> dict:

@@ -1,8 +1,10 @@
-"""A Python function is an operator. A team saves one; the catalog reads its inputs, settings and
+"""A Python function is an operator. A project saves one; the catalog reads its inputs, settings and
 columns from its code; a workflow calls it with its settings and `by`, and it runs on the unit's
 Python workers with each patient's rows whole on one worker, giving what pandas gives. What it
 returns against its @returns fails the run, naming both; a `by` column that is not there is a
-mistake before anything runs."""
+mistake before anything runs. A function that reads no table is a source. The classes that run a
+function, and the engine's operators that run code, are nobody's to write: the catalog does not
+offer them and refuses them."""
 import io
 import math
 
@@ -110,3 +112,44 @@ def test_a_by_column_that_is_not_there_is_said_before_anything_runs(alice, proje
     checked = alice.post(f"/workflows/{rid}/validate", {})
     assert not checked["ok"]
     assert 'by: the input has no column "patient"; did you mean "patient_id"?' in str(checked["operatorErrors"]["metrics"])
+
+
+SQUARES = '''import pandas as pd
+
+
+@returns(n=int, square=int)
+def squares(*, upto: int = 3):
+    """The first squares, one row at a time."""
+    for n in range(1, upto + 1):
+        yield pd.DataFrame({"n": [n], "square": [n * n]})
+'''
+
+
+def test_a_function_that_reads_no_table_is_a_source(alice, project, unit):
+    operator = function_operator(alice, project, "squares", SQUARES, "squares")
+    assert operator["spec"]["inputPorts"] == [] and "by" not in operator["spec"]["propertiesSchema"]["properties"]
+    spec = {"operators": [op("squares", f"{operator['metadata']['uri']}@1", upto=5), op("big", "filter", where="square > 4")],
+            "links": [link("squares", "big", "l1")]}
+    rid = alice.create("workflows", "squares", spec, project=project)["metadata"]["rid"]
+    run = w.run(alice, rid, "squares", computingUnit=unit)
+    assert run["status"]["phase"] == "completed", w.error_text(run)
+    page = w.rows(alice, rid, run["metadata"]["rid"], opid="big", limit=10)
+    # The filter runs on several workers: its rows come in no order.
+    assert sorted(r[w.column(page, "square")] for r in page["rows"]) == [9, 16, 25], page
+
+
+def test_the_engines_own_operators_are_not_offered_nor_taken(alice, project, iris):
+    offered = {o["spec"]["operatorType"] for o in alice.get("/operators?limit=500")["items"]}
+    assert offered and not offered & {"PythonUDFV2", "DualInputPortsPythonUDFV2", "PythonUDFSourceV2", "JavaUDF", "RUDF", "function", "stored"}, sorted(offered)
+    code = """from pytexera import *
+
+
+class ProcessTupleOperator(UDFOperatorV2):
+    @overrides
+    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+        yield tuple_
+"""
+    status, body = alice.call("POST", "/workflows", {"name": "by hand", "parent": project, "spec": w.with_operator(iris.file, "PythonUDFV2", {"code": code})})
+    assert status == 400 and "PythonUDFV2 is the engine's own; write the code as a Python function under @returns(...)" in body["message"], body
+    status, body = alice.call("POST", "/operators", {"name": "classy", "parent": project, "spec": {"implementation": {"python": {"code": code}}}})
+    assert status == 400 and "the code defines class ProcessTupleOperator(UDFOperatorV2), and the classes that run code are the engine's" in body["message"], body

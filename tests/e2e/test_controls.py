@@ -23,24 +23,28 @@ import pytest
 from texera_e2e import workflows as w
 from texera_e2e.events import Watch, phase
 
-UDF_SLOW = '''from pytexera import *
-import time
+# Puts out each row on its own, a fifth of a second apart: a function that yields as it goes.
+SLOW = '''import time
+
+import pandas as pd
 
 
-class ProcessTupleOperator(UDFOperatorV2):
-    @overrides
-    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+@returns(Id=int, Species=str)
+def one_by_one(rows: pd.DataFrame):
+    """Each row on its own, a fifth of a second after the last."""
+    for i in range(len(rows)):
         time.sleep(0.2)
-        yield tuple_
+        yield rows.iloc[[i]][["Id", "Species"]]
 '''
 
 
 @pytest.mark.slow
 def test_a_run_is_watched_paused_and_resumed(alice, bob, project, iris, unit):
-    udf = {"code": UDF_SLOW, "workers": 1, "retainInputColumns": True, "outputColumns": []}
-    wf = alice.create("workflows", "slow iris", w.with_operator(iris.file, "PythonUDFV2", udf, opid="slow"), project=project)
+    slow = w.function_operator(alice, project, "one by one", SLOW)
+    wf = alice.create("workflows", "slow iris", w.with_operator(iris.file, w.at_head(slow), opid="slow"), project=project)
     rid = wf["metadata"]["rid"]
-    run = alice.post(f"/workflows/{rid}/run", {"name": "slow execution", "computingUnit": unit})
+    # Fresh: the rows are made, not read from what an earlier run of the suite kept.
+    run = alice.post(f"/workflows/{rid}/run", {"name": "slow execution", "computingUnit": unit, "fresh": True})
     eid = run["metadata"]["rid"]
     path = f"/workflows/{rid}/executions/{eid}"
     watch = Watch(alice, eid)

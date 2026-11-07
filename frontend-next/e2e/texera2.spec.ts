@@ -412,12 +412,16 @@ test("creates a custom operator from its page and finds it in a workflow's palet
   const operator = madeIn("operators");
   cleanups.push(() => call.attempt("DELETE", `/resources/${operator}`));
   const form = page.locator("[data-spec-editor='operator']");
-  await expect(form.locator('[data-field="operatorType"]')).toHaveValue(name.replace(/[^A-Za-z0-9]+/g, ""));
-  await expect(form.locator('[data-field="code"]')).toContainText("ProcessTupleOperator");
-  // A property marked format: credential becomes a credential picker in the workflow editor.
-  await form
-    .locator('[data-field="propertiesSchema"]')
-    .fill(JSON.stringify({ type: "object", properties: { apiKey: { type: "string", format: "credential", description: "The service key" } } }));
+  // A new operator is a Python function named after it, never a class; what it reads, its
+  // settings and its columns are the catalog's reading of the code, not fields to fill.
+  const fn = name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  await expect(form.locator('[data-field="operatorType"]')).toHaveValue(fn);
+  const code = form.locator('[data-field="code"]');
+  await expect(code).toHaveValue(new RegExp(`@returns\\(rows=int\\)\\ndef ${fn}\\(table: pd\\.DataFrame, \\*,`));
+  expect(await code.inputValue()).not.toMatch(/class |UDFOperatorV2|process_tuple/);
+  await expect(form.locator('[data-field="propertiesSchema"]')).toHaveCount(0);
+  // A setting typed Credential becomes a credential picker in the workflow editor.
+  await code.fill((await code.inputValue()).replace('label: str = ""', 'label: str = "", api_key: Credential = None'));
   await form.locator("[data-save-spec]").click();
   await expect(form.locator("[data-save-spec]")).toBeDisabled();
   // Every save is a version, and the page shares the resource with someone found in the
@@ -710,20 +714,23 @@ test("an execution's page follows it as it goes, and pauses and resumes it", asy
   const rows = Array.from({ length: 150 }, (_, i) => `${i},${(i % 7) * 1.5}`).join("\n");
   await call("PUT", `/datasets/${dsRid}/files/numbers.csv`, `id,value\n${rows}\n`, "application/octet-stream");
   await call("POST", `/datasets/${dsRid}/commit`, { message: "numbers" });
-  const code = "from pytexera import *\nimport time\n\n\nclass ProcessTupleOperator(UDFOperatorV2):\n    @overrides\n    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:\n        time.sleep(0.2)\n        yield tuple_\n";
+  // A function that puts out each row on its own, a fifth of a second apart.
+  const code =
+    "import time\n\nimport pandas as pd\n\n\n@returns(id=int, value=float)\ndef one_by_one(rows: pd.DataFrame):\n    for i in range(len(rows)):\n        time.sleep(0.2)\n        yield rows.iloc[[i]]\n";
+  const oneByOne = await call("POST", "/operators", { name: `one by one ${stamp}`, spec: { implementation: { python: { code } } } });
   const spec = {
     operators: [
       { operatorID: "scan", operatorType: "CSVFileScan", operatorProperties: { fileName: `texera://datasets/${dsRid}@1/files/numbers.csv`, fileEncoding: "UTF_8", hasHeader: true } },
-      { operatorID: "slow", operatorType: "PythonUDFV2", viewResult: true, operatorProperties: { code, workers: 1, retainInputColumns: true, outputColumns: [] } },
+      { operatorID: "slow", operatorType: `${oneByOne.metadata.uri}@1`, viewResult: true, operatorProperties: {} },
     ],
     links: [{ linkID: "l1", source: { operatorID: "scan", portID: "output-0" }, target: { operatorID: "slow", portID: "input-0" } }],
   };
   const wf = await call("POST", "/workflows", { name: `slow numbers ${stamp}`, spec });
   const wfRid = wf.metadata.rid as string;
-  cleanups.push(() => discard(call, [wfRid], [dsRid]));
+  cleanups.push(() => discard(call, [wfRid], [dsRid, oneByOne.metadata.rid as string]));
 
   await signIn(page);
-  const started = await call("POST", `/workflows/${wfRid}/run`, { name: `slow execution ${stamp}` });
+  const started = await call("POST", `/workflows/${wfRid}/run`, { name: `slow execution ${stamp}`, fresh: true });
   await page.goto(`/workflows/${wfRid}/executions/${started.metadata.rid}`);
   const execution = page.locator("[data-execution-view]");
   await expect(execution.locator("[data-phase]")).toHaveText("running", { timeout: 90_000 });

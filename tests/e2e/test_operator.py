@@ -1,6 +1,6 @@
-"""A custom Python operator: created as a resource, used in a workflow by its URI and run,
-listed beside the built-ins; deleting it is refused while a workflow references it. Acceptance
-item 5."""
+"""A custom operator: a Python function saved as a resource, used in a workflow by its URI and
+run, listed beside the built-ins; deleting it is refused while a workflow references it.
+Acceptance item 5."""
 import json
 
 import pytest
@@ -10,12 +10,9 @@ from texera_e2e import workflows as w
 
 @pytest.mark.slow
 def test_a_custom_operator_runs_and_is_referenced(alice, project, iris, unit):
-    op = alice.create("operators", "Ordinal rank", {
-        "operatorType": "OrdinalRank", "displayName": "Ordinal rank", "group": "Custom",
-        "inputPorts": [{"portID": "input-0"}], "outputPorts": [{"portID": "output-0"}],
-        "implementation": {"python": {"code": w.UDF_ORDINAL, "outputColumns": [{"attributeName": "rank", "attributeType": "string"}]}},
-    }, project=project, description="Adds an ordinal rank column from Id")
-    op_uri = f"{op['metadata']['uri']}@{op['metadata']['head']}"
+    op = w.function_operator(alice, project, "Ordinal rank", w.ORDINAL, description="Adds an ordinal rank column from Id")
+    assert op["spec"]["operatorType"] == "ordinal_rank" and op["spec"]["implementation"]["python"]["function"] == "ordinal_rank"
+    op_uri = w.at_head(op)
     listed = alice.get("/operators?q=Ordinal+rank")["items"]
     assert any(o["metadata"]["rid"] == op["metadata"]["rid"] and o["metadata"]["project"] == project for o in listed)
 

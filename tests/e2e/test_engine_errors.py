@@ -9,13 +9,12 @@ import pytest
 from texera_e2e import chat
 from texera_e2e import workflows as w
 
-UDF_BOOM = '''from pytexera import *
+BOOM = '''import pandas as pd
 
 
-class ProcessTupleOperator(UDFOperatorV2):
-    @overrides
-    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
-        raise ValueError("the flower count is cursed " + str(7000 + 431))
+@returns(Id=int)
+def cursed(rows: pd.DataFrame) -> pd.DataFrame:
+    raise ValueError("the flower count is cursed " + str(7000 + 431))
 '''
 
 
@@ -23,12 +22,13 @@ def tool(api, name: str, **arguments) -> tuple[bool, str]:
     return chat.tool(api, name, **arguments)
 
 
-def udf(file_uri: str, code: str) -> dict:
-    return w.with_operator(file_uri, "PythonUDFV2", {"code": code, "workers": 1, "retainInputColumns": True, "outputColumns": []})
+def calling(api, project, file_uri: str, code: str) -> dict:
+    """The iris file into the one function the code defines, saved as an operator of the project."""
+    return w.with_operator(file_uri, w.at_head(w.function_operator(api, project, "boom", code)))
 
 
 def test_a_failing_operator_says_why_through_run_workflow(alice, project, iris):
-    wf = alice.create("workflows", "cursed", udf(iris.file, UDF_BOOM), project=project)
+    wf = alice.create("workflows", "cursed", calling(alice, project, iris.file, BOOM), project=project)
     failed, text = chat.tool(alice, "run_workflow", rid=wf["metadata"]["rid"], waitSeconds=120)
     assert not failed, "the call worked; the execution failed, and says so"
     execution = json.loads(text)

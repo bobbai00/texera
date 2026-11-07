@@ -1,5 +1,5 @@
 """Profiles: what a computing node is made of, its size and the Python packages it adds to the
-platform's runtime. A unit made from a profile has them: a Python UDF that imports one of them
+platform's runtime. A unit made from a profile has them: a Python function that imports one of them
 runs there and fails on a unit without it; the execution records the profile version and each
 package as the unit installed it. Saving the unit as a profile makes the profile's next version,
 its packages pinned, or a new profile; the unit is then made from what was saved."""
@@ -24,9 +24,8 @@ def test_a_unit_made_from_a_profile_has_its_packages(alice, project, iris, unit)
     phase, took = wait_ready(alice, rid)
     assert phase == "ready", f"{phase} after {took:.0f}s"
 
-    udf = {"code": w.UDF_RANK, "workers": 1, "retainInputColumns": True, "defaultEnv": True,
-           "outputColumns": [{"attributeName": "rank", "attributeType": "string"}]}
-    wf = alice.create("workflows", "humanize ranks", w.with_operator(iris.file, "PythonUDFV2", udf, opid="udf"), project=project)
+    rank = w.function_operator(alice, project, "humanize rank", w.RANK)
+    wf = alice.create("workflows", "humanize ranks", w.with_operator(iris.file, w.at_head(rank), opid="udf"), project=project)
     wrid = wf["metadata"]["rid"]
     assert alice.post(f"/workflows/{wrid}/validate", {})["ok"]
 
