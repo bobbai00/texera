@@ -397,8 +397,19 @@ func TestExecutionResultsAndLineage(t *testing.T) {
 	}
 	var compact api.ResourcePage
 	h.mustJSON("alice", "GET", p+"/operators", nil, &compact)
-	if len(compact.Items) != 2 || compact.Items[0].Spec["propertiesSchema"] != nil {
+	if len(compact.Items) != 3 || compact.Items[0].Spec["propertiesSchema"] != nil {
 		t.Fatalf("compact operators: %+v", compact.Items)
+	}
+	// Each built-in keeps the ports its unit describes, named as workflows name them.
+	var join api.ResourcePage
+	h.mustJSON("alice", "GET", p+"/operators?q=HashJoin", nil, &join)
+	if len(join.Items) != 1 {
+		t.Fatalf("HashJoin: %+v", join.Items)
+	}
+	ports, _ := json.Marshal(map[string]any{"in": join.Items[0].Spec["inputPorts"], "out": join.Items[0].Spec["outputPorts"]})
+	want := `{"in":[{"allowMultiInputs":true,"displayName":"left","portID":"input-0"},{"allowMultiInputs":true,"displayName":"right","portID":"input-1"}],"out":[{"portID":"output-0"}]}`
+	if string(ports) != want {
+		t.Fatalf("HashJoin ports: %s, want %s", ports, want)
 	}
 }
 

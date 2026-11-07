@@ -26,7 +26,9 @@ import org.apache.texera.amber.util.JSONUtils.objectMapper
 import scala.collection.mutable
 
 /**
-  * AggregateOpExec performs aggregation operations on input tuples, optionally grouping them by specified keys.
+  * The first stage of an aggregation, on every worker: accumulates its share of the input per
+  * group and emits each group's partial results (`AggregationOperation.getPartialValues`),
+  * which `AggregateFinalOpExec` merges.
   */
 class AggregateOpExec(descString: String) extends OperatorExecutor {
   private val desc: AggregateOpDesc = objectMapper.readValue(descString, classOf[AggregateOpDesc])
@@ -79,13 +81,13 @@ class AggregateOpExec(descString: String) extends OperatorExecutor {
   }
 
   override def onFinish(port: Int): Iterator[TupleLike] = {
-    // Finalize aggregation for all keys and produce the result
+    // Emit each group's partial results; the second stage merges them across workers.
     keyedPartialAggregates.iterator.map {
       case (key, partials) =>
-        val finalAggregates = partials.zipWithIndex.map {
-          case (partial, index) => distributedAggregations(index).finalAgg(partial)
+        val partialValues = desc.aggregations.indices.flatMap { index =>
+          desc.aggregations(index).getPartialValues(distributedAggregations(index), partials(index))
         }
-        TupleLike(key ++ finalAggregates)
+        TupleLike(key ++ partialValues)
     }
   }
 }

@@ -108,9 +108,11 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 	mux.HandleFunc("GET /api/operators", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"groups": []any{}, "operators": []any{
 			map[string]any{"operatorType": "CSVFileScan", "userFriendlyName": "CSV File Scan", "operatorGroupName": "Source", "operatorDescription": "Reads a CSV file",
-				"jsonSchema": map[string]any{"type": "object", "properties": map[string]any{"fileName": map[string]any{"type": "string"}}}, "inputPorts": []any{}, "outputPorts": []any{map[string]any{"portID": "output-0"}}},
+				"jsonSchema": map[string]any{"type": "object", "properties": map[string]any{"fileName": map[string]any{"type": "string"}}}, "inputPorts": []any{}, "outputPorts": []any{enginePort(0, "")}},
 			map[string]any{"operatorType": "Aggregate", "userFriendlyName": "Aggregate", "operatorGroupName": "Analysis", "operatorDescription": "Aggregates",
-				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{map[string]any{"portID": "input-0"}}, "outputPorts": []any{map[string]any{"portID": "output-0"}}},
+				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "")}, "outputPorts": []any{enginePort(0, "")}},
+			map[string]any{"operatorType": "HashJoin", "userFriendlyName": "Hash Join", "operatorGroupName": "Join", "operatorDescription": "Joins two inputs",
+				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "left"), enginePort(1, "right")}, "outputPorts": []any{enginePort(0, "")}},
 		}})
 	})
 	mux.HandleFunc("POST /api/compile", func(w http.ResponseWriter, r *http.Request) {
@@ -464,4 +466,9 @@ func field(e envelope, key string) any {
 func mustJSONBytes(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+// enginePort is a port as the engine describes it: its proto, keyed by its identity.
+func enginePort(number int, displayName string) map[string]any {
+	return map[string]any{"id": map[string]any{"id": number, "internal": false}, "displayName": displayName, "disallowMultiLinks": false, "dependencies": []any{}}
 }

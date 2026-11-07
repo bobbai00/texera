@@ -528,25 +528,29 @@ class AggregateOpSpec extends AnyFunSuite {
   }
 
   // ---------------------------------------------------------------------------
-  // getFinal behaviour
+  // getMergeAgg behaviour (the second stage)
   // ---------------------------------------------------------------------------
 
-  test("getFinal rewrites COUNT into SUM over the intermediate result attribute") {
+  test("getMergeAgg adds up COUNT partials from the result column") {
     val operation = makeAggregationOp(AggregationFunction.COUNT, "price", "price_count")
-    val finalOp = operation.getFinal
+    val partialSchema = makeSchema("price_count" -> AttributeType.INTEGER)
+    val merge = operation.getMergeAgg(AttributeType.INTEGER)
+    val merged = Seq(2, 3)
+      .map(count => makeTuple(partialSchema, count))
+      .foldLeft(merge.init())(merge.iterate)
 
-    assert(finalOp.aggFunction == AggregationFunction.SUM)
-    assert(finalOp.attribute == "price_count")
-    assert(finalOp.resultAttribute == "price_count")
+    assert(merge.finalAgg(merged) == 5)
   }
 
-  test("getFinal keeps non-COUNT aggregation function and rewires attribute to resultAttribute") {
+  test("getMergeAgg keeps SUM's function over the result column") {
     val operation = makeAggregationOp(AggregationFunction.SUM, "amount", "total_amount")
-    val finalOp = operation.getFinal
+    val partialSchema = makeSchema("total_amount" -> AttributeType.DOUBLE)
+    val merge = operation.getMergeAgg(AttributeType.DOUBLE)
+    val merged = Seq(1.5, 2.5)
+      .map(sum => makeTuple(partialSchema, sum))
+      .foldLeft(merge.init())(merge.iterate)
 
-    assert(finalOp.aggFunction == AggregationFunction.SUM)
-    assert(finalOp.attribute == "total_amount")
-    assert(finalOp.resultAttribute == "total_amount")
+    assert(merge.finalAgg(merged) == 4.0)
   }
 
   // ---------------------------------------------------------------------------

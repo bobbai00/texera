@@ -29,7 +29,7 @@ import java.sql.Timestamp
   * `AggregateOpSpec` (in this same package) already exercises the happy paths for
   * `getAggregationAttribute`, the per-kind `init` / `iterate` / `finalAgg` semantics
   * (SUM/COUNT/AVERAGE/MIN/MAX/CONCAT, including null-handling and AVERAGE-of-empty),
-  * and the `getFinal` rewrite. This spec deliberately does NOT duplicate those.
+  * and the per-function merges. This spec deliberately does NOT duplicate those.
   *
   * What this spec adds:
   * - `getAggFunc` validation errors (unsupported attribute types on SUM/MIN/MAX,
@@ -37,7 +37,7 @@ import java.sql.Timestamp
   * - The CONCAT-specific `merge` partial-combination behavior — `AggregateOpSpec`
   *   exercises iterate/finalAgg but never calls `merge` directly.
   * - A two-stage worker→final pipeline that runs a real partial aggregation
-  *   on each "worker", emits a partial tuple, then applies `getFinal` and
+  *   on each "worker", emits a partial tuple, then applies `getMergeAgg` and
   *   re-aggregates the partials end-to-end.
   * - `AveragePartialObj` (a plain `case class`, not a value class) field
   *   exposure and case-class value equality / hashCode.
@@ -105,11 +105,11 @@ class AggregationOperationSpec extends AnyFlatSpec {
   // --- partial + final pipeline ----------------------------------------------
 
   "Worker → final aggregation pipeline" should
-    "give the same total as a single-pass COUNT when partials are re-aggregated via getFinal" in {
+    "give the same total as a single-pass COUNT when partials are merged" in {
     // Two "workers" each run a COUNT over their slice of the data. Each
     // worker emits a partial output (an Integer count). The "final" stage
     // re-aggregates those partial outputs as a SUM over the result column,
-    // which getFinal is supposed to produce.
+    // which getMergeAgg produces for COUNT.
     val workerOp = op(AggregationFunction.COUNT, attribute = "v", resultAttribute = "row_count")
     val workerAgg = workerOp.getAggFunc(AttributeType.INTEGER)
 
@@ -131,11 +131,8 @@ class AggregationOperationSpec extends AnyFlatSpec {
     val w2Out = workerAgg.finalAgg(w2State).asInstanceOf[Integer]
     assert(w2Out == 3)
 
-    // Final stage: re-aggregate the partial counts via getFinal.
-    val finalOp = workerOp.getFinal
-    assert(finalOp.aggFunction == AggregationFunction.SUM)
-    assert(finalOp.attribute == "row_count")
-    val finalAgg = finalOp.getAggFunc(AttributeType.INTEGER)
+    // Final stage: merge the partial counts.
+    val finalAgg = workerOp.getMergeAgg(AttributeType.INTEGER)
     val partial1 = tupleOf("row_count", AttributeType.INTEGER, w1Out)
     val partial2 = tupleOf("row_count", AttributeType.INTEGER, w2Out)
     val finalState =
@@ -145,10 +142,10 @@ class AggregationOperationSpec extends AnyFlatSpec {
   }
 
   it should
-    "give the same total as a single-pass SUM when partials are re-aggregated via getFinal" in {
-    // For SUM, getFinal keeps aggFunction = SUM and rebinds attribute to the
-    // result column. The pipeline must produce the same total as a single-pass
-    // SUM over all the input tuples.
+    "give the same total as a single-pass SUM when partials are merged" in {
+    // For SUM, the merge sums the partial sums from the result column. The
+    // pipeline must produce the same total as a single-pass SUM over all the
+    // input tuples.
     val workerOp = op(AggregationFunction.SUM, attribute = "v", resultAttribute = "total")
     val workerAgg = workerOp.getAggFunc(AttributeType.INTEGER)
 
@@ -164,10 +161,7 @@ class AggregationOperationSpec extends AnyFlatSpec {
     }
     assert(partials == Seq(6: Integer, 30: Integer))
 
-    val finalOp = workerOp.getFinal
-    assert(finalOp.aggFunction == AggregationFunction.SUM)
-    assert(finalOp.attribute == "total")
-    val finalAgg = finalOp.getAggFunc(AttributeType.INTEGER)
+    val finalAgg = workerOp.getMergeAgg(AttributeType.INTEGER)
     val finalState = partials
       .map(p => tupleOf("total", AttributeType.INTEGER, p))
       .foldLeft(finalAgg.init())(finalAgg.iterate)
@@ -176,7 +170,7 @@ class AggregationOperationSpec extends AnyFlatSpec {
   }
 
   it should
-    "keep the type's maximum value when partial MAX results are re-aggregated via getFinal" in {
+    "keep the type's maximum value when partial MAX results are merged" in {
     // Regression: the local stage used to finalize a partial equal to
     // maxValue(attributeType) to null, so the final stage reported the largest
     // value from the other worker instead of the true maximum.
@@ -195,13 +189,49 @@ class AggregationOperationSpec extends AnyFlatSpec {
     val w2Out = workerAgg.finalAgg(w2State)
     assert(w2Out == Int.box(5))
 
-    val finalOp = workerOp.getFinal
-    assert(finalOp.aggFunction == AggregationFunction.MAX)
-    val finalAgg = finalOp.getAggFunc(AttributeType.INTEGER)
+    val finalAgg = workerOp.getMergeAgg(AttributeType.INTEGER)
     val finalState = Seq(w1Out, w2Out)
       .map(p => tupleOf("max_v", AttributeType.INTEGER, p))
       .foldLeft(finalAgg.init())(finalAgg.iterate)
     assert(finalAgg.finalAgg(finalState) == Int.box(Int.MaxValue))
+  }
+
+  it should
+    "merge averages from sums and counts, not by averaging each worker's average" in {
+    // Rows reach the first stage's workers round-robin, so a group can split unevenly:
+    // here 10 and 60 on one worker, 20 on the other. The mean of the group is 30;
+    // averaging the workers' averages (35 and 20) would give 27.5.
+    val workerOp = op(AggregationFunction.AVERAGE, attribute = "v", resultAttribute = "mean_v")
+    val workerAgg = workerOp.getAggFunc(AttributeType.INTEGER)
+    def partialOf(values: Seq[AnyRef]): List[Object] = {
+      val state = values
+        .map(v => tupleOf("v", AttributeType.INTEGER, v))
+        .foldLeft(workerAgg.init())(workerAgg.iterate)
+      workerOp.getPartialValues(workerAgg, state)
+    }
+    val partialSchema = Schema(workerOp.getPartialAttributes(AttributeType.INTEGER))
+    assert(partialSchema.getAttributeNames == List("mean_v", "mean_v__count"))
+    val partials = Seq(
+      partialOf(Seq(Int.box(10), Int.box(60))),
+      partialOf(Seq(Int.box(20))),
+      partialOf(Seq(null)) // a worker that saw only nulls contributes nothing
+    )
+    assert(partials.head == List(Double.box(70.0), Long.box(2L)))
+
+    val merge = workerOp.getMergeAgg(AttributeType.DOUBLE)
+    val merged = partials
+      .map(values => Tuple(partialSchema, values.toArray))
+      .foldLeft(merge.init())(merge.iterate)
+    assert(merge.finalAgg(merged) == Double.box(30.0))
+    assert(workerOp.getFinalAttribute(partialSchema) == new Attribute("mean_v", AttributeType.DOUBLE))
+  }
+
+  it should "give null when no worker saw a value to average" in {
+    val workerOp = op(AggregationFunction.AVERAGE, attribute = "v", resultAttribute = "mean_v")
+    val partialSchema = Schema(workerOp.getPartialAttributes(AttributeType.INTEGER))
+    val merge = workerOp.getMergeAgg(AttributeType.DOUBLE)
+    val nothing = Tuple(partialSchema, Array[Any](Double.box(0.0), Long.box(0L)))
+    assert(merge.finalAgg(merge.iterate(merge.init(), nothing)) == null)
   }
 
   // --- AveragePartialObj -----------------------------------------------------
@@ -415,23 +445,24 @@ class AggregationOperationSpec extends AnyFlatSpec {
     assert(agg.finalAgg(result) == "1,2")
   }
 
-  // --- getAggregationAttribute / getFinal: message and identity guarantees ----
+  // --- getAggregationAttribute / getMergeAgg: message and identity guarantees --
 
   "getAggregationAttribute" should "name the unknown aggregation function in its error" in {
     val ex = intercept[RuntimeException](op(null).getAggregationAttribute(AttributeType.INTEGER))
     assert(ex.getMessage == "Unknown aggregation function: null")
   }
 
-  "getFinal" should "produce a detached copy that re-reads the result column" in {
+  "getMergeAgg" should "read the result column and leave the operation untouched" in {
     val original = op(AggregationFunction.MAX, attribute = "src", resultAttribute = "dst")
-    val copy = original.getFinal
-
-    assert(copy ne original)
-    assert(copy.aggFunction == AggregationFunction.MAX)
-    // the final stage reads and writes the same (result) column
-    assert(copy.attribute == "dst")
-    assert(copy.resultAttribute == "dst")
-    // the original is left untouched
+    val merge = original.getMergeAgg(AttributeType.INTEGER)
+    val partialSchema = schemaWith("dst", AttributeType.INTEGER)
+    val merged = Seq(Int.box(3), Int.box(9), Int.box(4))
+      .map(v => Tuple.builder(partialSchema).add(new Attribute("dst", AttributeType.INTEGER), v).build())
+      .foldLeft(merge.init())(merge.iterate)
+    assert(merge.finalAgg(merged) == Int.box(9))
+    // the operation itself is not rewritten, so a plan can be built from it again
+    assert(original.aggFunction == AggregationFunction.MAX)
     assert(original.attribute == "src")
+    assert(original.resultAttribute == "dst")
   }
 }

@@ -21,7 +21,13 @@ package org.apache.texera.amber.operator.aggregate
 
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonProperty, JsonPropertyDescription}
 import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
-import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, AttributeTypeUtils, Tuple}
+import org.apache.texera.amber.core.tuple.{
+  Attribute,
+  AttributeType,
+  AttributeTypeUtils,
+  Schema,
+  Tuple
+}
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 
 import javax.validation.constraints.NotNull
@@ -119,19 +125,84 @@ class AggregationOperation {
     aggFunc.asInstanceOf[DistributedAggregation[Object]]
   }
 
+  /** The column that carries a first-stage average's row count, beside its running sum. */
   @JsonIgnore
-  def getFinal: AggregationOperation = {
-    val newAggFunc = aggFunction match {
-      // COUNT emits partial counts locally; the global stage sums them.
-      case AggregationFunction.COUNT => AggregationFunction.SUM
-      case a: AggregationFunction    => a
+  def averageCountAttribute: String = resultAttribute + "__count"
+
+  /**
+    * The columns the first stage emits for this aggregation on every worker. An average
+    * cannot be merged from averages, so its first stage emits a running sum and a row
+    * count; every other function emits one value of its result type.
+    */
+  @JsonIgnore
+  def getPartialAttributes(attrType: AttributeType): List[Attribute] =
+    aggFunction match {
+      case AggregationFunction.AVERAGE =>
+        List(
+          new Attribute(resultAttribute, AttributeType.DOUBLE),
+          new Attribute(averageCountAttribute, AttributeType.LONG)
+        )
+      case _ => List(getAggregationAttribute(attrType))
     }
-    val res = new AggregationOperation()
-    res.aggFunction = newAggFunc
-    res.resultAttribute = resultAttribute
-    res.attribute = resultAttribute
-    res
+
+  /** The first stage's values for one group, in the order of `getPartialAttributes`. */
+  @JsonIgnore
+  def getPartialValues(agg: DistributedAggregation[Object], partial: Object): List[Object] =
+    aggFunction match {
+      case AggregationFunction.AVERAGE =>
+        val average = partial.asInstanceOf[AveragePartialObj]
+        List(java.lang.Double.valueOf(average.sum), java.lang.Long.valueOf(average.count.toLong))
+      case _ => List(agg.finalAgg(partial))
+    }
+
+  /**
+    * The second stage: combines, per group, what the first stage emitted on every worker.
+    * Partial counts and sums add up, partial minima and maxima compete, partial
+    * concatenations join, and an average divides the summed sums by the summed counts.
+    *
+    * @param partialType the type of this aggregation's column in the first stage's output
+    */
+  @JsonIgnore
+  def getMergeAgg(partialType: AttributeType): DistributedAggregation[Object] = {
+    def overPartials(function: AggregationFunction): AggregationOperation = {
+      val operation = new AggregationOperation()
+      operation.aggFunction = function
+      operation.attribute = resultAttribute
+      operation.resultAttribute = resultAttribute
+      operation
+    }
+    aggFunction match {
+      case AggregationFunction.AVERAGE =>
+        averageMergeAgg().asInstanceOf[DistributedAggregation[Object]]
+      case AggregationFunction.COUNT =>
+        overPartials(AggregationFunction.SUM).getAggFunc(AttributeType.INTEGER)
+      case function => overPartials(function).getAggFunc(partialType)
+    }
   }
+
+  /** This aggregation's column in the final output, read off the first stage's output schema. */
+  @JsonIgnore
+  def getFinalAttribute(partialSchema: Schema): Attribute =
+    aggFunction match {
+      case AggregationFunction.AVERAGE => new Attribute(resultAttribute, AttributeType.DOUBLE)
+      case _                           => partialSchema.getAttribute(resultAttribute)
+    }
+
+  private def averageMergeAgg(): DistributedAggregation[AveragePartialObj] =
+    new DistributedAggregation[AveragePartialObj](
+      () => AveragePartialObj(0, 0),
+      (partial, tuple) => {
+        val sum = tuple.getField[java.lang.Double](resultAttribute)
+        val count = tuple.getField[java.lang.Long](averageCountAttribute)
+        AveragePartialObj(partial.sum + sum.doubleValue(), partial.count + count.doubleValue())
+      },
+      (partial1, partial2) =>
+        AveragePartialObj(partial1.sum + partial2.sum, partial1.count + partial2.count),
+      partial => {
+        val ret: java.lang.Double = if (partial.count == 0d) null else partial.sum / partial.count
+        ret
+      }
+    )
 
   private def sumAgg(attributeType: AttributeType): DistributedAggregation[Object] = {
     if (

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -259,10 +260,10 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 	count := 0
 	for _, op := range list.Operators {
 		spec := api.OperatorSpec{OperatorType: op.OperatorType, DisplayName: &op.UserFriendlyName, Group: &op.OperatorGroupName, Description: op.OperatorDescription, PropertiesSchema: op.JsonSchema}
-		if ports := portSpecs(op.InputPorts); len(ports) > 0 {
+		if ports := portSpecs(op.InputPorts, "input"); len(ports) > 0 {
 			spec.InputPorts = &ports
 		}
-		if ports := portSpecs(op.OutputPorts); len(ports) > 0 {
+		if ports := portSpecs(op.OutputPorts, "output"); len(ports) > 0 {
 			spec.OutputPorts = &ports
 		}
 		if op.Requires != nil {
@@ -304,26 +305,37 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 	return nil
 }
 
-func portSpecs(ports []any) []api.OperatorPortSpec {
+// portSpecs reads the ports a unit describes for an operator type. The engine sends each port
+// as its proto, keyed by its identity, and the catalog names it "input-1" or "output-1":
+//
+//	{"id": {"id": 1, "internal": false}, "displayName": "right", "disallowMultiLinks": false}
+//
+// An input port takes several links unless the engine says otherwise; their rows arrive as
+// one input. Internal ports belong to the engine's physical plan and are left out.
+func portSpecs(ports []any, direction string) []api.OperatorPortSpec {
 	var out []api.OperatorPortSpec
 	for _, p := range ports {
 		m, ok := p.(map[string]any)
 		if !ok {
 			continue
 		}
-		id, _ := m["portID"].(string)
-		if id == "" {
+		identity, ok := m["id"].(map[string]any)
+		if !ok {
 			continue
 		}
-		spec := api.OperatorPortSpec{PortID: id}
+		if internal, _ := identity["internal"].(bool); internal {
+			continue
+		}
+		number, _ := identity["id"].(float64)
+		spec := api.OperatorPortSpec{PortID: fmt.Sprintf("%s-%d", direction, int(number))}
 		if d, ok := m["displayName"].(string); ok && d != "" {
 			spec.DisplayName = &d
 		}
-		if b, ok := m["allowMultiInputs"].(bool); ok && b {
-			spec.AllowMultiInputs = &b
-		}
-		if b, ok := m["isDynamicPort"].(bool); ok && b {
-			spec.IsDynamicPort = &b
+		if direction == "input" {
+			if disallow, _ := m["disallowMultiLinks"].(bool); !disallow {
+				several := true
+				spec.AllowMultiInputs = &several
+			}
 		}
 		out = append(out, spec)
 	}

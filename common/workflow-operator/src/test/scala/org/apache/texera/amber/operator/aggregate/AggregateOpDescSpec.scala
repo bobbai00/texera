@@ -23,6 +23,7 @@ import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorMetadataGenerator}
+import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -41,8 +42,6 @@ class AggregateOpDescSpec extends AnyFlatSpec with Matchers {
     a
   }
 
-  // Each test builds a FRESH desc: getPhysicalPlan mutates `aggregations` (getFinal),
-  // so the descriptor is intentionally not idempotent across calls.
   private def descWith(keys: List[String], aggs: AggregationOperation*): AggregateOpDesc = {
     val d = new AggregateOpDesc
     d.groupByKeys = keys
@@ -106,6 +105,24 @@ class AggregateOpDescSpec extends AnyFlatSpec with Matchers {
       descWith(List.empty, aggOp(AggregationFunction.SUM, "", "total"))
         .getExternalOutputSchemas(Map(PortIdentity() -> input))
     }
+  }
+
+  "AggregateOpDesc.getPhysicalPlan" should
+    "leave the description as it was, so building the plan twice gives the same plan" in {
+    val desc = descWith(List("city"), aggOp(AggregationFunction.AVERAGE, "sales", "mean"))
+    val before = objectMapper.writeValueAsString(desc)
+    val first = desc.getPhysicalPlan(workflowId, executionId)
+    objectMapper.writeValueAsString(desc) shouldBe before
+    desc.getPhysicalPlan(workflowId, executionId).operators.map(_.opExecInitInfo) shouldBe
+      first.operators.map(_.opExecInitInfo)
+  }
+
+  it should "run the second stage on its own executor, which merges what the first emitted" in {
+    val plan = descWith(List("city"), aggOp(AggregationFunction.AVERAGE, "sales", "mean"))
+      .getPhysicalPlan(workflowId, executionId)
+    val executors = plan.operators.map(op => op.id.layerName -> op.opExecInitInfo).toMap
+    executors("localAgg").toString should include("AggregateOpExec")
+    executors("globalAgg").toString should include("AggregateFinalOpExec")
   }
 
   "AggregateOpDesc JSON schema" should

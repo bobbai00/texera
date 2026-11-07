@@ -51,6 +51,17 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
     json.has("jsonSchema") shouldBe true
   }
 
+  it should "describe each port by its proto, keyed by its identity, as the catalog reads it" in {
+    val join = UnitApiResource.operatorRegistry.operators.find(_.operatorType == "HashJoin").get
+    val ports = join.inputPorts.map(objectMapper.valueToTree[com.fasterxml.jackson.databind.JsonNode](_))
+    withClue(ports.mkString("\n")) {
+      ports.map(_.get("id").get("id").asInt) shouldBe List(0, 1)
+      ports.map(_.get("id").get("internal").asBoolean) shouldBe List(false, false)
+      ports.map(_.get("displayName").asText) shouldBe List("left", "right")
+      ports.forall(_.has("disallowMultiLinks")) shouldBe true
+    }
+  }
+
   "compile" should "report output schemas per port for a valid plan" in {
     val csv = java.nio.file.Files.createTempFile("iris", ".csv")
     java.nio.file.Files.writeString(csv, "species,petal\nsetosa,1.4\nvirginica,5.5\n")
