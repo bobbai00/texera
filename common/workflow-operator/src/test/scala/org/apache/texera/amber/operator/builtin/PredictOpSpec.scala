@@ -105,6 +105,11 @@ class PredictOpSpec extends AnyFlatSpec with Matchers {
     val anywhere = scored.getPhysicalOp(ids._1, ids._2)
     anywhere.parallelizable shouldBe true
     anywhere.partitionRequirement.flatten shouldBe empty
+    anywhere.pveName shouldBe ""
+    // The unit's environment, when its profile adds packages the model needs.
+    predict(s""""contract": $riskContract, "envName": "env-torch"""")
+      .getPhysicalOp(ids._1, ids._2)
+      .pveName shouldBe "env-torch"
 
     val grouped = riskContract.replace(
       """"framework": "sklearn"""",

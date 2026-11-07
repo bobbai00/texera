@@ -21,7 +21,7 @@ package org.apache.texera.amber.operator.builtin
 
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonProperty, JsonPropertyDescription}
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
+import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
 import org.apache.texera.amber.core.executor.OpExecWithCode
 import org.apache.texera.amber.core.tuple.{Attribute, Schema}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
@@ -45,7 +45,7 @@ import scala.jdk.CollectionConverters._
   * over the workers; without it, one worker gets every row. A function that reads no table is
   * a source, called once. Either may yield DataFrames as it makes them instead of returning one.
   */
-class FunctionOp extends LogicalOp {
+class FunctionOp extends LogicalOp with PythonEnvironment {
   @JsonProperty(required = true)
   @JsonSchemaTitle("Code")
   @JsonPropertyDescription("The Python module that defines the function")
@@ -165,6 +165,7 @@ class FunctionOp extends LogicalOp {
     if (isSource) {
       PhysicalOp
         .sourcePhysicalOp(workflowId, executionId, operatorIdentifier, exec)
+        .withPveName(pveName)
         .withInputPorts(Nil)
         .withOutputPorts(operatorInfo.outputPorts)
         .withIsOneToManyOp(true)
@@ -177,6 +178,7 @@ class FunctionOp extends LogicalOp {
       val ports = operatorInfo.inputPorts
       val op = PhysicalOp
         .oneToOnePhysicalOp(workflowId, executionId, operatorIdentifier, exec)
+        .withPveName(pveName)
         .withInputPorts(ports)
         .withOutputPorts(operatorInfo.outputPorts)
         .withIsOneToManyOp(true)
@@ -202,6 +204,21 @@ class FunctionOp extends LogicalOp {
       },
       outputPorts = List(OutputPort())
     )
+}
+
+/**
+  * An operator of the engine's that runs Python, in the environment the unit names: the one it
+  * built with its profile's packages, or its default Python when it names none.
+  */
+trait PythonEnvironment {
+  @JsonProperty
+  @JsonSchemaTitle("Environment")
+  @JsonSchemaInject(json = """{"options": {"hidden": true}}""")
+  @JsonPropertyDescription("The unit's Python environment it runs in, set by the unit")
+  var envName: String = ""
+
+  /** The environment the workers start in; empty: the unit's default Python. */
+  @JsonIgnore def pveName: String = Option(envName).map(_.trim).getOrElse("")
 }
 
 /** How the engine writes values into the Python modules its operators run. */

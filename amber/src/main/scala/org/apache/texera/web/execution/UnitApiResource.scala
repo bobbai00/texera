@@ -234,6 +234,24 @@ final case class RunHandle(
 object UnitApiResource {
   val runs = new TrieMap[String, RunHandle]()
 
+  /** The engine's operators that run Python besides the UDFs: a function, a model version. */
+  val PythonRunners: Set[String] = Set("function", "predict")
+
+  /** Points every operator of the plan that runs Python at the built environment. */
+  def applyEnvironment(plan: JsonNode, envName: String): Unit = {
+    val operators = plan.get("operators")
+    if (operators == null || !operators.isArray) return
+    operators.elements().asScala.foreach {
+      case op: ObjectNode =>
+        val opType = Option(op.get("operatorType")).map(_.asText()).getOrElse("")
+        if (opType.contains("PythonUDF") || PythonRunners(opType) || op.has("envName")) {
+          op.put("defaultEnv", false)
+          op.put("envName", envName)
+        }
+      case _ =>
+    }
+  }
+
   /** Execution ids a start has claimed; claiming is atomic, so one id never starts twice. */
   private val claimed = new TrieMap[String, Unit]()
   private[execution] def claim(eid: String): Boolean = claimed.putIfAbsent(eid, ()).isEmpty
@@ -469,7 +487,8 @@ class UnitApiResource extends LazyLogging {
     }
     val reporter =
       new LineageReporter(request.reporting.lineageUrl, () => UnitIdentity.token(), request.eid)
-    // The unit's packages: build (or confirm) their venv and point every Python UDF at it.
+    // The unit's packages: build (or confirm) their venv and point every operator that runs
+    // Python at it.
     val planNode = request.logicalPlan.deepCopy[JsonNode]()
     request.environment.foreach { env =>
       EnvironmentManager.ensure(env.key, env.packages) match {
@@ -480,7 +499,7 @@ class UnitApiResource extends LazyLogging {
             s"environment build failed: $message",
             Response.Status.BAD_REQUEST
           )
-        case _ => applyEnvironment(planNode, env.key)
+        case _ => UnitApiResource.applyEnvironment(planNode, env.key)
       }
     }
     val plan = objectMapper.treeToValue(planNode, classOf[LogicalPlanPojo])
@@ -649,21 +668,6 @@ class UnitApiResource extends LazyLogging {
       .subscribe((console: ExecutionConsoleStore) => failOnOperatorError(console))
     failOnOperatorError(executionService.executionStateStore.consoleStore.getState)
     ExecutionAck(request.eid, accepted = true)
-  }
-
-  /** Points every Python UDF operator of the plan at the built environment. */
-  private def applyEnvironment(plan: JsonNode, envName: String): Unit = {
-    val operators = plan.get("operators")
-    if (operators == null || !operators.isArray) return
-    operators.elements().asScala.foreach {
-      case op: ObjectNode =>
-        val opType = Option(op.get("operatorType")).map(_.asText()).getOrElse("")
-        if (opType.contains("PythonUDF") || op.has("envName")) {
-          op.put("defaultEnv", false)
-          op.put("envName", envName)
-        }
-      case _ =>
-    }
   }
 
   private def handleOf(eid: String): RunHandle =

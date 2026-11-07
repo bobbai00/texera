@@ -406,4 +406,20 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
     UnitApiResource.settledState(UNINITIALIZED, KILLED, failed = false) shouldBe KILLED
     UnitApiResource.settledState(PAUSED, KILLED, failed = false) shouldBe KILLED
   }
+
+  "applyEnvironment" should "point every operator that runs Python at the unit's environment, and no other" in {
+    val plan = objectMapper.readTree(
+      """{"operators": [
+        |  {"operatorID": "udf", "operatorType": "PythonUDFV2", "defaultEnv": true},
+        |  {"operatorID": "tir", "operatorType": "function"},
+        |  {"operatorID": "risk", "operatorType": "predict"},
+        |  {"operatorID": "lows", "operatorType": "filter"}
+        |]}""".stripMargin
+    )
+    UnitApiResource.applyEnvironment(plan, "env-humanize")
+    val ops = plan.get("operators")
+    (0 until 3).map(i => ops.get(i).get("envName").asText()) shouldBe Seq.fill(3)("env-humanize")
+    ops.get(0).get("defaultEnv").asBoolean() shouldBe false
+    ops.get(3).has("envName") shouldBe false
+  }
 }

@@ -151,4 +151,15 @@ class FunctionOpSpec extends AnyFlatSpec with Matchers {
     // Absent, the inputs are the one table it reads.
     function(""""returns": ["n long"]""").operatorInfo.inputPorts.size shouldBe 1
   }
+
+  it should "run in the Python environment the unit names, or the unit's default" in {
+    val ids = (WorkflowIdentity(1L), ExecutionIdentity(1L))
+    function(""""returns": ["n long"]""").getPhysicalOp(ids._1, ids._2).pveName shouldBe ""
+    function(""""returns": ["n long"], "envName": "env-humanize"""")
+      .getPhysicalOp(ids._1, ids._2)
+      .pveName shouldBe "env-humanize"
+    function(""""returns": ["n long"], "inputs": [], "envName": "env-humanize"""")
+      .getPhysicalOp(ids._1, ids._2)
+      .pveName shouldBe "env-humanize"
+  }
 }

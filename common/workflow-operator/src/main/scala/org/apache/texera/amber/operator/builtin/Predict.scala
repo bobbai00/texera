@@ -52,7 +52,7 @@ class ModelContract {
   * after the group's keys, every group whole on one worker. It runs on Python workers, each of
   * which fetches the version's files and loads the model once.
   */
-class PredictOp extends LogicalOp {
+class PredictOp extends LogicalOp with PythonEnvironment {
   @JsonProperty(required = true)
   @JsonSchemaTitle("Model")
   @JsonPropertyDescription("The model version: texera://models/<rid>@<version>")
@@ -164,6 +164,7 @@ class PredictOp extends LogicalOp {
         operatorIdentifier,
         OpExecWithCode(module, "python")
       )
+      .withPveName(pveName)
       .withInputPorts(ports)
       .withOutputPorts(operatorInfo.outputPorts)
       .withIsOneToManyOp(true)
