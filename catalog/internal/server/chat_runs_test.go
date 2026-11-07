@@ -8,8 +8,8 @@ import (
 )
 
 // Where an execution runs is not a chat's to choose. An agent's run in a chat goes where any run
-// goes: to the unit the call names, else the workflow's default unit, the project's, the
-// platform's; a compile goes there too. A unit asked for by name must be the caller's to use.
+// goes: to the unit the call names, else the workflow's default unit, else the project's, which
+// may come from up its chain to Texera's; a compile goes there too. A unit asked for by name must be the caller's to use.
 func TestARunInAChatGoesWhereAnyRunGoes(t *testing.T) {
 	h := newHarness(t)
 	other := newFakeUnit(t)
@@ -45,14 +45,13 @@ func TestARunInAChatGoesWhereAnyRunGoes(t *testing.T) {
 		unit, _ := exec.Spec["computingUnit"].(string)
 		return unit
 	}
-	var settings envelope
-	h.mustJSON("alice", "GET", p+"/settings", nil, &settings)
-	platform, _ := settings.Spec["defaults"].(map[string]any)["computingUnit"].(string)
-	if platform == "" || platform == uriOf(mine) {
-		t.Fatalf("the platform's default unit: %q", platform)
+	texeras := projectSettings(h, "alice", me(h, "alice").HomeProject).Defaults.ComputingUnit
+	if texeras == nil || string(*texeras) == uriOf(mine) {
+		t.Fatalf("the default unit the home inherits from Texera: %v", texeras)
 	}
+	platform := string(*texeras)
 
-	// With nothing said, in the chat as outside it: the platform's unit.
+	// With nothing said, in the chat as outside it: the unit the project inherits from Texera.
 	if got := unitOf(workflowOf("alice", "plain", nil), map[string]any{}, inChat...); got != platform {
 		t.Fatalf("a run in the chat went to %s", got)
 	}

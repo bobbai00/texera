@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -75,9 +76,9 @@ func (s *Service) warehouseOf(ctx context.Context, execution *store.Resource) st
 	return lakeNameOf(warehouse)
 }
 
-// checkWarehouse refuses a warehouse the caller may not ask for: on a store nobody listed, or
-// with a credential that is not theirs to use.
-func (s *Service) checkWarehouse(ctx context.Context, caller *auth.Caller, spec json.RawMessage) error {
+// checkWarehouse refuses a warehouse the caller may not ask for: on a store its project's limits
+// do not allow, or with a credential that is not theirs to use.
+func (s *Service) checkWarehouse(ctx context.Context, caller *auth.Caller, project *uuid.UUID, spec json.RawMessage) error {
 	var w api.WarehouseSpec
 	if err := json.Unmarshal(spec, &w); err != nil {
 		return err
@@ -85,8 +86,8 @@ func (s *Service) checkWarehouse(ctx context.Context, caller *auth.Caller, spec 
 	if w.Storage == nil {
 		return nil
 	}
-	if !s.storeListed(ctx, w.Storage.Endpoint) {
-		return Invalid(fmt.Sprintf("%s is not a store a warehouse may be on: an administrator lists them in the settings", w.Storage.Endpoint), map[string]any{"field": "/storage/endpoint"})
+	if !s.storeListed(ctx, project, w.Storage.Endpoint) {
+		return Invalid(fmt.Sprintf("%s is not a store a warehouse of this project may be on: a project's admins list stores in its limits (warehouseEndpoints), within what the projects up its chain list", w.Storage.Endpoint), map[string]any{"field": "/storage/endpoint"})
 	}
 	credential, err := s.named(ctx, string(w.Storage.Credential), credentialKind)
 	if err != nil {
@@ -95,21 +96,21 @@ func (s *Service) checkWarehouse(ctx context.Context, caller *auth.Caller, spec 
 	return s.require(ctx, caller, authz.Use, credential.RID)
 }
 
-// storeListed reports whether a warehouse may be on a store: the deployment's own, or one an
-// administrator listed in the settings. The lake and the units connect to it.
-func (s *Service) storeListed(ctx context.Context, endpoint string) bool {
-	same := func(a, b string) bool { return strings.TrimRight(a, "/") == strings.TrimRight(b, "/") }
-	if same(endpoint, s.Config.WarehouseStore.Endpoint) {
+// storeListed reports whether a warehouse in a project may be on a store: the deployment's own,
+// or one on the list of every project up the chain that sets one, with one set somewhere. The
+// lake and the units connect to it.
+func (s *Service) storeListed(ctx context.Context, project *uuid.UUID, endpoint string) bool {
+	if sameEndpoint(endpoint, s.Config.WarehouseStore.Endpoint) {
 		return true
 	}
-	if listed := s.settingsSpec(ctx).WarehouseEndpoints; listed != nil {
-		for _, e := range *listed {
-			if same(endpoint, e) {
-				return true
-			}
-		}
+	if project == nil {
+		return false
 	}
-	return false
+	settings, err := s.settingsOf(ctx, *project)
+	if err != nil || settings.Limits.WarehouseEndpoints == nil {
+		return false
+	}
+	return slices.ContainsFunc(*settings.Limits.WarehouseEndpoints, func(e string) bool { return sameEndpoint(endpoint, e) })
 }
 
 // storageOf is where a warehouse keeps its tables. With a store of its own: that place, and
@@ -122,7 +123,7 @@ func (s *Service) storageOf(ctx context.Context, warehouse *store.Resource) (por
 	}
 	if spec.Storage == nil {
 		storage := s.Config.WarehouseStore
-		if !s.builtIn(warehouse) {
+		if warehouse.RID != s.shippedWarehouse() {
 			storage.KeyPrefix = "w/" + warehouse.RID.String()
 		}
 		return storage, nil

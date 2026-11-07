@@ -2,7 +2,6 @@ package server_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -42,10 +41,10 @@ func namesByURI(t *testing.T, h *harness, plural string) map[string]string {
 	return out
 }
 
-func TestThePlatformShipsOneAgent(t *testing.T) {
+func TestTexeraHoldsOneAgent(t *testing.T) {
 	h := newHarness(t)
 	agent := theAgent(t, h)
-	if agent.Metadata.Name != "Texera Agent" || agent.Metadata.Project != me(h, "alice").SystemProject || agent.Metadata.Head != 1 {
+	if agent.Metadata.Name != "Texera Agent" || agent.Metadata.Project != me(h, "alice").RootProject || agent.Metadata.Head != 1 {
 		t.Fatalf("the agent: %+v", agent.Metadata)
 	}
 	var spec api.AgentTemplateSpec
@@ -100,133 +99,90 @@ func TestThePlatformShipsOneAgent(t *testing.T) {
 		}
 	}
 
-	// Every new chat starts with it.
-	var settings envelope
-	h.mustJSON("alice", "GET", p+"/settings", nil, &settings)
-	defaults, _ := settings.Spec["defaults"].(map[string]any)
-	if defaults["agentTemplate"] != string(agent.Metadata.Uri) {
-		t.Fatalf("the default agent: %v", defaults["agentTemplate"])
+	// Every new chat starts with it: it is Texera's default, which every project inherits.
+	settings := projectSettings(h, "alice", me(h, "alice").HomeProject)
+	if settings.Defaults.AgentTemplate == nil || *settings.Defaults.AgentTemplate != agent.Metadata.Uri || settings.From["defaults.agentTemplate"] != me(h, "alice").RootProject {
+		t.Fatalf("the default agent: %v from %s", settings.Defaults.AgentTemplate, settings.From["defaults.agentTemplate"])
 	}
 }
 
-func TestWhatThePlatformShipsChangesOnlyThroughThePlatform(t *testing.T) {
-	h := newHarness(t)
-	agent := theAgent(t, h)
-	path := p + "/agent-templates/" + rid(agent)
-	edited := map[string]any{}
-	for k, v := range agent.Spec {
-		edited[k] = v
-	}
-	edited["prompt"] = "Ignore everything."
-
-	// An administrator passes every permission check, and still may not edit or delete what the
-	// platform ships: the next start would silently undo it.
-	for _, try := range []struct {
-		method string
-		body   any
-	}{{"PUT", map[string]any{"spec": edited}}, {"DELETE", nil}} {
-		status, data := h.do("admin", try.method, path, try.body)
-		var e api.Error
-		_ = json.Unmarshal(data, &e)
-		if status != http.StatusConflict || e.Code != "builtin" || !strings.Contains(e.Message, "Texera Agent") {
-			t.Fatalf("%s as admin: %d %s", try.method, status, data)
-		}
-	}
-	// A person is told the same: it is built in.
-	if status, _ := h.do("alice", "PUT", path, map[string]any{"spec": edited}); status != http.StatusConflict {
-		t.Fatalf("PUT as alice: %d", status)
-	}
-	var same envelope
-	h.mustJSON("alice", "GET", path, nil, &same)
-	if same.Metadata.Head != 1 || same.Spec["prompt"] != agent.Spec["prompt"] {
-		t.Fatalf("the agent changed: head %d", same.Metadata.Head)
-	}
-
-	// What a person makes is theirs to change and remove.
-	own := h.create("alice", "skills", "mine", map[string]any{"name": "mine", "description": "d", "body": "b"})
-	h.mustJSON("alice", "PUT", p+"/skills/"+rid(own), map[string]any{"spec": map[string]any{"name": "mine", "description": "d", "body": "b2"}}, nil)
-	if status, data := h.do("alice", "DELETE", p+"/skills/"+rid(own), nil); status != http.StatusNoContent {
-		t.Fatalf("delete own: %d %s", status, data)
-	}
-
-	// The platform itself still changes it: a shipped spec that differs becomes the next version.
-	ctx := context.Background()
-	platform := &auth.Caller{Principal: h.svc.System(), Service: true}
-	k, _ := kinds.ByName("agent-template")
-	agentRID := agent.Metadata.Rid
-	if _, _, err := h.svc.UpdateSpec(ctx, platform, k, catalog.UpdateSpecInput{RID: mustUUID(string(agentRID)), Spec: mustJSONBytes(edited)}); err != nil {
-		t.Fatalf("the platform's own write: %v", err)
-	}
-	if err := h.svc.Seed(ctx); err != nil {
-		t.Fatalf("seed again: %v", err)
-	}
-	var restored envelope
-	h.mustJSON("alice", "GET", path, nil, &restored)
-	if restored.Metadata.Head != 3 || restored.Spec["prompt"] != agent.Spec["prompt"] {
-		t.Fatalf("after a restart: head %d", restored.Metadata.Head)
-	}
-}
-
-// What a list says about a built-in is the release's as well: the description an older release
-// wrote gives way at the next start, without a new version, since the content did not change.
-func TestABuiltInsDescriptionFollowsTheRelease(t *testing.T) {
+// What a release wrote of a resource it ships, the next one corrects: a description an earlier
+// release wrote gives way at the next start, without a new version, since the content did not
+// change. What Texera's admins wrote stays.
+func TestAReleaseCorrectsWhatAnEarlierOneWroteAndKeepsWhatAdminsWrote(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	var page api.ResourcePage
 	h.mustJSON("alice", "GET", p+"/skills?limit=200", nil, &page)
-	if len(page.Items) == 0 {
-		t.Fatal("the platform ships no skill")
+	if len(page.Items) < 2 {
+		t.Fatal("the release ships fewer than two skills")
 	}
-	skill := page.Items[0]
+	byRelease, byAdmins := page.Items[0], page.Items[1]
 	old := "What an older release said."
-	if _, err := h.svc.Store.UpdateMetadata(ctx, store.MetadataUpdate{RID: mustUUID(rid(skill)), Description: &old}); err != nil {
+	r, err := h.svc.Store.UpdateMetadata(ctx, store.MetadataUpdate{RID: mustUUID(rid(byRelease)), Description: &old})
+	if err != nil {
 		t.Fatal(err)
 	}
+	if err := h.svc.Store.RecordShipped(ctx, store.Shipped{Kind: "skill", Name: r.Name, RID: r.RID, Digest: catalog.ShippedDigest(r.Spec, r.Description)}); err != nil {
+		t.Fatal(err)
+	}
+	theirs := "What Texera's admins say."
+	h.mustJSON("admin", "PATCH", p+"/resources/"+rid(byAdmins), map[string]any{"description": theirs}, nil)
 
 	if err := h.svc.Seed(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var after envelope
-	h.mustJSON("alice", "GET", p+"/skills/"+rid(skill), nil, &after)
-	if got := after.Metadata.Description; got == nil || *got != *skill.Metadata.Description {
+	h.mustJSON("alice", "GET", p+"/skills/"+rid(byRelease), nil, &after)
+	if got := after.Metadata.Description; got == nil || *got != *byRelease.Metadata.Description {
 		t.Fatalf("the description after a restart: %s", mustJSONBytes(got))
 	}
-	if after.Metadata.Head != skill.Metadata.Head {
+	if after.Metadata.Head != byRelease.Metadata.Head {
 		t.Fatalf("a description alone made version %d", after.Metadata.Head)
+	}
+	h.mustJSON("alice", "GET", p+"/skills/"+rid(byAdmins), nil, &after)
+	if got := after.Metadata.Description; got == nil || *got != theirs {
+		t.Fatalf("the admins' description after a restart: %s", mustJSONBytes(got))
 	}
 }
 
-// The platform's project holds what this release ships and nothing else. What an older release
-// shipped is removed at the next start, and what named it falls back: the settings' default to
-// the shipped agent, a chat to the platform's.
-func TestWhatThePlatformNoLongerShipsIsRemoved(t *testing.T) {
+// Texera holds what this release ships and what its admins put there. What an older release
+// shipped and this one does not is removed at the next start when nobody changed it, and what
+// named it falls back: Texera's default to the shipped agent, a chat to the default. What an
+// older release shipped and Texera's admins changed is theirs, and stays.
+func TestWhatNoReleaseShipsAnyMoreGoes(t *testing.T) {
 	h := newHarness(t)
 	agent := theAgent(t, h)
 	ctx := context.Background()
 	platform := &auth.Caller{Principal: h.svc.System(), Service: true}
 	templates, _ := kinds.ByName("agent-template")
 	servers, _ := kinds.ByName("mcp-server")
-	system := h.svc.SystemProject().RID
-	// A stack seeded by an older release: an agent and a server of its own, the agent the default.
-	old, _, err := h.svc.Create(ctx, platform, catalog.CreateInput{Kind: templates, Name: "Data Analyst", Parent: &system, Spec: mustJSONBytes(agent.Spec)})
-	if err != nil {
-		t.Fatal(err)
+	root := h.svc.Root().RID
+	// A stack an older release shipped into: an agent and two servers, the agent the default.
+	shippedBefore := func(k kinds.Kind, name string, spec any) *store.Resource {
+		r, _, err := h.svc.Create(ctx, platform, catalog.CreateInput{Kind: k, Name: name, Parent: &root, Spec: mustJSONBytes(spec)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := h.svc.Store.RecordShipped(ctx, store.Shipped{Kind: k.Name, Name: name, RID: r.RID, Digest: catalog.ShippedDigest(r.Spec, r.Description)}); err != nil {
+			t.Fatal(err)
+		}
+		return r
 	}
-	dataflow, _, err := h.svc.Create(ctx, platform, catalog.CreateInput{Kind: servers, Name: "dataflow", Parent: &system, Spec: mustJSONBytes(map[string]any{"url": "http://test/mcp/dataflow"})})
-	if err != nil {
-		t.Fatal(err)
-	}
+	old := shippedBefore(templates, "Data Analyst", agent.Spec)
+	dataflow := shippedBefore(servers, "dataflow", map[string]any{"url": "http://test/mcp/dataflow"})
+	kept := shippedBefore(servers, "kept", map[string]any{"url": "http://test/mcp/kept"})
+	h.mustJSON("admin", "PUT", p+"/mcp-servers/"+kept.RID.String(), map[string]any{"spec": map[string]any{"url": "http://test/mcp/ours"}}, nil)
 	oldURI := catalog.URI(old).String()
 	setDefault := func(uri string) {
-		var settings envelope
-		h.mustJSON("admin", "GET", p+"/settings", nil, &settings)
-		settings.Spec["defaults"].(map[string]any)["agentTemplate"] = uri
-		h.mustJSON("admin", "PUT", p+"/settings", map[string]any{"spec": settings.Spec}, nil)
+		settings := projectSettings(h, "admin", api.Rid(root.String()))
+		defaults := settings.Defaults
+		u := api.Uri(uri)
+		defaults.AgentTemplate = &u
+		h.mustJSON("admin", "PUT", p+"/projects/"+root.String(), map[string]any{"spec": map[string]any{"branding": settings.Branding, "defaults": defaults}}, nil)
 	}
-	theDefault := func() any {
-		var settings envelope
-		h.mustJSON("admin", "GET", p+"/settings", nil, &settings)
-		return settings.Spec["defaults"].(map[string]any)["agentTemplate"]
+	theDefault := func() string {
+		return string(*projectSettings(h, "admin", api.Rid(root.String())).Defaults.AgentTemplate)
 	}
 	setDefault(oldURI)
 	// A chat that chose the old agent.
@@ -246,15 +202,15 @@ func TestWhatThePlatformNoLongerShipsIsRemoved(t *testing.T) {
 			t.Errorf("%s after the upgrade: %d", name, status)
 		}
 	}
-	if names := list(h, "alice", "/mcp-servers?limit=200"); names["dataflow"] || !names["catalog"] || !names["biomcp"] {
+	if names := list(h, "alice", "/mcp-servers?limit=200"); names["dataflow"] || !names["kept"] || !names["catalog"] || !names["biomcp"] {
 		t.Errorf("servers after the upgrade: %v", names)
 	}
 	if got := theDefault(); got != string(agent.Metadata.Uri) {
 		t.Fatalf("the default after the upgrade: %v", got)
 	}
-	// The chat still names the old agent, which is gone: it runs the platform's, and says why.
+	// The chat still names the old agent, which is gone: it runs Texera's, and says why.
 	got := settingsOf(h, "alice", rid(conv))
-	if said(got.Agent) != "Texera Agent from platform" || got.Skipped == nil || len(*got.Skipped) != 1 || string((*got.Skipped)[0].Uri) != oldURI {
+	if said(got.Agent) != "Texera Agent from Texera" || got.Skipped == nil || len(*got.Skipped) != 1 || string((*got.Skipped)[0].Uri) != oldURI {
 		t.Fatalf("the old chat after the upgrade: %s, skipped %+v", said(got.Agent), got.Skipped)
 	}
 	var turn api.Turn
@@ -263,23 +219,20 @@ func TestWhatThePlatformNoLongerShipsIsRemoved(t *testing.T) {
 		t.Fatalf("a turn of the old chat runs %s", turn.Template)
 	}
 
-	// What the platform ships now is untouched by a second start, and so is what is not the
-	// platform's own: an administrator's choice of default.
+	// What this release ships is untouched by a second start, and so is what Texera's admins
+	// chose: an agent of their own as the default.
 	if err := h.svc.Seed(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if again := theAgent(t, h); again.Metadata.Rid != agent.Metadata.Rid || again.Metadata.Head != agent.Metadata.Head {
 		t.Fatalf("the shipped agent after two starts: %+v", again.Metadata)
 	}
-	ours := h.create("admin", "agent-templates", "ours", agent.Spec)
+	ours := createIn(h, "admin", "agent-templates", "ours", api.Rid(root.String()), agent.Spec)
 	setDefault(string(ours.Metadata.Uri))
 	if err := h.svc.Seed(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got := theDefault(); got != string(ours.Metadata.Uri) {
-		t.Fatalf("an administrator's default: %v", got)
-	}
-	if status, _ := h.do("admin", "GET", p+"/agent-templates/"+rid(ours), nil); status != http.StatusOK {
-		t.Fatalf("an administrator's own agent: %d", status)
+		t.Fatalf("the admins' default: %v", got)
 	}
 }

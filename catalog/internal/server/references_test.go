@@ -21,10 +21,10 @@ func TestWhatASpecStopsNamingIsFreeAgain(t *testing.T) {
 	server := h.create("alice", "mcp-servers", "a server", map[string]any{"url": "http://a.test/mcp"})
 
 	// A project's defaults.
-	lab := h.create("alice", "projects", "lab", map[string]any{"defaultComputingUnit": uriOf(unit), "mcpServers": []string{uriOf(server)}})
+	lab := h.create("alice", "projects", "lab", map[string]any{"defaults": map[string]any{"computingUnit": uriOf(unit), "mcpServers": []string{uriOf(server)}}})
 	remove("a unit a project names", unit, http.StatusConflict)
 	remove("a server a project names", server, http.StatusConflict)
-	h.mustJSON("alice", "PUT", p+"/projects/"+rid(lab), map[string]any{"spec": map[string]any{"mcpServers": []string{uriOf(server)}}}, nil)
+	h.mustJSON("alice", "PUT", p+"/projects/"+rid(lab), map[string]any{"spec": map[string]any{"defaults": map[string]any{"mcpServers": []string{uriOf(server)}}}}, nil)
 	remove("a unit the project no longer names", unit, http.StatusNoContent)
 	remove("a server the project still names", server, http.StatusConflict)
 	h.mustJSON("alice", "PUT", p+"/projects/"+rid(lab), map[string]any{"spec": map[string]any{}}, nil)

@@ -5,7 +5,6 @@
 //	texera://{plural}/{rid}@{vno}
 //	texera://{plural}/{rid}/{subresource...}
 //	texera://workflows/{rid}/executions/{eid}/operators/{operatorID}/ports/{portID}
-//	texera://settings
 //
 // `@vno` names a version and may only follow the resource's rid. A nested kind (executions)
 // follows its parent's rid with its own collection and rid. Everything after the resource
@@ -31,7 +30,7 @@ const Scheme = "texera://"
 type Ref struct {
 	// Kind is the resource's kind; for a nested name the nested kind (execution).
 	Kind kinds.Kind
-	// Rid is the resource's id; empty for the settings singleton.
+	// Rid is the resource's id.
 	Rid string
 	// Parent is the parent's rid of a nested name (the workflow of an execution).
 	Parent string
@@ -63,10 +62,6 @@ func Parse(s string) (Ref, error) {
 	}
 	r := Ref{Kind: kind}
 	i := 1
-	if kind.Singleton {
-		r.Subresource = strings.Join(segs[i:], "/")
-		return r, nil
-	}
 	if len(segs) < 2 || segs[1] == "" {
 		return Ref{}, fmt.Errorf("%w: %q names no %s", ErrInvalid, s, kind.Name)
 	}
@@ -157,12 +152,6 @@ func (r Ref) Path(prefix string) string {
 	b.WriteString(strings.TrimSuffix(prefix, "/"))
 	b.WriteString("/")
 	b.WriteString(r.Kind.Plural)
-	if r.Kind.Singleton {
-		if r.Subresource != "" {
-			b.WriteString("/" + r.Subresource)
-		}
-		return b.String()
-	}
 	if r.Parent != "" {
 		parent, _ := kinds.ByName(r.Kind.Parent)
 		b.Reset()
@@ -186,12 +175,6 @@ func (r Ref) path() string {
 		b.WriteString(parent.Plural + "/" + r.Parent + "/")
 	}
 	b.WriteString(r.Kind.Plural)
-	if r.Kind.Singleton {
-		if r.Subresource != "" {
-			b.WriteString("/" + r.Subresource)
-		}
-		return b.String()
-	}
 	b.WriteString("/" + r.Rid)
 	if r.Vno != 0 {
 		b.WriteString("@" + strconv.Itoa(r.Vno))

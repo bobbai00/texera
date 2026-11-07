@@ -1,6 +1,7 @@
 // Package authz is the policy decision point: every operation names a permission
-// (permissions.gen.go), and a decision is a Check against the Authorizer port. Administrators
-// and the platform's service identity pass; everyone else is a relationship question.
+// (permissions.gen.go), and a decision is a Check against the Authorizer port. The platform's
+// service identity passes; everyone else, a project's admins included, is a relationship
+// question.
 package authz
 
 import (
@@ -27,11 +28,13 @@ const (
 	Use     = "use"
 	RunOn   = "run_on"
 	Rotate  = "rotate"
+	// Admin changes a project itself: its settings, what it inherits from, its people.
+	Admin = "admin"
 )
 
 // Resource permissions are the ones checked on a resource; the rest (list, create, self,
-// service, admin, public) are decided by the operation itself.
-var resourcePermissions = map[string]bool{Read: true, Write: true, Share: true, Delete: true, Execute: true, Use: true, RunOn: true, Rotate: true}
+// service, public) are decided by the operation itself.
+var resourcePermissions = map[string]bool{Read: true, Write: true, Share: true, Delete: true, Execute: true, Use: true, RunOn: true, Rotate: true, Admin: true}
 
 // IsResourcePermission reports whether a permission is checked against a resource.
 func IsResourcePermission(p string) bool { return resourcePermissions[p] }
@@ -55,7 +58,7 @@ func (p *PDP) Allowed(ctx context.Context, caller *auth.Caller, permission strin
 	if caller == nil || caller.Principal == nil {
 		return false, nil
 	}
-	if caller.Service || caller.Admin() {
+	if caller.Service {
 		return true, nil
 	}
 	if !IsResourcePermission(permission) {

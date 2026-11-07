@@ -32,12 +32,12 @@ type Config struct {
 	// OIDCIssuer and OIDCClientID are published to the app before login.
 	OIDCIssuer   string
 	OIDCClientID string
-	// Branding of the deployment.
+	// BrandName is Texera's name until its admins set one.
 	BrandName string
-	// Warehouse is the name of the platform's warehouse, in the lake and in the catalog, and
-	// WarehouseStore the deployment's own store for warehouses, as the lake and the units reach
-	// it: its key prefix is the platform warehouse's place, and a warehouse someone makes
-	// without a store of their own gets another place in the same bucket.
+	// Warehouse is the name of the warehouse the release ships, in the lake and in the catalog,
+	// and WarehouseStore the deployment's own store for warehouses, as the lake and the units
+	// reach it: its key prefix is that warehouse's place, and a warehouse someone makes without
+	// a store of their own gets another place in the same bucket.
 	Warehouse      string
 	WarehouseStore ports.WarehouseStorage
 	// LineageCallbackURL is where units post OpenLineage events, as a unit reaches it.
@@ -45,6 +45,9 @@ type Config struct {
 	PresignTTL         time.Duration
 	LeaseTTL           time.Duration
 	MaxDownloadBytes   int64
+	// UploadGrace is how long an upload that no version and no staging names is kept before the
+	// retention sweep removes it: long enough for it to be committed. A day when unset.
+	UploadGrace time.Duration
 	// WatchBeat is how often an open watch is kept alive and its watcher's right to read is
 	// asked again; 15 seconds when unset.
 	WatchBeat time.Duration
@@ -73,10 +76,12 @@ type Service struct {
 	Config      Config
 	Log         *slog.Logger
 
-	mu            sync.RWMutex
-	system        *store.Principal
-	systemProject *store.Resource
-	settings      *store.Resource
+	mu     sync.RWMutex
+	system *store.Principal
+	// root is Texera, the project every project inherits from.
+	root *store.Resource
+	// warehouse is the warehouse the release ships, on the deployment's own store.
+	warehouse uuid.UUID
 
 	eventsOnce sync.Once
 	broker     *Broker
@@ -164,37 +169,21 @@ func wrap(err error, what string) error {
 	return err
 }
 
-// changing are the permissions that change a resource or add to it.
-var changing = map[string]bool{authz.Write: true, authz.Share: true, authz.Delete: true, authz.Rotate: true, authz.Execute: true}
-
-// require checks a permission on a resource. What the platform ships is the platform's alone
-// to change: a permission that changes a built-in resource, or adds to it, is refused for
-// everyone else, an administrator included, since the next start puts back what ships.
+// require checks a permission on a resource. Everyone, Texera's admins included, holds what
+// the authorization model gives them and nothing more.
 func (s *Service) require(ctx context.Context, caller *auth.Caller, permission string, rid uuid.UUID) error {
-	if changing[permission] && !caller.Service {
-		if r, err := s.Store.GetResource(ctx, rid); err == nil && s.builtIn(r) {
-			return Conflict("builtin", fmt.Sprintf("%s is built in: it changes with the platform, not through the API", r.Name), nil)
-		}
-	}
 	return s.decide(ctx, caller, permission, rid)
 }
 
-// decide asks the decision point alone, for a permission that gates a read.
+// decide asks the decision point.
 func (s *Service) decide(ctx context.Context, caller *auth.Caller, permission string, rid uuid.UUID) error {
 	return wrap(s.PDP.Require(ctx, caller, permission, rid), "")
 }
 
-// builtIn reports whether the platform ships a resource: it lives in the platform's project,
-// or is that project.
-func (s *Service) builtIn(r *store.Resource) bool {
-	system := s.SystemProject()
-	return system != nil && r.ProjectRID != nil && *r.ProjectRID == system.RID
-}
-
-// readableBy returns the principal a list is filtered for: nil for administrators and
-// services, who see everything.
+// readableBy returns the principal a list is filtered for: nil for the platform's services,
+// which see everything.
 func readableBy(caller *auth.Caller) *uuid.UUID {
-	if caller.Service || caller.Admin() {
+	if caller.Service {
 		return nil
 	}
 	pid := caller.PID()
@@ -206,13 +195,6 @@ func (s *Service) System() *store.Principal {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.system
-}
-
-// SystemProject returns the project of the built-in resources.
-func (s *Service) SystemProject() *store.Resource {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.systemProject
 }
 
 func mustJSON(v any) json.RawMessage {

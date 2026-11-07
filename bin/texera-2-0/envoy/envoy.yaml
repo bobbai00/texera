@@ -38,7 +38,7 @@ static_resources:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
                               disabled: true
                         # The app's branding before anyone has logged in.
-                        - match: { path: "/catalog/v1/settings/public" }
+                        - match: { path: "/catalog/v1/public" }
                           route: { cluster: catalog, timeout: 15s }
                           typed_per_filter_config:
                             envoy.filters.http.ext_authz:
@@ -111,7 +111,7 @@ static_resources:
                               requirements:
                                 - provider_name: keycloak
                                 - allow_missing: {}
-                        - match: { path: "/catalog/v1/settings/public" }
+                        - match: { path: "/catalog/v1/public" }
                         - match: { prefix: "/bio-mcp" }
                         - match: { prefix: "/catalog/" }
                           requires: { provider_name: keycloak }

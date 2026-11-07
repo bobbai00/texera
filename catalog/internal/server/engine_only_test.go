@@ -30,7 +30,7 @@ func TestTheEnginesOwnOperatorsAreNotWrittenByHand(t *testing.T) {
 	h := newHarness(t)
 
 	// An earlier catalog listed one; a sync drops it, and never lists what the engine keeps.
-	sys, project := h.svc.System(), h.svc.SystemProject()
+	sys, project := h.svc.System(), h.svc.Root()
 	k, _ := kinds.ByName("operator")
 	caller := &auth.Caller{Principal: sys, Service: true}
 	if _, _, err := h.svc.Create(t.Context(), caller, catalog.CreateInput{Kind: k, Name: "PythonUDFV2", Parent: &project.RID,

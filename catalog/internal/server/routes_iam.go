@@ -10,7 +10,7 @@ import (
 
 func jsonUnmarshal(raw []byte, v any) error { return json.Unmarshal(raw, v) }
 
-// routeIAM registers me, principals and settings.
+// routeIAM registers me, principals, a project's settings, the public page and the retention sweep.
 func (s *Server) routeIAM() {
 	s.handle("GET "+Prefix+"/me", func(w http.ResponseWriter, r *http.Request) error {
 		me, err := s.svc.Me(ctxOf(r), callerOf(r))
@@ -56,27 +56,7 @@ func (s *Server) routeIAM() {
 		writeJSON(w, http.StatusOK, catalog.PrincipalOf(p))
 		return nil
 	})
-	s.handle("GET "+Prefix+"/settings", func(w http.ResponseWriter, r *http.Request) error {
-		res, err := s.svc.Settings(ctxOf(r), callerOf(r))
-		if err != nil {
-			return err
-		}
-		writeJSON(w, http.StatusOK, catalog.Envelope(res))
-		return nil
-	})
-	s.handle("PUT "+Prefix+"/settings", func(w http.ResponseWriter, r *http.Request) error {
-		var body updateBody
-		if err := decode(r, &body); err != nil {
-			return err
-		}
-		res, err := s.svc.UpdateSettings(ctxOf(r), callerOf(r), body.Spec, r.Header.Get("If-Match"))
-		if err != nil {
-			return err
-		}
-		writeJSON(w, http.StatusOK, catalog.Envelope(res))
-		return nil
-	})
-	s.handle("POST "+Prefix+"/settings/retention/sweep", func(w http.ResponseWriter, r *http.Request) error {
+	s.handle("POST "+Prefix+"/retention/sweep", func(w http.ResponseWriter, r *http.Request) error {
 		out, err := s.svc.Sweep(ctxOf(r), callerOf(r))
 		if err != nil {
 			return err
@@ -84,8 +64,20 @@ func (s *Server) routeIAM() {
 		writeJSON(w, http.StatusOK, out)
 		return nil
 	})
-	s.handle("GET "+Prefix+"/settings/public", func(w http.ResponseWriter, r *http.Request) error {
-		out, err := s.svc.PublicSettings(ctxOf(r))
+	s.handle("GET "+Prefix+"/public", func(w http.ResponseWriter, r *http.Request) error {
+		out, err := s.svc.Public(ctxOf(r))
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, out)
+		return nil
+	})
+	s.handle("GET "+Prefix+"/projects/{rid}/settings", func(w http.ResponseWriter, r *http.Request) error {
+		rid, err := ridParam(r, "rid")
+		if err != nil {
+			return err
+		}
+		out, err := s.svc.ProjectSettings(ctxOf(r), callerOf(r), rid)
 		if err != nil {
 			return err
 		}

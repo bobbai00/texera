@@ -58,7 +58,7 @@ func (s *Server) Mount(prefix string, h http.Handler) { s.extra[prefix] = h }
 
 // API returns the authenticated API handler, the one the MCP bridge calls in process.
 func (s *Server) API() http.Handler {
-	public := func(r *http.Request) bool { return r.URL.Path == Prefix+"/settings/public" }
+	public := func(r *http.Request) bool { return r.URL.Path == Prefix+"/public" }
 	return s.resolver.Middleware(public)(s.api)
 }
 

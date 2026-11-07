@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -41,14 +42,19 @@ func (c *Caller) PID() uuid.UUID {
 	return c.Principal.PID
 }
 
-// Admin reports whether the caller is a platform administrator.
-func (c *Caller) Admin() bool { return c.Principal != nil && c.Principal.Admin }
-
 // Resolver turns requests into callers.
 type Resolver struct {
 	identity ports.Identity
 	store    *store.Store
 	isUnit   func(clientID string) bool
+	// administrators is told of a person the identity provider names an administrator, each time
+	// they sign in: the catalog makes them one of Texera's admins.
+	administrators func(ctx context.Context, p *store.Principal) error
+}
+
+// OnAdministrator sets what is done for a person whose token carries the `admin` role.
+func (r *Resolver) OnAdministrator(fn func(ctx context.Context, p *store.Principal) error) {
+	r.administrators = fn
 }
 
 // NewResolver builds a resolver; isUnit tells the clients computing units run as, whose
@@ -111,15 +117,14 @@ func (r *Resolver) FromToken(ctx context.Context, raw string) (*Caller, error) {
 	if claims.Service {
 		display = "service:" + claims.ClientID
 	}
-	admin := false
-	for _, role := range claims.Roles {
-		if role == "admin" {
-			admin = true
-		}
-	}
-	p, _, err := r.store.EnsureUser(ctx, claims.Subject, display, claims.Email, admin)
+	p, _, err := r.store.EnsureUser(ctx, claims.Subject, display, claims.Email)
 	if err != nil {
 		return nil, err
+	}
+	if r.administrators != nil && !claims.Service && slices.Contains(claims.Roles, "admin") {
+		if err := r.administrators(ctx, p); err != nil {
+			return nil, err
+		}
 	}
 	return &Caller{Principal: p, Service: claims.Service, Token: raw, Claims: claims}, nil
 }

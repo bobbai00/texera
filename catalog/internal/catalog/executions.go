@@ -73,22 +73,21 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 			return nil, err
 		}
 	}
-	project := s.projectSpec(ctx, wf.ProjectRID)
-	settings := s.settingsSpec(ctx)
-	// Where it runs: the unit the request names, else the workflow's, the project's or the
-	// platform's default, the same for a person and for an agent in a chat.
-	unitName := firstNonEmpty(in.ComputingUnit, uriString(spec.DefaultComputingUnit), uriString(project.DefaultComputingUnit), uriString(settings.Defaults.ComputingUnit))
+	defaults := s.defaultsOf(ctx, wf.ProjectRID)
+	// Where it runs: the unit the request names, else the workflow's, else its project's default,
+	// which may come from up the project's chain; the same for a person and for an agent in a chat.
+	unitName := firstNonEmpty(in.ComputingUnit, uriString(spec.DefaultComputingUnit), uriString(defaults.ComputingUnit))
 	if unitName == "" {
-		return nil, Conflict("no_unit", "no computing unit: name one in the request, the workflow, the project or the settings", nil)
+		return nil, Conflict("no_unit", "no computing unit: name one in the request or the workflow, or set a default in the project or one it inherits from", nil)
 	}
 	unit, err := s.named(ctx, unitName, unitKind)
 	if err != nil {
 		return nil, err
 	}
 	// Where the results are kept is chosen the same way.
-	warehouseName := firstNonEmpty(in.Warehouse, uriString(spec.DefaultWarehouse), uriString(project.DefaultWarehouse), uriString(settings.Defaults.Warehouse))
+	warehouseName := firstNonEmpty(in.Warehouse, uriString(spec.DefaultWarehouse), uriString(defaults.Warehouse))
 	if warehouseName == "" {
-		return nil, Conflict("no_warehouse", "no warehouse: name one in the request, the workflow, the project or the settings", nil)
+		return nil, Conflict("no_warehouse", "no warehouse: name one in the request or the workflow, or set a default in the project or one it inherits from", nil)
 	}
 	warehouse, err := s.named(ctx, warehouseName, warehouseKind)
 	if err != nil {
@@ -96,7 +95,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 
 	// Compile, then authorize everything the plan names.
-	c, err := s.compile(ctx, spec)
+	c, err := s.compile(ctx, spec, wf.ProjectRID)
 	if err != nil {
 		return nil, err
 	}

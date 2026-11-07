@@ -16,7 +16,6 @@ type Principal struct {
 	DisplayName string
 	Subject     *string
 	Email       *string
-	Admin       bool
 	Preferences json.RawMessage
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -31,12 +30,14 @@ type Origin struct {
 
 // Resource is the envelope row of any kind.
 type Resource struct {
-	RID          uuid.UUID
-	Kind         string
-	Name         string
-	Description  *string
-	ParentRID    *uuid.UUID
-	ProjectRID   *uuid.UUID
+	RID         uuid.UUID
+	Kind        string
+	Name        string
+	Description *string
+	ParentRID   *uuid.UUID
+	ProjectRID  *uuid.UUID
+	// BaseRID is, for a project, the project it inherits from; nil for Texera and other kinds.
+	BaseRID      *uuid.UUID
 	OwnerPID     uuid.UUID
 	Visibility   string
 	Labels       map[string]string

@@ -9,14 +9,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const principalColumns = `pid, kind, display_name, subject, email, admin, preferences, created_at, updated_at`
+const principalColumns = `pid, kind, display_name, subject, email, preferences, created_at, updated_at`
 
 // ImportUser records a person the identity provider knows before their first login, so they
 // can be granted access; a later login fills in what the token says. An existing principal
 // is returned as it is.
 func (s *Store) ImportUser(ctx context.Context, subject, displayName, email string) (*Principal, error) {
 	var created bool
-	row := s.pool.QueryRow(ctx, `INSERT INTO principal (kind, display_name, subject, email, admin) VALUES ('user', $1, $2, nullif($3, ''), false)
+	row := s.pool.QueryRow(ctx, `INSERT INTO principal (kind, display_name, subject, email) VALUES ('user', $1, $2, nullif($3, ''))
 		ON CONFLICT (subject) DO UPDATE SET updated_at = principal.updated_at
 		RETURNING `+principalColumns+`, (xmax = 0)`, displayName, subject, email)
 	p, err := scanPrincipalCreated(row, &created)
@@ -28,11 +28,11 @@ func (s *Store) ImportUser(ctx context.Context, subject, displayName, email stri
 
 // EnsureUser finds or creates the user with the given subject and refreshes what the token
 // says about them; it reports whether the user is new.
-func (s *Store) EnsureUser(ctx context.Context, subject, displayName, email string, admin bool) (*Principal, bool, error) {
+func (s *Store) EnsureUser(ctx context.Context, subject, displayName, email string) (*Principal, bool, error) {
 	var created bool
-	row := s.pool.QueryRow(ctx, `INSERT INTO principal (kind, display_name, subject, email, admin) VALUES ('user', $1, $2, nullif($3, ''), $4)
-		ON CONFLICT (subject) DO UPDATE SET display_name = EXCLUDED.display_name, email = coalesce(EXCLUDED.email, principal.email), admin = EXCLUDED.admin, updated_at = now()
-		RETURNING `+principalColumns+`, (xmax = 0)`, displayName, subject, email, admin)
+	row := s.pool.QueryRow(ctx, `INSERT INTO principal (kind, display_name, subject, email) VALUES ('user', $1, $2, nullif($3, ''))
+		ON CONFLICT (subject) DO UPDATE SET display_name = EXCLUDED.display_name, email = coalesce(EXCLUDED.email, principal.email), updated_at = now()
+		RETURNING `+principalColumns+`, (xmax = 0)`, displayName, subject, email)
 	p, err := scanPrincipalCreated(row, &created)
 	if err != nil {
 		return nil, false, err
@@ -99,7 +99,7 @@ func (s *Store) UpdatePreferences(ctx context.Context, pid uuid.UUID, prefs json
 
 func scanPrincipal(row scanner) (*Principal, error) {
 	var p Principal
-	if err := row.Scan(&p.PID, &p.Kind, &p.DisplayName, &p.Subject, &p.Email, &p.Admin, &p.Preferences, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	if err := row.Scan(&p.PID, &p.Kind, &p.DisplayName, &p.Subject, &p.Email, &p.Preferences, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -107,7 +107,7 @@ func scanPrincipal(row scanner) (*Principal, error) {
 
 func scanPrincipalCreated(row pgx.Row, created *bool) (*Principal, error) {
 	var p Principal
-	if err := row.Scan(&p.PID, &p.Kind, &p.DisplayName, &p.Subject, &p.Email, &p.Admin, &p.Preferences, &p.CreatedAt, &p.UpdatedAt, created); err != nil {
+	if err := row.Scan(&p.PID, &p.Kind, &p.DisplayName, &p.Subject, &p.Email, &p.Preferences, &p.CreatedAt, &p.UpdatedAt, created); err != nil {
 		return nil, translate(err)
 	}
 	return &p, nil

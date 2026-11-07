@@ -131,7 +131,7 @@ func TestProvisionedUnitGetsAnIdentity(t *testing.T) {
 
 func callerOf(t *testing.T, h *harness, user string) *auth.Caller {
 	t.Helper()
-	principal, _, err := h.svc.Store.EnsureUser(context.Background(), "sub:"+user, user, user+"@example.org", false)
+	principal, _, err := h.svc.Store.EnsureUser(context.Background(), "sub:"+user, user, user+"@example.org")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,7 +33,7 @@ import "./kinds/mcp-server.tsp";
 import "./kinds/conversation.tsp";
 import "./kinds/credential.tsp";
 import "./kinds/model-endpoint.tsp";
-import "./kinds/settings.tsp";
+import "./texera.tsp";
 import "./access.tsp";
 import "./lineage.tsp";
 

@@ -50,8 +50,11 @@ export const zAuthzRequest = z.object({
     context: z.record(z.string(), z.unknown()).optional()
 });
 
+/**
+ * How a project looks in the app: inside it, and inside every project that inherits from it and sets no look of its own. Texera's is also the sign-in page's.
+ */
 export const zBranding = z.object({
-    name: z.string(),
+    name: z.string().optional(),
     logoUrl: z.string().optional()
 });
 
@@ -409,14 +412,22 @@ export const zProfileStatus = z.object({
     notHere: z.string().optional()
 });
 
+/**
+ * Bounds on the project's work. A project may narrow what it inherits, never widen it: along the chain, the strictest holds.
+ */
+export const zProjectLimits = z.object({
+    results: z.string().optional(),
+    warehouseEndpoints: z.array(z.string()).optional()
+});
+
 export const zProjectStatus = z.object({
     resources: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).optional()
 });
 
 /**
- * What the app needs before anyone has logged in.
+ * What the app needs before anyone has signed in: Texera's look and how to sign in.
  */
-export const zPublicSettings = z.object({
+export const zPublicInfo = z.object({
     branding: zBranding,
     auth: zAuthSettings
 });
@@ -433,7 +444,7 @@ export const zOperatorImplementation = z.object({
 });
 
 /**
- * The grantable relations. `user` is for computing units: may run on it, without reading its spec.
+ * The grantable relations. On a project, an `owner` is one of its admins, who change the project itself (its settings, what it inherits from, its people), and an `editor` is a member, who works in it. `user` may use without reading: run on a computing unit, keep results in a warehouse, lease a credential.
  */
 export const zRelation = z.enum([
     'owner',
@@ -464,17 +475,8 @@ export const zResourceKind = z.enum([
     'mcp-server',
     'conversation',
     'credential',
-    'model-endpoint',
-    'settings'
+    'model-endpoint'
 ]);
-
-/**
- * How long the catalog keeps what executions and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).
- */
-export const zRetention = z.object({
-    results: z.string().optional(),
-    blobs: z.string().optional()
-});
 
 /**
  * What one retention sweep did.
@@ -507,9 +509,16 @@ export const zGrant = z.object({
 export const zMe = z.object({
     principal: zPrincipal,
     homeProject: zRid,
-    systemProject: zRid,
-    admin: z.boolean(),
+    rootProject: zRid,
     preferences: z.record(z.string(), z.unknown())
+});
+
+/**
+ * A project in a chain.
+ */
+export const zProjectRef = z.object({
+    rid: zRid,
+    name: z.string()
 });
 
 export const zRowPage = z.object({
@@ -564,16 +573,14 @@ export const zSetSecret = z.object({
 });
 
 /**
- * The level a setting of a chat comes from.
+ * Where a chat's setting comes from: the chat's own choice, a project's default (the chat's project or one up its chain), the agent's own, or, when nothing chose, the catalog's default.
  */
 export const zSettingSource = z.enum([
     'chat',
     'project',
     'agent',
-    'platform'
+    'default'
 ]);
-
-export const zSettingsStatus = z.record(z.string(), z.unknown());
 
 export const zSkillSpec = z.object({
     name: z.string(),
@@ -666,14 +673,6 @@ export const zConversationStatus = z.object({
     messages: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }),
     lastMessageAt: z.iso.datetime().optional(),
     templates: z.array(zUri).optional()
-});
-
-export const zDefaults = z.object({
-    agentTemplate: zUri.optional(),
-    computingUnit: zUri.optional(),
-    profile: zUri.optional(),
-    warehouse: zUri.optional(),
-    modelEndpoint: zUri.optional()
 });
 
 export const zEdge = z.object({
@@ -904,6 +903,7 @@ export const zServerSetting = z.object({
     uri: zUri,
     name: z.string(),
     from: zSettingSource,
+    project: zChatProject.optional(),
     platform: z.boolean(),
     allow: z.array(z.string()).optional()
 });
@@ -914,15 +914,8 @@ export const zServerSetting = z.object({
 export const zSetting = z.object({
     uri: zUri,
     name: z.string(),
-    from: zSettingSource
-});
-
-export const zSettingsSpec = z.object({
-    branding: zBranding,
-    defaults: zDefaults,
-    features: z.record(z.string(), z.boolean()).optional(),
-    retention: zRetention.optional(),
-    warehouseEndpoints: z.array(z.string()).optional()
+    from: zSettingSource,
+    project: zChatProject.optional()
 });
 
 /**
@@ -960,6 +953,7 @@ export const zCreateAgentTemplate = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zAgentTemplateSpec,
@@ -970,6 +964,7 @@ export const zCreateComputingUnit = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zComputingUnitSpec,
@@ -980,6 +975,7 @@ export const zCreateCredential = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zCredentialSpec,
@@ -990,6 +986,7 @@ export const zCreateDataset = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zDatasetSpec,
@@ -1000,6 +997,7 @@ export const zCreateMcpServer = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zMcpServerSpec,
@@ -1010,6 +1008,7 @@ export const zCreateModel = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zModelSpec,
@@ -1020,6 +1019,7 @@ export const zCreateModelEndpoint = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zModelEndpointSpec,
@@ -1030,6 +1030,7 @@ export const zCreateOperator = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zOperatorSpec,
@@ -1040,6 +1041,7 @@ export const zCreateProfile = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zProfileSpec,
@@ -1050,6 +1052,7 @@ export const zCreateSkill = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zSkillSpec,
@@ -1060,6 +1063,7 @@ export const zUpdateMetadata = z.object({
     name: z.string().optional(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional()
 });
@@ -1234,6 +1238,7 @@ export const zResourceMetadata = z.object({
     description: z.string().optional(),
     parent: zRid.optional(),
     project: zRid,
+    base: zRid.optional(),
     owner: zPid,
     visibility: zVisibility,
     labels: z.record(z.string(), z.string()).optional(),
@@ -1452,17 +1457,6 @@ export const zRunWorkflow = z.object({
 /**
  * The typed envelope, served by the kind routes.
  */
-export const zSettings = z.object({
-    apiVersion: z.enum(['catalog.texera.apache.org/v1']),
-    kind: zResourceKind,
-    metadata: zResourceMetadata,
-    spec: zSettingsSpec,
-    status: zSettingsStatus.optional()
-});
-
-/**
- * The typed envelope, served by the kind routes.
- */
 export const zSkill = z.object({
     apiVersion: z.enum(['catalog.texera.apache.org/v1']),
     kind: zResourceKind,
@@ -1544,12 +1538,6 @@ export const zUpdateOperator = z.object({
 
 export const zUpdateProfile = z.object({
     spec: zProfileSpec,
-    message: z.string().optional(),
-    expectedHead: zVno.optional()
-});
-
-export const zUpdateSettings = z.object({
-    spec: zSettingsSpec,
     message: z.string().optional(),
     expectedHead: zVno.optional()
 });
@@ -1666,6 +1654,7 @@ export const zCreateWarehouse = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zWarehouseSpec,
@@ -1726,25 +1715,51 @@ export const zCreateConversation = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zConversationSpec,
     message: z.string().optional()
 });
 
-export const zProjectSpec = z.object({
-    defaultComputingUnit: zUri.optional(),
-    defaultWarehouse: zUri.optional(),
-    defaultAgentTemplate: zUri.optional(),
-    defaultModelEndpoint: zUri.optional(),
+/**
+ * What the project's work runs with when nothing nearer chooses: a request, a workflow and a chat choose first. A value here wins over the one the project inherits.
+ */
+export const zProjectDefaults = z.object({
+    agentTemplate: zUri.optional(),
+    modelEndpoint: zUri.optional(),
+    computingUnit: zUri.optional(),
+    profile: zUri.optional(),
+    warehouse: zUri.optional(),
     mcpServers: z.array(zUri).optional(),
-    defaultWorkMode: zWorkMode.optional()
+    workMode: zWorkMode.optional()
+});
+
+/**
+ * What a project's work runs with: each preference from the nearest project in its chain that sets it, each limit the strictest along the chain.
+ */
+export const zProjectSettings = z.object({
+    chain: z.array(zProjectRef),
+    branding: zBranding,
+    defaults: zProjectDefaults,
+    limits: zProjectLimits,
+    from: z.record(z.string(), zRid)
+});
+
+/**
+ * A project's settings. What it leaves out comes from the projects up its chain.
+ */
+export const zProjectSpec = z.object({
+    branding: zBranding.optional(),
+    defaults: zProjectDefaults.optional(),
+    limits: zProjectLimits.optional()
 });
 
 export const zCreateProject = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zProjectSpec,
@@ -1780,15 +1795,16 @@ export const zUpdateProject = z.object({
 });
 
 /**
- * How the agent's changes go in a chat: the chat's choice, else the project's, else the platform's (`auto`).
+ * How the agent's changes go in a chat: the chat's choice, else the nearest project's up the chain, else `auto`.
  */
 export const zWorkModeSetting = z.object({
     mode: zWorkMode,
-    from: zSettingSource
+    from: zSettingSource,
+    project: zChatProject.optional()
 });
 
 /**
- * What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default.
+ * What a turn of a chat runs with, for the caller: each choice of the chat, else the default of the nearest project up the chat's project's chain that sets one, else the agent's own.
  */
 export const zChatSettings = z.object({
     project: zChatProject,
@@ -1850,6 +1866,7 @@ export const zCreateWorkflow = z.object({
     name: z.string(),
     description: z.string().optional(),
     parent: zRid.optional(),
+    base: zRid.optional(),
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zWorkflowSpec,
@@ -1935,7 +1952,7 @@ export const zWorkflowVersionPage = z.object({
 });
 
 /**
- * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+ * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
  */
 export const zScoped = zRid;
 
@@ -3081,6 +3098,20 @@ export const zProjectsChatSettingsPath = z.object({
  */
 export const zProjectsChatSettingsResponse = zChatSettings;
 
+export const zProjectsSettingsPath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zProjectsSettingsResponse = zProjectSettings;
+
+/**
+ * The request has succeeded.
+ */
+export const zPublicReadResponse = zPublicInfo;
+
 export const zResourcesSearchQuery = z.object({
     scope: zRid.optional(),
     q: z.string().optional(),
@@ -3259,28 +3290,7 @@ export const zResourcesReadVersionResponse = zVersion;
 /**
  * The request has succeeded.
  */
-export const zSettingsRoutesReadResponse = zSettings;
-
-export const zSettingsRoutesUpdateBody = zUpdateSettings;
-
-export const zSettingsRoutesUpdateHeaders = z.object({
-    'If-Match': z.string().optional()
-});
-
-/**
- * The request has succeeded.
- */
-export const zSettingsRoutesUpdateResponse = zSettings;
-
-/**
- * The request has succeeded.
- */
-export const zSettingsRoutesPublicResponse = zPublicSettings;
-
-/**
- * The request has succeeded.
- */
-export const zSettingsRoutesSweepResponse = zRetentionSweep;
+export const zRetentionSweepResponse = zRetentionSweep;
 
 export const zSkillsListQuery = z.object({
     scope: zRid.optional(),

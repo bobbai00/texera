@@ -39,8 +39,9 @@ func has(t *testing.T, what string, names map[string]bool, present []string, abs
 	}
 }
 
-// A scope is a project and what it inherits: its own resources and the platform's built-ins,
-// not another project's. Without one a list holds everything the caller may read.
+// A scope is a project and what it inherits: its own resources and those of the projects up its
+// chain, Texera's among them, not another project's. Without one a list holds everything the
+// caller may read.
 func TestAScopeIsAProjectAndWhatItInherits(t *testing.T) {
 	h := newHarness(t)
 	home := string(me(h, "alice").HomeProject)
@@ -72,12 +73,12 @@ func TestAScopeIsAProjectAndWhatItInherits(t *testing.T) {
 	// An exact project inherits nothing.
 	has(t, "project=lab", list(h, "alice", "/skills?project="+rid(lab)), []string{"in lab"}, "in home", shipped)
 	// Projects are the scopes themselves: a scope hides none of them.
-	has(t, "projects", list(h, "alice", "/projects?scope="+rid(lab)), []string{"lab", "Built-in", "alice's home"})
+	has(t, "projects", list(h, "alice", "/projects?scope="+rid(lab)), []string{"lab", "Texera", "alice's home"})
 	// A scope names a project.
 	if status, data := h.do("alice", "GET", p+"/skills?scope="+rid(inLab), nil); status != http.StatusBadRequest {
 		t.Errorf("a skill as a scope: %d %s", status, data)
 	}
-	// Someone else's project as a scope shows what they may read of it: the built-ins alone.
+	// Someone else's project as a scope shows what they may read of it: what Texera holds alone.
 	has(t, "bob in the lab", list(h, "bob", "/skills?limit=200&scope="+rid(lab)), []string{shipped}, "in lab", "in home")
 }
 

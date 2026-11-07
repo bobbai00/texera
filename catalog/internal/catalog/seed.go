@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"regexp"
 	"sort"
 	"strings"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/apache/texera/catalog/internal/api"
 	"github.com/apache/texera/catalog/internal/auth"
-	"github.com/apache/texera/catalog/internal/kinds"
 	"github.com/apache/texera/catalog/internal/ports"
 	"github.com/apache/texera/catalog/internal/store"
 )
@@ -100,48 +100,58 @@ func shippedAgent() (shipped, error) {
 	return parseShipped("agents/texera-agent.md", agentFile)
 }
 
-// Seed creates the platform principal, the system project, the settings, and the built-in
-// resources: the dev stack's unit and the profile it is made from, the catalog's MCP server and the
-// bio add-on, the credentials and the model endpoint, the shipped skills and the agent. It
-// makes the platform's project what this release ships: a built-in whose shipped spec changed
-// gets a new version authored by the platform, and one an older release shipped is removed.
+// Seed creates the platform principal and Texera, the project every project inherits from, and
+// brings into Texera what this release ships: the profiles and the deployment's unit made from
+// one, the warehouse, the catalog's MCP server and the bio add-on, the credentials and the model
+// endpoint, the skills and the agent. Texera's admins may change or delete any of it, and a
+// release leaves what they did as it is (release.go). Texera's settings get the shipped defaults
+// where its admins have set none.
 func (s *Service) Seed(ctx context.Context) error {
-	sys, _, err := s.Store.EnsureUser(ctx, "system:texera", "Texera", "", true)
+	sys, _, err := s.Store.EnsureUser(ctx, "system:texera", "Texera", "")
 	if err != nil {
 		return err
 	}
 	caller := &auth.Caller{Principal: sys, Service: true}
-	project, err := s.ensureSystemProject(ctx, caller)
+	root, err := s.ensureRoot(ctx, caller)
 	if err != nil {
 		return err
 	}
-	// Everything under the system project is usable by everyone: the unit, the platform's
-	// credentials and model endpoint. Written on every start; the authorizer ignores duplicates.
-	if err := s.Store.SetEveryone(ctx, project.RID, "user", true); err != nil {
+	// Texera is open to everyone: what it holds is usable by all, its unit, credentials and
+	// model endpoint among them. Written on every start; the authorizer ignores duplicates.
+	if err := s.Store.SetEveryone(ctx, root.RID, "user", true); err != nil {
 		return err
 	}
 	s.mu.Lock()
-	s.system, s.systemProject = sys, project
+	s.system, s.root = sys, root
 	s.mu.Unlock()
 
-	// What this start ships, by rid, and the kinds it ships.
-	shipped, seeded := map[uuid.UUID]bool{}, map[string]bool{}
-	ensure := func(kind, name, desc string, spec any, status any) (*store.Resource, error) {
-		r, err := s.ensureBuiltin(ctx, caller, project, kind, name, desc, spec, status)
-		if err == nil {
-			shipped[r.RID], seeded[kind] = true, true
+	// What this start ships, by kind and name.
+	ships := map[string]map[string]bool{}
+	ship := func(kind, name, description string, spec any, status any) (*store.Resource, error) {
+		if ships[kind] == nil {
+			ships[kind] = map[string]bool{}
 		}
-		return r, err
+		ships[kind][name] = true
+		in := shipment{kind: kind, name: name, description: description, spec: mustJSON(spec)}
+		if status != nil {
+			in.status = mustJSON(status)
+		}
+		return s.ship(ctx, caller, in)
+	}
+	uriOf := func(r *store.Resource) *api.Uri {
+		if r == nil {
+			return nil
+		}
+		return uriPtr(URI(r).String())
 	}
 
-	// The platform's profile: a node of 2 GB with the Python libraries most analyses use. The
-	// deployment's unit is made from it.
+	// The profile the deployment's unit is made from: a node of 2 GB with the Python libraries
+	// most analyses use.
 	memory, packages := "2Gi", []string{"pandas", "numpy", "scikit-learn"}
-	profile, err := ensure("profile", "python-default", "2 GB with pandas, numpy and scikit-learn", api.ProfileSpec{Memory: &memory, Packages: &packages}, nil)
+	profile, err := ship("profile", "python-default", "2 GB with pandas, numpy and scikit-learn", api.ProfileSpec{Memory: &memory, Packages: &packages}, nil)
 	if err != nil {
 		return err
 	}
-	madeFrom := api.Uri(URI(profile).WithVersion(profile.HeadVno).String())
 
 	// The ladder the agent offers: sizes for data work, and for models on CPU or on a GPU.
 	// Each says, when read, whether this deployment can start it: Compose starts no unit from
@@ -163,13 +173,14 @@ func (s *Service) Seed(ctx context.Context) error {
 		if rung.gpu > 0 {
 			spec.Gpu = &rung.gpu
 		}
-		if _, err := ensure("profile", rung.name, rung.description, spec, nil); err != nil {
+		if _, err := ship("profile", rung.name, rung.description, spec, nil); err != nil {
 			return err
 		}
 	}
 
-	var unitURI string
-	if s.Config.StaticUnitEndpoint != "" {
+	var unit *store.Resource
+	if s.Config.StaticUnitEndpoint != "" && profile != nil {
+		madeFrom := api.Uri(URI(profile).WithVersion(profile.HeadVno).String())
 		spec := api.ComputingUnitSpec{
 			Provider:       api.UnitProviderStatic,
 			Endpoint:       &s.Config.StaticUnitEndpoint,
@@ -178,89 +189,106 @@ func (s *Service) Seed(ctx context.Context) error {
 		if s.Config.StaticUnitClientID != "" {
 			spec.ClientId = &s.Config.StaticUnitClientID
 		}
-		unit, err := ensure("computing-unit", s.Config.StaticUnitName, "The computing unit of this deployment", spec, nil)
-		if err != nil {
+		if unit, err = ship("computing-unit", s.Config.StaticUnitName, "The computing unit of this deployment", spec, nil); err != nil {
 			return err
 		}
-		// The client's subject is looked up on every start: the identity provider may have
-		// been recreated since the unit was seeded.
-		identity, err := s.unitIdentityFor(ctx, unit, spec)
-		if err != nil {
-			return fmt.Errorf("the static unit's identity: %w", err)
-		}
-		if identity != nil {
-			if err := s.recordUnitIdentity(ctx, unit, identity); err != nil {
+		if unit != nil {
+			// The client's subject is looked up on every start: the identity provider may have
+			// been recreated since the unit was seeded.
+			var current api.ComputingUnitSpec
+			if err := json.Unmarshal(unit.Spec, &current); err != nil {
 				return err
 			}
+			identity, err := s.unitIdentityFor(ctx, unit, current)
+			if err != nil {
+				return fmt.Errorf("the deployment's unit's identity: %w", err)
+			}
+			if identity != nil {
+				if err := s.recordUnitIdentity(ctx, unit, identity); err != nil {
+					return err
+				}
+			}
 		}
-		unitURI = URI(unit).String()
 	}
-	// The platform's warehouse, where an execution keeps its results unless something names
+	// The deployment's warehouse, where an execution keeps its results unless something names
 	// another. Its storage is looked at on every start: the store's address may have changed.
-	warehouse, err := ensure("warehouse", s.Config.Warehouse, "The warehouse of this deployment", api.WarehouseSpec{}, api.WarehouseStatus{Name: &s.Config.Warehouse})
+	warehouse, err := ship("warehouse", s.Config.Warehouse, "The warehouse of this deployment", api.WarehouseSpec{}, api.WarehouseStatus{Name: &s.Config.Warehouse})
 	if err != nil {
 		return err
 	}
-	if err := s.provisionWarehouse(ctx, warehouse); err != nil {
-		return fmt.Errorf("the platform's warehouse: %w", err)
-	}
-	// An execution of a release that had one warehouse kept its results in this one.
-	if n, err := s.Store.FillExecutionWarehouse(ctx, URI(warehouse).String()); err != nil {
-		return err
-	} else if n > 0 {
-		s.Log.Info("executions given their warehouse", "executions", n)
+	if warehouse != nil {
+		s.mu.Lock()
+		s.warehouse = warehouse.RID
+		s.mu.Unlock()
+		if err := s.provisionWarehouse(ctx, warehouse); err != nil {
+			return fmt.Errorf("the deployment's warehouse: %w", err)
+		}
+		// An execution of a release that had one warehouse kept its results in this one.
+		if n, err := s.Store.FillExecutionWarehouse(ctx, URI(warehouse).String()); err != nil {
+			return err
+		} else if n > 0 {
+			s.Log.Info("executions given their warehouse", "executions", n)
+		}
 	}
 
-	catalogMcp, err := ensure("mcp-server", "catalog", "The Texera MCP server: every resource with its versions, lineage and sharing, dataset files, operators, computing units, and building and running workflows",
+	catalogMcp, err := ship("mcp-server", "catalog", "The Texera MCP server: every resource with its versions, lineage and sharing, dataset files, operators, computing units, and building and running workflows",
 		api.McpServerSpec{Url: s.ownMcpURL()}, nil)
 	if err != nil {
 		return err
 	}
 
-	modelCred, err := ensure("credential", "anthropic-platform", "The platform's Anthropic API key, loaded into the secret store by the deployment",
+	modelCred, err := ship("credential", "anthropic-platform", "The deployment's Anthropic API key, loaded into the secret store by the deployment",
 		api.CredentialSpec{Kind: api.CredentialKindApiKey, Scope: strPtrOf("api.anthropic.com")}, api.CredentialStatus{SecretPath: &s.Config.ModelSecretPath})
 	if err != nil {
 		return err
 	}
-	s.refreshSecretStatus(ctx, modelCred)
+	if modelCred != nil {
+		s.refreshSecretStatus(ctx, modelCred)
+	}
 
 	bioKeyPath := "platform/biomcp"
-	bioCred, err := ensure("credential", "biomcp-key", "The API key of the platform's bio MCP server",
+	bioCred, err := ship("credential", "biomcp-key", "The API key of the deployment's bio MCP server",
 		api.CredentialSpec{Kind: api.CredentialKindApiKey, Scope: strPtrOf("bio-mcp")}, api.CredentialStatus{SecretPath: &bioKeyPath})
 	if err != nil {
 		return err
 	}
-	if s.Config.BioMcpKey != "" {
-		if _, err := s.Secrets.Get(ctx, bioKeyPath); errors.Is(err, ports.ErrSecretNotFound) {
-			if err := s.Secrets.Put(ctx, bioKeyPath, map[string]string{"value": s.Config.BioMcpKey}); err != nil {
-				s.Log.Warn("seed bio key", "err", err)
+	var bioMcp *store.Resource
+	if bioCred != nil {
+		if s.Config.BioMcpKey != "" {
+			if _, err := s.Secrets.Get(ctx, bioKeyPath); errors.Is(err, ports.ErrSecretNotFound) {
+				if err := s.Secrets.Put(ctx, bioKeyPath, map[string]string{"value": s.Config.BioMcpKey}); err != nil {
+					s.Log.Warn("seed bio key", "err", err)
+				}
 			}
 		}
-	}
-	s.refreshSecretStatus(ctx, bioCred)
-	bioMcp, err := ensure("mcp-server", "biomcp", "The bio MCP server: PubMed, citation networks, genes, variants, proteins and clinical significance",
-		api.McpServerSpec{Url: s.Config.BioMcpURL, Headers: &map[string]string{"X-API-Key": "credential:" + URI(bioCred).String() + "#value"}}, nil)
-	if err != nil {
-		return err
+		s.refreshSecretStatus(ctx, bioCred)
+		if bioMcp, err = ship("mcp-server", "biomcp", "The bio MCP server: PubMed, citation networks, genes, variants, proteins and clinical significance",
+			api.McpServerSpec{Url: s.Config.BioMcpURL, Headers: &map[string]string{"X-API-Key": "credential:" + URI(bioCred).String() + "#value"}}, nil); err != nil {
+			return err
+		}
 	}
 
-	model, err := ensure("model-endpoint", "anthropic-platform", "The platform's model: "+s.Config.ModelName,
-		api.ModelEndpointSpec{Provider: api.ModelProviderAnthropic, Model: s.Config.ModelName, Credential: uriPtr(URI(modelCred).String()), MaxOutputTokens: int32Ptr(8192)}, nil)
-	if err != nil {
-		return err
+	var model *store.Resource
+	if modelCred != nil {
+		if model, err = ship("model-endpoint", "anthropic-platform", "The deployment's model: "+s.Config.ModelName,
+			api.ModelEndpointSpec{Provider: api.ModelProviderAnthropic, Model: s.Config.ModelName, Credential: uriOf(modelCred), MaxOutputTokens: int32Ptr(8192)}, nil); err != nil {
+			return err
+		}
 	}
 
 	skills, err := shippedSkills()
 	if err != nil {
 		return err
 	}
-	skillURIs := map[string]string{}
+	var skillURIs []string
 	for _, sk := range skills {
-		r, err := ensure("skill", sk.Name, sk.Description, api.SkillSpec{Name: sk.Name, Description: sk.Description, Body: sk.Body}, nil)
+		r, err := ship("skill", sk.Name, sk.Description, api.SkillSpec{Name: sk.Name, Description: sk.Description, Body: sk.Body}, nil)
 		if err != nil {
 			return err
 		}
-		skillURIs[sk.Name] = URI(r).String()
+		if r != nil {
+			skillURIs = append(skillURIs, URI(r).String())
+		}
 	}
 
 	// One agent is the entry to every chat. It mounts the catalog's own server, its basic
@@ -270,197 +298,114 @@ func (s *Service) Seed(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var allSkills []string
-	for _, sk := range skills {
-		allSkills = append(allSkills, skillURIs[sk.Name])
-	}
-	free := api.LoopSpecAnswerFree
-	agent, err := ensure("agent-template", card.Name, card.Description,
-		api.AgentTemplateSpec{
-			Card:       api.AgentCard{Name: card.Name, Description: card.Description},
-			Model:      api.Uri(URI(model).String()),
-			Prompt:     card.Body,
-			Skills:     uris(allSkills...),
-			McpServers: &[]api.McpBinding{{Server: api.Uri(URI(catalogMcp).String())}, {Server: api.Uri(URI(bioMcp).String())}},
-			Loop:       &api.LoopSpec{Answer: &free},
-		}, nil)
-	if err != nil {
-		return err
-	}
-	retired, err := s.retire(ctx, project, sys.PID, shipped, seeded)
-	if err != nil {
-		return err
+	var agent *store.Resource
+	if model != nil && catalogMcp != nil {
+		servers := []api.McpBinding{{Server: api.Uri(URI(catalogMcp).String())}}
+		if bioMcp != nil {
+			servers = append(servers, api.McpBinding{Server: api.Uri(URI(bioMcp).String())})
+		}
+		free := api.LoopSpecAnswerFree
+		if agent, err = ship("agent-template", card.Name, card.Description,
+			api.AgentTemplateSpec{
+				Card:       api.AgentCard{Name: card.Name, Description: card.Description},
+				Model:      api.Uri(URI(model).String()),
+				Prompt:     card.Body,
+				Skills:     uris(skillURIs...),
+				McpServers: &servers,
+				Loop:       &api.LoopSpec{Answer: &free},
+			}, nil); err != nil {
+			return err
+		}
 	}
 
-	settings := api.SettingsSpec{Branding: api.Branding{Name: s.Config.BrandName}, Defaults: api.Defaults{AgentTemplate: uriPtr(URI(agent).String()), ModelEndpoint: uriPtr(URI(model).String()), Profile: uriPtr(URI(profile).String()), Warehouse: uriPtr(URI(warehouse).String())}}
-	if unitURI != "" {
-		settings.Defaults.ComputingUnit = uriPtr(unitURI)
-	}
-	if err := s.ensureSettings(ctx, caller, settings, retired); err != nil {
-		return err
-	}
-	s.Relay.Flush(ctx)
-	return nil
-}
-
-// retire removes from the platform's project what the platform made there and this release no
-// longer ships, and returns their URIs. What named one falls back: a chat to the platform's
-// agent, the settings' default to the shipped one. Only the kinds the seed ships are looked at:
-// the engine's operators are kept by the sync that reads them from a unit, and what someone
-// else made there before the project was closed to them is theirs.
-func (s *Service) retire(ctx context.Context, project *store.Resource, platform uuid.UUID, shipped map[uuid.UUID]bool, seeded map[string]bool) (map[string]bool, error) {
-	retired := map[string]bool{}
-	for kind := range seeded {
-		made, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: kind, ParentRID: &project.RID, OwnerPID: &platform, Limit: 500})
+	gone := map[string]bool{}
+	for _, kind := range []string{"profile", "computing-unit", "warehouse", "mcp-server", "credential", "model-endpoint", "skill", "agent-template"} {
+		went, err := s.unship(ctx, kind, ships[kind])
 		if err != nil {
-			return nil, err
+			return err
 		}
-		for i := range made {
-			old := &made[i]
-			if shipped[old.RID] {
-				continue
-			}
-			if err := s.Store.DeleteResource(ctx, old.RID); err != nil {
-				return nil, fmt.Errorf("retire %s %s: %w", kind, old.Name, err)
-			}
-			retired[URI(old).String()] = true
-			s.Log.Info("built-in retired", "kind", kind, "name", old.Name, "rid", old.RID)
-		}
+		maps.Copy(gone, went)
 	}
-	return retired, nil
+
+	return s.fillRootSettings(ctx, caller, api.ProjectSpec{
+		Branding: &api.Branding{Name: &s.Config.BrandName},
+		// No model: a chat's agent brings its own unless a chat or a project chooses another.
+		Defaults: &api.ProjectDefaults{AgentTemplate: uriOf(agent), ComputingUnit: uriOf(unit), Profile: uriOf(profile), Warehouse: uriOf(warehouse)},
+	}, gone)
 }
 
-// The platform's project: what it is called and what it says it holds.
+// Texera: what it is called and what it says it holds, when it is made.
 const (
-	systemProjectName        = "Built-in"
-	systemProjectDescription = "What the platform ships: the agent, its skills and MCP servers, the model endpoint, the default computing unit and its profile, and the engine's operators. Everyone can use them; they change with a release."
+	rootName        = "Texera"
+	rootDescription = "Texera itself, which every project inherits from: the agent and its skills, the engine's operators, the profiles, the computing unit and the warehouse of this deployment. Its settings are every project's unless the project sets its own."
 )
 
-// ensureSystemProject returns the platform's project, creating it at the first start. It is
-// the one place that says what is built in: a resource is built in when it lives here. The
-// project is public and usable by everyone, and what is in it is theirs through it.
-func (s *Service) ensureSystemProject(ctx context.Context, caller *auth.Caller) (*store.Resource, error) {
+// ensureRoot returns Texera, making it at the first start: a public project the platform owns,
+// marked as the root. Its admins rename and describe it as they like.
+func (s *Service) ensureRoot(ctx context.Context, caller *auth.Caller) (*store.Resource, error) {
 	pid := caller.PID()
-	rs, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "project", OwnerPID: &pid, Labels: map[string]string{"texera.system": "true"}, Limit: 1})
+	rs, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "project", OwnerPID: &pid, Labels: map[string]string{rootLabel: "true"}, Limit: 1})
 	if err != nil {
 		return nil, err
 	}
-	name, desc := systemProjectName, systemProjectDescription
-	if len(rs) == 0 {
-		r, _, err := s.Store.CreateResource(ctx, store.NewResource{Kind: "project", Name: name, Description: &desc, OwnerPID: pid, CreatedByPID: pid, Visibility: "public", Labels: map[string]string{"texera.system": "true"}})
-		if err != nil {
-			return nil, err
-		}
-		s.Log.Info("seeded the system project", "rid", r.RID)
-		return r, nil
+	if len(rs) > 0 {
+		return &rs[0], nil
 	}
-	r := &rs[0]
-	if r.Name != name || r.Description == nil || *r.Description != desc {
-		return s.Store.UpdateMetadata(ctx, store.MetadataUpdate{RID: r.RID, Name: &name, Description: &desc})
-	}
-	return r, nil
-}
-
-// ensureBuiltin creates a built-in in the platform's project, or makes the one that is there
-// what the release ships: its description, and a new version when the shipped spec changed.
-func (s *Service) ensureBuiltin(ctx context.Context, caller *auth.Caller, project *store.Resource, kind, name, desc string, spec any, status any) (*store.Resource, error) {
-	k, ok := kinds.ByName(kind)
-	if !ok {
-		return nil, fmt.Errorf("unknown kind %s", kind)
-	}
-	specJSON := mustJSON(spec)
-	var statusJSON json.RawMessage
-	if status != nil {
-		statusJSON = mustJSON(status)
-	}
-	existing, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: kind, ParentRID: &project.RID, Name: name, Limit: 1})
+	desc := rootDescription
+	r, _, err := s.Store.CreateResource(ctx, store.NewResource{Kind: "project", Name: rootName, Description: &desc, OwnerPID: pid, CreatedByPID: pid, Visibility: "public", Labels: map[string]string{rootLabel: "true"}})
 	if err != nil {
 		return nil, err
 	}
-	if len(existing) == 0 {
-		owner := caller.PID()
-		r, _, err := s.Create(ctx, caller, CreateInput{Kind: k, Name: name, Description: &desc, Parent: &project.RID, Spec: specJSON, Status: statusJSON, Owner: &owner})
-		if err != nil {
-			return nil, fmt.Errorf("seed %s %s: %w", kind, name, err)
-		}
-		s.Log.Info("seeded", "kind", kind, "name", name, "rid", r.RID)
-		return r, nil
-	}
-	r := &existing[0]
-	if r.Description == nil || *r.Description != desc {
-		if r, err = s.Store.UpdateMetadata(ctx, store.MetadataUpdate{RID: r.RID, Description: &desc}); err != nil {
-			return nil, fmt.Errorf("describe %s %s: %w", kind, name, err)
-		}
-	}
-	cur, _ := store.Canonical(r.Spec)
-	next, _ := store.Canonical(specJSON)
-	if string(cur) != string(next) {
-		msg := "updated by the platform"
-		updated, _, err := s.UpdateSpec(ctx, caller, k, UpdateSpecInput{RID: r.RID, Spec: specJSON, Message: &msg})
-		if err != nil {
-			return nil, fmt.Errorf("update %s %s: %w", kind, name, err)
-		}
-		s.Log.Info("built-in updated", "kind", kind, "name", name, "rid", r.RID)
-		r = updated
-	}
-	if statusJSON != nil {
-		if r, err = s.Store.MergeStatus(ctx, r.RID, statusJSON); err != nil {
-			return nil, err
-		}
-	}
+	s.Log.Info("made Texera, the project every project inherits from", "rid", r.RID)
 	return r, nil
 }
 
-// ensureSettings creates the settings, or fills what the deployment has not set. A default
-// that names a retired built-in gives way to the shipped one; an administrator's own choice stays.
-func (s *Service) ensureSettings(ctx context.Context, caller *auth.Caller, spec api.SettingsSpec, retired map[string]bool) error {
-	k, _ := kinds.ByName("settings")
-	r, err := s.Store.GetResource(ctx, SettingsRID)
-	if err != nil {
-		if !store.IsNotFound(err) {
-			return err
-		}
-		normalized, err := s.prepareSpec(ctx, caller, k, "settings", mustJSON(spec))
-		if err != nil {
-			return err
-		}
-		rid := SettingsRID
-		desc := "The deployment's settings"
-		r, _, err = s.Store.CreateResource(ctx, store.NewResource{RID: &rid, Kind: "settings", Name: "settings", Description: &desc, OwnerPID: caller.PID(), CreatedByPID: caller.PID(), Visibility: "public", Spec: normalized})
-		if err != nil {
-			return err
-		}
-		s.Log.Info("seeded the settings")
-	} else {
-		// Fill defaults the deployment has not set, without overriding an administrator's choices.
-		var current api.SettingsSpec
-		_ = json.Unmarshal(r.Spec, &current)
-		changed := false
-		if current.Branding.Name == "" {
-			current.Branding = spec.Branding
+// fillRootSettings gives Texera's settings what this release ships where its admins have set
+// nothing, and a default that named what no longer ships gives way to what does. What its admins
+// chose stays.
+func (s *Service) fillRootSettings(ctx context.Context, caller *auth.Caller, shipped api.ProjectSpec, gone map[string]bool) error {
+	root := s.Root()
+	var current api.ProjectSpec
+	_ = json.Unmarshal(root.Spec, &current)
+	changed := false
+	if current.Branding == nil {
+		current.Branding = &api.Branding{}
+	}
+	if current.Branding.Name == nil || strings.TrimSpace(*current.Branding.Name) == "" {
+		current.Branding.Name = shipped.Branding.Name
+		changed = true
+	}
+	if current.Defaults == nil {
+		current.Defaults = &api.ProjectDefaults{}
+	}
+	fill := func(dst **api.Uri, src *api.Uri) {
+		if (*dst == nil || **dst == "" || gone[string(**dst)]) && src != nil {
+			*dst = src
 			changed = true
 		}
-		fill := func(dst **api.Uri, src *api.Uri) {
-			if (*dst == nil || **dst == "" || retired[string(**dst)]) && src != nil {
-				*dst = src
-				changed = true
-			}
-		}
-		fill(&current.Defaults.AgentTemplate, spec.Defaults.AgentTemplate)
-		fill(&current.Defaults.ComputingUnit, spec.Defaults.ComputingUnit)
-		fill(&current.Defaults.Profile, spec.Defaults.Profile)
-		fill(&current.Defaults.Warehouse, spec.Defaults.Warehouse)
-		fill(&current.Defaults.ModelEndpoint, spec.Defaults.ModelEndpoint)
-		if changed {
-			if r, err = s.UpdateSettings(ctx, caller, mustJSON(current), ""); err != nil {
-				return err
-			}
-		}
+	}
+	fill(&current.Defaults.AgentTemplate, shipped.Defaults.AgentTemplate)
+	fill(&current.Defaults.ComputingUnit, shipped.Defaults.ComputingUnit)
+	fill(&current.Defaults.Profile, shipped.Defaults.Profile)
+	fill(&current.Defaults.Warehouse, shipped.Defaults.Warehouse)
+	if !changed {
+		return nil
+	}
+	updated, _, err := s.UpdateSpec(ctx, caller, projectKind, UpdateSpecInput{RID: root.RID, Spec: mustJSON(current)})
+	if err != nil {
+		return fmt.Errorf("Texera's settings: %w", err)
 	}
 	s.mu.Lock()
-	s.settings = r
+	s.root = updated
 	s.mu.Unlock()
 	return nil
+}
+
+// shippedWarehouse is the warehouse the release ships, on the deployment's own store.
+func (s *Service) shippedWarehouse() uuid.UUID {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.warehouse
 }
 
 func strPtrOf(s string) *string { return &s }

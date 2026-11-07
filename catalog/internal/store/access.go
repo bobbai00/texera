@@ -25,8 +25,8 @@ func enqueue(ctx context.Context, tx pgx.Tx, op, object, relation, subject strin
 }
 
 // SetEveryone grants or revokes a relation to everyone (`user:*`) on a resource, outside the
-// grant index: the way the system project makes the platform's unit, credentials and model
-// endpoint usable by all. The write is idempotent; the rebuild derives it from the label.
+// grant index: the way Texera, the root project, makes what it holds usable by all. The write is
+// idempotent; the rebuild derives it from the label.
 func (s *Store) SetEveryone(ctx context.Context, rid uuid.UUID, relation string, on bool) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		op := "write"
@@ -35,6 +35,20 @@ func (s *Store) SetEveryone(ctx context.Context, rid uuid.UUID, relation string,
 		}
 		return enqueue(ctx, tx, op, object(rid), relation, "user:*")
 	})
+}
+
+// linkBase writes or deletes the tuple that makes a project's people the readers and users of
+// what its base holds: the base names the project an inheritor. Texera, the root, needs none:
+// it is open to everyone, so a link to it gives nobody more than they have.
+func linkBase(ctx context.Context, tx pgx.Tx, op string, project, base uuid.UUID) error {
+	var root bool
+	if err := tx.QueryRow(ctx, `SELECT coalesce(labels ->> 'texera.root' = 'true', false) FROM resource WHERE rid = $1`, base).Scan(&root); err != nil {
+		return translate(err)
+	}
+	if root {
+		return nil
+	}
+	return enqueue(ctx, tx, op, object(base), "inheritor", object(project))
 }
 
 // writeGrant records a direct relation: one per principal and resource, so a change of
@@ -144,7 +158,8 @@ func (s *Store) MarkOutboxProcessed(ctx context.Context, ids []int64) error {
 }
 
 // AllTuples lists every tuple the index implies, for a rebuild of the authorization store:
-// direct grants, parent links, public viewers and the system project's users.
+// direct grants, parent links, the links of projects to the bases they inherit from (but
+// Texera), public viewers and Texera's users.
 func (s *Store) AllTuples(ctx context.Context) ([]OutboxEntry, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT 'resource:' || a.rid, a.relation, CASE p.kind WHEN 'group' THEN 'group:' || a.pid || '#member' ELSE 'user:' || a.pid END
@@ -152,9 +167,12 @@ func (s *Store) AllTuples(ctx context.Context) ([]OutboxEntry, error) {
 		UNION ALL
 		SELECT 'resource:' || r.rid, 'parent', 'resource:' || r.parent_rid FROM resource r WHERE r.parent_rid IS NOT NULL AND r.deleted_at IS NULL
 		UNION ALL
+		SELECT 'resource:' || b.rid, 'inheritor', 'resource:' || r.rid FROM resource r JOIN resource b ON b.rid = r.base_rid
+		WHERE r.deleted_at IS NULL AND coalesce(b.labels ->> 'texera.root', '') <> 'true'
+		UNION ALL
 		SELECT 'resource:' || r.rid, 'viewer', 'user:*' FROM resource r WHERE r.visibility = 'public' AND r.deleted_at IS NULL
 		UNION ALL
-		SELECT 'resource:' || r.rid, 'user', 'user:*' FROM resource r WHERE r.kind = 'project' AND r.labels->>'texera.system' = 'true' AND r.deleted_at IS NULL`)
+		SELECT 'resource:' || r.rid, 'user', 'user:*' FROM resource r WHERE r.kind = 'project' AND r.labels->>'texera.root' = 'true' AND r.deleted_at IS NULL`)
 	if err != nil {
 		return nil, err
 	}

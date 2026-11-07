@@ -115,14 +115,10 @@ func TestRunInThreePhases(t *testing.T) {
 	// A kept execution survives the retention policy.
 	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/executions/"+rid(exec)+"/cancel", map[string]any{}, nil)
 	h.mustJSON("alice", "PATCH", p+"/resources/"+rid(exec), map[string]any{"labels": map[string]any{"texera.keep": "true"}}, nil)
-	var settings envelope
-	h.mustJSON("admin", "GET", p+"/settings", nil, &settings)
-	s := map[string]any{}
-	mustDecode(t, settings.Spec, &s)
-	s["retention"] = map[string]any{"results": "PT0S"}
-	h.mustJSON("admin", "PUT", p+"/settings", map[string]any{"spec": s}, nil)
+	home := string(me(h, "alice").HomeProject)
+	h.mustJSON("alice", "PUT", p+"/projects/"+home, map[string]any{"spec": map[string]any{"limits": map[string]any{"results": "PT0S"}}}, nil)
 	var sweep api.RetentionSweep
-	h.mustJSON("admin", "POST", p+"/settings/retention/sweep", nil, &sweep)
+	h.mustJSON("admin", "POST", p+"/retention/sweep", nil, &sweep)
 	var kept envelope
 	h.mustJSON("alice", "GET", p+"/workflows/"+rid(wf)+"/executions/"+rid(exec), nil, &kept)
 	var st api.ExecutionStatus
@@ -130,6 +126,5 @@ func TestRunInThreePhases(t *testing.T) {
 	if st.ResultsExpiredAt != nil {
 		t.Fatal("a kept execution is not expired")
 	}
-	delete(s, "retention")
-	h.mustJSON("admin", "PUT", p+"/settings", map[string]any{"spec": s}, nil)
+	h.mustJSON("alice", "PUT", p+"/projects/"+home, map[string]any{"spec": map[string]any{}}, nil)
 }

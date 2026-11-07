@@ -68,24 +68,24 @@ func lakeName(h *harness, who string, warehouse envelope) string {
 	return *status.Name
 }
 
-func builtInWarehouse(h *harness) envelope {
+func texerasWarehouse(h *harness) envelope {
 	h.t.Helper()
 	var page struct{ Items []envelope }
-	h.mustJSON("alice", "GET", p+"/warehouses?scope="+h.svc.SystemProject().RID.String(), nil, &page)
+	h.mustJSON("alice", "GET", p+"/warehouses?scope="+h.svc.Root().RID.String(), nil, &page)
 	for _, w := range page.Items {
 		if w.Metadata.Name == "texera" {
 			return w
 		}
 	}
-	h.t.Fatalf("the platform's warehouse is not among %d", len(page.Items))
+	h.t.Fatalf("Texera's warehouse is not among %d", len(page.Items))
 	return envelope{}
 }
 
-func TestThePlatformsWarehouseIsBuiltInAndIsWhereAnExecutionKeepsItsResults(t *testing.T) {
+func TestTexerasWarehouseIsWhereAnExecutionKeepsItsResults(t *testing.T) {
 	h := newHarness(t)
-	platform := builtInWarehouse(h)
-	if string(platform.Metadata.Project) != h.svc.SystemProject().RID.String() {
-		t.Fatalf("the platform's warehouse lives in the platform's project: %s", platform.Metadata.Project)
+	platform := texerasWarehouse(h)
+	if string(platform.Metadata.Project) != h.svc.Root().RID.String() {
+		t.Fatalf("the deployment's warehouse lives in Texera: %s", platform.Metadata.Project)
 	}
 	// It is the lake's warehouse of the same name, on the deployment's own store.
 	if lakeName(h, "alice", platform) != "texera" {
@@ -95,16 +95,17 @@ func TestThePlatformsWarehouseIsBuiltInAndIsWhereAnExecutionKeepsItsResults(t *t
 	if !ok || storage != (ports.WarehouseStorage{Endpoint: "http://store:9000", Region: "us-east-1", Bucket: "texera", KeyPrefix: "warehouse", AccessKey: "store-key", SecretKey: "store-secret"}) {
 		t.Fatalf("the lake's warehouse: %v %+v", ok, storage)
 	}
-	// It is the platform's default, and nobody's to change.
-	var settings envelope
-	h.mustJSON("alice", "GET", p+"/settings", nil, &settings)
-	var spec api.SettingsSpec
-	mustDecode(t, settings.Spec, &spec)
-	if spec.Defaults.Warehouse == nil || string(*spec.Defaults.Warehouse) != string(platform.Metadata.Uri) {
-		t.Fatalf("the settings' default warehouse: %v", spec.Defaults.Warehouse)
+	// It is Texera's default, which every project inherits; nobody but Texera's admins changes
+	// it, and they do not delete it while Texera names it.
+	defaults := projectSettings(h, "alice", me(h, "alice").HomeProject).Defaults
+	if defaults.Warehouse == nil || string(*defaults.Warehouse) != string(platform.Metadata.Uri) {
+		t.Fatalf("the default warehouse: %v", defaults.Warehouse)
 	}
-	if status, body := h.do("admin", "DELETE", p+"/warehouses/"+rid(platform), nil); status != http.StatusConflict || !strings.Contains(string(body), "builtin") {
-		t.Fatalf("nobody deletes the platform's warehouse: %d %s", status, body)
+	if status, body := h.do("alice", "DELETE", p+"/warehouses/"+rid(platform), nil); status != http.StatusForbidden {
+		t.Fatalf("alice deletes the deployment's warehouse: %d %s", status, body)
+	}
+	if status, body := h.do("admin", "DELETE", p+"/warehouses/"+rid(platform), nil); status != http.StatusConflict || !strings.Contains(string(body), "referenced") {
+		t.Fatalf("Texera's admins delete the warehouse Texera names: %d %s", status, body)
 	}
 
 	// An execution that names none keeps its results there, and says so.
@@ -120,7 +121,7 @@ func TestThePlatformsWarehouseIsBuiltInAndIsWhereAnExecutionKeepsItsResults(t *t
 
 func TestAProjectsOwnWarehouseIsChosenLikeAUnit(t *testing.T) {
 	h := newHarness(t)
-	platform := builtInWarehouse(h)
+	platform := texerasWarehouse(h)
 	lab := h.create("alice", "projects", "lab", map[string]any{})
 	// A warehouse with no store of its own gets a place of its own on the deployment's store.
 	own := createIn(h, "alice", "warehouses", "lab results", lab.Metadata.Rid, map[string]any{})
@@ -139,7 +140,7 @@ func TestAProjectsOwnWarehouseIsChosenLikeAUnit(t *testing.T) {
 		t.Fatalf("with no default: %s", warehouse)
 	}
 	// The project's default.
-	h.mustJSON("alice", "PUT", p+"/projects/"+rid(lab), map[string]any{"spec": map[string]any{"defaultWarehouse": own.Metadata.Uri}}, nil)
+	h.mustJSON("alice", "PUT", p+"/projects/"+rid(lab), map[string]any{"spec": map[string]any{"defaults": map[string]any{"warehouse": own.Metadata.Uri}}}, nil)
 	exec, warehouse, namespace := ran(h, "alice", wf, map[string]any{})
 	if warehouse != string(own.Metadata.Uri) || h.lake.OpenedFor(name, namespace) == "" || h.lake.OpenedFor("texera", namespace) != "" {
 		t.Fatalf("the project's default: %s, opened %v", warehouse, h.lake.Opened)
@@ -182,14 +183,14 @@ func TestUsingAWarehouseIsNotImpliedByViewing(t *testing.T) {
 	run := p + "/workflows/" + rid(wf) + "/run"
 	// A viewer of the lab reads and runs its workflows, and the platform's warehouse is everyone's.
 	h.mustJSON("alice", "PUT", p+"/resources/"+rid(lab)+"/grants/"+bob, map[string]any{"relation": "viewer"}, nil)
-	if _, warehouse, _ := ran(h, "bob", wf, map[string]any{}); warehouse != string(builtInWarehouse(h).Metadata.Uri) {
+	if _, warehouse, _ := ran(h, "bob", wf, map[string]any{}); warehouse != string(texerasWarehouse(h).Metadata.Uri) {
 		t.Fatalf("bob's execution: %s", warehouse)
 	}
 	// The lab's own warehouse is not his to fill: named in the request, or as the lab's default.
 	if status, body := h.do("bob", "POST", run, map[string]any{"warehouse": own.Metadata.Uri}); status != http.StatusForbidden {
 		t.Fatalf("a viewer may not use the lab's warehouse: %d %s", status, body)
 	}
-	h.mustJSON("alice", "PUT", p+"/projects/"+rid(lab), map[string]any{"spec": map[string]any{"defaultWarehouse": own.Metadata.Uri}}, nil)
+	h.mustJSON("alice", "PUT", p+"/projects/"+rid(lab), map[string]any{"spec": map[string]any{"defaults": map[string]any{"warehouse": own.Metadata.Uri}}}, nil)
 	if status, body := h.do("bob", "POST", run, map[string]any{}); status != http.StatusForbidden {
 		t.Fatalf("nor through the lab's default: %d %s", status, body)
 	}
@@ -214,16 +215,22 @@ func TestAWarehouseOnAStoreOfItsOwn(t *testing.T) {
 		return status, string(body)
 	}
 
-	// The lake and the units connect to the address: one nobody listed is refused.
-	if status, body := create("alice", storage("http://minio.lab:9000", "lab", key.Metadata.Uri)); status != http.StatusBadRequest || !strings.Contains(body, "administrator") {
+	// The lake and the units connect to the address: one nobody listed is refused, and so is one
+	// only the lab lists, since a project's list narrows what it inherits and Texera lists none.
+	if status, body := create("alice", storage("http://minio.lab:9000", "lab", key.Metadata.Uri)); status != http.StatusBadRequest || !strings.Contains(body, "limits") {
 		t.Fatalf("an unlisted store: %d %s", status, body)
 	}
-	var settings envelope
-	h.mustJSON("admin", "GET", p+"/settings", nil, &settings)
-	var spec map[string]any
-	mustDecode(t, settings.Spec, &spec)
-	spec["warehouseEndpoints"] = []string{"http://minio.lab:9000/"}
-	h.mustJSON("admin", "PUT", p+"/settings", map[string]any{"spec": spec}, nil)
+	h.mustJSON("alice", "PUT", p+"/projects/"+rid(lab), map[string]any{"spec": map[string]any{"limits": map[string]any{"warehouseEndpoints": []string{"http://minio.lab:9000"}}}}, nil)
+	if status, body := create("alice", storage("http://minio.lab:9000", "lab", key.Metadata.Uri)); status != http.StatusBadRequest {
+		t.Fatalf("a store only the lab lists: %d %s", status, body)
+	}
+	root := string(me(h, "admin").RootProject)
+	var texera envelope
+	h.mustJSON("admin", "GET", p+"/projects/"+root, nil, &texera)
+	spec := map[string]any{}
+	mustDecode(t, texera.Spec, &spec)
+	spec["limits"] = map[string]any{"warehouseEndpoints": []string{"http://minio.lab:9000/", "http://elsewhere:9000"}}
+	h.mustJSON("admin", "PUT", p+"/projects/"+root, map[string]any{"spec": spec}, nil)
 
 	// The credential must be one, with the two fields, and the caller's to use.
 	if status, body := create("alice", storage("http://minio.lab:9000", "lab", lab.Metadata.Uri)); status != http.StatusBadRequest {
@@ -292,15 +299,10 @@ func TestAWarehouseGoesOnlyWhenNothingKeepsResultsInIt(t *testing.T) {
 		t.Fatalf("with results in it: %d %s", status, body)
 	}
 	// The execution's results expire: its namespace is dropped in its own warehouse.
-	var settings envelope
-	h.mustJSON("admin", "GET", p+"/settings", nil, &settings)
-	var spec map[string]any
-	mustDecode(t, settings.Spec, &spec)
-	spec["retention"] = map[string]any{"results": "PT0S"}
-	h.mustJSON("admin", "PUT", p+"/settings", map[string]any{"spec": spec}, nil)
+	h.mustJSON("alice", "PUT", p+"/projects/"+rid(lab), map[string]any{"spec": map[string]any{"limits": map[string]any{"results": "PT0S"}}}, nil)
 	time.Sleep(20 * time.Millisecond)
 	var sweep api.RetentionSweep
-	h.mustJSON("admin", "POST", p+"/settings/retention/sweep", nil, &sweep)
+	h.mustJSON("admin", "POST", p+"/retention/sweep", nil, &sweep)
 	if sweep.ExecutionsExpired != 1 || h.lake.OpenedFor(name, namespace) != "" {
 		t.Fatalf("the expiry: %+v, opened %v", sweep, h.lake.Opened)
 	}
@@ -313,7 +315,7 @@ func TestAWarehouseGoesOnlyWhenNothingKeepsResultsInIt(t *testing.T) {
 	}
 	// Named as a project's default it is still referenced; once nothing names it, it goes, and
 	// the lake's warehouse with it.
-	h.mustJSON("alice", "PUT", p+"/projects/"+rid(lab), map[string]any{"spec": map[string]any{"defaultWarehouse": own.Metadata.Uri}}, nil)
+	h.mustJSON("alice", "PUT", p+"/projects/"+rid(lab), map[string]any{"spec": map[string]any{"defaults": map[string]any{"warehouse": own.Metadata.Uri}}}, nil)
 	if status, body := del(); status != http.StatusConflict || !strings.Contains(body, "referenced") {
 		t.Fatalf("named by the project: %d %s", status, body)
 	}
@@ -341,7 +343,7 @@ func TestAWarehouseGoesOnlyWhenNothingKeepsResultsInIt(t *testing.T) {
 func TestAnExecutionOfAnEarlierReleaseIsGivenThePlatformsWarehouse(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	platform := builtInWarehouse(h)
+	platform := texerasWarehouse(h)
 	wf := oneScan(h, "alice", nil, "old", nil)
 	alice := mustUUID(principalOf(h, "alice"))
 	parent, project := mustUUID(rid(wf)), mustUUID(string(wf.Metadata.Project))

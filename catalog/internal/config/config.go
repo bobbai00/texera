@@ -79,6 +79,7 @@ type Config struct {
 
 	PresignTTL       time.Duration
 	LeaseTTL         time.Duration
+	UploadGrace      time.Duration
 	MaxDownloadBytes int64
 }
 
@@ -130,6 +131,7 @@ func FromEnv() (Config, error) {
 		ModelSecretPath:     env("TEXERA_MODEL_SECRET_PATH", "platform/anthropic"),
 		PresignTTL:          envDuration("TEXERA_PRESIGN_TTL", time.Hour),
 		LeaseTTL:            envDuration("TEXERA_LEASE_TTL", time.Hour),
+		UploadGrace:         envDuration("TEXERA_UPLOAD_GRACE", 24*time.Hour),
 		MaxDownloadBytes:    envInt64("TEXERA_MAX_DOWNLOAD_BYTES", 1<<20),
 	}
 	if c.DatabaseURL == "" {

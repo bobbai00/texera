@@ -94,7 +94,7 @@ model SaveUnitAsProfile {
   profile?: Uri;
   @doc("The new profile's name; required for a new profile.")
   name?: string;
-  @doc("The project a new profile goes into; absent: the unit's, or for a unit of the platform's own the chat's project in a chat, else the caller's own.")
+  @doc("The project a new profile goes into; absent: the unit's, when the caller may add to it, else the chat's project in a chat, else the caller's own.")
   parent?: Rid;
 }
 
@@ -113,7 +113,7 @@ namespace Routes {
     @extension("x-texera-permission", "list")
     @extension("x-mcp", #{
       tool: "list_computing_units",
-      description: "List the computing units the caller can run workflows on, with status. An execution that names no unit runs on the chat's, else the workflow's, the project's or the platform's default.",
+      description: "List the computing units the caller can run workflows on, with status. An execution that names no unit runs on the workflow's default, else its project's, which may come from up the project's chain (project_settings).",
       readOnlyHint: true,
     })
     available(...Scoped): ComputingUnit[] | Error;

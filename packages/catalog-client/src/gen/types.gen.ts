@@ -46,7 +46,7 @@ export type AgentTemplateSpec = {
      */
     skills?: Array<Uri>;
     /**
-     * The MCP servers the agent mounts. The platform's own server, the catalog, holds its basic tools and is listed like any other; the rest are add-ons.
+     * The MCP servers the agent mounts. The catalog's own server holds its basic tools and is listed like any other; the rest are add-ons.
      */
     mcpServers?: Array<McpBinding>;
     /**
@@ -141,8 +141,17 @@ export type AuthzSubject = {
     };
 };
 
+/**
+ * How a project looks in the app: inside it, and inside every project that inherits from it and sets no look of its own. Texera's is also the sign-in page's.
+ */
 export type Branding = {
-    name: string;
+    /**
+     * The name the app shows for the project's work.
+     */
+    name?: string;
+    /**
+     * The address of the logo the app shows beside the name.
+     */
     logoUrl?: string;
 };
 
@@ -178,7 +187,7 @@ export type ChatResource = {
 };
 
 /**
- * What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default.
+ * What a turn of a chat runs with, for the caller: each choice of the chat, else the default of the nearest project up the chat's project's chain that sets one, else the agent's own.
  */
 export type ChatSettings = {
     /**
@@ -191,7 +200,7 @@ export type ChatSettings = {
     agent: Setting;
     modelEndpoint: Setting;
     /**
-     * The platform's own server first, then the add-ons.
+     * The catalog's own server first, then the add-ons.
      */
     mcpServers: Array<ServerSetting>;
     /**
@@ -361,7 +370,7 @@ export type ConversationGraph = {
     edges: Array<GraphEdge>;
     planned: Array<PlannedItem>;
     /**
-     * The outside MCP servers the chat's agent consulted, in the order it first did; the platform's own server is not among them.
+     * The outside MCP servers the chat's agent consulted, in the order it first did; the catalog's own server is not among them.
      */
     sources: Array<GraphSource>;
 };
@@ -376,19 +385,19 @@ export type ConversationPage = {
 
 export type ConversationSpec = {
     /**
-     * The agent template the next turn runs, chosen by the person or by a handoff; absent: the project's default, else the platform's.
+     * The agent template the next turn runs, chosen by the person or by a handoff; absent: the project's default, which may come from up its chain.
      */
     template?: Uri;
     /**
-     * The model endpoint the agent uses in this chat; absent: the project's default, else the agent's own.
+     * The model endpoint the agent uses in this chat; absent: the project's default, which may come from up its chain, else the agent's own.
      */
     modelEndpoint?: Uri;
     /**
-     * The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.
+     * The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The catalog's own server is not an add-on and is never listed here.
      */
     mcpServers?: Array<Uri>;
     /**
-     * How the agent's changes go once it has said what it will do: `auto`, it makes them; `manual`, each change waits for a person's approval. Absent: the project's choice, else `auto`.
+     * How the agent's changes go once it has said what it will do: `auto`, it makes them; `manual`, each change waits for a person's approval. Absent: the project's choice, which may come from up its chain, else `auto`.
      */
     workMode?: WorkMode;
 };
@@ -417,6 +426,10 @@ export type CreateAgentTemplate = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -435,6 +448,10 @@ export type CreateComputingUnit = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -453,6 +470,10 @@ export type CreateConversation = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -471,6 +492,10 @@ export type CreateCredential = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -489,6 +514,10 @@ export type CreateDataset = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -507,6 +536,10 @@ export type CreateMcpServer = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -525,6 +558,10 @@ export type CreateModel = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -543,6 +580,10 @@ export type CreateModelEndpoint = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -561,6 +602,10 @@ export type CreateOperator = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -579,6 +624,10 @@ export type CreateProfile = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -597,6 +646,10 @@ export type CreateProject = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -615,6 +668,10 @@ export type CreateSkill = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -633,6 +690,10 @@ export type CreateWarehouse = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -651,6 +712,10 @@ export type CreateWorkflow = {
      * The parent; for a top-level kind a project, default the caller's home project.
      */
     parent?: Rid;
+    /**
+     * For a project: the project it inherits from, one the caller administers or Texera; default Texera.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -769,23 +834,6 @@ export type DatasetVersionPage = {
      * Opaque cursor for the next page; absent on the last page.
      */
     nextCursor?: string;
-};
-
-export type Defaults = {
-    /**
-     * The template a new chat starts with when the project names none.
-     */
-    agentTemplate?: Uri;
-    computingUnit?: Uri;
-    /**
-     * The profile a new computing unit is made from unless another is chosen.
-     */
-    profile?: Uri;
-    /**
-     * The warehouse an execution keeps its results in when nothing else names one.
-     */
-    warehouse?: Uri;
-    modelEndpoint?: Uri;
 };
 
 /**
@@ -1293,13 +1341,9 @@ export type Me = {
      */
     homeProject: Rid;
     /**
-     * The project that holds the platform's built-in resources.
+     * Texera: the project at the top of every chain, which every project inherits from.
      */
-    systemProject: Rid;
-    /**
-     * Whether the caller is a platform administrator.
-     */
-    admin: boolean;
+    rootProject: Rid;
     preferences: {
         [key: string]: unknown;
     };
@@ -1592,7 +1636,7 @@ export type OperatorSpec = {
      */
     propertiesSchema?: unknown;
     /**
-     * Absent for a built-in, whose code is in the engine image.
+     * Absent for one of the engine's operators, whose code is in the engine image.
      */
     implementation?: OperatorImplementation;
     requires?: RuntimeSpec;
@@ -1851,6 +1895,54 @@ export type Project = {
     status?: ProjectStatus;
 };
 
+/**
+ * What the project's work runs with when nothing nearer chooses: a request, a workflow and a chat choose first. A value here wins over the one the project inherits.
+ */
+export type ProjectDefaults = {
+    /**
+     * The agent template a chat runs.
+     */
+    agentTemplate?: Uri;
+    /**
+     * The model endpoint the agent uses in a chat; set nowhere up the chain: the agent's own.
+     */
+    modelEndpoint?: Uri;
+    /**
+     * The computing unit an execution runs on.
+     */
+    computingUnit?: Uri;
+    /**
+     * The profile a new computing unit is made from unless another is chosen.
+     */
+    profile?: Uri;
+    /**
+     * The warehouse an execution keeps its results in.
+     */
+    warehouse?: Uri;
+    /**
+     * Add-on MCP servers every chat mounts besides the agent's, unless the chat lists its own.
+     */
+    mcpServers?: Array<Uri>;
+    /**
+     * How the agent's changes go in a chat that does not choose: `auto` or `manual`; set nowhere up the chain: `auto`.
+     */
+    workMode?: WorkMode;
+};
+
+/**
+ * Bounds on the project's work. A project may narrow what it inherits, never widen it: along the chain, the strictest holds.
+ */
+export type ProjectLimits = {
+    /**
+     * How long a finished execution keeps its result tables, as an ISO 8601 duration (`P30D`, `PT12H`); its record and summaries stay. The shortest along the chain holds; set nowhere: forever.
+     */
+    results?: string;
+    /**
+     * The object stores, by endpoint, a warehouse in the project may be kept on besides the deployment's own store. A list narrows what the project inherits: a store must be on Texera's list, which allows none when it is not set, and on every list set along the chain.
+     */
+    warehouseEndpoints?: Array<string>;
+};
+
 export type ProjectPage = {
     items: Array<Project>;
     /**
@@ -1859,31 +1951,40 @@ export type ProjectPage = {
     nextCursor?: string;
 };
 
+/**
+ * A project in a chain.
+ */
+export type ProjectRef = {
+    rid: Rid;
+    name: string;
+};
+
+/**
+ * What a project's work runs with: each preference from the nearest project in its chain that sets it, each limit the strictest along the chain.
+ */
+export type ProjectSettings = {
+    /**
+     * The project and what it inherits from, nearest first: the project, its base, that one's base, and so on to Texera.
+     */
+    chain: Array<ProjectRef>;
+    branding: Branding;
+    defaults: ProjectDefaults;
+    limits: ProjectLimits;
+    /**
+     * Where each value comes from: the rid of the project that set it, by the value's path (`branding.name`, `defaults.profile`, `limits.results`). A limit set by several projects names the one whose value holds.
+     */
+    from: {
+        [key: string]: Rid;
+    };
+};
+
+/**
+ * A project's settings. What it leaves out comes from the projects up its chain.
+ */
 export type ProjectSpec = {
-    /**
-     * The computing unit an execution in this project uses when the request and the workflow name none.
-     */
-    defaultComputingUnit?: Uri;
-    /**
-     * The warehouse an execution in this project keeps its results in when the request and the workflow name none.
-     */
-    defaultWarehouse?: Uri;
-    /**
-     * The agent template a chat in this project runs when the chat names none.
-     */
-    defaultAgentTemplate?: Uri;
-    /**
-     * The model endpoint the agent uses in a chat of this project when the chat names none; absent: the agent's own.
-     */
-    defaultModelEndpoint?: Uri;
-    /**
-     * Add-on MCP servers every chat in this project mounts besides the agent's, unless the chat lists its own.
-     */
-    mcpServers?: Array<Uri>;
-    /**
-     * How the agent's changes go in a chat of this project when the chat does not choose: `auto` or `manual`; absent: `auto`.
-     */
-    defaultWorkMode?: WorkMode;
+    branding?: Branding;
+    defaults?: ProjectDefaults;
+    limits?: ProjectLimits;
 };
 
 export type ProjectStatus = {
@@ -1894,9 +1995,9 @@ export type ProjectStatus = {
 };
 
 /**
- * What the app needs before anyone has logged in.
+ * What the app needs before anyone has signed in: Texera's look and how to sign in.
  */
-export type PublicSettings = {
+export type PublicInfo = {
     branding: Branding;
     auth: AuthSettings;
 };
@@ -1921,7 +2022,7 @@ export type PythonOperator = {
 };
 
 /**
- * The grantable relations. `user` is for computing units: may run on it, without reading its spec.
+ * The grantable relations. On a project, an `owner` is one of its admins, who change the project itself (its settings, what it inherits from, its people), and an `editor` is a member, who works in it. `user` may use without reading: run on a computing unit, keep results in a warehouse, lease a credential.
  */
 export type Relation = 'owner' | 'editor' | 'viewer' | 'user';
 
@@ -1963,7 +2064,7 @@ export type Resource = {
 /**
  * The kinds. The value is the singular kebab-case kind; the collection is its plural.
  */
-export type ResourceKind = 'project' | 'workflow' | 'execution' | 'dataset' | 'model' | 'profile' | 'computing-unit' | 'warehouse' | 'operator' | 'agent-template' | 'skill' | 'mcp-server' | 'conversation' | 'credential' | 'model-endpoint' | 'settings';
+export type ResourceKind = 'project' | 'workflow' | 'execution' | 'dataset' | 'model' | 'profile' | 'computing-unit' | 'warehouse' | 'operator' | 'agent-template' | 'skill' | 'mcp-server' | 'conversation' | 'credential' | 'model-endpoint';
 
 export type ResourceMetadata = {
     rid: Rid;
@@ -1981,6 +2082,10 @@ export type ResourceMetadata = {
      * The nearest project: the resource itself for a project.
      */
     project: Rid;
+    /**
+     * For a project, its base: the project it inherits from. Its people read and use what the base holds, and its settings fill in what the project's own leave out. Every project has one but Texera, at the top of every chain.
+     */
+    base?: Rid;
     owner: Pid;
     visibility: Visibility;
     labels?: {
@@ -2006,20 +2111,6 @@ export type ResourcePage = {
      * Opaque cursor for the next page; absent on the last page.
      */
     nextCursor?: string;
-};
-
-/**
- * How long the catalog keeps what executions and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).
- */
-export type Retention = {
-    /**
-     * Finished executions keep their result tables this long; absent: forever. An execution's record and its summaries stay.
-     */
-    results?: string;
-    /**
-     * An uploaded file that no version and no staging names is removed this long after its upload; absent: one day.
-     */
-    blobs?: string;
 };
 
 /**
@@ -2119,7 +2210,7 @@ export type SaveUnitAsProfile = {
      */
     name?: string;
     /**
-     * The project a new profile goes into; absent: the unit's, or for a unit of the platform's own the chat's project in a chat, else the caller's own.
+     * The project a new profile goes into; absent: the unit's, when the caller may add to it, else the chat's project in a chat, else the caller's own.
      */
     parent?: Rid;
 };
@@ -2132,7 +2223,11 @@ export type ServerSetting = {
     name: string;
     from: SettingSource;
     /**
-     * True for the platform's own server, the catalog: the agent's basic tools, called as the person. Every other server is an add-on a turn can go without.
+     * The project whose default it is, when it comes from a project.
+     */
+    project?: ChatProject;
+    /**
+     * True for the catalog's own server: the agent's basic tools, called as the person. Every other server is an add-on a turn can go without.
      */
     platform: boolean;
     /**
@@ -2157,40 +2252,16 @@ export type Setting = {
     uri: Uri;
     name: string;
     from: SettingSource;
-};
-
-/**
- * The level a setting of a chat comes from.
- */
-export type SettingSource = 'chat' | 'project' | 'agent' | 'platform';
-
-/**
- * The typed envelope, served by the kind routes.
- */
-export type Settings = {
-    apiVersion: 'catalog.texera.apache.org/v1';
-    kind: ResourceKind;
-    metadata: ResourceMetadata;
-    spec: SettingsSpec;
-    status?: SettingsStatus;
-};
-
-export type SettingsSpec = {
-    branding: Branding;
-    defaults: Defaults;
-    features?: {
-        [key: string]: boolean;
-    };
-    retention?: Retention;
     /**
-     * The object stores, by endpoint, a warehouse of someone's own may be kept on besides the deployment's own store. The lake and the computing units connect to the address a warehouse names, so an administrator lists them.
+     * The project whose default it is, when it comes from a project.
      */
-    warehouseEndpoints?: Array<string>;
+    project?: ChatProject;
 };
 
-export type SettingsStatus = {
-    [key: string]: unknown;
-};
+/**
+ * Where a chat's setting comes from: the chat's own choice, a project's default (the chat's project or one up its chain), the agent's own, or, when nothing chose, the catalog's default.
+ */
+export type SettingSource = 'chat' | 'project' | 'agent' | 'default';
 
 /**
  * The typed envelope, served by the kind routes.
@@ -2380,6 +2451,10 @@ export type UpdateMetadata = {
      * Moves a top-level resource to another project.
      */
     parent?: Rid;
+    /**
+     * For a project: inherit from another project instead, one the caller administers or Texera. The project's admins change it.
+     */
+    base?: Rid;
     visibility?: Visibility;
     labels?: {
         [key: string]: string;
@@ -2436,18 +2511,6 @@ export type UpdateProfile = {
 
 export type UpdateProject = {
     spec: ProjectSpec;
-    /**
-     * Recorded on the new version of a versioned kind.
-     */
-    message?: string;
-    /**
-     * The head version the caller saw; refused with 409 when it moved.
-     */
-    expectedHead?: Vno;
-};
-
-export type UpdateSettings = {
-    spec: SettingsSpec;
     /**
      * Recorded on the new version of a versioned kind.
      */
@@ -2615,7 +2678,7 @@ export type WarehouseStatus = {
  */
 export type WarehouseStorage = {
     /**
-     * The store's endpoint, as the lake and the computing units reach it. It is the deployment's own store or one an administrator listed in the settings (`warehouseEndpoints`).
+     * The store's endpoint, as the lake and the computing units reach it. It is the deployment's own store or one the limits of the warehouse's project allow (`limits.warehouseEndpoints`, on every list set up its chain).
      */
     endpoint: string;
     region: string;
@@ -2636,11 +2699,15 @@ export type WarehouseStorage = {
 export type WorkMode = 'auto' | 'manual';
 
 /**
- * How the agent's changes go in a chat: the chat's choice, else the project's, else the platform's (`auto`).
+ * How the agent's changes go in a chat: the chat's choice, else the nearest project's up the chain, else `auto`.
  */
 export type WorkModeSetting = {
     mode: WorkMode;
     from: SettingSource;
+    /**
+     * The project whose default it is, when it comes from a project.
+     */
+    project?: ChatProject;
 };
 
 /**
@@ -2677,7 +2744,7 @@ export type WorkflowOperator = {
      */
     operatorID: string;
     /**
-     * A built-in operator type, e.g. CSVFileScan, or the URI of a custom operator with `@vno`.
+     * One of the engine's operator types, e.g. CSVFileScan, which the workflow's project or one up its chain offers, or the URI of a custom operator with `@vno`.
      */
     operatorType: string;
     /**
@@ -2798,7 +2865,7 @@ export type WorkflowVersionPage = {
 };
 
 /**
- * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+ * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
  */
 export type Scoped = Rid;
 
@@ -2832,7 +2899,7 @@ export type AgentTemplatesListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -3034,7 +3101,7 @@ export type ComputingUnitsListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -3094,7 +3161,7 @@ export type ComputingUnitsAvailableData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
     };
@@ -3372,7 +3439,7 @@ export type ConversationsListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -3737,7 +3804,7 @@ export type CredentialsListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -3935,7 +4002,7 @@ export type DatasetsListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -4374,7 +4441,7 @@ export type McpServersListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -4630,7 +4697,7 @@ export type ModelEndpointsListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -4774,7 +4841,7 @@ export type ModelsListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -5181,7 +5248,7 @@ export type OperatorsListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         q?: string;
@@ -5441,7 +5508,7 @@ export type ProfilesListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -5643,7 +5710,7 @@ export type ProjectsListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -5809,12 +5876,64 @@ export type ProjectsChatSettingsResponses = {
 
 export type ProjectsChatSettingsResponse = ProjectsChatSettingsResponses[keyof ProjectsChatSettingsResponses];
 
+export type ProjectsSettingsData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/projects/{rid}/settings';
+};
+
+export type ProjectsSettingsErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ProjectsSettingsError = ProjectsSettingsErrors[keyof ProjectsSettingsErrors];
+
+export type ProjectsSettingsResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: ProjectSettings;
+};
+
+export type ProjectsSettingsResponse = ProjectsSettingsResponses[keyof ProjectsSettingsResponses];
+
+export type PublicReadData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/catalog/v1/public';
+};
+
+export type PublicReadErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type PublicReadError = PublicReadErrors[keyof PublicReadErrors];
+
+export type PublicReadResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: PublicInfo;
+};
+
+export type PublicReadResponse = PublicReadResponses[keyof PublicReadResponses];
+
 export type ResourcesSearchData = {
     body?: never;
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         q?: string;
@@ -6248,115 +6367,37 @@ export type ResourcesReadVersionResponses = {
 
 export type ResourcesReadVersionResponse = ResourcesReadVersionResponses[keyof ResourcesReadVersionResponses];
 
-export type SettingsRoutesReadData = {
+export type RetentionSweepData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/catalog/v1/settings';
+    url: '/catalog/v1/retention/sweep';
 };
 
-export type SettingsRoutesReadErrors = {
+export type RetentionSweepErrors = {
     /**
      * An unexpected error response.
      */
     default: Error;
 };
 
-export type SettingsRoutesReadError = SettingsRoutesReadErrors[keyof SettingsRoutesReadErrors];
+export type RetentionSweepError = RetentionSweepErrors[keyof RetentionSweepErrors];
 
-export type SettingsRoutesReadResponses = {
-    /**
-     * The request has succeeded.
-     */
-    200: Settings;
-};
-
-export type SettingsRoutesReadResponse = SettingsRoutesReadResponses[keyof SettingsRoutesReadResponses];
-
-export type SettingsRoutesUpdateData = {
-    body: UpdateSettings;
-    headers?: {
-        'If-Match'?: string;
-    };
-    path?: never;
-    query?: never;
-    url: '/catalog/v1/settings';
-};
-
-export type SettingsRoutesUpdateErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type SettingsRoutesUpdateError = SettingsRoutesUpdateErrors[keyof SettingsRoutesUpdateErrors];
-
-export type SettingsRoutesUpdateResponses = {
-    /**
-     * The request has succeeded.
-     */
-    200: Settings;
-};
-
-export type SettingsRoutesUpdateResponse = SettingsRoutesUpdateResponses[keyof SettingsRoutesUpdateResponses];
-
-export type SettingsRoutesPublicData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/catalog/v1/settings/public';
-};
-
-export type SettingsRoutesPublicErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type SettingsRoutesPublicError = SettingsRoutesPublicErrors[keyof SettingsRoutesPublicErrors];
-
-export type SettingsRoutesPublicResponses = {
-    /**
-     * The request has succeeded.
-     */
-    200: PublicSettings;
-};
-
-export type SettingsRoutesPublicResponse = SettingsRoutesPublicResponses[keyof SettingsRoutesPublicResponses];
-
-export type SettingsRoutesSweepData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/catalog/v1/settings/retention/sweep';
-};
-
-export type SettingsRoutesSweepErrors = {
-    /**
-     * An unexpected error response.
-     */
-    default: Error;
-};
-
-export type SettingsRoutesSweepError = SettingsRoutesSweepErrors[keyof SettingsRoutesSweepErrors];
-
-export type SettingsRoutesSweepResponses = {
+export type RetentionSweepResponses = {
     /**
      * The request has succeeded.
      */
     200: RetentionSweep;
 };
 
-export type SettingsRoutesSweepResponse = SettingsRoutesSweepResponses[keyof SettingsRoutesSweepResponses];
+export type RetentionSweepResponse = RetentionSweepResponses[keyof RetentionSweepResponses];
 
 export type SkillsListData = {
     body?: never;
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -6558,7 +6599,7 @@ export type WarehousesListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;
@@ -6702,7 +6743,7 @@ export type WorkflowsListData = {
     path?: never;
     query?: {
         /**
-         * A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
+         * A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.
          */
         scope?: Rid;
         parent?: Rid;

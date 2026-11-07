@@ -30,9 +30,7 @@ func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID
 			return nil, Invalid("the workflow version is not a workflow spec", nil)
 		}
 	}
-	project := s.projectSpec(ctx, wf.ProjectRID)
-	settings := s.settingsSpec(ctx)
-	unitName = firstNonEmpty(unitName, uriString(spec.DefaultComputingUnit), uriString(project.DefaultComputingUnit), uriString(settings.Defaults.ComputingUnit))
+	unitName = firstNonEmpty(unitName, uriString(spec.DefaultComputingUnit), uriString(s.defaultsOf(ctx, wf.ProjectRID).ComputingUnit))
 	if unitName == "" {
 		return nil, Conflict("no_unit", "no computing unit to compile on", nil)
 	}
@@ -42,7 +40,7 @@ func (s *Service) Validate(ctx context.Context, caller *auth.Caller, workflowRID
 	}
 	// The same compile and the same authorization as an execution; the engine then compiles the
 	// bound copy, with the credentials left as URIs.
-	c, err := s.compile(ctx, spec)
+	c, err := s.compile(ctx, spec, wf.ProjectRID)
 	if err != nil {
 		return nil, err
 	}

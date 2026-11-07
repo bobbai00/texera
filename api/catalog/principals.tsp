@@ -15,10 +15,8 @@ model Me {
   principal: Principal;
   @doc("The caller's personal project, created at first login.")
   homeProject: Rid;
-  @doc("The project that holds the platform's built-in resources.")
-  systemProject: Rid;
-  @doc("Whether the caller is a platform administrator.")
-  admin: boolean;
+  @doc("Texera: the project at the top of every chain, which every project inherits from.")
+  rootProject: Rid;
   preferences: Record<unknown>;
 }
 
@@ -32,7 +30,7 @@ namespace Routes {
     @extension("x-texera-permission", "self")
     @extension("x-mcp", #{
       tool: "whoami",
-      description: "Who am I: the calling principal, the home project and the system project.",
+      description: "Who am I: the calling principal, the home project and Texera, the project every project inherits from.",
       readOnlyHint: true,
     })
     get(): Texera.Catalog.Me | Error;

@@ -18,9 +18,9 @@ import (
 
 // What a chat runs with. A chat stores choices of how its agent works and nothing else: its
 // agent, the model the agent uses, its add-on MCP servers, and whether the agent's changes
-// wait for a person's approval. Each is optional, and a new chat
-// stores none. A turn runs with the chat's choice, else the project's, else the agent's own or
-// the platform's default. A choice that names something gone, or something the caller may not
+// wait for a person's approval. Each is optional, and a new chat stores none. A turn runs with
+// the chat's choice, else the default of the nearest project up the chat's project's chain that
+// sets one (Texera's at the top), else the agent's own. A choice that names something gone, or something the caller may not
 // use, is passed over and reported, so a chat shared with someone who lacks its owner's rights
 // still works for them. Where an execution runs is not a chat's choice: an execution started in
 // a chat goes where any other does.
@@ -70,10 +70,11 @@ func (s *Service) chatSettings(ctx context.Context, caller *auth.Caller, conv *s
 	return s.resolveChat(ctx, caller, chat, project)
 }
 
-// choice is what one level names for a setting.
+// choice is what one level names for a setting, and the project it is the default of.
 type choice struct {
-	uri  *api.Uri
-	from api.SettingSource
+	uri     *api.Uri
+	from    api.SettingSource
+	project *api.ChatProject
 }
 
 // chatResolver resolves the settings of one chat for one caller, keeping what it passes over.
@@ -86,19 +87,24 @@ type chatResolver struct {
 
 func (s *Service) resolveChat(ctx context.Context, caller *auth.Caller, chat api.ConversationSpec, project *store.Resource) (*api.ChatSettings, error) {
 	r := &chatResolver{s: s, ctx: ctx, caller: caller}
-	var inProject api.ProjectSpec
-	_ = json.Unmarshal(project.Spec, &inProject)
-	platform := s.settingsSpec(ctx).Defaults
+	settings, err := s.settingsOf(ctx, project.RID)
+	if err != nil {
+		return nil, err
+	}
+	// A project's default, with the project of the chain that sets it.
+	inProject := func(value *api.Uri, path string) choice {
+		return choice{value, api.SettingSourceProject, projectRefOf(settings, settings.From[path])}
+	}
 
 	agent, chosen := r.first(api.SkippedSettingSettingTemplate, r.agent,
-		choice{chat.Template, api.SettingSourceChat}, choice{inProject.DefaultAgentTemplate, api.SettingSourceProject}, choice{platform.AgentTemplate, api.SettingSourcePlatform})
+		choice{chat.Template, api.SettingSourceChat, nil}, inProject(settings.Defaults.AgentTemplate, "defaults.agentTemplate"))
 	if agent == nil {
-		return nil, Conflict("no_agent", "no agent for this chat: neither the chat, its project nor the platform names one the caller may use", nil)
+		return nil, Conflict("no_agent", "no agent for this chat: neither the chat nor its project, nor any project it inherits from, names one the caller may use", nil)
 	}
 	// The agent at the version a turn runs: the one its URI pins, else the head.
 	out := &api.ChatSettings{
 		Project: api.ChatProject{Rid: api.Rid(project.RID.String()), Name: project.Name},
-		Agent:   api.Setting{Uri: api.Uri(URI(agent).WithVersion(versionOf(agent, *chosen.uri)).String()), Name: agent.Name, From: chosen.from},
+		Agent:   api.Setting{Uri: api.Uri(URI(agent).WithVersion(versionOf(agent, *chosen.uri)).String()), Name: agent.Name, From: chosen.from, Project: chosen.project},
 	}
 	var own api.AgentTemplateSpec
 	if err := json.Unmarshal(agent.Spec, &own); err != nil {
@@ -106,30 +112,31 @@ func (s *Service) resolveChat(ctx context.Context, caller *auth.Caller, chat api
 	}
 
 	model, chosen := r.first(api.SkippedSettingSettingModelEndpoint, r.modelEndpoint,
-		choice{chat.ModelEndpoint, api.SettingSourceChat}, choice{inProject.DefaultModelEndpoint, api.SettingSourceProject}, choice{&own.Model, api.SettingSourceAgent})
+		choice{chat.ModelEndpoint, api.SettingSourceChat, nil}, inProject(settings.Defaults.ModelEndpoint, "defaults.modelEndpoint"), choice{&own.Model, api.SettingSourceAgent, nil})
 	if model == nil {
 		return nil, Conflict("no_model", "no model endpoint for this chat that the caller may use", nil)
 	}
-	out.ModelEndpoint = settingOf(model, chosen.from)
+	out.ModelEndpoint = settingOf(model, chosen)
 
-	out.McpServers = r.servers(own, chat, inProject)
-	out.WorkMode = workMode(chat, inProject)
+	out.McpServers = r.servers(own, chat, settings)
+	out.WorkMode = workMode(chat, settings)
 	if len(r.skipped) > 0 {
 		out.Skipped = &r.skipped
 	}
 	return out, nil
 }
 
-// workMode is how the agent's changes go in a chat: the chat's choice, else the project's,
-// else the platform's, which is to make them once the agent has started its work.
-func workMode(chat api.ConversationSpec, project api.ProjectSpec) api.WorkModeSetting {
+// workMode is how the agent's changes go in a chat: the chat's choice, else the nearest
+// project's up the chain, else the catalog's default, which is to make them once the agent has
+// started its work.
+func workMode(chat api.ConversationSpec, settings *api.ProjectSettings) api.WorkModeSetting {
 	switch {
 	case chat.WorkMode != nil && chat.WorkMode.Valid():
 		return api.WorkModeSetting{Mode: *chat.WorkMode, From: api.SettingSourceChat}
-	case project.DefaultWorkMode != nil && project.DefaultWorkMode.Valid():
-		return api.WorkModeSetting{Mode: *project.DefaultWorkMode, From: api.SettingSourceProject}
+	case settings.Defaults.WorkMode != nil:
+		return api.WorkModeSetting{Mode: *settings.Defaults.WorkMode, From: api.SettingSourceProject, Project: projectRefOf(settings, settings.From["defaults.workMode"])}
 	default:
-		return api.WorkModeSetting{Mode: api.WorkModeAuto, From: api.SettingSourcePlatform}
+		return api.WorkModeSetting{Mode: api.WorkModeAuto, From: api.SettingSourceDefault}
 	}
 }
 
@@ -202,17 +209,18 @@ func (r *chatResolver) server(name string) (*store.Resource, error) {
 // always there. The add-ons are the chat's when it lists its own, else the agent's and then
 // the project's. A server is mounted once, and what the agent may call of it is the agent's
 // rule wherever the server is listed.
-func (r *chatResolver) servers(agent api.AgentTemplateSpec, chat api.ConversationSpec, project api.ProjectSpec) []api.ServerSetting {
+func (r *chatResolver) servers(agent api.AgentTemplateSpec, chat api.ConversationSpec, settings *api.ProjectSettings) []api.ServerSetting {
 	type listed struct {
-		uri   api.Uri
-		from  api.SettingSource
-		allow *[]string
+		uri     api.Uri
+		from    api.SettingSource
+		allow   *[]string
+		project *api.ChatProject
 	}
 	var order []listed
 	allowed := map[string]*[]string{}
 	if agent.McpServers != nil {
 		for _, b := range *agent.McpServers {
-			order = append(order, listed{b.Server, api.SettingSourceAgent, b.Allow})
+			order = append(order, listed{b.Server, api.SettingSourceAgent, b.Allow, nil})
 			if ref, err := uri.Parse(string(b.Server)); err == nil {
 				allowed[ref.Rid] = b.Allow
 			}
@@ -221,11 +229,12 @@ func (r *chatResolver) servers(agent api.AgentTemplateSpec, chat api.Conversatio
 	ownChoice := chat.McpServers != nil
 	if ownChoice {
 		for _, name := range *chat.McpServers {
-			order = append(order, listed{name, api.SettingSourceChat, nil})
+			order = append(order, listed{name, api.SettingSourceChat, nil, nil})
 		}
-	} else if project.McpServers != nil {
-		for _, name := range *project.McpServers {
-			order = append(order, listed{name, api.SettingSourceProject, nil})
+	} else if settings.Defaults.McpServers != nil {
+		from := projectRefOf(settings, settings.From["defaults.mcpServers"])
+		for _, name := range *settings.Defaults.McpServers {
+			order = append(order, listed{name, api.SettingSourceProject, nil, from})
 		}
 	}
 
@@ -242,7 +251,7 @@ func (r *chatResolver) servers(agent api.AgentTemplateSpec, chat api.Conversatio
 			continue
 		}
 		seen[server.RID] = true
-		setting := api.ServerSetting{Uri: api.Uri(URI(server).String()), Name: server.Name, From: l.from, Platform: own, Allow: l.allow}
+		setting := api.ServerSetting{Uri: api.Uri(URI(server).String()), Name: server.Name, From: l.from, Project: l.project, Platform: own, Allow: l.allow}
 		if setting.Allow == nil {
 			setting.Allow = allowed[server.RID.String()]
 		}
@@ -269,8 +278,8 @@ func (s *Service) ownMcpURL() string {
 	return strings.TrimSuffix(s.Config.PublicURL, "/") + McpPath
 }
 
-func settingOf(r *store.Resource, from api.SettingSource) api.Setting {
-	return api.Setting{Uri: api.Uri(URI(r).String()), Name: r.Name, From: from}
+func settingOf(r *store.Resource, c choice) api.Setting {
+	return api.Setting{Uri: api.Uri(URI(r).String()), Name: r.Name, From: c.from, Project: c.project}
 }
 
 // versionOf is the version a URI names of a resource: the one it pins, else the head.

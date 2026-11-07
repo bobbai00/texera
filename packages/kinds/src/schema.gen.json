@@ -87,7 +87,7 @@
           "$ref": "#/$defs/LoopSpec"
         },
         "mcpServers": {
-          "description": "The MCP servers the agent mounts. The platform's own server, the catalog, holds its basic tools and is listed like any other; the rest are add-ons.",
+          "description": "The MCP servers the agent mounts. The catalog's own server holds its basic tools and is listed like any other; the rest are add-ons.",
           "items": {
             "$ref": "#/$defs/McpBinding"
           },
@@ -351,17 +351,17 @@
       "type": "object"
     },
     "Branding": {
+      "description": "How a project looks in the app: inside it, and inside every project that inherits from it and sets no look of its own. Texera's is also the sign-in page's.",
       "properties": {
         "logoUrl": {
+          "description": "The address of the logo the app shows beside the name.",
           "type": "string"
         },
         "name": {
+          "description": "The name the app shows for the project's work.",
           "type": "string"
         }
       },
-      "required": [
-        "name"
-      ],
       "type": "object"
     },
     "CanvasPoint": {
@@ -423,14 +423,14 @@
       "type": "object"
     },
     "ChatSettings": {
-      "description": "What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default.",
+      "description": "What a turn of a chat runs with, for the caller: each choice of the chat, else the default of the nearest project up the chat's project's chain that sets one, else the agent's own.",
       "properties": {
         "agent": {
           "$ref": "#/$defs/Setting",
           "description": "The agent, at the version a turn runs."
         },
         "mcpServers": {
-          "description": "The platform's own server first, then the add-ons.",
+          "description": "The catalog's own server first, then the add-ons.",
           "items": {
             "$ref": "#/$defs/ServerSetting"
           },
@@ -844,7 +844,7 @@
           "type": "array"
         },
         "sources": {
-          "description": "The outside MCP servers the chat's agent consulted, in the order it first did; the platform's own server is not among them.",
+          "description": "The outside MCP servers the chat's agent consulted, in the order it first did; the catalog's own server is not among them.",
           "items": {
             "$ref": "#/$defs/GraphSource"
           },
@@ -880,7 +880,7 @@
     "ConversationSpec": {
       "properties": {
         "mcpServers": {
-          "description": "The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.",
+          "description": "The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The catalog's own server is not an add-on and is never listed here.",
           "items": {
             "$ref": "#/$defs/Uri"
           },
@@ -888,15 +888,15 @@
         },
         "modelEndpoint": {
           "$ref": "#/$defs/Uri",
-          "description": "The model endpoint the agent uses in this chat; absent: the project's default, else the agent's own."
+          "description": "The model endpoint the agent uses in this chat; absent: the project's default, which may come from up its chain, else the agent's own."
         },
         "template": {
           "$ref": "#/$defs/Uri",
-          "description": "The agent template the next turn runs, chosen by the person or by a handoff; absent: the project's default, else the platform's."
+          "description": "The agent template the next turn runs, chosen by the person or by a handoff; absent: the project's default, which may come from up its chain."
         },
         "workMode": {
           "$ref": "#/$defs/WorkMode",
-          "description": "How the agent's changes go once it has said what it will do: `auto`, it makes them; `manual`, each change waits for a person's approval. Absent: the project's choice, else `auto`."
+          "description": "How the agent's changes go once it has said what it will do: `auto`, it makes them; `manual`, each change waits for a person's approval. Absent: the project's choice, which may come from up its chain, else `auto`."
         }
       },
       "type": "object"
@@ -934,6 +934,10 @@
     },
     "CreateAgentTemplate": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -969,6 +973,10 @@
     },
     "CreateComputingUnit": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1004,6 +1012,10 @@
     },
     "CreateConversation": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1039,6 +1051,10 @@
     },
     "CreateCredential": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1074,6 +1090,10 @@
     },
     "CreateDataset": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1109,6 +1129,10 @@
     },
     "CreateMcpServer": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1144,6 +1168,10 @@
     },
     "CreateModel": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1179,6 +1207,10 @@
     },
     "CreateModelEndpoint": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1214,6 +1246,10 @@
     },
     "CreateOperator": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1249,6 +1285,10 @@
     },
     "CreateProfile": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1284,6 +1324,10 @@
     },
     "CreateProject": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1319,6 +1363,10 @@
     },
     "CreateSkill": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1354,6 +1402,10 @@
     },
     "CreateWarehouse": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1389,6 +1441,10 @@
     },
     "CreateWorkflow": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: the project it inherits from, one the caller administers or Texera; default Texera."
+        },
         "description": {
           "type": "string"
         },
@@ -1701,29 +1757,6 @@
       "required": [
         "items"
       ],
-      "type": "object"
-    },
-    "Defaults": {
-      "properties": {
-        "agentTemplate": {
-          "$ref": "#/$defs/Uri",
-          "description": "The template a new chat starts with when the project names none."
-        },
-        "computingUnit": {
-          "$ref": "#/$defs/Uri"
-        },
-        "modelEndpoint": {
-          "$ref": "#/$defs/Uri"
-        },
-        "profile": {
-          "$ref": "#/$defs/Uri",
-          "description": "The profile a new computing unit is made from unless another is chosen."
-        },
-        "warehouse": {
-          "$ref": "#/$defs/Uri",
-          "description": "The warehouse an execution keeps its results in when nothing else names one."
-        }
-      },
       "type": "object"
     },
     "Digest": {
@@ -2761,10 +2794,6 @@
     },
     "Me": {
       "properties": {
-        "admin": {
-          "description": "Whether the caller is a platform administrator.",
-          "type": "boolean"
-        },
         "homeProject": {
           "$ref": "#/$defs/Rid",
           "description": "The caller's personal project, created at first login."
@@ -2776,16 +2805,15 @@
         "principal": {
           "$ref": "#/$defs/Principal"
         },
-        "systemProject": {
+        "rootProject": {
           "$ref": "#/$defs/Rid",
-          "description": "The project that holds the platform's built-in resources."
+          "description": "Texera: the project at the top of every chain, which every project inherits from."
         }
       },
       "required": [
         "principal",
         "homeProject",
-        "systemProject",
-        "admin",
+        "rootProject",
         "preferences"
       ],
       "type": "object"
@@ -3385,7 +3413,7 @@
         },
         "implementation": {
           "$ref": "#/$defs/OperatorImplementation",
-          "description": "Absent for a built-in, whose code is in the engine image."
+          "description": "Absent for one of the engine's operators, whose code is in the engine image."
         },
         "inputPorts": {
           "items": {
@@ -3947,6 +3975,61 @@
         "versioned": false
       }
     },
+    "ProjectDefaults": {
+      "description": "What the project's work runs with when nothing nearer chooses: a request, a workflow and a chat choose first. A value here wins over the one the project inherits.",
+      "properties": {
+        "agentTemplate": {
+          "$ref": "#/$defs/Uri",
+          "description": "The agent template a chat runs."
+        },
+        "computingUnit": {
+          "$ref": "#/$defs/Uri",
+          "description": "The computing unit an execution runs on."
+        },
+        "mcpServers": {
+          "description": "Add-on MCP servers every chat mounts besides the agent's, unless the chat lists its own.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        },
+        "modelEndpoint": {
+          "$ref": "#/$defs/Uri",
+          "description": "The model endpoint the agent uses in a chat; set nowhere up the chain: the agent's own."
+        },
+        "profile": {
+          "$ref": "#/$defs/Uri",
+          "description": "The profile a new computing unit is made from unless another is chosen."
+        },
+        "warehouse": {
+          "$ref": "#/$defs/Uri",
+          "description": "The warehouse an execution keeps its results in."
+        },
+        "workMode": {
+          "$ref": "#/$defs/WorkMode",
+          "description": "How the agent's changes go in a chat that does not choose: `auto` or `manual`; set nowhere up the chain: `auto`."
+        }
+      },
+      "type": "object"
+    },
+    "ProjectLimits": {
+      "description": "Bounds on the project's work. A project may narrow what it inherits, never widen it: along the chain, the strictest holds.",
+      "properties": {
+        "results": {
+          "description": "How long a finished execution keeps its result tables, as an ISO 8601 duration (`P30D`, `PT12H`); its record and summaries stay. The shortest along the chain holds; set nowhere: forever.",
+          "format": "duration",
+          "type": "string"
+        },
+        "warehouseEndpoints": {
+          "description": "The object stores, by endpoint, a warehouse in the project may be kept on besides the deployment's own store. A list narrows what the project inherits: a store must be on Texera's list, which allows none when it is not set, and on every list set along the chain.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "ProjectPage": {
       "properties": {
         "items": {
@@ -3965,34 +4048,69 @@
       ],
       "type": "object"
     },
-    "ProjectSpec": {
+    "ProjectRef": {
+      "description": "A project in a chain.",
       "properties": {
-        "defaultAgentTemplate": {
-          "$ref": "#/$defs/Uri",
-          "description": "The agent template a chat in this project runs when the chat names none."
+        "name": {
+          "type": "string"
         },
-        "defaultComputingUnit": {
-          "$ref": "#/$defs/Uri",
-          "description": "The computing unit an execution in this project uses when the request and the workflow name none."
+        "rid": {
+          "$ref": "#/$defs/Rid"
+        }
+      },
+      "required": [
+        "rid",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ProjectSettings": {
+      "description": "What a project's work runs with: each preference from the nearest project in its chain that sets it, each limit the strictest along the chain.",
+      "properties": {
+        "branding": {
+          "$ref": "#/$defs/Branding"
         },
-        "defaultModelEndpoint": {
-          "$ref": "#/$defs/Uri",
-          "description": "The model endpoint the agent uses in a chat of this project when the chat names none; absent: the agent's own."
-        },
-        "defaultWarehouse": {
-          "$ref": "#/$defs/Uri",
-          "description": "The warehouse an execution in this project keeps its results in when the request and the workflow name none."
-        },
-        "defaultWorkMode": {
-          "$ref": "#/$defs/WorkMode",
-          "description": "How the agent's changes go in a chat of this project when the chat does not choose: `auto` or `manual`; absent: `auto`."
-        },
-        "mcpServers": {
-          "description": "Add-on MCP servers every chat in this project mounts besides the agent's, unless the chat lists its own.",
+        "chain": {
+          "description": "The project and what it inherits from, nearest first: the project, its base, that one's base, and so on to Texera.",
           "items": {
-            "$ref": "#/$defs/Uri"
+            "$ref": "#/$defs/ProjectRef"
           },
           "type": "array"
+        },
+        "defaults": {
+          "$ref": "#/$defs/ProjectDefaults"
+        },
+        "from": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Rid"
+          },
+          "description": "Where each value comes from: the rid of the project that set it, by the value's path (`branding.name`, `defaults.profile`, `limits.results`). A limit set by several projects names the one whose value holds.",
+          "type": "object"
+        },
+        "limits": {
+          "$ref": "#/$defs/ProjectLimits"
+        }
+      },
+      "required": [
+        "chain",
+        "branding",
+        "defaults",
+        "limits",
+        "from"
+      ],
+      "type": "object"
+    },
+    "ProjectSpec": {
+      "description": "A project's settings. What it leaves out comes from the projects up its chain.",
+      "properties": {
+        "branding": {
+          "$ref": "#/$defs/Branding"
+        },
+        "defaults": {
+          "$ref": "#/$defs/ProjectDefaults"
+        },
+        "limits": {
+          "$ref": "#/$defs/ProjectLimits"
         }
       },
       "type": "object"
@@ -4007,8 +4125,8 @@
       },
       "type": "object"
     },
-    "PublicSettings": {
-      "description": "What the app needs before anyone has logged in.",
+    "PublicInfo": {
+      "description": "What the app needs before anyone has signed in: Texera's look and how to sign in.",
       "properties": {
         "auth": {
           "$ref": "#/$defs/AuthSettings"
@@ -4051,7 +4169,7 @@
       "type": "object"
     },
     "Relation": {
-      "description": "The grantable relations. `user` is for computing units: may run on it, without reading its spec.",
+      "description": "The grantable relations. On a project, an `owner` is one of its admins, who change the project itself (its settings, what it inherits from, its people), and an `editor` is a member, who works in it. `user` may use without reading: run on a computing unit, keep results in a warehouse, lease a credential.",
       "enum": [
         "owner",
         "editor",
@@ -4146,13 +4264,16 @@
         "mcp-server",
         "conversation",
         "credential",
-        "model-endpoint",
-        "settings"
+        "model-endpoint"
       ],
       "type": "string"
     },
     "ResourceMetadata": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project, its base: the project it inherits from. Its people read and use what the base holds, and its settings fill in what the project's own leave out. Every project has one but Texera, at the top of every chain."
+        },
         "createdAt": {
           "format": "date-time",
           "type": "string"
@@ -4240,22 +4361,6 @@
       "required": [
         "items"
       ],
-      "type": "object"
-    },
-    "Retention": {
-      "description": "How long the catalog keeps what executions and uploads leave behind, as ISO 8601 durations (`P30D`, `PT12H`).",
-      "properties": {
-        "blobs": {
-          "description": "An uploaded file that no version and no staging names is removed this long after its upload; absent: one day.",
-          "format": "duration",
-          "type": "string"
-        },
-        "results": {
-          "description": "Finished executions keep their result tables this long; absent: forever. An execution's record and its summaries stay.",
-          "format": "duration",
-          "type": "string"
-        }
-      },
       "type": "object"
     },
     "RetentionSweep": {
@@ -4395,7 +4500,7 @@
         },
         "parent": {
           "$ref": "#/$defs/Rid",
-          "description": "The project a new profile goes into; absent: the unit's, or for a unit of the platform's own the chat's project in a chat, else the caller's own."
+          "description": "The project a new profile goes into; absent: the unit's, when the caller may add to it, else the chat's project in a chat, else the caller's own."
         },
         "profile": {
           "$ref": "#/$defs/Uri",
@@ -4421,8 +4526,12 @@
           "type": "string"
         },
         "platform": {
-          "description": "True for the platform's own server, the catalog: the agent's basic tools, called as the person. Every other server is an add-on a turn can go without.",
+          "description": "True for the catalog's own server: the agent's basic tools, called as the person. Every other server is an add-on a turn can go without.",
           "type": "boolean"
+        },
+        "project": {
+          "$ref": "#/$defs/ChatProject",
+          "description": "The project whose default it is, when it comes from a project."
         },
         "uri": {
           "$ref": "#/$defs/Uri"
@@ -4460,6 +4569,10 @@
         "name": {
           "type": "string"
         },
+        "project": {
+          "$ref": "#/$defs/ChatProject",
+          "description": "The project whose default it is, when it comes from a project."
+        },
         "uri": {
           "$ref": "#/$defs/Uri"
         }
@@ -4472,85 +4585,14 @@
       "type": "object"
     },
     "SettingSource": {
-      "description": "The level a setting of a chat comes from.",
+      "description": "Where a chat's setting comes from: the chat's own choice, a project's default (the chat's project or one up its chain), the agent's own, or, when nothing chose, the catalog's default.",
       "enum": [
         "chat",
         "project",
         "agent",
-        "platform"
+        "default"
       ],
       "type": "string"
-    },
-    "Settings": {
-      "description": "The typed envelope, served by the kind routes.",
-      "properties": {
-        "apiVersion": {
-          "enum": [
-            "catalog.texera.apache.org/v1"
-          ],
-          "type": "string"
-        },
-        "kind": {
-          "$ref": "#/$defs/ResourceKind"
-        },
-        "metadata": {
-          "$ref": "#/$defs/ResourceMetadata"
-        },
-        "spec": {
-          "$ref": "#/$defs/SettingsSpec"
-        },
-        "status": {
-          "$ref": "#/$defs/SettingsStatus"
-        }
-      },
-      "required": [
-        "apiVersion",
-        "kind",
-        "metadata",
-        "spec"
-      ],
-      "type": "object",
-      "x-texera-kind": {
-        "content": "spec",
-        "kind": "settings",
-        "plural": "settings",
-        "singleton": true,
-        "versioned": false
-      }
-    },
-    "SettingsSpec": {
-      "properties": {
-        "branding": {
-          "$ref": "#/$defs/Branding"
-        },
-        "defaults": {
-          "$ref": "#/$defs/Defaults"
-        },
-        "features": {
-          "additionalProperties": {
-            "type": "boolean"
-          },
-          "type": "object"
-        },
-        "retention": {
-          "$ref": "#/$defs/Retention"
-        },
-        "warehouseEndpoints": {
-          "description": "The object stores, by endpoint, a warehouse of someone's own may be kept on besides the deployment's own store. The lake and the computing units connect to the address a warehouse names, so an administrator lists them.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "branding",
-        "defaults"
-      ],
-      "type": "object"
-    },
-    "SettingsStatus": {
-      "type": "object"
     },
     "Skill": {
       "description": "The typed envelope, served by the kind routes.",
@@ -4909,6 +4951,10 @@
     },
     "UpdateMetadata": {
       "properties": {
+        "base": {
+          "$ref": "#/$defs/Rid",
+          "description": "For a project: inherit from another project instead, one the caller administers or Texera. The project's admins change it."
+        },
         "description": {
           "type": "string"
         },
@@ -5019,25 +5065,6 @@
         },
         "spec": {
           "$ref": "#/$defs/ProjectSpec"
-        }
-      },
-      "required": [
-        "spec"
-      ],
-      "type": "object"
-    },
-    "UpdateSettings": {
-      "properties": {
-        "expectedHead": {
-          "$ref": "#/$defs/Vno",
-          "description": "The head version the caller saw; refused with 409 when it moved."
-        },
-        "message": {
-          "description": "Recorded on the new version of a versioned kind.",
-          "type": "string"
-        },
-        "spec": {
-          "$ref": "#/$defs/SettingsSpec"
         }
       },
       "required": [
@@ -5352,7 +5379,7 @@
           "description": "The credential the lake uses for the bucket; its secret holds `accessKeyId` and `secretAccessKey`. No computing unit ever gets it: the lake hands a unit short-lived access to the tables it may touch."
         },
         "endpoint": {
-          "description": "The store's endpoint, as the lake and the computing units reach it. It is the deployment's own store or one an administrator listed in the settings (`warehouseEndpoints`).",
+          "description": "The store's endpoint, as the lake and the computing units reach it. It is the deployment's own store or one the limits of the warehouse's project allow (`limits.warehouseEndpoints`, on every list set up its chain).",
           "type": "string"
         },
         "keyPrefix": {
@@ -5380,13 +5407,17 @@
       "type": "string"
     },
     "WorkModeSetting": {
-      "description": "How the agent's changes go in a chat: the chat's choice, else the project's, else the platform's (`auto`).",
+      "description": "How the agent's changes go in a chat: the chat's choice, else the nearest project's up the chain, else `auto`.",
       "properties": {
         "from": {
           "$ref": "#/$defs/SettingSource"
         },
         "mode": {
           "$ref": "#/$defs/WorkMode"
+        },
+        "project": {
+          "$ref": "#/$defs/ChatProject",
+          "description": "The project whose default it is, when it comes from a project."
         }
       },
       "required": [
@@ -5496,7 +5527,7 @@
           "type": "object"
         },
         "operatorType": {
-          "description": "A built-in operator type, e.g. CSVFileScan, or the URI of a custom operator with `@vno`.",
+          "description": "One of the engine's operator types, e.g. CSVFileScan, which the workflow's project or one up its chain offers, or the URI of a custom operator with `@vno`.",
           "type": "string"
         },
         "outputPorts": {

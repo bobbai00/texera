@@ -33,7 +33,6 @@ enum ResourceKind {
   conversation,
   credential,
   modelEndpoint: "model-endpoint",
-  settings,
 }
 
 enum Visibility {
@@ -41,7 +40,7 @@ enum Visibility {
   public,
 }
 
-@doc("The grantable relations. `user` is for computing units: may run on it, without reading its spec.")
+@doc("The grantable relations. On a project, an `owner` is one of its admins, who change the project itself (its settings, what it inherits from, its people), and an `editor` is a member, who works in it. `user` may use without reading: run on a computing unit, keep results in a warehouse, lease a credential.")
 enum Relation {
   owner,
   editor,
@@ -74,6 +73,8 @@ model ResourceMetadata {
   parent?: Rid;
   @doc("The nearest project: the resource itself for a project.")
   project: Rid;
+  @doc("For a project, its base: the project it inherits from. Its people read and use what the base holds, and its settings fill in what the project's own leave out. Every project has one but Texera, at the top of every chain.")
+  base?: Rid;
   owner: Pid;
   visibility: Visibility;
   labels?: Record<string>;
@@ -117,6 +118,8 @@ model Create<Spec> {
   description?: string;
   @doc("The parent; for a top-level kind a project, default the caller's home project.")
   parent?: Rid;
+  @doc("For a project: the project it inherits from, one the caller administers or Texera; default Texera.")
+  base?: Rid;
   visibility?: Visibility;
   labels?: Record<string>;
   spec: Spec;
@@ -137,6 +140,8 @@ model UpdateMetadata {
   description?: string;
   @doc("Moves a top-level resource to another project.")
   parent?: Rid;
+  @doc("For a project: inherit from another project instead, one the caller administers or Texera. The project's admins change it.")
+  base?: Rid;
   visibility?: Visibility;
   labels?: Record<string>;
 }
@@ -249,7 +254,7 @@ model Principal {
 
 @doc("The scope of a list.")
 model Scoped {
-  @doc("A project: the list holds what is in it and what it inherits, the platform's built-ins. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.")
+  @doc("A project: the list holds what is in it and what it inherits, from its base and that one's base up to Texera. Absent: the chat's project for a call made in a chat, else everything the caller may read. Projects themselves are never narrowed.")
   @query
   scope?: Rid;
 }

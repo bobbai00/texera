@@ -12,18 +12,20 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const resourceColumns = `r.rid, r.kind, r.name, r.description, r.parent_rid, r.project_rid, r.owner_pid, r.visibility,
+const resourceColumns = `r.rid, r.kind, r.name, r.description, r.parent_rid, r.project_rid, r.base_rid, r.owner_pid, r.visibility,
 	r.labels, r.spec, r.status, r.head_vno, r.etag, r.created_by_pid, r.origin, r.created_at, r.updated_at`
 
 // NewResource is what CreateResource needs.
 type NewResource struct {
-	// RID fixes the id (the settings singleton); nil draws one.
-	RID          *uuid.UUID
-	Kind         string
-	Name         string
-	Description  *string
-	ParentRID    *uuid.UUID
-	ProjectRID   *uuid.UUID
+	// RID fixes the id; nil draws one.
+	RID         *uuid.UUID
+	Kind        string
+	Name        string
+	Description *string
+	ParentRID   *uuid.UUID
+	ProjectRID  *uuid.UUID
+	// BaseRID is, for a project, the project it inherits from.
+	BaseRID      *uuid.UUID
 	OwnerPID     uuid.UUID
 	CreatedByPID uuid.UUID
 	Visibility   string
@@ -68,9 +70,9 @@ func (s *Store) CreateResource(ctx context.Context, in NewResource) (*Resource, 
 		if in.Versioned {
 			head = 1
 		}
-		row := tx.QueryRow(ctx, `INSERT INTO resource AS r (rid, kind, name, description, parent_rid, project_rid, owner_pid, visibility, labels, spec, status, head_vno, etag, created_by_pid, origin)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING `+resourceColumns,
-			rid, in.Kind, in.Name, in.Description, in.ParentRID, in.ProjectRID, in.OwnerPID, in.Visibility, labels, in.Spec, nullableJSON(in.Status), head, newEtag(), in.CreatedByPID, origin)
+		row := tx.QueryRow(ctx, `INSERT INTO resource AS r (rid, kind, name, description, parent_rid, project_rid, base_rid, owner_pid, visibility, labels, spec, status, head_vno, etag, created_by_pid, origin)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING `+resourceColumns,
+			rid, in.Kind, in.Name, in.Description, in.ParentRID, in.ProjectRID, in.BaseRID, in.OwnerPID, in.Visibility, labels, in.Spec, nullableJSON(in.Status), head, newEtag(), in.CreatedByPID, origin)
 		var err error
 		r, err = scanResource(row)
 		if err != nil {
@@ -87,6 +89,11 @@ func (s *Store) CreateResource(ctx context.Context, in NewResource) (*Resource, 
 		}
 		if in.ParentRID != nil {
 			if err := enqueue(ctx, tx, "write", object(rid), "parent", object(*in.ParentRID)); err != nil {
+				return err
+			}
+		}
+		if in.BaseRID != nil {
+			if err := linkBase(ctx, tx, "write", rid, *in.BaseRID); err != nil {
 				return err
 			}
 		}
@@ -117,7 +124,9 @@ type ResourceFilter struct {
 	ProjectRID *uuid.UUID
 	// Scope keeps what lives in one of these projects. Projects are the scopes themselves and
 	// are never narrowed by one.
-	Scope    []uuid.UUID
+	Scope []uuid.UUID
+	// BaseRID keeps the projects that inherit from this one.
+	BaseRID  *uuid.UUID
 	OwnerPID *uuid.UUID
 	// Name matches exactly, case-insensitively.
 	Name string
@@ -134,13 +143,17 @@ type ResourceFilter struct {
 	Fields map[string]string
 	// Absent lists spec or status fields, by JSON pointer, that must not be set.
 	Absent []string
+	// Present lists spec or status fields, by JSON pointer, that must be set.
+	Present []string
 	// WithoutLabel keeps resources that do not carry the label.
 	WithoutLabel string
 	// UpdatedBefore keeps resources last changed before the instant.
 	UpdatedBefore *time.Time
 	// ReadableBy restricts to what the principal may read: what is public, owned or granted,
 	// itself or through its parent or its project, as the authorization model carries the
-	// relations down the tree. Nil means no restriction (an administrator or a service).
+	// relations down the tree; and what is in a project up the chain of a project the principal
+	// may read, which the model carries up through inheritors. Nil means no restriction (a
+	// service).
 	ReadableBy *uuid.UUID
 	// SharedWith keeps what was shared with the principal: a grant of their own on a resource
 	// someone else owns.
@@ -166,6 +179,9 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 	}
 	if f.ProjectRID != nil {
 		add("r.project_rid = $%d", *f.ProjectRID)
+	}
+	if f.BaseRID != nil {
+		add("r.base_rid = $%d", *f.BaseRID)
 	}
 	if len(f.Scope) > 0 {
 		add("(r.kind = 'project' OR r.project_rid = ANY($%d))", f.Scope)
@@ -203,6 +219,11 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 			where = append(where, fmt.Sprintf("(r.%s #> '{%s}') IS NULL", column, path))
 		}
 	}
+	for _, pointer := range f.Present {
+		if column, path, ok := pointerPath(pointer); ok {
+			where = append(where, fmt.Sprintf("(r.%s #> '{%s}') IS NOT NULL", column, path))
+		}
+	}
 	if f.UpdatedBefore != nil {
 		add("r.updated_at < $%d", *f.UpdatedBefore)
 	}
@@ -215,7 +236,13 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 	if f.ReadableBy != nil {
 		add(`(r.visibility = 'public' OR r.owner_pid = $%d OR EXISTS (
 			SELECT 1 FROM resource up WHERE up.rid IN (r.parent_rid, r.project_rid) AND up.visibility = 'public') OR EXISTS (
-			SELECT 1 FROM access_index a WHERE a.pid = $%[1]d AND a.rid IN (r.rid, r.parent_rid, r.project_rid)))`, *f.ReadableBy)
+			SELECT 1 FROM access_index a WHERE a.pid = $%[1]d AND a.rid IN (r.rid, r.parent_rid, r.project_rid)) OR r.project_rid IN (
+			WITH RECURSIVE inherited(rid) AS (
+				SELECT p.base_rid FROM resource p JOIN access_index a ON a.rid = p.rid
+				WHERE p.kind = 'project' AND p.deleted_at IS NULL AND p.base_rid IS NOT NULL AND a.pid = $%[1]d AND a.relation <> 'user'
+				UNION
+				SELECT p.base_rid FROM resource p JOIN inherited i ON p.rid = i.rid WHERE p.deleted_at IS NULL AND p.base_rid IS NOT NULL)
+			SELECT rid FROM inherited))`, *f.ReadableBy)
 	}
 	limit := f.Limit
 	if limit <= 0 || limit > 500 {
@@ -336,13 +363,15 @@ type MetadataUpdate struct {
 	Description *string
 	ParentRID   *uuid.UUID
 	ProjectRID  *uuid.UUID
-	Visibility  *string
-	Labels      map[string]string
-	IfMatch     string
+	// BaseRID is a project's new base.
+	BaseRID    *uuid.UUID
+	Visibility *string
+	Labels     map[string]string
+	IfMatch    string
 }
 
-// UpdateMetadata changes the metadata and keeps the tuples in step: a new parent, a change
-// of visibility.
+// UpdateMetadata changes the metadata and keeps the tuples in step: a new parent, a project's
+// new base, a change of visibility.
 func (s *Store) UpdateMetadata(ctx context.Context, in MetadataUpdate) (*Resource, error) {
 	var r *Resource
 	err := s.tx(ctx, func(tx pgx.Tx) error {
@@ -353,7 +382,7 @@ func (s *Store) UpdateMetadata(ctx context.Context, in MetadataUpdate) (*Resourc
 		if in.IfMatch != "" && in.IfMatch != cur.Etag {
 			return ErrPrecondition
 		}
-		name, desc, parent, project, vis, labels := cur.Name, cur.Description, cur.ParentRID, cur.ProjectRID, cur.Visibility, cur.Labels
+		name, desc, parent, project, base, vis, labels := cur.Name, cur.Description, cur.ParentRID, cur.ProjectRID, cur.BaseRID, cur.Visibility, cur.Labels
 		if in.Name != nil {
 			name = *in.Name
 		}
@@ -374,6 +403,17 @@ func (s *Store) UpdateMetadata(ctx context.Context, in MetadataUpdate) (*Resourc
 				project = in.ProjectRID
 			}
 		}
+		if in.BaseRID != nil && (base == nil || *base != *in.BaseRID) {
+			if base != nil {
+				if err := linkBase(ctx, tx, "delete", cur.RID, *base); err != nil {
+					return err
+				}
+			}
+			if err := linkBase(ctx, tx, "write", cur.RID, *in.BaseRID); err != nil {
+				return err
+			}
+			base = in.BaseRID
+		}
 		if in.Visibility != nil && *in.Visibility != vis {
 			op := "delete"
 			if *in.Visibility == "public" {
@@ -388,8 +428,8 @@ func (s *Store) UpdateMetadata(ctx context.Context, in MetadataUpdate) (*Resourc
 			labels = in.Labels
 		}
 		labelsJSON, _ := json.Marshal(labels)
-		row := tx.QueryRow(ctx, `UPDATE resource r SET name = $2, description = $3, parent_rid = $4, project_rid = $5, visibility = $6, labels = $7, etag = $8, updated_at = now()
-			WHERE r.rid = $1 RETURNING `+resourceColumns, cur.RID, name, desc, parent, project, vis, labelsJSON, newEtag())
+		row := tx.QueryRow(ctx, `UPDATE resource r SET name = $2, description = $3, parent_rid = $4, project_rid = $5, base_rid = $6, visibility = $7, labels = $8, etag = $9, updated_at = now()
+			WHERE r.rid = $1 RETURNING `+resourceColumns, cur.RID, name, desc, parent, project, base, vis, labelsJSON, newEtag())
 		r, err = scanResource(row)
 		return translate(err)
 	})
@@ -457,6 +497,11 @@ func (s *Store) deleteResource(ctx context.Context, rid uuid.UUID) error {
 		}
 		if cur.ParentRID != nil {
 			if err := enqueue(ctx, tx, "delete", object(rid), "parent", object(*cur.ParentRID)); err != nil {
+				return err
+			}
+		}
+		if cur.BaseRID != nil {
+			if err := linkBase(ctx, tx, "delete", rid, *cur.BaseRID); err != nil {
 				return err
 			}
 		}
@@ -627,7 +672,7 @@ func scanResource(row scanner) (*Resource, error) {
 	var r Resource
 	var labels, origin []byte
 	var status []byte
-	if err := row.Scan(&r.RID, &r.Kind, &r.Name, &r.Description, &r.ParentRID, &r.ProjectRID, &r.OwnerPID, &r.Visibility,
+	if err := row.Scan(&r.RID, &r.Kind, &r.Name, &r.Description, &r.ParentRID, &r.ProjectRID, &r.BaseRID, &r.OwnerPID, &r.Visibility,
 		&labels, &r.Spec, &status, &r.HeadVno, &r.Etag, &r.CreatedByPID, &origin, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, err
 	}

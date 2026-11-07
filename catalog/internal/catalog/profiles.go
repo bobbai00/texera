@@ -287,9 +287,10 @@ func (s *Service) SaveUnitAsProfile(ctx context.Context, caller *auth.Caller, ri
 		if in.Name == nil || strings.TrimSpace(*in.Name) == "" {
 			return nil, Invalid("a new profile needs a name", map[string]any{"field": "name"})
 		}
-		// Into the unit's project, unless that is the platform's own: then where the call is made.
+		// Into the unit's project when the caller may add to it (a unit of Texera's is not
+		// everyone's to add to): else where the call is made.
 		parent := unit.ParentRID
-		if s.builtIn(unit) {
+		if parent != nil && s.decide(ctx, caller, authz.Write, *parent) != nil {
 			parent = nil
 		}
 		if in.Parent != nil {

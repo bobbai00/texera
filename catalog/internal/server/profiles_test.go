@@ -73,11 +73,11 @@ func TestAUnitIsSavedAsAProfile(t *testing.T) {
 	}
 	// A new profile needs a name.
 	wantError(t, h, "POST", p+"/computing-units/"+unitRID+"/profile", map[string]any{}, http.StatusBadRequest, "invalid", "needs a name")
-	// The platform's own profile changes with the platform: it is not saved over.
+	// Texera's profile is its admins' to change: alice does not save over it.
 	var unit envelope
 	h.mustJSON("alice", "GET", p+"/computing-units/"+unitRID, nil, &unit)
-	builtin := nodeOf(t, unit).Profile
-	wantError(t, h, "POST", p+"/computing-units/"+unitRID+"/profile", map[string]any{"profile": strings.SplitN(string(*builtin), "@", 2)[0]}, http.StatusConflict, "builtin", "built in")
+	texeras := nodeOf(t, unit).Profile
+	wantError(t, h, "POST", p+"/computing-units/"+unitRID+"/profile", map[string]any{"profile": strings.SplitN(string(*texeras), "@", 2)[0]}, http.StatusForbidden, "forbidden", "may not")
 
 	// As the next version of a profile of one's own; a unit made from it is then made from that version.
 	var own envelope

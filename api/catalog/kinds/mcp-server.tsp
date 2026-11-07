@@ -1,7 +1,7 @@
-// mcp-server: an MCP server an agent can mount, over streamable HTTP. The platform's own
-// server (the catalog) and the add-ons it ships are rows in the system project like any other.
-// The platform's own is the one whose URL is the catalog's MCP address: a turn reaches it
-// inside the deployment and calls it as the person.
+// mcp-server: an MCP server an agent can mount, over streamable HTTP. The catalog's own server
+// and the add-ons a release ships are rows in Texera like any other. The catalog's own is the
+// one whose URL is the catalog's MCP address: a turn reaches it inside the deployment and calls
+// it as the person.
 import "@typespec/http";
 import "@typespec/rest";
 import "@typespec/openapi";

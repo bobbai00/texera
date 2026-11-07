@@ -9,13 +9,8 @@ import (
 
 	"github.com/apache/texera/catalog/internal/api"
 	"github.com/apache/texera/catalog/internal/auth"
-	"github.com/apache/texera/catalog/internal/kinds"
 	"github.com/apache/texera/catalog/internal/store"
-	"github.com/apache/texera/catalog/internal/uri"
 )
-
-// SettingsRID is the fixed id of the settings singleton.
-var SettingsRID = uuid.NewSHA1(uuid.NameSpaceURL, []byte("texera://settings"))
 
 // Me describes the caller.
 func (s *Service) Me(ctx context.Context, caller *auth.Caller) (*api.Me, error) {
@@ -25,9 +20,9 @@ func (s *Service) Me(ctx context.Context, caller *auth.Caller) (*api.Me, error) 
 	}
 	prefs := map[string]any{}
 	_ = json.Unmarshal(caller.Principal.Preferences, &prefs)
-	out := &api.Me{Principal: PrincipalOf(caller.Principal), HomeProject: api.Rid(home.RID.String()), Admin: caller.Admin(), Preferences: prefs}
-	if sys := s.SystemProject(); sys != nil {
-		out.SystemProject = api.Rid(sys.RID.String())
+	out := &api.Me{Principal: PrincipalOf(caller.Principal), HomeProject: api.Rid(home.RID.String()), Preferences: prefs}
+	if root := s.Root(); root != nil {
+		out.RootProject = api.Rid(root.RID.String())
 	}
 	return out, nil
 }
@@ -87,74 +82,16 @@ func (s *Service) Principal(ctx context.Context, pid uuid.UUID) (*store.Principa
 	return p, nil
 }
 
-func (s *Service) settingsResource() *store.Resource {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.settings
-}
-
-// Settings returns the deployment's settings.
-func (s *Service) Settings(ctx context.Context, caller *auth.Caller) (*store.Resource, error) {
-	r, err := s.Store.GetResource(ctx, SettingsRID)
-	if err != nil {
-		return nil, NotFound("settings")
-	}
-	return r, nil
-}
-
-// UpdateSettings replaces the settings; administrators only.
-func (s *Service) UpdateSettings(ctx context.Context, caller *auth.Caller, spec json.RawMessage, ifMatch string) (*store.Resource, error) {
-	if !caller.Admin() && !caller.Service {
-		return nil, Forbidden()
-	}
-	k, _ := kinds.ByName("settings")
-	normalized, err := s.prepareSpec(ctx, caller, k, "settings", spec)
-	if err != nil {
-		return nil, err
-	}
-	references, err := s.references(ctx, caller, SettingsRID, uri.Ref{Kind: k}, normalized)
-	if err != nil {
-		return nil, err
-	}
-	r, _, err := s.Store.UpdateSpec(ctx, store.SpecUpdate{RID: SettingsRID, Spec: normalized, IfMatch: ifMatch, ContentKind: "spec", Content: normalized, CreatedByPID: caller.PID(), References: references})
-	if err != nil {
-		return nil, wrap(err, "settings")
-	}
-	s.mu.Lock()
-	s.settings = r
-	s.mu.Unlock()
-	return r, nil
-}
-
-// PublicSettings is what the app needs before login.
-func (s *Service) PublicSettings(ctx context.Context) (*api.PublicSettings, error) {
-	out := &api.PublicSettings{Branding: api.Branding{Name: s.Config.BrandName}, Auth: api.AuthSettings{Issuer: s.Config.OIDCIssuer, ClientId: s.Config.OIDCClientID}}
-	if r, err := s.Store.GetResource(ctx, SettingsRID); err == nil {
-		var spec api.SettingsSpec
-		if json.Unmarshal(r.Spec, &spec) == nil && spec.Branding.Name != "" {
-			out.Branding = spec.Branding
+// Public is what the app needs before anyone has signed in: Texera's look, and how to sign in.
+func (s *Service) Public(ctx context.Context) (*api.PublicInfo, error) {
+	out := &api.PublicInfo{Branding: api.Branding{Name: &s.Config.BrandName}, Auth: api.AuthSettings{Issuer: s.Config.OIDCIssuer, ClientId: s.Config.OIDCClientID}}
+	if root := s.Root(); root != nil {
+		if settings, err := s.settingsOf(ctx, root.RID); err == nil {
+			if settings.Branding.Name != nil {
+				out.Branding.Name = settings.Branding.Name
+			}
+			out.Branding.LogoUrl = settings.Branding.LogoUrl
 		}
 	}
 	return out, nil
-}
-
-// settingsSpec returns the current settings spec, or zero when unseeded.
-func (s *Service) settingsSpec(ctx context.Context) api.SettingsSpec {
-	var spec api.SettingsSpec
-	if r, err := s.Store.GetResource(ctx, SettingsRID); err == nil {
-		_ = json.Unmarshal(r.Spec, &spec)
-	}
-	return spec
-}
-
-// projectSpec returns a project's spec.
-func (s *Service) projectSpec(ctx context.Context, project *uuid.UUID) api.ProjectSpec {
-	var spec api.ProjectSpec
-	if project == nil {
-		return spec
-	}
-	if r, err := s.Store.GetResource(ctx, *project); err == nil {
-		_ = json.Unmarshal(r.Spec, &spec)
-	}
-	return spec
 }

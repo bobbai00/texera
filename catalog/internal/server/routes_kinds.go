@@ -16,7 +16,7 @@ import (
 // the contract adds its routes here without code.
 func (s *Server) routeKinds() {
 	for _, k := range kinds.Table {
-		if k.Nested || k.Singleton {
+		if k.Nested {
 			continue
 		}
 		k := k
@@ -37,6 +37,7 @@ type createBody struct {
 	Name        string            `json:"name"`
 	Description *string           `json:"description"`
 	Parent      *string           `json:"parent"`
+	Base        *string           `json:"base"`
 	Visibility  *string           `json:"visibility"`
 	Labels      map[string]string `json:"labels"`
 	Spec        json.RawMessage   `json:"spec"`
@@ -114,6 +115,16 @@ func (s *Server) createKind(k kinds.Kind) handlerFunc {
 				return catalog.Invalid("parent is not a resource id", nil)
 			}
 			in.Parent = &rid
+		}
+		if body.Base != nil && *body.Base != "" {
+			if k.Name != "project" {
+				return catalog.Invalid("only a project inherits from a base", map[string]any{"field": "base"})
+			}
+			rid, err := uuid.Parse(*body.Base)
+			if err != nil {
+				return catalog.Invalid("base is not a resource id", nil)
+			}
+			in.Base = &rid
 		}
 		res, _, err := s.svc.Create(ctxOf(r), callerOf(r), in)
 		if err != nil {

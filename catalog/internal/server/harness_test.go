@@ -30,7 +30,8 @@ import (
 	"github.com/apache/texera/catalog/internal/store"
 )
 
-// fakeIdentity accepts tokens that name a user: "alice", "bob", "admin" (an administrator),
+// fakeIdentity accepts tokens that name a user: "alice", "bob", "admin" (an administrator, so
+// one of Texera's admins),
 // "service" (the platform's service client), "unit" (the seeded unit's client, texera-unit)
 // and "unit:<clientId>" (any unit client; the subject is what memory.Workloads gives it).
 type fakeIdentity struct{}
@@ -116,6 +117,14 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "")}, "outputPorts": []any{enginePort(0, "")}},
 			map[string]any{"operatorType": "HashJoin", "userFriendlyName": "Hash Join", "operatorGroupName": "Join", "operatorDescription": "Joins two inputs",
 				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "left"), enginePort(1, "right")}, "outputPorts": []any{enginePort(0, "")}},
+			map[string]any{"operatorType": "Limit", "userFriendlyName": "Limit", "operatorGroupName": "Cleaning", "operatorDescription": "Keeps the first rows",
+				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "")}, "outputPorts": []any{enginePort(0, "")}},
+			map[string]any{"operatorType": "scan", "userFriendlyName": "scan", "operatorGroupName": "Core", "operatorDescription": "Reads a file",
+				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{}, "outputPorts": []any{enginePort(0, "")}},
+			map[string]any{"operatorType": "filter", "userFriendlyName": "filter", "operatorGroupName": "Core", "operatorDescription": "Keeps the rows that hold",
+				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "")}, "outputPorts": []any{enginePort(0, "")}},
+			map[string]any{"operatorType": "predict", "userFriendlyName": "predict", "operatorGroupName": "Machine Learning", "operatorDescription": "Applies a model",
+				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "")}, "outputPorts": []any{enginePort(0, "")}},
 			// The engine's own, which the catalog never offers: a class that runs code, and the
 			// operators a workflow is compiled into.
 			map[string]any{"operatorType": "PythonUDFV2", "userFriendlyName": "Python UDF", "operatorGroupName": "Python", "operatorDescription": "Runs a class",
@@ -314,10 +323,19 @@ func newHarness(t *testing.T) *harness {
 	if err := svc.Seed(ctx); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	// Texera offers the engine's operators, as it does once a deployment's unit is up.
+	units, err := st.ListResources(ctx, store.ResourceFilter{Kind: "computing-unit", ParentRID: &svc.Root().RID, Limit: 1})
+	if err != nil || len(units) == 0 {
+		t.Fatalf("the deployment's unit: %v", err)
+	}
+	if err := svc.SyncOperators(ctx, &units[0]); err != nil {
+		t.Fatalf("sync operators: %v", err)
+	}
 	if err := relay.Once(ctx); err != nil {
 		t.Fatal(err)
 	}
 	resolver := auth.NewResolver(fakeIdentity{}, st, isUnitClient)
+	resolver.OnAdministrator(svc.MakeAdministrator)
 	srv := server.New(svc, resolver, pdp, "http://test", log)
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)

@@ -1,8 +1,8 @@
 // warehouse: where executions keep their result tables. A warehouse is a place in an object
 // store that the lake (the Iceberg REST catalog) manages: the location, the key to it, and the
 // tables under it. An execution runs on a computing unit and keeps its results in a warehouse.
-// Unversioned. One is built in, on the deployment's own store; a project can have its own, on
-// the deployment's store or on a store of the project's.
+// Unversioned. Texera holds the deployment's, on its own store; a project can have its own, on
+// the deployment's store or on a store its limits allow.
 import "@typespec/http";
 import "@typespec/rest";
 import "@typespec/openapi";
@@ -17,7 +17,7 @@ namespace Texera.Catalog;
 
 @doc("A place in an S3-compatible object store that is the warehouse's alone. The store must hand out short-lived keys itself (STS, as MinIO and RustFS do): that is how a unit reaches one table's files.")
 model WarehouseStorage {
-  @doc("The store's endpoint, as the lake and the computing units reach it. It is the deployment's own store or one an administrator listed in the settings (`warehouseEndpoints`).")
+  @doc("The store's endpoint, as the lake and the computing units reach it. It is the deployment's own store or one the limits of the warehouse's project allow (`limits.warehouseEndpoints`, on every list set up its chain).")
   endpoint: string;
   region: string;
   bucket: string;

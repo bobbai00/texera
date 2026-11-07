@@ -17,16 +17,25 @@ func settingsOf(h *harness, token, rid string) api.ChatSettings {
 	return out
 }
 
-// said renders a setting as "name from".
-func said(s api.Setting) string { return s.Name + " from " + string(s.From) }
+// said renders a setting as "name from", where it comes from: the chat, the agent, or the
+// project whose default it is.
+func said(s api.Setting) string {
+	if s.Project != nil {
+		return s.Name + " from " + s.Project.Name
+	}
+	return s.Name + " from " + string(s.From)
+}
 
 // mounts renders the servers of a turn, in order: "name from", with what marks each.
 func mounts(s api.ChatSettings) string {
 	var out []string
 	for _, m := range s.McpServers {
 		text := m.Name + " from " + string(m.From)
+		if m.Project != nil {
+			text = m.Name + " from " + m.Project.Name
+		}
 		if m.Platform {
-			text += ", the platform's"
+			text += ", the catalog's"
 		}
 		if m.Allow != nil {
 			text += ", only " + strings.Join(*m.Allow, " ")
@@ -44,8 +53,8 @@ func choose(h *harness, token string, conv envelope, spec map[string]any) {
 	h.mustJSON(token, "PUT", p+"/conversations/"+rid(conv), map[string]any{"spec": spec}, nil)
 }
 
-// A chat stores choices and nothing else, and a new one stores none: it runs with the
-// platform's agent and the agent's model and servers.
+// A chat stores choices and nothing else, and a new one stores none: it runs with the agent
+// Texera names, which every project inherits, and the agent's model and servers.
 func TestANewChatStoresNothingAndRunsWithTheDefaults(t *testing.T) {
 	h := newHarness(t)
 	conv := h.create("alice", "conversations", "a chat", map[string]any{})
@@ -57,13 +66,13 @@ func TestANewChatStoresNothingAndRunsWithTheDefaults(t *testing.T) {
 	if got.Project.Rid != me(h, "alice").HomeProject || got.Project.Name != "alice's home" {
 		t.Errorf("project: %+v", got.Project)
 	}
-	if got.Agent.Uri != api.Uri(uriOf(agent)+"@1") || said(got.Agent) != "Texera Agent from platform" {
+	if got.Agent.Uri != api.Uri(uriOf(agent)+"@1") || said(got.Agent) != "Texera Agent from Texera" {
 		t.Errorf("agent: %+v", got.Agent)
 	}
 	if said(got.ModelEndpoint) != "anthropic-platform from agent" {
 		t.Errorf("model: %+v", got.ModelEndpoint)
 	}
-	if mounts(got) != "catalog from agent, the platform's; biomcp from agent" {
+	if mounts(got) != "catalog from agent, the catalog's; biomcp from agent" {
 		t.Errorf("servers: %s", mounts(got))
 	}
 	if got.Skipped != nil {
@@ -91,9 +100,9 @@ func TestANewChatStoresNothingAndRunsWithTheDefaults(t *testing.T) {
 	}
 }
 
-// The chat's choice comes first, then the project's, then the agent's own or the platform's.
-// The add-ons a chat lists take the place of the agent's and the project's; the platform's own
-// server is not an add-on and stays.
+// The chat's choice comes first, then the project's, which may come from up its chain, then the
+// agent's own. The add-ons a chat lists take the place of the agent's and the project's; the
+// catalog's own server is not an add-on and stays.
 func TestAChatsChoiceComesFirstThenTheProjectsThenTheAgents(t *testing.T) {
 	h := newHarness(t)
 	home := string(me(h, "alice").HomeProject)
@@ -108,13 +117,13 @@ func TestAChatsChoiceComesFirstThenTheProjectsThenTheAgents(t *testing.T) {
 	projectServer, chatServer := server("project-server"), server("chat-server")
 
 	h.mustJSON("alice", "PUT", p+"/projects/"+home, map[string]any{"spec": map[string]any{
-		"defaultModelEndpoint": uriOf(projectModel), "mcpServers": []string{uriOf(projectServer)},
+		"defaults": map[string]any{"modelEndpoint": uriOf(projectModel), "mcpServers": []string{uriOf(projectServer)}},
 	}}, nil)
 	got := settingsOf(h, "alice", rid(conv))
-	if said(got.Agent) != "Texera Agent from platform" || said(got.ModelEndpoint) != "project-model from project" {
+	if said(got.Agent) != "Texera Agent from Texera" || said(got.ModelEndpoint) != "project-model from alice's home" {
 		t.Errorf("with the project's defaults: %s, %s", said(got.Agent), said(got.ModelEndpoint))
 	}
-	if mounts(got) != "catalog from agent, the platform's; biomcp from agent; project-server from project" {
+	if mounts(got) != "catalog from agent, the catalog's; biomcp from agent; project-server from alice's home" {
 		t.Errorf("with the project's add-on: %s", mounts(got))
 	}
 
@@ -123,13 +132,13 @@ func TestAChatsChoiceComesFirstThenTheProjectsThenTheAgents(t *testing.T) {
 	if said(got.ModelEndpoint) != "chat-model from chat" {
 		t.Errorf("with the chat's choices: %s", said(got.ModelEndpoint))
 	}
-	if mounts(got) != "catalog from agent, the platform's; chat-server from chat" {
+	if mounts(got) != "catalog from agent, the catalog's; chat-server from chat" {
 		t.Errorf("with the chat's add-on: %s", mounts(got))
 	}
 
 	// A chat can do without any add-on.
 	choose(h, "alice", conv, map[string]any{"mcpServers": []string{}})
-	if got = settingsOf(h, "alice", rid(conv)); mounts(got) != "catalog from agent, the platform's" {
+	if got = settingsOf(h, "alice", rid(conv)); mounts(got) != "catalog from agent, the catalog's" {
 		t.Errorf("with every add-on off: %s", mounts(got))
 	}
 
@@ -139,13 +148,13 @@ func TestAChatsChoiceComesFirstThenTheProjectsThenTheAgents(t *testing.T) {
 		"card": map[string]any{"name": "mine", "description": "d"}, "model": uriOf(chatModel), "prompt": "p",
 		"mcpServers": []any{map[string]any{"server": uriOf(projectServer), "allow": []string{"only_this"}}},
 	})
-	h.mustJSON("alice", "PUT", p+"/projects/"+home, map[string]any{"spec": map[string]any{"mcpServers": []string{uriOf(projectServer), uriOf(chatServer)}}}, nil)
+	h.mustJSON("alice", "PUT", p+"/projects/"+home, map[string]any{"spec": map[string]any{"defaults": map[string]any{"mcpServers": []string{uriOf(projectServer), uriOf(chatServer)}}}}, nil)
 	choose(h, "alice", conv, map[string]any{"template": uriOf(own)})
 	got = settingsOf(h, "alice", rid(conv))
 	if got.Agent.Uri != api.Uri(uriOf(own)+"@1") || said(got.Agent) != "mine from chat" || said(got.ModelEndpoint) != "chat-model from agent" {
 		t.Errorf("with an agent of one's own: %s (%s), %s", said(got.Agent), got.Agent.Uri, said(got.ModelEndpoint))
 	}
-	if mounts(got) != "project-server from agent, only only_this; chat-server from project" {
+	if mounts(got) != "project-server from agent, only only_this; chat-server from alice's home" {
 		t.Errorf("its servers: %s", mounts(got))
 	}
 }
@@ -163,7 +172,7 @@ func TestAChoiceSomeoneCannotUseIsPassedOverForThem(t *testing.T) {
 	if said(hers.ModelEndpoint) != "alice's model from chat" || hers.Skipped != nil {
 		t.Fatalf("alice's own: %s, skipped %v", said(hers.ModelEndpoint), hers.Skipped)
 	}
-	if mounts(hers) != "catalog from agent, the platform's; alice's server from chat" {
+	if mounts(hers) != "catalog from agent, the catalog's; alice's server from chat" {
 		t.Fatalf("alice's servers: %s", mounts(hers))
 	}
 
@@ -175,7 +184,7 @@ func TestAChoiceSomeoneCannotUseIsPassedOverForThem(t *testing.T) {
 	if said(his.ModelEndpoint) != "anthropic-platform from agent" {
 		t.Errorf("bob's: %s", said(his.ModelEndpoint))
 	}
-	if mounts(his) != "catalog from agent, the platform's" {
+	if mounts(his) != "catalog from agent, the catalog's" {
 		t.Errorf("bob's servers: %s", mounts(his))
 	}
 	passed := map[string]string{}
@@ -238,12 +247,12 @@ func TestAChatsWorkModeIsItsOwnElseItsProjectsElseAuto(t *testing.T) {
 		got := settingsOf(h, "alice", rid(conv)).WorkMode
 		return string(got.Mode) + " from " + string(got.From)
 	}
-	if got := mode(); got != "auto from platform" {
+	if got := mode(); got != "auto from default" {
 		t.Fatalf("a new chat: %s", got)
 	}
 
 	home := string(me(h, "alice").HomeProject)
-	h.mustJSON("alice", "PUT", p+"/projects/"+home, map[string]any{"spec": map[string]any{"defaultWorkMode": "manual"}}, nil)
+	h.mustJSON("alice", "PUT", p+"/projects/"+home, map[string]any{"spec": map[string]any{"defaults": map[string]any{"workMode": "manual"}}}, nil)
 	if got := mode(); got != "manual from project" {
 		t.Fatalf("with the project's choice: %s", got)
 	}

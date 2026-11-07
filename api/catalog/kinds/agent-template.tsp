@@ -45,7 +45,7 @@ model AgentTemplateSpec {
   prompt: string;
   @doc("Skill resource URIs, loaded on demand.")
   skills?: Uri[];
-  @doc("The MCP servers the agent mounts. The platform's own server, the catalog, holds its basic tools and is listed like any other; the rest are add-ons.")
+  @doc("The MCP servers the agent mounts. The catalog's own server holds its basic tools and is listed like any other; the rest are add-ons.")
   mcpServers?: McpBinding[];
   @doc("Templates this agent may hand the conversation to.")
   handoffs?: Uri[];

@@ -145,7 +145,7 @@ func run(log *slog.Logger) error {
 				AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey,
 			},
 			LineageCallbackURL: cfg.LineageCallbackURL,
-			PresignTTL:         cfg.PresignTTL, LeaseTTL: cfg.LeaseTTL, MaxDownloadBytes: cfg.MaxDownloadBytes,
+			PresignTTL:         cfg.PresignTTL, LeaseTTL: cfg.LeaseTTL, MaxDownloadBytes: cfg.MaxDownloadBytes, UploadGrace: cfg.UploadGrace,
 			StaticUnitEndpoint: cfg.StaticUnitEndpoint, StaticUnitName: cfg.StaticUnitName, StaticUnitClientID: cfg.StaticUnitClientID, BioMcpURL: cfg.BioMcpURL, BioMcpKey: cfg.BioMcpKey,
 			ModelName: cfg.ModelName, ModelSecretPath: cfg.ModelSecretPath,
 		},
@@ -175,6 +175,8 @@ func run(log *slog.Logger) error {
 		return strings.HasPrefix(clientID, "unit-") || (cfg.StaticUnitClientID != "" && clientID == cfg.StaticUnitClientID)
 	}
 	resolver := auth.NewResolver(identity, st, isUnit)
+	// The identity provider names the administrators: each is one of Texera's admins.
+	resolver.OnAdministrator(svc.MakeAdministrator)
 	srv := server.New(svc, resolver, pdp, cfg.PublicURL, log)
 	api := srv.API()
 	srv.Mount(catalog.McpPath, mcp.Handler(api, resolver, cfg.PublicURL, log))

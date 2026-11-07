@@ -148,6 +148,7 @@ var relationsFor = map[string][]string{
 	"can_write":   {"editor", "owner"},
 	"can_share":   {"owner"},
 	"can_delete":  {"owner"},
+	"can_admin":   {"owner"},
 	"can_execute": {"viewer", "editor", "owner"},
 	"can_use":     {"user", "editor", "owner"},
 	"can_run_on":  {"user", "editor", "owner"},
@@ -169,7 +170,14 @@ func (a *Authorizer) Check(_ context.Context, subject, permission, object string
 	return false, nil
 }
 
-// has reports a direct tuple, a wildcard, a group membership, or the relation from a parent.
+// implied lists the relations that hold one: an editor is a viewer and a user, an owner all.
+var implied = map[string][]string{
+	"viewer": {"viewer", "editor", "owner"},
+	"user":   {"user", "editor", "owner"},
+}
+
+// has reports a direct tuple, a wildcard, a group membership, the relation from a parent, or,
+// for viewer and user, the relation held on a project that inherits from the object.
 func (a *Authorizer) has(subject, relation, object string, depth int) bool {
 	if depth > 16 {
 		return false
@@ -189,6 +197,13 @@ func (a *Authorizer) has(subject, relation, object string, depth int) bool {
 		}
 		if t.Object == object && t.Relation == "parent" && a.has(subject, relation, t.Subject, depth+1) {
 			return true
+		}
+		if t.Object == object && t.Relation == "inheritor" {
+			for _, held := range implied[relation] {
+				if a.has(subject, held, t.Subject, depth+1) {
+					return true
+				}
+			}
 		}
 	}
 	return false

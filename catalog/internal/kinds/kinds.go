@@ -23,12 +23,10 @@ type Kind struct {
 	Versioned bool
 	// Content is what a version holds: spec, manifest or table.
 	Content string
-	// Parent is the kind of the parent, "" for a project (the root) and the singleton.
+	// Parent is the kind of the parent, "" for a project.
 	Parent string
 	// Nested kinds live under their parent's path, e.g. workflows/{rid}/executions/{eid}.
 	Nested bool
-	// Singleton kinds have one instance at /{plural}.
-	Singleton bool
 	// Index lists the spec or status fields, as JSON pointers, a list filters on.
 	Index []string
 	// Envelope, Spec and Status are the schema names in the bundle.

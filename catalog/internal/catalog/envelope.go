@@ -17,9 +17,6 @@ func URI(r *store.Resource) uri.Ref {
 	if k.Nested && r.ParentRID != nil {
 		return uri.Nested(k, r.ParentRID.String(), r.RID.String())
 	}
-	if k.Singleton {
-		return uri.Ref{Kind: k}
-	}
 	return uri.Of(k, r.RID.String())
 }
 
@@ -66,6 +63,10 @@ func Metadata(r *store.Resource) api.ResourceMetadata {
 	}
 	if r.ProjectRID != nil {
 		m.Project = api.Rid(r.ProjectRID.String())
+	}
+	if r.BaseRID != nil {
+		b := api.Rid(r.BaseRID.String())
+		m.Base = &b
 	}
 	if len(r.Labels) > 0 {
 		labels := r.Labels

@@ -25,8 +25,6 @@ func TestRoundTrip(t *testing.T) {
 		"texera://computing-units/" + rid1 + "/computing-nodes/w-gpu",
 		"texera://conversations/" + rid1 + "/messages/17",
 		"texera://agent-templates/" + rid1 + "@5",
-		"texera://settings",
-		"texera://settings/public",
 		"texera://projects/" + rid1,
 	}
 	for _, name := range names {
@@ -77,9 +75,8 @@ func TestParseFields(t *testing.T) {
 		t.Errorf("rest spelling: %+v %v", rest, err)
 	}
 
-	s, err := Parse("texera://settings")
-	if err != nil || s.Kind.Name != "settings" || s.Rid != "" {
-		t.Errorf("settings: %+v %v", s, err)
+	if _, err := Parse("texera://settings"); err == nil {
+		t.Error("texera://settings names nothing: the deployment's settings are Texera's, a project's")
 	}
 }
 

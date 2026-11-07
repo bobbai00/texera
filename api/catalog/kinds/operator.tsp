@@ -1,6 +1,7 @@
-// operator: an operator type as a resource. Built-ins are platform-owned, public and versioned
-// by the engine image digest; custom operators carry their implementation and are versioned
-// by their authors. A workflow names one by its operatorType or its URI with @vno.
+// operator: an operator type as a resource. The engine's operators live in Texera, kept in step
+// with the units' engine and versioned with it; custom operators are functions in a project,
+// carry their implementation and are versioned by their authors. A workflow names one by its
+// operatorType, which its project or one up its chain must offer, or by its URI with @vno.
 import "@typespec/http";
 import "@typespec/rest";
 import "@typespec/openapi";
@@ -45,7 +46,7 @@ model OperatorSpec {
   outputPorts?: OperatorPortSpec[];
   @doc("JSON Schema of the operator's properties.")
   propertiesSchema?: unknown;
-  @doc("Absent for a built-in, whose code is in the engine image.")
+  @doc("Absent for one of the engine's operators, whose code is in the engine image.")
   implementation?: OperatorImplementation;
   requires?: RuntimeSpec;
 }
@@ -67,7 +68,7 @@ namespace Routes {
   @route("/operators")
   interface Operators
     extends VersionedKindRoutes<Operator, OperatorPage, CreateOperator, UpdateOperator, OperatorVersion, OperatorVersionPage> {
-    @doc("List the operators the caller may use, built-ins and custom. The summary view carries the type, name, group and description; the full view adds the property schema and ports.")
+    @doc("List the operators the caller may use, the engine's and functions. The summary view carries the type, name, group and description; the full view adds the property schema and ports.")
     @get
     @extension("x-texera-permission", "list")
     @extension("x-mcp", #{

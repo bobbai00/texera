@@ -132,7 +132,7 @@ func (s *Service) workedFrom(ctx context.Context, chat uuid.UUID, made []store.R
 	}
 	var refs []uri.Ref
 	for _, name := range attached {
-		if ref, err := uri.Parse(name); err == nil && !ref.Kind.Singleton {
+		if ref, err := uri.Parse(name); err == nil {
 			refs = append(refs, ref)
 		}
 	}

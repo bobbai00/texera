@@ -148,7 +148,7 @@ wait_ready() {
     echo "$app: ready"
   done
   for _ in $(seq 1 120); do
-    curl -sf -o /dev/null "$PUBLIC/auth/realms/texera" && curl -sf -o /dev/null "$PUBLIC/catalog/v1/settings/public" && return 0
+    curl -sf -o /dev/null "$PUBLIC/auth/realms/texera" && curl -sf -o /dev/null "$PUBLIC/catalog/v1/public" && return 0
     sleep 2
   done
   echo "the gateway does not answer on $PUBLIC" >&2

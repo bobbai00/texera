@@ -27,7 +27,7 @@ model WorkflowPort {
 model WorkflowOperator {
   @doc("Unique within the workflow, e.g. scan or avg.")
   operatorID: string;
-  @doc("A built-in operator type, e.g. CSVFileScan, or the URI of a custom operator with `@vno`.")
+  @doc("One of the engine's operator types, e.g. CSVFileScan, which the workflow's project or one up its chain offers, or the URI of a custom operator with `@vno`.")
   operatorType: string;
   @doc("Property values following the operator type's JSON Schema. A file property takes a dataset file URI, texera://datasets/{rid}@{vno}/files/{path}.")
   operatorProperties: Record<unknown>;
@@ -181,7 +181,7 @@ namespace Routes {
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
       tool: "validate_workflow",
-      description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator. Leave computingUnit out to use the workflow's default unit, else its project's or the platform's.",
+      description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator. Leave computingUnit out to use the workflow's default unit, else its project's, which may come from up the project's chain.",
       readOnlyHint: true,
     })
     validate(@path rid: Rid, @body body: ValidateWorkflow): WorkflowValidation | Error;
@@ -192,7 +192,7 @@ namespace Routes {
     @extension("x-texera-permission", "execute")
     @extension("x-mcp", #{
       tool: "run_workflow",
-      description: "Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the workflow's default unit, else its project's or the platform's; name one only when the person asks for another. Results are kept in the warehouse of the workflow, its project or the platform; name one only when the person asks.",
+      description: "Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the workflow's default unit, else its project's, which may come from up the project's chain; name one only when the person asks for another. Results are kept in the warehouse of the workflow, else its project's, which may come from up the project's chain; name one only when the person asks.",
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,

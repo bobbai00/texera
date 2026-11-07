@@ -331,9 +331,12 @@ func upTo(spec api.WorkflowSpec, operatorID string) (api.WorkflowSpec, error) {
 	return part, nil
 }
 
-func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled, error) {
+func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec, project *uuid.UUID) (*compiled, error) {
 	defaultPorts(&spec)
 	if err := validateGraph(&spec); err != nil {
+		return nil, err
+	}
+	if err := s.offered(ctx, &spec, project); err != nil {
 		return nil, err
 	}
 	out := &compiled{Outputs: []api.PortTable{}}

@@ -117,7 +117,7 @@ evals() {
 
 cluster() {
   echo "== cluster (against $GW_CLUSTER)"
-  if ! http_ok "$GW_CLUSTER/catalog/v1/settings/public"; then
+  if ! http_ok "$GW_CLUSTER/catalog/v1/public"; then
     echo "the cluster does not answer on $GW_CLUSTER; run bin/texera-2-0/k8s.sh up first" >&2
     FAILED=1
     return

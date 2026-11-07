@@ -24,11 +24,13 @@ type CreateInput struct {
 	Name        string
 	Description *string
 	Parent      *uuid.UUID
-	Visibility  string
-	Labels      map[string]string
-	Spec        json.RawMessage
-	Status      json.RawMessage
-	Message     *string
+	// Base is, for a project, the project it inherits from; nil: Texera.
+	Base       *uuid.UUID
+	Visibility string
+	Labels     map[string]string
+	Spec       json.RawMessage
+	Status     json.RawMessage
+	Message    *string
 	// Owner overrides the caller as owner; only a service caller may set it (seeding).
 	Owner *uuid.UUID
 }
@@ -40,19 +42,29 @@ func (s *Service) Create(ctx context.Context, caller *auth.Caller, in CreateInpu
 	if k.Nested {
 		return nil, nil, Invalid(k.Name+" is created through its parent", nil)
 	}
-	if k.Singleton {
-		return nil, nil, Invalid(k.Name+" is a singleton", nil)
-	}
 	if strings.TrimSpace(in.Name) == "" {
 		return nil, nil, Invalid("a name is required", nil)
 	}
-	var parent, project *uuid.UUID
+	var parent, project, base *uuid.UUID
 	if k.Name != "project" {
 		p, err := s.parentProject(ctx, caller, in.Parent)
 		if err != nil {
 			return nil, nil, err
 		}
 		parent, project = &p.RID, p.ProjectRID
+	} else if root := s.Root(); root != nil {
+		// A project inherits from Texera unless it names a base its creator administers.
+		base = &root.RID
+		if in.Base != nil {
+			b, err := s.baseFor(ctx, caller, nil, *in.Base, in.Visibility == "public")
+			if err != nil {
+				return nil, nil, err
+			}
+			base = &b.RID
+		}
+	}
+	if !caller.Service {
+		in.Labels = keepIdentityLabels(nil, in.Labels)
 	}
 	owner := caller.PID()
 	if in.Owner != nil && caller.Service {
@@ -62,7 +74,7 @@ func (s *Service) Create(ctx context.Context, caller *auth.Caller, in CreateInpu
 	if len(spec) == 0 {
 		spec = json.RawMessage(`{}`)
 	}
-	spec, err := s.prepareSpec(ctx, caller, k, in.Name, spec)
+	spec, err := s.prepareSpec(ctx, caller, k, in.Name, project, spec)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -80,7 +92,7 @@ func (s *Service) Create(ctx context.Context, caller *auth.Caller, in CreateInpu
 		return nil, nil, err
 	}
 	r, v, err := s.Store.CreateResource(ctx, store.NewResource{
-		RID: &rid, Kind: k.Name, Name: strings.TrimSpace(in.Name), Description: in.Description, ParentRID: parent, ProjectRID: project,
+		RID: &rid, Kind: k.Name, Name: strings.TrimSpace(in.Name), Description: in.Description, ParentRID: parent, ProjectRID: project, BaseRID: base,
 		OwnerPID: owner, CreatedByPID: caller.PID(), Visibility: in.Visibility, Labels: in.Labels, Spec: spec, Status: in.Status, Origin: caller.Origin,
 		Versioned: versioned, ContentKind: k.Content, Content: spec, Message: in.Message, References: references,
 	})
@@ -118,7 +130,7 @@ func (s *Service) parentProject(ctx context.Context, caller *auth.Caller, parent
 // HomeProject returns the caller's personal project, creating it on first use.
 func (s *Service) HomeProject(ctx context.Context, caller *auth.Caller) (*store.Resource, error) {
 	pid := caller.PID()
-	rs, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "project", OwnerPID: &pid, Labels: map[string]string{"texera.home": "true"}, Limit: 1})
+	rs, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "project", OwnerPID: &pid, Labels: map[string]string{homeLabel: "true"}, Limit: 1})
 	if err != nil {
 		return nil, err
 	}
@@ -129,8 +141,12 @@ func (s *Service) HomeProject(ctx context.Context, caller *auth.Caller) (*store.
 	if name == "" {
 		name = "home"
 	}
+	var base *uuid.UUID
+	if root := s.Root(); root != nil {
+		base = &root.RID
+	}
 	r, _, err := s.Store.CreateResource(ctx, store.NewResource{
-		Kind: "project", Name: name + "'s home", OwnerPID: pid, CreatedByPID: pid, Labels: map[string]string{"texera.home": "true"},
+		Kind: "project", Name: name + "'s home", OwnerPID: pid, CreatedByPID: pid, BaseRID: base, Labels: map[string]string{homeLabel: "true"},
 	})
 	if err != nil {
 		return nil, wrap(err, "project")
@@ -157,9 +173,9 @@ func (s *Service) Get(ctx context.Context, caller *auth.Caller, kind *kinds.Kind
 
 // ListFilter selects resources for a list.
 type ListFilter struct {
-	// Scope is a project: the list holds what is in it and what it inherits, the platform's
-	// built-ins. Absent, a call made in a chat is scoped to the chat's project, unless the
-	// filter names its own place (a project, a parent, an origin).
+	// Scope is a project: the list holds what is in it and what it inherits, up its chain to
+	// Texera. Absent, a call made in a chat is scoped to the chat's project, unless the filter
+	// names its own place (a project, a parent, an origin).
 	Scope   *uuid.UUID
 	Parent  *uuid.UUID
 	Project *uuid.UUID
@@ -221,8 +237,8 @@ func (s *Service) List(ctx context.Context, caller *auth.Caller, kind *kinds.Kin
 }
 
 // scope is the projects a list is narrowed to: the one the filter names, or the chat's for a
-// call made in a chat, each with the platform's project, whose built-ins every project
-// inherits. Nil narrows nothing.
+// call made in a chat, with every project up its chain, whose resources it inherits. Nil
+// narrows nothing.
 func (s *Service) scope(ctx context.Context, caller *auth.Caller, f ListFilter) ([]uuid.UUID, error) {
 	project := f.Scope
 	if project != nil {
@@ -237,11 +253,7 @@ func (s *Service) scope(ctx context.Context, caller *auth.Caller, f ListFilter) 
 	if project == nil {
 		return nil, nil
 	}
-	scope := []uuid.UUID{*project}
-	if system := s.SystemProject(); system != nil && system.RID != *project {
-		scope = append(scope, system.RID)
-	}
-	return scope, nil
+	return s.chainRIDs(ctx, *project), nil
 }
 
 // chatProject is the project of the chat a call acts in, when the runtime vouches for one.
@@ -297,13 +309,18 @@ func (s *Service) UpdateSpec(ctx context.Context, caller *auth.Caller, k kinds.K
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := s.require(ctx, caller, authz.Write, r.RID); err != nil {
+	// A project's settings are its admins' to change; what is in a project, its members'.
+	permission := authz.Write
+	if k.Name == projectKind.Name {
+		permission = authz.Admin
+	}
+	if err := s.require(ctx, caller, permission, r.RID); err != nil {
 		return nil, nil, err
 	}
 	if k.Name == "workflow" {
 		in.Spec = keepLayout(in.Spec, r.Spec)
 	}
-	spec, err := s.prepareSpec(ctx, caller, k, r.Name, in.Spec)
+	spec, err := s.prepareSpec(ctx, caller, k, r.Name, r.ProjectRID, in.Spec)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -347,13 +364,19 @@ type MetadataInput struct {
 	Name        *string
 	Description *string
 	Parent      *uuid.UUID
-	Visibility  *string
-	Labels      map[string]string
-	IfMatch     string
+	// Base is a project's new base.
+	Base       *uuid.UUID
+	Visibility *string
+	Labels     map[string]string
+	IfMatch    string
 }
 
-// UpdateMetadata renames, describes, moves, publishes or labels a resource.
+// UpdateMetadata renames, describes, moves, publishes or labels a resource; a project's admins
+// do so for their project, and choose what it inherits from.
 func (s *Service) UpdateMetadata(ctx context.Context, caller *auth.Caller, in MetadataInput) (*store.Resource, error) {
+	if r, err := s.Store.GetResource(ctx, in.RID); err == nil && r.Kind == projectKind.Name {
+		return s.updateProject(ctx, caller, r, in)
+	}
 	r, err := s.Get(ctx, caller, nil, in.RID)
 	if err != nil {
 		return nil, err
@@ -361,7 +384,13 @@ func (s *Service) UpdateMetadata(ctx context.Context, caller *auth.Caller, in Me
 	if err := s.require(ctx, caller, authz.Write, r.RID); err != nil {
 		return nil, err
 	}
-	update := store.MetadataUpdate{RID: r.RID, Name: in.Name, Description: in.Description, Labels: in.Labels, IfMatch: in.IfMatch}
+	if in.Base != nil {
+		return nil, Invalid("only a project inherits from a base", map[string]any{"field": "base"})
+	}
+	update := store.MetadataUpdate{RID: r.RID, Name: in.Name, Description: in.Description, IfMatch: in.IfMatch}
+	if in.Labels != nil {
+		update.Labels = keepIdentityLabels(r.Labels, in.Labels)
+	}
 	if in.Name != nil && strings.TrimSpace(*in.Name) == "" {
 		return nil, Invalid("a name is required", nil)
 	}
@@ -376,7 +405,7 @@ func (s *Service) UpdateMetadata(ctx context.Context, caller *auth.Caller, in Me
 	}
 	if in.Parent != nil {
 		k, _ := kinds.ByName(r.Kind)
-		if k.Nested || k.Name == "project" {
+		if k.Nested {
 			return nil, Invalid(r.Kind+" cannot be moved", nil)
 		}
 		p, err := s.parentProject(ctx, caller, in.Parent)
@@ -401,9 +430,6 @@ func (s *Service) Delete(ctx context.Context, caller *auth.Caller, kind *kinds.K
 	}
 	if err := s.require(ctx, caller, authz.Delete, r.RID); err != nil {
 		return err
-	}
-	if r.Kind == "settings" {
-		return Invalid("settings cannot be deleted", nil)
 	}
 	if n, err := s.Store.CountChildren(ctx, r.RID); err != nil {
 		return err
@@ -464,8 +490,7 @@ func (s *Service) Version(ctx context.Context, caller *auth.Caller, kind *kinds.
 	return r, v, nil
 }
 
-// Grants lists a resource's direct grants, for whoever may share it. Reading them changes
-// nothing, so a built-in's can be read.
+// Grants lists a resource's direct grants, for whoever may share it.
 func (s *Service) Grants(ctx context.Context, caller *auth.Caller, rid uuid.UUID) ([]store.Grant, error) {
 	if _, err := s.Get(ctx, caller, nil, rid); err != nil {
 		return nil, err
@@ -531,15 +556,7 @@ func (s *Service) Resolve(ctx context.Context, caller *auth.Caller, name string)
 		return nil, Invalid(err.Error(), nil)
 	}
 	var r *store.Resource
-	if ref.Kind.Singleton {
-		r = s.settingsResource()
-		if r == nil {
-			return nil, NotFound(name)
-		}
-		if err := s.require(ctx, caller, authz.Read, r.RID); err != nil {
-			return nil, err
-		}
-	} else {
+	{
 		rid, err := uuid.Parse(ref.Rid)
 		if err != nil {
 			return nil, Invalid(err.Error(), nil)
@@ -600,9 +617,6 @@ func (s *Service) references(ctx context.Context, caller *auth.Caller, fromRID u
 	found := uri.Extract(v)
 	var edges []store.Edge
 	for pointer, ref := range found {
-		if ref.Kind.Singleton {
-			continue
-		}
 		rid, err := uuid.Parse(ref.Rid)
 		if err != nil {
 			return nil, Invalid("bad reference at "+pointer, nil)

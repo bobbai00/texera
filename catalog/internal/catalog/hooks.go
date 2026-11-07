@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/apache/texera/catalog/internal/api"
 	"github.com/apache/texera/catalog/internal/auth"
 	"github.com/apache/texera/catalog/internal/kinds"
@@ -15,7 +17,7 @@ import (
 )
 
 // prepareSpec normalizes a spec for its kind and validates it against the contract's schema.
-func (s *Service) prepareSpec(ctx context.Context, caller *auth.Caller, k kinds.Kind, name string, spec json.RawMessage) (json.RawMessage, error) {
+func (s *Service) prepareSpec(ctx context.Context, caller *auth.Caller, k kinds.Kind, name string, project *uuid.UUID, spec json.RawMessage) (json.RawMessage, error) {
 	var doc map[string]any
 	if err := json.Unmarshal(spec, &doc); err != nil {
 		return nil, Invalid("the spec must be a JSON object", nil)
@@ -54,7 +56,7 @@ func (s *Service) prepareSpec(ctx context.Context, caller *auth.Caller, k kinds.
 		return nil, err
 	}
 	if k.Name == "warehouse" {
-		if err := s.checkWarehouse(ctx, caller, normalized); err != nil {
+		if err := s.checkWarehouse(ctx, caller, project, normalized); err != nil {
 			return nil, err
 		}
 	}
@@ -208,6 +210,8 @@ func (s *Service) afterUpdate(ctx context.Context, before, r *store.Resource) er
 // beforeDelete cleans up what a kind holds outside the store.
 func (s *Service) beforeDelete(ctx context.Context, r *store.Resource) error {
 	switch r.Kind {
+	case "project":
+		return s.beforeDeleteProject(ctx, r)
 	case "credential":
 		path := secretPath(r)
 		if err := s.Secrets.Delete(ctx, path); err != nil && !errors.Is(err, ports.ErrSecretNotFound) {

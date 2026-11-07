@@ -95,7 +95,7 @@ func BlobStore(t *testing.T, b ports.BlobStore) {
 }
 
 // Authorizer exercises direct relations, the hierarchy, parent inheritance, the public
-// wildcard, group membership and deletes.
+// wildcard, group membership, projects that inherit from others, and deletes.
 func Authorizer(t *testing.T, a ports.Authorizer) {
 	t.Helper()
 	ctx := context.Background()
@@ -183,5 +183,50 @@ func Authorizer(t *testing.T, a ports.Authorizer) {
 	}
 	if !check(alice, "can_delete", project) {
 		t.Fatal("the tuple written again is gone")
+	}
+
+	// A project inherits from its base: the people who view or use the project view or use
+	// what the base holds, up the chain; nobody edits through it, and the base's admins get
+	// nothing in the project.
+	lab, group2, student := "resource:lab-"+suffix, "resource:study-"+suffix, "resource:thesis-"+suffix
+	labUnit, labOperator, studyData := "resource:lab-unit-"+suffix, "resource:lab-operator-"+suffix, "resource:study-data-"+suffix
+	head, member, guest, runner, outsider := "user:head-"+suffix, "user:member-"+suffix, "user:guest-"+suffix, "user:runner-"+suffix, "user:outsider-"+suffix
+	must(a.Write(ctx, []ports.Tuple{
+		{Object: lab, Relation: "owner", Subject: head},
+		{Object: labUnit, Relation: "parent", Subject: lab},
+		{Object: labOperator, Relation: "parent", Subject: lab},
+		{Object: lab, Relation: "inheritor", Subject: group2},
+		{Object: group2, Relation: "inheritor", Subject: student},
+		{Object: studyData, Relation: "parent", Subject: group2},
+		{Object: student, Relation: "owner", Subject: member},
+		{Object: student, Relation: "viewer", Subject: guest},
+		{Object: student, Relation: "user", Subject: runner},
+	}, nil))
+	time.Sleep(50 * time.Millisecond)
+	if !check(member, "can_read", labOperator) || !check(member, "can_run_on", labUnit) || !check(member, "can_read", studyData) {
+		t.Fatal("an admin of a project reads and uses what its chain holds")
+	}
+	if check(member, "can_write", labOperator) || check(member, "can_admin", lab) || check(member, "can_delete", studyData) {
+		t.Fatal("nobody edits, administers or deletes through inheritance")
+	}
+	if !check(guest, "can_read", labOperator) || check(guest, "can_use", labUnit) {
+		t.Fatal("a viewer of the inheritor views the base and does not use it")
+	}
+	if !check(runner, "can_run_on", labUnit) || check(runner, "can_read", labOperator) {
+		t.Fatal("a user of the inheritor uses the base and does not view it")
+	}
+	if check(head, "can_read", student) || check(head, "can_admin", group2) {
+		t.Fatal("a base's admin gets nothing in what inherits from it")
+	}
+	if check(outsider, "can_read", labOperator) || check(outsider, "can_run_on", labUnit) {
+		t.Fatal("an outsider gets nothing")
+	}
+	if !check(head, "can_admin", lab) || !check(head, "can_share", labUnit) {
+		t.Fatal("a project's owner is its admin and administers what is in it")
+	}
+	must(a.Write(ctx, nil, []ports.Tuple{{Object: group2, Relation: "inheritor", Subject: student}}))
+	time.Sleep(50 * time.Millisecond)
+	if check(member, "can_read", labOperator) || check(member, "can_read", studyData) {
+		t.Fatal("a project that no longer inherits reads nothing up the old chain")
 	}
 }

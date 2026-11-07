@@ -47,6 +47,10 @@ func Handler(api http.Handler, resolver *texauth.Resolver, publicURL string, log
 const instructions = `The Texera catalog: every resource and what can be done with it. A resource (a workflow, dataset,
 execution, skill, MCP server, computing unit, profile, warehouse, operator, conversation,
 credential or model endpoint) has a texera:// URI, versions, grants and lineage. whoami says who is calling.
+Every resource lives in a project, and a project inherits from its base, up to Texera, which every
+project inherits from: its people read and use what the projects up its chain hold, and
+project_settings says what its work runs with (its default agent, model, unit, profile and
+warehouse, its look and its limits) and which project of the chain each comes from.
 search_resources finds things by kind, project or text; resolve_uri and get_resource read one;
 list_versions and get_version read history; get_lineage shows where a version came from and what
 was made from it; grant_access shares a resource with a principal found by search_principals.
@@ -62,7 +66,7 @@ in a warehouse; every edit is a version, and running it makes an execution with 
 links} where a scan's fileName is texera://datasets/<rid>@<vno>/files/<path>; get_workflow reads
 it; edit_workflow applies an RFC 6902 patch as a new version; validate_workflow compiles it,
 until it reports ok; run_workflow with waitSeconds starts an execution (on the computing unit and
-in the warehouse it names, else the workflow's, the project's or the platform's default; upTo
+in the warehouse it names, else the workflow's, else the project's default; upTo
 runs only what leads to one operator) and
 get_port_result reads its rows: results live with the execution. get_execution follows one that is still going;
 pause_execution and resume_execution hold and continue it.`

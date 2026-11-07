@@ -8,7 +8,6 @@ export interface KindEntry {
   content: "spec" | "manifest" | "table";
   parent?: string;
   nested: boolean;
-  singleton: boolean;
   envelope: string;
   spec: string;
   status?: string;
@@ -16,20 +15,19 @@ export interface KindEntry {
 
 /** Every kind, in kind order. */
 export const KIND_TABLE: readonly KindEntry[] = [
-  { kind: "agent-template", plural: "agent-templates", versioned: true, content: "spec", parent: "project", nested: false, singleton: false, envelope: "AgentTemplate", spec: "AgentTemplateSpec", status: "AgentTemplateStatus" },
-  { kind: "computing-unit", plural: "computing-units", versioned: false, content: "spec", parent: "project", nested: false, singleton: false, envelope: "ComputingUnit", spec: "ComputingUnitSpec", status: "ComputingUnitStatus" },
-  { kind: "conversation", plural: "conversations", versioned: false, content: "spec", parent: "project", nested: false, singleton: false, envelope: "Conversation", spec: "ConversationSpec", status: "ConversationStatus" },
-  { kind: "credential", plural: "credentials", versioned: false, content: "spec", parent: "project", nested: false, singleton: false, envelope: "Credential", spec: "CredentialSpec", status: "CredentialStatus" },
-  { kind: "dataset", plural: "datasets", versioned: true, content: "manifest", parent: "project", nested: false, singleton: false, envelope: "Dataset", spec: "DatasetSpec", status: "DatasetStatus" },
-  { kind: "execution", plural: "executions", versioned: false, content: "spec", parent: "workflow", nested: true, singleton: false, envelope: "Execution", spec: "ExecutionSpec", status: "ExecutionStatus" },
-  { kind: "mcp-server", plural: "mcp-servers", versioned: true, content: "spec", parent: "project", nested: false, singleton: false, envelope: "McpServer", spec: "McpServerSpec", status: "McpServerStatus" },
-  { kind: "model", plural: "models", versioned: true, content: "manifest", parent: "project", nested: false, singleton: false, envelope: "Model", spec: "ModelSpec", status: "ModelStatus" },
-  { kind: "model-endpoint", plural: "model-endpoints", versioned: false, content: "spec", parent: "project", nested: false, singleton: false, envelope: "ModelEndpoint", spec: "ModelEndpointSpec", status: "ModelEndpointStatus" },
-  { kind: "operator", plural: "operators", versioned: true, content: "spec", parent: "project", nested: false, singleton: false, envelope: "Operator", spec: "OperatorSpec", status: "OperatorStatus" },
-  { kind: "profile", plural: "profiles", versioned: true, content: "spec", parent: "project", nested: false, singleton: false, envelope: "Profile", spec: "ProfileSpec", status: "ProfileStatus" },
-  { kind: "project", plural: "projects", versioned: false, content: "spec", nested: false, singleton: false, envelope: "Project", spec: "ProjectSpec", status: "ProjectStatus" },
-  { kind: "settings", plural: "settings", versioned: false, content: "spec", nested: false, singleton: true, envelope: "Settings", spec: "SettingsSpec", status: "SettingsStatus" },
-  { kind: "skill", plural: "skills", versioned: true, content: "spec", parent: "project", nested: false, singleton: false, envelope: "Skill", spec: "SkillSpec", status: "SkillStatus" },
-  { kind: "warehouse", plural: "warehouses", versioned: false, content: "spec", parent: "project", nested: false, singleton: false, envelope: "Warehouse", spec: "WarehouseSpec", status: "WarehouseStatus" },
-  { kind: "workflow", plural: "workflows", versioned: true, content: "spec", parent: "project", nested: false, singleton: false, envelope: "Workflow", spec: "WorkflowSpec", status: "WorkflowStatus" },
+  { kind: "agent-template", plural: "agent-templates", versioned: true, content: "spec", parent: "project", nested: false, envelope: "AgentTemplate", spec: "AgentTemplateSpec", status: "AgentTemplateStatus" },
+  { kind: "computing-unit", plural: "computing-units", versioned: false, content: "spec", parent: "project", nested: false, envelope: "ComputingUnit", spec: "ComputingUnitSpec", status: "ComputingUnitStatus" },
+  { kind: "conversation", plural: "conversations", versioned: false, content: "spec", parent: "project", nested: false, envelope: "Conversation", spec: "ConversationSpec", status: "ConversationStatus" },
+  { kind: "credential", plural: "credentials", versioned: false, content: "spec", parent: "project", nested: false, envelope: "Credential", spec: "CredentialSpec", status: "CredentialStatus" },
+  { kind: "dataset", plural: "datasets", versioned: true, content: "manifest", parent: "project", nested: false, envelope: "Dataset", spec: "DatasetSpec", status: "DatasetStatus" },
+  { kind: "execution", plural: "executions", versioned: false, content: "spec", parent: "workflow", nested: true, envelope: "Execution", spec: "ExecutionSpec", status: "ExecutionStatus" },
+  { kind: "mcp-server", plural: "mcp-servers", versioned: true, content: "spec", parent: "project", nested: false, envelope: "McpServer", spec: "McpServerSpec", status: "McpServerStatus" },
+  { kind: "model", plural: "models", versioned: true, content: "manifest", parent: "project", nested: false, envelope: "Model", spec: "ModelSpec", status: "ModelStatus" },
+  { kind: "model-endpoint", plural: "model-endpoints", versioned: false, content: "spec", parent: "project", nested: false, envelope: "ModelEndpoint", spec: "ModelEndpointSpec", status: "ModelEndpointStatus" },
+  { kind: "operator", plural: "operators", versioned: true, content: "spec", parent: "project", nested: false, envelope: "Operator", spec: "OperatorSpec", status: "OperatorStatus" },
+  { kind: "profile", plural: "profiles", versioned: true, content: "spec", parent: "project", nested: false, envelope: "Profile", spec: "ProfileSpec", status: "ProfileStatus" },
+  { kind: "project", plural: "projects", versioned: false, content: "spec", nested: false, envelope: "Project", spec: "ProjectSpec", status: "ProjectStatus" },
+  { kind: "skill", plural: "skills", versioned: true, content: "spec", parent: "project", nested: false, envelope: "Skill", spec: "SkillSpec", status: "SkillStatus" },
+  { kind: "warehouse", plural: "warehouses", versioned: false, content: "spec", parent: "project", nested: false, envelope: "Warehouse", spec: "WarehouseSpec", status: "WarehouseStatus" },
+  { kind: "workflow", plural: "workflows", versioned: true, content: "spec", parent: "project", nested: false, envelope: "Workflow", spec: "WorkflowSpec", status: "WorkflowStatus" },
 ];

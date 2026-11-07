@@ -19,28 +19,29 @@ func TestMeAndSeed(t *testing.T) {
 	h := newHarness(t)
 	var me api.Me
 	h.mustJSON("alice", "GET", p+"/me", nil, &me)
-	if me.HomeProject == "" || me.SystemProject == "" || me.Admin {
+	if me.HomeProject == "" || me.RootProject == "" || me.HomeProject == me.RootProject {
 		t.Fatalf("me: %+v", me)
 	}
-	var settings api.PublicSettings
-	h.mustJSON("", "GET", p+"/settings/public", nil, &settings)
-	if settings.Branding.Name != "Texera Test" || settings.Auth.ClientId != "texera-app" {
-		t.Fatalf("public settings: %+v", settings)
+	// Before anyone signs in, the app reads Texera's look and how to sign in.
+	var public api.PublicInfo
+	h.mustJSON("", "GET", p+"/public", nil, &public)
+	if public.Branding.Name == nil || *public.Branding.Name != "Texera Test" || public.Auth.ClientId != "texera-app" {
+		t.Fatalf("public: %+v", public)
 	}
 	status, _ := h.do("", "GET", p+"/me", nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("no token: %d", status)
 	}
-	var full envelope
-	h.mustJSON("alice", "GET", p+"/settings", nil, &full)
-	if full.Kind != "settings" || full.Spec["defaults"] == nil {
-		t.Fatalf("settings: %+v", full)
+	// Texera's admins set its look, and the sign-in page shows it.
+	root := projectSettings(h, "alice", me.RootProject)
+	refused(t, h, "alice", "PUT", "/projects/"+string(me.RootProject), map[string]any{"spec": map[string]any{"defaults": root.Defaults}}, http.StatusForbidden, "forbidden")
+	h.mustJSON("admin", "PUT", p+"/projects/"+string(me.RootProject), map[string]any{"spec": map[string]any{
+		"branding": map[string]any{"name": "Clinic", "logoUrl": "https://clinic.example/logo.svg"}, "defaults": root.Defaults,
+	}}, nil)
+	h.mustJSON("", "GET", p+"/public", nil, &public)
+	if public.Branding.Name == nil || *public.Branding.Name != "Clinic" || public.Branding.LogoUrl == nil {
+		t.Fatalf("public after Texera's admins set its look: %+v", public.Branding)
 	}
-	status, _ = h.do("alice", "PUT", p+"/settings", map[string]any{"spec": full.Spec})
-	if status != http.StatusForbidden {
-		t.Fatalf("alice may not write settings: %d", status)
-	}
-	h.mustJSON("admin", "PUT", p+"/settings", map[string]any{"spec": full.Spec}, nil)
 }
 
 func TestWorkflowLifecycleAndSharing(t *testing.T) {
@@ -386,7 +387,7 @@ func TestExecutionResultsAndLineage(t *testing.T) {
 	if len(page.Items) != 1 {
 		t.Fatalf("workflow executions: %d", len(page.Items))
 	}
-	// Built-in operators were synced from the unit into the system project.
+	// The engine's operators were synced from the unit into Texera.
 	if err := h.svc.SyncOperators(t.Context(), unitOf(h)); err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +398,7 @@ func TestExecutionResultsAndLineage(t *testing.T) {
 	}
 	var compact api.ResourcePage
 	h.mustJSON("alice", "GET", p+"/operators", nil, &compact)
-	if len(compact.Items) != 4 || compact.Items[0].Spec["propertiesSchema"] != nil {
+	if len(compact.Items) != 8 || compact.Items[0].Spec["propertiesSchema"] != nil {
 		t.Fatalf("compact operators: %+v", compact.Items)
 	}
 	// Types that differ only in case are two operators, each named by its type, and syncing

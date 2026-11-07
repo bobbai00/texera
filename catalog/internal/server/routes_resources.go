@@ -103,6 +103,13 @@ func (s *Server) routeResources() {
 			}
 			in.Parent = &parent
 		}
+		if body.Base != nil {
+			base, err := uuid.Parse(string(*body.Base))
+			if err != nil {
+				return catalog.Invalid("base is not a resource id", nil)
+			}
+			in.Base = &base
+		}
 		res, err := s.svc.UpdateMetadata(ctxOf(r), callerOf(r), in)
 		if err != nil {
 			return err
@@ -321,7 +328,7 @@ func (s *Server) routeResources() {
 			return err
 		}
 		caller := callerOf(r)
-		if req.Subject.Id != "" && req.Subject.Id != caller.PID().String() && !caller.Service && !caller.Admin() {
+		if req.Subject.Id != "" && req.Subject.Id != caller.PID().String() && !caller.Service {
 			return catalog.Forbidden()
 		}
 		rid, err := uuid.Parse(req.Resource.Id)

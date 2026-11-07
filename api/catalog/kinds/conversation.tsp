@@ -1,8 +1,9 @@
 // conversation: the state of a chat. The spec holds the chat's choices of how its agent works,
 // each optional: the agent, the model the agent uses, its add-on MCP servers. A turn runs with
-// the chat's choice, else the project's, else the agent's own or the platform's default
-// (ChatSettings). Where an execution runs is not a chat's to choose: the call names a unit, else
-// the workflow's, the project's or the platform's default applies, for everyone alike. Messages
+// the chat's choice, else the default of the nearest project up the chat's project's chain that
+// sets one, else the agent's own (ChatSettings). Where an execution runs is not a chat's to
+// choose: the call names a unit, else the workflow's, else its project's default applies, for
+// everyone alike. Messages
 // are an append-only subresource; a turn is one run of the loop, locked on the conversation.
 import "@typespec/http";
 import "@typespec/rest";
@@ -17,13 +18,13 @@ using OpenAPI;
 namespace Texera.Catalog;
 
 model ConversationSpec {
-  @doc("The agent template the next turn runs, chosen by the person or by a handoff; absent: the project's default, else the platform's.")
+  @doc("The agent template the next turn runs, chosen by the person or by a handoff; absent: the project's default, which may come from up its chain.")
   template?: Uri;
-  @doc("The model endpoint the agent uses in this chat; absent: the project's default, else the agent's own.")
+  @doc("The model endpoint the agent uses in this chat; absent: the project's default, which may come from up its chain, else the agent's own.")
   modelEndpoint?: Uri;
-  @doc("The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.")
+  @doc("The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The catalog's own server is not an add-on and is never listed here.")
   mcpServers?: Uri[];
-  @doc("How the agent's changes go once it has said what it will do: `auto`, it makes them; `manual`, each change waits for a person's approval. Absent: the project's choice, else `auto`.")
+  @doc("How the agent's changes go once it has said what it will do: `auto`, it makes them; `manual`, each change waits for a person's approval. Absent: the project's choice, which may come from up its chain, else `auto`.")
   workMode?: WorkMode;
 }
 
@@ -33,12 +34,12 @@ enum WorkMode {
   manual,
 }
 
-@doc("The level a setting of a chat comes from.")
+@doc("Where a chat's setting comes from: the chat's own choice, a project's default (the chat's project or one up its chain), the agent's own, or, when nothing chose, the catalog's default.")
 enum SettingSource {
   chat,
   project,
   agent,
-  platform,
+  default,
 }
 
 @doc("One setting of a chat as a turn uses it.")
@@ -46,12 +47,14 @@ model Setting {
   uri: Uri;
   name: string;
   from: SettingSource;
+  @doc("The project whose default it is, when it comes from a project.")
+  project?: ChatProject;
 }
 
 @doc("An MCP server a turn mounts.")
 model ServerSetting {
   ...Setting;
-  @doc("True for the platform's own server, the catalog: the agent's basic tools, called as the person. Every other server is an add-on a turn can go without.")
+  @doc("True for the catalog's own server: the agent's basic tools, called as the person. Every other server is an add-on a turn can go without.")
   platform: boolean;
   @doc("The tool names the agent may call; absent: every tool the server exposes.")
   allow?: string[];
@@ -72,24 +75,26 @@ model ChatProject {
   name: string;
 }
 
-@doc("What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default.")
+@doc("What a turn of a chat runs with, for the caller: each choice of the chat, else the default of the nearest project up the chat's project's chain that sets one, else the agent's own.")
 model ChatSettings {
   @doc("Where the chat is: what a turn makes goes into this project, and a list made in a turn is scoped to it.")
   project: ChatProject;
   @doc("The agent, at the version a turn runs.")
   agent: Setting;
   modelEndpoint: Setting;
-  @doc("The platform's own server first, then the add-ons.")
+  @doc("The catalog's own server first, then the add-ons.")
   mcpServers: ServerSetting[];
   @doc("How the agent's changes go in this chat, and where that choice comes from.")
   workMode: WorkModeSetting;
   skipped?: SkippedSetting[];
 }
 
-@doc("How the agent's changes go in a chat: the chat's choice, else the project's, else the platform's (`auto`).")
+@doc("How the agent's changes go in a chat: the chat's choice, else the nearest project's up the chain, else `auto`.")
 model WorkModeSetting {
   mode: WorkMode;
   from: SettingSource;
+  @doc("The project whose default it is, when it comes from a project.")
+  project?: ChatProject;
 }
 
 @doc("A version as a chat knows it: one the chat made, or one it worked from.")
@@ -176,7 +181,7 @@ model ConversationGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   planned: PlannedItem[];
-  @doc("The outside MCP servers the chat's agent consulted, in the order it first did; the platform's own server is not among them.")
+  @doc("The outside MCP servers the chat's agent consulted, in the order it first did; the catalog's own server is not among them.")
   sources: GraphSource[];
 }
 

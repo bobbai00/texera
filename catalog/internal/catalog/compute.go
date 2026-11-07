@@ -234,13 +234,15 @@ func (s *Service) UnitOperators(ctx context.Context, caller *auth.Caller, rid uu
 	return filtered, nil
 }
 
-// SyncOperators mirrors a unit's operator registry into operator resources of the system
-// project: one per type, versioned by the engine that provides it. It runs at startup and
-// whenever a unit's engine changes.
+// SyncOperators brings the engine's operators of a unit into Texera, one resource per type,
+// versioned by the engine that provides them, through the release ledger: an operator Texera's
+// admins changed keeps their change, and one they deleted stays gone, which is how they take an
+// operator from everyone. It runs at startup and whenever a unit's engine changes. The engine's
+// own operators, which no workflow names, are left out.
 func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error {
 	sys := s.System()
-	project := s.SystemProject()
-	if sys == nil || project == nil {
+	root := s.Root()
+	if sys == nil || root == nil {
 		return nil
 	}
 	client, status, err := s.unitClient(ctx, unit)
@@ -256,12 +258,11 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 		return err
 	}
 	caller := &auth.Caller{Principal: sys, Service: true}
-	k, _ := kinds.ByName("operator")
-	count := 0
+	changed := 0
 	for _, op := range list.Operators {
 		if engineOnly[op.OperatorType] {
-			// Not one anybody calls: no workflow names it, so the list does not offer it.
-			s.dropOperatorType(ctx, caller, project.RID, op.OperatorType)
+			// Not one anybody calls: no workflow names it, so Texera does not offer it.
+			s.dropOperatorType(ctx, caller, root.RID, op.OperatorType)
 			continue
 		}
 		spec := api.OperatorSpec{OperatorType: op.OperatorType, DisplayName: &op.UserFriendlyName, Group: &op.OperatorGroupName, Description: op.OperatorDescription, PropertiesSchema: op.JsonSchema}
@@ -274,53 +275,31 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 		if op.Requires != nil {
 			spec.Requires = &api.RuntimeSpec{Isolation: op.Requires.Isolation, Resources: op.Requires.Resources}
 		}
-		status := mustJSON(api.OperatorStatus{Engine: &engineID})
-		// The name filter ignores case, and the engine has both "Filter" and "filter": the
-		// resource of this type is the one whose spec names it.
-		named, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "operator", ParentRID: &project.RID, Name: op.OperatorType, Limit: 20})
-		if err != nil {
-			return err
+		description := ""
+		if op.OperatorDescription != nil {
+			description = *op.OperatorDescription
 		}
-		existing := ofOperatorType(named, op.OperatorType)
-		specJSON := mustJSON(spec)
-		if len(existing) == 0 {
-			desc := op.OperatorDescription
-			if _, _, err := s.Create(ctx, caller, CreateInput{Kind: k, Name: op.OperatorType, Description: desc, Parent: &project.RID, Spec: specJSON, Status: status, Owner: &sys.PID}); err != nil {
-				s.Log.Warn("seed operator", "type", op.OperatorType, "err", err)
-				continue
-			}
-			count++
+		before, _ := s.Store.GetShipped(ctx, "operator", op.OperatorType)
+		r, err := s.ship(ctx, caller, shipment{
+			kind: "operator", name: op.OperatorType, description: description, spec: mustJSON(spec),
+			status: mustJSON(api.OperatorStatus{Engine: &engineID}), message: "updated by engine " + engineID, typed: true,
+		})
+		if err != nil {
+			s.Log.Warn("sync operator", "type", op.OperatorType, "err", err)
 			continue
 		}
-		cur := existing[0]
-		if cur.Name != op.OperatorType {
-			// Named after another type's spelling by an earlier sync that matched on the name alone.
-			name := op.OperatorType
-			if _, err := s.UpdateMetadata(ctx, caller, MetadataInput{RID: cur.RID, Name: &name}); err != nil {
-				s.Log.Warn("rename operator", "type", op.OperatorType, "err", err)
-			}
-		}
-		curCanon, _ := store.Canonical(cur.Spec)
-		newCanon, _ := store.Canonical(specJSON)
-		if string(curCanon) != string(newCanon) {
-			msg := "updated by engine " + engineID
-			if _, _, err := s.UpdateSpec(ctx, caller, k, UpdateSpecInput{RID: cur.RID, Spec: specJSON, Message: &msg}); err != nil {
-				s.Log.Warn("update operator", "type", op.OperatorType, "err", err)
-				continue
-			}
-			count++
-		}
-		if string(cur.Status) == "" || !strings.Contains(string(cur.Status), engineID) {
-			_, _ = s.Store.UpdateStatus(ctx, cur.RID, status)
+		if r != nil && (before == nil || before.Digest != ShippedDigest(r.Spec, r.Description)) {
+			changed++
 		}
 	}
-	if count > 0 {
-		s.Log.Info("operators synced", "unit", unit.Name, "engine", engineID, "changed", count, "total", len(list.Operators))
+	if changed > 0 {
+		s.Log.Info("operators synced", "unit", unit.Name, "engine", engineID, "changed", changed, "total", len(list.Operators))
 	}
 	return nil
 }
 
-// dropOperatorType deletes the system's operator resources of a type, as an earlier sync made.
+// dropOperatorType deletes Texera's operator resources of a type, as an earlier sync made, and
+// forgets that a release shipped it.
 func (s *Service) dropOperatorType(ctx context.Context, caller *auth.Caller, project uuid.UUID, operatorType string) {
 	named, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "operator", ParentRID: &project, Name: operatorType, Limit: 20})
 	if err != nil {
@@ -332,6 +311,7 @@ func (s *Service) dropOperatorType(ctx context.Context, caller *auth.Caller, pro
 			s.Log.Warn("drop engine operator", "type", operatorType, "err", err)
 		}
 	}
+	_ = s.Store.ForgetShipped(ctx, "operator", operatorType)
 }
 
 // ofOperatorType keeps the operator resources whose spec is of exactly this type.

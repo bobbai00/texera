@@ -41,7 +41,7 @@ func open(t *testing.T) *store.Store {
 
 func user(t *testing.T, st *store.Store, name string) *store.Principal {
 	t.Helper()
-	p, _, err := st.EnsureUser(context.Background(), "sub:"+name, name, name+"@example.org", false)
+	p, _, err := st.EnsureUser(context.Background(), "sub:"+name, name, name+"@example.org")
 	if err != nil {
 		t.Fatal(err)
 	}
