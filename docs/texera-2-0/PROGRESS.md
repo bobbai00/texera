@@ -2,6 +2,46 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-06 (session 14, part 2): two designs, with plans
+
+Design only; nothing in the code changed. The user reviewed the resource graph design and named
+two big efforts: the resource graph (simple, visually distinct from the workflow canvas, opened
+when the agent starts writing, with an agent that clarifies, reads and asks first, and profiles
+with GPU and ML environments), and a simpler engine declaration with efficiency and caching
+(operators as simple as dataflow-agent's native mode, core operators in Scala instead of pandas,
+Python for user code, R at low priority, Amber's parallelism, caching from lineage, models in
+workflows with their lineage).
+
+- The Claude Doc "Texera 2.0: The Resource Graph" (https://claude.ai/artifact/HKWSujDmAbLpRHM7JEkQ9Z)
+  was rewritten: four agent phases with an `ask` tool and a `start_work` call that opens the graph
+  (writes refused before it), a profile ladder, five node kinds and four labelled arrows in fixed
+  columns, a data model with no new table, the demo phase by phase, and phases G1 to G5.
+- A new Claude Doc, "Texera 2.0: Operators, Runtimes and Caching"
+  (https://claude.ai/artifact/YTxrrUqJfphVt6Sa5zv15v): one-line operators backed by one Scala
+  contract each, SQL expressions, Python functions as custom operators (`by` for parallelism),
+  runtimes, worker counts from the unit, fingerprints of port results reused through the
+  catalog's lineage, models through `predict` and a loader, and phases E0 to E6.
+
+Found while reading the engine, recorded in the engine doc: with the default two workers,
+Aggregate's second stage averages the first stage's per-worker averages without weights, so an
+uneven split gives a wrong mean (`AggregateOpExec.onFinish` emits `finalAgg`, and
+`AggregationOperation.getFinal` keeps AVERAGE); and the catalog keeps only port entries with a
+`portID` (`portSpecs` in `compute.go`) while the unit sends them keyed `id`, so every built-in
+operator resource has no ports. Phase E0 fixes both.
+
+A fresh-eyes review of both docs (a subagent reading them against the code) changed the designs:
+settings store resource URIs and the line shows names; the workflow document keeps its shape;
+a Python function is a custom operator (no new kind) with `@returns` columns; caching rewrites the
+plan in the catalog (skipped operators removed, a `stored` source reads each found table) instead
+of changing Amber's scheduler, and a shown hit is copied into the new execution; fingerprints
+include kernel and package versions; E1 opens with a spike on the expression engine (Calcite
+against DuckDB); range sort and a parallel final aggregate are new work in E5; the write gate
+covers only the platform server's tools, and no work id or new chat part is needed; graph
+columns are ranks of dependency, dashed means planned only; the phases' dependencies and tests
+were corrected (G4 closes on today's operators, the demo needs E1 to E4).
+
+Next: the user's review of both designs; E0 can go first either way.
+
 ## 2026-11-06 (session 14, on Linux): what using it found, fixed; the resource graph designed
 
 The user, after sessions 7 to 13 on the Mac: operators could not be deleted and editing felt
