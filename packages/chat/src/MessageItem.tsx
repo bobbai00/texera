@@ -85,6 +85,9 @@ export const MessageItem = memo(function MessageItem({
   const label = message.template ? labels.get(message.template) : undefined;
   const model = message.model ? labels.get(message.model) : undefined;
   const parts = visibleParts(message.parts);
+  // A change that waited for approval is shown by its approval card, not as a step of its own.
+  const held = new Set(parts.flatMap(p => (p.type === "approval" ? [p.toolCallId] : [])));
+  const calls = new Map(parts.flatMap(p => (p.type === "tool" ? [[p.id, p] as const] : [])));
   return (
     <div className="space-y-3 text-sm leading-relaxed" data-message-role={message.role} data-template={label?.name}>
       {showLabel && label && (
@@ -107,11 +110,12 @@ export const MessageItem = memo(function MessageItem({
           case "reasoning":
             return <ReasoningPart key={key} text={part.text} />;
           case "tool":
+            if (held.has(part.id)) return null;
             if (part.name === "start_work" && part.input !== undefined) return <PlanPart key={key} part={part} />;
             if (part.name === "ask" && part.input !== undefined) return <AskPart key={key} part={part} onPick={answers?.pick} />;
             return <ToolCallPart key={key} part={part} />;
           case "approval":
-            return <ApprovalPart key={key} part={part} onDecide={answers ? approved => answers.decide(part.toolCallId, approved) : undefined} />;
+            return <ApprovalPart key={key} part={part} call={calls.get(part.toolCallId)} onDecide={answers ? approved => answers.decide(part.toolCallId, approved) : undefined} />;
           case "resource":
             return <ResourceCard key={key} ref={part.ref} />;
           case "handoff":

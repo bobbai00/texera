@@ -123,11 +123,13 @@ export function PlanPart({ part }: { part: ToolPart }) {
         <ul className="space-y-1" data-plan-makes={makes.length}>
           {makes.map((m, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: the plan's items are positional
-            <li key={i} className="flex items-center gap-1.5 text-xs" data-plan-make={m.kind}>
-              <span className="text-muted-foreground">Makes</span>
-              {m.kind && isKindId(m.kind) && <KindIcon kind={m.kind} className="size-4 rounded [&_svg]:size-2.5" />}
-              <span className="font-medium">{m.name}</span>
-              {m.detail && <span className="text-muted-foreground">· {m.detail}</span>}
+            <li key={i} className="flex items-start gap-1.5 text-xs" data-plan-make={m.kind}>
+              <span className="shrink-0 text-muted-foreground">Makes</span>
+              {m.kind && isKindId(m.kind) && <KindIcon kind={m.kind} className="size-4 shrink-0 rounded [&_svg]:size-2.5" />}
+              <span className="min-w-0">
+                <span className="font-medium">{m.name}</span>
+                {m.detail && <span className="text-muted-foreground"> · {m.detail}</span>}
+              </span>
             </li>
           ))}
         </ul>
@@ -167,7 +169,16 @@ export function AskPart({ part, onPick }: { part: ToolPart; onPick?: (label: str
  * A change the agent asked to make, in manual work mode: what it is, and Approve or Decline
  * while it waits; then who decided what.
  */
-export function ApprovalPart({ part, onDecide }: { part: Extract<Part, { type: "approval" }>; onDecide?: (approved: boolean) => void }) {
+export function ApprovalPart({
+  part,
+  call,
+  onDecide,
+}: {
+  part: Extract<Part, { type: "approval" }>;
+  /** The call the change is, once it has run: its result or its error. */
+  call?: ToolPart;
+  onDecide?: (approved: boolean) => void;
+}) {
   const [open, setOpen] = useState(false);
   const label = part.reason ?? humanize(part.toolName);
   return (
@@ -207,6 +218,7 @@ export function ApprovalPart({ part, onDecide }: { part: Extract<Part, { type: "
           )}
         </p>
       )}
+      {part.state === "approved" && call?.status === "error" && call.error && <p className="text-xs whitespace-pre-wrap text-destructive">{call.error}</p>}
     </div>
   );
 }
