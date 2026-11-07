@@ -10,6 +10,7 @@ import type {
   Message,
   MessagePart,
   ModelEndpointSpec,
+  OperatorSpec,
   ReplaceMessage,
   Resolved,
   Resource,
@@ -33,6 +34,7 @@ export type {
   Message,
   MessagePart,
   ModelEndpointSpec,
+  OperatorSpec,
   ReplaceMessage,
   Resolved,
   Resource,
@@ -142,4 +144,11 @@ export interface Validation {
   ok: boolean;
   operatorErrors?: Record<string, unknown>;
   operatorOutputSchemas?: Record<string, Record<string, { attributeName: string; attributeType: string }[] | null>>;
+}
+
+/** An operator type as the catalog lists it: a built-in, or a custom operator with its code. */
+export interface OperatorRecord {
+  kind: "operator";
+  metadata: { rid: string; uri: string; name: string; head: number };
+  spec: OperatorSpec;
 }

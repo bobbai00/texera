@@ -11,9 +11,11 @@
  */
 import {
   applyLines,
+  type InputPorts,
   type Line,
   LineError,
   linesOf,
+  type PortsOf,
   parseLines,
   type SetLine,
   type Value,
@@ -21,7 +23,14 @@ import {
 import { type ToolSet, tool } from "ai";
 import { z } from "zod";
 import { type CatalogClient, CatalogError } from "../catalog/client.ts";
-import type { CatalogAuth, Validation, WorkflowRecord, WorkflowSpec } from "../catalog/types.ts";
+import {
+  type CatalogAuth,
+  type OperatorSpec,
+  parseUri,
+  type Validation,
+  type WorkflowRecord,
+  type WorkflowSpec,
+} from "../catalog/types.ts";
 
 /** The catalog's tools these replace, by name. */
 export const LINE_TOOLS = ["create_workflow", "edit_workflow", "get_workflow"] as const;
@@ -36,8 +45,9 @@ export interface LineToolDeps {
 const LINES_DOC =
   "Lines, one statement each: `set <id>: <op>(<inputs>, <setting>=<value>, ...)` creates or replaces an operator; " +
   "`delete <id>` removes one. Inputs are other operators' ids, in port order (a join's left, then its right). " +
-  'Values are JSON-like: "text", 1.5, true, null, ["a", "b"]. Expressions are text: where="glucose < 70". ' +
-  "Ids use letters, digits and '-', never '_'. A file is texera://datasets/<rid>@<version>/files/<path>, or by name: \"CGM cohort@4/cgm.csv\".";
+  'Values are JSON-like: "text", 1.5, true, null, ["a", "b"]; code over several lines goes in """...""". ' +
+  "Expressions are text: where=\"glucose < 70\". Ids use letters, digits and '-', never '_'. " +
+  'A file is texera://datasets/<rid>@<version>/files/<path>, or by name: "CGM cohort@4/cgm.csv".';
 
 /** A workflow record as the agent reads it: where it stands, without the JSON of its spec. */
 function standing(w: WorkflowRecord) {
@@ -47,36 +57,144 @@ function standing(w: WorkflowRecord) {
   };
 }
 
+/** The operators of a workflow's lines, in the order the lines give them. */
+const idsOf = (lines: string[]) => lines.map((l) => /^set ([A-Za-z0-9-]+):/.exec(l)?.[1] ?? "");
+
 /** Each operator's output columns, from a compilation, for the agent to write the next lines against. */
-function columnsOf(v: Validation): Record<string, string> {
+function columnsOf(v: Validation, lines: string[]): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [op, ports] of Object.entries(v.operatorOutputSchemas ?? {})) {
-    const first = Object.values(ports ?? {})[0];
+  for (const op of idsOf(lines)) {
+    const first = Object.values(v.operatorOutputSchemas?.[op] ?? {})[0];
     if (first) out[op] = first.map((a) => `${a.attributeName} ${a.attributeType}`).join(", ");
   }
   return out;
 }
 
-/** Each mistake on its line: the edit's line for an operator it set, else the operator's line now. */
-function mistakes(v: Validation, edit: Line[], now: string[]): { line?: number; operator: string; error: string }[] {
-  return Object.entries(v.operatorErrors ?? {}).map(([operator, error]) => {
-    const set = edit.find((l) => l.kind === "set" && l.id === operator);
-    const text =
-      typeof error === "string" ? error : ((error as { message?: string })?.message ?? JSON.stringify(error));
-    const at = set?.line ?? now.findIndex((l) => l.startsWith(`set ${operator}:`)) + 1;
-    return { ...(at > 0 ? { line: at } : {}), operator, error: text };
+/** The engine's own words for an operator that reads a broken one: it has no columns to check against. */
+const NO_SCHEMA = /SchemaNotAvailableException|schema is not available/;
+/** The class an engine error was thrown as, which says nothing to the agent. */
+const THROWN_AS = /^(?:[a-z][\w$]*\.)+[A-Z][\w$]*: /;
+
+/**
+ * Each mistake with the line that made it, in the order of the lines. An operator that only
+ * reads a broken one is not a mistake of its own: it is named among those waiting on the fix.
+ */
+function mistakes(v: Validation, lines: string[]): { errors: { line: string; error: string }[]; waiting: string[] } {
+  const all = idsOf(lines).flatMap((op) => {
+    const error = v.operatorErrors?.[op];
+    if (error === undefined || error === null) return [];
+    const text = typeof error === "string" ? error : ((error as { message?: string }).message ?? JSON.stringify(error));
+    return [{ op, line: lines[idsOf(lines).indexOf(op)] as string, error: text.replace(THROWN_AS, "") }];
   });
+  const own = all.filter((e) => !NO_SCHEMA.test(e.error));
+  const shown = own.length > 0 ? own : all;
+  return {
+    errors: shown.map(({ line, error }) => ({ line, error })),
+    waiting: own.length > 0 ? all.filter((e) => NO_SCHEMA.test(e.error)).map((e) => e.op) : [],
+  };
+}
+
+/** The settings that take a dataset's file: the built-in scan's, and the classic scans'. */
+const FILE_SETTINGS = ["file", "fileName"];
+
+/** The input ports of an operator type, as its spec describes them. */
+function inputPorts(spec: OperatorSpec): InputPorts {
+  const ports = spec.inputPorts ?? [];
+  return { names: ports.map((p) => p.displayName ?? ""), manyOnLast: ports.at(-1)?.allowMultiInputs === true };
+}
+
+/** How far apart two names are, in edits of one letter. */
+function distance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++)
+      next[j] = Math.min(
+        (row[j] as number) + 1,
+        (next[j - 1] as number) + 1,
+        (row[j - 1] as number) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    row = next;
+  }
+  return row[b.length] as number;
+}
+
+/** What a line is told when no operator has its type: the closest type there is. */
+async function unknownType(op: string, deps: LineToolDeps): Promise<string> {
+  const types = (await deps.catalog.operators("", deps.project, deps.auth())).map((r) => r.spec.operatorType);
+  const close = types
+    .map((t) => ({ t, d: t.toLowerCase() === op.toLowerCase() ? 0 : distance(op.toLowerCase(), t.toLowerCase()) }))
+    .filter(({ d }) => d <= 2)
+    .sort((a, b) => a.d - b.d || Number(b.t === b.t.toLowerCase()) - Number(a.t === a.t.toLowerCase()));
+  return close[0]
+    ? `there is no operator ${op}; did you mean ${close[0].t}?`
+    : `there is no operator ${op}; list_operators with q finds one by name`;
+}
+
+/**
+ * The operator types the lines use, read once each: their input ports, and a custom operator
+ * named by its type is written as its URI at its newest version.
+ */
+async function typesOf(lines: Line[], deps: LineToolDeps): Promise<{ lines: Line[]; ports: PortsOf }> {
+  const ports = new Map<string, InputPorts>();
+  const custom = new Map<string, string>();
+  for (const l of lines) {
+    if (l.kind !== "set" || ports.has(l.op) || custom.has(l.op)) continue;
+    if (l.op.startsWith("texera://")) {
+      const { plural, rid, vno } = parseUri(l.op);
+      if (plural !== "operators" || vno === undefined)
+        throw new LineError(l.line, `${l.op} is not an operator at a version: texera://operators/<rid>@<version>`);
+      try {
+        ports.set(l.op, inputPorts(await deps.catalog.operatorAt(rid, vno, deps.auth())));
+      } catch (e) {
+        if (e instanceof CatalogError && (e.status === 404 || e.status === 403))
+          throw new LineError(l.line, `there is no operator ${l.op} you may use`);
+        throw e;
+      }
+      continue;
+    }
+    const found = (await deps.catalog.operators(l.op, deps.project, deps.auth())).filter(
+      (r) => r.spec.operatorType === l.op,
+    );
+    if (found.length === 0) throw new LineError(l.line, await unknownType(l.op, deps));
+    if (found.length > 1)
+      throw new LineError(
+        l.line,
+        `${found.length} operators are named ${l.op}: ${found.map((r) => r.metadata.uri).join(", ")}; use one's URI`,
+      );
+    const r = found[0] as (typeof found)[number];
+    if (r.spec.implementation) {
+      const uri = `${r.metadata.uri}@${r.metadata.head}`;
+      custom.set(l.op, uri);
+      ports.set(uri, inputPorts(r.spec));
+    } else ports.set(l.op, inputPorts(r.spec));
+  }
+  return {
+    lines: lines.map((l) => (l.kind === "set" && custom.has(l.op) ? { ...l, op: custom.get(l.op) as string } : l)),
+    ports: (type) => ports.get(type),
+  };
+}
+
+/** Reads an edit's lines, resolving the files and operator types they name. */
+async function readLines(text: string, deps: LineToolDeps): Promise<{ edit: Line[]; ports: PortsOf }> {
+  const { lines, ports } = await typesOf(parseLines(text), deps);
+  return { edit: await resolveFiles(lines, deps), ports };
 }
 
 /** A setting that names a dataset's file by the dataset's name, resolved to its URI at a version. */
 async function resolveFiles(lines: Line[], deps: LineToolDeps): Promise<Line[]> {
   const out: Line[] = [];
   for (const l of lines) {
-    if (l.kind !== "set" || typeof l.settings.file !== "string" || l.settings.file.startsWith("texera://")) {
+    if (l.kind !== "set") {
       out.push(l);
       continue;
     }
-    out.push({ ...l, settings: { ...l.settings, file: await fileUri(l.settings.file, l, deps) } } as SetLine);
+    const settings = { ...l.settings };
+    for (const key of FILE_SETTINGS) {
+      const named = settings[key];
+      if (typeof named === "string" && !named.startsWith("texera://")) settings[key] = await fileUri(named, l, deps);
+    }
+    out.push({ ...l, settings });
   }
   return out;
 }
@@ -113,7 +231,7 @@ async function fileUri(named: string, line: SetLine, deps: LineToolDeps): Promis
 }
 
 /** Saves a workflow's new spec and compiles it, answering in lines. */
-async function saved(w: WorkflowRecord, edit: Line[], deps: LineToolDeps) {
+async function saved(w: WorkflowRecord, deps: LineToolDeps) {
   const lines = linesOf(w.spec);
   let checked: Validation | undefined;
   let unchecked: string | undefined;
@@ -122,11 +240,13 @@ async function saved(w: WorkflowRecord, edit: Line[], deps: LineToolDeps) {
   } catch (e) {
     unchecked = e instanceof Error ? e.message : String(e);
   }
+  const wrong = checked && !checked.ok ? mistakes(checked, lines) : undefined;
   return {
     workflow: standing(w),
     lines,
-    ...(checked ? { columns: columnsOf(checked) } : {}),
-    ...(checked && !checked.ok ? { errors: mistakes(checked, edit, lines) } : {}),
+    ...(checked ? { columns: columnsOf(checked, lines) } : {}),
+    ...(wrong ? { errors: wrong.errors } : {}),
+    ...(wrong && wrong.waiting.length > 0 ? { waitingOnTheFix: wrong.waiting } : {}),
     ...(unchecked ? { notChecked: unchecked } : {}),
   };
 }
@@ -144,10 +264,10 @@ export function workflowLineTools(deps: LineToolDeps): ToolSet {
       inputSchema: z.object({ name: z.string().min(1), lines: z.string().min(1).describe("The workflow's lines.") }),
       execute: async ({ name, lines }) => {
         try {
-          const edit = await resolveFiles(parseLines(lines), deps);
-          const spec = applyLines(empty, edit);
+          const { edit, ports } = await readLines(lines, deps);
+          const spec = applyLines(empty, edit, ports);
           const w = await deps.catalog.createWorkflow(name, spec, deps.project, deps.auth());
-          return await saved(w, edit, deps);
+          return await saved(w, deps);
         } catch (e) {
           return refusal(e);
         }
@@ -158,11 +278,11 @@ export function workflowLineTools(deps: LineToolDeps): ToolSet {
       inputSchema: z.object({ rid: z.string().min(1), lines: z.string().min(1).describe("The lines of the change.") }),
       execute: async ({ rid, lines }) => {
         try {
-          const edit = await resolveFiles(parseLines(lines), deps);
+          const { edit, ports } = await readLines(lines, deps);
           // Someone may save in between: the change goes onto the head it was made against, once more if it moved.
           for (let attempt = 0; ; attempt++) {
             const current = await deps.catalog.getWorkflow(rid, deps.auth());
-            const spec = applyLines(current.spec, edit);
+            const spec = applyLines(current.spec, edit, ports);
             try {
               const w = await deps.catalog.updateWorkflowSpec(
                 rid,
@@ -171,7 +291,7 @@ export function workflowLineTools(deps: LineToolDeps): ToolSet {
                 `${edit.length} line${edit.length === 1 ? "" : "s"} from the agent`,
                 deps.auth(),
               );
-              return await saved(w, edit, deps);
+              return await saved(w, deps);
             } catch (e) {
               if (e instanceof CatalogError && e.status === 409 && attempt < 1) continue;
               throw e;

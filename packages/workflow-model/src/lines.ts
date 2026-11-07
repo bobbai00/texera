@@ -7,6 +7,9 @@
 // settings; a `delete` removes one. A set replaces an operator whole, its settings and its
 // inputs; the operators reading it keep reading it. The lines of one edit apply together or
 // not at all, and an input may name an operator a later line of the same edit sets.
+//
+// Text is in quotes, "..." or '...' with backslash escapes, or """...""" taken as it is, for
+// code over several lines. A setting whose name is not a word is quoted: "result attribute"=1.
 
 import type { WorkflowLink, WorkflowOperator, WorkflowSpec } from "./types";
 
@@ -60,7 +63,13 @@ function tokenize(text: string): Token[] {
       if (depth === 0) out.push({ t: "nl", at: i });
       i++;
     } else if (/\s/.test(c)) i++;
-    else if (c === '"' || c === "'") {
+    else if ((c === '"' || c === "'") && text.startsWith(c.repeat(3), i)) {
+      // Taken as it is, newlines and backslashes included: code reads as it is written.
+      const end = text.indexOf(c.repeat(3), i + 3);
+      if (end < 0) throw new Error(`at ${i}: the text that starts here is not closed with ${c.repeat(3)}`);
+      out.push({ t: "str", v: text.slice(i + 3, end), at: i });
+      i = end + 3;
+    } else if (c === '"' || c === "'") {
       const start = i;
       let s = "";
       i++;
@@ -183,7 +192,7 @@ export function parseLines(text: string): Line[] {
       while (!(peek().t === "sym" && (peek() as { v: string }).v === ")")) {
         const t = next();
         const after = peek();
-        if (t.t === "word" && after.t === "sym" && after.v === "=") {
+        if ((t.t === "word" || t.t === "str") && after.t === "sym" && after.v === "=") {
           next();
           if (t.v in settings) fail(t, `${t.v} is set twice`);
           settings[t.v] = value();
@@ -205,16 +214,26 @@ export function parseLines(text: string): Line[] {
   return lines;
 }
 
+export interface PrintOptions {
+  /** Text over several lines as """...""", as code is read; else on one line, as a card shows it. */
+  multiline?: boolean;
+}
+
 /** A value as a line writes it. */
-export function printValue(v: Value): string {
+export function printValue(v: Value, options: PrintOptions = {}): string {
   if (v === null) return "null";
-  if (Array.isArray(v)) return `[${v.map(printValue).join(", ")}]`;
+  if (Array.isArray(v)) return `[${v.map(x => printValue(x, options)).join(", ")}]`;
   if (typeof v === "object")
     return `{${Object.entries(v)
-      .map(([k, x]) => `${JSON.stringify(k)}: ${printValue(x)}`)
+      .map(([k, x]) => `${JSON.stringify(k)}: ${printValue(x, options)}`)
       .join(", ")}}`;
-  return typeof v === "string" ? JSON.stringify(v) : String(v);
+  if (typeof v !== "string") return String(v);
+  // """...""" reads back as it is, unless the text holds """ or ends in a quote.
+  if (options.multiline && v.includes("\n") && !v.includes('"""') && !v.endsWith('"')) return `"""${v}"""`;
+  return JSON.stringify(v);
 }
+
+const WORD = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
 /** The inputs of an operator, by the operators its links come from, in port order. */
 export function inputsOf(spec: WorkflowSpec, operatorID: string): string[] {
@@ -226,8 +245,10 @@ export function inputsOf(spec: WorkflowSpec, operatorID: string): string[] {
 }
 
 /** An operator as a card names it: `filter(readings, where="...")`. */
-export function callOf(spec: WorkflowSpec, op: WorkflowOperator): string {
-  const settings = Object.entries(op.operatorProperties ?? {}).map(([k, v]) => `${k}=${printValue(v as Value)}`);
+export function callOf(spec: WorkflowSpec, op: WorkflowOperator, options: PrintOptions = {}): string {
+  const settings = Object.entries(op.operatorProperties ?? {}).map(
+    ([k, v]) => `${WORD.test(k) ? k : JSON.stringify(k)}=${printValue(v as Value, options)}`
+  );
   return `${op.operatorType}(${[...inputsOf(spec, op.operatorID), ...settings].join(", ")})`;
 }
 
@@ -242,13 +263,43 @@ export function linesOf(spec: WorkflowSpec): string[] {
     );
     const op = remaining.splice(i >= 0 ? i : 0, 1)[0] as WorkflowOperator;
     placed.add(op.operatorID);
-    out.push(`set ${op.operatorID}: ${callOf(spec, op)}`);
+    out.push(`set ${op.operatorID}: ${callOf(spec, op, { multiline: true })}`);
   }
   return out;
 }
 
+/** An operator type's input ports, as a line's inputs need them. */
+export interface InputPorts {
+  /** The ports' names, in order: ["left", "right"]; "" for an unnamed one. */
+  names: string[];
+  /** The last port takes several links: the inputs past it go there too, as a union's do. */
+  manyOnLast: boolean;
+}
+
+/** An operator type's input ports, when known; a line of an unknown type links its inputs in order. */
+export type PortsOf = (operatorType: string) => InputPorts | undefined;
+
+/** The port each of a line's inputs goes to, once the number of inputs is right for its type. */
+function portsFor(l: SetLine, ports: InputPorts | undefined): number[] {
+  if (!ports) return l.inputs.map((_, i) => i);
+  const n = ports.names.length;
+  const reads =
+    n === 0
+      ? "no input"
+      : n === 1
+        ? "one input"
+        : `${n} inputs${ports.names.every(name => name !== "") ? `, ${ports.names.join(" and ")}` : ""}`;
+  const fits = l.inputs.length === n || (l.inputs.length > n && n > 0 && ports.manyOnLast);
+  if (!fits)
+    throw new LineError(
+      l.line,
+      `${l.op} reads ${reads}${ports.manyOnLast && n > 0 ? " or more" : ""}; this line gives ${l.inputs.length}`
+    );
+  return l.inputs.map((_, i) => Math.min(i, n - 1));
+}
+
 /** Applies an edit's lines to a workflow, all of them or none. */
-export function applyLines(spec: WorkflowSpec, lines: Line[]): WorkflowSpec {
+export function applyLines(spec: WorkflowSpec, lines: Line[], portsOf?: PortsOf): WorkflowSpec {
   let operators: WorkflowOperator[] = spec.operators.map(o => ({ ...o }));
   let links: WorkflowLink[] = [...spec.links];
   const setBy = new Map<string, number>();
@@ -275,11 +326,12 @@ export function applyLines(spec: WorkflowSpec, lines: Line[]): WorkflowSpec {
     };
     operators = before ? operators.map(o => (o.operatorID === l.id ? next : o)) : [...operators, next];
     links = links.filter(k => k.target.operatorID !== l.id);
+    const ports = portsFor(l, portsOf?.(l.op));
     l.inputs.forEach((input, i) => {
       links.push({
         linkID: `${input}-${l.id}-${i}`,
         source: { operatorID: input, portID: "output-0" },
-        target: { operatorID: l.id, portID: `input-${i}` },
+        target: { operatorID: l.id, portID: `input-${ports[i]}` },
       });
     });
   }

@@ -12,6 +12,29 @@ import type { WorkflowSpec } from "../src/catalog/types.ts";
 const IRIS = "texera://datasets/11111111-1111-4111-8111-111111111111";
 const WF = "22222222-2222-4222-8222-222222222222";
 
+const METRICS = "44444444-4444-4444-8444-444444444444";
+const port = (displayName?: string, many = false) => ({
+  portID: "input-0",
+  ...(displayName ? { displayName } : {}),
+  ...(many ? { allowMultiInputs: true } : {}),
+});
+const operator = (operatorType: string, inputPorts: object[], rid = crypto.randomUUID(), code?: string) => ({
+  kind: "operator",
+  metadata: { rid, uri: `texera://operators/${rid}`, name: operatorType, head: 2 },
+  spec: { operatorType, inputPorts, ...(code ? { implementation: { python: { code } } } : {}) },
+});
+/** The built-ins the lines use, a classic type, and one custom operator. */
+const OPERATORS = [
+  operator("scan", []),
+  operator("aggregate", [port()]),
+  operator("Aggregate", [port(undefined, true)]),
+  operator("limit", [port()]),
+  operator("filter", [port()]),
+  operator("join", [port("left"), port("right")]),
+  operator("union", [port(undefined, true)]),
+  operator("cgm_metrics", [port()], METRICS, "def cgm_metrics(readings): ..."),
+];
+
 /** A catalog with one dataset of one file and one workflow, recording what is asked of it. */
 function fakeCatalog(options: { errors?: Record<string, string>; conflictOnce?: boolean; datasets?: string[] } = {}) {
   const calls: { method: string; path: string; body?: unknown }[] = [];
@@ -38,6 +61,12 @@ function fakeCatalog(options: { errors?: Record<string, string>; conflictOnce?: 
         })),
       });
     if (url.pathname.endsWith("/versions/3/files")) return json(200, { files: [{ path: "iris.csv" }] });
+    if (url.pathname === "/catalog/v1/operators") {
+      const q = (url.searchParams.get("q") ?? "").toLowerCase();
+      return json(200, { items: OPERATORS.filter((o) => o.spec.operatorType.toLowerCase().includes(q)) });
+    }
+    if (url.pathname === `/catalog/v1/operators/${METRICS}/versions/2`)
+      return json(200, { content: OPERATORS.find((o) => o.metadata.rid === METRICS)?.spec });
     if (url.pathname === "/catalog/v1/workflows" && method === "POST") {
       spec = body.spec;
       return json(201, record());
@@ -105,17 +134,24 @@ describe("create_workflow", () => {
     ]);
   });
 
-  test("gives each mistake back on the line that made it", async () => {
+  test("gives each mistake back with the line that made it, and names what waits on the fix", async () => {
     const fake = fakeCatalog({
-      errors: { avg: 'mean: the input has no column "PetalLength"; did you mean "PetalLengthCm"?' },
+      errors: {
+        top: "org.apache.texera.amber.core.workflow.SchemaNotAvailableException: schema is not available",
+        avg: 'org.apache.texera.amber.operator.builtin.SettingError: mean: the input has no column "PetalLength"; did you mean "PetalLengthCm"?',
+      },
     });
     const out = await call(toolsOf(fake), "create_workflow", {
       name: "means",
-      lines: LINES.replace("PetalLengthCm", "PetalLength"),
+      lines: `${LINES.replace("PetalLengthCm", "PetalLength")}\nset top: limit(avg, n=1)`,
     });
     expect(out.errors).toEqual([
-      { line: 2, operator: "avg", error: 'mean: the input has no column "PetalLength"; did you mean "PetalLengthCm"?' },
+      {
+        line: 'set avg: aggregate(scan, by=["Species"], outputs=["mean = avg(PetalLength)"])',
+        error: 'mean: the input has no column "PetalLength"; did you mean "PetalLengthCm"?',
+      },
     ]);
+    expect(out.waitingOnTheFix).toEqual(["top"]);
   });
 
   test("refuses what it cannot read, or a name that is not one dataset's, before saving anything", async () => {
@@ -130,6 +166,41 @@ describe("create_workflow", () => {
     });
     const ambiguous = await call(toolsOf(fake), "create_workflow", { name: "x", lines: LINES });
     expect(String(ambiguous.error)).toStartWith('line 1: 2 datasets are named "iris"');
+    expect(fake.calls.some((c) => c.method === "POST" && c.path === "/catalog/v1/workflows")).toBe(false);
+  });
+});
+
+describe("operator types", () => {
+  test("puts a union's inputs on its one port, and a custom operator named by its type at its newest version", async () => {
+    const fake = fakeCatalog();
+    const out = await call(toolsOf(fake), "create_workflow", {
+      name: "both",
+      lines: `${LINES}\nset both: union(scan, scan)\nset m: cgm_metrics(both)`,
+    });
+    expect(out.error).toBeUndefined();
+    expect(
+      fake
+        .spec()
+        .links.filter((l) => l.target.operatorID === "both")
+        .map((l) => l.target.portID),
+    ).toEqual(["input-0", "input-0"]);
+    expect((out.lines as string[]).at(-1)).toBe(`set m: texera://operators/${METRICS}@2(both)`);
+    // Written back as it reads, the URI is a type too.
+    const again = await call(toolsOf(fake), "edit_workflow", {
+      rid: WF,
+      lines: `set m: texera://operators/${METRICS}@2(both)`,
+    });
+    expect(again.error).toBeUndefined();
+  });
+
+  test("says which type was meant, and how many inputs a type reads", async () => {
+    const fake = fakeCatalog();
+    expect(await call(toolsOf(fake), "create_workflow", { name: "x", lines: "set a: fliter(where='y')" })).toEqual({
+      error: "line 1: there is no operator fliter; did you mean filter?",
+    });
+    expect(
+      await call(toolsOf(fake), "create_workflow", { name: "x", lines: `${LINES}\nset j: join(avg, on=["Species"])` }),
+    ).toEqual({ error: "line 3: join reads 2 inputs, left and right; this line gives 1" });
     expect(fake.calls.some((c) => c.method === "POST" && c.path === "/catalog/v1/workflows")).toBe(false);
   });
 });

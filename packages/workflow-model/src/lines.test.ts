@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyLines, callOf, type LineError, linesOf, parseLines, printValue } from "./lines";
+import { applyLines, callOf, type LineError, linesOf, type PortsOf, parseLines, printValue } from "./lines";
 import type { WorkflowOperator, WorkflowSpec } from "./types";
 
 const EDIT = `set readings: scan(file="texera://datasets/d1@4/files/cgm.csv")
@@ -118,5 +118,71 @@ describe("applyLines", () => {
 
   it("prints values as the lines read them", () => {
     expect(printValue({ a: [1, "x"], b: null, c: true })).toBe('{"a": [1, "x"], "b": null, "c": true}');
+  });
+});
+
+describe("text, names and ports", () => {
+  const CODE = 'def f(df):\n    return df.assign(label="a\\tb")\n';
+
+  it("takes code in triple quotes as it is, and prints it back that way", () => {
+    const text = `set f: PythonUDFV2(rows, code="""${CODE}""", workers=1)\nset g: limit(f, n=1)`;
+    const lines = parseLines(text);
+    expect(lines[0]).toMatchObject({ settings: { code: CODE, workers: 1 }, line: 1 });
+    expect(lines[1]).toMatchObject({ id: "g", line: 4 });
+    const spec = applyLines(
+      { operators: [{ operatorID: "rows", operatorType: "scan", operatorProperties: {} }], links: [] },
+      lines
+    );
+    const printed = linesOf(spec);
+    expect(printed[1]).toBe(`set f: PythonUDFV2(rows, code="""${CODE}""", workers=1)`);
+    expect(parseLines(printed.join("\n"))[1]).toMatchObject({ settings: { code: CODE } });
+    // A card shows it on one line.
+    expect(callOf(spec, spec.operators[1] as WorkflowOperator)).toBe(
+      `PythonUDFV2(rows, code=${JSON.stringify(CODE)}, workers=1)`
+    );
+    expect(() => parseLines('set f: PythonUDFV2(rows, code="""never closed)')).toThrow(
+      'line 1: the text that starts here is not closed with """'
+    );
+  });
+
+  it("quotes a setting whose name is not a word, both ways", () => {
+    const lines = parseLines('set s: RandomKSampling(rows, "random k sample percentage"=10)');
+    expect(lines[0]).toMatchObject({ settings: { "random k sample percentage": 10 } });
+    const spec = applyLines(
+      { operators: [{ operatorID: "rows", operatorType: "scan", operatorProperties: {} }], links: [] },
+      lines
+    );
+    expect(linesOf(spec)[1]).toBe('set s: RandomKSampling(rows, "random k sample percentage"=10)');
+  });
+
+  it("links a line's inputs to its type's ports, and says when their number is wrong", () => {
+    const ports: PortsOf = op =>
+      ({
+        scan: { names: [], manyOnLast: false },
+        filter: { names: [""], manyOnLast: false },
+        join: { names: ["left", "right"], manyOnLast: false },
+        union: { names: [""], manyOnLast: true },
+      })[op];
+    const base = applyLines(
+      empty,
+      parseLines("set a: scan(file='x')\nset b: scan(file='y')\nset c: scan(file='z')"),
+      ports
+    );
+    const all = applyLines(base, parseLines("set all: union(a, b, c)"), ports);
+    expect(
+      all.links.filter(l => l.target.operatorID === "all").map(l => [l.source.operatorID, l.target.portID])
+    ).toEqual([
+      ["a", "input-0"],
+      ["b", "input-0"],
+      ["c", "input-0"],
+    ]);
+    expect(linesOf(all).at(-1)).toBe("set all: union(a, b, c)");
+    const wrong = (text: string) => () => applyLines(base, parseLines(text), ports);
+    expect(wrong("set j: join(a, on=['k'])")).toThrow("line 1: join reads 2 inputs, left and right; this line gives 1");
+    expect(wrong("set f: filter(a, b, where='x > 1')")).toThrow("line 1: filter reads one input; this line gives 2");
+    expect(wrong("set s: scan(a, file='x')")).toThrow("line 1: scan reads no input; this line gives 1");
+    expect(wrong("set u: union(where='x')")).toThrow("line 1: union reads one input or more; this line gives 0");
+    // A type it does not know links its inputs in order.
+    expect(applyLines(base, parseLines("set m: Mystery(a, b)"), ports).links.at(-1)?.target.portID).toBe("input-1");
   });
 });

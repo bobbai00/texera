@@ -16,6 +16,8 @@ import {
   type Message,
   type ModelEndpointRecord,
   type ModelEndpointSpec,
+  type OperatorRecord,
+  type OperatorSpec,
   parseUri,
   type ReplaceMessage,
   type Resolved,
@@ -141,6 +143,18 @@ export class CatalogClient {
       auth,
     );
     return (manifest.files ?? []).map((f) => f.path);
+  }
+
+  /** The operator types whose type or name holds `q`, built-in and custom, with their ports. */
+  async operators(q: string, scope: string, auth: CatalogAuth): Promise<OperatorRecord[]> {
+    const query = new URLSearchParams({ q, scope, view: "full", limit: "50" });
+    return (await this.request<Page<OperatorRecord>>("GET", `${API}/operators?${query}`, auth)).items;
+  }
+
+  /** A custom operator as it was at a version. */
+  async operatorAt(rid: string, vno: number, auth: CatalogAuth): Promise<OperatorSpec> {
+    return (await this.request<{ content: OperatorSpec }>("GET", `${API}/operators/${rid}/versions/${vno}`, auth))
+      .content;
   }
 
   getConversation(rid: string, auth: CatalogAuth): Promise<Conversation> {
