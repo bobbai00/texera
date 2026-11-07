@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -57,7 +59,11 @@ type Options struct {
 
 type Provider struct {
 	client kubernetes.Interface
-	opts   Options
+	// The cluster's nodes as last read, for Offers.
+	nodesMu   sync.Mutex
+	nodesRead *corev1.NodeList
+	nodesAt   time.Time
+	opts      Options
 }
 
 // New connects in-cluster, or through the kubeconfig KUBECONFIG or ~/.kube/config names.
@@ -168,13 +174,10 @@ func (p *Provider) labels(rid string) map[string]string {
 	return map[string]string{labelApp: name(rid), labelRID: rid, labelOwner: managedBy}
 }
 
-func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.Deployment {
-	image := p.opts.Image
-	if spec.Engine != nil && spec.Engine.Image != nil && *spec.Engine.Image != "" {
-		image = *spec.Engine.Image
-	}
-	requests, limits := corev1.ResourceList{}, corev1.ResourceList{}
-	memory, cpu, gpu := p.opts.Memory, "", int32(0)
+// sizeOf is what a unit's master node asks for: memory (the deployment's default when it says
+// none), CPU ("" for none) and GPUs.
+func (p *Provider) sizeOf(spec api.ComputingUnitSpec) (memory, cpu string, gpu int32) {
+	memory = p.opts.Memory
 	if spec.ComputingNodes != nil {
 		for _, n := range *spec.ComputingNodes {
 			if n.Role == api.ComputingNodeSpecRoleMaster {
@@ -190,18 +193,87 @@ func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.De
 			}
 		}
 	}
+	return memory, cpu, gpu
+}
+
+// Offers says whether the cluster has room for such a unit: GPUs when it asks for them, and a
+// node with as much CPU and memory as it asks for. A cluster the catalog may not read is not
+// refused for that.
+func (p *Provider) Offers(ctx context.Context, spec api.ComputingUnitSpec) error {
+	memory, cpu, gpu := p.sizeOf(spec)
+	nodes, err := p.nodes(ctx)
+	if err != nil {
+		return nil
+	}
+	var gpus int64
+	var mostCPU, mostMemory resource.Quantity
+	for _, n := range nodes.Items {
+		a := n.Status.Allocatable
+		if q, ok := a[gpuResource]; ok {
+			gpus += q.Value()
+		}
+		if q, ok := a[corev1.ResourceCPU]; ok && q.Cmp(mostCPU) > 0 {
+			mostCPU = q
+		}
+		if q, ok := a[corev1.ResourceMemory]; ok && q.Cmp(mostMemory) > 0 {
+			mostMemory = q
+		}
+	}
+	if gpu > 0 && gpus == 0 {
+		return fmt.Errorf("no GPU in this cluster")
+	}
+	if int64(gpu) > gpus {
+		return fmt.Errorf("asks for %d GPUs; the cluster has %d", gpu, gpus)
+	}
+	if q, err := resource.ParseQuantity(cpu); cpu != "" && err == nil && !mostCPU.IsZero() && q.Cmp(mostCPU) > 0 {
+		return fmt.Errorf("asks for %s CPUs; the largest node has %s", cpu, mostCPU.String())
+	}
+	if q, err := resource.ParseQuantity(memory); err == nil && !mostMemory.IsZero() && q.Cmp(mostMemory) > 0 {
+		return fmt.Errorf("asks for %s of memory; the largest node has %s", memory, mostMemory.String())
+	}
+	return nil
+}
+
+// nodes are the cluster's nodes, read at most every few seconds: a list of profiles asks about
+// each one.
+func (p *Provider) nodes(ctx context.Context) (*corev1.NodeList, error) {
+	p.nodesMu.Lock()
+	defer p.nodesMu.Unlock()
+	if p.nodesRead != nil && time.Since(p.nodesAt) < 15*time.Second {
+		return p.nodesRead, nil
+	}
+	list, err := p.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	p.nodesRead, p.nodesAt = list, time.Now()
+	return list, nil
+}
+
+func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.Deployment {
+	image := p.opts.Image
+	if spec.Engine != nil && spec.Engine.Image != nil && *spec.Engine.Image != "" {
+		image = *spec.Engine.Image
+	}
+	requests, limits := corev1.ResourceList{}, corev1.ResourceList{}
+	memory, cpu, gpu := p.sizeOf(spec)
+	// A size holds: what a unit asks for is also all it may use, so units on one node do not
+	// take each other's room.
 	if q, err := resource.ParseQuantity(memory); err == nil {
 		requests[corev1.ResourceMemory] = q
+		limits[corev1.ResourceMemory] = q
 	}
 	if cpu != "" {
 		if q, err := resource.ParseQuantity(cpu); err == nil {
 			requests[corev1.ResourceCPU] = q
+			limits[corev1.ResourceCPU] = q
 		}
 	}
 	// A GPU is an extended resource: reserved by its limit, which is also its request.
 	if gpu > 0 {
 		limits[gpuResource] = *resource.NewQuantity(int64(gpu), resource.DecimalSI)
-	} else {
+	}
+	if len(limits) == 0 {
 		limits = nil
 	}
 	env := []corev1.EnvVar{{Name: "TEXERA_UNIT_PORT", Value: fmt.Sprint(port)}}

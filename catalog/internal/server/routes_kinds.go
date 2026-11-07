@@ -64,7 +64,7 @@ func (s *Server) listKind(k kinds.Kind) handlerFunc {
 		if err != nil {
 			return err
 		}
-		items := envelopes(p.Items)
+		items := s.envelopes(ctxOf(r), p.Items)
 		if k.Name == "operator" && r.URL.Query().Get("view") != "full" && r.URL.Query().Get("q") == "" && r.URL.Query().Get("group") == "" {
 			for i := range items {
 				delete(items[i].Spec, "propertiesSchema")
@@ -139,7 +139,9 @@ func (s *Server) getKind(k kinds.Kind) handlerFunc {
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, catalog.Envelope(res.(resourceLike)))
+		env := catalog.Envelope(res.(resourceLike))
+		s.svc.Present(ctxOf(r), &env)
+		writeJSON(w, http.StatusOK, env)
 		return nil
 	}
 }

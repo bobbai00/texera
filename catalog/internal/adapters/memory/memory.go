@@ -206,6 +206,8 @@ func (Units) Endpoint(_ context.Context, _ string, spec api.ComputingUnitSpec, _
 
 func (Units) Terminate(context.Context, string, api.ComputingUnitSpec) error { return nil }
 
+func (Units) Offers(context.Context, api.ComputingUnitSpec) error { return nil }
+
 // Workloads is a ports.Workloads that mints predictable identities: the subject of client c
 // is "sa:" + c and its secret "secret-" + c. It starts with the dev stack's unit client.
 type Workloads struct {

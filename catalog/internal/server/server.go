@@ -236,16 +236,24 @@ func queryRid(r *http.Request, name string) (*uuid.UUID, error) {
 	return &rid, nil
 }
 
-func envelopes(rs []store.Resource) []api.Resource {
+// envelopes renders resources as the API answers them, with what is true of each now.
+func (s *Server) envelopes(ctx context.Context, rs []store.Resource) []api.Resource {
 	out := make([]api.Resource, 0, len(rs))
 	for i := range rs {
-		out = append(out, catalog.Envelope(&rs[i]))
+		out = append(out, s.envelope(ctx, &rs[i]))
 	}
 	return out
 }
 
-func page(rs []store.Resource, next string) api.ResourcePage {
-	p := api.ResourcePage{Items: envelopes(rs)}
+// envelope renders one resource as the API answers it, with what is true of it now.
+func (s *Server) envelope(ctx context.Context, r *store.Resource) api.Resource {
+	env := catalog.Envelope(r)
+	s.svc.Present(ctx, &env)
+	return env
+}
+
+func (s *Server) page(ctx context.Context, rs []store.Resource, next string) api.ResourcePage {
+	p := api.ResourcePage{Items: s.envelopes(ctx, rs)}
 	if next != "" {
 		p.NextCursor = &next
 	}

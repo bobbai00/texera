@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/apache/texera/catalog/internal/adapters/staticunit"
+	"github.com/apache/texera/catalog/internal/adapters/unitmux"
 	"github.com/apache/texera/catalog/internal/api"
 )
 
@@ -124,5 +126,37 @@ func TestAUnitGivenOtherPackagesHasNothingInstalled(t *testing.T) {
 	put(node)
 	if got := installed(); got != nil {
 		t.Fatalf("other packages have nothing installed yet: %v", *got)
+	}
+}
+
+// A profile says, when read, whether this deployment can start a unit from it: everywhere the
+// person or the agent finds it, its list, its page and a search.
+func TestAProfileSaysWhetherThisDeploymentCanStartIt(t *testing.T) {
+	h := newHarness(t)
+	var listed api.ResourcePage
+	h.mustJSON("alice", "GET", p+"/profiles?limit=50", nil, &listed)
+	names := map[string]bool{}
+	for _, it := range listed.Items {
+		names[it.Metadata.Name] = true
+		if (*it.Status)["startable"] != true {
+			t.Fatalf("%s should start where units of every kind start: %v", it.Metadata.Name, it.Status)
+		}
+	}
+	for _, rung := range []string{"Small", "Medium", "Large", "ML", "GPU"} {
+		if !names[rung] {
+			t.Fatalf("the ladder lacks %s: %v", rung, names)
+		}
+	}
+	// A deployment of static units only, as on Compose: no profile can start.
+	h.svc.Units = unitmux.Mux{api.UnitProviderStatic: staticunit.Provider{}}
+	var gpu api.ResourcePage
+	h.mustJSON("alice", "GET", p+"/resources?kind=profile&q=GPU&limit=5", nil, &gpu)
+	if len(gpu.Items) == 0 || (*gpu.Items[0].Status)["startable"] != false || (*gpu.Items[0].Status)["notHere"] != "this deployment starts no units from profiles: its own unit runs everything" {
+		t.Fatalf("a search finds the GPU profile not startable here, saying why: %+v", gpu.Items)
+	}
+	var one envelope
+	h.mustJSON("alice", "GET", p+"/profiles/"+gpu.Items[0].Metadata.Rid, nil, &one)
+	if (*one.Status)["startable"] != false {
+		t.Fatalf("its page says so too: %v", one.Status)
 	}
 }

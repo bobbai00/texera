@@ -7438,7 +7438,14 @@ components:
       description: What a computing node is made of.
     ProfileStatus:
       type: object
-      description: 'A profile has no status: what it describes is its spec.'
+      properties:
+        startable:
+          type: boolean
+          description: Whether a unit made from the profile can start in this deployment.
+        notHere:
+          type: string
+          description: 'Why not, in a person''s words: "no GPU in this cluster".'
+      description: 'Whether this deployment can start a unit from the profile, as the catalog finds when the profile is read: Compose starts none, a cluster without GPUs no GPU unit.'
     ProfileVersion:
       type: object
       required:

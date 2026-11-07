@@ -43,7 +43,7 @@ func (s *Server) routeResources() {
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, page(p.Items, p.NextCursor))
+		writeJSON(w, http.StatusOK, s.page(ctxOf(r), p.Items, p.NextCursor))
 		return nil
 	})
 	s.handle("GET "+base+"/resolve", func(w http.ResponseWriter, r *http.Request) error {
@@ -258,7 +258,7 @@ func (s *Server) routeResources() {
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, page(p.Items, p.NextCursor))
+		writeJSON(w, http.StatusOK, s.page(ctxOf(r), p.Items, p.NextCursor))
 		return nil
 	})
 

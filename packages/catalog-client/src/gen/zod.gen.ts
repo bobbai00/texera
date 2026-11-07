@@ -371,9 +371,12 @@ export const zProfileSpec = z.object({
 });
 
 /**
- * A profile has no status: what it describes is its spec.
+ * Whether this deployment can start a unit from the profile, as the catalog finds when the profile is read: Compose starts none, a cluster without GPUs no GPU unit.
  */
-export const zProfileStatus = z.record(z.string(), z.unknown());
+export const zProfileStatus = z.object({
+    startable: z.boolean().optional(),
+    notHere: z.string().optional()
+});
 
 export const zProjectStatus = z.object({
     resources: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).optional()

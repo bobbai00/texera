@@ -151,7 +151,7 @@ func (s *Server) routeWorkflows() {
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, page(p.Items, p.NextCursor))
+		writeJSON(w, http.StatusOK, s.page(ctxOf(r), p.Items, p.NextCursor))
 		return nil
 	})
 

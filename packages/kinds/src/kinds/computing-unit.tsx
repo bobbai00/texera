@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { computingUnitsSaveAsProfile, computingUnitsTerminate } from "@texera/catalog-client";
-import type { ComputingUnitSpec, ComputingUnitStatus, ProfileSpec, Resource } from "@texera/catalog-client/types";
+import type { ComputingUnitSpec, ComputingUnitStatus, ProfileSpec, ProfileStatus, Resource } from "@texera/catalog-client/types";
 import {
   Badge,
   Button,
@@ -368,11 +368,16 @@ function NewUnit({ spec, onChange }: { spec: unknown; onChange: (spec: unknown) 
           onChange={e => onChange(madeFrom(unit, e.target.value || undefined))}
           className="w-full"
           data-field="profile">
-          {profiles?.items.map(p => (
-            <option key={p.metadata.uri} value={p.metadata.uri}>
-              {[p.metadata.name, ...makeupFacts(p.spec as ProfileSpec)].join(" · ")}
-            </option>
-          ))}
+          {profiles?.items.map(p => {
+            // A profile this deployment cannot start says why beside its name.
+            const status = p.status as ProfileStatus | undefined;
+            const notHere = status?.startable === false && status.notHere ? [`not here: ${status.notHere}`] : [];
+            return (
+              <option key={p.metadata.uri} value={p.metadata.uri} data-startable={status?.startable !== false}>
+                {[p.metadata.name, ...makeupFacts(p.spec as ProfileSpec), ...notHere].join(" · ")}
+              </option>
+            );
+          })}
           <option value="">No profile</option>
         </NativeSelect>
       </Field>

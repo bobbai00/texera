@@ -3587,7 +3587,17 @@
       "type": "object"
     },
     "ProfileStatus": {
-      "description": "A profile has no status: what it describes is its spec.",
+      "description": "Whether this deployment can start a unit from the profile, as the catalog finds when the profile is read: Compose starts none, a cluster without GPUs no GPU unit.",
+      "properties": {
+        "notHere": {
+          "description": "Why not, in a person's words: \"no GPU in this cluster\".",
+          "type": "string"
+        },
+        "startable": {
+          "description": "Whether a unit made from the profile can start in this deployment.",
+          "type": "boolean"
+        }
+      },
       "type": "object"
     },
     "ProfileVersion": {

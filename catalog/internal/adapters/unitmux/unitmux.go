@@ -37,3 +37,16 @@ func (m Mux) Terminate(ctx context.Context, rid string, spec api.ComputingUnitSp
 	}
 	return p.Terminate(ctx, rid, spec)
 }
+
+// Offers says why this deployment cannot start such a unit: a provider it does not offer, or
+// what the provider says.
+func (m Mux) Offers(ctx context.Context, spec api.ComputingUnitSpec) error {
+	p, ok := m[spec.Provider]
+	if !ok {
+		if spec.Provider == api.UnitProviderKubernetes {
+			return fmt.Errorf("this deployment starts no units from profiles: its own unit runs everything")
+		}
+		return fmt.Errorf("units of provider %q are not offered in this deployment", spec.Provider)
+	}
+	return p.Offers(ctx, spec)
+}

@@ -100,6 +100,10 @@ type UnitProvider interface {
 	Endpoint(ctx context.Context, rid string, spec api.ComputingUnitSpec, identity WorkloadSource) (string, error)
 	// Terminate releases what the unit holds; a unit that does not exist is not an error.
 	Terminate(ctx context.Context, rid string, spec api.ComputingUnitSpec) error
+	// Offers says whether this deployment can start a unit like spec, nil if it can, else
+	// why not in a person's words: no units of its provider here, no GPU in the cluster, no
+	// node that large. What it cannot tell, it does not refuse.
+	Offers(ctx context.Context, spec api.ComputingUnitSpec) error
 }
 
 // WorkloadSource reads a unit's identity on demand.

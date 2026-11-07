@@ -1678,10 +1678,17 @@ export type ProfileSpec = {
 };
 
 /**
- * A profile has no status: what it describes is its spec.
+ * Whether this deployment can start a unit from the profile, as the catalog finds when the profile is read: Compose starts none, a cluster without GPUs no GPU unit.
  */
 export type ProfileStatus = {
-    [key: string]: unknown;
+    /**
+     * Whether a unit made from the profile can start in this deployment.
+     */
+    startable?: boolean;
+    /**
+     * Why not, in a person's words: "no GPU in this cluster".
+     */
+    notHere?: string;
 };
 
 /**

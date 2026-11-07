@@ -20,7 +20,7 @@ func (s *Server) routeCompute() {
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, envelopes(rs))
+		writeJSON(w, http.StatusOK, s.envelopes(ctxOf(r), rs))
 		return nil
 	})
 	s.handle("POST "+units+"/{rid}/terminate", func(w http.ResponseWriter, r *http.Request) error {

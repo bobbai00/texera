@@ -143,6 +143,31 @@ func (s *Service) Seed(ctx context.Context) error {
 	}
 	madeFrom := api.Uri(URI(profile).WithVersion(profile.HeadVno).String())
 
+	// The ladder the agent offers: sizes for data work, and for models on CPU or on a GPU.
+	// Each says, when read, whether this deployment can start it: Compose starts no unit from
+	// a profile, and a cluster without GPUs no GPU unit.
+	data := []string{"pandas", "numpy", "pyarrow", "scipy", "scikit-learn", "statsmodels"}
+	ml := append(append([]string{}, data...), "torch", "xgboost", "onnxruntime")
+	for _, rung := range []struct {
+		name, description, cpu, memory string
+		gpu                            int32
+		packages                       []string
+	}{
+		{"Small", "2 CPUs and 4 GB for data work: exploring, tables under a million rows", "2", "4Gi", 0, data},
+		{"Medium", "4 CPUs and 8 GB for data work: most analyses", "4", "8Gi", 0, data},
+		{"Large", "8 CPUs and 16 GB for data work: big tables, many workers per operator", "8", "16Gi", 0, data},
+		{"ML", "4 CPUs and 12 GB with PyTorch, xgboost and onnxruntime: models on CPU", "4", "12Gi", 0, ml},
+		{"GPU", "4 CPUs, 12 GB and a GPU with PyTorch: training and fast inference", "4", "12Gi", 1, ml},
+	} {
+		spec := api.ProfileSpec{Cpu: &rung.cpu, Memory: &rung.memory, Packages: &rung.packages}
+		if rung.gpu > 0 {
+			spec.Gpu = &rung.gpu
+		}
+		if _, err := ensure("profile", rung.name, rung.description, spec, nil); err != nil {
+			return err
+		}
+	}
+
 	var unitURI string
 	if s.Config.StaticUnitEndpoint != "" {
 		spec := api.ComputingUnitSpec{

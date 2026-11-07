@@ -27,3 +27,6 @@ func (Provider) Endpoint(_ context.Context, _ string, spec api.ComputingUnitSpec
 
 // Terminate does nothing: a static unit is not the catalog's to stop.
 func (Provider) Terminate(context.Context, string, api.ComputingUnitSpec) error { return nil }
+
+// Offers: a static unit is there already.
+func (Provider) Offers(context.Context, api.ComputingUnitSpec) error { return nil }

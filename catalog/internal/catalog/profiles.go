@@ -370,3 +370,29 @@ func (s *Service) recordInstalled(ctx context.Context, unitRID, execRID uuid.UUI
 		s.Log.Warn("the packages of an execution were not recorded", "execution", execRID, "err", err)
 	}
 }
+
+// Present adds to a resource what is true of it now rather than what is stored: for a profile,
+// whether this deployment can start a unit from it, and if not why.
+func (s *Service) Present(ctx context.Context, env *api.Resource) {
+	if env.Kind != "profile" || s.Units == nil {
+		return
+	}
+	var spec api.ProfileSpec
+	_ = json.Unmarshal(mustJSON(env.Spec), &spec)
+	unit := api.ComputingUnitSpec{Provider: api.UnitProviderKubernetes, ComputingNodes: &[]api.ComputingNodeSpec{{
+		Name: "master", Role: api.ComputingNodeSpecRoleMaster, Cpu: spec.Cpu, Memory: spec.Memory, Gpu: spec.Gpu,
+	}}}
+	status := map[string]any{}
+	if env.Status != nil {
+		for k, v := range *env.Status {
+			status[k] = v
+		}
+	}
+	if err := s.Units.Offers(ctx, unit); err != nil {
+		status["startable"], status["notHere"] = false, err.Error()
+	} else {
+		status["startable"] = true
+		delete(status, "notHere")
+	}
+	env.Status = &status
+}

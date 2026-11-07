@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -48,6 +50,10 @@ func TestEndpointReconcilesAndTerminateDeletes(t *testing.T) {
 	c := d.Spec.Template.Spec.Containers[0]
 	if c.Image != image || c.Resources.Requests.Memory().String() != "3Gi" || c.Resources.Requests.Cpu().String() != "500m" {
 		t.Fatalf("the spec's image and master node resources: %s %v", c.Image, c.Resources.Requests)
+	}
+	// A size holds: the limits are the requests.
+	if c.Resources.Limits.Memory().String() != "3Gi" || c.Resources.Limits.Cpu().String() != "500m" {
+		t.Fatalf("the limits: %v", c.Resources.Limits)
 	}
 	found, fromSecret := false, false
 	for _, e := range c.Env {
@@ -124,5 +130,42 @@ func TestEndpointReconcilesAndTerminateDeletes(t *testing.T) {
 	}
 	if err := p.Terminate(ctx, rid, spec); err != nil {
 		t.Fatalf("terminating twice is fine: %v", err)
+	}
+}
+
+// What the cluster can start: a unit with a GPU only where a node has one, and one no larger
+// than its largest node; a cluster the catalog may not read is not refused for that.
+func TestOffersSaysWhatTheClusterCannotStart(t *testing.T) {
+	ctx := context.Background()
+	node := func(name, cpu, memory string, gpus int64) *corev1.Node {
+		n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}, Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse(cpu), corev1.ResourceMemory: resource.MustParse(memory)}}}
+		if gpus > 0 {
+			n.Status.Allocatable[gpuResource] = *resource.NewQuantity(gpus, resource.DecimalSI)
+		}
+		return n
+	}
+	unit := func(cpu, memory string, gpu int32) api.ComputingUnitSpec {
+		return api.ComputingUnitSpec{Provider: api.UnitProviderKubernetes, ComputingNodes: &[]api.ComputingNodeSpec{{Name: "master", Role: api.ComputingNodeSpecRoleMaster, Cpu: &cpu, Memory: &memory, Gpu: &gpu}}}
+	}
+	cpuOnly := NewWithClient(fake.NewSimpleClientset(node("a", "24", "31Gi", 0)), Options{Namespace: "texera2"})
+	if err := cpuOnly.Offers(ctx, unit("8", "16Gi", 0)); err != nil {
+		t.Fatalf("a Large unit fits: %v", err)
+	}
+	if err := cpuOnly.Offers(ctx, unit("4", "12Gi", 1)); err == nil || err.Error() != "no GPU in this cluster" {
+		t.Fatalf("a GPU unit: %v", err)
+	}
+	if err := cpuOnly.Offers(ctx, unit("32", "16Gi", 0)); err == nil || err.Error() != "asks for 32 CPUs; the largest node has 24" {
+		t.Fatalf("a unit larger than any node: %v", err)
+	}
+	if err := cpuOnly.Offers(ctx, unit("8", "64Gi", 0)); err == nil || err.Error() != "asks for 64Gi of memory; the largest node has 31Gi" {
+		t.Fatalf("more memory than any node: %v", err)
+	}
+	withGPU := NewWithClient(fake.NewSimpleClientset(node("a", "24", "31Gi", 0), node("b", "8", "16Gi", 1)), Options{Namespace: "texera2"})
+	if err := withGPU.Offers(ctx, unit("4", "12Gi", 1)); err != nil {
+		t.Fatalf("a GPU unit where a node has one: %v", err)
+	}
+	if err := withGPU.Offers(ctx, unit("4", "12Gi", 2)); err == nil || err.Error() != "asks for 2 GPUs; the cluster has 1" {
+		t.Fatalf("two GPUs: %v", err)
 	}
 }
