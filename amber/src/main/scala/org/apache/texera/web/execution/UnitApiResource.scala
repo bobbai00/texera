@@ -323,6 +323,17 @@ object UnitApiResource {
       case _                                        => KILLED
     }
 
+  /**
+    * What the unit reports as its engine: the release and a digest of its operator registry, so a
+    * unit whose operators changed is told apart and the catalog takes its operators again.
+    */
+  lazy val engineVersion: String = {
+    val digest = java.security.MessageDigest
+      .getInstance("SHA-256")
+      .digest(objectMapper.writeValueAsBytes(operatorRegistry))
+    "2.0.0-alpha+" + digest.take(6).map("%02x".format(_)).mkString
+  }
+
   /** The operator registry in the contract's shape, computed once. */
   lazy val operatorRegistry: OperatorTypeList = toOperatorTypeList(
     OperatorMetadataGenerator.allOperatorMetadata
@@ -393,7 +404,7 @@ class UnitApiResource extends LazyLogging {
 
   @GET
   @Path("/health")
-  def health(): UnitHealth = UnitHealth("ok", Some("2.0.0-alpha"))
+  def health(): UnitHealth = UnitHealth("ok", Some(engineVersion))
 
   @GET
   @Path("/operators")

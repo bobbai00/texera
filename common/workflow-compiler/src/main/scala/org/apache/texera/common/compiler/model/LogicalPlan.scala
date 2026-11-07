@@ -24,7 +24,7 @@ import org.apache.texera.amber.core.storage.FileResolver
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.operator.LogicalOp
 import org.apache.texera.amber.operator.loop.{LoopEndOpDesc, LoopStartOpDesc}
-import org.apache.texera.amber.operator.source.scan.ScanSourceOpDesc
+import org.apache.texera.amber.operator.source.scan.ReadsFile
 import org.jgrapht.graph.DirectedAcyclicGraph
 import org.jgrapht.util.SupplierUtil
 
@@ -142,23 +142,23 @@ case class LogicalPlan(
       errorList: Option[ArrayBuffer[(OperatorIdentity, Throwable)]]
   ): Unit = {
     operators.foreach {
-      case operator @ (scanOp: ScanSourceOpDesc) =>
+      case operator @ (scanOp: ReadsFile) =>
         Try {
-          // Resolve file path for ScanSourceOpDesc
-          val fileName = scanOp.fileName.getOrElse(
+          // Resolve the file an operator reads
+          val fileName = scanOp.fileToRead.getOrElse(
             throw new RuntimeException(
               "No file selected. Please select a file from the 'File' dropdown in the right panel."
             )
           )
           val fileUri = FileResolver.resolve(fileName) // Convert to URI
 
-          // Set the URI in the ScanSourceOpDesc
+          // Set the URI the operator reads
           scanOp.setResolvedFileName(fileUri)
         } match {
           case Success(_) => // Successfully resolved and set the file URI
 
           case Failure(err) =>
-            logger.error("Error resolving file path for ScanSourceOpDesc", err)
+            logger.error("Error resolving the file an operator reads", err)
             errorList match {
               case Some(errList) =>
                 errList.append((operator.operatorIdentifier, err))
@@ -168,7 +168,7 @@ case class LogicalPlan(
             }
         }
 
-      case _ => // Skip non-ScanSourceOpDesc operators
+      case _ => // Operators that read no file
     }
   }
 }

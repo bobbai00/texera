@@ -36,6 +36,18 @@ import org.apache.texera.amber.core.workflow.WorkflowContext.{
 }
 import org.apache.texera.amber.core.workflow.{PhysicalOp, PhysicalPlan, PortIdentity}
 import org.apache.texera.amber.operator.aggregate.AggregateOpDesc
+import org.apache.texera.amber.operator.builtin.{
+  AggregateOp,
+  ComputeOp,
+  DistinctOp,
+  FilterOp,
+  JoinOp,
+  LimitOp,
+  ProjectOp,
+  ScanOp,
+  SortOp,
+  UnionOp
+}
 import org.apache.texera.amber.operator.cartesianProduct.CartesianProductOpDesc
 import org.apache.texera.amber.operator.dictionary.DictionaryMatcherOpDesc
 import org.apache.texera.amber.operator.set.difference.DifferenceOpDesc
@@ -199,6 +211,17 @@ trait StateTransferFunc
     new Type(value = classOf[ContourPlotOpDesc], name = "ContourPlot"),
     new Type(value = classOf[ECDFPlotOpDesc], name = "ECDFPlot"),
     new Type(value = classOf[RegexOpDesc], name = "Regex"),
+    // The built-in operators: a workflow's line names them, `set id: filter(input, where="...")`.
+    new Type(value = classOf[ScanOp], name = "scan"),
+    new Type(value = classOf[FilterOp], name = "filter"),
+    new Type(value = classOf[ProjectOp], name = "project"),
+    new Type(value = classOf[ComputeOp], name = "compute"),
+    new Type(value = classOf[AggregateOp], name = "aggregate"),
+    new Type(value = classOf[JoinOp], name = "join"),
+    new Type(value = classOf[UnionOp], name = "union"),
+    new Type(value = classOf[DistinctOp], name = "distinct"),
+    new Type(value = classOf[SortOp], name = "sort"),
+    new Type(value = classOf[LimitOp], name = "limit"),
     new Type(value = classOf[SpecializedFilterOpDesc], name = "Filter"),
     new Type(value = classOf[ProjectionOpDesc], name = "Projection"),
     new Type(value = classOf[StripChartOpDesc], name = "StripChart"),

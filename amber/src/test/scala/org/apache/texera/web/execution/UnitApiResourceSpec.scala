@@ -62,6 +62,12 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
     }
   }
 
+  "the engine's version" should "name the operator registry it serves, so a changed registry is synced again" in {
+    UnitApiResource.engineVersion should fullyMatch regex "2\\.0\\.0-alpha\\+[0-9a-f]{12}"
+    new UnitApiResource().health().version shouldBe Some(UnitApiResource.engineVersion)
+    UnitApiResource.operatorRegistry.operators.map(_.operatorType) should contain allOf ("scan", "filter", "aggregate", "join")
+  }
+
   "compile" should "report output schemas per port for a valid plan" in {
     val csv = java.nio.file.Files.createTempFile("iris", ".csv")
     java.nio.file.Files.writeString(csv, "species,petal\nsetosa,1.4\nvirginica,5.5\n")

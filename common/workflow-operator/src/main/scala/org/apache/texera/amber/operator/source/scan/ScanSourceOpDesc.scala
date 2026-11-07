@@ -31,7 +31,7 @@ import org.apache.commons.lang3.builder.EqualsBuilder
 
 import java.net.URI
 
-abstract class ScanSourceOpDesc extends SourceOperatorDescriptor {
+abstract class ScanSourceOpDesc extends SourceOperatorDescriptor with ReadsFile {
 
   /** in the case we do not want to read the entire large file, but only
     * the first a few lines of it to do the type inference.
@@ -110,7 +110,9 @@ abstract class ScanSourceOpDesc extends SourceOperatorDescriptor {
     )
   }
 
-  def setResolvedFileName(uri: URI): Unit = {
+  override def fileToRead: Option[String] = fileName
+
+  override def setResolvedFileName(uri: URI): Unit = {
     fileName = Some(uri.toASCIIString)
   }
 
