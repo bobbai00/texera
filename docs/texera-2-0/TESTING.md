@@ -30,7 +30,7 @@ Bob) goes through a guard fixture that puts it back.
 | Running a workflow in three phases: the dry run's plan is the execution's, stored without secrets; the tables the catalog named, ports, rows, lineage; the keep mark (acceptance 3, 4 at the API) | `test_run.py` | | 15 s |
 | Results kept per execution, through later executions and the unit's idle release; an execution deleted with its tables | `test_results.py` | slow | 1 min |
 | Old results expire under the retention policy; the record stays; a kept execution does not expire | `test_results.py` | destructive | 20 s |
-| A unit made from a profile has its packages: a UDF that imports one fails on the platform's unit and completes there; the execution records the profile version and each package as installed; the unit saved as the profile's next version and as a new one, its packages pinned | `test_profile.py` | cluster, slow | 3 min |
+| A unit made from a profile has its packages: a Python function that imports one fails on the platform's unit and completes there; the execution records the profile version and each package as installed; the unit saved as the profile's next version and as a new one, its packages pinned | `test_profile.py` | cluster, slow | 3 min |
 | A custom operator as a resource, used by URI and run, deletion refused while referenced (acceptance 5) | `test_operator.py` | slow | 1 min |
 | A project shared with a viewer: reads, runs, nothing more; revoked (acceptance 6) | `test_sharing.py` | | 20 s |
 | What others shared with a person is one list whatever its kind and project (a project, a chat, a workflow, a dataset), not what is inside a project they were given; a grant taken back takes the thing off it | `test_sharing.py` | | 5 s |

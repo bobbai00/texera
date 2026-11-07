@@ -62,6 +62,13 @@ Resource Graph", each of which now carries a dated status under its Plan heading
   agent consulted (a tool call records its server).
 - A function that samples without a seed, reads the clock or calls out says
   `@returns(..., nondeterministic=True)`; no run reuses its rows or those after it.
+- Nobody writes the engine's classes: an operator's Python is a function under `@returns`, and
+  the catalog refuses class code. The engine's code-running operators (`PythonUDFV2`,
+  `DualInputPortsPythonUDFV2`, `PythonUDFSourceV2`, `JavaUDF`, the R UDFs) and those a workflow is
+  compiled into (`function`, `stored`) are not listed, and a workflow naming one is refused
+  (`catalog/internal/catalog/engine_only.go`). What a class could do, a function does: one with
+  no input is a source, one may yield DataFrames as it makes them, and a setting typed
+  `Credential` gets a credential's secret.
 - Skills: texera-workflows, python-udf, reading-results, computing-units, exploring-resources,
   using-models (`catalog/internal/catalog/skills/`).
 - A diabetes research team's project from public data, with a scientist's session through the

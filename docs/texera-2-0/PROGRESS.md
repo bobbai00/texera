@@ -2,6 +2,73 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-07 (session 15, part 4): nobody writes the engine's classes
+
+The user's rule: an agent or a person using operators never works on the class template; the
+class is the engine's. A custom operator is a Python function under `@returns`, saved as one
+of a project's operators.
+
+- **Function only.** The catalog refuses an operator's code that defines no function under
+  `@returns`, or a class built on one of the engine's bases (`UDFOperatorV2`,
+  `UDFTableOperator`, `FunctionOperator`, …); with no `function` named, the code's one function
+  under `@returns` is the operator (`pyfunc.go`). The class compile path is gone (no
+  `PythonUDFV2` with a `PROPS` header); secrets always go to a function's arguments. An
+  operator saved as a class before is not run: it says to save its code again as a function.
+- **Engine-only operators** (`engine_only.go`): `PythonUDFV2`, `DualInputPortsPythonUDFV2`,
+  `PythonUDFSourceV2`, `JavaUDF`, `RUDF`, `RUDFSource` (the unit images have no R), and
+  `function` and `stored`, which the catalog compiles a workflow into. The operator sync drops
+  them (183 operators listed on the dev stack before, 175 after), and a workflow naming one is
+  refused on save and at compile, saying what to write instead. Only the catalog writes a
+  `stored` source, where it found the reader may see the earlier run.
+- **What a class could do, a function does.** A function with no positional parameter is a
+  source (`function` with no inputs is a source physical op; the module calls it from
+  `GenerateOperator(FunctionSourceOperator)`); a link into one is refused. A function may
+  `yield` DataFrames, each put out as it comes, so rows go on and a run can pause between
+  them. A setting typed `Credential` is a credential property; the function gets the leased
+  secret. Not the same: a function without `by` runs on one worker, where a class with
+  `workers` spread rows over several.
+- **A bug the change uncovered.** A unit made from a profile builds a venv with the profile's
+  packages and pointed only the `PythonUDF*` operators at it, so a function (or a model version
+  through `predict`) that imports such a package ran in the default Python and failed; the old
+  profile test had passed through `PythonUDFV2`. Found on kind once that test used a function.
+  `function` and `predict` now take the environment the unit names (`PythonEnvironment`), and
+  the unit gives them its name only: the first fix also set the UDFs' `defaultEnv` on them,
+  which the engine's strict plan reading refused ("Unable to process JSON" at start, never at
+  compile); found on the dev stack, whose unit builds an environment too, and fixed with a spec
+  that reads the rewritten plan as the engine does.
+- **Agent.** The python-udf skill drops the `PythonUDFV2` line for sources, yields and
+  `Credential` settings; the `python` field says so in brief; a line naming an operator that is
+  not there says code of one's own is a function under `@returns` in `python`.
+- **App.** New → Operator starts from a function named after the operator (`Time in range` →
+  `time_in_range`); the fields the catalog reads from the code are not in the form; a source
+  function shows as one.
+- **Tests off class code.** e2e `test_controls` pauses and resumes a function that yields a row
+  every 0.2 s; `test_credentials` passes a secret to a `Credential` setting; `test_engine_errors`,
+  `test_operator` and `test_profile` (humanize, cluster) use functions; Playwright's operator page
+  and slow-run tests too. New: Go `TestTheEnginesOwnOperatorsAreNotWrittenByHand`,
+  `TestAFunctionThatReadsNoTableIsASource` and pyfunc cases; a Scala source spec; pytexera
+  yield, source and `Credential` tests; e2e `test_a_function_that_reads_no_table_is_a_source` and
+  `test_the_engines_own_operators_are_not_offered_nor_taken`; agent and app unit tests.
+
+Verified: catalog `go test ./...` against Postgres green; agent runtime 104; pytexera udf 96;
+Scala builtin specs 28 with scalafmt clean; frontend vitest 294, tsc and biome clean. On the
+dev stack the e2e suite gave 47 passed and 1 failed: the new source test assumed a filter's
+rows in order (several workers, no order); fixed, and with the final catalog the function,
+operator, credential and error files passed 12 of 12; Playwright 63 passed, 5 skipped (the
+model's). Kind, rebuilt from the commits: the first check failed the profile test (a function
+importing humanize on the profile's unit), which found the environment bug above; after both
+fixes the dev stack's whole e2e suite passed (48), and kind's check passed whole on its second
+run (scenarios 52 passed; Playwright 63 passed, 5 skipped). Its first run had one failure in
+`collaboration.spec.ts:240`, a pointer still shown 10 s after it left the canvas, which passed
+3 of 3 alone against the cluster and in the rerun: presence timing, not this change.
+With the final engine the dev stack's Playwright run gave 61 passed, 5 skipped, 2 failed:
+`texera2.spec.ts:365` (a long first answer scrolled into view) and `:671` (the other person's
+message in a shared chat); both chat-only, both passed 3 of 3 alone right after, and the same
+frontend passed whole earlier the same day and on kind.
+
+Next: as part 3 says (E5's rest, E6 R, ML environment images, stored reads across units), and
+a parallel mode for functions whose rows are independent, if it is wanted.
+
 ## 2026-11-07 (session 15, part 3): the graph's last pieces, nondeterministic functions, kind
 
 - A plan in the chat floating over a page offers Open graph, which opens the chat with its graph.

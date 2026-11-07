@@ -310,9 +310,12 @@ api -X PATCH $GW/catalog/v1/resources/$EID -d '{"labels":{"texera.keep":"true"}}
 api -X PUT $GW/catalog/v1/resources/$PROJECT/grants/$BOB -d '{"relation":"viewer"}'       # share
 ```
 
-A workflow spec names operators by type (`CSVFileScan`, `Aggregate`, `PythonUDFV2`, … ;
+A workflow spec names operators by type (`scan`, `filter`, `aggregate`, `CSVFileScan`, … ;
 `GET /operators?q=Aggregate` gives each type's properties schema) or by a custom operator's
-URI, and links ports `output-0` to `input-0`. The spec in the walkthrough is a complete
+URI, and links ports `output-0` to `input-0`. The engine's own operators that run code
+(`PythonUDFV2`, `JavaUDF`, the R UDFs) and those the catalog compiles a workflow into
+(`function`, `stored`) are not offered and a workflow that names one is refused: code of a
+project's own is a custom operator. The spec in the walkthrough is a complete
 example. `viewResult: true` on an operator stores its output so the rows can be read; an
 operator nothing reads is stored anyway.
 
@@ -351,13 +354,19 @@ fit the phase answers 409. A workflow with an execution still going on the same 
 
 **Custom operators, credentials.**
 
-- A **custom operator** is a Python class with the engine's UDF interface, with its ports, its
-  properties schema and the columns it adds (`outputColumns`, so the engine can type the
-  output). It runs with the packages of the unit it runs on (section 6). A workflow uses it by URI with `@vno` as the
-  `operatorType`; its instance properties reach the code as the dict `PROPS`. Deleting an
-  operator a workflow version uses is refused, the dependents listed.
+- A **custom operator** is a Python function under `@returns(column=type, ...)`: its
+  positional parameters are its inputs, one DataFrame each (none makes it a source), its
+  parameters after `*` its settings (one typed `Credential` takes a credential), its
+  docstring its description. The catalog reads all of it from the code when the operator is
+  saved, and refuses code that defines no such function, a class included: the classes that
+  run a function are the engine's. It returns a DataFrame or yields DataFrames as it makes
+  them, and runs with the packages of the unit it runs on (section 6). A workflow uses it by
+  URI with `@vno` as the `operatorType`, with its settings as the instance's properties;
+  the catalog compiles the call into the engine's `function`. Deleting an operator a
+  workflow version uses is refused, the dependents listed.
 - A **credential** holds a secret written once (`PUT /credentials/{rid}/secret`) and never
-  read back. A property whose schema says `format: credential` takes a credential URI; the
+  read back. A property whose schema says `format: credential` (a function's setting typed
+  `Credential`) takes a credential URI; the
   catalog leases the secret for the execution and puts it in the plan the engine receives, never in
   a version or an execution. The caller must be allowed to use the credential.
 
