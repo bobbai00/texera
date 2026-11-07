@@ -53,7 +53,16 @@ uv venv /tmp/diabetes-prep && VIRTUAL_ENV=/tmp/diabetes-prep uv pip install pand
 python3 load.py --data ~/texera-diabetes
 ```
 
-Then open a chat in the project "Diabetes research", as bob, and ask what the team has.
+Then open a chat in the project "Diabetes research", as bob, and ask what the team has, or let
+`scenario.py` ask: what the project has, what could be learned from it, whether the onset model
+holds up on the women it never saw, whether HbA1c testing goes with fewer readmissions by
+primary diagnosis, and how the adolescents' CGM metrics compare with the study's and with their
+daily steps. It prints the tools the agent called and its answers, and writes the transcript.
+
+```bash
+python3 scenario.py                 # needs the platform's model key on the stack
+python3 scenario.py --ask 3         # one question, in a new chat
+```
 
 ## Sources
 
