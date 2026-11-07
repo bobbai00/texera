@@ -13,7 +13,7 @@ import { Button, ErrorNote, Textarea, cn } from "@texera/ui";
 import { Braces, Check, ListTree, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { CatalogError, canUpdate, updateSpec } from "../api";
-import { keysOf } from "../queries";
+import { keysOf, readResource } from "../queries";
 import { KINDS } from "../registry";
 import { prune, specSchema } from "../schema/schema";
 import { SchemaForm } from "../schema/SchemaForm";
@@ -55,8 +55,19 @@ export function SpecEditor({ resource, readonly = false }: { resource: Resource;
   const save = useMutation({
     mutationFn: async () => {
       const body = schema ? prune(draft, schema) : draft;
-      const saved = await updateSpec(kind, resource.metadata.rid, { spec: body, ...(versioned ? { expectedHead: base.head, message: "Edited in the app" } : {}) }, base.etag);
-      return saved;
+      const write = (head: number, etag: string) =>
+        updateSpec(kind, resource.metadata.rid, { spec: body, ...(versioned ? { expectedHead: head, message: "Edited in the app" } : {}) }, etag);
+      try {
+        return await write(base.head, base.etag);
+      } catch (e) {
+        // Refused because the resource moved: if only what is not its spec moved (a unit's
+        // status, a rename), the save goes again as it was meant; a spec someone else changed
+        // is the person's to decide (below).
+        if (!(e instanceof CatalogError && e.status === 412)) throw e;
+        const now = await readResource(resource.metadata.rid);
+        if (shape(now.spec) !== shape(base.spec)) throw e;
+        return await write(now.metadata.head, now.metadata.etag);
+      }
     },
     onSuccess: saved => {
       // What was saved is the base from now on: the draft is no longer an edit, and the

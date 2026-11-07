@@ -25,6 +25,9 @@ export const meQuery = () => ({ ...meGetOptions(), staleTime: 5 * 60_000 });
 export const settingsQuery = () => ({ ...settingsRoutesReadOptions(), staleTime: 5 * 60_000 });
 
 /** The envelope of any catalog resource, by rid. */
+/** A resource as the catalog has it this moment, past any cache: for a write that must start from it. */
+export const readResource = async (rid: string): Promise<Resource> => (await resourcesRead({ path: { rid }, throwOnError: true })).data;
+
 export const resourceQuery = (rid: string) =>
   queryOptions({
     queryKey: ["resource", rid],

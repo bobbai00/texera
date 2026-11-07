@@ -18,8 +18,8 @@ import {
 } from "@texera/ui";
 import { Check, Cpu, Loader2, Power, Save, Server } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
-import { unwrap, updateSpec } from "../api";
-import { canQuery, keysOf, resolveQuery, resourceQuery, searchQuery } from "../queries";
+import { CatalogError, unwrap, updateSpec } from "../api";
+import { canQuery, keysOf, readResource, resolveQuery, searchQuery } from "../queries";
 import { useDestination, useScope } from "../scope";
 import { useIsBuiltIn } from "../shell/builtin";
 import { UriChip } from "../shell/Chips";
@@ -101,16 +101,18 @@ function MadeOf({ resource }: { resource: Resource }) {
   const changes = profile ? changesFrom(profile, draft) : [];
   const dirty = JSON.stringify(makeupOf(draft)) !== JSON.stringify(saved);
   const save = useMutation({
-    // The change goes onto the unit as it is now: reading a unit probes it, so its status, and
-    // with it its etag, may have moved since this page read it.
+    // The change goes onto the unit as it is now. Reading a unit probes it, so while it starts
+    // anyone's read moves its status, and with it its etag, between this read and this write:
+    // a write refused for that goes again on a fresh read, the makeup put on its spec anew.
     mutationFn: async () => {
-      const now = await queryClient.fetchQuery({ ...resourceQuery(rid), staleTime: 0 });
-      return updateSpec(
-        "computing-unit",
-        rid,
-        { spec: withMakeup(now.spec as ComputingUnitSpec, draft) },
-        now.metadata.etag
-      );
+      for (let attempt = 1; ; attempt++) {
+        const now = await readResource(rid);
+        try {
+          return await updateSpec("computing-unit", rid, { spec: withMakeup(now.spec as ComputingUnitSpec, draft) }, now.metadata.etag);
+        } catch (e) {
+          if (!(e instanceof CatalogError && e.status === 412) || attempt >= 3) throw e;
+        }
+      }
     },
     onSuccess: () => {
       for (const key of keysOf(rid)) queryClient.invalidateQueries({ queryKey: key });
