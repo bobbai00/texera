@@ -23,20 +23,20 @@ description: Choose where a workflow runs - the units there are, the profiles a 
 
 # Computing units
 
-A workflow compiles and runs on a computing unit: a node with CPU, memory, perhaps GPUs, and Python packages. A call goes to the unit it names, else to the workflow's `defaultComputingUnit`, else to its project's default, else to the platform's unit. Name a unit in `validate_workflow` or `run_workflow` only when the person asks for one.
+A workflow compiles and runs on a computing unit: a node with CPU, memory, perhaps GPUs, and Python packages. A call goes to the unit it names, else to the workflow's `defaultComputingUnit`, else to its project's default unit, which the project may inherit from a project up its chain: Texera's is the deployment's own unit (`project_settings` says which). Name a unit in `validate_workflow` or `run_workflow` only when the person asks for one.
 
 ## What there is
 
 - `list_computing_units`: the units the person can run on, with their status.
-- `search_resources` with kind `profile`: the profiles units are made from, the platform's ladder among them: Small, Medium and Large for data work, ML for models on CPU, GPU for training and fast inference. Each shows its `cpu`, `memory`, `gpu` and `packages`, and its `status` says whether this deployment can start it (`startable`) and if not why (`notHere`, such as "no GPU in this cluster"). Offer only what can start here, and when what the work needs cannot, say so and offer the nearest that can: ML on CPU for a GPU.
+- `search_resources` with kind `profile`: the profiles units are made from, Texera's ladder among them: Small, Medium and Large for data work, ML for models on CPU, GPU for training and fast inference. Each shows its `cpu`, `memory`, `gpu` and `packages`, and its `status` says whether this deployment can start it (`startable`) and if not why (`notHere`, such as "no GPU in this cluster"). Offer only what can start here, and when what the work needs cannot, say so and offer the nearest that can: ML on CPU for a GPU.
 
-The platform's unit runs the core operators and Python with pandas, numpy and pyarrow, and it is enough for most tables. A workflow needs another unit when its Python imports a package the platform's unit lacks, such as scikit-learn, statsmodels or torch, or when its data or model needs more memory or a GPU. Never make a unit for work the platform's unit can do.
+The deployment's unit runs the core operators and Python with pandas, numpy and pyarrow, and it is enough for most tables. A workflow needs another unit when its Python imports a package the deployment's unit lacks, such as scikit-learn, statsmodels or torch, or when its data or model needs more memory or a GPU. Never make a unit for work the deployment's unit can do.
 
 ## Ask first
 
 A unit costs money while it runs and takes minutes to start, so the person chooses. Before `create_computing_unit`, call `ask` with the choices that make sense, each with what it gives and costs, for example:
 
-- Run on the platform's unit, which lacks scikit-learn: fit the model another way.
+- Run on the deployment's unit, which lacks scikit-learn: fit the model another way.
 - Make a unit from "ML" (2 CPU, 8 GiB, scikit-learn): ready in a few minutes.
 - Make a unit from "ML GPU" (1 GPU): faster to train, and costs more.
 

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { ALL_PROJECTS, destination, projectLabel, workingProject } from "./scope";
 
-const me = (project?: unknown) => ({ homeProject: "home", systemProject: "platform", preferences: project === undefined ? {} : { project } });
-const readable = ["home", "lab", "platform"];
+const me = (project?: unknown) => ({ homeProject: "home", rootProject: "texera", preferences: project === undefined ? {} : { project } });
+const readable = ["home", "lab", "texera"];
 
 describe("the project a person works in", () => {
   it("is their home project until they pick another", () => {
@@ -14,9 +14,12 @@ describe("the project a person works in", () => {
     expect(workingProject(me(ALL_PROJECTS), readable)).toBe(ALL_PROJECTS);
   });
 
-  it("falls back to home when the pick is gone, is the platform's own, or is not a project", () => {
+  it("may be Texera, which its admins work in like any project", () => {
+    expect(workingProject(me("texera"), readable)).toBe("texera");
+  });
+
+  it("falls back to home when the pick is gone or is not a project", () => {
     expect(workingProject(me("deleted"), readable)).toBe("home");
-    expect(workingProject(me("platform"), readable)).toBe("home");
     expect(workingProject(me(42), readable)).toBe("home");
     expect(workingProject(me(""), readable)).toBe("home");
   });
@@ -27,7 +30,7 @@ describe("the project a person works in", () => {
 });
 
 describe("how a project is named in the app", () => {
-  const names = { home: "alice's home", platform: "Built-in", lab: "lab" };
+  const names = { home: "alice's home", texera: "Texera", lab: "lab" };
   const label = (rid: string) => projectLabel(rid, me(), names[rid as keyof typeof names]);
 
   it("calls the person's own project Personal and the lifted scope All projects", () => {
@@ -37,7 +40,7 @@ describe("how a project is named in the app", () => {
 
   it("calls every other project by its name", () => {
     expect(label("lab")).toBe("lab");
-    expect(label("platform")).toBe("Built-in");
+    expect(label("texera")).toBe("Texera");
     expect(projectLabel("unknown", me(), undefined)).toBe("a project");
   });
 });

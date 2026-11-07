@@ -15,7 +15,7 @@ import { useOpenResource } from "./navigation";
 export function UriChip({ uri, emphasis, className }: { uri: string; emphasis?: boolean; className?: string }) {
   const parsed = parseUri(uri);
   const { beside } = useOpenResource();
-  const { data } = useQuery({ ...resourceByUriQuery(uri), enabled: !!parsed && parsed.ref.kind !== "settings" });
+  const { data } = useQuery({ ...resourceByUriQuery(uri), enabled: !!parsed });
   if (!parsed) return <ForeignChip uri={uri} className={className} />;
   const { ref, subresource } = parsed;
   const Icon = KINDS[ref.kind].icon;

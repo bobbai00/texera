@@ -7,7 +7,7 @@ import type { ConversationStatus, Setting } from "@texera/catalog-client/types";
 import { Button, EmptyState, SectionTitle, Skeleton, cn, timeAgo } from "@texera/ui";
 import { ArrowUpRight, MessagesSquare } from "lucide-react";
 import { lazy } from "react";
-import { chatSettingsQuery, resourceQuery, SOURCE_LABEL } from "../queries";
+import { chatSettingsQuery, resourceQuery, sourceOf } from "../queries";
 import { PrincipalName, UriChip } from "../shell/Chips";
 import { FromThisChat } from "../shell/FromThisChat";
 import { KindHeader } from "../shell/KindHeader";
@@ -79,7 +79,7 @@ function Chosen({ label, setting, emphasis }: { label: string; setting: Setting;
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="flex min-w-0 items-center gap-2">
         <UriChip uri={setting.uri} emphasis={emphasis} />
-        <span className="truncate text-muted-foreground">{SOURCE_LABEL[setting.from]}</span>
+        <span className="truncate text-muted-foreground">{sourceOf(setting)}</span>
       </dd>
     </>
   );

@@ -12,7 +12,7 @@ export interface Effective {
   agent: string;
   /** The model endpoint's URI. */
   model: string;
-  /** The add-on servers a turn mounts, by URI; never the platform's own. */
+  /** The add-on servers a turn mounts, by URI; never the catalog's own. */
   addOns: string[];
   /** How the agent's changes go: once it has said its plan, or each after the person approves it. */
   workMode: WorkMode;

@@ -5,7 +5,6 @@ import { Check, Loader2, Warehouse } from "lucide-react";
 import { Fragment, type ReactNode, useId } from "react";
 import { updateSpec } from "../api";
 import { canQuery, keysOf, resourceQuery } from "../queries";
-import { useIsBuiltIn } from "../shell/builtin";
 import { UriChip } from "../shell/Chips";
 import type { KindSpec } from "../types";
 import { CredentialPicker } from "../workflow/CredentialPicker";
@@ -13,33 +12,33 @@ import { CredentialPicker } from "../workflow/CredentialPicker";
 /** Where a warehouse keeps its tables, in a few words. */
 export function placeOf(spec: Partial<WarehouseSpec>): string {
   const storage = spec.storage;
-  if (!storage) return "on the platform's store";
+  if (!storage) return "on the deployment's store";
   return `${storage.bucket}${storage.keyPrefix ? `/${storage.keyPrefix.replace(/^\/+|\/+$/g, "")}` : ""} on ${storage.endpoint.replace(/^https?:\/\//, "")}`;
 }
 
 /**
  * Whether the warehouse's own project keeps its results here, and the one click that makes it
- * so: an execution keeps its results in the warehouse its project names, unless the workflow
- * or the run names another.
+ * so: an execution keeps its results in the warehouse its project names, or the one a project up
+ * its chain names, unless the workflow or the run names another. Texera's is every project's
+ * unless they name their own. The project's admins choose.
  */
 function Actions({ resource, readonly }: { resource: Resource; readonly?: boolean }) {
   const queryClient = useQueryClient();
-  const builtIn = useIsBuiltIn()(resource);
   const project = resource.metadata.project;
-  const { data: owner } = useQuery({ ...resourceQuery(project), enabled: !builtIn });
-  const { data: mayChange } = useQuery({ ...canQuery("write", project), enabled: !builtIn });
+  const { data: owner } = useQuery(resourceQuery(project));
+  const { data: mayChange } = useQuery(canQuery("admin", project));
   const spec = (owner?.spec ?? {}) as ProjectSpec;
-  const used = spec.defaultWarehouse === resource.metadata.uri;
+  const used = spec.defaults?.warehouse === resource.metadata.uri;
   const choose = useMutation({
     mutationFn: (on: boolean) => {
-      const { defaultWarehouse: _, ...rest } = spec;
-      return updateSpec("project", project, { spec: on ? { ...rest, defaultWarehouse: resource.metadata.uri } : rest });
+      const { warehouse: _, ...rest } = spec.defaults ?? {};
+      return updateSpec("project", project, { spec: { ...spec, defaults: on ? { ...rest, warehouse: resource.metadata.uri } : rest } }, owner?.metadata.etag);
     },
     onSuccess: () => {
       for (const key of keysOf(project)) queryClient.invalidateQueries({ queryKey: key });
+      queryClient.invalidateQueries({ queryKey: [{ _id: "projectsSettings" }] });
     },
   });
-  if (builtIn) return <Badge data-warehouse-default="platform">Where results go unless a project names another</Badge>;
   if (!owner) return null;
   return (
     <>

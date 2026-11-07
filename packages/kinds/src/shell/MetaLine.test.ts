@@ -23,11 +23,6 @@ describe("the line under a resource's name", () => {
     expect(metaLine("skill", metadata({ visibility: "public" })).startsWith("public · v2 · ")).toBe(true);
   });
 
-  it("says built-in for what the platform ships, whatever its own visibility", () => {
-    expect(metaLine("skill", metadata({}), [], true).startsWith("built-in · v2 · ")).toBe(true);
-    expect(metaLine("skill", metadata({ visibility: "public" }), [], true).startsWith("built-in · ")).toBe(true);
-  });
-
   it("leaves the version out of a kind that has none, and says when there is none yet", () => {
     expect(metaLine("computing-unit", metadata({ head: 0 }))).not.toContain(" v");
     expect(metaLine("skill", metadata({ head: 0 }), ["a note"])).toMatch(/^no version yet · updated .* · a note$/);

@@ -12,7 +12,6 @@ import { isAbout, keysOf, resourceQuery } from "../queries";
 import { KINDS } from "../registry";
 import { kindEntry, type KindViewProps, type ResourceRef } from "../types";
 import { Access } from "./Access";
-import { useIsBuiltIn } from "./builtin";
 import { OriginChip } from "./Chips";
 import { JsonBlock } from "./JsonBlock";
 import { EditableName, KindHeader } from "./KindHeader";
@@ -45,10 +44,11 @@ export function ResourcePage({
   /** Shows the spec without letting it be saved, for callers who know the caller may not write. */
   readonly?: boolean;
 }) {
-  const builtIn = useIsBuiltIn()(resource);
-  // Only what the catalog lets this person do is offered: a viewer reads, an editor changes, an owner deletes.
-  const may = useMay(resource.metadata.rid);
-  const fixed = readonly || builtIn || may.write === false;
+  // Only what the catalog lets this person do is offered: a viewer reads, an editor changes, an
+  // owner deletes; a project itself, its name and settings, is its admins' to change.
+  const project = resource.kind === "project";
+  const may = useMay(resource.metadata.rid, project);
+  const fixed = readonly || (project ? may.admin === false : may.write === false);
   // What others change while the page is open arrives as it happens.
   useWatch(resource.metadata.rid);
   const kind = resource.kind;
@@ -95,14 +95,14 @@ export function ResourcePage({
                 </button>
               </Badge>
             )}
-            <span className="truncate">{metaLine(kind, resource.metadata, resource.metadata.description ? [resource.metadata.description] : [], builtIn)}</span>
+            <span className="truncate">{metaLine(kind, resource.metadata, resource.metadata.description ? [resource.metadata.description] : [])}</span>
             {resource.metadata.origin && <OriginChip origin={resource.metadata.origin} />}
           </span>
         }
         actions={
           <>
             {Actions && <Actions resource={resource} readonly={fixed} />}
-            {!entry.singleton && !builtIn && may.delete === true && (
+            {may.delete === true && (
               <Button variant="ghost" size="icon-sm" aria-label={`Delete ${spec.label.toLowerCase()}`} onClick={() => confirm(`Delete "${resource.metadata.name}"?`) && remove.mutate()} disabled={remove.isPending} data-delete>
                 <Trash2 />
               </Button>
@@ -127,16 +127,12 @@ export function ResourcePage({
               <History /> Versions
             </Tab>
           )}
-          {!entry.singleton && (
-            <Tab value="access">
-              <Users /> Access
-            </Tab>
-          )}
-          {!entry.singleton && (
-            <Tab value="lineage">
-              <GitBranch /> Lineage
-            </Tab>
-          )}
+          <Tab value="access">
+            <Users /> {project ? "People" : "Access"}
+          </Tab>
+          <Tab value="lineage">
+            <GitBranch /> Lineage
+          </Tab>
           <Tab value="json">
             <Braces /> JSON
           </Tab>
@@ -154,16 +150,12 @@ export function ResourcePage({
             <Versions rid={resource.metadata.rid} head={resource.metadata.head} selected={vno} onSelect={setVno} />
           </TabPanel>
         )}
-        {!entry.singleton && (
-          <TabPanel value="access" className="scrollbar-thin overflow-y-auto">
-            <Access resource={resource} builtIn={builtIn} />
-          </TabPanel>
-        )}
-        {!entry.singleton && (
-          <TabPanel value="lineage" className="scrollbar-thin overflow-y-auto">
-            <Lineage ref={{ ...ref, vno: vno ?? (entry.versioned && resource.metadata.head > 0 ? resource.metadata.head : undefined) }} />
-          </TabPanel>
-        )}
+        <TabPanel value="access" className="scrollbar-thin overflow-y-auto">
+          <Access resource={resource} />
+        </TabPanel>
+        <TabPanel value="lineage" className="scrollbar-thin overflow-y-auto">
+          <Lineage ref={{ ...ref, vno: vno ?? (entry.versioned && resource.metadata.head > 0 ? resource.metadata.head : undefined) }} />
+        </TabPanel>
         <TabPanel value="json" className="scrollbar-thin overflow-y-auto p-3">
           <JsonBlock value={resource} />
         </TabPanel>

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ALL_PROJECTS, KINDS, LIBRARY_GROUPS, meQuery, pluralOf, searchQuery, useWorkingProject } from "@texera/kinds";
+import { ALL_PROJECTS, KINDS, LIBRARY_GROUPS, pluralOf, searchQuery, useLook, useWorkingProject } from "@texera/kinds";
 import {
   Avatar,
   Button,
@@ -16,18 +16,19 @@ import {
   Tooltip,
   toggleTheme,
 } from "@texera/ui";
-import { LogOut, MoonStar, PanelLeftClose, PanelLeftOpen, Search, Settings, SquarePen, Users } from "lucide-react";
+import { LogOut, MoonStar, PanelLeftClose, PanelLeftOpen, Search, SquarePen, Users } from "lucide-react";
 import { signOut, useSession } from "@/auth/session";
 
 /** The sidebar collapsed: a narrow column with the way back, a new chat and the search. */
 export function SidebarRail({ onExpand, onSearch }: { onExpand: () => void; onSearch: () => void }) {
+  const look = useLook();
   return (
     <nav
       className="flex h-full w-12 flex-col items-center gap-1 bg-sidebar py-3"
       aria-label="Main, collapsed"
       data-sidebar-rail>
-      <Link to="/" aria-label="Texera" className="mb-1">
-        <img src="/texera-mark.png" alt="" className="size-7" />
+      <Link to="/" aria-label={look.name} className="mb-1">
+        <img src={look.logoUrl ?? "/texera-mark.png"} alt="" className="size-7" />
       </Link>
       <Tooltip content="Expand sidebar" side="right">
         <Button variant="ghost" size="icon-sm" onClick={onExpand} aria-label="Expand sidebar">
@@ -51,9 +52,10 @@ export function SidebarRail({ onExpand, onSearch }: { onExpand: () => void; onSe
 export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSearch: () => void }) {
   const user = useSession();
   const navigate = useNavigate();
-  const { data: me } = useQuery(meQuery());
-  // The project the person works in: the lists show it, and what is made goes into it.
+  // The project the person works in: the lists show it, and what is made goes into it. The app
+  // wears its look.
   const working = useWorkingProject();
+  const look = useLook();
   const { data: chats, isPending } = useQuery({
     ...searchQuery({
       kind: "conversation",
@@ -67,9 +69,12 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
   return (
     <nav className="flex h-full w-64 flex-col bg-sidebar" aria-label="Main">
       <div className="flex items-center gap-2 px-3 pt-3 pb-2">
-        <Link to="/" className="flex items-center gap-2 px-1 text-[15px] font-semibold tracking-tight">
-          <img src="/texera-mark.png" alt="" className="size-7" />
-          Texera
+        <Link
+          to="/"
+          className="flex min-w-0 items-center gap-2 px-1 text-[15px] font-semibold tracking-tight"
+          data-look={look.name}>
+          <img src={look.logoUrl ?? "/texera-mark.png"} alt="" className="size-7 shrink-0 rounded" />
+          <span className="truncate">{look.name}</span>
         </Link>
         <div className="flex-1" />
         <Button variant="ghost" size="icon-sm" onClick={onCollapse} aria-label="Collapse sidebar">
@@ -126,14 +131,6 @@ export function Sidebar({ onCollapse, onSearch }: { onCollapse: () => void; onSe
             })}
           </section>
         ))}
-        {me?.admin && (
-          <Link
-            to="/settings"
-            data-settings-link
-            className="flex items-center gap-2.5 rounded-lg px-2 py-1 text-sm hover:bg-accent data-[status=active]:bg-accent data-[status=active]:font-medium">
-            <Settings className="size-4 text-muted-foreground" /> Settings
-          </Link>
-        )}
         <section className="mt-3">
           <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">Chats</h2>
           {isPending && [0, 1, 2].map(i => <Skeleton key={i} className="mx-2 my-1.5 h-6" />)}

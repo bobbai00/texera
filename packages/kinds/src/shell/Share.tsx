@@ -7,7 +7,6 @@ import { KINDS } from "../registry";
 import type { ResourceRef } from "../types";
 import { href } from "../uri";
 import { Access } from "./Access";
-import { useIsBuiltIn } from "./builtin";
 
 /**
  * Sharing a resource, from its page: its link, and who it is shared with. The link opens the
@@ -31,7 +30,6 @@ export function ShareButton({ ref }: { ref: ResourceRef }) {
 
 function ShareDialog({ ref }: { ref: ResourceRef }) {
   const { data: resource } = useQuery(resourceQuery(ref.rid));
-  const isBuiltIn = useIsBuiltIn();
   const [copied, setCopied] = useState(false);
   const link = `${window.location.origin}${href(ref)}`;
   const copy = async () => {
@@ -51,7 +49,7 @@ function ShareDialog({ ref }: { ref: ResourceRef }) {
             {copied ? <Check /> : <Link2 />} {copied ? "Copied" : "Copy link"}
           </Button>
         </div>
-        {resource ? <div className="-mx-4 rounded-xl border"><Access resource={resource} builtIn={isBuiltIn(resource)} /></div> : <Skeleton className="h-32" />}
+        {resource ? <div className="-mx-4 rounded-xl border"><Access resource={resource} /></div> : <Skeleton className="h-32" />}
       </div>
     </DialogContent>
   );

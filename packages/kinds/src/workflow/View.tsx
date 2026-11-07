@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { workflowsRun } from "@texera/catalog-client";
-import type { ComputingUnitSpec, Execution, ExecutionStatus, ProjectSpec } from "@texera/catalog-client/types";
+import type { ComputingUnitSpec, Execution, ExecutionStatus } from "@texera/catalog-client/types";
 import {
   Badge,
   Button,
@@ -42,7 +42,7 @@ import { unwrap } from "../api";
 import { executionOverlay } from "../execution/overlay";
 import { useRoom } from "../live/room";
 import { masterOf } from "../kinds/profiles";
-import { keysOf, operatorSchemasQuery, resourceQuery, searchQuery, settingsQuery, unitsQuery } from "../queries";
+import { keysOf, operatorSchemasQuery, projectSettingsQuery, searchQuery, unitsQuery } from "../queries";
 import { resultLabel } from "../results/labels";
 import { ResultsWindow } from "../results/ResultsWindow";
 import { ProjectScope, useScope } from "../scope";
@@ -232,18 +232,18 @@ function EditorLayout({
   // How the canvas is looked at: how much the cards say, the card open, the result on screen.
   const view = useMemo(() => createCanvasView(), []);
   // Where a run goes and keeps its results: what is picked here for this page's runs, else what
-  // the workflow, its project or the platform names, as the catalog decides for anyone's run.
+  // the workflow names, else its project's default, which may come from up the project's chain,
+  // as the catalog decides for anyone's run.
   const { data: warehouses } = useQuery(searchQuery({ kind: "warehouse", scope }));
-  const { data: project } = useQuery({ ...resourceQuery(scope ?? ""), enabled: !!scope });
-  const { data: settings } = useQuery(settingsQuery());
-  const defaults = { project: project?.spec as ProjectSpec | undefined, platform: settings?.spec.defaults };
+  const { data: settings } = useQuery({ ...projectSettingsQuery(scope ?? ""), enabled: !!scope });
+  const defaults = settings?.defaults;
   const [unitPick, setUnitPick] = useState<string>();
-  const named = unitPick ?? spec.defaultComputingUnit ?? defaults.project?.defaultComputingUnit ?? defaults.platform?.computingUnit;
+  const named = unitPick ?? spec.defaultComputingUnit ?? defaults?.computingUnit;
   // A unit the person may not run on is not among theirs: a ready one of theirs stands in.
   const unit = units?.find(u => u.metadata.uri === named) ?? units?.find(u => u.status?.phase === "ready") ?? units?.[0];
   const madeFrom = unit && masterOf(unit.spec as ComputingUnitSpec)?.profile;
   const [warehousePick, setWarehousePick] = useState<string>();
-  const warehouse = warehousePick ?? spec.defaultWarehouse ?? defaults.project?.defaultWarehouse ?? defaults.platform?.warehouse;
+  const warehouse = warehousePick ?? spec.defaultWarehouse ?? defaults?.warehouse;
   const compiled = useQuery(compilationQuery(rid, spec, unit?.metadata.uri));
   const compilation = compiled.data;
   const executions = useQuery({

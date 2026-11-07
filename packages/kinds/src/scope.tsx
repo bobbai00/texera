@@ -1,5 +1,5 @@
-// The project a person works in. Lists show it with what it inherits (the platform's
-// built-ins), and what the person makes goes into it: a chat, a workflow, anything. With every
+// The project a person works in. Lists show it with what it inherits (what the projects up its
+// chain hold, Texera's among them), and what the person makes goes into it: a chat, a workflow, anything. With every
 // project in view there is no one project to make things in, so the app asks which. It is the
 // person's home project until they pick another; the pick is kept in their preferences, so it
 // follows them. Inside a resource's own page (a workflow's editor, a chat) what is listed is
@@ -15,7 +15,7 @@ import { meQuery, searchQuery } from "./queries";
 /** The pick that lifts the scope: every project the person may read. */
 export const ALL_PROJECTS = "all";
 
-type Person = Pick<Me, "homeProject" | "systemProject" | "preferences">;
+type Person = Pick<Me, "homeProject" | "rootProject" | "preferences">;
 
 /**
  * The project a person works in: their pick when it is a project they can still read and work
@@ -25,7 +25,7 @@ export function workingProject(me: Person | undefined, readable: string[]): stri
   if (!me) return undefined;
   const picked = me.preferences.project;
   if (picked === ALL_PROJECTS) return ALL_PROJECTS;
-  return typeof picked === "string" && picked !== me.systemProject && readable.includes(picked) ? picked : me.homeProject;
+  return typeof picked === "string" && readable.includes(picked) ? picked : me.homeProject;
 }
 
 /**
@@ -80,13 +80,16 @@ export function useWorkingProject() {
       current === undefined
         ? ""
         : projectLabel(current, me, readable?.find(p => p.metadata.rid === current)?.metadata.name),
-    /** What can be picked: the person's home first, then the others; never the platform's own. */
+    /**
+     * What can be picked: the person's home first, then the others. Texera, which everyone reads,
+     * is there only while it is the pick: its admins work in it from its own page.
+     */
     choices:
       me && readable
         ? [
             { value: me.homeProject, label: projectLabel(me.homeProject, me, undefined) },
             ...readable
-              .filter(p => p.metadata.rid !== me.homeProject && p.metadata.rid !== me.systemProject)
+              .filter(p => p.metadata.rid !== me.homeProject && (p.metadata.rid !== me.rootProject || p.metadata.rid === current))
               .map(p => ({ value: p.metadata.rid, label: p.metadata.name })),
             { value: ALL_PROJECTS, label: projectLabel(ALL_PROJECTS, me, undefined) },
           ]

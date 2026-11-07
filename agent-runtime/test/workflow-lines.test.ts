@@ -25,7 +25,7 @@ const operator = (operatorType: string, inputPorts: object[], rid = crypto.rando
   metadata: { rid, uri: `texera://operators/${rid}`, name: operatorType, head: 2 },
   spec: { operatorType, inputPorts, ...(code ? { implementation: { python: { code } } } : {}) },
 });
-/** The built-ins the lines use, a classic type, and one custom operator. */
+/** The engine operators the lines use, a classic type, and one custom operator. */
 const OPERATORS = [
   operator("scan", []),
   operator("aggregate", [port()]),

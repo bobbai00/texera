@@ -17,15 +17,16 @@ import { PrincipalName } from "./Chips";
 
 const RELATIONS: Relation[] = ["viewer", "editor", "owner", "user"];
 
-export function Access({ resource, builtIn = false }: { resource: Resource; builtIn?: boolean }) {
-  if (builtIn) {
-    return (
-      <div className="p-4" data-access="built-in">
-        <SectionTitle>Access</SectionTitle>
-        <p className="mt-2 text-sm text-muted-foreground">Built in: everyone can view and use it. It changes with a release of the platform, not from here.</p>
-      </div>
-    );
-  }
+/**
+ * What a relation is called on a resource of a kind. On a project an owner is one of its admins,
+ * who change the project itself, and an editor a member, who works in it.
+ */
+export function relationLabel(kind: string, relation: Relation): string {
+  if (kind === "project") return { owner: "admin", editor: "member", viewer: "viewer", user: "user" }[relation];
+  return relation;
+}
+
+export function Access({ resource }: { resource: Resource }) {
   return <Grants resource={resource} />;
 }
 
@@ -85,7 +86,7 @@ function Grants({ resource }: { resource: Resource }) {
                 <li key={`${g.principal}:${g.relation}`} className="space-y-1 px-3 py-2 text-sm" data-grant={g.relation}>
                   <div className="flex items-center gap-2">
                     <PrincipalName pid={g.principal} className="min-w-0 flex-1 truncate" />
-                    <Badge>{g.relation}</Badge>
+                    <Badge>{relationLabel(resource.kind, g.relation)}</Badge>
                     {/* The owner's own grant is the ownership: the catalog does not take it back. */}
                     {g.principal !== resource.metadata.owner && (
                       <Button variant="ghost" size="icon-xs" aria-label="Revoke" onClick={() => revoke.mutate(g.principal)} disabled={revoke.isPending}>
@@ -98,7 +99,7 @@ function Grants({ resource }: { resource: Resource }) {
                 </li>
               ))}
             </ul>
-            <GrantForm used={used} busy={grant.isPending} onGrant={(pid, relation) => grant.mutate({ pid, relation })} />
+            <GrantForm kind={resource.kind} used={used} busy={grant.isPending} onGrant={(pid, relation) => grant.mutate({ pid, relation })} />
             {(grant.error ?? revoke.error) && <ErrorNote error={grant.error ?? revoke.error} prefix="Could not change access" />}
           </>
         )}
@@ -138,7 +139,7 @@ function Needs({ rid, pid }: { rid: string; pid: string }) {
   );
 }
 
-function GrantForm({ used, busy, onGrant }: { used: boolean; busy: boolean; onGrant: (pid: string, relation: Relation) => void }) {
+function GrantForm({ kind, used, busy, onGrant }: { kind: string; used: boolean; busy: boolean; onGrant: (pid: string, relation: Relation) => void }) {
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Principal>();
   const [relation, setRelation] = useState<Relation>(used ? "user" : "viewer");
@@ -181,7 +182,7 @@ function GrantForm({ used, busy, onGrant }: { used: boolean; busy: boolean; onGr
         <NativeSelect value={relation} onChange={e => setRelation(e.target.value as Relation)} aria-label="Relation">
           {RELATIONS.map(r => (
             <option key={r} value={r}>
-              {r}
+              {relationLabel(kind, r)}
             </option>
           ))}
         </NativeSelect>

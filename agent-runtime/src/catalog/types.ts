@@ -146,7 +146,7 @@ export interface Validation {
   operatorOutputSchemas?: Record<string, Record<string, { attributeName: string; attributeType: string }[] | null>>;
 }
 
-/** An operator type as the catalog lists it: a built-in, or a custom operator with its code. */
+/** An operator type as the catalog lists it: one of the engine's, or a custom operator with its code. */
 export interface OperatorRecord {
   kind: "operator";
   metadata: { rid: string; uri: string; name: string; head: number; project?: string };

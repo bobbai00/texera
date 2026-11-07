@@ -1,6 +1,7 @@
 // What a chat runs with, in the chat box: the agent, its model and the add-on tools. It shows
 // what the catalog resolves and writes a choice only when the person makes one, so a chat that
-// was never touched keeps following its project's and the platform's defaults. Where an
+// was never touched keeps following its project's defaults, which may come from up the project's
+// chain to Texera's. Where an
 // execution runs is the run's to say, not the chat's.
 
 import { useQuery } from "@tanstack/react-query";
@@ -30,7 +31,7 @@ export function ChatSettingsBar({
   const now = effective(settings, choices);
   if (!settings || !now) return null;
 
-  // The platform's own server holds the basic tools and is always on; the rest are add-ons.
+  // The catalog's own server holds the basic tools and is always on; the rest are add-ons.
   const own = new Set(settings.mcpServers.filter(s => s.platform).map(s => s.uri));
   const addOns = (servers?.items ?? []).filter(s => !own.has(s.metadata.uri));
   // What is chosen stays listed even when the lists do not hold it (another project's).
@@ -57,7 +58,7 @@ export function ChatSettingsBar({
             {settings.mcpServers
               .filter(s => s.platform)
               .map(s => s.name)
-              .join(", ") || "No platform server"}{" "}
+              .join(", ") || "No catalog server"}{" "}
             · always on
           </DropdownMenuLabel>
           {addOns.length === 0 && <DropdownMenuLabel>No add-on servers in this project.</DropdownMenuLabel>}

@@ -1,15 +1,22 @@
+import { useQuery } from "@tanstack/react-query";
 import type { Resource } from "@texera/catalog-client/types";
 import { Badge, EmptyState, Skeleton, timeAgo } from "@texera/ui";
 import { KINDS, isKindId } from "../registry";
-import { useIsBuiltIn } from "../shell/builtin";
+import { projectsQuery, useScope } from "../scope";
 import { OriginChip, PrincipalName } from "../shell/Chips";
 import { KindIcon } from "../shell/KindIcon";
 import { useOpenResource } from "../shell/navigation";
 
-/** The library list. Identical for every kind: the point of one envelope. */
+/**
+ * The library list. Identical for every kind: the point of one envelope. What the project in view
+ * inherits says which project it comes from.
+ */
 export function ResourceTable({ resources, loading, empty = "Nothing here yet. Ask for one in a chat, or create one." }: { resources: Resource[] | undefined; loading: boolean; empty?: string }) {
   const { expand } = useOpenResource();
-  const isBuiltIn = useIsBuiltIn();
+  const scope = useScope();
+  const { data: projects } = useQuery(projectsQuery());
+  const inherited = (r: Resource) =>
+    r.kind !== "project" && scope !== undefined && r.metadata.project !== scope ? projects?.items.find(p => p.metadata.rid === r.metadata.project)?.metadata.name : undefined;
   if (loading) {
     return (
       <div className="space-y-2">
@@ -39,13 +46,12 @@ export function ResourceTable({ resources, loading, empty = "Nothing here yet. A
               </div>
             </div>
             {r.metadata.origin && <OriginChip origin={r.metadata.origin} className="hidden md:inline-flex" />}
-            {isBuiltIn(r) ? (
-              <Badge className="hidden sm:inline-flex" data-built-in>
-                Built-in
+            {inherited(r) && (
+              <Badge className="hidden sm:inline-flex" data-inherited-from={inherited(r)}>
+                from {inherited(r)}
               </Badge>
-            ) : (
-              <PrincipalName pid={r.metadata.owner} className="hidden w-24 truncate text-right text-xs text-muted-foreground sm:block" />
             )}
+            <PrincipalName pid={r.metadata.owner} className="hidden w-24 truncate text-right text-xs text-muted-foreground sm:block" />
             <span className="w-28 text-right text-xs text-muted-foreground">{timeAgo(r.metadata.updatedAt)}</span>
           </div>
         );

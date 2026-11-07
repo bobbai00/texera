@@ -13,7 +13,6 @@ import { modelEndpointKind } from "./kinds/model-endpoint";
 import { operatorKind } from "./kinds/operator";
 import { profileKind } from "./kinds/profile";
 import { projectKind } from "./kinds/project";
-import { settingsKind } from "./kinds/settings";
 import { skillKind } from "./kinds/skill";
 import { warehouseKind } from "./kinds/warehouse";
 import type { KindId, KindSpec } from "./types";
@@ -35,7 +34,6 @@ export const KINDS: Record<KindId, KindSpec> = {
   conversation: conversationKind,
   credential: credentialKind,
   "model-endpoint": modelEndpointKind,
-  settings: settingsKind,
 };
 
 /**

@@ -14,7 +14,6 @@ import { Route as CallbackRouteImport } from './routes/callback'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppPluralRouteImport } from './routes/_app/$plural'
-import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppSharedRouteImport } from './routes/_app/shared'
 import { Route as AppPluralRidRouteImport } from './routes/_app/$plural_.$rid'
 import { Route as AppConversationsRidRouteImport } from './routes/_app/conversations.$rid'
@@ -44,11 +43,6 @@ const AppPluralRoute = AppPluralRouteImport.update({
   path: '/$plural',
   getParentRoute: () => AppRoute,
 } as any)
-const AppSettingsRoute = AppSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppSharedRoute = AppSharedRouteImport.update({
   id: '/shared',
   path: '/shared',
@@ -76,7 +70,6 @@ export interface FileRoutesByFullPath {
   '/callback': typeof CallbackRoute
   '/login': typeof LoginRoute
   '/$plural': typeof AppPluralRoute
-  '/settings': typeof AppSettingsRoute
   '/shared': typeof AppSharedRoute
   '/$plural/$rid': typeof AppPluralRidRoute
   '/conversations/$rid': typeof AppConversationsRidRoute
@@ -86,7 +79,6 @@ export interface FileRoutesByTo {
   '/callback': typeof CallbackRoute
   '/login': typeof LoginRoute
   '/$plural': typeof AppPluralRoute
-  '/settings': typeof AppSettingsRoute
   '/shared': typeof AppSharedRoute
   '/': typeof AppIndexRoute
   '/$plural/$rid': typeof AppPluralRidRoute
@@ -99,7 +91,6 @@ export interface FileRoutesById {
   '/callback': typeof CallbackRoute
   '/login': typeof LoginRoute
   '/_app/$plural': typeof AppPluralRoute
-  '/_app/settings': typeof AppSettingsRoute
   '/_app/shared': typeof AppSharedRoute
   '/_app/': typeof AppIndexRoute
   '/_app/$plural_/$rid': typeof AppPluralRidRoute
@@ -113,7 +104,6 @@ export interface FileRouteTypes {
     | '/callback'
     | '/login'
     | '/$plural'
-    | '/settings'
     | '/shared'
     | '/$plural/$rid'
     | '/conversations/$rid'
@@ -123,7 +113,6 @@ export interface FileRouteTypes {
     | '/callback'
     | '/login'
     | '/$plural'
-    | '/settings'
     | '/shared'
     | '/'
     | '/$plural/$rid'
@@ -135,7 +124,6 @@ export interface FileRouteTypes {
     | '/callback'
     | '/login'
     | '/_app/$plural'
-    | '/_app/settings'
     | '/_app/shared'
     | '/_app/'
     | '/_app/$plural_/$rid'
@@ -186,13 +174,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPluralRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/settings': {
-      id: '/_app/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof AppSettingsRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/shared': {
       id: '/_app/shared'
       path: '/shared'
@@ -226,7 +207,6 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppPluralRoute: typeof AppPluralRoute
-  AppSettingsRoute: typeof AppSettingsRoute
   AppSharedRoute: typeof AppSharedRoute
   AppIndexRoute: typeof AppIndexRoute
   AppPluralRidRoute: typeof AppPluralRidRoute
@@ -236,7 +216,6 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppPluralRoute: AppPluralRoute,
-  AppSettingsRoute: AppSettingsRoute,
   AppSharedRoute: AppSharedRoute,
   AppIndexRoute: AppIndexRoute,
   AppPluralRidRoute: AppPluralRidRoute,

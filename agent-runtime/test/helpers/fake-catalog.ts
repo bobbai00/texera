@@ -191,7 +191,7 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       })),
       workMode: options.workMode
         ? { mode: options.workMode, from: "chat" as const }
-        : { mode: "auto" as const, from: "platform" as const },
+        : { mode: "auto" as const, from: "default" as const },
     };
   };
 

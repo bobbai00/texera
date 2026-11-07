@@ -61,7 +61,7 @@ function list(names: string[]): string {
 export function chatContext({ today, project, app, people, unavailable }: ChatContextInput): string {
   const lines = ["## This chat", `Today is ${today.toISOString().slice(0, 10)}.`];
   lines.push(
-    `Project: ${project.name} (${project.rid}). What you make goes into it, and a search covers it and the built-ins unless it names another scope.`,
+    `Project: ${project.name} (${project.rid}). What you make goes into it, and a search covers it and what it inherits from the projects up its chain, to Texera, unless it names another scope.`,
   );
   for (const { description, value } of appContext(app)) lines.push(description ? `${description}: ${value}` : value);
   if (people) {

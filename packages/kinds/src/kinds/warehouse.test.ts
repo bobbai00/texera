@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { placeOf } from "./warehouse";
 
 describe("where a warehouse keeps its tables, in a few words", () => {
-  it("is the platform's store when it names none of its own", () => {
-    expect(placeOf({})).toBe("on the platform's store");
+  it("is the deployment's store when it names none of its own", () => {
+    expect(placeOf({})).toBe("on the deployment's store");
   });
 
   it("is the bucket, the folder and the store's address when it names its own", () => {

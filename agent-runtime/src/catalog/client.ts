@@ -129,7 +129,7 @@ export class CatalogClient {
     return this.request("POST", `${API}/workflows/${rid}/validate`, auth, {});
   }
 
-  /** Resources of a kind whose name matches, in a project and the built-ins. */
+  /** Resources of a kind whose name matches, in a project and what it inherits up its chain. */
   async searchResources(kind: string, q: string, scope: string, auth: CatalogAuth): Promise<Resource[]> {
     const query = new URLSearchParams({ kind, q, scope, limit: "50" });
     return (await this.request<Page<Resource>>("GET", `${API}/resources?${query}`, auth)).items;
@@ -145,7 +145,7 @@ export class CatalogClient {
     return (manifest.files ?? []).map((f) => f.path);
   }
 
-  /** The operator types whose type or name holds `q`, built-in and custom, with their ports. */
+  /** The operator types whose type or name holds `q`, the engine's and custom, with their ports. */
   async operators(q: string, scope: string, auth: CatalogAuth): Promise<OperatorRecord[]> {
     const query = new URLSearchParams({ q, scope, view: "full", limit: "50" });
     return (await this.request<Page<OperatorRecord>>("GET", `${API}/operators?${query}`, auth)).items;

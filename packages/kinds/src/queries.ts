@@ -1,4 +1,4 @@
-// Queries shared by every kind: the caller, settings, envelopes, versions, lineage,
+// Queries shared by every kind: the caller, a project's settings, envelopes, versions, lineage,
 // grants, principals, search, units and operator types.
 
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
@@ -9,11 +9,11 @@ import {
   meGetOptions,
   principalsListOptions,
   projectsChatSettingsOptions,
+  projectsSettingsOptions,
   resourcesLineageOptions,
   resourcesListGrantsOptions,
   resourcesListVersionsOptions,
   resourcesSearchOptions,
-  settingsRoutesReadOptions,
 } from "@texera/catalog-client/query";
 import type { LineageDirection, Resource, ResourceKind, SettingSource } from "@texera/catalog-client/types";
 import { schemaMap } from "@texera/workflow-model";
@@ -22,7 +22,11 @@ import { baseUri } from "./uri";
 
 export const meQuery = () => ({ ...meGetOptions(), staleTime: 5 * 60_000 });
 
-export const settingsQuery = () => ({ ...settingsRoutesReadOptions(), staleTime: 5 * 60_000 });
+/**
+ * What a project's work runs with: its settings with what it inherits filled in, each value with
+ * the project of its chain that set it.
+ */
+export const projectSettingsQuery = (rid: string) => ({ ...projectsSettingsOptions({ path: { rid } }), staleTime: 60_000 });
 
 /** The envelope of any catalog resource, by rid. */
 /** A resource as the catalog has it this moment, past any cache: for a write that must start from it. */
@@ -53,7 +57,7 @@ export const lineageQuery = (ref: ResourceRef, direction: LineageDirection = "bo
 export const grantsQuery = (rid: string) => resourcesListGrantsOptions({ path: { rid } });
 
 /** Whether the caller may do something to a resource: the catalog's own decision. */
-export const canQuery = (action: "read" | "write" | "share" | "delete", rid: string) =>
+export const canQuery = (action: "read" | "write" | "share" | "delete" | "admin", rid: string) =>
   queryOptions({
     queryKey: ["can", action, rid],
     queryFn: async () => (await evaluationEvaluate({ body: { subject: { type: "user", id: "" }, action: { name: action }, resource: { type: "resource", id: rid } }, throwOnError: true })).data.decision,
@@ -64,7 +68,7 @@ export const principalsQuery = (q?: string) => ({ ...principalsListOptions({ que
 
 export interface SearchFilter {
   kind?: ResourceKind;
-  /** A project and what it inherits, the platform's built-ins; absent narrows nothing. */
+  /** A project and what it inherits, up its chain to Texera; absent narrows nothing. */
   scope?: string;
   parent?: string;
   /** Exactly a project's own resources. */
@@ -109,13 +113,17 @@ export const unitsQuery = (scope?: string) => ({ ...computingUnitsAvailableOptio
  */
 export const chatSettingsQuery = (rid: string) => ({ ...conversationsSettingsOptions({ path: { rid } }), staleTime: 30_000 });
 
-/** Which level chose a setting of a chat, in words. */
+/** Which level chose a setting of a chat, in words; a project's default says which project. */
 export const SOURCE_LABEL: Record<SettingSource, string> = {
   chat: "chosen for this chat",
   project: "the project's default",
   agent: "the agent's own",
-  platform: "the platform's default",
+  default: "the default",
 };
+
+/** Where a setting of a chat comes from, in words: the project whose default it is, by name. */
+export const sourceOf = (setting: { from: SettingSource; project?: { name: string } }): string =>
+  setting.from === "project" && setting.project ? `${setting.project.name}'s default` : SOURCE_LABEL[setting.from];
 
 /** The same for a chat that is not started yet, in a project. */
 export const newChatSettingsQuery = (project: string) => ({ ...projectsChatSettingsOptions({ path: { rid: project } }), staleTime: 30_000 });

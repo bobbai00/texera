@@ -21,7 +21,6 @@ import { type FormEvent, useId, useState } from "react";
 import { CatalogError, unwrap, updateSpec } from "../api";
 import { canQuery, keysOf, readResource, resolveQuery, searchQuery } from "../queries";
 import { useDestination, useScope } from "../scope";
-import { useIsBuiltIn } from "../shell/builtin";
 import { UriChip } from "../shell/Chips";
 import type { KindSpec } from "../types";
 import {
@@ -227,17 +226,19 @@ function MadeOf({ resource }: { resource: Resource }) {
 function SaveAsProfile({ resource, made, disabled }: { resource: Resource; made?: Resource; disabled?: boolean }) {
   const rid = resource.metadata.rid;
   const queryClient = useQueryClient();
-  const builtIn = useIsBuiltIn();
   const { data: mayUpdate } = useQuery({ ...canQuery("write", made?.metadata.rid ?? ""), enabled: !!made });
-  const updatable = !!made && !!mayUpdate && !builtIn(made);
+  const updatable = !!made && !!mayUpdate;
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"update" | "new">("update");
   const [name, setName] = useState("");
   const nameId = useId();
   const choice = updatable ? mode : "new";
-  // A new profile goes into the unit's project; a built-in unit's, into the one the person works in.
+  // A new profile goes into the unit's project when the person may add to it (Texera's units are
+  // everyone's to use, not to add to), else into the one the person works in.
   const { project: working, label } = useDestination();
-  const into = builtIn(resource) ? working : undefined;
+  const { data: mayAdd } = useQuery(canQuery("write", resource.metadata.project));
+  const elsewhere = mayAdd === false;
+  const into = elsewhere ? working : undefined;
   const save = useMutation({
     mutationFn: () =>
       unwrap(
@@ -310,7 +311,7 @@ function SaveAsProfile({ resource, made, disabled }: { resource: Resource; made?
                 label="Name"
                 required
                 htmlFor={nameId}
-                help={`It goes into ${builtIn(resource) ? (label ?? "your own project") : "the unit's project"}.`}>
+                help={`It goes into ${elsewhere ? (label ?? "your own project") : "the unit's project"}.`}>
                 <Input id={nameId} value={name} onChange={e => setName(e.target.value)} autoFocus data-profile-name />
               </Field>
             )}

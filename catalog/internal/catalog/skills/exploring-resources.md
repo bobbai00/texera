@@ -27,7 +27,7 @@ A person new to a project asks what is in it, what it can answer, and where to s
 
 ## Survey
 
-1. `search_resources` once per kind, with `project` set to the chat's project so that only the team's own resources come back, not the platform's built-ins: `dataset`, `model`, `operator`, `workflow`, then `execution` for what has been run. Add `q` with a word from the question, such as `glucose`, to narrow a long list.
+1. `search_resources` once per kind, with `project` set to the chat's project so that only the team's own resources come back, not what it inherits from the projects up its chain (Texera's operators and profiles among them): `dataset`, `model`, `operator`, `workflow`, then `execution` for what has been run. Add `q` with a word from the question, such as `glucose`, to narrow a long list.
 2. Read what each says of itself: its name, its description and its labels. `get_resource` returns the rest: a model's framework and task, a custom operator's settings, the columns it adds and its code, a workflow's head version.
 3. Look inside the data that matters to the question: `list_dataset_files` for a dataset version's files, and `read_dataset_file` for a file's header and first rows. A file's columns, units and coding, such as glucose in mg/dL or mmol/L or an outcome coded 0 and 1, decide what can be computed from it.
 4. Follow how things were made: `get_lineage` on a model, a dataset or a workflow shows what it was made from and what was made from it, and `list_versions` shows how it changed.

@@ -4,7 +4,7 @@ import { chatContext } from "../src/agent/chat-context.ts";
 const today = new Date("2026-11-05T23:30:00Z");
 const project = { rid: "22222222-2222-4222-8222-222222222222", name: "lab" };
 const where =
-  "Project: lab (22222222-2222-4222-8222-222222222222). What you make goes into it, and a search covers it and the built-ins unless it names another scope.";
+  "Project: lab (22222222-2222-4222-8222-222222222222). What you make goes into it, and a search covers it and what it inherits from the projects up its chain, to Texera, unless it names another scope.";
 
 describe("chatContext", () => {
   test("says the date, where the chat is, and what is missing; nothing about where executions go", () => {

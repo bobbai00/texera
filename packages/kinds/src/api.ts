@@ -65,7 +65,7 @@ export async function unwrap<T>(call: Promise<Result<T>>): Promise<T> {
 type Create = (options: { body: never }) => Promise<Result<Resource>>;
 type Update = (options: { path: { rid: string }; body: never; headers?: { "If-Match"?: string } }) => Promise<Result<Resource>>;
 
-// The typed kind routes, by kind. An execution is created by running a workflow; settings is a singleton.
+// The typed kind routes, by kind. An execution is created by running a workflow.
 const CREATE: Partial<Record<KindId, Create>> = {
   "agent-template": sdk.agentTemplatesCreate as Create,
   "computing-unit": sdk.computingUnitsCreate as Create,
@@ -101,9 +101,11 @@ const UPDATE: Partial<Record<KindId, Update>> = {
 };
 
 export const canCreate = (kind: KindId) => kind in CREATE;
-export const canUpdate = (kind: KindId) => kind in UPDATE || kind === "settings";
+export const canUpdate = (kind: KindId) => kind in UPDATE;
 
 export interface CreateBody extends CreateInput {
+  /** For a project: the project it inherits from; absent: Texera. */
+  base?: string;
   spec: unknown;
   visibility?: "private" | "public";
   labels?: Record<string, string>;
@@ -125,9 +127,6 @@ export interface UpdateSpecBody {
 
 /** Replaces the spec of a resource through its typed route; a versioned kind gets a new version. */
 export function updateSpec(kind: KindId, rid: string, body: UpdateSpecBody, etag?: string): Promise<Resource> {
-  if (kind === "settings") {
-    return unwrap(sdk.settingsRoutesUpdate({ body: body as never, headers: etag ? { "If-Match": etag } : undefined })) as Promise<Resource>;
-  }
   const update = UPDATE[kind];
   if (!update) throw new CatalogError(400, `${kind} cannot be updated`);
   return unwrap(update({ path: { rid }, body: body as never, headers: etag ? { "If-Match": etag } : undefined }));

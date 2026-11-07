@@ -4,7 +4,7 @@
 // generated kind table; a module adds what the app knows (icon, forms, cards).
 
 import type { QueryClient } from "@tanstack/react-query";
-import type { Defaults, Resource, ResourceKind } from "@texera/catalog-client/types";
+import type { ProjectDefaults, Resource, ResourceKind } from "@texera/catalog-client/types";
 import type { LucideIcon } from "lucide-react";
 import type { ComponentType, LazyExoticComponent } from "react";
 import { KIND_TABLE, type KindEntry } from "./kinds.gen";
@@ -73,8 +73,11 @@ export interface KindSpec {
   tabs?: KindTab[];
   /** Header actions of the generic page; `readonly` when the resource is not the caller's to change. */
   Actions?: ComponentType<{ resource: Resource; readonly?: boolean }>;
-  /** The spec a new resource starts with; absent for kinds made elsewhere (executions, chats). */
-  defaultSpec?: (input: CreateInput, defaults: Defaults) => unknown;
+  /**
+   * The spec a new resource starts with, from the defaults of the project it goes into; absent
+   * for kinds made elsewhere (executions, chats).
+   */
+  defaultSpec?: (input: CreateInput, defaults: ProjectDefaults) => unknown;
   /**
    * What the "New" dialog asks for besides a name, for a kind whose first spec depends on a
    * choice (the size of a unit). It is given the starting spec and reports the one to create.

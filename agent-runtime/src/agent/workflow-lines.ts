@@ -110,11 +110,11 @@ function mistakes(v: Validation, lines: string[]): { errors: { line: string; err
   };
 }
 
-/** The settings that take a dataset's file: the built-in scan's, and the classic scans'. */
+/** The settings that take a dataset's file: the engine's scan's, and the classic scans'. */
 const FILE_SETTINGS = ["file", "fileName"];
 
 /**
- * The input ports of an operator type, as its spec describes them. A built-in without them reads
+ * The input ports of an operator type, as its spec describes them. An engine operator without them reads
  * nothing, as a scan; a custom operator without them is not known, and its inputs link in order.
  */
 function inputPorts(spec: OperatorSpec): InputPorts | undefined {

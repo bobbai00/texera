@@ -1,7 +1,6 @@
 // The one grammar of names, as the catalog's internal/uri package has it:
 //   texera://{plural}/{rid}[@vno][/{subresource}]            a flat kind
 //   texera://workflows/{rid}/executions/{eid}[/{subresource}]  the nested kind
-//   texera://settings                                          the singleton
 // The app's page paths are the same without the scheme, so a URI is a link.
 
 import { KIND_TABLE, type KindEntry } from "./kinds.gen";
@@ -37,10 +36,6 @@ export function parsePath(path: string): ParsedUri | undefined {
   const entry = segs[0] ? byPlural.get(segs[0]) : undefined;
   if (!entry) return undefined;
   const kind = entry.kind as KindId;
-  if (entry.singleton) {
-    const rest = segs.slice(1).join("/");
-    return { ref: { kind, rid: "" }, ...(rest ? { subresource: rest } : {}) };
-  }
   const head = segs[1] ? splitVersion(segs[1]) : undefined;
   if (!head) return undefined;
   let ref: ResourceRef = { kind, rid: head.rid, ...(head.vno !== undefined ? { vno: head.vno } : {}) };
@@ -75,7 +70,6 @@ export function pathOf(ref: ResourceRef, { version = true, subresource }: { vers
   const plural = entry?.plural ?? `${ref.kind}s`;
   const tail = version && ref.vno !== undefined ? `@${ref.vno}` : "";
   const sub = subresource ? `/${subresource}` : "";
-  if (entry?.singleton) return `${plural}${sub}`;
   if (entry?.nested && ref.parent) return `${pluralOf(entry.parent as KindId)}/${ref.parent}/${plural}/${ref.rid}${tail}${sub}`;
   return `${plural}/${ref.rid}${tail}${sub}`;
 }
