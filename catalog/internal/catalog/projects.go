@@ -325,12 +325,9 @@ func keepIdentityLabels(current, requested map[string]string) map[string]string 
 	return out
 }
 
-// beforeDeleteProject refuses to delete Texera, or a project another inherits from: its people
-// would lose what it gives them.
+// beforeDeleteProject refuses to delete a project another inherits from: its people would lose
+// what it gives them.
 func (s *Service) beforeDeleteProject(ctx context.Context, r *store.Resource) error {
-	if s.isRoot(r) {
-		return Conflict("root", "Texera holds what every project inherits: it cannot be deleted", nil)
-	}
 	inheritors, err := s.Store.Inheritors(ctx, r.RID, 50)
 	if err != nil {
 		return err

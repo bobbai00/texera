@@ -162,7 +162,7 @@ func TestTexerasAdminsChangeItAndNobodyElse(t *testing.T) {
 	refused(t, h, "admin", "PATCH", "/resources/"+root, map[string]any{"visibility": "private"}, http.StatusConflict, "root")
 	lab := project(h, "admin", "lab", "", map[string]any{})
 	refused(t, h, "admin", "PATCH", "/resources/"+root, map[string]any{"base": rid(lab)}, http.StatusBadRequest, "invalid")
-	refused(t, h, "admin", "DELETE", "/projects/"+root, nil, http.StatusConflict, "")
+	refused(t, h, "admin", "DELETE", "/projects/"+root, nil, http.StatusConflict, "root")
 	refused(t, h, "admin", "PATCH", "/resources/"+root, map[string]any{"labels": map[string]any{}}, http.StatusOK, "")
 	if me(h, "bob").RootProject != api.Rid(root) {
 		t.Fatal("Texera is lost when its labels are replaced")

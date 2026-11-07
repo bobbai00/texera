@@ -431,6 +431,9 @@ func (s *Service) Delete(ctx context.Context, caller *auth.Caller, kind *kinds.K
 	if err := s.require(ctx, caller, authz.Delete, r.RID); err != nil {
 		return err
 	}
+	if s.isRoot(r) {
+		return Conflict("root", "Texera holds what every project inherits: it cannot be deleted", nil)
+	}
 	if n, err := s.Store.CountChildren(ctx, r.RID); err != nil {
 		return err
 	} else if n > 0 {
