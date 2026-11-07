@@ -63,10 +63,6 @@ export const zCanvasPoint = z.object({
     y: z.number()
 });
 
-export const zCommitFiles = z.object({
-    message: z.string().optional()
-});
-
 export const zComputingNodeStatus = z.object({
     name: z.string(),
     role: z.enum([
@@ -243,13 +239,6 @@ export const zLoopSpec = z.object({
     temperature: z.number().optional()
 });
 
-/**
- * The content of a dataset or model version: files over content-addressed blobs.
- */
-export const zManifest = z.object({
-    files: z.array(zDatasetFile)
-});
-
 export const zMcpServerSpec = z.object({
     url: z.string(),
     headers: z.record(z.string(), z.string()).optional()
@@ -259,6 +248,31 @@ export const zMcpServerStatus = z.object({
     tools: z.array(z.string()).optional(),
     reachable: z.boolean().optional(),
     lastChecked: z.iso.datetime().optional()
+});
+
+/**
+ * What a model version reads and puts out, so a workflow pinned to the version is checked against it: predict checks its input's columns against the inputs and adds the outputs.
+ */
+export const zModelContract = z.object({
+    framework: z.enum(['sklearn', 'python']),
+    entry: z.string(),
+    inputs: z.array(zAttribute),
+    outputs: z.array(zAttribute),
+    needs: z.string().optional(),
+    grouped: z.boolean().optional()
+});
+
+export const zCommitFiles = z.object({
+    message: z.string().optional(),
+    contract: zModelContract.optional()
+});
+
+/**
+ * The content of a dataset or model version: files over content-addressed blobs.
+ */
+export const zManifest = z.object({
+    files: z.array(zDatasetFile),
+    contract: zModelContract.optional()
 });
 
 export const zModelEndpointStatus = z.record(z.string(), z.unknown());

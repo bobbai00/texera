@@ -223,6 +223,10 @@ export type ChatVersion = {
 
 export type CommitFiles = {
     message?: string;
+    /**
+     * For a model, the new version's contract; absent, the head version's carries over. A model version may change only its contract.
+     */
+    contract?: ModelContract;
 };
 
 export type ComputingNodeSpec = {
@@ -1088,6 +1092,10 @@ export type LoopSpec = {
  */
 export type Manifest = {
     files: Array<DatasetFile>;
+    /**
+     * A model version's contract: what it reads and puts out.
+     */
+    contract?: ModelContract;
 };
 
 export type McpBinding = {
@@ -1260,6 +1268,36 @@ export type Model = {
     metadata: ResourceMetadata;
     spec: ModelSpec;
     status?: ModelStatus;
+};
+
+/**
+ * What a model version reads and puts out, so a workflow pinned to the version is checked against it: predict checks its input's columns against the inputs and adds the outputs.
+ */
+export type ModelContract = {
+    /**
+     * How the version is loaded and called: `sklearn`, a fitted estimator saved with joblib or pickle; or `python`, an entry file that defines load(directory) and predict(model, frame).
+     */
+    framework: 'sklearn' | 'python';
+    /**
+     * The file in the version that holds the model, or for python the entry file: model.joblib, predict.py.
+     */
+    entry: string;
+    /**
+     * The columns it reads, in the order it reads them, each with its type.
+     */
+    inputs: Array<Attribute>;
+    /**
+     * The columns it adds. For sklearn, the first is what predict gives; a second, for a classifier, is the probability of its last class, the positive one of two. For python, those of the frame predict returns.
+     */
+    outputs: Array<Attribute>;
+    /**
+     * What it needs to run well, said to whoever runs it: a GPU, much memory.
+     */
+    needs?: string;
+    /**
+     * Whether it reads a whole group of rows at once, such as one patient's readings, so predict needs by.
+     */
+    grouped?: boolean;
 };
 
 /**

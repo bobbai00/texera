@@ -379,12 +379,18 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 		} else {
 			logical = props
 		}
+		if operatorType == predictType {
+			if err := s.compilePredict(ctx, logical); err != nil {
+				return nil, Invalid(fmt.Sprintf("operator %s: %v", op.OperatorID, err), map[string]any{"field": "model"})
+			}
+		}
 		for _, ref := range refs {
 			ref.Operator = index
 			out.Secrets = append(out.Secrets, ref)
 		}
 		for pointer, ref := range uri.Extract(logical) {
-			if ref.Kind.Name != "dataset" || ref.Vno == 0 || !strings.HasPrefix(ref.Subresource, "files/") {
+			// The files it reads, of a dataset or a model version.
+			if (ref.Kind.Name != "dataset" && ref.Kind.Name != "model") || ref.Vno == 0 || !strings.HasPrefix(ref.Subresource, "files/") {
 				continue
 			}
 			if err := s.fileExists(ctx, ref); err != nil {
@@ -465,15 +471,15 @@ func appendUnique(list []string, item string) []string {
 func (s *Service) fileExists(ctx context.Context, ref uri.Ref) error {
 	rid, err := uuid.Parse(ref.Rid)
 	if err != nil {
-		return fmt.Errorf("%s: bad dataset id", ref.String())
+		return fmt.Errorf("%s: bad %s id", ref.String(), ref.Kind.Name)
 	}
 	v, err := s.Store.GetVersion(ctx, rid, ref.Vno)
 	if err != nil {
-		return fmt.Errorf("%s: no such dataset version", ref.String())
+		return fmt.Errorf("%s: no such %s version", ref.String(), ref.Kind.Name)
 	}
 	var m api.Manifest
 	if err := json.Unmarshal(v.Content, &m); err != nil {
-		return fmt.Errorf("%s: not a dataset version", ref.String())
+		return fmt.Errorf("%s: not a %s version", ref.String(), ref.Kind.Name)
 	}
 	path := strings.TrimPrefix(ref.Subresource, "files/")
 	for _, f := range m.Files {
@@ -730,7 +736,10 @@ func (s *Service) resolveInput(ctx context.Context, caller *auth.Caller, ref uri
 	if err != nil {
 		return nil, err
 	}
-	k, _ := kinds.ByName("dataset")
+	k, ok := kinds.ByName(ref.Kind.Name)
+	if !ok {
+		return nil, fmt.Errorf("%s: not a file of a version", ref.String())
+	}
 	path := strings.TrimPrefix(ref.Subresource, "files/")
 	f, err := s.File(ctx, caller, k, rid, ref.Vno, path)
 	if err != nil {

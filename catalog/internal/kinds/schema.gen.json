@@ -519,6 +519,10 @@
     },
     "CommitFiles": {
       "properties": {
+        "contract": {
+          "$ref": "#/$defs/ModelContract",
+          "description": "For a model, the new version's contract; absent, the head version's carries over. A model version may change only its contract."
+        },
         "message": {
           "type": "string"
         }
@@ -2333,6 +2337,10 @@
     "Manifest": {
       "description": "The content of a dataset or model version: files over content-addressed blobs.",
       "properties": {
+        "contract": {
+          "$ref": "#/$defs/ModelContract",
+          "description": "A model version's contract: what it reads and puts out."
+        },
         "files": {
           "items": {
             "$ref": "#/$defs/DatasetFile"
@@ -2737,6 +2745,52 @@
         "plural": "models",
         "versioned": true
       }
+    },
+    "ModelContract": {
+      "description": "What a model version reads and puts out, so a workflow pinned to the version is checked against it: predict checks its input's columns against the inputs and adds the outputs.",
+      "properties": {
+        "entry": {
+          "description": "The file in the version that holds the model, or for python the entry file: model.joblib, predict.py.",
+          "type": "string"
+        },
+        "framework": {
+          "description": "How the version is loaded and called: `sklearn`, a fitted estimator saved with joblib or pickle; or `python`, an entry file that defines load(directory) and predict(model, frame).",
+          "enum": [
+            "sklearn",
+            "python"
+          ],
+          "type": "string"
+        },
+        "grouped": {
+          "description": "Whether it reads a whole group of rows at once, such as one patient's readings, so predict needs by.",
+          "type": "boolean"
+        },
+        "inputs": {
+          "description": "The columns it reads, in the order it reads them, each with its type.",
+          "items": {
+            "$ref": "#/$defs/Attribute"
+          },
+          "type": "array"
+        },
+        "needs": {
+          "description": "What it needs to run well, said to whoever runs it: a GPU, much memory.",
+          "type": "string"
+        },
+        "outputs": {
+          "description": "The columns it adds. For sklearn, the first is what predict gives; a second, for a classifier, is the probability of its last class, the positive one of two. For python, those of the frame predict returns.",
+          "items": {
+            "$ref": "#/$defs/Attribute"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "framework",
+        "entry",
+        "inputs",
+        "outputs"
+      ],
+      "type": "object"
     },
     "ModelEndpoint": {
       "description": "The typed envelope, served by the kind routes.",

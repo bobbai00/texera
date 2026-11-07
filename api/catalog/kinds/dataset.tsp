@@ -35,10 +35,16 @@ model DatasetFile {
 @doc("The content of a dataset or model version: files over content-addressed blobs.")
 model Manifest {
   files: DatasetFile[];
+
+  @doc("A model version's contract: what it reads and puts out.")
+  contract?: ModelContract;
 }
 
 model CommitFiles {
   message?: string;
+
+  @doc("For a model, the new version's contract; absent, the head version's carries over. A model version may change only its contract.")
+  contract?: ModelContract;
 }
 
 @doc("A whole file.")

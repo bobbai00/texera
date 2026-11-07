@@ -120,7 +120,10 @@ func (s *Service) Staged(ctx context.Context, caller *auth.Caller, k kinds.Kind,
 }
 
 // Commit makes a version from the head version's files overlaid with the staged ones.
-func (s *Service) Commit(ctx context.Context, caller *auth.Caller, k kinds.Kind, rid uuid.UUID, message *string) (*store.Resource, *store.Version, error) {
+func (s *Service) Commit(ctx context.Context, caller *auth.Caller, k kinds.Kind, rid uuid.UUID, message *string, contract *api.ModelContract) (*store.Resource, *store.Version, error) {
+	if contract != nil && k.Name != "model" {
+		return nil, nil, Invalid("only a model version has a contract", nil)
+	}
 	r, err := s.Get(ctx, caller, &k, rid)
 	if err != nil {
 		return nil, nil, err
@@ -132,10 +135,12 @@ func (s *Service) Commit(ctx context.Context, caller *auth.Caller, k kinds.Kind,
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(staged) == 0 {
+	// A model's version may change its contract alone.
+	if len(staged) == 0 && contract == nil {
 		return nil, nil, Conflict("nothing_staged", "upload files before committing", nil)
 	}
 	files := map[string]api.DatasetFile{}
+	var headContract *api.ModelContract
 	if r.HeadVno > 0 {
 		if head, err := s.Store.GetVersion(ctx, rid, 0); err == nil {
 			var m api.Manifest
@@ -143,6 +148,7 @@ func (s *Service) Commit(ctx context.Context, caller *auth.Caller, k kinds.Kind,
 			for _, f := range m.Files {
 				files[f.Path] = f
 			}
+			headContract = m.Contract
 		}
 	}
 	for _, f := range staged {
@@ -153,6 +159,18 @@ func (s *Service) Commit(ctx context.Context, caller *auth.Caller, k kinds.Kind,
 		manifest.Files = append(manifest.Files, f)
 	}
 	sortFiles(manifest.Files)
+	if k.Name == "model" {
+		// What the version reads and puts out: as committed, else as the head said.
+		if contract == nil {
+			contract = headContract
+		}
+		if contract != nil {
+			if err := checkContract(*contract, manifest.Files); err != nil {
+				return nil, nil, Invalid("the contract: "+err.Error(), map[string]any{"field": "contract"})
+			}
+			manifest.Contract = contract
+		}
+	}
 	v, err := s.Store.CreateVersion(ctx, store.NewVersion{RID: rid, ContentKind: "manifest", Content: mustJSON(manifest), Message: message, CreatedByPID: caller.PID(), Origin: caller.Origin, ClearStaging: true})
 	if err != nil {
 		return nil, nil, wrap(err, k.Name)

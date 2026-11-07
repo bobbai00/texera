@@ -66,7 +66,7 @@ func (s *Server) routeFiles() {
 			if err := decode(r, &body); err != nil {
 				return err
 			}
-			res, v, err := s.svc.Commit(ctxOf(r), callerOf(r), k, rid, body.Message)
+			res, v, err := s.svc.Commit(ctxOf(r), callerOf(r), k, rid, body.Message, body.Contract)
 			if err != nil {
 				return err
 			}
