@@ -67,7 +67,7 @@ passes the right ones per layer. `local` means the Compose stack's host ports (L
 Keycloak, OpenBao, the unit process); `destructive` means other tests may see the effect
 (the unit restarts, every finished run on the stack expires), so those run last.
 
-Playwright covers the pages, in six files under `frontend-next/e2e/`. `texera2.spec.ts`, the
+Playwright covers the pages, in nine files under `frontend-next/e2e/`. `texera2.spec.ts`, the
 app: sign-in, a chat started by its first message with an upload that becomes a dataset and stays a card of the message, the agent's page (on show, read-only),
 the project a person works in (what the lists show, where new things go, the pick kept; a
 project made in the app is worked in at once and the dialog names it; with every project in
@@ -103,11 +103,20 @@ a table of its HTML; "Tidy up" lays a workflow out so a join stands between its 
 and no card lies on an arrow, and makes no version; the bar beside Run says where a run goes
 (the unit, the profile it is made from, the warehouse), a warehouse picked there is where the
 run keeps its results, and the execution's page and its lineage card say so, with each
-package as installed.
+package as installed. Editing like an editor: several cards picked at once (a Ctrl or Cmd
+click, a Shift box) go with one key, and Ctrl+Z brings them back with their arrows (Ctrl+Shift+Z
+does it again); a new operator's card opens with its first setting ready to type in, Backspace
+editing the setting and never removing the operator, and an operator with nothing linked says
+it needs an input; a setting that names a column offers the input's columns with their types.
+The results float in a window over the canvas: each named as its card names it (two
+aggregates told apart), pointing at one rings its card, no card lies under the window when it
+opens, and it moves by its title bar, stays where it was put across a reload, folds, goes back
+on a double click, and says "ran v1" once the workflow moves on.
 
 `lineage.spec.ts`: a workflow's lineage as a graph at its two levels: the dataset, the
 workflow and its executions as cards with the arrows' words, then the file, the version that
-ran and each result.
+ran and each result; a person the workflow is shared with, without its dataset, sees the graph
+once and steadily (it used to blink without end), the dataset drawn "Not shared with you".
 
 `dock.spec.ts`, the agent beside a page: on the page of every kind (fourteen, made in a
 project of the test's or taken from the built-ins) the chat button opens a chat whose message
@@ -123,7 +132,20 @@ button of their page (the link, copied; the person found by name; the owner's ow
 one to take back), and the other person finds all four under "Shared with me" and opens each;
 a link to something not shared says so on the page of every kind and opens once it is shared;
 a grant taken back in the dialog closes the page the other has open, with no reload, and takes
-the thing off their list.
+the thing off their list; a person shared a workflow but not the dataset it reads is told
+before Run, above the canvas and on the scan's card, what is missing and whom to ask, and runs
+once it is shared; a person is offered only what the catalog lets them do: a viewer reads (no
+rename, no delete, no keep, no "Work in this project", a chat box that says it is for reading),
+an editor changes, and only the owner deletes.
+
+`resources.spec.ts`, a resource's page keeps what the person is doing: an edit of a spec in
+progress survives a rename, and a save over someone else's change says so and asks whose to
+keep; deleting an execution takes it off its workflow's page (the count, the results window),
+and deleting a project from its own page leaves it.
+
+`pages.spec.ts`: search opens what matches with Enter, and offers a new chat first when nothing
+is typed; a library lists every one of its kind, not the first hundred; a file's preview says
+it shows the first rows, of how many; a list opens from its first option, whichever is picked.
 
 `collaboration.spec.ts`, people together: who has a page open is shown at its top right on
 every kind's page and in a chat; two people see each other come and go; two people edit one

@@ -2,6 +2,78 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-06 (session 14, on Linux): what using it found, fixed; the resource graph designed
+
+The user, after sessions 7 to 13 on the Mac: operators could not be deleted and editing felt
+unpolished; people on one canvas took time to see each other; a person a thing was shared
+with saw its lineage flash and never show; an execution's results were fixed under the canvas
+and hard to map to the workflow; sharing, resource control and runs were not reliable enough;
+two workflows could not have the same name ("each resource should have a unique ID, that
+should not be the name"); and "play around with the front end" for smoothness bugs. Later in
+the session: design a resource graph beside the chat (the Claude Doc "Texera 2.0: The Resource
+Graph", https://claude.ai/artifact/HKWSujDmAbLpRHM7JEkQ9Z), design only.
+
+Found by driving the app in a browser (scripts in the session's scratchpad, then a sweep of
+every page on the kind cluster's production build), each fixed with a test:
+
+- **Canvas**: picking several cards never worked (the store's "no single one" was put back
+  on the canvas as "none"), so several could not be deleted; React Flow's delete key missed
+  the first press after a modifier click; a new operator left the keyboard on the list, so
+  Backspace deleted it; no undo; column settings never offered columns (the catalog keys ports
+  `output-0`, the app read `0_false`); an unlinked operator said "Schema is not available".
+  Now: pick several and delete with one key, Ctrl/Cmd+Z and Shift+Z (a Y.UndoManager of the
+  person's own edits), a new card takes the keyboard in its first setting, columns to pick,
+  "Needs an input". (`cc7263bcb`)
+- **Lineage for a person it was shared with** blinked between the placeholder and the graph
+  every 20 ms with some 2,700 requests in 12 s: a refused card asked again on mount and set the
+  tab pending. The tab waits for first answers only. (`618e15b81`)
+- **Names are labels** (migration 0010): no unique index, no `name_taken`, executions named by
+  their start without numbers, the app's numbering workarounds gone. (`a88e69368`)
+- **A run refused** says what the caller lacks and where the workflow names it (the unit, a
+  dataset an operator reads, a custom operator, a credential), and the workflow page says so
+  before Run, above the canvas and on the operator's card. (`3a4288094`)
+- **Results in a window** over the canvas, named as their cards, pointing them out, moved,
+  sized, folded, kept; "ran v1" when the canvas moved on; doubles read 5.552. (`5a9140bce`)
+- **The live session**: the head shows at once while the session is joined ("Connecting");
+  the live service asks its three questions at once. Measured here and on kind: both canvases
+  editable in about 0.5 s, a cursor seen in 36 to 47 ms. The Mac's slowness was not reproduced.
+  (`31eb1be1b`)
+- **A run that fails as the engine starts** (the coordinator's preStart) now fails instead of
+  running for good: the client actor supervises its coordinator and keeps an early fatal error
+  for the first listener. (`5fc70075b`)
+- **Resource control** (the sweep): a viewer was offered rename, delete, keep, "Work in this
+  project" and a chat box that failed on send; every 4xx was retried twice (the generated
+  client threw the raw body, so the retry rule never saw a 403), so a link not shared took 3 s;
+  a rename threw away an edit in progress; a save over another's change was a dead end; a
+  deleted execution stayed on its workflow's page and a deleted project's page stayed open;
+  a refused rename stayed in the header; Enter in search opened a new chat; the operator
+  library and a file's preview stopped at 100 silently; a select opened scrolled past its
+  first option; a workflow's name vanished beside a chat; the chat button hid a table's last
+  cells. All fixed: the client's errors are CatalogErrors with their status; pages ask the
+  catalog what the person may do (`useMay`); the spec editor keeps its draft and offers Keep
+  mine or Take theirs.
+
+- **Found by the gates**: a unit's packages saved while it started were refused with 412,
+  because any read of a unit probes it and records a new status, and with it a new etag,
+  between a page's read and its write; a save refused only for that now goes again
+  (`dd64a34ce`). The agent's validate and run tools still said "the chat's unit"; they say the
+  workflow's default, the project's or the platform's (`8a8c48f28`).
+
+Verified: the local gate on a wiped stack, every layer green but one test: Go, bun (runtime,
+live), vitest (273), sbt, the adapters and the engine's integration suites, 36 scenarios and 5
+local ones, 60 browser tests without the model (4 skipped), the model scenarios (4, 1
+skipped), and 63 of 64 browser tests with the model; the one failure, the canvas card back to
+its place, was a pixel of rounding, since allowed (`eab76c931`, 4 of 4 runs green). On the kind
+cluster, rebuilt from `dd64a34ce` and rolled: `k8s.sh check` green, 40 scenarios (the unit made
+as a resource among them) and 60 browser tests (the 4 that need the model skipped there).
+
+Not fixed: the inline styles cmdk and Base UI inject are refused by the app's CSP (a console
+error only; a nonce through the gateway is the fix). A cluster upgraded in place keeps the
+realm it first imported, so the sign-in theme needs the realm's `loginTheme` set (done here
+with kcadm) or the cluster made anew.
+
+Next: the user's review of the resource graph design, then its phase 1 if approved.
+
 ## 2026-11-06 (session 13, part 5): two fixes found by using it
 
 - **A Keycloak restart no longer breaks making units**: the catalog keeps Keycloak's admin token

@@ -68,8 +68,12 @@ automated checks, and the close gate (`down.sh --wipe && up.sh && test.sh`) is g
 - The frontend: a generic page for every kind from its JSON Schema (spec, versions, access,
   lineage), the workflow editor, the execution page with the port view, and the chat. The
   sidebar picks the project a person works in (Personal by default); a chat starts by typing,
-  and its box shows the agent and picks the model, the computing unit (Automatic by default)
-  and the add-ons; the Agents page shows the built-in agent, read-only. The execution page and
+  and its box shows the agent and picks the model and the add-ons (a chat names no computing
+  unit: a run goes where any run goes); the Agents page shows the built-in agent, read-only.
+  The canvas edits like an editor (several cards picked and deleted at once, undo and redo of
+  one's own edits, column settings picked from the input's columns), and an execution's
+  results float in a window over the canvas, named as their operators' cards. Every page
+  offers only what the catalog lets the person do (`useMay`). The execution page and
   the chat follow their
   resource's event stream, so a shared chat is a group chat (authors named, the other's turn
   shown and waited for) and an execution shows its progress and its pause and resume buttons.
@@ -117,7 +121,11 @@ doors closed and the output tables named by the catalog (steps 1 to 3 of the not
 2.0: Authorize, Compile, Materialize"; results live with the execution, `texera.keep` keeps them),
 the resource event stream with the group chat and the execution controls built on it, the
 canvas as a shared document with a live service beside the runtime, a reply reaching the
-other members of a chat as it is written (the runtime rewrites the message every 400 ms).
+other members of a chat as it is written (the runtime rewrites the message every 400 ms), and
+on Nov 6 the fixes that using it found (session 14 in `PROGRESS.md`: names as labels, refusals
+that say what is missing, the results window, resource control on every page). Designed and
+not built: the resource graph beside the chat (the Claude Doc "Texera 2.0: The Resource
+Graph", https://claude.ai/artifact/HKWSujDmAbLpRHM7JEkQ9Z), in five phases.
 Nearest gaps: steps 4 and 5 of that note; a turn that outlives the request of the person who
 asked, with a stop any member can use; other people's cursors and selections on the canvas;
 text merged inside a property (a Python operator's code is last write wins); a grant to a
