@@ -3,7 +3,7 @@
 // (ChatSettings). The box shows the resolved values and writes a choice only when the person
 // makes one. Where an execution runs is not among them: that is the run's to say.
 
-import type { ChatSettings, ConversationSpec, Resource } from "@texera/catalog-client/types";
+import type { ChatSettings, ConversationSpec, Resource, WorkMode } from "@texera/catalog-client/types";
 import { KINDS, type KindId } from "@texera/kinds";
 import type { SelectOption } from "@texera/ui";
 
@@ -14,6 +14,8 @@ export interface Effective {
   model: string;
   /** The add-on servers a turn mounts, by URI; never the platform's own. */
   addOns: string[];
+  /** How the agent's changes go: once it has said its plan, or each after the person approves it. */
+  workMode: WorkMode;
 }
 
 /** What a turn runs with: the chat's choice where it has one, else what the settings resolve to. */
@@ -23,6 +25,7 @@ export function effective(settings: ChatSettings | undefined, choices: Conversat
     agent: settings.agent.name,
     model: choices.modelEndpoint ?? settings.modelEndpoint.uri,
     addOns: choices.mcpServers ?? settings.mcpServers.filter(s => !s.platform).map(s => s.uri),
+    workMode: choices.workMode ?? settings.workMode?.mode ?? "auto",
   };
 }
 
@@ -40,3 +43,11 @@ export function withAddOn(choices: ConversationSpec, settings: ChatSettings, ser
   const next = on ? (now.includes(server) ? now : [...now, server]) : now.filter(uri => uri !== server);
   return { ...choices, mcpServers: next };
 }
+
+export const withWorkMode = (choices: ConversationSpec, workMode: WorkMode): ConversationSpec => ({ ...choices, workMode });
+
+/** The two ways the agent's changes go, as the chat box offers them. */
+export const WORK_MODES: SelectOption<WorkMode>[] = [
+  { value: "auto", label: "Auto", hint: "changes go ahead once the agent has said its plan" },
+  { value: "manual", label: "Manual", hint: "each change waits for your approval" },
+];

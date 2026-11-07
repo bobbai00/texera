@@ -609,12 +609,6 @@ export const zComputingUnitSpec = z.object({
     computingNodes: z.array(zComputingNodeSpec).optional()
 });
 
-export const zConversationSpec = z.object({
-    template: zUri.optional(),
-    modelEndpoint: zUri.optional(),
-    mcpServers: z.array(zUri).optional()
-});
-
 export const zConversationStatus = z.object({
     activeTurn: z.string().optional(),
     activeTurnBy: zPid.optional(),
@@ -700,7 +694,7 @@ export const zAgentTemplateSpec = z.object({
 });
 
 /**
- * One message part: text, reasoning, a tool call, a tool result, a resource reference, a file, or an error.
+ * One message part: text, reasoning, a tool call, a tool result, a resource reference, a file, an error, or an approval: a change the agent asked to make, waiting for a person's yes or no (in `manual` work mode).
  */
 export const zMessagePart = z.object({
     type: z.enum([
@@ -710,7 +704,8 @@ export const zMessagePart = z.object({
         'tool_result',
         'resource',
         'file',
-        'error'
+        'error',
+        'approval'
     ]),
     text: z.string().optional(),
     toolCallId: z.string().optional(),
@@ -718,7 +713,13 @@ export const zMessagePart = z.object({
     args: z.unknown().optional(),
     result: z.unknown().optional(),
     resource: zUri.optional(),
-    file: z.record(z.string(), z.unknown()).optional()
+    file: z.record(z.string(), z.unknown()).optional(),
+    state: z.enum([
+        'pending',
+        'approved',
+        'declined'
+    ]).optional(),
+    decidedBy: zPid.optional()
 });
 
 export const zAppendMessage = z.object({
@@ -784,14 +785,6 @@ export const zOrigin = z.object({
     template: zUri.optional()
 });
 
-export const zProjectSpec = z.object({
-    defaultComputingUnit: zUri.optional(),
-    defaultWarehouse: zUri.optional(),
-    defaultAgentTemplate: zUri.optional(),
-    defaultModelEndpoint: zUri.optional(),
-    mcpServers: z.array(zUri).optional()
-});
-
 export const zReplaceMessage = z.object({
     parts: z.array(zMessagePart),
     template: zUri.optional()
@@ -848,17 +841,6 @@ export const zSkippedSetting = z.object({
     reason: z.string()
 });
 
-/**
- * What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default.
- */
-export const zChatSettings = z.object({
-    project: zChatProject,
-    agent: zSetting,
-    modelEndpoint: zSetting,
-    mcpServers: z.array(zServerSetting),
-    skipped: z.array(zSkippedSetting).optional()
-});
-
 export const zStartTurn = z.object({
     template: zUri.optional()
 });
@@ -893,16 +875,6 @@ export const zCreateComputingUnit = z.object({
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zComputingUnitSpec,
-    message: z.string().optional()
-});
-
-export const zCreateConversation = z.object({
-    name: z.string(),
-    description: z.string().optional(),
-    parent: zRid.optional(),
-    visibility: zVisibility.optional(),
-    labels: z.record(z.string(), z.string()).optional(),
-    spec: zConversationSpec,
     message: z.string().optional()
 });
 
@@ -973,16 +945,6 @@ export const zCreateProfile = z.object({
     visibility: zVisibility.optional(),
     labels: z.record(z.string(), z.string()).optional(),
     spec: zProfileSpec,
-    message: z.string().optional()
-});
-
-export const zCreateProject = z.object({
-    name: z.string(),
-    description: z.string().optional(),
-    parent: zRid.optional(),
-    visibility: zVisibility.optional(),
-    labels: z.record(z.string(), z.string()).optional(),
-    spec: zProjectSpec,
     message: z.string().optional()
 });
 
@@ -1195,22 +1157,6 @@ export const zComputingUnitPage = z.object({
 /**
  * The typed envelope, served by the kind routes.
  */
-export const zConversation = z.object({
-    apiVersion: z.enum(['catalog.texera.apache.org/v1']),
-    kind: zResourceKind,
-    metadata: zResourceMetadata,
-    spec: zConversationSpec,
-    status: zConversationStatus.optional()
-});
-
-export const zConversationPage = z.object({
-    items: z.array(zConversation),
-    nextCursor: z.string().optional()
-});
-
-/**
- * The typed envelope, served by the kind routes.
- */
 export const zCredential = z.object({
     apiVersion: z.enum(['catalog.texera.apache.org/v1']),
     kind: zResourceKind,
@@ -1337,22 +1283,6 @@ export const zProfilePage = z.object({
 });
 
 /**
- * The typed envelope, served by the kind routes.
- */
-export const zProject = z.object({
-    apiVersion: z.enum(['catalog.texera.apache.org/v1']),
-    kind: zResourceKind,
-    metadata: zResourceMetadata,
-    spec: zProjectSpec,
-    status: zProjectStatus.optional()
-});
-
-export const zProjectPage = z.object({
-    items: z.array(zProject),
-    nextCursor: z.string().optional()
-});
-
-/**
  * The untyped envelope, served by the generic routes.
  */
 export const zResource = z.object({
@@ -1452,12 +1382,6 @@ export const zUpdateComputingUnit = z.object({
     expectedHead: zVno.optional()
 });
 
-export const zUpdateConversation = z.object({
-    spec: zConversationSpec,
-    message: z.string().optional(),
-    expectedHead: zVno.optional()
-});
-
 export const zUpdateCredential = z.object({
     spec: zCredentialSpec,
     message: z.string().optional(),
@@ -1496,12 +1420,6 @@ export const zUpdateOperator = z.object({
 
 export const zUpdateProfile = z.object({
     spec: zProfileSpec,
-    message: z.string().optional(),
-    expectedHead: zVno.optional()
-});
-
-export const zUpdateProject = z.object({
-    spec: zProjectSpec,
     message: z.string().optional(),
     expectedHead: zVno.optional()
 });
@@ -1650,6 +1568,111 @@ export const zWarehouse = z.object({
 export const zWarehousePage = z.object({
     items: z.array(zWarehouse),
     nextCursor: z.string().optional()
+});
+
+/**
+ * How the agent's changes go: `auto`, it makes them once it has started work; `manual`, each one waits for a person's approval.
+ */
+export const zWorkMode = z.enum(['auto', 'manual']);
+
+export const zConversationSpec = z.object({
+    template: zUri.optional(),
+    modelEndpoint: zUri.optional(),
+    mcpServers: z.array(zUri).optional(),
+    workMode: zWorkMode.optional()
+});
+
+/**
+ * The typed envelope, served by the kind routes.
+ */
+export const zConversation = z.object({
+    apiVersion: z.enum(['catalog.texera.apache.org/v1']),
+    kind: zResourceKind,
+    metadata: zResourceMetadata,
+    spec: zConversationSpec,
+    status: zConversationStatus.optional()
+});
+
+export const zConversationPage = z.object({
+    items: z.array(zConversation),
+    nextCursor: z.string().optional()
+});
+
+export const zCreateConversation = z.object({
+    name: z.string(),
+    description: z.string().optional(),
+    parent: zRid.optional(),
+    visibility: zVisibility.optional(),
+    labels: z.record(z.string(), z.string()).optional(),
+    spec: zConversationSpec,
+    message: z.string().optional()
+});
+
+export const zProjectSpec = z.object({
+    defaultComputingUnit: zUri.optional(),
+    defaultWarehouse: zUri.optional(),
+    defaultAgentTemplate: zUri.optional(),
+    defaultModelEndpoint: zUri.optional(),
+    mcpServers: z.array(zUri).optional(),
+    defaultWorkMode: zWorkMode.optional()
+});
+
+export const zCreateProject = z.object({
+    name: z.string(),
+    description: z.string().optional(),
+    parent: zRid.optional(),
+    visibility: zVisibility.optional(),
+    labels: z.record(z.string(), z.string()).optional(),
+    spec: zProjectSpec,
+    message: z.string().optional()
+});
+
+/**
+ * The typed envelope, served by the kind routes.
+ */
+export const zProject = z.object({
+    apiVersion: z.enum(['catalog.texera.apache.org/v1']),
+    kind: zResourceKind,
+    metadata: zResourceMetadata,
+    spec: zProjectSpec,
+    status: zProjectStatus.optional()
+});
+
+export const zProjectPage = z.object({
+    items: z.array(zProject),
+    nextCursor: z.string().optional()
+});
+
+export const zUpdateConversation = z.object({
+    spec: zConversationSpec,
+    message: z.string().optional(),
+    expectedHead: zVno.optional()
+});
+
+export const zUpdateProject = z.object({
+    spec: zProjectSpec,
+    message: z.string().optional(),
+    expectedHead: zVno.optional()
+});
+
+/**
+ * How the agent's changes go in a chat: the chat's choice, else the project's, else the platform's (`auto`).
+ */
+export const zWorkModeSetting = z.object({
+    mode: zWorkMode,
+    from: zSettingSource
+});
+
+/**
+ * What a turn of a chat runs with, for the caller: each choice of the chat, else the project's, else the agent's own or the platform's default.
+ */
+export const zChatSettings = z.object({
+    project: zChatProject,
+    agent: zSetting,
+    modelEndpoint: zSetting,
+    mcpServers: z.array(zServerSetting),
+    workMode: zWorkModeSetting,
+    skipped: z.array(zSkippedSetting).optional()
 });
 
 export const zWorkflowLinkEnd = z.object({

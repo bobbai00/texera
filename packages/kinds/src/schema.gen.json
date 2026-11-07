@@ -448,13 +448,18 @@
             "$ref": "#/$defs/SkippedSetting"
           },
           "type": "array"
+        },
+        "workMode": {
+          "$ref": "#/$defs/WorkModeSetting",
+          "description": "How the agent's changes go in this chat, and where that choice comes from."
         }
       },
       "required": [
         "project",
         "agent",
         "modelEndpoint",
-        "mcpServers"
+        "mcpServers",
+        "workMode"
       ],
       "type": "object"
     },
@@ -847,6 +852,10 @@
         "template": {
           "$ref": "#/$defs/Uri",
           "description": "The agent template the next turn runs, chosen by the person or by a handoff; absent: the project's default, else the platform's."
+        },
+        "workMode": {
+          "$ref": "#/$defs/WorkMode",
+          "description": "How the agent's changes go once it has said what it will do: `auto`, it makes them; `manual`, each change waits for a person's approval. Absent: the project's choice, else `auto`."
         }
       },
       "type": "object"
@@ -2639,9 +2648,13 @@
       "type": "object"
     },
     "MessagePart": {
-      "description": "One message part: text, reasoning, a tool call, a tool result, a resource reference, a file, or an error.",
+      "description": "One message part: text, reasoning, a tool call, a tool result, a resource reference, a file, an error, or an approval: a change the agent asked to make, waiting for a person's yes or no (in `manual` work mode).",
       "properties": {
         "args": {},
+        "decidedBy": {
+          "$ref": "#/$defs/Pid",
+          "description": "For a decided approval: the person who decided."
+        },
         "file": {
           "additionalProperties": {},
           "type": "object"
@@ -2651,6 +2664,15 @@
           "description": "A resource URI, with `@vno` when a version is meant."
         },
         "result": {},
+        "state": {
+          "description": "For an approval: whether it waits, or what the person decided.",
+          "enum": [
+            "pending",
+            "approved",
+            "declined"
+          ],
+          "type": "string"
+        },
         "text": {
           "type": "string"
         },
@@ -2668,7 +2690,8 @@
             "tool_result",
             "resource",
             "file",
-            "error"
+            "error",
+            "approval"
           ],
           "type": "string"
         }
@@ -3641,6 +3664,10 @@
         "defaultWarehouse": {
           "$ref": "#/$defs/Uri",
           "description": "The warehouse an execution in this project keeps its results in when the request and the workflow name none."
+        },
+        "defaultWorkMode": {
+          "$ref": "#/$defs/WorkMode",
+          "description": "How the agent's changes go in a chat of this project when the chat does not choose: `auto` or `manual`; absent: `auto`."
         },
         "mcpServers": {
           "description": "Add-on MCP servers every chat in this project mounts besides the agent's, unless the chat lists its own.",
@@ -4990,6 +5017,30 @@
         "region",
         "bucket",
         "credential"
+      ],
+      "type": "object"
+    },
+    "WorkMode": {
+      "description": "How the agent's changes go: `auto`, it makes them once it has started work; `manual`, each one waits for a person's approval.",
+      "enum": [
+        "auto",
+        "manual"
+      ],
+      "type": "string"
+    },
+    "WorkModeSetting": {
+      "description": "How the agent's changes go in a chat: the chat's choice, else the project's, else the platform's (`auto`).",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/SettingSource"
+        },
+        "mode": {
+          "$ref": "#/$defs/WorkMode"
+        }
+      },
+      "required": [
+        "mode",
+        "from"
       ],
       "type": "object"
     },

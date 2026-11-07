@@ -101,19 +101,17 @@ export function useConversation({ rid, template, getToken, context, onRunEnd }: 
   // answers, so what a turn makes shows up as it is made.
   const remade = useCallback(() => queryClient.invalidateQueries({ queryKey: [{ _id: "conversationsResources", path: { rid } }] }), [queryClient, rid]);
 
-  const send = useCallback(
-    async (text: string, attachments: Attachment[] = []) => {
-      const messageId = crypto.randomUUID();
-      dispatch({
-        type: "user",
-        message: { id: messageId, role: "user", parts: [...(text ? [{ type: "text" as const, text }] : []), ...attachments.map(a => ({ type: "resource" as const, ref: a.ref }))] },
-        template,
-      });
+  /**
+   * One run of the agent, streamed into the live state: the person's message, or their answer to
+   * a change that waited for their approval. When the request is over the catalog's copy of the
+   * turn takes over.
+   */
+  const run = useCallback(
+    async (input: RunAgentInput) => {
       setBaseline(maxSeq);
       setInFlight(true);
       const controller = new AbortController();
       abort.current = controller;
-      const input: RunAgentInput = { threadId: rid, runId: newRunId(), messages: [{ id: messageId, role: "user", content: messageContent(text, attachments) }], tools: [], context: viewing.current ?? [], forwardedProps: {} };
       try {
         await runAgent({
           url: agUiUrl(rid),
@@ -137,7 +135,35 @@ export function useConversation({ rid, template, getToken, context, onRunEnd }: 
         onRunEnd?.();
       }
     },
-    [rid, template, maxSeq, getToken, queryClient, onRunEnd, remade]
+    [rid, maxSeq, getToken, queryClient, onRunEnd, remade]
+  );
+
+  const send = useCallback(
+    async (text: string, attachments: Attachment[] = []) => {
+      const messageId = crypto.randomUUID();
+      dispatch({
+        type: "user",
+        message: { id: messageId, role: "user", parts: [...(text ? [{ type: "text" as const, text }] : []), ...attachments.map(a => ({ type: "resource" as const, ref: a.ref }))] },
+        template,
+      });
+      await run({ threadId: rid, runId: newRunId(), messages: [{ id: messageId, role: "user", content: messageContent(text, attachments) }], tools: [], context: viewing.current ?? [], forwardedProps: {} });
+    },
+    [rid, template, run]
+  );
+
+  /** Answers the change the chat waits on: the agent makes it, or reads that it was declined, and goes on. */
+  const decide = useCallback(
+    (toolCallId: string, approved: boolean) =>
+      run({
+        threadId: rid,
+        runId: newRunId(),
+        messages: [],
+        tools: [],
+        context: viewing.current ?? [],
+        forwardedProps: {},
+        resume: [{ interruptId: toolCallId, status: approved ? "resolved" : "cancelled", payload: { approved } }],
+      }),
+    [rid, run]
   );
 
   /**
@@ -166,6 +192,7 @@ export function useConversation({ rid, template, getToken, context, onRunEnd }: 
     loading: history.isPending,
     historyError: history.error,
     send,
+    decide,
     note,
     stop,
   };

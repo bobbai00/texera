@@ -17,7 +17,8 @@ import (
 )
 
 // What a chat runs with. A chat stores choices of how its agent works and nothing else: its
-// agent, the model the agent uses, its add-on MCP servers. Each is optional, and a new chat
+// agent, the model the agent uses, its add-on MCP servers, and whether the agent's changes
+// wait for a person's approval. Each is optional, and a new chat
 // stores none. A turn runs with the chat's choice, else the project's, else the agent's own or
 // the platform's default. A choice that names something gone, or something the caller may not
 // use, is passed over and reported, so a chat shared with someone who lacks its owner's rights
@@ -112,10 +113,24 @@ func (s *Service) resolveChat(ctx context.Context, caller *auth.Caller, chat api
 	out.ModelEndpoint = settingOf(model, chosen.from)
 
 	out.McpServers = r.servers(own, chat, inProject)
+	out.WorkMode = workMode(chat, inProject)
 	if len(r.skipped) > 0 {
 		out.Skipped = &r.skipped
 	}
 	return out, nil
+}
+
+// workMode is how the agent's changes go in a chat: the chat's choice, else the project's,
+// else the platform's, which is to make them once the agent has started its work.
+func workMode(chat api.ConversationSpec, project api.ProjectSpec) api.WorkModeSetting {
+	switch {
+	case chat.WorkMode != nil && chat.WorkMode.Valid():
+		return api.WorkModeSetting{Mode: *chat.WorkMode, From: api.SettingSourceChat}
+	case project.DefaultWorkMode != nil && project.DefaultWorkMode.Valid():
+		return api.WorkModeSetting{Mode: *project.DefaultWorkMode, From: api.SettingSourceProject}
+	default:
+		return api.WorkModeSetting{Mode: api.WorkModeAuto, From: api.SettingSourcePlatform}
+	}
 }
 
 // first returns the first choice that names something the caller may use, with what it names.

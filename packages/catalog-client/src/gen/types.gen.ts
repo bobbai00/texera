@@ -194,6 +194,10 @@ export type ChatSettings = {
      * The platform's own server first, then the add-ons.
      */
     mcpServers: Array<ServerSetting>;
+    /**
+     * How the agent's changes go in this chat, and where that choice comes from.
+     */
+    workMode: WorkModeSetting;
     skipped?: Array<SkippedSetting>;
 };
 
@@ -366,6 +370,10 @@ export type ConversationSpec = {
      * The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.
      */
     mcpServers?: Array<Uri>;
+    /**
+     * How the agent's changes go once it has said what it will do: `auto`, it makes them; `manual`, each change waits for a person's approval. Absent: the project's choice, else `auto`.
+     */
+    workMode?: WorkMode;
 };
 
 export type ConversationStatus = {
@@ -1217,10 +1225,10 @@ export type MessagePage = {
 };
 
 /**
- * One message part: text, reasoning, a tool call, a tool result, a resource reference, a file, or an error.
+ * One message part: text, reasoning, a tool call, a tool result, a resource reference, a file, an error, or an approval: a change the agent asked to make, waiting for a person's yes or no (in `manual` work mode).
  */
 export type MessagePart = {
-    type: 'text' | 'reasoning' | 'tool_call' | 'tool_result' | 'resource' | 'file' | 'error';
+    type: 'text' | 'reasoning' | 'tool_call' | 'tool_result' | 'resource' | 'file' | 'error' | 'approval';
     text?: string;
     toolCallId?: string;
     toolName?: string;
@@ -1233,6 +1241,14 @@ export type MessagePart = {
     file?: {
         [key: string]: unknown;
     };
+    /**
+     * For an approval: whether it waits, or what the person decided.
+     */
+    state?: 'pending' | 'approved' | 'declined';
+    /**
+     * For a decided approval: the person who decided.
+     */
+    decidedBy?: Pid;
 };
 
 /**
@@ -1684,6 +1700,10 @@ export type ProjectSpec = {
      * Add-on MCP servers every chat in this project mounts besides the agent's, unless the chat lists its own.
      */
     mcpServers?: Array<Uri>;
+    /**
+     * How the agent's changes go in a chat of this project when the chat does not choose: `auto` or `manual`; absent: `auto`.
+     */
+    defaultWorkMode?: WorkMode;
 };
 
 export type ProjectStatus = {
@@ -2404,6 +2424,19 @@ export type WarehouseStorage = {
      * The credential the lake uses for the bucket; its secret holds `accessKeyId` and `secretAccessKey`. No computing unit ever gets it: the lake hands a unit short-lived access to the tables it may touch.
      */
     credential: Uri;
+};
+
+/**
+ * How the agent's changes go: `auto`, it makes them once it has started work; `manual`, each one waits for a person's approval.
+ */
+export type WorkMode = 'auto' | 'manual';
+
+/**
+ * How the agent's changes go in a chat: the chat's choice, else the project's, else the platform's (`auto`).
+ */
+export type WorkModeSetting = {
+    mode: WorkMode;
+    from: SettingSource;
 };
 
 /**

@@ -22,6 +22,8 @@ model ProjectSpec {
   defaultModelEndpoint?: Uri;
   @doc("Add-on MCP servers every chat in this project mounts besides the agent's, unless the chat lists its own.")
   mcpServers?: Uri[];
+  @doc("How the agent's changes go in a chat of this project when the chat does not choose: `auto` or `manual`; absent: `auto`.")
+  defaultWorkMode?: WorkMode;
 }
 
 model ProjectStatus {

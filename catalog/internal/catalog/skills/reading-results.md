@@ -29,7 +29,7 @@ description: Read, check and report computed results - what run_workflow and get
 - Every final quantity, ratios and differences included, is computed by an operator and read back. Do not calculate it mentally from retrieved inputs. Keep the engine's precision and round only when presenting.
 - Check what could mislead: rows lost by an inner join, duplicate keys, null denominators, numbers stored as text (cast with TypeCasting before arithmetic), header cells with spaces, literal values such as `None` or `NA` that are not nulls, a population that changed between operators.
 - A failed execution names the failing operator and its error. Fix the plan (a new version) and rerun. If the same error repeats, read the failing operator's input before changing the code again.
-- When the question allows more than one reading, choose the conventional one, apply it, and answer that reading only.
+- When the question allows more than one reading, choose the conventional one, apply it, say which you chose, and answer that reading only. Choices about resources (a unit, a GPU, who gets access) are asked, not chosen.
 
 ## Answering
 

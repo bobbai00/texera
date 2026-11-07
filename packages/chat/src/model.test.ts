@@ -1,7 +1,7 @@
 import type { Message } from "@texera/catalog-client/types";
 import { describe, expect, it } from "vitest";
 import type { AgUiEvent } from "./agui/types";
-import { applyEvent, applyPatch, type ChatState, EMPTY_STATE, extractResourceRefs, fromHistory, messageContent, messageParts, settled, toolFailure, visibleParts, writersOf } from "./model";
+import { applyEvent, applyPatch, type ChatState, EMPTY_STATE, extractResourceRefs, fromHistory, messageContent, messageParts, settled, toolFailure, visibleParts, waitingApproval, writersOf } from "./model";
 
 const W = "0b7a1c2d-0000-4000-8000-000000000001";
 const E = "0b7a1c2d-0000-4000-8000-000000000002";
@@ -247,5 +247,57 @@ describe("messageParts", () => {
       { type: "resource", resource: `texera://datasets/${D}@2`, text: "sales.csv" },
     ]);
     expect(messageParts("", [{ ref: { kind: "dataset", rid: D }, name: "sales.csv" }])).toEqual([{ type: "resource", resource: `texera://datasets/${D}`, text: "sales.csv" }]);
+  });
+});
+
+describe("a change that waits for approval", () => {
+  const pending = { type: "CUSTOM" as const, name: "texera.approval", value: { toolCallId: "c3", toolName: "create_workflow", input: { name: "means" }, reason: 'Create the workflow "means"', state: "pending" } };
+
+  it("shows as a card in the reply that asked, and waits there", () => {
+    const state = run([
+      { type: "RUN_STARTED", threadId: "c", runId: "r1" },
+      { type: "TEXT_MESSAGE_START", messageId: "m1", role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "Making it." },
+      pending,
+      { type: "RUN_FINISHED", threadId: "c", runId: "r1" },
+    ]);
+    const reply = state.messages.at(-1);
+    expect(reply?.parts.at(-1)).toEqual({ type: "approval", toolCallId: "c3", toolName: "create_workflow", input: { name: "means" }, reason: 'Create the workflow "means"', state: "pending" });
+    expect(waitingApproval(state.messages)?.toolCallId).toBe("c3");
+  });
+
+  it("shows the decision once it is made, and no longer waits", () => {
+    const asked = run([{ type: "RUN_STARTED", threadId: "c", runId: "r1" }, { type: "TEXT_MESSAGE_START", messageId: "m1", role: "assistant" }, pending]);
+    const decided = applyEvent(asked, { type: "CUSTOM", name: "texera.approval", value: { toolCallId: "c3", toolName: "create_workflow", state: "approved", decidedBy: "pid-1" } });
+    expect(decided.messages.at(-1)?.parts.at(-1)).toMatchObject({ type: "approval", state: "approved", decidedBy: "pid-1" });
+    expect(waitingApproval(decided.messages)).toBeUndefined();
+  });
+
+  it("is read back from the catalog's history with its decision", () => {
+    const history = [
+      { conversation: "c", seq: 1, role: "user", author: "pid-1", turn: "t1", parts: [{ type: "text", text: "Make it" }], createdAt: "2026-11-06T00:00:00Z" },
+      {
+        conversation: "c",
+        seq: 2,
+        role: "assistant",
+        author: "pid-1",
+        turn: "t1",
+        template: T,
+        parts: [
+          { type: "tool_call", toolCallId: "c3", toolName: "create_workflow", args: { name: "means" } },
+          { type: "approval", toolCallId: "c3", toolName: "create_workflow", args: { name: "means" }, text: "Create the workflow", state: "declined", decidedBy: "pid-1" },
+        ],
+        createdAt: "2026-11-06T00:00:01Z",
+      },
+    ] as Message[];
+    const messages = fromHistory(history);
+    expect(messages.at(-1)?.parts.at(-1)).toEqual({ type: "approval", toolCallId: "c3", toolName: "create_workflow", input: { name: "means" }, reason: "Create the workflow", state: "declined", decidedBy: "pid-1" });
+    expect(waitingApproval(messages)).toBeUndefined();
+  });
+
+  it("is not waited on once the person has written again", () => {
+    const asked = run([{ type: "RUN_STARTED", threadId: "c", runId: "r1" }, { type: "TEXT_MESSAGE_START", messageId: "m1", role: "assistant" }, pending]);
+    const wrote = { ...asked, messages: [...asked.messages, { id: "u2", role: "user" as const, parts: [{ type: "text" as const, text: "never mind" }] }] };
+    expect(waitingApproval(wrote.messages)).toBeUndefined();
   });
 });

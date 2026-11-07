@@ -228,3 +228,32 @@ func TestAnAnswerRecordsWhatWroteIt(t *testing.T) {
 		}
 	}
 }
+
+// Whether the agent's changes wait for a person's approval is a chat's choice, else its
+// project's; a chat that names neither lets the agent make them once it has started work.
+func TestAChatsWorkModeIsItsOwnElseItsProjectsElseAuto(t *testing.T) {
+	h := newHarness(t)
+	conv := h.create("alice", "conversations", "careful", map[string]any{})
+	mode := func() string {
+		got := settingsOf(h, "alice", rid(conv)).WorkMode
+		return string(got.Mode) + " from " + string(got.From)
+	}
+	if got := mode(); got != "auto from platform" {
+		t.Fatalf("a new chat: %s", got)
+	}
+
+	home := string(me(h, "alice").HomeProject)
+	h.mustJSON("alice", "PUT", p+"/projects/"+home, map[string]any{"spec": map[string]any{"defaultWorkMode": "manual"}}, nil)
+	if got := mode(); got != "manual from project" {
+		t.Fatalf("with the project's choice: %s", got)
+	}
+
+	choose(h, "alice", conv, map[string]any{"workMode": "auto"})
+	if got := mode(); got != "auto from chat" {
+		t.Fatalf("with the chat's own choice: %s", got)
+	}
+
+	if status, body := h.do("alice", "PUT", p+"/conversations/"+rid(conv), map[string]any{"spec": map[string]any{"workMode": "sometimes"}}); status != http.StatusBadRequest {
+		t.Fatalf("an unknown mode: %d %s", status, body)
+	}
+}

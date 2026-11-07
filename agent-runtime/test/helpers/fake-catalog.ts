@@ -4,13 +4,7 @@
  * contract: conversations with turns, messages and settings, resolve by URI, templates, skills,
  * MCP servers, model endpoints, credential leases.
  */
-import type {
-  AgentTemplateSpec,
-  ChatSettings,
-  McpServerSpec,
-  Message,
-  SkillSpec,
-} from "@texera/catalog-client/types";
+import type { AgentTemplateSpec, ChatSettings, McpServerSpec, Message, SkillSpec } from "@texera/catalog-client/types";
 
 export const CONVERSATION_RID = "33333333-3333-4333-8333-333333333333";
 export const TEMPLATE_RID = "22222222-2222-4222-8222-222222222222";
@@ -52,6 +46,8 @@ export interface FakeCatalogOptions {
   conversationTemplate?: string;
   /** The model endpoint the chat chooses, in place of its agent's. */
   conversationModel?: string;
+  /** The chat's work mode as its settings resolve it; default `auto`, the platform's. */
+  workMode?: "auto" | "manual";
 }
 
 function envelope(kind: string, rid: string, name: string, spec: unknown, head = 1, status?: unknown) {
@@ -193,6 +189,9 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
         platform: options.platformServer === true,
         ...(b.allow ? { allow: b.allow } : {}),
       })),
+      workMode: options.workMode
+        ? { mode: options.workMode, from: "chat" as const }
+        : { mode: "auto" as const, from: "platform" as const },
     };
   };
 
@@ -257,7 +256,8 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       }
       return json(200, conversationEnvelope());
     }
-    if (p === `/catalog/v1/conversations/${CONVERSATION_RID}/settings` && method === "GET") return json(200, settings());
+    if (p === `/catalog/v1/conversations/${CONVERSATION_RID}/settings` && method === "GET")
+      return json(200, settings());
     if (p === "/catalog/v1/conversations" && method === "POST") {
       const b = body as { name: string; spec: Record<string, unknown> };
       return json(201, { ...envelope("conversation", CONVERSATION_RID, b.name, b.spec, 0), status: {} });
@@ -268,7 +268,7 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
       const template = (body as { template?: string })?.template;
       if (template) conversation.spec = { ...conversation.spec, template };
       const turn = `turn-${calls.length}`;
-      conversation.status = { ...conversation.status, activeTurn: turn };
+      conversation.status = { ...conversation.status, activeTurn: turn, activeTurnBy: USER_PID };
       const current = String(conversation.spec.template);
       const m = /^texera:\/\/agent-templates\/([0-9a-f-]{36})/i.exec(current);
       const r = m ? resources[`agent-templates/${m[1]}`] : undefined;
@@ -276,7 +276,7 @@ export function fakeCatalog(options: FakeCatalogOptions = {}) {
     }
     const endTurn = /^\/catalog\/v1\/conversations\/([^/]+)\/turns\/([^/]+)$/.exec(p);
     if (endTurn && method === "DELETE") {
-      const { activeTurn: _, ...rest } = conversation.status;
+      const { activeTurn: _, activeTurnBy: __, ...rest } = conversation.status;
       conversation.status = rest;
       return new Response(null, { status: 204 });
     }

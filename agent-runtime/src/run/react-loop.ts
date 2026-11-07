@@ -20,6 +20,7 @@ import {
   stepCountIs,
   streamText,
   type TextStreamPart,
+  type ToolApprovalConfiguration,
   type ToolSet,
 } from "ai";
 import { type ResourceRef, resourceRefsInToolOutput, toolOutputValues } from "../resources.ts";
@@ -97,7 +98,17 @@ export type LoopEvent =
   | { type: "step"; step: LoopStep }
   | { type: "correction"; reason: "premature_answer" | "cut_off" | "refused"; text: string };
 
-export type LoopEnd = "answered" | "step_limit" | "error" | "aborted" | "refused" | "interrupted";
+export type LoopEnd = "answered" | "step_limit" | "error" | "aborted" | "refused" | "interrupted" | "awaiting_approval";
+
+/** A change the loop stopped at because a person must approve it first. */
+export interface PendingApproval {
+  approvalId: string;
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  /** The change in one plain line, for the person who decides. */
+  reason?: string;
+}
 
 export interface LoopOutcome {
   reason: LoopEnd;
@@ -105,6 +116,8 @@ export interface LoopOutcome {
   usage: LoopUsage;
   /** For `interrupted`: the call of an interrupt tool the loop stopped at, with its result. */
   interrupt?: { toolName: string; input: unknown; output: unknown };
+  /** For `awaiting_approval`: the change that waits for a person. */
+  approval?: PendingApproval;
 }
 
 export interface ReactLoopOptions {
@@ -123,6 +136,11 @@ export interface ReactLoopOptions {
   parallelToolCalls?: boolean;
   /** Tools whose successful call ends the loop with `interrupted` (a handoff): the caller takes over. */
   interruptTools?: string[];
+  /**
+   * Whether each tool call may run: refused with a reason the model reads, or held for a
+   * person's approval, which ends the loop with `awaiting_approval`. Absent: every call runs.
+   */
+  toolApproval?: ToolApprovalConfiguration<ToolSet, unknown>;
 }
 
 export const PREMATURE_ANSWER_CORRECTION =
@@ -214,6 +232,14 @@ export function stepFromResult(index: number, step: StepResult<ToolSet>, resultT
         toolName: item.toolName,
         output: item.output,
         isError: isErrorOutput(item.output),
+      });
+    } else if (item.type === "tool-approval-response" && !item.approved) {
+      // A call refused before it ran: a change before start_work.
+      toolResults.push({
+        toolCallId: item.toolCall.toolCallId,
+        toolName: item.toolCall.toolName,
+        output: { error: item.reason ?? "not done" },
+        isError: true,
       });
     } else if (item.type === "tool-error") {
       const message = item.error instanceof Error ? item.error.message : String(item.error);
@@ -345,6 +371,7 @@ export async function* runReactLoop(options: ReactLoopOptions): AsyncGenerator<L
       abortSignal: options.abortSignal,
       stopWhen,
       toolChoice: "auto",
+      ...(options.toolApproval ? { toolApproval: options.toolApproval } : {}),
       providerOptions: { anthropic: { disableParallelToolUse: !(options.parallelToolCalls ?? false) } },
       // Every step re-renders the turn's state at the end of the prompt (the Dataflow Agent's
       // prepareStep), so the instructions and the conversation stay a cacheable prefix.
@@ -361,9 +388,19 @@ export async function* runReactLoop(options: ReactLoopOptions): AsyncGenerator<L
     let errored = false;
     let aborted = false;
     let emitted = 0;
+    let pending: PendingApproval | undefined;
     for await (const part of result.fullStream) {
       if (part.type === "error") errored = true;
       if (part.type === "abort") aborted = true;
+      if (part.type === "tool-approval-request" && !part.isAutomatic) {
+        pending = {
+          approvalId: part.approvalId,
+          toolCallId: part.toolCall.toolCallId,
+          toolName: part.toolCall.toolName,
+          input: part.toolCall.input,
+          ...(part.reason ? { reason: part.reason } : {}),
+        };
+      }
       yield { type: "part", part };
       // Steps finish between parts; surface each one as soon as it is recorded.
       while (emitted < finishedSteps.length) {
@@ -377,6 +414,8 @@ export async function* runReactLoop(options: ReactLoopOptions): AsyncGenerator<L
 
     const last = finishedSteps[finishedSteps.length - 1];
     if (!last) return { reason: "error", state, usage };
+    // A change that waits for a person: the loop stops before it runs.
+    if (pending) return { reason: "awaiting_approval", state, usage, approval: pending };
     // An interrupt tool that succeeded ends the loop: the caller takes the conversation from here.
     for (const r of last.toolResults) {
       if (interrupts.includes(r.toolName) && !r.isError) {

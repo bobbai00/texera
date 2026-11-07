@@ -2,7 +2,7 @@ import { KindIcon, PrincipalName, ResourceCard } from "@texera/kinds";
 import { cn } from "@texera/ui";
 import { memo } from "react";
 import { type ChatMessage, visibleParts } from "./model";
-import { ErrorPart, HandoffPart, ReasoningPart, TextPart, ToolCallPart } from "./parts";
+import { ApprovalPart, AskPart, ErrorPart, HandoffPart, PlanPart, ReasoningPart, TextPart, ToolCallPart } from "./parts";
 import type { ResourceLabel } from "./labels";
 
 /**
@@ -16,6 +16,7 @@ export const MessageItem = memo(function MessageItem({
   labels,
   showLabel,
   showAuthor = false,
+  answers,
 }: {
   message: ChatMessage;
   streaming: boolean;
@@ -24,6 +25,11 @@ export const MessageItem = memo(function MessageItem({
   showLabel: boolean;
   /** Whether to name the person who wrote a user message: someone else in a shared chat. */
   showAuthor?: boolean;
+  /**
+   * What the person can answer in this message, when it is the one the chat waits on: pick an
+   * option of a question, or decide on a change. Absent elsewhere, and for someone who only reads.
+   */
+  answers?: { pick: (label: string) => void; decide: (toolCallId: string, approved: boolean) => void };
 }) {
   if (message.role === "user") {
     const texts = message.parts.filter(p => p.type === "text");
@@ -101,7 +107,11 @@ export const MessageItem = memo(function MessageItem({
           case "reasoning":
             return <ReasoningPart key={key} text={part.text} />;
           case "tool":
+            if (part.name === "start_work" && part.input !== undefined) return <PlanPart key={key} part={part} />;
+            if (part.name === "ask" && part.input !== undefined) return <AskPart key={key} part={part} onPick={answers?.pick} />;
             return <ToolCallPart key={key} part={part} />;
+          case "approval":
+            return <ApprovalPart key={key} part={part} onDecide={answers ? approved => answers.decide(part.toolCallId, approved) : undefined} />;
           case "resource":
             return <ResourceCard key={key} ref={part.ref} />;
           case "handoff":

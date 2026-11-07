@@ -30,6 +30,7 @@ import { defaultModelFactory, type ModelFactory } from "./model.ts";
 import { LOAD_SKILL_TOOL, loadSkillTool } from "./skills.ts";
 import { composeSystemPrompt } from "./system-prompt.ts";
 import type { TurnContext } from "./turn-context.ts";
+import { ASK_TOOL, approvalOf, type Work, workTools } from "./work.ts";
 
 /** The Dataflow Agent's sampling temperature. */
 export const DEFAULT_TEMPERATURE = 0.2;
@@ -61,6 +62,8 @@ export interface BuildInput {
   app?: unknown;
   /** The people of a chat several write in, and the one being answered. */
   people?: ChatPeople;
+  /** The turn's work: how its changes go, and whether it has started. */
+  work: Work;
 }
 
 export interface RunInput {
@@ -73,6 +76,8 @@ export interface BuiltAgent {
   tools: ToolSet;
   instructions: string;
   handoffs: HandoffCandidate[];
+  /** The platform's tools that change something: they wait for `start_work`. */
+  changes: ReadonlySet<string>;
   /** The servers this turn mounted. */
   servers: MountedServer[];
   /** The add-on servers left out of this turn. */
@@ -133,7 +138,7 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
     transportFactory: deps.transportFactory,
   });
 
-  const tools: ToolSet = { ...mcp.tools, ...(deps.extraTools ?? {}) };
+  const tools: ToolSet = { ...mcp.tools, ...workTools(input.work), ...(deps.extraTools ?? {}) };
   if (skills.length > 0) tools[LOAD_SKILL_TOOL] = loadSkillTool(skills);
   if (handoffs.length > 0) tools[HANDOFF_TOOL] = handoffTool(handoffs);
   const instructions = composeSystemPrompt(template, skills, handoffs);
@@ -162,6 +167,7 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
     tools,
     instructions,
     handoffs,
+    changes: mcp.changes,
     servers: mcp.servers,
     unavailable: mcp.unavailable,
     policy,
@@ -178,7 +184,9 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
         temperature,
         maxOutputTokens,
         abortSignal: run.abortSignal,
-        interruptTools: handoffs.length > 0 ? [HANDOFF_TOOL] : [],
+        // A question to the person ends the turn, and so does a handoff.
+        interruptTools: handoffs.length > 0 ? [ASK_TOOL, HANDOFF_TOOL] : [ASK_TOOL],
+        toolApproval: approvalOf(input.work, mcp.changes),
         renderContext: (state, step) => `${renderTurnState(state, step)}\n\n${chat}`,
       }),
     close: () => mcp.close(),

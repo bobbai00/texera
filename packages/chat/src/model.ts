@@ -22,7 +22,19 @@ export type Part =
     }
   | { type: "resource"; ref: ResourceRef }
   | { type: "handoff"; from?: string; to: string; name: string; by: "agent" | "person" }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | {
+      /** A change the agent asked to make, waiting for a person's yes or no (manual work mode). */
+      type: "approval";
+      toolCallId: string;
+      toolName: string;
+      input?: unknown;
+      reason?: string;
+      state: ApprovalState;
+      decidedBy?: string;
+    };
+
+export type ApprovalState = "pending" | "approved" | "declined";
 
 export interface ChatMessage {
   id: string;
@@ -281,6 +293,9 @@ export function applyEvent(state: ChatState, event: AgUiEvent): ChatState {
         if (!refs.length) return state;
         return withMessage(state, currentAssistantId(state), "assistant", m => ({ ...m, parts: [...m.parts, ...refs.map(ref => ({ type: "resource" as const, ref }))] }));
       }
+      if (event.name === "texera.approval" && isRecord(event.value) && typeof event.value.toolCallId === "string") {
+        return applyApproval(state, event.value as unknown as ApprovalEvent);
+      }
       if (event.name === "texera.handoff" && isRecord(event.value) && typeof event.value.to === "string") {
         const v = event.value as { from?: string; to: string; name?: string; by?: string };
         const part: Part = { type: "handoff", from: v.from, to: v.to, name: v.name ?? "another agent", by: v.by === "person" ? "person" : "agent" };
@@ -293,6 +308,44 @@ export function applyEvent(state: ChatState, event: AgUiEvent): ChatState {
     default:
       return state;
   }
+}
+
+interface ApprovalEvent {
+  toolCallId: string;
+  toolName?: string;
+  input?: unknown;
+  reason?: string;
+  state?: string;
+  decidedBy?: string;
+}
+
+/**
+ * A change waits for approval (a new card in the current reply), or was decided (the card,
+ * wherever it is, shows the decision).
+ */
+function applyApproval(state: ChatState, v: ApprovalEvent): ChatState {
+  const decided: ApprovalState | undefined = v.state === "approved" || v.state === "declined" ? v.state : undefined;
+  if (decided) {
+    const messages = state.messages.map(m => ({
+      ...m,
+      parts: m.parts.map(p => (p.type === "approval" && p.toolCallId === v.toolCallId ? { ...p, state: decided, ...(v.decidedBy ? { decidedBy: v.decidedBy } : {}) } : p)),
+    }));
+    return { ...state, messages };
+  }
+  const part: Part = { type: "approval", toolCallId: v.toolCallId, toolName: v.toolName ?? "tool", input: v.input, ...(v.reason ? { reason: v.reason } : {}), state: "pending" };
+  return withMessage(state, currentAssistantId(state), "assistant", m => ({ ...m, parts: [...m.parts, part] }));
+}
+
+/** The change a chat waits on, if any: the newest assistant message's pending approval. */
+export function waitingApproval(messages: ChatMessage[]): Extract<Part, { type: "approval" }> | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as ChatMessage;
+    if (m.role === "user") return undefined;
+    if (m.role !== "assistant") continue;
+    const part = m.parts.find((p): p is Extract<Part, { type: "approval" }> => p.type === "approval" && p.state === "pending");
+    if (part) return part;
+  }
+  return undefined;
 }
 
 function fromAgUiMessage(m: AgUiMessage): ChatMessage {
@@ -357,6 +410,19 @@ export function fromHistory(messages: CatalogMessage[]): ChatMessage[] {
           break;
         case "error":
           parts.push({ type: "error", message: p.text ?? "Something went wrong." });
+          break;
+        case "approval":
+          if (p.toolCallId && p.toolName) {
+            parts.push({
+              type: "approval",
+              toolCallId: p.toolCallId,
+              toolName: p.toolName,
+              input: p.args,
+              ...(p.text ? { reason: p.text } : {}),
+              state: p.state ?? "pending",
+              ...(p.decidedBy ? { decidedBy: p.decidedBy } : {}),
+            });
+          }
           break;
       }
     }

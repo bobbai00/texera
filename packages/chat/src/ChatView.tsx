@@ -126,6 +126,17 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
     if (first) void sendFirst.current(first).finally(() => setStarting(false));
   }, [rid]);
 
+  // The newest reply is what the chat waits on: a question to pick from, a change to decide on.
+  // The person answers it there, when nothing runs and the chat is theirs to write in.
+  const canAnswer = !busy && !readOnly && othersTurn === undefined;
+  const answers = useMemo(
+    () => ({
+      pick: (label: string) => void sendFirst.current({ text: label, files: [] }),
+      decide: (toolCallId: string, approved: boolean) => void chat.decide(toolCallId, approved),
+    }),
+    [chat.decide]
+  );
+
   // Which assistant messages open a run of the same template: those get the label.
   let previousTemplate: string | undefined;
   const items = chat.messages.map(m => {
@@ -189,7 +200,14 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
                 // Older messages skip layout until scrolled to; the newest ones must have their real
                 // height, or the chat cannot find its end when the persisted copy replaces the live one.
                 <div key={message.id} className={cn(i < items.length - NEWEST_LAID_OUT && "[content-visibility:auto] [contain-intrinsic-size:auto_120px]")}>
-                  <MessageItem message={message} streaming={chat.running && i === items.length - 1} labels={labels} showLabel={showLabel} showAuthor={message.author !== undefined && message.author !== myPid} />
+                  <MessageItem
+                    message={message}
+                    streaming={chat.running && i === items.length - 1}
+                    labels={labels}
+                    showLabel={showLabel}
+                    showAuthor={message.author !== undefined && message.author !== myPid}
+                    answers={canAnswer && i === items.length - 1 && message.role === "assistant" ? answers : undefined}
+                  />
                 </div>
               ))}
               {chat.running && (!last || last.role === "user") && <Loader2 className="size-4 animate-spin text-muted-foreground" />}

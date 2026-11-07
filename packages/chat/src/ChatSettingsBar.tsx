@@ -8,7 +8,7 @@ import type { ChatSettings, ConversationSpec } from "@texera/catalog-client/type
 import { baseUri, KindIcon, searchQuery } from "@texera/kinds";
 import { Button, DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuTrigger, Select, type SelectOption } from "@texera/ui";
 import { Blocks } from "lucide-react";
-import { asOption, effective, withAddOn, withModel } from "./settings";
+import { asOption, effective, WORK_MODES, withAddOn, withModel, withWorkMode } from "./settings";
 
 export function ChatSettingsBar({
   settings,
@@ -45,6 +45,7 @@ export function ChatSettingsBar({
         {now.agent}
       </span>
       <Select aria-label="Model" value={baseUri(now.model)} onChange={uri => onChange(withModel(choices, uri))} options={modelOptions} disabled={disabled} className="max-w-44" />
+      <Select aria-label="Changes" value={now.workMode} onChange={mode => onChange(withWorkMode(choices, mode))} options={WORK_MODES} disabled={disabled} className="max-w-32" data-work-mode={now.workMode} />
       <DropdownMenu>
         <DropdownMenuTrigger>
           <Button variant="outline" size="sm" className="h-8 gap-1.5 px-2 text-xs font-normal" disabled={disabled} data-chat-add-ons={now.addOns.length}>

@@ -220,4 +220,6 @@ export interface RunAgentInput {
   tools: unknown[];
   context: { description: string; value: string }[];
   forwardedProps?: unknown;
+  /** Answers to the interrupts the previous run ended with: a change approved or declined. */
+  resume?: { interruptId: string; status: "resolved" | "cancelled"; payload?: unknown }[];
 }

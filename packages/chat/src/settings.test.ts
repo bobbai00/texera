@@ -1,6 +1,6 @@
 import type { ChatSettings, ConversationSpec, Resource } from "@texera/catalog-client/types";
 import { describe, expect, it } from "vitest";
-import { asOption, effective, withAddOn, withModel } from "./settings";
+import { asOption, effective, withAddOn, withModel, withWorkMode } from "./settings";
 
 const uri = (kind: string, n: number) => `texera://${kind}/0b7a1c2d-0000-4000-8000-00000000000${n}`;
 const CATALOG = uri("mcp-servers", 1);
@@ -19,16 +19,17 @@ const defaults: ChatSettings = {
     { uri: CATALOG, name: "catalog", from: "agent", platform: true },
     { uri: BIO, name: "biomcp", from: "agent", platform: false },
   ],
+  workMode: { mode: "auto", from: "platform" },
 };
 
 describe("what the chat box shows", () => {
   it("is what the settings resolve to when the chat has chosen nothing", () => {
-    expect(effective(defaults, {})).toEqual({ agent: "Texera Agent", model: HAIKU, addOns: [BIO] });
+    expect(effective(defaults, {})).toEqual({ agent: "Texera Agent", model: HAIKU, addOns: [BIO], workMode: "auto" });
   });
 
   it("is the chat's own choice where it has one", () => {
     const chosen: ConversationSpec = { modelEndpoint: OTHER, mcpServers: [LAB] };
-    expect(effective(defaults, chosen)).toEqual({ agent: "Texera Agent", model: OTHER, addOns: [LAB] });
+    expect(effective(defaults, chosen)).toEqual({ agent: "Texera Agent", model: OTHER, addOns: [LAB], workMode: "auto" });
   });
 
   it("is empty until the settings are known", () => {
@@ -68,5 +69,15 @@ describe("what a pick stores in the chat", () => {
 
   it("never lists the platform's own server as an add-on", () => {
     expect(withAddOn({}, defaults, LAB, true).mcpServers).not.toContain(CATALOG);
+  });
+});
+
+describe("how the agent's changes go", () => {
+  it("follows the project's or the platform's choice until the chat makes its own", () => {
+    expect(effective(defaults, {})?.workMode).toBe("auto");
+    expect(effective({ ...defaults, workMode: { mode: "manual", from: "project" } }, {})?.workMode).toBe("manual");
+    const chosen = withWorkMode({}, "manual");
+    expect(chosen).toEqual({ workMode: "manual" });
+    expect(effective(defaults, chosen)?.workMode).toBe("manual");
   });
 });

@@ -106,6 +106,49 @@ describe("mountMcpServers", () => {
     await mount.close();
   });
 
+  test("the platform's tools that its server does not mark read-only are its changes; an add-on has none", async () => {
+    const server = new McpServer({ name: "catalog", version: "0.0.1" });
+    server.registerTool(
+      "get_resource",
+      { description: "Read", inputSchema: { rid: z.string() }, annotations: { readOnlyHint: true } },
+      async () => ({ content: [] }),
+    );
+    server.registerTool("create_workflow", { description: "Create", inputSchema: { name: z.string() } }, async () => ({
+      content: [],
+    }));
+    const pair = () => {
+      const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+      return { clientSide, ready: server.connect(serverSide) };
+    };
+    const platform = pair();
+    await platform.ready;
+    const asPlatform = await mountMcpServers({
+      servers: [listed(catalog, true)],
+      resolveServer: async () => catalog,
+      leaseCredential,
+      userToken: "tok",
+      publicUrl: "http://localhost:8088",
+      turn,
+      transportFactory: () => platform.clientSide,
+    });
+    expect([...asPlatform.changes]).toEqual(["create_workflow"]);
+    await asPlatform.close();
+
+    const addOn = await inProcessServer("bio");
+    const asAddOn = await mountMcpServers({
+      servers: [listed(catalog, false)],
+      resolveServer: async () => catalog,
+      leaseCredential,
+      userToken: "tok",
+      publicUrl: "http://localhost:8088",
+      turn,
+      transportFactory: () => addOn.clientSide,
+    });
+    expect(Object.keys(asAddOn.tools).sort()).toEqual(["list_operators", "run_workflow"]);
+    expect([...asAddOn.changes]).toEqual([]);
+    await asAddOn.close();
+  });
+
   /** A transport whose connection fails at once, or never comes up. */
   const dead = (hang = false) =>
     ({

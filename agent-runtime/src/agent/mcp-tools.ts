@@ -53,6 +53,12 @@ export interface MountedServer {
 
 export interface McpMount {
   tools: ToolSet;
+  /**
+   * The platform's tools that change something: those its server does not mark read-only. They
+   * wait for `start_work`, and in manual work mode for a person's approval. An add-on's tools
+   * are never among them.
+   */
+  changes: Set<string>;
   servers: MountedServer[];
   /** The add-ons that could not be mounted. */
   unavailable: UnavailableServer[];
@@ -134,6 +140,7 @@ function sanitize(name: string): string {
 export async function mountMcpServers(options: McpMountOptions): Promise<McpMount> {
   const clients: MCPClient[] = [];
   const tools: ToolSet = {};
+  const changes = new Set<string>();
   const servers: MountedServer[] = [];
   const unavailable: UnavailableServer[] = [];
   const timeout = options.addOnTimeoutMs ?? DEFAULT_ADD_ON_TIMEOUT_MS;
@@ -148,7 +155,11 @@ export async function mountMcpServers(options: McpMountOptions): Promise<McpMoun
         const transport = options.transportFactory?.(server, url, headers) ?? { type: "http" as const, url, headers };
         const client = await bounded(createMCPClient({ transport }), (late) => void late.close().catch(() => {}));
         clients.push(client);
-        const all = await bounded(client.tools());
+        const definitions = await bounded(client.listTools());
+        const all = client.toolsFromDefinitions(definitions);
+        const readOnly = new Set(
+          definitions.tools.filter((d) => d.annotations?.readOnlyHint === true).map((d) => d.name),
+        );
         const allow = listed.allow ? new Set(listed.allow) : undefined;
         const mounted: string[] = [];
         for (const [name, t] of Object.entries(all)) {
@@ -156,6 +167,7 @@ export async function mountMcpServers(options: McpMountOptions): Promise<McpMoun
           const key = name in tools ? `${sanitize(server.name)}__${name}` : name;
           tools[key] = t;
           mounted.push(key);
+          if (listed.platform && !readOnly.has(name)) changes.add(key);
         }
         servers.push({ name: server.name, uri: server.uri, toolNames: mounted });
       } catch (err) {
@@ -173,6 +185,7 @@ export async function mountMcpServers(options: McpMountOptions): Promise<McpMoun
   }
   return {
     tools,
+    changes,
     servers,
     unavailable,
     close: async () => {

@@ -23,6 +23,14 @@ model ConversationSpec {
   modelEndpoint?: Uri;
   @doc("The add-on MCP servers of this chat, in place of the agent's and the project's; absent: theirs. The platform's own server is not an add-on and is never listed here.")
   mcpServers?: Uri[];
+  @doc("How the agent's changes go once it has said what it will do: `auto`, it makes them; `manual`, each change waits for a person's approval. Absent: the project's choice, else `auto`.")
+  workMode?: WorkMode;
+}
+
+@doc("How the agent's changes go: `auto`, it makes them once it has started work; `manual`, each one waits for a person's approval.")
+enum WorkMode {
+  auto,
+  manual,
 }
 
 @doc("The level a setting of a chat comes from.")
@@ -73,7 +81,15 @@ model ChatSettings {
   modelEndpoint: Setting;
   @doc("The platform's own server first, then the add-ons.")
   mcpServers: ServerSetting[];
+  @doc("How the agent's changes go in this chat, and where that choice comes from.")
+  workMode: WorkModeSetting;
   skipped?: SkippedSetting[];
+}
+
+@doc("How the agent's changes go in a chat: the chat's choice, else the project's, else the platform's (`auto`).")
+model WorkModeSetting {
+  mode: WorkMode;
+  from: SettingSource;
 }
 
 @doc("A version as a chat knows it: one the chat made, or one it worked from.")
@@ -103,9 +119,9 @@ model ConversationStatus {
   templates?: Uri[];
 }
 
-@doc("One message part: text, reasoning, a tool call, a tool result, a resource reference, a file, or an error.")
+@doc("One message part: text, reasoning, a tool call, a tool result, a resource reference, a file, an error, or an approval: a change the agent asked to make, waiting for a person's yes or no (in `manual` work mode).")
 model MessagePart {
-  type: "text" | "reasoning" | "tool_call" | "tool_result" | "resource" | "file" | "error";
+  type: "text" | "reasoning" | "tool_call" | "tool_result" | "resource" | "file" | "error" | "approval";
   text?: string;
   toolCallId?: string;
   toolName?: string;
@@ -114,6 +130,10 @@ model MessagePart {
   @doc("A resource URI, with `@vno` when a version is meant.")
   resource?: Uri;
   file?: Record<unknown>;
+  @doc("For an approval: whether it waits, or what the person decided.")
+  state?: "pending" | "approved" | "declined";
+  @doc("For a decided approval: the person who decided.")
+  decidedBy?: Pid;
 }
 
 model Message {

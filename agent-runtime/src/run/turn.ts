@@ -13,11 +13,13 @@
  * The host's native commands are handled here without a model: `/mode <name or uri>` switches
  * the conversation's template.
  */
-import type { Message as AGUIMessage, RunAgentInput } from "@ag-ui/core";
+import type { Message as AGUIMessage, RunAgentInput, RunFinishedOutcome } from "@ag-ui/core";
+import type { ToolSet } from "ai";
 import type { BuildInput, BuiltAgent } from "../agent/build.ts";
 import type { ChatPeople } from "../agent/chat-context.ts";
 import { HANDOFF_TOOL, handoffTarget } from "../agent/handoff.ts";
 import { TurnContext } from "../agent/turn-context.ts";
+import { Work, type WorkMode } from "../agent/work.ts";
 import { type CatalogClient, CatalogError } from "../catalog/client.ts";
 import { baseUri, type CatalogAuth, type Message, type MessagePart, type Turn } from "../catalog/types.ts";
 import type { Logger } from "../log.ts";
@@ -111,6 +113,50 @@ async function writersOf(
   return new Map(pids.map((pid, i) => [pid, names[i] as string]));
 }
 
+/** A person's answer to a change that waited for their approval. */
+export interface Decision {
+  toolCallId: string;
+  approved: boolean;
+}
+
+/**
+ * The answer a run carries to the change its chat waits on, as AG-UI resume entries: the
+ * interrupt is the change's tool call; `resolved` with `{approved: false}`, or `cancelled`, is a no.
+ */
+export function decisionOf(input: RunAgentInput): Decision | undefined {
+  const entry = input.resume?.[0];
+  if (!entry?.interruptId) return undefined;
+  const payload = (entry.payload ?? {}) as { approved?: unknown };
+  return { toolCallId: entry.interruptId, approved: entry.status === "resolved" && payload.approved !== false };
+}
+
+/** The change a chat waits on: the newest assistant message's approval part still pending. */
+export function waitingApproval(history: Message[]): { message: Message; part: MessagePart } | undefined {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const message = history[i] as Message;
+    if (message.role !== "assistant") continue;
+    const part = message.parts.find((p) => p.type === "approval" && p.state === "pending");
+    return part ? { message, part } : undefined;
+  }
+  return undefined;
+}
+
+/** What a change that did not go ahead tells the model, by why. */
+export const DECLINED = "Not done: the person declined this change.";
+export const PASSED_OVER = "Not done: the person wrote instead of approving this change.";
+
+/** Runs a change a person approved, with the tool the turn built for it. */
+async function runApproved(tools: ToolSet, part: MessagePart, signal?: AbortSignal): Promise<unknown> {
+  const run = part.toolName ? tools[part.toolName]?.execute : undefined;
+  if (!run || !part.toolCallId)
+    return { error: `Not done: ${part.toolName ?? "the tool"} is not available in this turn.` };
+  try {
+    return await run(part.args ?? {}, { toolCallId: part.toolCallId, messages: [], abortSignal: signal, context: {} });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** Runs a turn, yielding AG-UI events in order. Never throws; errors become RUN_ERROR. */
 export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator<AGUIEvent> {
   const { input, conversationRid: rid } = req;
@@ -118,9 +164,10 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
   const newId = deps.newId ?? (() => crypto.randomUUID());
   yield events.runStarted(input.threadId, input.runId);
 
-  const text = newestUserText(input.messages);
-  const attachments = newestUserAttachments(input.messages);
-  if (!text && attachments.length === 0) {
+  const decision = decisionOf(input);
+  const text = decision ? undefined : newestUserText(input.messages);
+  const attachments = decision ? [] : newestUserAttachments(input.messages);
+  if (!decision && !text && attachments.length === 0) {
     yield events.runError("the run has no user message", "bad_request");
     return;
   }
@@ -151,18 +198,37 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
   });
   const names = new Map<string, string>();
   let errored = false;
+  // How the run ends for the person: done, or waiting for their approval of a change.
+  let finished: RunFinishedOutcome = { type: "success" };
   // The agent version the turn is running, for the record of a failure.
   let current = turn.template;
   try {
-    const said: MessagePart[] = text ? [{ type: "text", text }] : [];
-    const attached = attachments.map(
-      (a): MessagePart => ({ type: "resource", resource: a.uri, ...(a.name ? { text: a.name } : {}) }),
-    );
-    const asked = await deps.catalog.appendMessage(
-      rid,
-      { turn: turn.turn, role: "user", parts: [...said, ...attached] },
-      auth(),
-    );
+    // A change the chat waits on is answered by a decision; a message instead passes it over,
+    // and the model reads that it was not done.
+    const waiting = waitingApproval(await deps.catalog.listMessages(rid, auth()));
+    if (decision && waiting?.part.toolCallId !== decision.toolCallId) {
+      errored = true;
+      yield events.runError("no change waits for that approval in this chat", "bad_request");
+      return;
+    }
+    let asker: string;
+    if (decision) {
+      asker = (await deps.catalog.getConversation(rid, auth())).status?.activeTurnBy ?? "";
+    } else {
+      const said: MessagePart[] = text ? [{ type: "text", text }] : [];
+      const attached = attachments.map(
+        (a): MessagePart => ({ type: "resource", resource: a.uri, ...(a.name ? { text: a.name } : {}) }),
+      );
+      if (waiting) {
+        yield* settleApproval(deps, rid, waiting, { state: "declined", output: { error: PASSED_OVER } }, auth());
+      }
+      const asked = await deps.catalog.appendMessage(
+        rid,
+        { turn: turn.turn, role: "user", parts: [...said, ...attached] },
+        auth(),
+      );
+      asker = asked.author;
+    }
     for (let hop = 0; ; hop++) {
       // What this chat runs with, as the catalog resolves it for the person; after a handoff,
       // for the agent that took over.
@@ -178,8 +244,11 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
       const writers = await writersOf(history, (pid) => deps.catalog.principalName(pid, auth()));
       const people: ChatPeople | undefined = writers && {
         names: [...writers.values()].sort(),
-        asking: writers.get(asked.author) ?? "someone",
+        asking: writers.get(asker) ?? "someone",
       };
+      // Work an approval answers was started in the turn that asked; it goes on from there.
+      const mode: WorkMode = settings.workMode?.mode ?? "auto";
+      const work = new Work(mode, { continued: hop === 0 && decision !== undefined });
       const built = await deps.build({
         settings,
         template,
@@ -188,6 +257,7 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
         purpose: `texera://conversations/${rid}`,
         app: input.context,
         people,
+        work,
       });
       let outcome: Awaited<ReturnType<BuiltAgent["run"]>["return"]> extends never
         ? never
@@ -205,6 +275,19 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
               ),
             );
           }
+        }
+        if (hop === 0 && decision && waiting) {
+          const output = decision.approved
+            ? await runApproved(built.tools, waiting.part, req.signal)
+            : { error: DECLINED };
+          yield* settleApproval(
+            deps,
+            rid,
+            waiting,
+            { state: decision.approved ? "approved" : "declined", decidedBy: asker || undefined, output },
+            auth(),
+          );
+          history.splice(0, history.length, ...(await deps.catalog.listMessages(rid, auth())));
         }
         // The answer records what writes it: the agent's version, the model, the servers mounted.
         const assistant = await deps.catalog.appendMessage(
@@ -265,6 +348,19 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
           steps: outcome.state.steps.length,
           usage: outcome.usage,
         });
+        if (outcome.reason === "awaiting_approval" && outcome.approval) {
+          finished = {
+            type: "interrupt",
+            interrupts: [
+              {
+                id: outcome.approval.toolCallId,
+                reason: "approval",
+                toolCallId: outcome.approval.toolCallId,
+                ...(outcome.approval.reason ? { message: outcome.approval.reason } : {}),
+              },
+            ],
+          };
+        }
         if (outcome.reason === "step_limit" || outcome.reason === "refused") {
           const message =
             outcome.reason === "step_limit"
@@ -333,7 +429,45 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
       log.error("could not end the turn", { error: (err as Error).message });
     }
   }
-  if (!errored) yield events.runFinished(input.threadId, input.runId, { type: "success" });
+  if (!errored) yield events.runFinished(input.threadId, input.runId, finished);
+}
+
+/**
+ * Records what became of a change that waited for approval, in the message that asked for it:
+ * the decision on its approval part, then the call's result, and announces both.
+ */
+async function* settleApproval(
+  deps: TurnDeps,
+  rid: string,
+  waiting: { message: Message; part: MessagePart },
+  settled: { state: "approved" | "declined"; decidedBy?: string; output: unknown },
+  auth: CatalogAuth,
+): AsyncGenerator<AGUIEvent> {
+  const { part } = waiting;
+  const toolCallId = part.toolCallId as string;
+  const toolName = part.toolName as string;
+  const mapper = new StreamMapper({ newId: deps.newId });
+  const results =
+    settled.state === "approved"
+      ? mapper.map({ type: "tool-result", toolCallId, toolName, input: part.args, output: settled.output } as never)
+      : mapper.map({
+          type: "tool-error",
+          toolCallId,
+          toolName,
+          input: part.args,
+          error: (settled.output as { error: string }).error,
+        } as never);
+  const parts = waiting.message.parts.map((p) =>
+    p === part ? { ...p, state: settled.state, ...(settled.decidedBy ? { decidedBy: settled.decidedBy } : {}) } : p,
+  );
+  await deps.catalog.replaceMessage(rid, waiting.message.seq, { parts: [...parts, ...mapper.collected.parts] }, auth);
+  yield events.approval({
+    toolCallId,
+    toolName,
+    state: settled.state,
+    ...(settled.decidedBy ? { decidedBy: settled.decidedBy } : {}),
+  });
+  yield* results;
 }
 
 /** `/mode <name or uri>`: the host switches the conversation's template without a model call. */

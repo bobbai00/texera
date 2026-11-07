@@ -38,6 +38,21 @@ export const CORRECTION_EVENT = "texera.correction";
 /** The custom event that says the conversation changed template: `{from?, to, name, by}`. */
 export const HANDOFF_EVENT = "texera.handoff";
 
+/**
+ * The custom event that says a change waits for a person's approval, or that it was decided:
+ * `{toolCallId, toolName, input?, reason?, state, decidedBy?}`.
+ */
+export const APPROVAL_EVENT = "texera.approval";
+
+export interface ApprovalValue {
+  toolCallId: string;
+  toolName: string;
+  input?: unknown;
+  reason?: string;
+  state: "pending" | "approved" | "declined";
+  decidedBy?: string;
+}
+
 export interface HandoffValue {
   /** The template version that handed off; absent when the person switched. */
   from?: string;
@@ -136,6 +151,12 @@ export const events = {
     name: HANDOFF_EVENT,
     value,
   }),
+  approval: (value: ApprovalValue): CustomEvent => ({
+    type: EventType.CUSTOM,
+    timestamp: stamp(),
+    name: APPROVAL_EVENT,
+    value,
+  }),
 };
 
 export interface MapperOptions {
@@ -173,6 +194,8 @@ export class StreamMapper {
   private readonly startedToolCalls = new Set<string>();
   readonly collected: CollectedTurn = { parts: [], text: "", toolCalls: [], toolResults: [], resources: [] };
   private openText?: { type: "text"; text: string };
+  /** Why a call was refused before it ran, by call, until its refusal arrives. */
+  private readonly refusals = new Map<string, string>();
 
   private appendText(delta: string): void {
     if (!this.openText) {
@@ -263,6 +286,50 @@ export class StreamMapper {
           out.push(events.resource(ref));
         }
         return out;
+      }
+      case "tool-approval-request": {
+        // Refusals the runtime decides itself arrive with their answer; only a change that waits
+        // for a person is recorded and announced.
+        if (part.isAutomatic) return [];
+        const value: ApprovalValue = {
+          toolCallId: part.toolCall.toolCallId,
+          toolName: part.toolCall.toolName,
+          input: part.toolCall.input,
+          ...(part.reason ? { reason: part.reason } : {}),
+          state: "pending",
+        };
+        this.openText = undefined;
+        this.collected.parts.push({
+          type: "approval",
+          toolCallId: value.toolCallId,
+          toolName: value.toolName,
+          args: value.input,
+          ...(value.reason ? { text: value.reason } : {}),
+          state: "pending",
+        });
+        return [events.approval(value)];
+      }
+      case "tool-approval-response": {
+        if (!part.approved) this.refusals.set(part.toolCall.toolCallId, part.reason ?? "not done");
+        return [];
+      }
+      case "tool-output-denied": {
+        // A call refused before it ran: the model reads why, and so does the record.
+        const output = { error: this.refusals.get(part.toolCallId) ?? "not done" };
+        this.refusals.delete(part.toolCallId);
+        this.collected.toolResults.push({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          output,
+          isError: true,
+        });
+        this.collected.parts.push({
+          type: "tool_result",
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          result: output,
+        });
+        return [events.toolCallResult(this.newId(), part.toolCallId, JSON.stringify(output))];
       }
       case "tool-error": {
         const message = part.error instanceof Error ? part.error.message : String(part.error);
