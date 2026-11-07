@@ -352,6 +352,8 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 	}
 	out := &compiled{Custom: map[int]customOp{}, Outputs: []api.PortTable{}}
 	enabled := map[string]*api.WorkflowOperator{}
+	// The functions that may give other rows for the same input, by operator id.
+	nondeterministic := map[string]bool{}
 	plan := logicalPlan{Operators: []map[string]any{}, Links: []logicalLink{}, OpsToViewResult: []string{}, OpsToReuseResult: []string{}}
 	for i := range spec.Operators {
 		op := &spec.Operators[i]
@@ -373,6 +375,9 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 				return nil, err
 			}
 			operatorType, logical = custom.engineType, custom.logical
+			if custom.nondeterministic {
+				nondeterministic[op.OperatorID] = true
+			}
 			if custom.engineType == functionType {
 				// A function's settings are its arguments, so a secret goes where they are.
 				for i := range refs {
@@ -452,7 +457,7 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 		out.Shown[portKey(o.OperatorID, o.PortID)] = true
 		out.Outputs[i].Shown = &shown
 	}
-	out.Reusable = reusableOps(plan)
+	out.Reusable = reusableOps(plan, nondeterministic)
 	for _, logical := range plan.Operators {
 		id := opID(logical)
 		if !keptTypes[opType(logical)] || !out.Reusable[id] {
@@ -528,6 +533,8 @@ type compiledCustom struct {
 	logical    map[string]any
 	code       string
 	version    string
+	// nondeterministic: a function that may give other rows for the same input.
+	nondeterministic bool
 }
 
 // compileCustomOperator turns a custom operator, at the version its URI names, into the engine
@@ -591,7 +598,8 @@ func (s *Service) compileCustomOperator(ctx context.Context, name string, instan
 				args[k] = value
 			}
 		}
-		return &compiledCustom{engineType: functionType, logical: props, code: py.Code, version: version}, nil
+		nondeterministic := py.Nondeterministic != nil && *py.Nondeterministic
+		return &compiledCustom{engineType: functionType, logical: props, code: py.Code, version: version, nondeterministic: nondeterministic}, nil
 	}
 	// The engine's Python operator keeps the input columns and needs the added ones declared.
 	props := map[string]any{"code": customHeader(instance) + py.Code, "workers": 1, "retainInputColumns": true, "defaultEnv": true, "outputColumns": columns}

@@ -146,3 +146,54 @@ func TestARunReadsWhatAnEarlierRunOfTheSameWorkStored(t *testing.T) {
 		t.Fatalf("bob's run read what he may not: %v", ops)
 	}
 }
+
+// A function its code declares nondeterministic, as one that samples without a seed, gives
+// other rows for the same input: no run reuses its rows, nor those of anything after it, and no
+// run keeps them for a later one.
+func TestANondeterministicFunctionIsMadeAgainOnEveryRun(t *testing.T) {
+	h := newHarness(t)
+	ds := h.create("alice", "datasets", "iris", map[string]any{"format": "csv"})
+	h.mustJSON("alice", "PUT", p+"/datasets/"+rid(ds)+"/files/iris.csv", "Species,PetalLengthCm\nsetosa,1.4\n", nil)
+	h.mustJSON("alice", "POST", p+"/datasets/"+rid(ds)+"/commit", map[string]any{}, nil)
+	file := string(ds.Metadata.Uri) + "@1/files/iris.csv"
+
+	code := "@returns(Species=str, PetalLengthCm=float, nondeterministic=True)\ndef sample_rows(rows, *, n: int = 1):\n    return rows.sample(n)\n"
+	var fn envelope
+	h.mustJSON("alice", "POST", p+"/operators", map[string]any{"name": "sample rows", "spec": map[string]any{
+		"implementation": map[string]any{"python": map[string]any{"code": code, "function": "sample_rows"}},
+	}}, &fn)
+	var saved api.OperatorSpec
+	mustDecode(t, fn.Spec, &saved)
+	if py := saved.Implementation.Python; py.Nondeterministic == nil || !*py.Nondeterministic {
+		t.Fatalf("the saved function is not marked nondeterministic: %+v", py)
+	}
+
+	spec := overnightSpec(file)
+	ops := spec["operators"].([]any)
+	ops = append(ops[:1], append([]any{map[string]any{"operatorID": "sample", "operatorType": string(fn.Metadata.Uri) + "@1", "operatorProperties": map[string]any{"n": 1}}}, ops[1:]...)...)
+	spec["operators"] = ops
+	link := func(from, to string) map[string]any {
+		return map[string]any{"linkID": from + "-" + to, "source": map[string]any{"operatorID": from, "portID": "output-0"}, "target": map[string]any{"operatorID": to, "portID": "input-0"}}
+	}
+	spec["links"] = []any{link("readings", "sample"), link("sample", "lows"), link("lows", "many")}
+	wf := h.create("alice", "workflows", "sampled", spec)
+
+	exec1, _ := runOnUnit(t, h, "alice", rid(wf), map[string]any{})
+	for _, o := range planned(t, exec1).Plan.Outputs {
+		if o.OperatorID != "many" || o.Fingerprint != nil {
+			t.Fatalf("the run keeps or fingerprints what a later run may not reuse: %+v", o)
+		}
+	}
+	ns1 := "e_" + strings.ReplaceAll(rid(exec1), "-", "")
+	report(t, h, exec1, "many", map[string]any{"opid": "many", "state": "Completed", "rowsOut": 1}, map[string]map[string]any{"output-0": {"table": ns1 + ".many_output_0", "tupleCount": 1}})
+	finish(t, h, exec1, "completed")
+
+	exec2, start2 := runOnUnit(t, h, "alice", rid(wf), map[string]any{})
+	got := operatorsOf(start2)
+	if len(got) != 4 || got["sample"]["operatorType"] != "function" || got["lows"]["operatorType"] != "aggregate" {
+		t.Fatalf("the second run's plan: %v", got)
+	}
+	if spec2 := planned(t, exec2); spec2.Reused != nil && len(*spec2.Reused) > 0 {
+		t.Fatalf("the second run reused: %+v", *spec2.Reused)
+	}
+}

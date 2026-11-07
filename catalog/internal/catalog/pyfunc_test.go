@@ -99,22 +99,23 @@ def score(labs, readings, /, threshold: Optional[float] = None, *, units="mg/dL"
 
 func TestWhatIsWrongWithAFunctionIsSaidOnItsLine(t *testing.T) {
 	cases := map[string]string{
-		"def f(x):\n    return x\n":                                    "f has no @returns: name its output columns and their types above it, as @returns(patient_id=str, mean=float)",
-		"@returns(a=str)\ndef g(x):\n    return x\n":                   "the code has no function f at its top level",
-		"@returns(a=str)\ndef f(*tables):\n    return x\n":             "line 2: f takes no *tables: name each input and each setting",
-		"@returns(a=str)\ndef f(x, **options):\n    return x\n":        "line 2: f takes no **options: name each input and each setting",
-		"@returns(a=str)\ndef f(x, *, by=['a']):\n    return x\n":      "line 2: by is the setting that groups an operator's rows; name yours otherwise",
-		"@returns(a=str)\ndef f(x, *, n=len('a')):\n    return x\n":    "line 2: setting n: its default must be a number, text, True, False, None or a list of them",
-		"@returns(a=str)\ndef f(x, *, n):\n    return x\n":             "line 2: setting n: say its type, as n: int = 0",
-		"@returns(a=decimal)\ndef f(x):\n    return x\n":               `line 1: column a: "decimal" is not a column type; use str, int, float, bool or datetime`,
-		"@returns(a=str, a=int)\ndef f(x):\n    return x\n":            "line 1: column a is named twice",
-		"@returns()\ndef f(x):\n    return x\n":                        "line 1: @returns names no column; f's output needs at least one",
-		"@returns(str)\ndef f(x):\n    return x\n":                     "line 1: @returns names each column as name=type, as @returns(patient_id=str, mean=float)",
-		"@returns(a=str)\ndef f(*, n: int = 1):\n    return x\n":       "f reads no table: its first parameters are its inputs, as def f(readings, *, ...)",
-		"@returns(a=str)\ndef f(x='a', y):\n    return x\n":            "line 2: input y comes after a setting; inputs come first",
-		"@returns(a=str)\ndef f(x):\n    s = 'never closed\n":          "line 3: a string is not closed",
-		"class C:\n    @returns(a=str)\n    def f(x):\n        pass\n": "the code has no function f at its top level",
-		"s = \"def f(x):\"  # def f(x):\n":                             "the code has no function f at its top level",
+		"def f(x):\n    return x\n":                                      "f has no @returns: name its output columns and their types above it, as @returns(patient_id=str, mean=float)",
+		"@returns(a=str)\ndef g(x):\n    return x\n":                     "the code has no function f at its top level",
+		"@returns(a=str)\ndef f(*tables):\n    return x\n":               "line 2: f takes no *tables: name each input and each setting",
+		"@returns(a=str)\ndef f(x, **options):\n    return x\n":          "line 2: f takes no **options: name each input and each setting",
+		"@returns(a=str)\ndef f(x, *, by=['a']):\n    return x\n":        "line 2: by is the setting that groups an operator's rows; name yours otherwise",
+		"@returns(a=str)\ndef f(x, *, n=len('a')):\n    return x\n":      "line 2: setting n: its default must be a number, text, True, False, None or a list of them",
+		"@returns(a=str)\ndef f(x, *, n):\n    return x\n":               "line 2: setting n: say its type, as n: int = 0",
+		"@returns(a=decimal)\ndef f(x):\n    return x\n":                 `line 1: column a: "decimal" is not a column type; use str, int, float, bool or datetime`,
+		"@returns(a=str, a=int)\ndef f(x):\n    return x\n":              "line 1: column a is named twice",
+		"@returns()\ndef f(x):\n    return x\n":                          "line 1: @returns names no column; f's output needs at least one",
+		"@returns(str)\ndef f(x):\n    return x\n":                       "line 1: @returns names each column as name=type, as @returns(patient_id=str, mean=float)",
+		"@returns(a=str, nondeterministic=1)\ndef f(x):\n    return x\n": "line 1: @returns takes nondeterministic=True or nondeterministic=False",
+		"@returns(a=str)\ndef f(*, n: int = 1):\n    return x\n":         "f reads no table: its first parameters are its inputs, as def f(readings, *, ...)",
+		"@returns(a=str)\ndef f(x='a', y):\n    return x\n":              "line 2: input y comes after a setting; inputs come first",
+		"@returns(a=str)\ndef f(x):\n    s = 'never closed\n":            "line 3: a string is not closed",
+		"class C:\n    @returns(a=str)\n    def f(x):\n        pass\n":   "the code has no function f at its top level",
+		"s = \"def f(x):\"  # def f(x):\n":                               "the code has no function f at its top level",
 	}
 	for code, want := range cases {
 		_, err := parsePyFunction(code, "f")
@@ -156,6 +157,23 @@ func TestSavingAFunctionOperatorFillsItsSpecFromItsCode(t *testing.T) {
 	two, _ := json.Marshal(named["inputPorts"])
 	if named["operatorType"] != "CGM metrics" || named["description"] != "mine" || string(two) != `[{"displayName":"left","portID":"input-0"},{"displayName":"right","portID":"input-1"}]` {
 		t.Fatalf("named: %v %v %s", named["operatorType"], named["description"], two)
+	}
+	// What the code says of its determinism is what the spec says, whatever the request said.
+	sampled := map[string]any{"implementation": map[string]any{"python": map[string]any{
+		"code": "@returns(patient_id=str, glucose=float, nondeterministic=True)\ndef sample_readings(readings, *, n: int = 100):\n    return readings.sample(n)\n", "function": "sample_readings"}}}
+	if err := functionOperator(sampled); err != nil {
+		t.Fatal(err)
+	}
+	py := sampled["implementation"].(map[string]any)["python"].(map[string]any)
+	if py["nondeterministic"] != true || len(py["outputColumns"].([]any)) != 2 {
+		t.Fatalf("a sampling function: %v, columns %v", py["nondeterministic"], py["outputColumns"])
+	}
+	claimed := map[string]any{"implementation": map[string]any{"python": map[string]any{"code": cgmMetrics, "function": "cgm_metrics", "nondeterministic": true}}}
+	if err := functionOperator(claimed); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := claimed["implementation"].(map[string]any)["python"].(map[string]any)["nondeterministic"]; ok {
+		t.Fatalf("a function its code does not declare nondeterministic is marked so")
 	}
 	class := map[string]any{"implementation": map[string]any{"python": map[string]any{"code": "class X: pass"}}}
 	if err := functionOperator(class); err != nil || class["inputPorts"] != nil {

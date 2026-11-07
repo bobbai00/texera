@@ -31,6 +31,8 @@ export const operatorKind: KindSpec = {
     }) satisfies OperatorSpec,
   facts: r => {
     const spec = r.spec as Partial<OperatorSpec>;
-    return [spec.implementation ? "custom" : "engine", spec.group ?? ""].filter(Boolean);
+    // A function that may give other rows for the same input is made again on every run.
+    const fresh = spec.implementation?.python?.nondeterministic ? "nondeterministic" : "";
+    return [spec.implementation ? "custom" : "engine", spec.group ?? "", fresh].filter(Boolean);
   },
 };

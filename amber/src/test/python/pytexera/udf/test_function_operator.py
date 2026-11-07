@@ -186,3 +186,15 @@ class TestFunctionOperator:
             return rows
 
         assert f(1) == 1 and f.__texera_returns__ == {"n": int}
+        assert f.__texera_nondeterministic__ is False
+
+    def test_nondeterministic_is_a_mark_not_a_column(self):
+        @returns(patient_id=str, glucose=float, nondeterministic=True)
+        def sample_readings(readings, *, n: int = 100):
+            return readings
+
+        assert sample_readings.__texera_returns__ == {
+            "patient_id": str,
+            "glucose": float,
+        }
+        assert sample_readings.__texera_nondeterministic__ is True

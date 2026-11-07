@@ -27,6 +27,8 @@ model PythonOperator {
   function?: string;
   @doc("For a class, the columns the code adds to each tuple, declared so the engine can type the output; input columns pass through. For a function, every output column, read from its @returns.")
   outputColumns?: Attribute[];
+  @doc("For a function, read from `@returns(..., nondeterministic=True)`: it may give other rows for the same input, as a function that samples without a seed, reads the clock or calls out does. No run reuses its rows, nor those of anything after it.")
+  nondeterministic?: boolean;
 }
 
 model OperatorImplementation {

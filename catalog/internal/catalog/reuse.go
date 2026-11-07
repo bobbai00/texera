@@ -103,8 +103,9 @@ func (g planGraph) sourcePort(l logicalLink) string {
 
 // reusableOps are the operators whose rows a later run could reuse: of a reusable type and by
 // its rules, with every input reusable. A limit keeps the first rows to arrive, so only after a
-// sort; a distinct over some columns keeps the first row of each, so only over all of them.
-func reusableOps(plan logicalPlan) map[string]bool {
+// sort; a distinct over some columns keeps the first row of each, so only over all of them; a
+// function declared nondeterministic, never.
+func reusableOps(plan logicalPlan, nondeterministic map[string]bool) map[string]bool {
 	g := graphOf(plan)
 	out := map[string]bool{}
 	seen := map[string]bool{}
@@ -115,7 +116,7 @@ func reusableOps(plan logicalPlan) map[string]bool {
 		}
 		seen[id] = true
 		op := g.ops[id]
-		ok := reusableTypes[opType(op)]
+		ok := reusableTypes[opType(op)] && !nondeterministic[id]
 		switch opType(op) {
 		case "limit":
 			links := g.into[id]

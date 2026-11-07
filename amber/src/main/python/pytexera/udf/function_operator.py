@@ -38,15 +38,18 @@ from core.models import Table, TableLike
 from .udf_operator import UDFTableOperator
 
 
-def returns(**columns: Any) -> Callable:
+def returns(*, nondeterministic: bool = False, **columns: Any) -> Callable:
     """
     Name a function's output columns and their types: str, int, float, bool or datetime.
-    The catalog reads them from the code when the operator is saved; at run time the
-    function stays as it is.
+    With nondeterministic=True, say the function may give other rows for the same input,
+    as one that samples without a seed, reads the clock or calls out does: no run reuses
+    its rows. The catalog reads both from the code when the operator is saved; at run time
+    the function stays as it is.
     """
 
     def mark(function: Callable) -> Callable:
         function.__texera_returns__ = columns
+        function.__texera_nondeterministic__ = nondeterministic
         return function
 
     return mark

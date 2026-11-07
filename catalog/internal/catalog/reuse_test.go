@@ -46,11 +46,21 @@ func TestOnlyWhatDependsOnItsInputsAloneIsReusable(t *testing.T) {
 			lop("unique", "distinct", nil),
 			lop("udf", "PythonUDFV2", nil),
 			lop("after-udf", "filter", nil),
+			lop("metrics", functionType, nil),
+			lop("jitter", functionType, nil),
+			lop("after-jitter", "filter", nil),
 		},
-		Links: []logicalLink{llink("scan", "sorted", 0), llink("sorted", "top", 0), llink("scan", "some", 0), llink("scan", "one-each", 0), llink("scan", "unique", 0), llink("scan", "udf", 0), llink("udf", "after-udf", 0)},
+		Links: []logicalLink{
+			llink("scan", "sorted", 0), llink("sorted", "top", 0), llink("scan", "some", 0), llink("scan", "one-each", 0), llink("scan", "unique", 0),
+			llink("scan", "udf", 0), llink("udf", "after-udf", 0), llink("scan", "metrics", 0), llink("scan", "jitter", 0), llink("jitter", "after-jitter", 0),
+		},
 	}
-	got := reusableOps(plan)
-	want := map[string]bool{"scan": true, "sorted": true, "top": true, "some": false, "one-each": false, "unique": true, "udf": false, "after-udf": false}
+	// A function is reused unless it is declared nondeterministic; then neither is what follows it.
+	got := reusableOps(plan, map[string]bool{"jitter": true})
+	want := map[string]bool{
+		"scan": true, "sorted": true, "top": true, "some": false, "one-each": false, "unique": true, "udf": false, "after-udf": false,
+		"metrics": true, "jitter": false, "after-jitter": false,
+	}
 	for id, ok := range want {
 		if got[id] != ok {
 			t.Errorf("%s reusable: %v, want %v", id, got[id], ok)
@@ -60,26 +70,26 @@ func TestOnlyWhatDependsOnItsInputsAloneIsReusable(t *testing.T) {
 
 func TestTheSameWorkHasTheSameFingerprintWhereverItIsDone(t *testing.T) {
 	a, b := overnight(readings, "a-"), overnight(readings, "b-")
-	fa := fingerprints(a, reusableOps(a), "engine-1", "env-1")
-	fb := fingerprints(b, reusableOps(b), "engine-1", "env-1")
+	fa := fingerprints(a, reusableOps(a, nil), "engine-1", "env-1")
+	fb := fingerprints(b, reusableOps(b, nil), "engine-1", "env-1")
 	if fa["a-ranked/output-0"] == "" || fa["a-ranked/output-0"] != fb["b-ranked/output-0"] || fa["a-lows/output-0"] != fb["b-lows/output-0"] {
 		t.Fatalf("the same work under other ids: %v, %v", fa, fb)
 	}
 	// Another version of the file, another engine, another setting: other rows.
 	c := overnight(strings.Replace(readings, "@4", "@5", 1), "a-")
-	if fingerprints(c, reusableOps(c), "engine-1", "env-1")["a-scan/output-0"] == fa["a-scan/output-0"] {
+	if fingerprints(c, reusableOps(c, nil), "engine-1", "env-1")["a-scan/output-0"] == fa["a-scan/output-0"] {
 		t.Fatal("a new version of the file made the same scan")
 	}
-	if fingerprints(a, reusableOps(a), "engine-2", "env-1")["a-scan/output-0"] == fa["a-scan/output-0"] {
+	if fingerprints(a, reusableOps(a, nil), "engine-2", "env-1")["a-scan/output-0"] == fa["a-scan/output-0"] {
 		t.Fatal("another engine made the same scan")
 	}
 	// The Python environment is part only of what runs Python.
-	if fingerprints(a, reusableOps(a), "engine-1", "env-2")["a-ranked/output-0"] != fa["a-ranked/output-0"] {
+	if fingerprints(a, reusableOps(a, nil), "engine-1", "env-2")["a-ranked/output-0"] != fa["a-ranked/output-0"] {
 		t.Fatal("the packages changed a sort")
 	}
 	d := overnight(readings, "a-")
 	d.Operators[2]["outputs"] = []any{"n = count(*)", "lows = count_if(glucose < 70)"}
-	fd := fingerprints(d, reusableOps(d), "engine-1", "env-1")
+	fd := fingerprints(d, reusableOps(d, nil), "engine-1", "env-1")
 	if fd["a-night/output-0"] != fa["a-night/output-0"] || fd["a-lows/output-0"] == fa["a-lows/output-0"] || fd["a-ranked/output-0"] == fa["a-ranked/output-0"] {
 		t.Fatal("a changed aggregate should change it and what reads it, and nothing before it")
 	}
@@ -91,7 +101,7 @@ func compiledOf(plan logicalPlan, shown ...string) *compiled {
 		c.Shown[portKey(id, "output-0")] = true
 		c.Outputs = append(c.Outputs, api.PortTable{OperatorID: id, PortID: "output-0", Table: tableName(id, "output-0")})
 	}
-	c.Reusable = reusableOps(plan)
+	c.Reusable = reusableOps(plan, nil)
 	for _, op := range plan.Operators {
 		if keptTypes[opType(op)] && !c.Shown[portKey(opID(op), "output-0")] {
 			c.Outputs = append(c.Outputs, api.PortTable{OperatorID: opID(op), PortID: "output-0", Table: tableName(opID(op), "output-0")})

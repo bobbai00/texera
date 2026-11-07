@@ -63,7 +63,9 @@ const PYTHON_DOC =
   "Python functions the lines call, as one module. Each top-level function under @returns(column=type, ...) " +
   "becomes one of the project's operators, a new version when its code changed: its positional parameters " +
   "are its inputs, one table each, and its parameters with defaults its settings. A line calls it by its name, " +
-  'with by=["patient_id"] to call it once per worker on whole groups: set m: cgm_metrics(night, by=["patient_id"], low=70).';
+  'with by=["patient_id"] to call it once per worker on whole groups: set m: cgm_metrics(night, by=["patient_id"], low=70). ' +
+  "A function that may give other rows for the same input (it samples without a seed, reads the clock or calls out) " +
+  "adds nondeterministic=True to its @returns, so no run reuses its rows.";
 
 const UNIT_DOC =
   "The computing unit its runs and compiles go to when a call names none, as texera://computing-units/<rid>: " +

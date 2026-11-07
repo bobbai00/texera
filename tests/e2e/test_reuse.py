@@ -1,7 +1,8 @@
 """A run reads what an earlier run of the same work stored instead of making it again. The
 costly step, a team's function, runs once: a second run reads its rows from the first and does
 not scan the file, changing the last step makes only that step again, and a fresh run makes
-everything. The rows are the same each way."""
+everything. The rows are the same each way. A function that draws at random says so, and runs
+again every time."""
 import time
 
 from texera_e2e import workflows as w
@@ -17,6 +18,16 @@ def slow_summary(readings: pd.DataFrame, *, pause: float = 4.0) -> pd.DataFrame:
     time.sleep(pause)
     g = readings.groupby("patient_id")["glucose"]
     return pd.DataFrame({"readings": g.size(), "mean_glucose": g.mean()}).reset_index()
+'''
+
+
+SAMPLED = '''import pandas as pd
+
+
+@returns(patient_id=str, glucose=float, nondeterministic=True)
+def some_readings(readings: pd.DataFrame, *, n: int = 10) -> pd.DataFrame:
+    """Readings drawn at random, so each run may draw others."""
+    return readings.sample(n=n)[["patient_id", "glucose"]].astype({"glucose": float})
 '''
 
 
@@ -81,3 +92,26 @@ def test_a_run_reads_the_costly_rows_an_earlier_run_stored(alice, project, unit)
     fresh, _ = timed_run(alice, rid, unit, fresh=True)
     assert "reused" not in fresh["spec"] and "skipped" not in fresh["spec"]
     assert rows_of(alice, rid, fresh) == rows_of(alice, rid, third)
+
+
+def test_a_function_that_draws_at_random_runs_again_every_time(alice, project, unit):
+    ds = alice.create("datasets", "cgm", {"format": "csv"}, project=project)
+    alice.upload(f"/datasets/{ds['metadata']['rid']}/files/cgm.csv", readings_csv())
+    alice.post(f"/datasets/{ds['metadata']['rid']}/commit", {})
+    draw = alice.create("operators", "some readings", {"implementation": {"python": {"code": SAMPLED, "function": "some_readings"}}}, project=project)
+    assert draw["spec"]["implementation"]["python"]["nondeterministic"] is True
+    spec = {
+        "operators": [
+            op("readings", "scan", file=f"{ds['metadata']['uri']}@1/files/cgm.csv"),
+            op("draw", f"{draw['metadata']['uri']}@1", n=10),
+            op("top", "aggregate", by=["patient_id"], outputs=["n = count(*)"]),
+        ],
+        "links": [link("readings", "draw"), link("draw", "top")],
+    }
+    rid = alice.create("workflows", "draws", spec, project=project)["metadata"]["rid"]
+
+    first, _ = timed_run(alice, rid, unit)
+    second, _ = timed_run(alice, rid, unit)
+    # Neither the draw nor the aggregate after it is read from the first run.
+    assert "reused" not in second["spec"] and "skipped" not in second["spec"], second["spec"]
+    assert sum(n for _, n in rows_of(alice, rid, first)) == sum(n for _, n in rows_of(alice, rid, second)) == 10

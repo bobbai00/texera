@@ -8,7 +8,8 @@ package catalog
 //
 // Its positional parameters are its inputs, one table each; its parameters with defaults, and
 // those after a bare *, are its settings; its docstring is its description; @returns names its
-// output columns and their types. The catalog reads them from the code when the operator is
+// output columns and their types, and with nondeterministic=True says the function may give
+// other rows for the same input. The catalog reads them from the code when the operator is
 // saved, so every client that saves the code gets the same operator.
 
 import (
@@ -27,6 +28,8 @@ type pyFunction struct {
 	Inputs   []string
 	Settings []pySetting
 	Returns  []api.Attribute
+	// Nondeterministic: the function may give other rows for the same input.
+	Nondeterministic bool
 }
 
 // pySetting is one of a function's settings, as a JSON Schema property.
@@ -228,7 +231,7 @@ func parsePyFunction(code, name string) (*pyFunction, error) {
 	for i := at - 1; i >= 0 && lines[i].col == 0 && lines[i].tokens[0].text == "@"; i-- {
 		d := lines[i].tokens
 		if len(d) >= 3 && d[1].text == "returns" && d[2].text == "(" {
-			if fn.Returns, err = parseReturns(d[3:], name); err != nil {
+			if err := fn.readReturns(d[3:]); err != nil {
 				return nil, fmt.Errorf("line %d: %w", d[0].line, err)
 			}
 			found = true
@@ -356,11 +359,12 @@ var pyColumnTypes = map[string]string{
 	"datetime": "timestamp", "datetime.datetime": "timestamp", "Timestamp": "timestamp", "pd.Timestamp": "timestamp", "pandas.Timestamp": "timestamp", "timestamp": "timestamp",
 }
 
-// parseReturns reads `name=type, ...)` of @returns, in order.
-func parseReturns(tokens []pyToken, fn string) ([]api.Attribute, error) {
+// readReturns reads `name=type, ...)` of @returns, the columns in order, and its
+// nondeterministic=True or False.
+func (fn *pyFunction) readReturns(tokens []pyToken) error {
 	parts, err := splitTop(tokens, ")")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var out []api.Attribute
 	seen := map[string]bool{}
@@ -369,7 +373,14 @@ func parseReturns(tokens []pyToken, fn string) ([]api.Attribute, error) {
 			continue
 		}
 		if len(p) < 3 || p[0].kind != "name" || p[1].text != "=" {
-			return nil, fmt.Errorf("@returns names each column as name=type, as @returns(patient_id=str, mean=float)")
+			return fmt.Errorf("@returns names each column as name=type, as @returns(patient_id=str, mean=float)")
+		}
+		if p[0].text == "nondeterministic" {
+			if len(p) != 3 || (p[2].text != "True" && p[2].text != "False") {
+				return fmt.Errorf("@returns takes nondeterministic=True or nondeterministic=False")
+			}
+			fn.Nondeterministic = p[2].text == "True"
+			continue
 		}
 		var typ string
 		if p[2].kind == "string" && len(p) == 3 {
@@ -383,18 +394,19 @@ func parseReturns(tokens []pyToken, fn string) ([]api.Attribute, error) {
 		}
 		t, ok := pyColumnTypes[typ]
 		if !ok {
-			return nil, fmt.Errorf("column %s: %q is not a column type; use str, int, float, bool or datetime", p[0].text, typ)
+			return fmt.Errorf("column %s: %q is not a column type; use str, int, float, bool or datetime", p[0].text, typ)
 		}
 		if seen[p[0].text] {
-			return nil, fmt.Errorf("column %s is named twice", p[0].text)
+			return fmt.Errorf("column %s is named twice", p[0].text)
 		}
 		seen[p[0].text] = true
 		out = append(out, api.Attribute{AttributeName: p[0].text, AttributeType: t})
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("@returns names no column; %s's output needs at least one", fn)
+		return fmt.Errorf("@returns names no column; %s's output needs at least one", fn.Name)
 	}
-	return out, nil
+	fn.Returns = out
+	return nil
 }
 
 // pySettingOf is a setting's JSON Schema property: its type from its annotation, else from its
@@ -570,7 +582,7 @@ func docstring(s string) string {
 }
 
 // functionOperator fills a function operator's spec from its code: its ports, its settings,
-// its output columns and, unless it has one, its description.
+// its output columns, whether it is nondeterministic and, unless it has one, its description.
 func functionOperator(doc map[string]any) error {
 	impl, _ := doc["implementation"].(map[string]any)
 	py, _ := impl["python"].(map[string]any)
@@ -624,5 +636,11 @@ func functionOperator(doc map[string]any) error {
 		columns[i] = map[string]any{"attributeName": a.AttributeName, "attributeType": a.AttributeType}
 	}
 	py["outputColumns"] = columns
+	// What the code says, whatever the request said.
+	if fn.Nondeterministic {
+		py["nondeterministic"] = true
+	} else {
+		delete(py, "nondeterministic")
+	}
 	return nil
 }
