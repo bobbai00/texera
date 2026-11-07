@@ -39,9 +39,12 @@ const errorText = (e: unknown): string => {
   return "Error";
 };
 
-/** The schema of an output port; the engine keys ports as `<id>_false`, the catalog may key them `<id>`. */
+/**
+ * The schema of an output port: the catalog keys ports by their id (`output-0`), as the
+ * contract says; the engine's own forms (`0_false`, `0`) are read too.
+ */
 const portSchema = (ports: Record<string, Attribute[] | null> | undefined, id: number) =>
-  ports?.[`${id}_false`] ?? ports?.[String(id)] ?? undefined;
+  ports?.[`output-${id}`] ?? ports?.[`${id}_false`] ?? ports?.[String(id)] ?? undefined;
 
 export function interpret(plan: LogicalPlan, result: Pick<CompileResult, "operatorOutputSchemas" | "operatorErrors">): Compilation {
   const schemas = result.operatorOutputSchemas ?? {};
@@ -55,6 +58,20 @@ export function interpret(plan: LogicalPlan, result: Pick<CompileResult, "operat
   const outputs: Compilation["outputs"] = {};
   for (const [opId, ports] of Object.entries(schemas)) outputs[opId] = portSchema(ports, 0) ?? undefined;
   const errors: Compilation["errors"] = {};
-  for (const [opId, e] of Object.entries(result.operatorErrors ?? {})) errors[opId] = readableError(errorText(e));
+  for (const [opId, e] of Object.entries(result.operatorErrors ?? {})) {
+    const text = errorText(e);
+    // The engine says an input has no columns; the plan says whether that is a link missing.
+    errors[opId] = /schema is not available/i.test(text) ? missingInput(plan, opId) : readableError(text);
+  }
   return { inputs, outputs, errors };
+}
+
+/** Why an operator's input has no columns, in words: an input not linked, or what feeds it not ready. */
+function missingInput(plan: LogicalPlan, opId: string): string {
+  const ports = plan.inputCounts?.[opId] ?? 1;
+  const linked = new Set(plan.links.filter(l => l.toOpId === opId).map(l => l.toPortId.id));
+  const open = Array.from({ length: ports }, (_, i) => i).filter(i => !linked.has(i)).length;
+  if (open === 0) return "Waits for its input: fix the operator before it.";
+  if (open === ports) return ports > 1 ? "Needs its inputs: link an operator to each of them." : "Needs an input: link an operator to it.";
+  return "Needs another input: link an operator to each of its inputs.";
 }

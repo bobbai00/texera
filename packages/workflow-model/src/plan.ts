@@ -19,6 +19,8 @@ export interface LogicalLink {
 export interface LogicalPlan {
   operatorIds: string[];
   links: LogicalLink[];
+  /** How many input ports each operator has, so a compilation can say which are not linked. */
+  inputCounts?: Record<string, number>;
 }
 
 /** The enabled part of the workflow, with links by port position. */
@@ -29,6 +31,7 @@ export function logicalPlan(spec: WorkflowSpec): LogicalPlan {
     byId.get(opId)?.[side]?.findIndex(p => p.portID === portId) ?? -1;
   return {
     operatorIds: operators.map(o => o.operatorID),
+    inputCounts: Object.fromEntries(operators.map(o => [o.operatorID, o.inputPorts?.length ?? 0])),
     links: links.map(l => ({
       fromOpId: l.source.operatorID,
       fromPortId: { id: ordinal(l.source.operatorID, l.source.portID, "outputPorts"), internal: false },

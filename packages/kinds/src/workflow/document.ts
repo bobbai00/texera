@@ -3,7 +3,7 @@
 // and the live service saves it into the catalog's versions. An older version is only looked
 // at: the same interface over a spec that never changes.
 
-import { applyChange, movePositions, type Positions, positionsOf, readSaveAnswer, type SaveAnswer, saveRequest, specOf, standingIn, type WorkflowSpec } from "@texera/workflow-model";
+import { applyChange, historyOf, movePositions, type Positions, positionsOf, readSaveAnswer, type SaveAnswer, saveRequest, specOf, standingIn, type WorkflowSpec } from "@texera/workflow-model";
 import type * as Y from "yjs";
 import type { Room } from "../live/room";
 
@@ -12,6 +12,18 @@ import type { Room } from "../live/room";
  * right now, or with the session but not taken by the catalog as a version.
  */
 export type SyncState = "saved" | "pending" | "offline" | "refused";
+
+/** What this person did to the document, to take back and do again; what others did stays. */
+export interface History {
+  undo(): void;
+  redo(): void;
+  canUndo(): boolean;
+  canRedo(): boolean;
+  /** Calls back whenever what can be taken back or done again changes. */
+  watch(listener: () => void): () => void;
+  /** Stops recording: the view is gone. */
+  destroy(): void;
+}
 
 export interface WorkflowDocument {
   /** The spec it holds; operators and links it shares with `previous` come in that order. */
@@ -29,6 +41,27 @@ export interface WorkflowDocument {
   watchState(listener: () => void): () => void;
   /** Resolves once the catalog has a version of everything written here, with that version's number. */
   settle(): Promise<number | undefined>;
+  /** This person's edits, to take back; none for a version that is only shown. */
+  history?: History;
+}
+
+/** A Yjs document's history of this person's edits. */
+export function historyIn(doc: Y.Doc): History {
+  const manager = historyOf(doc);
+  const events = ["stack-item-added", "stack-item-popped", "stack-cleared"] as const;
+  return {
+    undo: () => void manager.undo(),
+    redo: () => void manager.redo(),
+    canUndo: () => manager.canUndo(),
+    canRedo: () => manager.canRedo(),
+    watch: listener => {
+      for (const event of events) manager.on(event, listener);
+      return () => {
+        for (const event of events) manager.off(event, listener);
+      };
+    },
+    destroy: () => manager.destroy(),
+  };
 }
 
 /** A Yjs document as a workflow's document: the part that needs no connection. */
@@ -86,6 +119,7 @@ export function liveDocument(room: Room): WorkflowDocument {
     });
   return {
     ...documentOf(room.document),
+    history: historyIn(room.document),
     state,
     refusal,
     watchState,

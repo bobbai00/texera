@@ -34,6 +34,11 @@ export interface EditorState {
   refusal?: string;
   /** Why a new name was not saved. */
   saveError?: string;
+  /** Whether this person has an edit to take back, or one taken back to do again. */
+  canUndo: boolean;
+  canRedo: boolean;
+  undo: () => void;
+  redo: () => void;
   edit: (change: (spec: WorkflowSpec) => WorkflowSpec) => void;
   move: (moves: Record<string, Point>) => void;
   rename: (name: string) => void;
@@ -73,6 +78,7 @@ export function createEditorStore(workflow: OpenWorkflow, document: WorkflowDocu
         set({ spec, positions: placeMissing(spec, document.positions()) });
       }),
       document.watchState(() => set({ saveState: document.state(), refusal: document.refusal() })),
+      document.history?.watch(() => set({ canUndo: !!document.history?.canUndo(), canRedo: !!document.history?.canRedo() })) ?? (() => undefined),
     ];
     return {
       rid: workflow.rid,
@@ -84,6 +90,14 @@ export function createEditorStore(workflow: OpenWorkflow, document: WorkflowDocu
       selected: null,
       saveState: document.state(),
       refusal: document.refusal(),
+      canUndo: false,
+      canRedo: false,
+      undo: () => {
+        if (!get().readonly) document.history?.undo();
+      },
+      redo: () => {
+        if (!get().readonly) document.history?.redo();
+      },
       edit: change => {
         if (get().readonly) return;
         const next = change(get().spec);
@@ -103,6 +117,7 @@ export function createEditorStore(workflow: OpenWorkflow, document: WorkflowDocu
       flush: () => document.settle(),
       close: () => {
         for (const unsubscribe of stop) unsubscribe();
+        document.history?.destroy();
       },
     };
   });

@@ -39,11 +39,13 @@ export interface CanvasViewState {
   map: boolean;
   /** The operator whose settings are open in its card. */
   editing: string | null;
+  /** Whether the card open was just made: its first setting takes the keyboard. */
+  fresh: boolean;
   /** The result on screen under the canvas, by its port's key. */
   result: string | null;
   setDensity: (density: Density) => void;
   setMap: (open: boolean) => void;
-  edit: (operatorID: string | null) => void;
+  edit: (operatorID: string | null, fresh?: boolean) => void;
   show: (result: string | null) => void;
 }
 
@@ -54,6 +56,7 @@ export function createCanvasView(): CanvasView {
     density: remembered(DENSITY_KEY) === "detailed" ? "detailed" : "compact",
     map: remembered(MAP_KEY) === "open",
     editing: null,
+    fresh: false,
     result: null,
     setDensity: density => {
       remember(DENSITY_KEY, density);
@@ -63,7 +66,7 @@ export function createCanvasView(): CanvasView {
       remember(MAP_KEY, open ? "open" : "closed");
       set({ map: open });
     },
-    edit: operatorID => set({ editing: operatorID }),
+    edit: (operatorID, fresh = false) => set({ editing: operatorID, fresh: operatorID !== null && fresh }),
     show: result => set({ result }),
   }));
 }

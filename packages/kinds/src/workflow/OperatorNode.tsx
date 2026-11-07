@@ -41,7 +41,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { memo, type ReactElement, useMemo } from "react";
+import { memo, type ReactElement, useEffect, useMemo, useRef } from "react";
 import { useStore } from "zustand";
 import { toneOf } from "./Cursors";
 import { type Canvas, useCanvas } from "./canvas-view";
@@ -466,12 +466,37 @@ function Editor({
   data: OperatorNodeType["data"];
 }) {
   const operator = useStore(editor, s => s.spec.operators.find(o => o.operatorID === id));
+  const box = useRef<HTMLDivElement>(null);
+  // An open card takes the keyboard, so a key pressed in it is the card's: Backspace deletes a
+  // character, never the operator. A card just made puts it in its first setting, to be set.
+  // A card is drawn hidden until the canvas has measured it, and hidden things take no focus,
+  // so this tries again for a few frames until the card has it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once, as the card opens
+  useEffect(() => {
+    const fresh = canvas.view.getState().fresh;
+    let frame = 0;
+    const take = (tries: number) => {
+      const card = box.current;
+      if (!card || card.contains(document.activeElement)) return;
+      const field = fresh
+        ? card.querySelector<HTMLElement>("form input:not([type=checkbox]), form textarea, form select")
+        : null;
+      (field ?? card).focus({ preventScroll: true });
+      if (!card.contains(document.activeElement) && tries > 0) frame = requestAnimationFrame(() => take(tries - 1));
+    };
+    take(20);
+    return () => cancelAnimationFrame(frame);
+  }, []);
   if (!operator) return null;
   const schema = canvas.schemas?.get(operator.operatorType);
   const { edit } = editor.getState();
   return (
-    // Typing, selecting and scrolling inside the form are the form's, not the canvas's.
-    <div className="nodrag nopan nowheel cursor-default" data-operator-editor={operator.operatorType}>
+    // Typing, selecting, scrolling and keys inside the form are the form's, not the canvas's.
+    <div
+      ref={box}
+      tabIndex={-1}
+      className="nodrag nopan nowheel nokey cursor-default outline-none"
+      data-operator-editor={operator.operatorType}>
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <OperatorIcon type={operator.operatorType} />
         <div className="min-w-0 flex-1">

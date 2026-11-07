@@ -155,6 +155,18 @@ export function specOf(doc: Y.Doc, previous?: WorkflowSpec): WorkflowSpec {
   return spec;
 }
 
+/**
+ * What a person did to a document, to take back and do again: their own edits and moves, the
+ * ones written here with no origin, never what arrived from someone else or from the session.
+ * Typing in a setting is one step until it pauses.
+ */
+export function historyOf(doc: Y.Doc): Y.UndoManager {
+  return new Y.UndoManager([doc.getMap(OPERATORS), doc.getMap(LINKS), doc.getMap(SETTINGS), doc.getMap(POSITIONS)], {
+    captureTimeout: 500,
+    trackedOrigins: new Set([null]),
+  });
+}
+
 /** Where each operator sits, for the ones somebody or the layout has placed. */
 export function positionsOf(doc: Y.Doc): Positions {
   return doc.getMap<Point>(POSITIONS).toJSON() as Positions;

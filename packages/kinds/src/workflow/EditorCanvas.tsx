@@ -31,7 +31,7 @@ import {
   useStoreApi,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { LayoutGrid, Plus, X } from "lucide-react";
+import { LayoutGrid, Plus, Redo2, Undo2, X } from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { operatorSchemasQuery } from "../queries";
@@ -49,6 +49,11 @@ import { OPERATOR_DRAG_TYPE, OperatorPalette } from "./OperatorPalette";
 import { roomFor } from "./room";
 
 const FIT_UP_TO = 60;
+
+/** Whether a key goes to something the person types in, which keeps its own undo. */
+const typing = (target: EventTarget | null) =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || !!target.closest(".cm-editor"));
 const EDITOR_VIEWPORT = { x: 40, y: 40, zoom: 1 };
 
 /**
@@ -76,6 +81,8 @@ export function EditorCanvas({
   const positions = useStore(store, s => s.positions);
   const selected = useStore(store, s => s.selected);
   const readonly = useStore(store, s => s.readonly);
+  const canUndo = useStore(store, s => s.canUndo);
+  const canRedo = useStore(store, s => s.canRedo);
   const editing = useStore(view, s => s.editing);
   const density = useStore(view, s => s.density);
   const [fitOnOpen] = useState(() => store.getState().spec.operators.length <= FIT_UP_TO);
@@ -85,7 +92,7 @@ export function EditorCanvas({
   );
   const wrapper = useRef<HTMLDivElement>(null);
   const userMoved = useRef(false);
-  const { screenToFlowPosition, setCenter, getViewport } = useReactFlow();
+  const { screenToFlowPosition, setCenter, getViewport, getNodes, getEdges } = useReactFlow();
   const flowStore = useStoreApi();
   const frame = useFrame(view);
   const measured = useNodesInitialized();
@@ -111,6 +118,50 @@ export function EditorCanvas({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [editing, view]);
+  // Delete or Backspace removes what is picked on the canvas, several cards and arrows at once,
+  // in one edit (one step to take back). The canvas says it here rather than through React
+  // Flow's own key, which missed the first press after a modifier key (a Ctrl or Cmd click).
+  // Keys pressed in a text field, or in an open card, are theirs.
+  useEffect(() => {
+    if (readonly) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key !== "Delete" && e.key !== "Backspace") || e.metaKey || e.ctrlKey || e.altKey || typing(e.target))
+        return;
+      // Only a key pressed on the canvas (or with nothing else focused) is the canvas's.
+      const onCanvas =
+        e.target === document.body || (e.target instanceof Node && !!wrapper.current?.contains(e.target));
+      if (!onCanvas || (e.target instanceof HTMLElement && e.target.closest(".nokey"))) return;
+      const nodes = getNodes()
+        .filter(n => n.selected)
+        .map(n => n.id);
+      const links = getEdges()
+        .filter(l => l.selected)
+        .map(l => l.id);
+      if (!nodes.length && !links.length) return;
+      e.preventDefault();
+      if (nodes.includes(view.getState().editing ?? "")) view.getState().edit(null);
+      store.getState().select(null);
+      store.getState().edit(cur => deleteOperators(deleteLinks(cur, links), nodes));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [readonly, getNodes, getEdges, store, view]);
+  // Cmd/Ctrl+Z takes back this person's last edit and Shift+Cmd/Ctrl+Z (or Ctrl+Y) does it
+  // again; what others did stays. In a text field the keys are the field's own.
+  useEffect(() => {
+    if (readonly) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || typing(e.target)) return;
+      const key = e.key.toLowerCase();
+      const redo = (key === "z" && e.shiftKey) || (key === "y" && e.ctrlKey && !e.metaKey);
+      if (key !== "z" && !redo) return;
+      e.preventDefault();
+      if (redo) store.getState().redo();
+      else store.getState().undo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [readonly, store]);
   // The card open for editing, as it is drawn: the cards under it make room for it.
   const openWidth = useFlowStore(s => (editing ? (s.nodeLookup.get(editing)?.measured.width ?? 0) : 0));
   const openHeight = useFlowStore(s => (editing ? (s.nodeLookup.get(editing)?.measured.height ?? 0) : 0));
@@ -141,13 +192,16 @@ export function EditorCanvas({
   );
 
   // The store is the truth of the workflow; React Flow keeps what it measured, what is being
-  // dragged and what is picked. The store's pick is put onto the canvas only when the store
-  // changed it (an operator just added is picked): a pick made on the canvas is the canvas's
-  // until it has told the store, and the two must not answer each other.
+  // dragged and what is picked. The store's pick is put onto the canvas only when the app
+  // changed it (an operator just added is picked): a pick made on the canvas is the canvas's,
+  // several cards at once included, which the store knows as no single one. What the canvas
+  // last told the store is remembered, so the store's answer is not taken for a new pick.
   const picked = useRef(selected);
+  const fromCanvas = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    const told = picked.current !== selected;
+    const told = picked.current !== selected && selected !== fromCanvas.current;
     picked.current = selected;
+    fromCanvas.current = undefined;
     setNodes(previous => {
       const before = new Map(previous.map(n => [n.id, n]));
       return flow.nodes.map(n => {
@@ -202,8 +256,8 @@ export function EditorCanvas({
       store.getState().move({ [op.operatorID]: spot });
       edit(cur => addOperator(cur, op));
       store.getState().select(op.operatorID);
-      // A new operator is there to be set.
-      view.getState().edit(op.operatorID);
+      // A new operator is there to be set: its card opens with its first setting ready to type in.
+      view.getState().edit(op.operatorID, true);
       return spread({ at: spot }, k).at;
     },
     [schemas, store, edit, view, k, mine]
@@ -243,7 +297,9 @@ export function EditorCanvas({
   const onSelectionChange = useCallback(
     ({ nodes: chosen }: OnSelectionChangeParams) => {
       const id = chosen.length === 1 ? (chosen[0]?.id ?? null) : null;
-      if (id !== store.getState().selected) store.getState().select(id);
+      if (id === store.getState().selected) return;
+      fromCanvas.current = id;
+      store.getState().select(id);
     },
     [store]
   );
@@ -280,22 +336,6 @@ export function EditorCanvas({
                   )
                 )
             }
-            onNodesDelete={deleted =>
-              edit(cur =>
-                deleteOperators(
-                  cur,
-                  deleted.map(n => n.id)
-                )
-              )
-            }
-            onEdgesDelete={deleted =>
-              edit(cur =>
-                deleteLinks(
-                  cur,
-                  deleted.map(e => e.id)
-                )
-              )
-            }
             onSelectionChange={onSelectionChange}
             // A click on a card shows its result, when the execution on screen kept one.
             onNodeClick={(_, node) => {
@@ -316,7 +356,8 @@ export function EditorCanvas({
             onPointerLeave={() => point(null)}
             nodesDraggable={!readonly}
             nodesConnectable={!readonly}
-            deleteKeyCode={readonly ? null : ["Backspace", "Delete"]}
+            // Deleting is the canvas's own key handling, above.
+            deleteKeyCode={null}
             defaultViewport={EDITOR_VIEWPORT}
             minZoom={0.1}
             colorMode={dark ? "dark" : "light"}>
@@ -332,6 +373,30 @@ export function EditorCanvas({
                   data-add-operator>
                   {paletteOpen ? <X /> : <Plus />} {paletteOpen ? "Close" : "Add operator"}
                 </Button>
+              )}
+              {!readonly && (
+                <span className="flex items-center rounded-md border bg-background shadow-xs" data-history>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Undo"
+                    title="Undo your last change (Ctrl+Z)"
+                    disabled={!canUndo}
+                    onClick={() => store.getState().undo()}
+                    data-undo>
+                    <Undo2 />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Redo"
+                    title="Redo (Ctrl+Shift+Z)"
+                    disabled={!canRedo}
+                    onClick={() => store.getState().redo()}
+                    data-redo>
+                    <Redo2 />
+                  </Button>
+                </span>
               )}
               <DensityToggle view={view} />
               {!readonly && spec.operators.length > 1 && (

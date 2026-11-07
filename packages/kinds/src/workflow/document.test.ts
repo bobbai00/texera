@@ -96,6 +96,37 @@ describe("the document of a workflow's live session", () => {
     expect(await settled).toBe(7);
   });
 
+  it("takes back this person's own edits and moves, and does them again; what others did stays", () => {
+    const live = session();
+    const doc = live.room.document;
+    const base = { operators: [{ operatorID: "scan", operatorType: "CSVFileScan", operatorProperties: {} }], links: [] };
+    // What the session loaded, and what another person did, arrive from the provider.
+    const provider = { remote: true };
+    applySpec(doc, base, provider);
+    const document = liveDocument(live.room);
+    const history = document.history;
+    expect(history?.canUndo()).toBe(false);
+    let told = 0;
+    history?.watch(() => told++);
+    const withLimit = { ...base, operators: [...base.operators, { operatorID: "limit", operatorType: "Limit", operatorProperties: { limit: 5 } }] };
+    document.change(base, withLimit);
+    document.move({ limit: { x: 300, y: 40 } });
+    // Someone else's edit, after this person's: undo leaves it in place.
+    applySpec(doc, { ...withLimit, operators: withLimit.operators.map(o => (o.operatorID === "scan" ? { ...o, customDisplayName: "theirs" } : o)) }, provider);
+    expect(history?.canUndo()).toBe(true);
+    expect(told).toBeGreaterThan(0);
+    history?.undo();
+    const back = document.spec();
+    expect(back.operators.map(o => o.operatorID)).toEqual(["scan"]);
+    expect(back.operators[0]?.customDisplayName).toBe("theirs");
+    expect(document.positions().limit).toBeUndefined();
+    expect(history?.canRedo()).toBe(true);
+    history?.redo();
+    expect(document.spec().operators.map(o => o.operatorID).sort()).toEqual(["limit", "scan"]);
+    expect(document.positions().limit).toEqual({ x: 300, y: 40 });
+    history?.destroy();
+  });
+
   it("does not settle on a workflow the catalog would not take: it says why", async () => {
     const live = session();
     const settled = liveDocument(live.room).settle();

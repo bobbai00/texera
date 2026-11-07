@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { api, type Caller, cleanups, discard, editOperator, type Envelope, IRIS_CSV, operatorCard, pick, signIn, tidyUp } from "./support";
+import { api, type Caller, cleanups, discard, editOperator, type Envelope, IRIS_CSV, operatorCard, operatorList, pick, signIn, tidyUp } from "./support";
 
 // The canvas: an operator is a card that says how it is set, in one line or with every setting
 // on its own, and is edited in place, the cards under it making room; arrows are curves. Each
@@ -57,7 +57,14 @@ async function overlap(a: Locator, b: Locator) {
 
 /** The operators of a workflow as the catalog has it now. */
 const operatorsOf = async (alice: Caller, rid: string) =>
-  (await alice("GET", `/workflows/${rid}`)).spec.operators as { operatorID: string; customDisplayName?: string; viewResult?: boolean; isDisabled?: boolean }[];
+  (await alice("GET", `/workflows/${rid}`)).spec.operators as {
+    operatorID: string;
+    operatorType: string;
+    operatorProperties: Record<string, unknown>;
+    customDisplayName?: string;
+    viewResult?: boolean;
+    isDisabled?: boolean;
+  }[];
 
 test("an operator is a card that says its settings, keeps its result at a click on its eye, and is edited in place", async ({ page, request }) => {
   const alice = await api(request);
@@ -136,6 +143,91 @@ test("an operator is a card that says its settings, keeps its result at a click 
   await page.locator('[data-operator-menu="delete"]').click();
   await expect(most).toHaveCount(0);
   await expect.poll(async () => (await operatorsOf(alice, rid)).map(o => o.operatorID).sort(), { timeout: 20_000 }).toEqual(["avg", "scan"]);
+});
+
+test("several cards are picked at once and go with one key, and Ctrl+Z brings them back with their arrows", async ({ page, request }) => {
+  const alice = await api(request);
+  const { rid } = await irisWorkflow(alice, "pick several", { beside: true });
+  await signIn(page);
+  await page.goto(`/workflows/${rid}`);
+  await expect(page.locator('[data-workflow-canvas][data-editable="true"]')).toBeVisible();
+  const picked = page.locator(".react-flow__node.selected");
+  const avg = operatorCard(page, "avg");
+  const most = operatorCard(page, "most");
+
+  // A click picks one card; with Ctrl (Cmd on a Mac) a second joins it, and the two stay picked.
+  await avg.click({ position: { x: 100, y: 14 } });
+  await most.click({ position: { x: 100, y: 14 }, modifiers: ["ControlOrMeta"] });
+  await expect(picked).toHaveCount(2);
+  await page.waitForTimeout(300);
+  await expect(picked).toHaveCount(2);
+  // One press of Backspace removes both, and the arrows into them; the catalog's next version says so.
+  await page.keyboard.press("Backspace");
+  await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  await expect(page.locator(".react-flow__edge")).toHaveCount(0);
+  await expect.poll(async () => (await operatorsOf(alice, rid)).map(o => o.operatorID), { timeout: 20_000 }).toEqual(["scan"]);
+
+  // Ctrl+Z takes it back, the arrows included, and Ctrl+Shift+Z does it again.
+  await expect(page.locator("[data-undo]")).toBeEnabled();
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator(".react-flow__node")).toHaveCount(3);
+  await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+  await expect.poll(async () => (await operatorsOf(alice, rid)).map(o => o.operatorID).sort(), { timeout: 20_000 }).toEqual(["avg", "most", "scan"]);
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  await page.locator("[data-undo]").click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(3);
+
+  // A box drawn with Shift picks every card in it; Delete removes them all.
+  const pane = await box(page.locator(".react-flow__pane"));
+  await page.keyboard.down("Shift");
+  await page.mouse.move(pane.x + 5, pane.y + 60);
+  await page.mouse.down();
+  await page.mouse.move(pane.x + pane.width - 10, pane.y + pane.height - 10, { steps: 10 });
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  await expect(picked).toHaveCount(3);
+  await page.keyboard.press("Delete");
+  await expect(page.locator(".react-flow__node")).toHaveCount(0);
+});
+
+test("a new operator opens ready to set: typing and Backspace edit its setting, never remove it, and it says what it lacks", async ({ page, request }) => {
+  const alice = await api(request);
+  const { rid } = await irisWorkflow(alice, "new card");
+  await signIn(page);
+  await page.goto(`/workflows/${rid}`);
+  await expect(page.locator('[data-workflow-canvas][data-editable="true"]')).toBeVisible();
+  const palette = await operatorList(page);
+  await palette.getByPlaceholder("Search operators").fill("Limit");
+  await palette.locator('[data-palette-operator="Limit"]').click();
+  const limit = page.locator('.react-flow__node:has([data-operator-type="Limit"])');
+  await expect(limit.locator("[data-operator-editor]")).toBeVisible();
+  // The keyboard is in the card's first setting, not on the list it came from.
+  await expect(limit.locator("[data-operator-editor] form input").first()).toBeFocused();
+  await page.keyboard.type("25");
+  await page.keyboard.press("Backspace");
+  await expect(limit).toHaveCount(1);
+  await expect(limit.locator("[data-operator-editor] form input").first()).toHaveValue("2");
+  // Backspace anywhere in the open card is the card's.
+  await limit.locator("[data-operator-editor]").click({ position: { x: 20, y: 20 } });
+  await page.keyboard.press("Backspace");
+  await expect(limit).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  // Not linked to anything, it says so in words.
+  await expect(limit.locator("[data-operator-error]")).toHaveText("Needs an input: link an operator to it.");
+  await expect.poll(async () => (await operatorsOf(alice, rid)).find(o => o.operatorType === "Limit")?.operatorProperties, { timeout: 20_000 }).toEqual({ limit: 2 });
+});
+
+test("a setting that names a column offers the columns its input has", async ({ page, request }) => {
+  const alice = await api(request);
+  const { rid } = await irisWorkflow(alice, "columns");
+  await signIn(page);
+  await page.goto(`/workflows/${rid}`);
+  const editor = await editOperator(page, "avg");
+  // The aggregation's column is picked from the scan's columns, each with its type.
+  const options = editor.locator("select option");
+  await expect(options.filter({ hasText: "PetalLengthCm · double" })).toHaveCount(1);
+  await expect(options.filter({ hasText: "Species · string" }).first()).toBeAttached();
 });
 
 test("a workflow too large to see at once offers a map, which lies over the canvas only once the viewer opens it", async ({ page, request }) => {
