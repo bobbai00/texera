@@ -56,8 +56,11 @@ python3 load.py --data ~/texera-diabetes
 Then open a chat in the project "Diabetes research", as bob, and ask what the team has, or let
 `scenario.py` ask: what the project has, what could be learned from it, whether the onset model
 holds up on the women it never saw, whether HbA1c testing goes with fewer readmissions by
-primary diagnosis, and how the adolescents' CGM metrics compare with the study's and with their
-daily steps. It prints the tools the agent called and its answers, and writes the transcript.
+primary diagnosis, how the adolescents' CGM metrics compare with the study's and with their
+daily steps, and, citing the international consensus on time in range, how many of the
+adolescents meet its target. It prints the tools the agent called and its answers, then what the chat's
+graph holds and the outside sources it consulted (PubMed through biomcp), and writes the
+transcript.
 
 ```bash
 python3 scenario.py                 # needs the platform's model key on the stack

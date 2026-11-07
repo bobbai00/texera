@@ -17,10 +17,12 @@
 # under the License.
 
 """A scientist new to the diabetes team asks the Texera Agent what the team has, what it can do
-with it, and then does it: five questions in one chat in the project load.py made, as bob. Each
-turn prints the tools the agent called and its answer; the transcript is written as JSON.
+with it, and then does it: six questions in one chat in the project load.py made, as bob, the
+last of them reading the literature as well as the data. Each turn prints the tools the agent
+called and its answer; at the end, what the chat's graph holds and the outside sources it
+consulted. The transcript is written as JSON.
 
-    python scenario.py                      # all five questions, against http://localhost:8088
+    python scenario.py                      # all six questions, against http://localhost:8088
     python scenario.py --ask 3 5            # only some of them, in a new chat
     python scenario.py --transcript out.json
 
@@ -43,6 +45,9 @@ QUESTIONS = [
     "primary diagnosis, and leave out encounters that ended in death or hospice.",
     "For the adolescents with type 1 diabetes, compute the standard CGM metrics for each participant, check them "
     "against what the study itself reported, and tell me whether more daily steps go with more time in range.",
+    "The international consensus on time in range recommends more than 70% of readings between 70 and 180 mg/dL "
+    "for most people with type 1 diabetes. Find that paper and cite it, then compute each adolescent's time in "
+    "range from their CGM readings and tell me how many meet the target.",
 ]
 
 
@@ -124,7 +129,7 @@ def main() -> None:
     ap.add_argument("--gw", default="http://localhost:8088", help="the gateway")
     ap.add_argument("--user", default="bob", help="the scientist, on the team")
     ap.add_argument(
-        "--ask", type=int, nargs="*", help="which questions, 1 to 5; all by default"
+        "--ask", type=int, nargs="*", help="which questions, 1 to 6; all by default"
     )
     ap.add_argument(
         "--transcript",
@@ -166,8 +171,21 @@ def main() -> None:
         turn = ask(gw, bearer, chat["metadata"]["rid"], QUESTIONS[n - 1])
         print(f"\n{turn['answer'].strip()}\n")
         turns.append(turn)
+    # What the chat read, made and ran, and the outside sources it consulted, as its graph says.
+    graph = call(gw, bearer, "GET", f"/conversations/{chat['metadata']['rid']}/graph")
+    made = sorted(f"{n['role']} {n['name']}" for n in graph["nodes"] if n["made"])
+    print(
+        f"the graph: {len(graph['nodes'])} nodes, made: {', '.join(made) or 'nothing'}"
+    )
+    for source in graph["sources"]:
+        print(f"consulted {source['name']}: {len(source['calls'])} calls")
+        for c in source["calls"]:
+            print(f"   - {c['tool']}: {c['asked']}")
     args.transcript.write_text(
-        json.dumps({"chat": chat["metadata"]["uri"], "turns": turns}, indent=1) + "\n"
+        json.dumps(
+            {"chat": chat["metadata"]["uri"], "turns": turns, "graph": graph}, indent=1
+        )
+        + "\n"
     )
     print(f"transcript: {args.transcript}")
 
