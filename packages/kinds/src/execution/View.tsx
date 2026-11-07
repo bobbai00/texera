@@ -39,7 +39,7 @@ import {
 import { useCallback, useMemo, useState } from "react";
 import { unwrap } from "../api";
 import { sizeLabel } from "../kinds/profiles";
-import { operatorSchemasQuery } from "../queries";
+import { isAbout, operatorSchemasQuery } from "../queries";
 import { resultLabel } from "../results/labels";
 import { type ResultLabel, ResultsWindow } from "../results/ResultsWindow";
 import { ProjectScope, useScope } from "../scope";
@@ -47,6 +47,7 @@ import { UriChip } from "../shell/Chips";
 import { JsonBlock } from "../shell/JsonBlock";
 import { KindHeader } from "../shell/KindHeader";
 import { Lineage } from "../shell/Lineage";
+import { useMay } from "../shell/may";
 import { useOpenResource } from "../shell/navigation";
 import { OpenError } from "../shell/OpenError";
 import { RanOn } from "../shell/RanOn";
@@ -95,11 +96,16 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
     onSuccess: refresh,
   });
   const { expand } = useOpenResource();
-  // A finished execution can be deleted with its result tables; the workflow stays open.
+  // What the person may do to it: keep it (write), delete it (delete); a viewer only looks.
+  const may = useMay(ref.rid);
+  // A finished execution can be deleted with its result tables; the workflow stays open, and
+  // every list that showed the execution is asked again.
   const remove = useMutation({
     mutationFn: () => unwrap(workflowsDeleteExecution({ path: { rid: workflow, eid: ref.rid } })),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
+      void queryClient.invalidateQueries({ queryKey: [{ _id: "workflowsListExecutions", path: { rid: workflow } }] });
+      queryClient.removeQueries({ predicate: query => isAbout(query.queryKey, ref.rid) });
       expand({ kind: "workflow", rid: workflow });
     },
   });
@@ -174,7 +180,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
                 <Square className="fill-current" /> Stop
               </Button>
             )}
-            {!live && (
+            {!live && may.write === true && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -189,7 +195,7 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
                 {kept ? <BookmarkCheck /> : <Bookmark />} {kept ? "Kept" : "Keep"}
               </Button>
             )}
-            {!live && (
+            {!live && may.delete === true && (
               <Button
                 variant="ghost"
                 size="sm"

@@ -8,7 +8,7 @@ import { Badge, Button, ErrorNote, Skeleton, Tab, TabPanel, Tabs, TabsList } fro
 import { Braces, GitBranch, History, Settings2, Trash2, Users } from "lucide-react";
 import { useState } from "react";
 import { deleteResource, updateMetadata } from "../api";
-import { keysOf, resourceQuery } from "../queries";
+import { isAbout, keysOf, resourceQuery } from "../queries";
 import { KINDS } from "../registry";
 import { kindEntry, type KindViewProps, type ResourceRef } from "../types";
 import { Access } from "./Access";
@@ -18,10 +18,13 @@ import { JsonBlock } from "./JsonBlock";
 import { EditableName, KindHeader } from "./KindHeader";
 import { Lineage } from "./Lineage";
 import { metaLine } from "./MetaLine";
+import { useMay } from "./may";
 import { useOpenResource } from "./navigation";
 import { SpecEditor } from "./SpecEditor";
 import { Versions } from "./Versions";
 import { OpenError } from "./OpenError";
+import { useNavigate } from "@tanstack/react-router";
+import { useWatch } from "../watch";
 
 export function GenericView({ ref, mode }: KindViewProps) {
   const { data, error } = useQuery(resourceQuery(ref.rid));
@@ -43,12 +46,17 @@ export function ResourcePage({
   readonly?: boolean;
 }) {
   const builtIn = useIsBuiltIn()(resource);
-  const fixed = readonly || builtIn;
+  // Only what the catalog lets this person do is offered: a viewer reads, an editor changes, an owner deletes.
+  const may = useMay(resource.metadata.rid);
+  const fixed = readonly || builtIn || may.write === false;
+  // What others change while the page is open arrives as it happens.
+  useWatch(resource.metadata.rid);
   const kind = resource.kind;
   const spec = KINDS[kind];
   const entry = kindEntry(kind);
   const queryClient = useQueryClient();
   const { expand } = useOpenResource();
+  const navigate = useNavigate();
   const [vno, setVno] = useState<number | undefined>(ref.vno);
   const first = spec.tabs?.[0]?.value ?? "spec";
   const [tab, setTab] = useState(first);
@@ -62,7 +70,10 @@ export function ResourcePage({
     mutationFn: () => deleteResource(resource.metadata.rid),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
-      expand({ kind: "project", rid: resource.metadata.project });
+      // What was read of it is gone with it; the page goes to where it lived, or home for a project.
+      queryClient.removeQueries({ predicate: query => isAbout(query.queryKey, resource.metadata.rid) });
+      if (kind === "project") void navigate({ to: "/" });
+      else expand({ kind: "project", rid: resource.metadata.project });
     },
   });
   const Actions = spec.Actions;
@@ -73,7 +84,7 @@ export function ResourcePage({
       <KindHeader
         ref={ref}
         mode={mode}
-        name={<EditableName value={resource.metadata.name} onChange={name => rename.mutate(name)} disabled={fixed} label={`${spec.label} name`} />}
+        name={<EditableName value={resource.metadata.name} onChange={name => rename.mutateAsync(name)} disabled={fixed} label={`${spec.label} name`} />}
         meta={
           <span className="flex items-center gap-1.5">
             {pinned && (
@@ -91,7 +102,7 @@ export function ResourcePage({
         actions={
           <>
             {Actions && <Actions resource={resource} readonly={fixed} />}
-            {!entry.singleton && !builtIn && (
+            {!entry.singleton && !builtIn && may.delete === true && (
               <Button variant="ghost" size="icon-sm" aria-label={`Delete ${spec.label.toLowerCase()}`} onClick={() => confirm(`Delete "${resource.metadata.name}"?`) && remove.mutate()} disabled={remove.isPending} data-delete>
                 <Trash2 />
               </Button>
@@ -136,7 +147,7 @@ export function ResourcePage({
           </TabPanel>
         ))}
         <TabPanel value="spec" className="scrollbar-thin overflow-y-auto">
-          <Editor key={`${resource.metadata.etag}:${pinned}`} resource={resource} readonly={pinned || fixed} />
+          <Editor key={`${resource.metadata.rid}:${pinned}`} resource={resource} readonly={pinned || fixed} />
         </TabPanel>
         {entry.versioned && (
           <TabPanel value="versions" className="scrollbar-thin overflow-y-auto">

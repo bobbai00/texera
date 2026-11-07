@@ -48,8 +48,21 @@ export function KindHeader({
   );
 }
 
-/** A name that edits in place: blur or Enter saves, Escape restores. */
-export function EditableName({ value, onChange, disabled, label }: { value: string; onChange: (name: string) => void; disabled?: boolean; label: string }) {
+/**
+ * A name that edits in place: blur or Enter saves, Escape restores. A save that `onChange`
+ * says failed (a rejected promise) puts the name back, so a refused rename is not left on screen.
+ */
+export function EditableName({
+  value,
+  onChange,
+  disabled,
+  label,
+}: {
+  value: string;
+  onChange: (name: string) => void | Promise<unknown>;
+  disabled?: boolean;
+  label: string;
+}) {
   return (
     <input
       aria-label={label}
@@ -57,9 +70,17 @@ export function EditableName({ value, onChange, disabled, label }: { value: stri
       defaultValue={value}
       disabled={disabled}
       onBlur={e => {
-        const next = e.target.value.trim();
-        if (next && next !== value) onChange(next);
-        else e.target.value = value;
+        const input = e.currentTarget;
+        const next = input.value.trim();
+        if (!next || next === value) {
+          input.value = value;
+          return;
+        }
+        const saving = onChange(next);
+        if (saving instanceof Promise)
+          saving.catch(() => {
+            input.value = value;
+          });
       }}
       onKeyDown={e => {
         if (e.key === "Enter") e.currentTarget.blur();

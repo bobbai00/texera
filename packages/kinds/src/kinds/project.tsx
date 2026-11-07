@@ -6,6 +6,7 @@ import { ResourceTable } from "../library/ResourceTable";
 import { searchQuery } from "../queries";
 import { useWorkingProject } from "../scope";
 import { useIsBuiltIn } from "../shell/builtin";
+import { useMay } from "../shell/may";
 import type { KindSpec } from "../types";
 
 /** Everything in the project the caller may read. */
@@ -25,6 +26,8 @@ function Contents({ resource }: { resource: Resource }) {
 function Actions({ resource }: { resource: Resource }) {
   const { current, pick } = useWorkingProject();
   const builtIn = useIsBuiltIn()(resource);
+  // Working in a project puts what one makes into it: only someone who may add to it works there.
+  const may = useMay(resource.metadata.rid);
   // The platform's own project is nobody's to work in.
   if (current === undefined || builtIn) return null;
   if (current === resource.metadata.rid)
@@ -33,6 +36,7 @@ function Actions({ resource }: { resource: Resource }) {
         <Check className="size-3" /> You work here
       </Badge>
     );
+  if (may.write !== true) return null;
   return (
     <Button
       variant="outline"

@@ -7,6 +7,8 @@ interface Props {
   busy: boolean;
   /** Nothing can be sent right now (someone else's turn runs); drafting stays possible. */
   disabled?: boolean;
+  /** The person may only read this chat: nothing can be written, sent or posted as a note. */
+  readOnly?: boolean;
   /** Resolves false when the message could not be sent, so the draft stays in the box. */
   onSend: (message: { text: string; files: File[] }) => Promise<boolean>;
   /**
@@ -24,7 +26,8 @@ interface Props {
   controls?: ReactNode;
 }
 
-export function Composer({ busy, disabled = false, onSend, onNote, onStop, files, onFilesChange, autoFocus, placeholder, status, controls }: Props) {
+export function Composer({ busy, disabled: waiting = false, readOnly = false, onSend, onNote, onStop, files, onFilesChange, autoFocus, placeholder, status, controls }: Props) {
+  const disabled = waiting || readOnly;
   const [text, setText] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const empty = !text.trim() && files.length === 0;
@@ -70,7 +73,8 @@ export function Composer({ busy, disabled = false, onSend, onNote, onStop, files
         rows={1}
         // biome-ignore lint/a11y/noAutofocus: the composer is the page's primary input
         autoFocus={autoFocus}
-        placeholder={placeholder ?? "Ask Texera to find, analyze or build something…"}
+        placeholder={readOnly ? "Shared with you to read" : (placeholder ?? "Ask Texera to find, analyze or build something…")}
+        disabled={readOnly}
         aria-label="Message"
         className="block max-h-60 min-h-12 w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-sm outline-none [field-sizing:content] placeholder:text-muted-foreground"
       />
@@ -100,7 +104,7 @@ export function Composer({ busy, disabled = false, onSend, onNote, onStop, files
           <>
             {onNote && (
               <Tooltip content="Post as a note: the people in this chat read it, the agent is not asked">
-                <Button variant="ghost" size="icon-sm" disabled={empty} onClick={() => void hand(onNote)} aria-label="Post as a note" data-send-note>
+                <Button variant="ghost" size="icon-sm" disabled={empty || readOnly} onClick={() => void hand(onNote)} aria-label="Post as a note" data-send-note>
                   <MessageSquareText />
                 </Button>
               </Tooltip>

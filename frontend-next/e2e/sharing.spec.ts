@@ -275,3 +275,50 @@ test("a person shared a workflow but not what it reads is told, before Run, what
   await bobs.locator("[data-run]").click();
   await expect(bobs.locator('[data-latest-execution="completed"]')).toBeVisible({ timeout: 120_000 });
 });
+
+test("a person is offered only what the catalog lets them do: a viewer reads, an editor changes, only the owner deletes", async ({ browser, request }) => {
+  test.setTimeout(240_000);
+  const alice = await api(request);
+  const bob = await api(request, "bob", "bob");
+  const stamp = Date.now();
+  const project: Envelope = await alice("POST", "/projects", { name: `lent things ${stamp}`, spec: {} });
+  const dataset: Envelope = await alice("POST", "/datasets", { name: "iris", parent: project.metadata.rid, spec: { format: "csv" } });
+  await alice("PUT", `/datasets/${dataset.metadata.rid}/files/iris.csv`, IRIS_CSV, "text/csv");
+  await alice("POST", `/datasets/${dataset.metadata.rid}/commit`, { message: "iris" });
+  const workflow: Envelope = await alice("POST", "/workflows", {
+    name: `petals ${stamp}`,
+    parent: project.metadata.rid,
+    spec: { operators: [{ operatorID: "scan", operatorType: "CSVFileScan", viewResult: true, operatorProperties: { fileName: `${dataset.metadata.uri}@1/files/iris.csv`, fileEncoding: "UTF_8", hasHeader: true } }], links: [] },
+  });
+  const execution = await alice("POST", `/workflows/${workflow.metadata.rid}/run`, { waitSeconds: 180 });
+  const chat: Envelope = await alice("POST", "/conversations", { name: `lent chat ${stamp}`, parent: project.metadata.rid, spec: {} });
+  cleanups.push(async () => {
+    await discard(alice, [workflow.metadata.rid], [dataset.metadata.rid, chat.metadata.rid]);
+    await alice.attempt("DELETE", `/projects/${project.metadata.rid}`);
+  });
+  const bobPid = (await bob("GET", "/me")).principal.pid as string;
+
+  for (const relation of ["viewer", "editor"] as const) {
+    await alice("PUT", `/resources/${project.metadata.rid}/grants/${bobPid}`, { relation });
+    const bobs = await browserOf(browser, "bob");
+    const writes = relation === "editor";
+    await bobs.goto(pathOf(dataset));
+    await expect(bobs.locator("[data-resource-view]")).toBeVisible();
+    // Only an editor renames; nobody but the owner deletes.
+    await expect(bobs.locator("[data-resource-name]")).toBeEnabled({ enabled: writes });
+    await bobs.waitForTimeout(1000);
+    await expect(bobs.locator("[data-delete]")).toHaveCount(0);
+    await bobs.goto(`/workflows/${workflow.metadata.rid}/executions/${execution.metadata.rid}`);
+    await expect(bobs.locator("[data-results]")).toBeVisible();
+    await expect(bobs.locator("[data-keep-execution]")).toHaveCount(writes ? 1 : 0);
+    await expect(bobs.locator("[data-delete-execution]")).toHaveCount(0);
+    await bobs.goto(pathOf(project));
+    await expect(bobs.locator("[data-resource-view]")).toBeVisible();
+    await expect(bobs.locator("[data-work-here]")).toHaveCount(writes ? 1 : 0);
+    // A reader of a chat follows it; the box says so instead of failing on send.
+    await bobs.goto(pathOf(chat));
+    await expect(bobs.getByLabel("Message", { exact: true })).toBeEnabled({ enabled: writes });
+    await expect(bobs.locator("[data-chat-read-only]")).toHaveCount(writes ? 0 : 1);
+  }
+  await alice("DELETE", `/resources/${project.metadata.rid}/grants/${bobPid}`);
+});

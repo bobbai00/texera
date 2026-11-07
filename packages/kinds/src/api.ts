@@ -28,10 +28,30 @@ interface Result<T> {
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
+/**
+ * What the catalog answered when it refused, as a CatalogError with the response's status,
+ * the API's message, its code and its details. The generated client hands over the raw body
+ * (`throwOnError` throws it), which says no status: the app registers this as the client's
+ * error interceptor, so a 403 or 404 is known as one wherever it was asked (the retry rule,
+ * "not shared with you", the forms). A failure with no response (the network) passes as it is.
+ */
+export function catalogErrorOf(error: unknown, response: Response | undefined): unknown {
+  if (error instanceof CatalogError || !response || response.ok) return error;
+  const e = isRecord(error) ? error : undefined;
+  const message =
+    typeof e?.message === "string" && e.message
+      ? e.message
+      : typeof error === "string" && error
+        ? error
+        : response.statusText || `HTTP ${response.status}`;
+  return new CatalogError(response.status, message, typeof e?.code === "string" ? e.code : undefined, isRecord(e?.details) ? e.details : undefined);
+}
+
 /** The data of a client call, or a CatalogError with the response status and the API's message. */
 export async function unwrap<T>(call: Promise<Result<T>>): Promise<T> {
   const r = await call;
   const status = r.response?.status ?? 0;
+  if (r.error instanceof CatalogError) throw r.error;
   if (r.error !== undefined || (r.response && !r.response.ok)) {
     const e = r.error;
     const message = isRecord(e) && typeof e.message === "string" ? e.message : typeof e === "string" ? e : (r.response?.statusText ?? "");

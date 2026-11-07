@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConversationSpec, ConversationStatus, Resource } from "@texera/catalog-client/types";
-import { type AppContext, baseUri, chatSettingsQuery, createDatasetVersion, FromThisChat, keysOf, KindIcon, meQuery, OpenError, Presence, PrincipalName, ProjectScope, resourceQuery, settleViewing, ShareButton, updateSpec, useOpenResource } from "@texera/kinds";
+import { type AppContext, baseUri, chatSettingsQuery, createDatasetVersion, FromThisChat, keysOf, KindIcon, meQuery, OpenError, Presence, PrincipalName, ProjectScope, resourceQuery, settleViewing, ShareButton, updateSpec, useMay, useOpenResource } from "@texera/kinds";
 import { Button, ErrorNote, Skeleton, cn } from "@texera/ui";
 import { Loader2, PanelRight } from "lucide-react";
 import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -49,6 +49,9 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   const myPid = me?.principal.pid;
   // A shared chat is a group chat: one turn at a time, and the others see whose it is.
   const othersTurn = status?.activeTurn && status.activeTurnBy && status.activeTurnBy !== myPid ? status.activeTurnBy : undefined;
+  // Someone the chat is shared with to read follows it; writing in it takes more.
+  const may = useMay(rid);
+  const readOnly = may.write === false;
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
   const [upload, setUpload] = useState<{ status?: string; error?: string }>({});
@@ -204,9 +207,15 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
                 <PrincipalName pid={othersTurn} /> is talking to {agent?.name ?? "the agent"}…
               </p>
             )}
+            {readOnly && (
+              <p className="text-xs text-muted-foreground" data-chat-read-only>
+                This chat is shared with you to read. Ask its owner to let you write in it.
+              </p>
+            )}
             <Composer
               busy={busy}
               disabled={othersTurn !== undefined}
+              readOnly={readOnly}
               onSend={send}
               onNote={message => send(message, false)}
               onStop={chat.stop}
