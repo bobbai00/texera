@@ -7,10 +7,27 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/apache/texera/catalog/internal/api"
 	"github.com/apache/texera/catalog/internal/catalog"
 	"github.com/apache/texera/catalog/internal/kinds"
 )
+
+// readKind is the kind whose version a read of files names: the route's, except that the
+// dataset routes read a model's version when the rid names a model, so the agent's dataset file
+// tools read a model's card and contract as well. The read itself checks the caller's access.
+func (s *Server) readKind(r *http.Request, k kinds.Kind, rid uuid.UUID) kinds.Kind {
+	if k.Name != "dataset" {
+		return k
+	}
+	if res, err := s.svc.Store.GetResource(ctxOf(r), rid); err == nil && res.Kind == "model" {
+		if m, ok := kinds.ByName("model"); ok {
+			return m
+		}
+	}
+	return k
+}
 
 // routeFiles registers the file subresources of every kind whose versions are manifests:
 // staging, commit, and the files and links of a version.
@@ -82,7 +99,7 @@ func (s *Server) routeFiles() {
 			if err != nil {
 				return err
 			}
-			m, err := s.svc.Files(ctxOf(r), callerOf(r), k, rid, vno)
+			m, err := s.svc.Files(ctxOf(r), callerOf(r), s.readKind(r, k, rid), rid, vno)
 			if err != nil {
 				return err
 			}
@@ -105,7 +122,7 @@ func (s *Server) routeFiles() {
 			if limit := s.svc.Config.MaxDownloadBytes; limit > 0 && (length <= 0 || length > limit) {
 				length = limit
 			}
-			f, rc, err := s.svc.Download(ctxOf(r), callerOf(r), k, rid, vno, r.PathValue("path"), offset, length)
+			f, rc, err := s.svc.Download(ctxOf(r), callerOf(r), s.readKind(r, k, rid), rid, vno, r.PathValue("path"), offset, length)
 			if err != nil {
 				return err
 			}

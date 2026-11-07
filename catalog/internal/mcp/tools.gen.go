@@ -102,7 +102,7 @@ var Tools = []Tool{
 	},
 	{
 		Name:        "list_dataset_files",
-		Description: "List the files of a dataset version with sizes and digests.",
+		Description: "List the files of a dataset or model version with sizes and digests; a model version's manifest also holds its contract.",
 		ReadOnly:    true, Idempotent: false, Destructive: nil,
 		Method: "GET", Path: "/catalog/v1/datasets/{rid}/versions/{vno}/files",
 		PathParams: []Param{{Name: "rid", Type: "string", Required: true}, {Name: "vno", Type: "integer", Required: true}}, QueryParams: nil, Body: false,
@@ -134,7 +134,7 @@ var Tools = []Tool{
 	},
 	{
 		Name:        "read_dataset_file",
-		Description: "Read the beginning of a dataset file (bounded bytes), e.g. to inspect a CSV header.",
+		Description: "Read the beginning of a dataset or model version's file (bounded bytes), e.g. a CSV header or a model's README.",
 		ReadOnly:    true, Idempotent: false, Destructive: nil,
 		Method: "GET", Path: "/catalog/v1/datasets/{rid}/versions/{vno}/files/{path}",
 		PathParams: []Param{{Name: "rid", Type: "string", Required: true}, {Name: "vno", Type: "integer", Required: true}, {Name: "path", Type: "string", Required: true}}, QueryParams: []Param{{Name: "maxBytes", Type: "integer", Required: false}}, Body: false,

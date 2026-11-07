@@ -151,7 +151,7 @@ namespace Routes {
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
       tool: "list_dataset_files",
-      description: "List the files of a dataset version with sizes and digests.",
+      description: "List the files of a dataset or model version with sizes and digests; a model version's manifest also holds its contract.",
       readOnlyHint: true,
     })
     files(@path rid: Rid, @path vno: Vno): Manifest | Error;
@@ -162,7 +162,7 @@ namespace Routes {
     @extension("x-texera-permission", "read")
     @extension("x-mcp", #{
       tool: "read_dataset_file",
-      description: "Read the beginning of a dataset file (bounded bytes), e.g. to inspect a CSV header.",
+      description: "Read the beginning of a dataset or model version's file (bounded bytes), e.g. a CSV header or a model's README.",
       readOnlyHint: true,
     })
     download(

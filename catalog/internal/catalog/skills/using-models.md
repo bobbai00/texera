@@ -33,7 +33,8 @@ A model is versions of files, like a dataset, and each version has a contract: w
    - `inputs`: the columns it reads, by exact name and type, in order.
    - `outputs`: the columns it adds. For an sklearn classifier, the predicted class, then the probability of its last class, the positive one of two.
    - `needs`: what it needs to run well, such as a GPU; `grouped`: it reads whole groups, such as one patient's readings, and needs `by`.
-3. `get_lineage` on the version shows what it was made from, such as the dataset version it was fitted on: say so when it matters, such as scoring the very rows a model was fitted on.
+3. `list_dataset_files` and `read_dataset_file` read a model version's files too, by the model's rid: its `README.md`, the model card, says how it was fitted and evaluated and how it reads missing values, and a file such as `holdout.csv` lists the rows it was not fitted on. Read the card before you report on a model, and evaluate it on the rows it never saw, which a line reads as `scan(file="<model name>/holdout.csv")`.
+4. `get_lineage` on the version shows what it was made from, such as the dataset version it was fitted on: say so when it matters, such as scoring the very rows a model was fitted on.
 
 ## Run it
 

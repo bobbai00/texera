@@ -66,6 +66,16 @@ func TestAModelVersionsContractIsWhatPredictRunsWith(t *testing.T) {
 	}
 	h.mustJSON("alice", "POST", p+"/datasets/"+rid(ds)+"/commit", map[string]any{}, nil)
 
+	// The dataset file tools read a model version's files too: its card, and its manifest's contract.
+	if status, body := h.do("alice", "GET", p+"/datasets/"+rid(model)+"/versions/2/files/README.md", nil); status != http.StatusOK || string(body) != "how it was fitted" {
+		t.Fatalf("a model's file through the dataset route: %d %s", status, body)
+	}
+	var manifest api.Manifest
+	h.mustJSON("alice", "GET", p+"/datasets/"+rid(model)+"/versions/1/files", nil, &manifest)
+	if manifest.Contract == nil || len(manifest.Files) != 1 {
+		t.Fatalf("a model's manifest through the dataset route: %+v", manifest)
+	}
+
 	// predict, pinned to version 1.
 	fileURI := string(ds.Metadata.Uri) + "@1/files/pima.csv"
 	wf := h.create("alice", "workflows", "scored", map[string]any{
