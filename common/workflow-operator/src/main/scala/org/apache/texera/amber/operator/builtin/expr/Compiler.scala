@@ -93,22 +93,22 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
       case IsNull(x, negated, _) =>
         val n = compile(x)
         Node(Some(BOOLEAN), env => java.lang.Boolean.valueOf((n.eval(env) == null) != negated))
-      case In(x, options, negated, at)            => in(x, options, negated, at)
-      case Between(x, low, high, negated, at)     => between(x, low, high, negated, at)
-      case Like(x, pattern, negated, at)          => like(x, pattern, negated, at)
-      case Case(whens, otherwise, at)             => caseWhen(whens, otherwise, at)
-      case Cast(x, to, safe, at)                  => cast(compile(x), to, safe, at)
-      case Call(name, args, star, distinct, at)   => call(name, args, star, distinct, at)
+      case In(x, options, negated, at)          => in(x, options, negated, at)
+      case Between(x, low, high, negated, at)   => between(x, low, high, negated, at)
+      case Like(x, pattern, negated, at)        => like(x, pattern, negated, at)
+      case Case(whens, otherwise, at)           => caseWhen(whens, otherwise, at)
+      case Cast(x, to, safe, at)                => cast(compile(x), to, safe, at)
+      case Call(name, args, star, distinct, at) => call(name, args, star, distinct, at)
     }
 
   private def literalType(v: Any): Option[AttributeType] =
     v match {
-      case null                  => None
-      case _: java.lang.Long     => Some(LONG)
-      case _: java.lang.Double   => Some(DOUBLE)
-      case _: String             => Some(STRING)
-      case _: java.lang.Boolean  => Some(BOOLEAN)
-      case _                     => Some(STRING)
+      case null                 => None
+      case _: java.lang.Long    => Some(LONG)
+      case _: java.lang.Double  => Some(DOUBLE)
+      case _: String            => Some(STRING)
+      case _: java.lang.Boolean => Some(BOOLEAN)
+      case _                    => Some(STRING)
     }
 
   // ---- columns -------------------------------------------------------------------------
@@ -124,11 +124,17 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
         }
     val index = input.getIndex(name)
     val tpe = input.getAttribute(name).getType
-    Node(Some(tpe), env => {
-      if (env.row == null)
-        throw ExprError(s"$name is not aggregated: put it in by, or use it inside an aggregate such as avg($name)", c.at)
-      env.row.getField[Any](index)
-    })
+    Node(
+      Some(tpe),
+      env => {
+        if (env.row == null)
+          throw ExprError(
+            s"$name is not aggregated: put it in by, or use it inside an aggregate such as avg($name)",
+            c.at
+          )
+        env.row.getField[Any](index)
+      }
+    )
   }
 
   // ---- logic and comparison ------------------------------------------------------------
@@ -136,42 +142,55 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
   private def bool(e: Expr): Node = {
     val n = compile(e)
     if (n.tpe.exists(_ != BOOLEAN))
-      throw ExprError(s"${said(e)} is ${typeName(n.tpe)}, not true or false: compare it with something", e.at)
+      throw ExprError(
+        s"${said(e)} is ${typeName(n.tpe)}, not true or false: compare it with something",
+        e.at
+      )
     n
   }
 
   private def not(x: Expr, at: Int): Node = {
     val n = bool(x)
-    Node(Some(BOOLEAN), env => n.eval(env) match {
-      case null       => null
-      case b: Boolean => java.lang.Boolean.valueOf(!b)
-    })
+    Node(
+      Some(BOOLEAN),
+      env =>
+        n.eval(env) match {
+          case null       => null
+          case b: Boolean => java.lang.Boolean.valueOf(!b)
+        }
+    )
   }
 
   private def logic(op: String, l: Expr, r: Expr, at: Int): Node = {
     val (a, b) = (bool(l), bool(r))
     if (op == "and")
-      Node(Some(BOOLEAN), env => {
-        val x = a.eval(env)
-        if (x == java.lang.Boolean.FALSE) java.lang.Boolean.FALSE
-        else {
-          val y = b.eval(env)
-          if (y == java.lang.Boolean.FALSE) java.lang.Boolean.FALSE
-          else if (x == null || y == null) null
-          else java.lang.Boolean.TRUE
+      Node(
+        Some(BOOLEAN),
+        env => {
+          val x = a.eval(env)
+          if (x == java.lang.Boolean.FALSE) java.lang.Boolean.FALSE
+          else {
+            val y = b.eval(env)
+            if (y == java.lang.Boolean.FALSE) java.lang.Boolean.FALSE
+            else if (x == null || y == null) null
+            else java.lang.Boolean.TRUE
+          }
         }
-      })
+      )
     else
-      Node(Some(BOOLEAN), env => {
-        val x = a.eval(env)
-        if (x == java.lang.Boolean.TRUE) java.lang.Boolean.TRUE
-        else {
-          val y = b.eval(env)
-          if (y == java.lang.Boolean.TRUE) java.lang.Boolean.TRUE
-          else if (x == null || y == null) null
-          else java.lang.Boolean.FALSE
+      Node(
+        Some(BOOLEAN),
+        env => {
+          val x = a.eval(env)
+          if (x == java.lang.Boolean.TRUE) java.lang.Boolean.TRUE
+          else {
+            val y = b.eval(env)
+            if (y == java.lang.Boolean.TRUE) java.lang.Boolean.TRUE
+            else if (x == null || y == null) null
+            else java.lang.Boolean.FALSE
+          }
         }
-      })
+      )
   }
 
   /** Two values that can be compared, a time read from text where the other side is a time. */
@@ -180,9 +199,9 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
     if (a.tpe.contains(TIMESTAMP) && b.tpe.contains(STRING)) b = timeLiteral(r, b)
     if (b.tpe.contains(TIMESTAMP) && a.tpe.contains(STRING)) a = timeLiteral(l, a)
     val ok = (a.tpe, b.tpe) match {
-      case (None, _) | (_, None)                             => true
-      case (Some(x), Some(y)) if numeric(x) && numeric(y)     => true
-      case (Some(x), Some(y))                                 => x == y
+      case (None, _) | (_, None)                          => true
+      case (Some(x), Some(y)) if numeric(x) && numeric(y) => true
+      case (Some(x), Some(y))                             => x == y
     }
     if (!ok)
       throw ExprError(
@@ -196,7 +215,10 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
     e match {
       case Literal(s: String, at) =>
         val t = Try(AttributeTypeUtils.parseTimestamp(s)).getOrElse(
-          throw ExprError(s"'$s' is not a time this can read; write it as 'YYYY-MM-DD hh:mm:ss'", at)
+          throw ExprError(
+            s"'$s' is not a time this can read; write it as 'YYYY-MM-DD hh:mm:ss'",
+            at
+          )
         )
         Node(Some(TIMESTAMP), _ => t)
       case _ => n
@@ -212,60 +234,76 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
       case ">"  => _ > 0
       case ">=" => _ >= 0
     }
-    Node(Some(BOOLEAN), env => {
-      val x = a.eval(env)
-      if (x == null) null
-      else {
-        val y = b.eval(env)
-        if (y == null) null else java.lang.Boolean.valueOf(test(Values.compare(x, y)))
+    Node(
+      Some(BOOLEAN),
+      env => {
+        val x = a.eval(env)
+        if (x == null) null
+        else {
+          val y = b.eval(env)
+          if (y == null) null else java.lang.Boolean.valueOf(test(Values.compare(x, y)))
+        }
       }
-    })
+    )
   }
 
   private def in(x: Expr, options: List[Expr], negated: Boolean, at: Int): Node = {
     val pairs = options.map(o => comparable(x, o, o.at))
     val value = pairs.head._1
     val choices = pairs.map(_._2)
-    Node(Some(BOOLEAN), env => {
-      val v = value.eval(env)
-      if (v == null) null
-      else {
-        var sawNull = false
-        var found = false
-        val it = choices.iterator
-        while (!found && it.hasNext) {
-          val c = it.next().eval(env)
-          if (c == null) sawNull = true else if (Values.compare(v, c) == 0) found = true
+    Node(
+      Some(BOOLEAN),
+      env => {
+        val v = value.eval(env)
+        if (v == null) null
+        else {
+          var sawNull = false
+          var found = false
+          val it = choices.iterator
+          while (!found && it.hasNext) {
+            val c = it.next().eval(env)
+            if (c == null) sawNull = true else if (Values.compare(v, c) == 0) found = true
+          }
+          if (found) java.lang.Boolean.valueOf(!negated)
+          else if (sawNull) null
+          else java.lang.Boolean.valueOf(negated)
         }
-        if (found) java.lang.Boolean.valueOf(!negated)
-        else if (sawNull) null
-        else java.lang.Boolean.valueOf(negated)
       }
-    })
+    )
   }
 
   private def between(x: Expr, low: Expr, high: Expr, negated: Boolean, at: Int): Node = {
     val (v, lo) = comparable(x, low, at)
     val (_, hi) = comparable(x, high, at)
-    Node(Some(BOOLEAN), env => {
-      val (a, b, c) = (v.eval(env), lo.eval(env), hi.eval(env))
-      if (a == null || b == null || c == null) null
-      else java.lang.Boolean.valueOf((Values.compare(a, b) >= 0 && Values.compare(a, c) <= 0) != negated)
-    })
+    Node(
+      Some(BOOLEAN),
+      env => {
+        val (a, b, c) = (v.eval(env), lo.eval(env), hi.eval(env))
+        if (a == null || b == null || c == null) null
+        else
+          java.lang.Boolean.valueOf(
+            (Values.compare(a, b) >= 0 && Values.compare(a, c) <= 0) != negated
+          )
+      }
+    )
   }
 
   private def like(x: Expr, pattern: Expr, negated: Boolean, at: Int): Node = {
     val (v, p) = (text(x), text(pattern))
-    Node(Some(BOOLEAN), env => {
-      val (s, pat) = (v.eval(env), p.eval(env))
-      if (s == null || pat == null) null
-      else java.lang.Boolean.valueOf(Values.like(s.toString, pat.toString) != negated)
-    })
+    Node(
+      Some(BOOLEAN),
+      env => {
+        val (s, pat) = (v.eval(env), p.eval(env))
+        if (s == null || pat == null) null
+        else java.lang.Boolean.valueOf(Values.like(s.toString, pat.toString) != negated)
+      }
+    )
   }
 
   private def text(e: Expr): Node = {
     val n = compile(e)
-    if (n.tpe.exists(_ != STRING)) throw ExprError(s"${said(e)} is ${typeName(n.tpe)}, not text", e.at)
+    if (n.tpe.exists(_ != STRING))
+      throw ExprError(s"${said(e)} is ${typeName(n.tpe)}, not text", e.at)
     n
   }
 
@@ -276,7 +314,8 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
     if (!isNumeric(n.tpe))
       throw ExprError(
         s"${said(e)} is ${typeName(n.tpe)}, not a number" +
-          (if (n.tpe.contains(STRING)) s"; read it as one with try_cast(${said(e)} AS double)" else ""),
+          (if (n.tpe.contains(STRING)) s"; read it as one with try_cast(${said(e)} AS double)"
+           else ""),
         e.at
       )
     n
@@ -285,10 +324,16 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
   private def negate(x: Expr, at: Int): Node = {
     val n = number(x)
     val asLong = integral(n.tpe)
-    Node(if (asLong) Some(LONG) else Some(DOUBLE), env => n.eval(env) match {
-      case null      => null
-      case v: Number => if (asLong) java.lang.Long.valueOf(-v.longValue) else java.lang.Double.valueOf(-v.doubleValue)
-    })
+    Node(
+      if (asLong) Some(LONG) else Some(DOUBLE),
+      env =>
+        n.eval(env) match {
+          case null => null
+          case v: Number =>
+            if (asLong) java.lang.Long.valueOf(-v.longValue)
+            else java.lang.Double.valueOf(-v.doubleValue)
+        }
+    )
   }
 
   private def arithmetic(op: String, l: Expr, r: Expr, at: Int): Node = {
@@ -299,30 +344,45 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
         case "+" => (x, y) => java.lang.Long.valueOf(x.longValue + y.longValue)
         case "-" => (x, y) => java.lang.Long.valueOf(x.longValue - y.longValue)
         case "*" => (x, y) => java.lang.Long.valueOf(x.longValue * y.longValue)
-        case "%" => (x, y) => if (y.longValue == 0) null else java.lang.Long.valueOf(x.longValue % y.longValue)
+        case "%" =>
+          (x, y) =>
+            if (y.longValue == 0) null else java.lang.Long.valueOf(x.longValue % y.longValue)
       }
-      else op match {
-        case "+" => (x, y) => java.lang.Double.valueOf(x.doubleValue + y.doubleValue)
-        case "-" => (x, y) => java.lang.Double.valueOf(x.doubleValue - y.doubleValue)
-        case "*" => (x, y) => java.lang.Double.valueOf(x.doubleValue * y.doubleValue)
-        case "/" => (x, y) => if (y.doubleValue == 0) null else java.lang.Double.valueOf(x.doubleValue / y.doubleValue)
-        case "%" => (x, y) => if (y.doubleValue == 0) null else java.lang.Double.valueOf(x.doubleValue % y.doubleValue)
+      else
+        op match {
+          case "+" => (x, y) => java.lang.Double.valueOf(x.doubleValue + y.doubleValue)
+          case "-" => (x, y) => java.lang.Double.valueOf(x.doubleValue - y.doubleValue)
+          case "*" => (x, y) => java.lang.Double.valueOf(x.doubleValue * y.doubleValue)
+          case "/" =>
+            (x, y) =>
+              if (y.doubleValue == 0) null
+              else java.lang.Double.valueOf(x.doubleValue / y.doubleValue)
+          case "%" =>
+            (x, y) =>
+              if (y.doubleValue == 0) null
+              else java.lang.Double.valueOf(x.doubleValue % y.doubleValue)
+        }
+    Node(
+      Some(if (asLong) LONG else DOUBLE),
+      env => {
+        val x = a.eval(env)
+        if (x == null) null
+        else {
+          val y = b.eval(env)
+          if (y == null) null else f(x.asInstanceOf[Number], y.asInstanceOf[Number])
+        }
       }
-    Node(Some(if (asLong) LONG else DOUBLE), env => {
-      val x = a.eval(env)
-      if (x == null) null
-      else {
-        val y = b.eval(env)
-        if (y == null) null else f(x.asInstanceOf[Number], y.asInstanceOf[Number])
-      }
-    })
+    )
   }
 
   private def concat(parts: List[Node]): Node =
-    Node(Some(STRING), env => {
-      val values = parts.map(_.eval(env))
-      if (values.contains(null)) null else values.map(Values.show).mkString
-    })
+    Node(
+      Some(STRING),
+      env => {
+        val values = parts.map(_.eval(env))
+        if (values.contains(null)) null else values.map(Values.show).mkString
+      }
+    )
 
   // ---- CASE and CAST --------------------------------------------------------------------
 
@@ -330,12 +390,16 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
   private def common(nodes: List[(Expr, Node)], at: Int): Option[AttributeType] = {
     val typed = nodes.filter(_._2.tpe.isDefined)
     if (typed.isEmpty) None
-    else if (typed.forall(n => isNumeric(n._2.tpe))) Some(if (typed.forall(n => integral(n._2.tpe))) LONG else DOUBLE)
+    else if (typed.forall(n => isNumeric(n._2.tpe)))
+      Some(if (typed.forall(n => integral(n._2.tpe))) LONG else DOUBLE)
     else {
       val first = typed.head
       typed.find(_._2.tpe != first._2.tpe) match {
         case Some((other, n)) =>
-          throw ExprError(s"${said(first._1)} is ${typeName(first._2.tpe)} but ${said(other)} is ${typeName(n.tpe)}: give every branch one type", at)
+          throw ExprError(
+            s"${said(first._1)} is ${typeName(first._2.tpe)} but ${said(other)} is ${typeName(n.tpe)}: give every branch one type",
+            at
+          )
         case None => first._2.tpe
       }
     }
@@ -344,56 +408,93 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
   private def widen(n: Node, to: Option[AttributeType]): Env => Any =
     to match {
       case Some(DOUBLE) if n.tpe.exists(t => t != DOUBLE) =>
-        env => n.eval(env) match { case null => null; case v: Number => java.lang.Double.valueOf(v.doubleValue) }
+        env =>
+          n.eval(env) match {
+            case null => null; case v: Number => java.lang.Double.valueOf(v.doubleValue)
+          }
       case Some(LONG) if n.tpe.contains(INTEGER) =>
-        env => n.eval(env) match { case null => null; case v: Number => java.lang.Long.valueOf(v.longValue) }
+        env =>
+          n.eval(env) match {
+            case null => null; case v: Number => java.lang.Long.valueOf(v.longValue)
+          }
       case _ => n.eval
     }
 
   private def caseWhen(whens: List[(Expr, Expr)], otherwise: Option[Expr], at: Int): Node = {
     val conditions = whens.map { case (c, _) => bool(c) }
-    val results = whens.map { case (_, v) => v -> compile(v) } ++ otherwise.map(o => o -> compile(o))
+    val results =
+      whens.map { case (_, v) => v -> compile(v) } ++ otherwise.map(o => o -> compile(o))
     val tpe = common(results, at)
     val evals = results.map(r => widen(r._2, tpe)).toArray
     val tests = conditions.toArray
     val hasElse = otherwise.isDefined
-    Node(tpe, env => {
-      var i = 0
-      var out: Any = null
-      var done = false
-      while (!done && i < tests.length) {
-        if (tests(i).eval(env) == java.lang.Boolean.TRUE) { out = evals(i)(env); done = true }
-        i += 1
+    Node(
+      tpe,
+      env => {
+        var i = 0
+        var out: Any = null
+        var done = false
+        while (!done && i < tests.length) {
+          if (tests(i).eval(env) == java.lang.Boolean.TRUE) { out = evals(i)(env); done = true }
+          i += 1
+        }
+        if (!done && hasElse) evals(tests.length)(env) else out
       }
-      if (!done && hasElse) evals(tests.length)(env) else out
-    })
+    )
   }
 
   private def cast(n: Node, to: String, safe: Boolean, at: Int): Node = {
-    val target = Names.typeNamed(to).getOrElse(
-      throw ExprError(s"'$to' is not a type; use one of integer, long, double, text, boolean, timestamp", at)
+    val target = Names
+      .typeNamed(to)
+      .getOrElse(
+        throw ExprError(
+          s"'$to' is not a type; use one of integer, long, double, text, boolean, timestamp",
+          at
+        )
+      )
+    Node(
+      Some(target),
+      env => {
+        val v = n.eval(env)
+        if (v == null) null
+        else
+          Try(Values.cast(v, target)).getOrElse {
+            if (safe) null
+            else
+              throw ExprError(
+                s"'${Values.show(v)}' cannot be read as ${typeName(Some(target))}; try_cast gives null instead",
+                at
+              )
+          }
+      }
     )
-    Node(Some(target), env => {
-      val v = n.eval(env)
-      if (v == null) null
-      else
-        Try(Values.cast(v, target)).getOrElse {
-          if (safe) null
-          else throw ExprError(s"'${Values.show(v)}' cannot be read as ${typeName(Some(target))}; try_cast gives null instead", at)
-        }
-    })
   }
 
   // ---- functions ------------------------------------------------------------------------
 
-  private def call(name: String, args: List[Expr], star: Boolean, distinct: Boolean, at: Int): Node =
+  private def call(
+      name: String,
+      args: List[Expr],
+      star: Boolean,
+      distinct: Boolean,
+      at: Int
+  ): Node =
     if (Aggregates.names.contains(name)) aggregate(name, args, star, distinct, at)
     else if (star || distinct) throw ExprError(s"$name takes no * or DISTINCT", at)
     else Functions.compile(this, name, args, at)
 
-  private def aggregate(name: String, args: List[Expr], star: Boolean, distinct: Boolean, at: Int): Node = {
+  private def aggregate(
+      name: String,
+      args: List[Expr],
+      star: Boolean,
+      distinct: Boolean,
+      at: Int
+  ): Node = {
     if (!aggregatesAllowed)
-      throw ExprError(s"$name is an aggregate: use it in aggregate's outputs, with by naming the groups", at)
+      throw ExprError(
+        s"$name is an aggregate: use it in aggregate's outputs, with by naming the groups",
+        at
+      )
     val inner = new Compiler(input, aggregatesAllowed = false)
     val compiledArgs = args.map(inner.compile)
     val spec = Aggregates.spec(name, args, compiledArgs, star, distinct, at)
@@ -410,8 +511,16 @@ final class Compiler(input: Schema, aggregatesAllowed: Boolean) {
     val n = compile(e)
     n.tpe match {
       case Some(TIMESTAMP) | None => n
-      case Some(STRING)           => timeLiteral(e, n) match { case t if t.tpe.contains(TIMESTAMP) => t; case _ => throw ExprError(s"${said(e)} is text, not a time; read it with try_cast(${said(e)} AS timestamp)", e.at) }
-      case other                  => throw ExprError(s"${said(e)} is ${typeName(other)}, not a time", e.at)
+      case Some(STRING) =>
+        timeLiteral(e, n) match {
+          case t if t.tpe.contains(TIMESTAMP) => t;
+          case _ =>
+            throw ExprError(
+              s"${said(e)} is text, not a time; read it with try_cast(${said(e)} AS timestamp)",
+              e.at
+            )
+        }
+      case other => throw ExprError(s"${said(e)} is ${typeName(other)}, not a time", e.at)
     }
   }
   def commonOf(args: List[Expr], at: Int): (List[Node], Option[AttributeType]) = {
@@ -430,7 +539,10 @@ object Values {
       case (x: java.lang.Long, y: java.lang.Long)       => java.lang.Long.compare(x, y)
       case (x: java.lang.Integer, y: java.lang.Integer) => Integer.compare(x, y)
       case (x: Number, y: Number) =>
-        if ((x.isInstanceOf[java.lang.Long] || x.isInstanceOf[Integer]) && (y.isInstanceOf[java.lang.Long] || y.isInstanceOf[Integer]))
+        if (
+          (x.isInstanceOf[java.lang.Long] || x.isInstanceOf[Integer]) && (y
+            .isInstanceOf[java.lang.Long] || y.isInstanceOf[Integer])
+        )
           java.lang.Long.compare(x.longValue, y.longValue)
         else java.lang.Double.compare(x.doubleValue, y.doubleValue)
       case (x: String, y: String)                       => x.compareTo(y)
@@ -441,12 +553,13 @@ object Values {
 
   def show(v: Any): String =
     v match {
-      case null                => "null"
+      case null => "null"
       case d: java.lang.Double =>
         val x = d.doubleValue
-        if (x == math.rint(x) && !x.isInfinite && math.abs(x) < 1e15) x.toLong.toString else x.toString
-      case t: Timestamp        => t.toString
-      case other               => other.toString
+        if (x == math.rint(x) && !x.isInfinite && math.abs(x) < 1e15) x.toLong.toString
+        else x.toString
+      case t: Timestamp => t.toString
+      case other        => other.toString
     }
 
   def cast(v: Any, to: AttributeType): Any =
@@ -458,7 +571,7 @@ object Values {
           case n: Number            => java.lang.Boolean.valueOf(n.doubleValue != 0)
           case s: String =>
             s.trim.toLowerCase match {
-              case "true" | "t" | "yes" | "y" | "1"  => java.lang.Boolean.TRUE
+              case "true" | "t" | "yes" | "y" | "1" => java.lang.Boolean.TRUE
               case "false" | "f" | "no" | "n" | "0" => java.lang.Boolean.FALSE
               case _                                => throw new IllegalArgumentException(s)
             }
@@ -467,25 +580,25 @@ object Values {
       case AttributeType.TIMESTAMP => AttributeTypeUtils.parseTimestamp(v)
       case AttributeType.INTEGER =>
         v match {
-          case n: Number => java.lang.Integer.valueOf(Math.toIntExact(Math.round(n.doubleValue)))
-          case s: String => java.lang.Integer.valueOf(BigDecimal(s.trim).toIntExact)
+          case n: Number            => java.lang.Integer.valueOf(Math.toIntExact(Math.round(n.doubleValue)))
+          case s: String            => java.lang.Integer.valueOf(BigDecimal(s.trim).toIntExact)
           case b: java.lang.Boolean => java.lang.Integer.valueOf(if (b) 1 else 0)
-          case other => throw new IllegalArgumentException(String.valueOf(other))
+          case other                => throw new IllegalArgumentException(String.valueOf(other))
         }
       case AttributeType.LONG =>
         v match {
-          case t: Timestamp => java.lang.Long.valueOf(t.getTime)
-          case n: Number    => java.lang.Long.valueOf(Math.round(n.doubleValue))
-          case s: String    => java.lang.Long.valueOf(BigDecimal(s.trim).toLongExact)
+          case t: Timestamp         => java.lang.Long.valueOf(t.getTime)
+          case n: Number            => java.lang.Long.valueOf(Math.round(n.doubleValue))
+          case s: String            => java.lang.Long.valueOf(BigDecimal(s.trim).toLongExact)
           case b: java.lang.Boolean => java.lang.Long.valueOf(if (b) 1L else 0L)
-          case other        => throw new IllegalArgumentException(String.valueOf(other))
+          case other                => throw new IllegalArgumentException(String.valueOf(other))
         }
       case AttributeType.DOUBLE =>
         v match {
-          case n: Number => java.lang.Double.valueOf(n.doubleValue)
-          case s: String => java.lang.Double.valueOf(s.trim.toDouble)
+          case n: Number            => java.lang.Double.valueOf(n.doubleValue)
+          case s: String            => java.lang.Double.valueOf(s.trim.toDouble)
           case b: java.lang.Boolean => java.lang.Double.valueOf(if (b) 1.0 else 0.0)
-          case other     => throw new IllegalArgumentException(String.valueOf(other))
+          case other                => throw new IllegalArgumentException(String.valueOf(other))
         }
       case other => throw new IllegalArgumentException(s"cannot cast to $other")
     }
@@ -501,7 +614,8 @@ object Values {
     s.matches(regex.toString)
   }
 
-  def zoned(t: Timestamp, zone: ZoneId): ZonedDateTime = Instant.ofEpochMilli(t.getTime).atZone(zone)
+  def zoned(t: Timestamp, zone: ZoneId): ZonedDateTime =
+    Instant.ofEpochMilli(t.getTime).atZone(zone)
 
   def truncate(t: Timestamp, unit: String, zone: ZoneId): Timestamp = {
     val z = zoned(t, zone)

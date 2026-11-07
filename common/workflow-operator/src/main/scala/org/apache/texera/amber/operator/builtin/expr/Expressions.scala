@@ -40,6 +40,7 @@ final class Computed private[expr] (node: Node) {
   */
 final class Aggregated private[expr] (node: Node, specs: List[AggregateSpec]) {
   val tpe: AttributeType = node.tpe.getOrElse(AttributeType.STRING)
+
   /** A group's states, one per aggregate call. */
   def newStates(): Array[AggregateState] = specs.map(_.newState()).toArray
   def add(states: Array[AggregateState], row: Tuple, env: Env): Unit = {
@@ -64,7 +65,10 @@ object Expressions {
   def condition(text: String, input: Schema): Condition = {
     val node = new Compiler(input, aggregatesAllowed = false).compile(Parser.parse(text))
     if (node.tpe.exists(_ != AttributeType.BOOLEAN))
-      throw ExprError("this is a value, not a condition: compare it with something, as in glucose < 70", 0)
+      throw ExprError(
+        "this is a value, not a condition: compare it with something, as in glucose < 70",
+        0
+      )
     new Condition(node)
   }
 
@@ -75,7 +79,10 @@ object Expressions {
     val compiler = new Compiler(input, aggregatesAllowed = true)
     val node = compiler.compile(Parser.parse(text))
     if (compiler.aggregates.isEmpty)
-      throw ExprError("an output of aggregate needs an aggregate, such as count(*), avg(x) or max(x)", 0)
+      throw ExprError(
+        "an output of aggregate needs an aggregate, such as count(*), avg(x) or max(x)",
+        0
+      )
     new Aggregated(node, compiler.aggregates.toList)
   }
 }

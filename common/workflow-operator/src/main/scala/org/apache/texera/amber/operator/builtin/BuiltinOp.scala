@@ -44,7 +44,8 @@ object Split {
 }
 
 /** A setting that is wrong, named, with what is wrong with it in the setting's terms. */
-final class SettingError(val setting: String, message: String) extends RuntimeException(s"$setting: $message")
+final class SettingError(val setting: String, message: String)
+    extends RuntimeException(s"$setting: $message")
 
 /**
   * A built-in operator: a name, its inputs and a few flat settings, as a workflow's line says it,
@@ -75,14 +76,24 @@ abstract class BuiltinOp extends LogicalOp {
   /** The class of the worker's executor; it reads this operator's JSON. */
   @JsonIgnore def executor: String
 
-  override def getPhysicalOp(workflowId: WorkflowIdentity, executionId: ExecutionIdentity): PhysicalOp = {
+  override def getPhysicalOp(
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity
+  ): PhysicalOp = {
     val ports = operatorInfo.inputPorts
     val op = PhysicalOp
-      .oneToOnePhysicalOp(workflowId, executionId, operatorIdentifier, OpExecWithClassName(executor, objectMapper.writeValueAsString(this)))
+      .oneToOnePhysicalOp(
+        workflowId,
+        executionId,
+        operatorIdentifier,
+        OpExecWithClassName(executor, objectMapper.writeValueAsString(this))
+      )
       .withInputPorts(ports)
       .withOutputPorts(operatorInfo.outputPorts)
       .withPropagateSchema(
-        SchemaPropagationFunc(in => Map(operatorInfo.outputPorts.head.id -> outputColumns(ports.map(p => in(p.id)))))
+        SchemaPropagationFunc(in =>
+          Map(operatorInfo.outputPorts.head.id -> outputColumns(ports.map(p => in(p.id))))
+        )
       )
     split match {
       case Split.Anywhere => op
@@ -100,7 +111,11 @@ abstract class BuiltinOp extends LogicalOp {
       BuiltinOp.Group,
       inputPorts = inputNames.zipWithIndex.map {
         case (input, i) =>
-          InputPort(PortIdentity(i), displayName = if (inputNames.size > 1) input else "", disallowMultiLinks = !manyLinks)
+          InputPort(
+            PortIdentity(i),
+            displayName = if (inputNames.size > 1) input else "",
+            disallowMultiLinks = !manyLinks
+          )
       },
       outputPorts = List(OutputPort())
     )
@@ -137,7 +152,11 @@ object BuiltinOp {
       val (name, rest) =
         if (text.startsWith("\"")) {
           val end = text.indexOf('"', 1)
-          if (end < 0) throw new SettingError(setting, s"'$text': the name is not closed with a \"")
+          if (end < 0)
+            throw new SettingError(
+              setting,
+              s"""'$text': the name is not closed with a double quote"""
+            )
           (text.substring(1, end), text.substring(end + 1).trim)
         } else {
           val word = text.takeWhile(c => c.isLetterOrDigit || c == '_')

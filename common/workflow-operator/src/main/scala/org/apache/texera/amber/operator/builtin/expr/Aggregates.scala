@@ -31,7 +31,11 @@ trait AggregateState {
 }
 
 /** One aggregate call: the type of its result and how a group's state starts. */
-final case class AggregateSpec(name: String, tpe: Option[AttributeType], newState: () => AggregateState)
+final case class AggregateSpec(
+    name: String,
+    tpe: Option[AttributeType],
+    newState: () => AggregateState
+)
 
 /**
   * The aggregates: count(*), count(x), count(DISTINCT x), count_if(condition), sum, avg (mean),
@@ -39,9 +43,17 @@ final case class AggregateSpec(name: String, tpe: Option[AttributeType], newStat
   * to aggregate gives NULL, except the counts, which give 0.
   */
 object Aggregates {
-  val names: Set[String] = Set("count", "count_if", "sum", "avg", "mean", "min", "max", "stddev", "variance", "median")
+  val names: Set[String] =
+    Set("count", "count_if", "sum", "avg", "mean", "min", "max", "stddev", "variance", "median")
 
-  def spec(name: String, args: List[Expr], compiled: List[Node], star: Boolean, distinct: Boolean, at: Int): AggregateSpec = {
+  def spec(
+      name: String,
+      args: List[Expr],
+      compiled: List[Node],
+      star: Boolean,
+      distinct: Boolean,
+      at: Int
+  ): AggregateSpec = {
     def one(): Node =
       compiled match {
         case List(x) if !star => x
@@ -49,7 +61,10 @@ object Aggregates {
       }
     def numeric(x: Node): Node = {
       if (!x.tpe.forall(t => t == INTEGER || t == LONG || t == DOUBLE))
-        throw ExprError(s"$name needs numbers, and ${describe(args)} is ${x.tpe.map(_.getName).getOrElse("null")}; read it as a number with try_cast(... AS double)", at)
+        throw ExprError(
+          s"$name needs numbers, and ${describe(args)} is ${x.tpe.map(_.getName).getOrElse("null")}; read it as a number with try_cast(... AS double)",
+          at
+        )
       x
     }
     if (distinct && name != "count") throw ExprError(s"DISTINCT goes only with count", at)
@@ -64,8 +79,16 @@ object Aggregates {
         AggregateSpec(name, Some(LONG), () => new Counter(env => x.eval(env) != null))
       case "count_if" =>
         val x = one()
-        if (x.tpe.exists(_ != BOOLEAN)) throw ExprError("count_if counts the rows where a condition is true; give it a condition", at)
-        AggregateSpec(name, Some(LONG), () => new Counter(env => x.eval(env) == java.lang.Boolean.TRUE))
+        if (x.tpe.exists(_ != BOOLEAN))
+          throw ExprError(
+            "count_if counts the rows where a condition is true; give it a condition",
+            at
+          )
+        AggregateSpec(
+          name,
+          Some(LONG),
+          () => new Counter(env => x.eval(env) == java.lang.Boolean.TRUE)
+        )
       case "sum" =>
         val x = numeric(one())
         val integral = x.tpe.forall(t => t == INTEGER || t == LONG)
@@ -114,10 +137,14 @@ object Aggregates {
     private var doubles = 0.0
     def add(env: Env): Unit =
       x.eval(env) match {
-        case null      =>
-        case v: Number => any = true; if (integral) longs += v.longValue else doubles += v.doubleValue
+        case null =>
+        case v: Number =>
+          any = true; if (integral) longs += v.longValue else doubles += v.doubleValue
       }
-    def result: Any = if (!any) null else if (integral) java.lang.Long.valueOf(longs) else java.lang.Double.valueOf(doubles)
+    def result: Any =
+      if (!any) null
+      else if (integral) java.lang.Long.valueOf(longs)
+      else java.lang.Double.valueOf(doubles)
   }
 
   object Moments extends Enumeration { val Mean, StdDev, Variance = Value }
@@ -148,20 +175,26 @@ object Aggregates {
     private var best: Any = null
     def add(env: Env): Unit = {
       val v = x.eval(env)
-      if (v != null && (best == null || (if (max) Values.compare(v, best) > 0 else Values.compare(v, best) < 0))) best = v
+      if (
+        v != null && (best == null || (if (max) Values.compare(v, best) > 0
+                                       else Values.compare(v, best) < 0))
+      ) best = v
     }
     def result: Any = best
   }
 
   private final class Median(x: Node) extends AggregateState {
     private val values = mutable.ArrayBuffer[Double]()
-    def add(env: Env): Unit = x.eval(env) match { case null => ; case v: Number => values += v.doubleValue }
+    def add(env: Env): Unit =
+      x.eval(env) match { case null => ; case v: Number => values += v.doubleValue }
     def result: Any =
       if (values.isEmpty) null
       else {
         val sorted = values.sorted
         val mid = sorted.length / 2
-        java.lang.Double.valueOf(if (sorted.length % 2 == 1) sorted(mid) else (sorted(mid - 1) + sorted(mid)) / 2)
+        java.lang.Double.valueOf(
+          if (sorted.length % 2 == 1) sorted(mid) else (sorted(mid - 1) + sorted(mid)) / 2
+        )
       }
   }
 }

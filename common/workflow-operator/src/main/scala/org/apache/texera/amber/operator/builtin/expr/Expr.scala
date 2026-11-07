@@ -50,8 +50,7 @@ object Expr {
   final case class Between(operand: Expr, low: Expr, high: Expr, negated: Boolean, at: Int)
       extends Expr
   final case class Like(operand: Expr, pattern: Expr, negated: Boolean, at: Int) extends Expr
-  final case class Case(whens: List[(Expr, Expr)], otherwise: Option[Expr], at: Int)
-      extends Expr
+  final case class Case(whens: List[(Expr, Expr)], otherwise: Option[Expr], at: Int) extends Expr
   final case class Cast(operand: Expr, to: String, safe: Boolean, at: Int) extends Expr
   final case class Call(name: String, args: List[Expr], star: Boolean, distinct: Boolean, at: Int)
       extends Expr

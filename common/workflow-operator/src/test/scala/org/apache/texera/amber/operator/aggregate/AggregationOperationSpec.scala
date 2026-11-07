@@ -223,7 +223,9 @@ class AggregationOperationSpec extends AnyFlatSpec {
       .map(values => Tuple(partialSchema, values.toArray))
       .foldLeft(merge.init())(merge.iterate)
     assert(merge.finalAgg(merged) == Double.box(30.0))
-    assert(workerOp.getFinalAttribute(partialSchema) == new Attribute("mean_v", AttributeType.DOUBLE))
+    assert(
+      workerOp.getFinalAttribute(partialSchema) == new Attribute("mean_v", AttributeType.DOUBLE)
+    )
   }
 
   it should "give null when no worker saw a value to average" in {
@@ -457,7 +459,9 @@ class AggregationOperationSpec extends AnyFlatSpec {
     val merge = original.getMergeAgg(AttributeType.INTEGER)
     val partialSchema = schemaWith("dst", AttributeType.INTEGER)
     val merged = Seq(Int.box(3), Int.box(9), Int.box(4))
-      .map(v => Tuple.builder(partialSchema).add(new Attribute("dst", AttributeType.INTEGER), v).build())
+      .map(v =>
+        Tuple.builder(partialSchema).add(new Attribute("dst", AttributeType.INTEGER), v).build()
+      )
       .foldLeft(merge.init())(merge.iterate)
     assert(merge.finalAgg(merged) == Int.box(9))
     // the operation itself is not rewritten, so a plan can be built from it again

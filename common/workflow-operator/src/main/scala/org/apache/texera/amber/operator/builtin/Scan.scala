@@ -82,12 +82,14 @@ class ScanOp extends BuiltinOp with ReadsFile {
       case "csv" | "tsv" =>
         val csv = new CSVScanSourceOpDesc
         csv.hasHeader = header
-        val sep = Option(delimiter).filter(_.nonEmpty).getOrElse(if (formatOf == "tsv") "\t" else ",")
+        val sep =
+          Option(delimiter).filter(_.nonEmpty).getOrElse(if (formatOf == "tsv") "\t" else ",")
         if (sep.length != 1) throw new SettingError("delimiter", "one character")
         csv.customDelimiter = Some(sep)
         csv
       case "json" => new JSONLScanSourceOpDesc
-      case other  => throw new SettingError("format", s"'$other' is not one this reads: csv, tsv or json")
+      case other =>
+        throw new SettingError("format", s"'$other' is not one this reads: csv, tsv or json")
     }
     if (fileToRead.isEmpty) throw new SettingError("file", "name the file to read")
     r.fileName = fileToRead
@@ -97,9 +99,18 @@ class ScanOp extends BuiltinOp with ReadsFile {
 
   override def outputColumns(inputs: List[Schema]): Schema = reader.sourceSchema()
 
-  override def getPhysicalOp(workflowId: WorkflowIdentity, executionId: ExecutionIdentity): PhysicalOp =
+  override def getPhysicalOp(
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity
+  ): PhysicalOp =
     reader.getPhysicalOp(workflowId, executionId)
 
   override def operatorInfo: OperatorInfo =
-    OperatorInfo(name, summary, BuiltinOp.Group, inputPorts = List.empty, outputPorts = List(OutputPort()))
+    OperatorInfo(
+      name,
+      summary,
+      BuiltinOp.Group,
+      inputPorts = List.empty,
+      outputPorts = List(OutputPort())
+    )
 }

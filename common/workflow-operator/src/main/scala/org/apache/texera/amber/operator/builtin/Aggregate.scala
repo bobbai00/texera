@@ -43,18 +43,25 @@ class AggregateOp extends BuiltinOp {
 
   @JsonProperty(required = true)
   @JsonSchemaTitle("Outputs")
-  @JsonPropertyDescription("Output columns in order, each name = an aggregate over the group's rows: mean = avg(glucose)")
+  @JsonPropertyDescription(
+    "Output columns in order, each name = an aggregate over the group's rows: mean = avg(glucose)"
+  )
   var outputs: java.util.List[String] = new java.util.ArrayList()
 
   @JsonIgnore override def name = "aggregate"
-  @JsonIgnore override def summary = "One row per group, with counts, sums, means and other aggregates."
+  @JsonIgnore override def summary =
+    "One row per group, with counts, sums, means and other aggregates."
   @JsonIgnore def keys: List[String] = Option(by).map(_.asScala.toList).getOrElse(Nil)
   @JsonIgnore override def split: Split = if (keys.isEmpty) Split.OneWorker else Split.ByKey(keys)
 
   /** Each output, compiled against the input's columns. */
   def compiled(input: Schema): List[(String, Aggregated)] = {
     val named = BuiltinOp.named("outputs", Option(outputs).map(_.asScala.toList).getOrElse(Nil))
-    named.foreach { case (n, _) => if (keys.contains(n)) throw new SettingError(n, s"""$n is also a by column; name the output otherwise""") }
+    named.foreach {
+      case (n, _) =>
+        if (keys.contains(n))
+          throw new SettingError(n, s"""$n is also a by column; name the output otherwise""")
+    }
     named.map { case (n, e) => n -> BuiltinOp.checked(n)(Expressions.aggregate(e, input)) }
   }
 

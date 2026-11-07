@@ -23,7 +23,11 @@ import com.fasterxml.jackson.annotation.{JsonIgnore, JsonProperty, JsonPropertyD
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.texera.amber.core.executor.{OpExecWithClassName, OperatorExecutor}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple, TupleLike}
-import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, PhysicalOpIdentity, WorkflowIdentity}
+import org.apache.texera.amber.core.virtualidentity.{
+  ExecutionIdentity,
+  PhysicalOpIdentity,
+  WorkflowIdentity
+}
 import org.apache.texera.amber.core.workflow._
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 
@@ -64,8 +68,9 @@ class JoinOp extends BuiltinOp {
     keys.map { k =>
       k.split("=", 2).map(_.trim).toList match {
         case List(l, r) if l.nonEmpty && r.nonEmpty => l -> r
-        case List(both) if both.nonEmpty             => both -> both
-        case _                                       => throw new SettingError("on", s"'$k' is not a column, nor left_column = right_column")
+        case List(both) if both.nonEmpty            => both -> both
+        case _ =>
+          throw new SettingError("on", s"'$k' is not a column, nor left_column = right_column")
       }
     }
   }
@@ -75,7 +80,8 @@ class JoinOp extends BuiltinOp {
 
   override def outputColumns(inputs: List[Schema]): Schema = {
     val (left, right) = (inputs.head, inputs(1))
-    if (!JoinOp.kinds.contains(how)) throw new SettingError("how", "inner, left, right, full, semi or anti")
+    if (!JoinOp.kinds.contains(how))
+      throw new SettingError("how", "inner, left, right, full, semi or anti")
     val pairs = keyPairs
     pairs.foreach {
       case (l, r) =>
@@ -83,24 +89,38 @@ class JoinOp extends BuiltinOp {
         BuiltinOp.column("on", r, right)
         val (lt, rt) = (left.getAttribute(l).getType, right.getAttribute(r).getType)
         if (lt != rt && !(JoinOp.numeric.contains(lt) && JoinOp.numeric.contains(rt)))
-          throw new SettingError("on", s"$l and $r hold different kinds of values; make them one kind with compute first")
+          throw new SettingError(
+            "on",
+            s"$l and $r hold different kinds of values; make them one kind with compute first"
+          )
     }
     if (!withRight) return left
     val rightKeys = pairs.map(_._2).toSet
     val rights = right.getAttributes.filterNot(a => rightKeys.contains(a.getName))
     rights.find(a => left.containsAttribute(a.getName)).foreach { a =>
-      throw new SettingError("on", s"""both inputs have a column named "${a.getName}"; rename one with project first""")
+      throw new SettingError(
+        "on",
+        s"""both inputs have a column named "${a.getName}"; rename one with project first"""
+      )
     }
     Schema(left.getAttributes ++ rights)
   }
 
-  override def getPhysicalPlan(workflowId: WorkflowIdentity, executionId: ExecutionIdentity): PhysicalPlan = {
+  override def getPhysicalPlan(
+      workflowId: WorkflowIdentity,
+      executionId: ExecutionIdentity
+  ): PhysicalPlan = {
     val pairs = keyPairs
     val leftPort = operatorInfo.inputPorts.head
     val rightPort = operatorInfo.inputPorts(1)
     val kept = OutputPort(PortIdentity(0, internal = true), blocking = true)
     val build = PhysicalOp
-      .oneToOnePhysicalOp(PhysicalOpIdentity(operatorIdentifier, "build"), workflowId, executionId, OpExecWithClassName(classOf[JoinBuildExec].getName, objectMapper.writeValueAsString(this)))
+      .oneToOnePhysicalOp(
+        PhysicalOpIdentity(operatorIdentifier, "build"),
+        workflowId,
+        executionId,
+        OpExecWithClassName(classOf[JoinBuildExec].getName, objectMapper.writeValueAsString(this))
+      )
       .withInputPorts(List(leftPort))
       .withOutputPorts(List(kept))
       .withPartitionRequirement(List(Option(HashPartition(pairs.map(_._1)))))
@@ -109,14 +129,30 @@ class JoinOp extends BuiltinOp {
     val keptIn = InputPort(PortIdentity(0, internal = true))
     val probeIn = InputPort(rightPort.id, dependencies = List(keptIn.id))
     val probe = PhysicalOp
-      .oneToOnePhysicalOp(PhysicalOpIdentity(operatorIdentifier, "probe"), workflowId, executionId, OpExecWithClassName(executor, objectMapper.writeValueAsString(this)))
+      .oneToOnePhysicalOp(
+        PhysicalOpIdentity(operatorIdentifier, "probe"),
+        workflowId,
+        executionId,
+        OpExecWithClassName(executor, objectMapper.writeValueAsString(this))
+      )
       .withInputPorts(List(keptIn, probeIn))
       .withOutputPorts(operatorInfo.outputPorts)
-      .withPartitionRequirement(List(Option(HashPartition(pairs.map(_._1))), Option(HashPartition(pairs.map(_._2)))))
+      .withPartitionRequirement(
+        List(Option(HashPartition(pairs.map(_._1))), Option(HashPartition(pairs.map(_._2))))
+      )
       .withDerivePartition(_ => HashPartition(pairs.map(_._1)))
       .withParallelizable(true)
-      .withPropagateSchema(SchemaPropagationFunc(in => Map(operatorInfo.outputPorts.head.id -> outputColumns(List(in(keptIn.id), in(probeIn.id))))))
-    PhysicalPlan(operators = Set(build, probe), links = Set(PhysicalLink(build.id, kept.id, probe.id, keptIn.id)))
+      .withPropagateSchema(
+        SchemaPropagationFunc(in =>
+          Map(
+            operatorInfo.outputPorts.head.id -> outputColumns(List(in(keptIn.id), in(probeIn.id)))
+          )
+        )
+      )
+    PhysicalPlan(
+      operators = Set(build, probe),
+      links = Set(PhysicalLink(build.id, kept.id, probe.id, keptIn.id))
+    )
   }
 }
 
@@ -138,6 +174,7 @@ class JoinBuildExec(descString: String) extends OperatorExecutor {
   */
 class JoinProbeExec(descString: String) extends OperatorExecutor {
   private val op = objectMapper.readValue(descString, classOf[JoinOp])
+
   /** The left rows by key; those with a NULL key under `null`, kept only to be output unmatched. */
   private val kept = mutable.LinkedHashMap[List[Any], mutable.ArrayBuffer[Tuple]]()
   private val matched = mutable.Set[List[Any]]()
@@ -163,7 +200,7 @@ class JoinProbeExec(descString: String) extends OperatorExecutor {
       else {
         val rights = named(tuple, op.keyPairs.map(_._2).toSet)
         lefts match {
-          case Some(rows) => rows.iterator.map(l => TupleLike((named(l) ++ rights).toMap))
+          case Some(rows)                                    => rows.iterator.map(l => TupleLike((named(l) ++ rights).toMap))
           case None if op.how == "right" || op.how == "full" =>
             // The left's keys take the right's values, so the row says which key it is.
             val keys = op.keyPairs.map { case (l, r) => l -> tuple.getField[Any](r) }
@@ -176,9 +213,15 @@ class JoinProbeExec(descString: String) extends OperatorExecutor {
   override def onFinish(port: Int): Iterator[TupleLike] =
     if (port != 1) Iterator.empty
     else {
-      def unmatched = kept.iterator.collect { case (k, rows) if k == null || !matched.contains(k) => rows }.flatten
+      def unmatched =
+        kept.iterator.collect {
+          case (k, rows) if k == null || !matched.contains(k) => rows
+        }.flatten
       op.how match {
-        case "semi"          => kept.iterator.collect { case (k, rows) if k != null && matched.contains(k) => rows }.flatten
+        case "semi" =>
+          kept.iterator.collect {
+            case (k, rows) if k != null && matched.contains(k) => rows
+          }.flatten
         case "anti"          => unmatched
         case "left" | "full" => unmatched.map(l => TupleLike(named(l).toMap))
         case _               => Iterator.empty

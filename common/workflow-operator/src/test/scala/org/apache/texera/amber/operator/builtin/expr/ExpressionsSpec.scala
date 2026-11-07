@@ -40,16 +40,28 @@ class ExpressionsSpec extends AnyFlatSpec with Matchers {
 
   private def at(local: String): Timestamp = Timestamp.valueOf(local)
 
-  private def row(patient: String, takenAt: String, glucose: java.lang.Double, age: Integer, insulin: java.lang.Boolean, note: String = null) =
-    Tuple(readings, Array[Any](patient, if (takenAt == null) null else at(takenAt), glucose, age, insulin, note))
+  private def row(
+      patient: String,
+      takenAt: String,
+      glucose: java.lang.Double,
+      age: Integer,
+      insulin: java.lang.Boolean,
+      note: String = null
+  ) =
+    Tuple(
+      readings,
+      Array[Any](patient, if (takenAt == null) null else at(takenAt), glucose, age, insulin, note)
+    )
 
   private val night = row("P-1", "2026-11-01 23:30:00", 64.0, 52, true, "after dinner")
   private val day = row("P-2", "2026-11-02 12:00:00", 180.5, 17, false)
   private val missing = row("P-3", null, null, null, null)
 
   private def eval(text: String, r: Tuple = night): Any = Expressions.value(text, readings)(r)
-  private def holds(text: String, r: Tuple = night): Boolean = Expressions.condition(text, readings).holds(r)
-  private def error(text: String): ExprError = intercept[ExprError](Expressions.value(text, readings))
+  private def holds(text: String, r: Tuple = night): Boolean =
+    Expressions.condition(text, readings).holds(r)
+  private def error(text: String): ExprError =
+    intercept[ExprError](Expressions.value(text, readings))
 
   "A condition" should "keep a row only where it is true" in {
     holds("glucose < 70") shouldBe true
@@ -76,7 +88,9 @@ class ExpressionsSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "be refused when it is a value, not a condition" in {
-    intercept[ExprError](Expressions.condition("glucose + 1", readings)).getMessage should include("not a condition")
+    intercept[ExprError](Expressions.condition("glucose + 1", readings)).getMessage should include(
+      "not a condition"
+    )
   }
 
   "A value" should "add integers as a long, mix in a double as a double, and divide as a double" in {
@@ -92,12 +106,19 @@ class ExpressionsSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "compute CASE, CAST and TRY_CAST" in {
-    eval("case when glucose < 70 then 'low' when glucose > 180 then 'high' else 'in range' end") shouldBe "low"
-    eval("case when glucose < 70 then 'low' when glucose > 180 then 'high' else 'in range' end", day) shouldBe "high"
+    eval(
+      "case when glucose < 70 then 'low' when glucose > 180 then 'high' else 'in range' end"
+    ) shouldBe "low"
+    eval(
+      "case when glucose < 70 then 'low' when glucose > 180 then 'high' else 'in range' end",
+      day
+    ) shouldBe "high"
     eval("case when glucose > 1000 then 1 else 2.5 end") shouldBe 2.5
     eval("cast('12' as integer) + 1") shouldBe 13L
     Option(eval("try_cast('twelve' as double)")) shouldBe None
-    intercept[ExprError](eval("cast('twelve' as double)")).getMessage should include("cannot be read as a number")
+    intercept[ExprError](eval("cast('twelve' as double)")).getMessage should include(
+      "cannot be read as a number"
+    )
     eval("cast(age as text) || ' years'") shouldBe "52 years"
   }
 
@@ -121,11 +142,15 @@ class ExpressionsSpec extends AnyFlatSpec with Matchers {
     e.getMessage shouldBe """the input has no column "taken"; did you mean "taken_at"?"""
     e.at shouldBe 5
     eval("Glucose * 2") shouldBe 128.0 // a different case still finds the one column
-    intercept[ExprError](eval("\"Glucose\" * 2")).getMessage should include("did you mean \"glucose\"") // quoted is exact
+    intercept[ExprError](eval("\"Glucose\" * 2")).getMessage should include(
+      "did you mean \"glucose\""
+    ) // quoted is exact
   }
 
   it should "say what types do not go together, and how to fix it" in {
-    error("patient_id * 2").getMessage shouldBe "patient_id is text, not a number; read it as one with try_cast(patient_id AS double)"
+    error(
+      "patient_id * 2"
+    ).getMessage shouldBe "patient_id is text, not a number; read it as one with try_cast(patient_id AS double)"
     error("glucose < 'high'").getMessage should include("cannot be compared")
     error("avg(glucose)").getMessage should include("use it in aggregate's outputs")
     error("sqrt(glucose, 2)").getMessage shouldBe "sqrt takes 1 argument, not 2"
@@ -158,8 +183,14 @@ class ExpressionsSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "be refused where no aggregate is, and on a column not aggregated" in {
-    intercept[ExprError](Expressions.aggregate("glucose + 1", readings)).getMessage should include("needs an aggregate")
-    intercept[ExprError](Expressions.aggregate("avg(patient_id)", readings)).getMessage should include("avg needs numbers")
-    intercept[ExprError](Expressions.aggregate("avg(avg(glucose))", readings)).getMessage should include("aggregate")
+    intercept[ExprError](Expressions.aggregate("glucose + 1", readings)).getMessage should include(
+      "needs an aggregate"
+    )
+    intercept[ExprError](
+      Expressions.aggregate("avg(patient_id)", readings)
+    ).getMessage should include("avg needs numbers")
+    intercept[ExprError](
+      Expressions.aggregate("avg(avg(glucose))", readings)
+    ).getMessage should include("aggregate")
   }
 }

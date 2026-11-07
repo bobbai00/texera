@@ -53,7 +53,8 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
 
   it should "describe each port by its proto, keyed by its identity, as the catalog reads it" in {
     val join = UnitApiResource.operatorRegistry.operators.find(_.operatorType == "HashJoin").get
-    val ports = join.inputPorts.map(objectMapper.valueToTree[com.fasterxml.jackson.databind.JsonNode](_))
+    val ports =
+      join.inputPorts.map(objectMapper.valueToTree[com.fasterxml.jackson.databind.JsonNode](_))
     withClue(ports.mkString("\n")) {
       ports.map(_.get("id").get("id").asInt) shouldBe List(0, 1)
       ports.map(_.get("id").get("internal").asBoolean) shouldBe List(false, false)
@@ -65,7 +66,9 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
   "the engine's version" should "name the operator registry it serves, so a changed registry is synced again" in {
     UnitApiResource.engineVersion should fullyMatch regex "2\\.0\\.0-alpha\\+[0-9a-f]{12}"
     new UnitApiResource().health().version shouldBe Some(UnitApiResource.engineVersion)
-    UnitApiResource.operatorRegistry.operators.map(_.operatorType) should contain allOf ("scan", "filter", "aggregate", "join")
+    UnitApiResource.operatorRegistry.operators.map(
+      _.operatorType
+    ) should contain allOf ("scan", "filter", "aggregate", "join")
   }
 
   "compile" should "report output schemas per port for a valid plan" in {

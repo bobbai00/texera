@@ -33,7 +33,9 @@ import scala.jdk.CollectionConverters._
 class FilterOp extends BuiltinOp {
   @JsonProperty(required = true)
   @JsonSchemaTitle("Where")
-  @JsonPropertyDescription("A condition over the input's columns; the rows where it is true are kept: glucose < 70 and age >= 18")
+  @JsonPropertyDescription(
+    "A condition over the input's columns; the rows where it is true are kept: glucose < 70 and age >= 18"
+  )
   var where: String = ""
 
   @JsonIgnore override def name = "filter"
@@ -78,7 +80,8 @@ class ProjectOp extends BuiltinOp {
   def chosen(input: Schema): List[(Attribute, String)] = {
     val keeps = Option(keep).map(_.asScala.toList).filter(_.nonEmpty)
     val drops = Option(drop).map(_.asScala.toList).getOrElse(Nil)
-    if (keeps.isDefined && drops.nonEmpty) throw new SettingError("keep", "use keep or drop, not both")
+    if (keeps.isDefined && drops.nonEmpty)
+      throw new SettingError("keep", "use keep or drop, not both")
     val renames = Option(rename).map(_.asScala.toList).getOrElse(Nil)
     renames.foreach { case (from, _) => BuiltinOp.column("rename", from, input) }
     val staying = keeps match {
@@ -103,7 +106,11 @@ class ProjectExec(descString: String) extends OperatorExecutor {
   private val op = objectMapper.readValue(descString, classOf[ProjectOp])
   private var indices: Array[Int] = _
   override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = {
-    if (indices == null) indices = op.chosen(tuple.getSchema).map { case (a, _) => tuple.getSchema.getIndex(a.getName) }.toArray
+    if (indices == null)
+      indices = op
+        .chosen(tuple.getSchema)
+        .map { case (a, _) => tuple.getSchema.getIndex(a.getName) }
+        .toArray
     Iterator.single(TupleLike(indices.map(i => tuple.getField[Any](i))))
   }
 }
@@ -112,7 +119,9 @@ class ProjectExec(descString: String) extends OperatorExecutor {
 class ComputeOp extends BuiltinOp {
   @JsonProperty(required = true)
   @JsonSchemaTitle("Columns")
-  @JsonPropertyDescription("New columns in order, each name = an expression over the input's columns: mmol = glucose / 18.016")
+  @JsonPropertyDescription(
+    "New columns in order, each name = an expression over the input's columns: mmol = glucose / 18.016"
+  )
   var columns: java.util.List[String] = new java.util.ArrayList()
 
   @JsonIgnore override def name = "compute"
@@ -121,9 +130,15 @@ class ComputeOp extends BuiltinOp {
   /** Each output column, and the expression that makes it when it is computed. */
   def layout(input: Schema): List[(Attribute, Option[String])] = {
     val computed = BuiltinOp.named("columns", Option(columns).map(_.asScala.toList).getOrElse(Nil))
-    val typed = computed.map { case (n, e) => n -> (new Attribute(n, BuiltinOp.typeOf(n, e, input)), e) }.toMap
-    val replaced = input.getAttributes.map(a => typed.get(a.getName).map { case (t, e) => t -> Some(e) }.getOrElse(a -> None))
-    val added = computed.collect { case (n, _) if !input.containsAttribute(n) => typed(n)._1 -> Some(typed(n)._2) }
+    val typed = computed.map {
+      case (n, e) => n -> (new Attribute(n, BuiltinOp.typeOf(n, e, input)), e)
+    }.toMap
+    val replaced = input.getAttributes.map(a =>
+      typed.get(a.getName).map { case (t, e) => t -> Some(e) }.getOrElse(a -> None)
+    )
+    val added = computed.collect {
+      case (n, _) if !input.containsAttribute(n) => typed(n)._1 -> Some(typed(n)._2)
+    }
     replaced ++ added
   }
 
@@ -133,14 +148,18 @@ class ComputeOp extends BuiltinOp {
 
 class ComputeExec(descString: String) extends OperatorExecutor {
   private val op = objectMapper.readValue(descString, classOf[ComputeOp])
+
   /** Per output column: a computation, or the input column it copies. */
   private var makers: Array[Either[Int, Computed]] = _
   override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = {
     if (makers == null)
-      makers = op.layout(tuple.getSchema).map {
-        case (_, Some(e)) => Right(Expressions.value(e, tuple.getSchema))
-        case (a, None)    => Left(tuple.getSchema.getIndex(a.getName))
-      }.toArray
+      makers = op
+        .layout(tuple.getSchema)
+        .map {
+          case (_, Some(e)) => Right(Expressions.value(e, tuple.getSchema))
+          case (a, None)    => Left(tuple.getSchema.getIndex(a.getName))
+        }
+        .toArray
     Iterator.single(TupleLike(makers.map {
       case Left(i)  => tuple.getField[Any](i)
       case Right(c) => c(tuple)
@@ -167,7 +186,9 @@ class PassExec(descString: String) extends OperatorExecutor {
 class DistinctOp extends BuiltinOp {
   @JsonProperty
   @JsonSchemaTitle("Columns")
-  @JsonPropertyDescription("The columns whose values make a row the same as another; absent: all of them")
+  @JsonPropertyDescription(
+    "The columns whose values make a row the same as another; absent: all of them"
+  )
   var columns: java.util.List[String] = _
 
   @JsonIgnore override def name = "distinct"
@@ -194,7 +215,9 @@ class DistinctExec(descString: String) extends OperatorExecutor {
 class SortOp extends BuiltinOp {
   @JsonProperty(required = true)
   @JsonSchemaTitle("By")
-  @JsonPropertyDescription("The columns to order by, each ascending, or descending with ' desc' after its name")
+  @JsonPropertyDescription(
+    "The columns to order by, each ascending, or descending with ' desc' after its name"
+  )
   var by: java.util.List[String] = new java.util.ArrayList()
 
   @JsonProperty(defaultValue = "last")
@@ -214,7 +237,10 @@ class SortOp extends BuiltinOp {
     wanted.map { key =>
       val parts = key.trim.split("\\s+").toList
       val descending = parts.lastOption.exists(_.equalsIgnoreCase("desc"))
-      val name = if (parts.size > 1 && (descending || parts.last.equalsIgnoreCase("asc"))) parts.init.mkString(" ") else key.trim
+      val name =
+        if (parts.size > 1 && (descending || parts.last.equalsIgnoreCase("asc")))
+          parts.init.mkString(" ")
+        else key.trim
       BuiltinOp.column("by", name, input) -> descending
     }
   }
@@ -225,10 +251,13 @@ class SortOp extends BuiltinOp {
 class SortExec(descString: String) extends OperatorExecutor {
   private val op = objectMapper.readValue(descString, classOf[SortOp])
   private val rows = mutable.ArrayBuffer[Tuple]()
-  override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = { rows += tuple; Iterator.empty }
+  override def processTuple(tuple: Tuple, port: Int): Iterator[TupleLike] = {
+    rows += tuple; Iterator.empty
+  }
   override def onFinish(port: Int): Iterator[TupleLike] = {
     if (rows.isEmpty) return Iterator.empty
-    val keys = op.keys(rows.head.getSchema).map { case (n, d) => (rows.head.getSchema.getIndex(n), d) }
+    val keys =
+      op.keys(rows.head.getSchema).map { case (n, d) => (rows.head.getSchema.getIndex(n), d) }
     val nullsFirst = op.nulls == "first"
     val ordering = new Ordering[Tuple] {
       def compare(a: Tuple, b: Tuple): Int = {

@@ -32,13 +32,17 @@ object Names {
       .filter {
         case (c, d) =>
           val column = c.toLowerCase
-          d <= math.max(2, column.length / 3) || (wanted.length >= 3 && (column.startsWith(wanted) || column.contains(wanted) || wanted.startsWith(column)))
+          d <= math.max(2, column.length / 3) || (wanted.length >= 3 && (column.startsWith(
+            wanted
+          ) || column.contains(wanted) || wanted.startsWith(column)))
       }
       .sortBy(_._2)
     close.headOption match {
       case Some((best, _)) => s"""the input has no column "$name"; did you mean "$best"?"""
       case None if columns.size <= 12 =>
-        s"""the input has no column "$name"; its columns are ${columns.map(c => s""""$c"""").mkString(", ")}"""
+        s"""the input has no column "$name"; its columns are ${columns
+          .map(c => s""""$c"""")
+          .mkString(", ")}"""
       case None => s"""the input has no column "$name\""""
     }
   }
@@ -46,13 +50,13 @@ object Names {
   /** The type a name in CAST means. */
   def typeNamed(name: String): Option[AttributeType] =
     name.toLowerCase match {
-      case "integer" | "int"                             => Some(AttributeType.INTEGER)
-      case "long" | "bigint"                             => Some(AttributeType.LONG)
-      case "double" | "float" | "real" | "number"        => Some(AttributeType.DOUBLE)
-      case "text" | "string" | "varchar"                 => Some(AttributeType.STRING)
-      case "boolean" | "bool"                            => Some(AttributeType.BOOLEAN)
-      case "timestamp" | "datetime" | "date" | "time"    => Some(AttributeType.TIMESTAMP)
-      case _                                             => None
+      case "integer" | "int"                          => Some(AttributeType.INTEGER)
+      case "long" | "bigint"                          => Some(AttributeType.LONG)
+      case "double" | "float" | "real" | "number"     => Some(AttributeType.DOUBLE)
+      case "text" | "string" | "varchar"              => Some(AttributeType.STRING)
+      case "boolean" | "bool"                         => Some(AttributeType.BOOLEAN)
+      case "timestamp" | "datetime" | "date" | "time" => Some(AttributeType.TIMESTAMP)
+      case _                                          => None
     }
 
   /** Edit distance: how many letters to change, add or remove to get from one name to the other. */
@@ -63,7 +67,10 @@ object Names {
       row(0) = i
       for (j <- 1 to b.length) {
         val above = row(j)
-        row(j) = math.min(math.min(row(j) + 1, row(j - 1) + 1), diagonal + (if (a(i - 1) == b(j - 1)) 0 else 1))
+        row(j) = math.min(
+          math.min(row(j) + 1, row(j - 1) + 1),
+          diagonal + (if (a(i - 1) == b(j - 1)) 0 else 1)
+        )
         diagonal = above
       }
     }

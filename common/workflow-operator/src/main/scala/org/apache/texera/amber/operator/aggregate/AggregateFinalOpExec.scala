@@ -62,6 +62,8 @@ class AggregateFinalOpExec(descString: String) extends OperatorExecutor {
   override def onFinish(port: Int): Iterator[TupleLike] =
     mergedByKey.iterator.map {
       case (key, merged) =>
-        TupleLike(key ++ merges.zip(merged).map { case (merge, partial) => merge.finalAgg(partial) })
+        TupleLike(
+          key ++ merges.zip(merged).map { case (merge, partial) => merge.finalAgg(partial) }
+        )
     }
 }

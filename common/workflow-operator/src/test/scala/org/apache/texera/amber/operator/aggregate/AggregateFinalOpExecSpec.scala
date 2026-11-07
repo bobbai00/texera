@@ -69,7 +69,9 @@ class AggregateFinalOpExecSpec extends AnyFlatSpec with Matchers {
   private def firstStage(rows: (String, Integer)*): List[TupleLike] = {
     val exec = new AggregateOpExec(descJson)
     exec.open()
-    rows.foreach { case (city, sales) => exec.processTuple(Tuple(input, Array[Any](city, sales)), 0) }
+    rows.foreach {
+      case (city, sales) => exec.processTuple(Tuple(input, Array[Any](city, sales)), 0)
+    }
     val out = exec.onFinish(0).toList
     exec.close()
     out
@@ -79,10 +81,14 @@ class AggregateFinalOpExecSpec extends AnyFlatSpec with Matchers {
     val exec = new AggregateFinalOpExec(descJson)
     exec.open()
     partials.foreach(p => exec.processTuple(Tuple(partialSchema, p.getFields.toArray), 0))
-    val out = exec.onFinish(0).toList.map { t =>
-      val fields = t.getFields.toList
-      fields.head.asInstanceOf[String] -> fields.tail
-    }.toMap
+    val out = exec
+      .onFinish(0)
+      .toList
+      .map { t =>
+        val fields = t.getFields.toList
+        fields.head.asInstanceOf[String] -> fields.tail
+      }
+      .toMap
     exec.close()
     out
   }

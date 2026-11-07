@@ -34,7 +34,8 @@ object Parser {
   private final case class Symbol(text: String, at: Int) extends Token
   private final case class End(at: Int) extends Token
 
-  private val symbols = List("||", "<=", ">=", "<>", "!=", "==", "(", ")", ",", "+", "-", "*", "/", "%", "=", "<", ">")
+  private val symbols =
+    List("||", "<=", ">=", "<>", "!=", "==", "(", ")", ",", "+", "-", "*", "/", "%", "=", "<", ">")
 
   private def tokenize(text: String): Vector[Token] = {
     val out = ArrayBuffer[Token]()
@@ -68,7 +69,8 @@ object Parser {
         }
         if (!closed)
           throw ExprError(
-            if (c == '\'') "this text is not closed: add a ' at its end" else "this name is not closed: add a \" at its end",
+            if (c == '\'') "this text is not closed: add a ' at its end"
+            else "this name is not closed: add a \" at its end",
             start
           )
         out += (if (c == '\'') Text(sb.toString, start) else Quoted(sb.toString, start))
@@ -97,7 +99,7 @@ object Parser {
   private def describe(t: Token): String =
     t match {
       case Word(w, _)   => s"'$w'"
-      case Quoted(q, _) => s"\"$q\""
+      case Quoted(q, _) => s""""$q""""
       case Text(s, _)   => s"'$s'"
       case Number(n, _) => n
       case Symbol(s, _) => s"'$s'"
@@ -108,14 +110,22 @@ object Parser {
     private var pos = 0
     def peek: Token = tokens(pos)
     private def next(): Token = { val t = tokens(pos); pos += 1; t }
-    private def isWord(t: Token, w: String) = t match { case Word(x, _) => x.equalsIgnoreCase(w); case _ => false }
-    private def isSymbol(t: Token, s: String) = t match { case Symbol(x, _) => x == s; case _ => false }
-    private def acceptWord(w: String): Boolean = if (isWord(peek, w)) { pos += 1; true } else false
-    private def acceptSymbol(s: String): Boolean = if (isSymbol(peek, s)) { pos += 1; true } else false
+    private def isWord(t: Token, w: String) =
+      t match { case Word(x, _) => x.equalsIgnoreCase(w); case _ => false }
+    private def isSymbol(t: Token, s: String) =
+      t match { case Symbol(x, _) => x == s; case _ => false }
+    private def acceptWord(w: String): Boolean =
+      if (isWord(peek, w)) { pos += 1; true }
+      else false
+    private def acceptSymbol(s: String): Boolean =
+      if (isSymbol(peek, s)) { pos += 1; true }
+      else false
     private def expectSymbol(s: String, what: String): Unit =
-      if (!acceptSymbol(s)) throw ExprError(s"expected '$s' $what, found ${describe(peek)}", peek.at)
+      if (!acceptSymbol(s))
+        throw ExprError(s"expected '$s' $what, found ${describe(peek)}", peek.at)
     private def expectWord(w: String, what: String): Unit =
-      if (!acceptWord(w)) throw ExprError(s"expected ${w.toUpperCase} $what, found ${describe(peek)}", peek.at)
+      if (!acceptWord(w))
+        throw ExprError(s"expected ${w.toUpperCase} $what, found ${describe(peek)}", peek.at)
 
     def expr(): Expr = or()
 
@@ -199,10 +209,13 @@ object Parser {
     private def primary(): Expr =
       next() match {
         case Number(n, at) =>
-          if (n.exists(c => c == '.' || c == 'e' || c == 'E')) Literal(java.lang.Double.valueOf(n.toDouble), at)
+          if (n.exists(c => c == '.' || c == 'e' || c == 'E'))
+            Literal(java.lang.Double.valueOf(n.toDouble), at)
           else
             try Literal(java.lang.Long.valueOf(n.toLong), at)
-            catch { case _: NumberFormatException => Literal(java.lang.Double.valueOf(n.toDouble), at) }
+            catch {
+              case _: NumberFormatException => Literal(java.lang.Double.valueOf(n.toDouble), at)
+            }
         case Text(s, at)   => Literal(s, at)
         case Quoted(q, at) => Column(q, quoted = true, at)
         case Symbol("(", _) =>
@@ -233,7 +246,8 @@ object Parser {
 
     private def call(name: Word): Expr = {
       next() // (
-      if (acceptSymbol(")")) return Call(name.text.toLowerCase, Nil, star = false, distinct = false, name.at)
+      if (acceptSymbol(")"))
+        return Call(name.text.toLowerCase, Nil, star = false, distinct = false, name.at)
       if (acceptSymbol("*")) {
         expectSymbol(")", s"after ${name.text}(*")
         return Call(name.text.toLowerCase, Nil, star = true, distinct = false, name.at)
