@@ -3,7 +3,7 @@ import type { ConversationSpec, ConversationStatus, Resource } from "@texera/cat
 import { type AppContext, baseUri, chatSettingsQuery, createDatasetVersion, FromThisChat, keysOf, KindIcon, meQuery, OpenError, Presence, PrincipalName, ProjectScope, ResourcePanel, resourceQuery, settleViewing, ShareButton, updateSpec, useChatGraph, useMay, useOpenResource } from "@texera/kinds";
 import { Button, ErrorNote, Skeleton, cn } from "@texera/ui";
 import { Loader2, PanelRight } from "lucide-react";
-import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatSettingsBar, PassedOver } from "./ChatSettingsBar";
 import { Composer } from "./Composer";
 import { useResourceLabels } from "./labels";
@@ -68,7 +68,8 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   }, [said, refresh]);
   const uris = useMemo(() => writersOf(chat.messages), [chat.messages]);
   const labels = useResourceLabels(uris);
-  const { beside } = useOpenResource();
+  const { beside, expand } = useOpenResource();
+  const openGraph = useCallback(() => expand({ kind: "conversation", rid }), [expand, rid]);
 
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -215,6 +216,7 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
                     showLabel={showLabel}
                     showAuthor={message.author !== undefined && message.author !== myPid}
                     answers={canAnswer && i === items.length - 1 && message.role === "assistant" ? answers : undefined}
+                    openGraph={dock ? openGraph : undefined}
                   />
                 </div>
               ))}

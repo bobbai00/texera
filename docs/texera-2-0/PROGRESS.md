@@ -2,6 +2,44 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-07 (session 15, part 2): caching from lineage, the profile ladder, the resource graph
+
+- E3, caching from lineage: every port a run stores carries the fingerprint of the work that
+  makes it (the engine operator's type and settings, versions named by number, the engine, the
+  Python environment for Python operators, the inputs' fingerprints). Reusable: the built-ins (a
+  limit only after a sort, a distinct only over every column), functions and predict. A run
+  keeps the results of its costliest operators (functions, predict, aggregate, join, sort) though
+  nothing shows them; before a run the catalog serves each costly operator whose results the
+  project's completed runs stored, that the caller may read and the unit can open, by the
+  engine's new `stored` source, and drops what fed only it. The execution records reused and
+  skipped, lineage a reused arrow; `fresh` makes everything again. On the canvas a served card
+  says "Read from" with the earlier run, a skipped one says it did not run, and the run bar has
+  Run fresh. Each plan marks the ports it shows.
+- G2, profiles: Small, Medium, Large (data), ML and GPU are seeded; a unit's limits equal its
+  requests; a unit provider says whether the deployment can start a unit like a spec (Compose
+  none from a profile; a cluster with no GPU, or no node that large, says so), and every read of a
+  profile says startable and why not. computing-units offers only what can start here.
+- G3, the graph's data: GET /conversations/{rid}/graph, from origins, executions and references:
+  data, workflows (with their runs in the chat), models, functions and units; reads, makes, uses,
+  runs on; what start_work planned and was not made.
+- G4, the view: once a chat starts work the graph takes the left of the chat page, round nodes
+  by kind, labelled arrows, columns of dependency on bands (Used first, Made last), planned items
+  dashed, places kept for the chat's life; a click shows what a node is and opens it; List is the
+  tree that stood there before.
+- E5, in part: a unit started from a profile runs an operator that splits on a worker per CPU.
+
+Verified: catalog `go test ./...`; the built-in, function and predict Scala specs and StoredOpSpec
+(27); pytexera 92; the runtime 102; frontend vitest 291; e2e on the dev stack 45 (with
+test_reuse.py: a 4 s function skipped on the second run, the same rows, a changed last step
+reruns only it, fresh recomputes); Playwright: reuse on the canvas, the graph (nodes and arrows
+appear, nothing moves when a second workflow arrives, the detail card, the list).
+
+Not done: the stored source reads another unit's tables only where the lake lets that unit (a run
+that cannot read one makes it again); the nondeterministic mark on functions; the "Open graph"
+line in the floating chat; MCP sources on the graph (tool calls do not record their server yet);
+environment images for the ML profiles (PyTorch installs on first use); E5's range sort,
+broadcast join and the Parquet benchmark; E6, R.
+
 ## 2026-11-07 (session 15, on Linux): the work gate, operators as lines, functions and models, a diabetes team's project
 
 The user approved both plans with one change (start_work governed by the chat's work mode, so in

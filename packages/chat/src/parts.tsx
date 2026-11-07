@@ -4,7 +4,7 @@
 
 import { isKindId, KindIcon, PrincipalName, UriChip } from "@texera/kinds";
 import { Button, cn } from "@texera/ui";
-import { AlertTriangle, ArrowRightLeft, Brain, Check, ChevronDown, CircleHelp, ListChecks, Loader2, ShieldCheck, Wrench, X } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, Brain, Check, ChevronDown, CircleHelp, ListChecks, Loader2, Network, ShieldCheck, Wrench, X } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 import type { Part } from "./model";
 
@@ -101,7 +101,7 @@ interface Plan {
 }
 
 /** What the agent said it will do before its first change: the goal, what it reads, what it makes. */
-export function PlanPart({ part }: { part: ToolPart }) {
+export function PlanPart({ part, onOpenGraph }: { part: ToolPart; onOpenGraph?: () => void }) {
   const plan = (part.input ?? {}) as Plan;
   const reads = (plan.reads ?? []).filter(uri => typeof uri === "string");
   const makes = (plan.makes ?? []).filter(m => m && typeof m.name === "string");
@@ -109,6 +109,12 @@ export function PlanPart({ part }: { part: ToolPart }) {
     <div className="space-y-2 rounded-xl border bg-muted/20 p-3" data-part="plan">
       <div className="flex items-center gap-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
         <ListChecks className="size-3.5" /> Plan
+        {onOpenGraph && (
+          // The graph is never drawn over a canvas: it is on the chat's own page.
+          <button type="button" onClick={onOpenGraph} className="ml-auto flex items-center gap-1 normal-case tracking-normal text-primary hover:underline" data-open-graph>
+            <Network className="size-3.5" /> Open graph
+          </button>
+        )}
       </div>
       {plan.goal && <p className="font-medium">{plan.goal}</p>}
       {reads.length > 0 && (

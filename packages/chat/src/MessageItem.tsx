@@ -17,6 +17,7 @@ export const MessageItem = memo(function MessageItem({
   showLabel,
   showAuthor = false,
   answers,
+  openGraph,
 }: {
   message: ChatMessage;
   streaming: boolean;
@@ -30,6 +31,8 @@ export const MessageItem = memo(function MessageItem({
    * option of a question, or decide on a change. Absent elsewhere, and for someone who only reads.
    */
   answers?: { pick: (label: string) => void; decide: (toolCallId: string, approved: boolean) => void };
+  /** In the chat that floats over a page, a plan offers the chat's own page, where its graph is. */
+  openGraph?: () => void;
 }) {
   if (message.role === "user") {
     const texts = message.parts.filter(p => p.type === "text");
@@ -111,7 +114,7 @@ export const MessageItem = memo(function MessageItem({
             return <ReasoningPart key={key} text={part.text} />;
           case "tool":
             if (held.has(part.id)) return null;
-            if (part.name === "start_work" && part.input !== undefined) return <PlanPart key={key} part={part} />;
+            if (part.name === "start_work" && part.input !== undefined) return <PlanPart key={key} part={part} onOpenGraph={openGraph} />;
             if (part.name === "ask" && part.input !== undefined) return <AskPart key={key} part={part} onPick={answers?.pick} />;
             return <ToolCallPart key={key} part={part} />;
           case "approval":
