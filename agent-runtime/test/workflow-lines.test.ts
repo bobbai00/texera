@@ -5,7 +5,7 @@
  * line that made it.
  */
 import { describe, expect, test } from "bun:test";
-import { workflowLineTools } from "../src/agent/workflow-lines.ts";
+import { functionsIn, workflowLineTools } from "../src/agent/workflow-lines.ts";
 import { CatalogClient } from "../src/catalog/client.ts";
 import type { WorkflowSpec } from "../src/catalog/types.ts";
 
@@ -52,6 +52,15 @@ function fakeCatalog(options: { errors?: Record<string, string>; conflictOnce?: 
   let spec: WorkflowSpec = { operators: [], links: [] };
   let head = 1;
   let conflict = options.conflictOnce ?? false;
+  const operators = OPERATORS.map((o) => structuredClone(o)) as {
+    kind: string;
+    metadata: { rid: string; uri: string; name: string; head: number; project?: string };
+    spec: {
+      operatorType: string;
+      inputPorts?: object[];
+      implementation?: { python?: { code: string; function?: string } };
+    };
+  }[];
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   const record = () => ({
@@ -72,12 +81,35 @@ function fakeCatalog(options: { errors?: Record<string, string>; conflictOnce?: 
         })),
       });
     if (url.pathname.endsWith("/versions/3/files")) return json(200, { files: [{ path: "iris.csv" }] });
-    if (url.pathname === "/catalog/v1/operators") {
+    if (url.pathname === "/catalog/v1/operators" && method === "GET") {
       const q = (url.searchParams.get("q") ?? "").toLowerCase();
-      return json(200, { items: OPERATORS.filter((o) => o.spec.operatorType.toLowerCase().includes(q)) });
+      return json(200, { items: operators.filter((o) => o.spec.operatorType.toLowerCase().includes(q)) });
     }
-    if (url.pathname === `/catalog/v1/operators/${METRICS}/versions/2`)
-      return json(200, { content: OPERATORS.find((o) => o.metadata.rid === METRICS)?.spec });
+    if (url.pathname === "/catalog/v1/operators" && method === "POST") {
+      // The catalog reads a function's ports from its code; one input here.
+      if (String(body.spec.implementation?.python?.code).includes("decimal"))
+        return json(400, {
+          code: "invalid",
+          message: 'the function: line 1: column x: "decimal" is not a column type',
+        });
+      const made = {
+        ...operator(body.name, [port()], crypto.randomUUID(), body.spec.implementation.python.code),
+        spec: { ...body.spec, inputPorts: [port()] },
+      };
+      made.metadata = { ...made.metadata, head: 1, project: body.parent } as typeof made.metadata;
+      operators.push(made);
+      return json(201, made);
+    }
+    const custom = /^\/catalog\/v1\/operators\/([0-9a-f-]{36})(?:\/versions\/(\d+))?$/.exec(url.pathname);
+    if (custom && method === "PUT") {
+      const found = operators.find((o) => o.metadata.rid === custom[1]);
+      if (!found) return json(404, { code: "not_found", message: "no operator" });
+      found.spec = { ...body.spec, inputPorts: [port()] };
+      found.metadata.head += 1;
+      return json(200, found);
+    }
+    if (custom && method === "GET")
+      return json(200, { content: operators.find((o) => o.metadata.rid === custom[1])?.spec });
     if (url.pathname === "/catalog/v1/workflows" && method === "POST") {
       spec = body.spec;
       return json(201, record());
@@ -102,7 +134,7 @@ function fakeCatalog(options: { errors?: Record<string, string>; conflictOnce?: 
       });
     return json(404, { code: "not_found", message: `no route ${method} ${url.pathname}` });
   };
-  return { calls, fetch, spec: () => spec, head: () => head };
+  return { calls, fetch, spec: () => spec, head: () => head, operators };
 }
 
 const toolsOf = (fake: ReturnType<typeof fakeCatalog>) =>
@@ -224,6 +256,82 @@ describe("operator types", () => {
     expect(
       await call(toolsOf(fake), "create_workflow", { name: "x", lines: `${LINES}\nset j: join(avg, on=["Species"])` }),
     ).toEqual({ error: "line 3: join reads 2 inputs, left and right; this line gives 1" });
+    expect(fake.calls.some((c) => c.method === "POST" && c.path === "/catalog/v1/workflows")).toBe(false);
+  });
+});
+
+const PYTHON = `import pandas as pd
+
+def _share(s, low, high):
+    return s.between(low, high).mean()
+
+
+@returns(
+    patient_id=str,
+    time_in_range=float,
+)
+def tir(readings, *, low: int = 70):
+    g = readings.groupby("patient_id")["glucose"]
+    return g.apply(lambda s: _share(s, low, 180)).rename("time_in_range").reset_index()
+`;
+
+describe("python functions", () => {
+  test("finds the module's functions under @returns, whatever decorates them", () => {
+    expect(functionsIn(PYTHON)).toEqual(["tir"]);
+    expect(
+      functionsIn(
+        "@cache\n@returns(n=int)\ndef a(t):\n  pass\n\n@returns(n=int)\n\ndef b(t): pass\nclass C:\n    @returns(n=int)\n    def c(self): pass",
+      ),
+    ).toEqual(["a"]);
+  });
+
+  test("saves each function as one of the project's operators, and the lines call it by name", async () => {
+    const fake = fakeCatalog();
+    const tools = toolsOf(fake);
+    const out = await call(tools, "create_workflow", {
+      name: "tir",
+      lines: `${LINES}\nset t: tir(scan, by=["Species"], low=54)`,
+      python: PYTHON,
+    });
+    expect(out.error).toBeUndefined();
+    const created = fake.calls.find((c) => c.method === "POST" && c.path === "/catalog/v1/operators");
+    expect(created?.body).toEqual({
+      name: "tir",
+      parent: "p",
+      spec: { operatorType: "tir", implementation: { python: { code: PYTHON, function: "tir" } } },
+    });
+    const tir = fake.operators.find((o) => o.metadata.name === "tir");
+    expect((out.lines as string[]).at(-1)).toBe(`set t: ${tir?.metadata.uri}@1(scan, by=["Species"], low=54)`);
+    expect(out.functions).toEqual([{ name: "tir", operator: tir?.metadata.uri, version: 1, saved: "created" }]);
+
+    // The same code again makes no version; changed code makes one, and the workflow calls it.
+    const same = await call(tools, "edit_workflow", { rid: WF, python: PYTHON });
+    expect(same.functions).toEqual([{ name: "tir", operator: tir?.metadata.uri, version: 1, saved: "unchanged" }]);
+    const changed = await call(tools, "edit_workflow", { rid: WF, python: PYTHON.replace("180", "140") });
+    expect(changed.functions).toEqual([{ name: "tir", operator: tir?.metadata.uri, version: 2, saved: "new version" }]);
+    expect(fake.spec().operators.find((o) => o.operatorID === "t")?.operatorType).toBe(`${tir?.metadata.uri}@2`);
+    expect(
+      fake.calls.findLast((c) => c.method === "PUT" && c.path.startsWith("/catalog/v1/workflows"))?.body,
+    ).toMatchObject({ message: "tir new version" });
+  });
+
+  test("refuses a module without a function to save, and says what the catalog could not read", async () => {
+    const fake = fakeCatalog();
+    expect(
+      await call(toolsOf(fake), "create_workflow", { name: "x", lines: LINES, python: "def f(t):\n    return t\n" }),
+    ).toEqual({
+      error:
+        "line 1: the python defines no function under @returns(...): name each function's output columns and their types above its def",
+    });
+    expect(
+      await call(toolsOf(fake), "create_workflow", {
+        name: "x",
+        lines: LINES,
+        python: "@returns(x=decimal)\ndef f(t):\n    return t\n",
+      }),
+    ).toEqual({
+      error: 'python, f: the function: line 1: column x: "decimal" is not a column type',
+    });
     expect(fake.calls.some((c) => c.method === "POST" && c.path === "/catalog/v1/workflows")).toBe(false);
   });
 });

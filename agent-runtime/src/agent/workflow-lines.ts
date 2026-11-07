@@ -58,6 +58,12 @@ function standing(w: WorkflowRecord) {
   };
 }
 
+const PYTHON_DOC =
+  "Python functions the lines call, as one module. Each top-level function under @returns(column=type, ...) " +
+  "becomes one of the project's operators, a new version when its code changed: its positional parameters " +
+  "are its inputs, one table each, and its parameters with defaults its settings. A line calls it by its name, " +
+  'with by=["patient_id"] to call it once per worker on whole groups: set m: cgm_metrics(night, by=["patient_id"], low=70).';
+
 const UNIT_DOC =
   "The computing unit its runs and compiles go to when a call names none, as texera://computing-units/<rid>: " +
   "set it when the workflow needs a unit of its own, such as one with the packages its Python uses.";
@@ -185,6 +191,86 @@ async function typesOf(lines: Line[], deps: LineToolDeps): Promise<{ lines: Line
   };
 }
 
+/**
+ * The functions a Python module makes operators of: the top-level ones with @returns among the
+ * decorators right above them.
+ */
+export function functionsIn(python: string): string[] {
+  const lines = python.split("\n");
+  const out: string[] = [];
+  lines.forEach((line, i) => {
+    const def = /^def\s+([A-Za-z_]\w*)\s*\(/.exec(line);
+    if (!def) return;
+    // Up over the decorators and their continued lines, to the line before them.
+    for (let k = i - 1; k >= 0; k--) {
+      const above = lines[k] as string;
+      if (above.startsWith("@returns")) {
+        out.push(def[1] as string);
+        return;
+      }
+      if (!(above.startsWith("@") || /^[\s)\]]/.test(above)) || above.trim() === "") return;
+    }
+  });
+  return out;
+}
+
+/** What saving a module's functions did to each operator. */
+interface SavedFunction {
+  name: string;
+  operator: string;
+  version: number;
+  saved: "created" | "new version" | "unchanged";
+}
+
+/**
+ * Saves each function of a module as one of the project's operators, a new version only when
+ * its code changed. The catalog reads each one's inputs, settings and columns from the code, and
+ * refuses one it cannot read, on its line.
+ */
+async function saveFunctions(python: string, deps: LineToolDeps): Promise<SavedFunction[]> {
+  const names = functionsIn(python);
+  if (names.length === 0)
+    throw new LineError(
+      1,
+      "the python defines no function under @returns(...): name each function's output columns and their types above its def",
+    );
+  const out: SavedFunction[] = [];
+  for (const name of names) {
+    const mine = (await deps.catalog.operators(name, deps.project, deps.auth())).find(
+      (r) => r.spec.operatorType === name && r.spec.implementation && r.metadata.project === deps.project,
+    );
+    const implementation = { python: { code: python, function: name } };
+    try {
+      if (!mine) {
+        const r = await deps.catalog.createOperator(
+          name,
+          { operatorType: name, implementation },
+          deps.project,
+          deps.auth(),
+        );
+        out.push({ name, operator: r.metadata.uri, version: r.metadata.head, saved: "created" });
+      } else if (
+        mine.spec.implementation?.python?.code === python &&
+        mine.spec.implementation?.python?.function === name
+      ) {
+        out.push({ name, operator: mine.metadata.uri, version: mine.metadata.head, saved: "unchanged" });
+      } else {
+        const r = await deps.catalog.updateOperatorSpec(
+          mine.metadata.rid,
+          { ...mine.spec, implementation },
+          "the agent's edit",
+          deps.auth(),
+        );
+        out.push({ name, operator: r.metadata.uri, version: r.metadata.head, saved: "new version" });
+      }
+    } catch (e) {
+      if (e instanceof CatalogError && e.status === 400) throw new Error(`python, ${name}: ${e.message}`);
+      throw e;
+    }
+  }
+  return out;
+}
+
 /** Reads an edit's lines, resolving the files and operator types they name. */
 async function readLines(text: string, deps: LineToolDeps): Promise<{ edit: Line[]; ports: PortsOf }> {
   const { lines, ports } = await typesOf(parseLines(text), deps);
@@ -262,9 +348,20 @@ async function saved(w: WorkflowRecord, deps: LineToolDeps) {
 }
 
 /** A refusal the model reads and can act on. */
-const refusal = (e: unknown) => ({
-  error: e instanceof LineError || e instanceof CatalogError ? e.message : String(e),
-});
+const refusal = (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) });
+
+/** The workflow's calls to the functions an edit saved, moved to the versions it saved. */
+function callingSaved(spec: WorkflowSpec, functions: SavedFunction[]): WorkflowSpec {
+  const latest = new Map(functions.map((f) => [f.operator, `${f.operator}@${f.version}`]));
+  return {
+    ...spec,
+    operators: spec.operators.map((op) => {
+      const base = op.operatorType.replace(/@\d+$/, "");
+      const now = latest.get(base);
+      return now && now !== op.operatorType ? { ...op, operatorType: now } : op;
+    }),
+  };
+}
 
 export function workflowLineTools(deps: LineToolDeps): ToolSet {
   const empty: WorkflowSpec = { operators: [], links: [] };
@@ -274,14 +371,16 @@ export function workflowLineTools(deps: LineToolDeps): ToolSet {
       inputSchema: z.object({
         name: z.string().min(1),
         lines: z.string().min(1).describe("The workflow's lines."),
+        python: z.string().optional().describe(PYTHON_DOC),
         defaultComputingUnit: z.string().startsWith("texera://computing-units/").optional().describe(UNIT_DOC),
       }),
-      execute: async ({ name, lines, defaultComputingUnit }) => {
+      execute: async ({ name, lines, python, defaultComputingUnit }) => {
         try {
+          const functions = python?.trim() ? await saveFunctions(python, deps) : [];
           const { edit, ports } = await readLines(lines, deps);
           const spec = { ...applyLines(empty, edit, ports), ...(defaultComputingUnit ? { defaultComputingUnit } : {}) };
           const w = await deps.catalog.createWorkflow(name, spec, deps.project, deps.auth());
-          return await saved(w, deps);
+          return { ...(await saved(w, deps)), ...(functions.length > 0 ? { functions } : {}) };
         } catch (e) {
           return refusal(e);
         }
@@ -293,28 +392,31 @@ export function workflowLineTools(deps: LineToolDeps): ToolSet {
         .object({
           rid: z.string().min(1),
           lines: z.string().optional().describe("The lines of the change."),
+          python: z.string().optional().describe(PYTHON_DOC),
           defaultComputingUnit: z.string().startsWith("texera://computing-units/").optional().describe(UNIT_DOC),
         })
-        .refine((a) => (a.lines ?? "").trim() !== "" || a.defaultComputingUnit, {
-          message: "send lines, a defaultComputingUnit, or both",
+        .refine((a) => (a.lines ?? "").trim() !== "" || (a.python ?? "").trim() !== "" || a.defaultComputingUnit, {
+          message: "send lines, python, a defaultComputingUnit, or some of them",
         }),
-      execute: async ({ rid, lines, defaultComputingUnit }) => {
+      execute: async ({ rid, lines, python, defaultComputingUnit }) => {
         try {
+          const functions = python?.trim() ? await saveFunctions(python, deps) : [];
           const { edit, ports } = await readLines(lines ?? "", deps);
           const said = [
             ...(edit.length > 0 ? [`${edit.length} line${edit.length === 1 ? "" : "s"} from the agent`] : []),
+            ...functions.filter((f) => f.saved !== "unchanged").map((f) => `${f.name} ${f.saved}`),
             ...(defaultComputingUnit ? [`runs on ${defaultComputingUnit}`] : []),
           ].join("; ");
           // Someone may save in between: the change goes onto the head it was made against, once more if it moved.
           for (let attempt = 0; ; attempt++) {
             const current = await deps.catalog.getWorkflow(rid, deps.auth());
             const spec = {
-              ...applyLines(current.spec, edit, ports),
+              ...callingSaved(applyLines(current.spec, edit, ports), functions),
               ...(defaultComputingUnit ? { defaultComputingUnit } : {}),
             };
             try {
               const w = await deps.catalog.updateWorkflowSpec(rid, spec, current.metadata.head, said, deps.auth());
-              return await saved(w, deps);
+              return { ...(await saved(w, deps)), ...(functions.length > 0 ? { functions } : {}) };
             } catch (e) {
               if (e instanceof CatalogError && e.status === 409 && attempt < 1) continue;
               throw e;

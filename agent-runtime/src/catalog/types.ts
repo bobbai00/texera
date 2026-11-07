@@ -149,6 +149,6 @@ export interface Validation {
 /** An operator type as the catalog lists it: a built-in, or a custom operator with its code. */
 export interface OperatorRecord {
   kind: "operator";
-  metadata: { rid: string; uri: string; name: string; head: number };
+  metadata: { rid: string; uri: string; name: string; head: number; project?: string };
   spec: OperatorSpec;
 }

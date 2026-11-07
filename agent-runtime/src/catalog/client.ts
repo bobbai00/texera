@@ -151,6 +151,16 @@ export class CatalogClient {
     return (await this.request<Page<OperatorRecord>>("GET", `${API}/operators?${query}`, auth)).items;
   }
 
+  /** A new custom operator in a project; the catalog reads a function's ports, settings and columns from its code. */
+  createOperator(name: string, spec: OperatorSpec, project: string, auth: CatalogAuth): Promise<OperatorRecord> {
+    return this.request("POST", `${API}/operators`, auth, { name, spec, parent: project });
+  }
+
+  /** A new version of a custom operator. */
+  updateOperatorSpec(rid: string, spec: OperatorSpec, message: string, auth: CatalogAuth): Promise<OperatorRecord> {
+    return this.request("PUT", `${API}/operators/${rid}`, auth, { spec, message });
+  }
+
   /** A custom operator as it was at a version. */
   async operatorAt(rid: string, vno: number, auth: CatalogAuth): Promise<OperatorSpec> {
     return (await this.request<{ content: OperatorSpec }>("GET", `${API}/operators/${rid}/versions/${vno}`, auth))

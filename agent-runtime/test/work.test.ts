@@ -79,6 +79,16 @@ describe("the gate", () => {
     expect(describeChange("edit_workflow", { rid: "w", defaultComputingUnit: "texera://computing-units/u" })).toBe(
       "Change the workflow: its runs go to texera://computing-units/u",
     );
+    expect(
+      describeChange("create_workflow", { name: "tir", python: "@returns(n=int)\ndef tir(t):\n    return t\n" }),
+    ).toBe('Create the workflow "tir", with tir');
+    expect(
+      describeChange("edit_workflow", {
+        rid: "w",
+        lines: "set m: tir(r)",
+        python: "@returns(n=int)\ndef tir(t):\n    return t\n",
+      }),
+    ).toBe("Change the workflow: define tir; set m");
     expect(describeChange("something_new", {})).toBe("Call something_new");
   });
 });

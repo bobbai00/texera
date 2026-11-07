@@ -10,8 +10,10 @@
  * A change is a call of the platform's own server that the server does not mark read-only. An
  * add-on (PubMed, say) reads, and is never held.
  */
+
 import { type ToolApprovalConfiguration, type ToolSet, tool } from "ai";
 import { z } from "zod";
+import { functionsIn } from "./workflow-lines.ts";
 
 export const START_WORK_TOOL = "start_work";
 export const ASK_TOOL = "ask";
@@ -118,14 +120,19 @@ export function describeChange(toolName: string, input: unknown): string {
   const a = (input ?? {}) as Record<string, unknown>;
   const name = text(a.name);
   switch (toolName) {
-    case "create_workflow":
-      return name ? `Create the workflow "${name}"` : "Create a workflow";
+    case "create_workflow": {
+      const made = name ? `Create the workflow "${name}"` : "Create a workflow";
+      const defined = functionsIn(text(a.python) ?? "");
+      return defined.length > 0 ? `${made}, with ${defined.join(", ")}` : made;
+    }
     case "edit_workflow": {
       // The lines' statements, as the card names them: "set night, delete old"; and where it runs.
       const said = [...(text(a.lines) ?? "").matchAll(/^\s*(set|delete)\s+([A-Za-z0-9-]+)/gm)].map(
         (m) => `${m[1]} ${m[2]}`,
       );
+      const defined = functionsIn(text(a.python) ?? "");
       const parts = [
+        ...(defined.length > 0 ? [`define ${defined.join(", ")}`] : []),
         ...(said.length > 0
           ? [`${said.slice(0, 4).join(", ")}${said.length > 4 ? `, and ${said.length - 4} more` : ""}`]
           : []),
