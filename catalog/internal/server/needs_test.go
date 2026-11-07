@@ -1,8 +1,10 @@
 package server_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/apache/texera/catalog/internal/api"
@@ -62,5 +64,47 @@ func TestSharingSaysWhatThePersonCannotOpenOfWhatItUses(t *testing.T) {
 	h.mustJSON("alice", "PUT", p+"/resources/"+rid(wf)+"/grants/"+bob, map[string]any{"relation": "viewer"}, nil)
 	if status, _ := h.do("bob", "GET", p+"/resources/"+rid(wf)+"/needs?principal="+alice, nil); status != http.StatusForbidden {
 		t.Fatalf("a viewer asks: %d", status)
+	}
+}
+
+// A run refused says what the caller lacks and where the workflow names it, so a person a
+// workflow was shared with knows what to ask for: the unit to run on, then each dataset an
+// operator reads. A dry run (validate) says the same.
+func TestARunRefusedSaysWhatTheCallerLacks(t *testing.T) {
+	h := newHarness(t)
+	bob := string(me(h, "bob").Principal.Pid)
+	iris := h.create("alice", "datasets", "iris", map[string]any{"format": "csv"})
+	h.mustJSON("alice", "PUT", p+"/datasets/"+rid(iris)+"/files/data.csv", "Species,PetalLengthCm\nsetosa,1.4\n", nil)
+	h.mustJSON("alice", "POST", p+"/datasets/"+rid(iris)+"/commit", map[string]any{}, nil)
+	unit := h.create("alice", "computing-units", "alice's unit", map[string]any{"provider": "static", "endpoint": h.unit.URL})
+	file := uriOf(iris) + "@1/files/data.csv"
+	wf := h.create("alice", "workflows", "petals", map[string]any{
+		"operators":            []any{map[string]any{"operatorID": "scan", "operatorType": "CSVFileScan", "operatorProperties": map[string]any{"fileName": file}}},
+		"links":                []any{},
+		"defaultComputingUnit": uriOf(unit),
+	})
+	h.mustJSON("alice", "PUT", p+"/resources/"+rid(wf)+"/grants/"+bob, map[string]any{"relation": "viewer"}, nil)
+	refused := func(path string, words string, needs string) {
+		t.Helper()
+		status, data := h.do("bob", "POST", p+"/workflows/"+rid(wf)+path, map[string]any{})
+		var e api.Error
+		_ = json.Unmarshal(data, &e)
+		if status != http.StatusForbidden || e.Code != "forbidden" || !strings.Contains(e.Message, words) {
+			t.Fatalf("%s: %d %s, want forbidden saying %q", path, status, data, words)
+		}
+		if e.Details == nil || (*e.Details)["needs"] != needs {
+			t.Fatalf("%s: details %v, want needs %s", path, e.Details, needs)
+		}
+	}
+	// First the unit, which only alice may run on.
+	refused("/run", "you may not run on the computing unit "+uriOf(unit), uriOf(unit))
+	h.mustJSON("alice", "PUT", p+"/resources/"+rid(unit)+"/grants/"+bob, map[string]any{"relation": "user"}, nil)
+	// Then the dataset the scan reads, which is not shared with him.
+	refused("/run", "operator scan reads "+file+", which is not shared with you", file)
+	refused("/validate", "operator scan reads "+file+", which is not shared with you", file)
+	// Shared, the run goes.
+	h.mustJSON("alice", "PUT", p+"/resources/"+rid(iris)+"/grants/"+bob, map[string]any{"relation": "viewer"}, nil)
+	if status, data := h.do("bob", "POST", p+"/workflows/"+rid(wf)+"/run", map[string]any{}); status != http.StatusCreated {
+		t.Fatalf("run once shared: %d %s", status, data)
 	}
 }

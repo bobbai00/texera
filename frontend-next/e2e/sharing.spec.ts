@@ -230,3 +230,48 @@ test("sharing a workflow says what the person cannot open of what it uses, and s
   await expect(needs).toHaveCount(0);
   expect((await bob("GET", `/datasets/${dataset.metadata.rid}`)).metadata.name).toBe(`iris ${stamp}`);
 });
+
+test("a person shared a workflow but not what it reads is told, before Run, what is missing and whom to ask", async ({ browser, request }) => {
+  const alice = await api(request);
+  const bob = await api(request, "bob", "bob");
+  const stamp = Date.now();
+  const project: Envelope = await alice("POST", "/projects", { name: `lent workflow ${stamp}`, spec: {} });
+  const dataset: Envelope = await alice("POST", "/datasets", { name: "iris", parent: project.metadata.rid, spec: { format: "csv" } });
+  await alice("PUT", `/datasets/${dataset.metadata.rid}/files/iris.csv`, IRIS_CSV, "text/csv");
+  await alice("POST", `/datasets/${dataset.metadata.rid}/commit`, { message: "iris" });
+  const workflow: Envelope = await alice("POST", "/workflows", {
+    name: `petals ${stamp}`,
+    parent: project.metadata.rid,
+    spec: {
+      operators: [{ operatorID: "scan", operatorType: "CSVFileScan", viewResult: true, operatorProperties: { fileName: `${dataset.metadata.uri}@1/files/iris.csv`, fileEncoding: "UTF_8", hasHeader: true } }],
+      links: [],
+    },
+  });
+  cleanups.push(async () => {
+    await discard(alice, [workflow.metadata.rid], [dataset.metadata.rid]);
+    await alice.attempt("DELETE", `/projects/${project.metadata.rid}`);
+  });
+  const bobPid = (await bob("GET", "/me")).principal.pid as string;
+  await alice("PUT", `/resources/${workflow.metadata.rid}/grants/${bobPid}`, { relation: "viewer" });
+
+  const bobs = await browserOf(browser, "bob");
+  await bobs.goto(pathOf(workflow));
+  // Said once, above the canvas, with what is on screen: the operator, the file; and on its card.
+  const blocked = bobs.locator("[data-run-blocked]");
+  await expect(blocked).toContainText("You can look at this workflow but not run it.");
+  await expect(blocked).toContainText("CSV File Scan reads iris.csv, from a dataset not shared with you. Ask the workflow's owner to share it with you.");
+  await expect(blocked).not.toContainText("texera://");
+  await expect(bobs.locator('.react-flow__node[data-id="scan"] [data-operator-error]')).toContainText("Not shared with you");
+  // Run says the same, not "the caller may not do this".
+  await bobs.locator("[data-run]").click();
+  await expect(bobs.getByText("Could not start the execution")).toHaveCount(0);
+  await expect(bobs.getByText("the caller may not do this")).toHaveCount(0);
+
+  // Once the dataset is shared too, the page says nothing more, and Bob's run goes.
+  await alice("PUT", `/resources/${dataset.metadata.rid}/grants/${bobPid}`, { relation: "viewer" });
+  await bobs.reload();
+  await expect(bobs.locator('[data-workflow-canvas]')).toBeVisible();
+  await expect(blocked).toHaveCount(0);
+  await bobs.locator("[data-run]").click();
+  await expect(bobs.locator('[data-latest-execution="completed"]')).toBeVisible({ timeout: 120_000 });
+});

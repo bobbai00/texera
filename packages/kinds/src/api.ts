@@ -9,11 +9,14 @@ import type { CreateInput, KindId } from "./types";
 export class CatalogError extends Error {
   readonly status: number;
   readonly code?: string;
-  constructor(status: number, message: string, code?: string) {
+  /** What the catalog adds to its message: the resource a refusal is about, the field at fault. */
+  readonly details?: Record<string, unknown>;
+  constructor(status: number, message: string, code?: string, details?: Record<string, unknown>) {
     super(message);
     this.name = "CatalogError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -33,7 +36,8 @@ export async function unwrap<T>(call: Promise<Result<T>>): Promise<T> {
     const e = r.error;
     const message = isRecord(e) && typeof e.message === "string" ? e.message : typeof e === "string" ? e : (r.response?.statusText ?? "");
     const code = isRecord(e) && typeof e.code === "string" ? e.code : undefined;
-    throw new CatalogError(status, message || `HTTP ${status}`, code);
+    const details = isRecord(e) && isRecord(e.details) ? e.details : undefined;
+    throw new CatalogError(status, message || `HTTP ${status}`, code, details);
   }
   return r.data as T;
 }

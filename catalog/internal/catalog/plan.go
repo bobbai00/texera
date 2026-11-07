@@ -3,7 +3,9 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -541,19 +543,21 @@ func (s *Service) versionURI(ctx context.Context, name, kind string) (string, er
 
 // authorizePlan is the one authorization pass of an execution or a dry run, before anything is
 // written: running on the unit, using the warehouse, reading every dataset and every custom
-// operator the plan names, using every credential.
+// operator the plan names, using every credential. A refusal says which of them the caller
+// lacks and where the workflow names it (all of which the caller read in the workflow), so a
+// person a workflow was shared with knows what to ask for, and an agent can say so.
 func (s *Service) authorizePlan(ctx context.Context, caller *auth.Caller, c *compiled, unit, warehouse *store.Resource) error {
 	if err := s.require(ctx, caller, authz.RunOn, unit.RID); err != nil {
-		return err
+		return refusedFor(err, fmt.Sprintf("you may not run on the computing unit %s: ask its owner to share it with you, or run on another", URI(unit)), URI(unit).String(), "")
 	}
 	// A dry run keeps no results and names no warehouse.
 	if warehouse != nil {
 		if err := s.require(ctx, caller, authz.Use, warehouse.RID); err != nil {
-			return err
+			return refusedFor(err, fmt.Sprintf("you may not keep results in the warehouse %s: ask its owner to share it with you, or pick another", URI(warehouse)), URI(warehouse).String(), "")
 		}
 	}
 	seen := map[string]bool{}
-	check := func(permission, id string) error {
+	check := func(permission, id string, refused func(err error) error) error {
 		key := permission + ":" + id
 		if seen[key] {
 			return nil
@@ -563,25 +567,52 @@ func (s *Service) authorizePlan(ctx context.Context, caller *auth.Caller, c *com
 		if err != nil {
 			return Invalid("bad resource id "+id, nil)
 		}
-		return s.require(ctx, caller, permission, rid)
+		if err := s.require(ctx, caller, permission, rid); err != nil {
+			return refused(err)
+		}
+		return nil
 	}
 	for _, in := range c.Inputs {
-		if err := check(authz.Read, in.Ref.Rid); err != nil {
+		if err := check(authz.Read, in.Ref.Rid, func(err error) error {
+			return refusedFor(err, fmt.Sprintf("operator %s reads %s, which is not shared with you: ask the workflow's owner to share it with you", in.OperatorID, in.URI), in.URI, in.OperatorID)
+		}); err != nil {
 			return err
 		}
 	}
 	for _, name := range c.Operators {
 		ref, _ := uri.Parse(name)
-		if err := check(authz.Read, ref.Rid); err != nil {
+		if err := check(authz.Read, ref.Rid, func(err error) error {
+			return refusedFor(err, fmt.Sprintf("the workflow uses the operator %s, which is not shared with you: ask the workflow's owner to share it with you", name), name, "")
+		}); err != nil {
 			return err
 		}
 	}
 	for _, ref := range c.Secrets {
-		if err := check(authz.Use, ref.RID.String()); err != nil {
+		operatorID := ""
+		if ref.Operator >= 0 && ref.Operator < len(c.Plan.Operators) {
+			operatorID, _ = c.Plan.Operators[ref.Operator]["operatorID"].(string)
+		}
+		if err := check(authz.Use, ref.RID.String(), func(err error) error {
+			return refusedFor(err, fmt.Sprintf("operator %s uses the credential %s, which you may not use: ask its owner to share it with you", operatorID, ref.URI), ref.URI, operatorID)
+		}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// refusedFor says, in words, what a refusal was about; any other error passes as it is. The
+// details name the resource the caller lacks (needs) and the operator that names it.
+func refusedFor(err error, msg, needs, operatorID string) error {
+	var e *Error
+	if !errors.As(err, &e) || e.Status != http.StatusForbidden {
+		return err
+	}
+	details := map[string]any{"needs": needs}
+	if operatorID != "" {
+		details["operator"] = operatorID
+	}
+	return &Error{Status: http.StatusForbidden, Code: e.Code, Message: msg, Details: details}
 }
 
 // bindInputs presigns every input into a copy of the plan the engine can read.

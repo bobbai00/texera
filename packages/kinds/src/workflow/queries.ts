@@ -1,4 +1,4 @@
-import { queryOptions } from "@tanstack/react-query";
+import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 import { workflowsValidate } from "@texera/catalog-client";
 import { workflowsListExecutionsOptions, workflowsReadOptions, workflowsReadVersionOptions } from "@texera/catalog-client/query";
 import { type Compilation, interpret, logicalPlan, normalizeSpec, type WorkflowSpec } from "@texera/workflow-model";
@@ -28,5 +28,8 @@ export const compilationQuery = (rid: string, spec: WorkflowSpec | undefined, un
     },
     staleTime: Number.POSITIVE_INFINITY,
     retry: false,
+    // While a changed workflow compiles, its cards keep what the last compilation said: the
+    // columns to pick from and the errors do not blink out at every keystroke.
+    placeholderData: keepPreviousData,
   });
 };

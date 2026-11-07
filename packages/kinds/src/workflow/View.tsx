@@ -33,6 +33,7 @@ import {
   GitBranch,
   History,
   Loader2,
+  Lock,
   Play,
   Users,
   Workflow,
@@ -64,6 +65,7 @@ import { fixedDocument, liveDocument, type WorkflowDocument } from "./document";
 import { createEditorStore, type EditorStore } from "./editor";
 import { EditorCanvas } from "./EditorCanvas";
 import { compilationQuery, executionsQuery, versionSpecQuery, workflowQuery } from "./queries";
+import { isRefusal, notRunnable, refusedOperator } from "./runnable";
 
 const LIVE = new Set<ExecutionStatus["phase"]>(["pending", "provisioning", "running"]);
 
@@ -234,7 +236,8 @@ function EditorLayout({
   const madeFrom = unit && masterOf(unit.spec as ComputingUnitSpec)?.profile;
   const [warehousePick, setWarehousePick] = useState<string>();
   const warehouse = warehousePick ?? spec.defaultWarehouse ?? defaults.project?.defaultWarehouse ?? defaults.platform?.warehouse;
-  const { data: compilation } = useQuery(compilationQuery(rid, spec, unit?.metadata.uri));
+  const compiled = useQuery(compilationQuery(rid, spec, unit?.metadata.uri));
+  const compilation = compiled.data;
   const executions = useQuery({
     ...executionsQuery(rid),
     // While an execution goes, the cards follow it second by second.
@@ -243,7 +246,6 @@ function EditorLayout({
   const latest = executions.data?.items[0] as Execution | undefined;
   const [tab, setTab] = useState("canvas");
   const [resultsOpen, setResultsOpen] = useState(true);
-  const overlay = useMemo(() => overlayFor(spec, compilation, latest?.status), [spec, compilation, latest?.status]);
   const { beside } = useOpenResource();
   const live = latest !== undefined && LIVE.has(latest.status?.phase ?? "pending");
   const nameOf = useCallback(
@@ -281,6 +283,15 @@ function EditorLayout({
     },
   });
   const runTo = useCallback((operatorID: string) => run.mutate(operatorID), [run.mutate]);
+  // A person who may look at the workflow but lacks something it needs to run (a dataset not
+  // shared with them, the unit) is told what, by the dry run before they press Run, or by Run.
+  const blocked = isRefusal(compiled.error) ? compiled.error : isRefusal(run.error) ? run.error : undefined;
+  const overlay = useMemo(() => {
+    const said = overlayFor(spec, compilation, latest?.status);
+    const operator = blocked && refusedOperator(blocked);
+    if (operator && said[operator]) said[operator] = { ...said[operator], error: "Not shared with you: ask the workflow's owner" };
+    return said;
+  }, [spec, compilation, latest?.status, blocked]);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-workflow-view={rid}>
@@ -361,7 +372,13 @@ function EditorLayout({
           Not saved: {refusal}. The edits stay here; they become a version once this is put right.
         </p>
       )}
-      {run.error && <ErrorNote error={run.error} prefix="Could not start the execution" className="m-3" />}
+      {blocked && (
+        <p className="flex items-start gap-1.5 border-b bg-warning/10 px-3 py-1.5 text-xs" data-run-blocked>
+          <Lock className="mt-0.5 size-3.5 shrink-0" />
+          <span>You can look at this workflow but not run it. {notRunnable(blocked, nameOf)}</span>
+        </p>
+      )}
+      {run.error && !isRefusal(run.error) && <ErrorNote error={run.error} prefix="Could not start the execution" className="m-3" />}
       <Tabs value={tab} onValueChange={v => setTab(String(v))} className="flex min-h-0 flex-1 flex-col">
         <TabsList>
           <Tab value="canvas">
