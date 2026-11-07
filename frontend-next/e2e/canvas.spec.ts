@@ -126,7 +126,8 @@ test("an operator is a card that says its settings, keeps its result at a click 
   await page.locator("[data-operator-done]").click();
   await expect(avg.locator("[data-operator-editor]")).toHaveCount(0);
   await expect(avg).toContainText("mean petal");
-  await expect.poll(async () => Math.round((await box(most)).y)).toBe(Math.round(under.y));
+  // Back where it was, to the pixel a zoomed canvas rounds it to.
+  await expect.poll(async () => Math.abs((await box(most)).y - under.y)).toBeLessThanOrEqual(1);
   await expect.poll(async () => (await operatorsOf(alice, rid)).find(o => o.operatorID === "avg")?.customDisplayName, { timeout: 20_000 }).toBe("mean petal");
   // A double click opens a card as its pencil does, and Escape closes it.
   await scan.dblclick({ position: { x: 60, y: 14 } });
