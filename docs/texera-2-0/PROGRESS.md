@@ -2,6 +2,59 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-07 (session 15, on Linux): the work gate, operators as lines, functions and models, a diabetes team's project
+
+The user approved both plans with one change (start_work governed by the chat's work mode, so in
+manual mode every change waits for a yes), asked for the skills to follow the engine, and asked
+for a diabetes use case on real data: a team with data, models and operators, and a scientist
+who asks the agent what the team has and analyzes with it.
+
+- G1, the work gate: the agent reads and asks first (`ask` with choices), says its plan with
+  `start_work`, and only then may change anything; in manual mode each change is an approval
+  card in the chat, approved or declined by whoever is in it (AG-UI interrupt and resume).
+- E0: an average over an uneven split is the mean of all rows (partials merged in a final
+  stage); the catalog keeps the ports the unit describes.
+- E1: ten built-ins (scan, filter, project, compute, aggregate, join, union, distinct, sort,
+  limit) with flat settings and a SQL expression language (typed, three-valued, did-you-mean
+  errors). Workflows are written as lines, `set night: filter(readings, where="...")`: parsed,
+  printed and applied all at once in workflow-model, and the agent's create_workflow,
+  edit_workflow and get_workflow take and give lines, resolve files and models by name, know each
+  type's ports, and answer with each operator's columns and each mistake on its line. The
+  operator sync no longer lets `filter` overwrite `Filter`.
+- Skills: texera-workflows (lines, the core operators, every function), python-udf (functions
+  first), reading-results; new: computing-units, exploring-resources, using-models.
+- E2: a Python function under `@returns` is a custom operator; the catalog reads its inputs,
+  settings and columns from the code; the engine's `function` operator calls it on each worker's
+  rows, whole groups with `by`; the agent defines functions in `python` and calls them by name.
+- E4: a model version has a contract (framework, entry, inputs, outputs, needs, grouped);
+  `predict` checks it before anything runs and runs the version on Python workers through a
+  loader (sklearn, or a Python entry); the run records that it used the version; the dataset file
+  tools read a model's card and files.
+- The use case, `bin/texera-2-0/examples/diabetes`: prepare.py downloads the Pima cohort, the
+  130-hospital encounters, the Efron progression data and a week of adolescent T1D CGM (Cronin et
+  al. 2024), and fits three models (onset risk AUC 0.847, readmission AUC 0.663, progression R2
+  0.407); operators/ holds the team's functions (CGM metrics, ROC AUC, calibration, odds ratio);
+  load.py makes alice's project "Diabetes research" with bob on the team; scenario.py asks the five
+  questions.
+
+Verified: catalog `go test ./...` with the database; WorkflowOperator built-in specs (26);
+amber Python 92 in pytexera/udf, 1406 overall (the Iceberg tests need a Postgres on 5432, absent
+here); agent-runtime 102; workflow-model 80; frontend vitest 287 and tsc; e2e on the dev stack:
+built-ins, functions (CGM metrics by patient equal pandas), models (a fitted logistic
+regression's classes and risks equal scikit-learn's, used-lineage recorded); the model scenarios
+(4 of 5; the fifth needs kind); the diabetes session through the real model, five turns, each
+answer checked against independent computations (the HbA1c odds ratios against a pandas run,
+the AUC against scikit-learn, the CGM metrics against the study's published values).
+
+Found by running it, and fixed: two predict workers on one host raced fetching a model's files;
+the agent could not read a model's card, so it doubted how the model treats a 0.
+
+Next: E3 caching from lineage; G2 to G4, the profile ladder and the resource graph; E5
+parallelism; E6 R, at low priority. Follow-ups: a built-in's card could show its line; the
+operator page's starter could be a function; the unit's environment for every Python operator and
+run-scoped credentials (E2); the runtime sends a temperature Haiku 5.5 ignores, with a warning per
+step.
+
 ## 2026-11-06 (session 14, part 2): two designs, with plans
 
 Design only; nothing in the code changed. The user reviewed the resource graph design and named
