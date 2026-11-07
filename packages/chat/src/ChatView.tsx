@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConversationSpec, ConversationStatus, Resource } from "@texera/catalog-client/types";
-import { type AppContext, baseUri, chatSettingsQuery, createDatasetVersion, FromThisChat, keysOf, KindIcon, meQuery, OpenError, Presence, PrincipalName, ProjectScope, resourceQuery, settleViewing, ShareButton, updateSpec, useMay, useOpenResource } from "@texera/kinds";
+import { type AppContext, baseUri, chatSettingsQuery, createDatasetVersion, FromThisChat, keysOf, KindIcon, meQuery, OpenError, Presence, PrincipalName, ProjectScope, ResourcePanel, resourceQuery, settleViewing, ShareButton, updateSpec, useChatGraph, useMay, useOpenResource } from "@texera/kinds";
 import { Button, ErrorNote, Skeleton, cn } from "@texera/ui";
 import { Loader2, PanelRight } from "lucide-react";
 import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -60,6 +60,12 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
   // that message is sent the chat is busy with it: it never stands empty with a box to write in.
   const [starting, setStarting] = useState(() => awaitsFirstMessage(rid));
   const busy = chat.running || uploading || starting;
+  // The chat's resource graph, followed while the agent works, and again with every message.
+  const { graph, started, refresh } = useChatGraph(rid, { enabled: !dock, live: chat.running });
+  const said = chat.messages.length;
+  useEffect(() => {
+    if (said > 0) refresh();
+  }, [said, refresh]);
   const uris = useMemo(() => writersOf(chat.messages), [chat.messages]);
   const labels = useResourceLabels(uris);
   const { beside } = useOpenResource();
@@ -182,7 +188,9 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
         </header>
       )}
       <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col">
+        {/* Once the chat starts work, what it reads, makes and runs takes the left, and the chat the right. */}
+        {!dock && started && graph && <ResourcePanel rid={rid} graph={graph} className="hidden min-w-0 flex-1 border-r xl:flex" />}
+        <div className={cn("flex min-w-0 flex-col", !dock && started ? "flex-1 xl:w-[30rem] xl:flex-none" : "flex-1")}>
           <div
             ref={scroller}
             onScroll={e => {
@@ -246,7 +254,7 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
             />
           </div>
         </div>
-        {!dock && <FromThisChat rid={rid} className="hidden w-72 shrink-0 overflow-y-auto border-l p-3 xl:block" />}
+        {!dock && !started && <FromThisChat rid={rid} className="hidden w-72 shrink-0 overflow-y-auto border-l p-3 xl:block" />}
       </div>
       <div className={cn("pointer-events-none absolute inset-3 hidden items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/5 text-sm font-medium text-primary", dragging && "flex")}>
         Drop files to add them as a dataset

@@ -33,3 +33,5 @@ export { Library } from "./library/Library";
 export { ResourceTable } from "./library/ResourceTable";
 export { createDatasetVersion, type UploadOptions } from "./files/upload";
 export { useMay } from "./shell/may";
+export { ResourcePanel } from "./graph/ResourcePanel";
+export { ResourceGraph, useChatGraph } from "./graph/ResourceGraph";

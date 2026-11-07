@@ -54,6 +54,8 @@ test("a chat shows what it made and worked from as a tree that folds at every le
 
   await signIn(page);
   await page.goto(`/conversations/${conversation}`);
+  // A chat that made something shows its graph beside it; the tree is its list.
+  await page.locator('[data-resource-view="list"]').click();
   const tree = page.locator("[data-chat-tree]");
   // A section per kind, in the sidebar's order: the workflow it made, the dataset it read.
   await expect

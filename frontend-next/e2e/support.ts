@@ -88,7 +88,7 @@ export async function inTurn(request: APIRequestContext, as: Caller, conversatio
   const turn = await as("POST", `/conversations/${conversation}/turns`, {});
   const origin = `conversation=${conversation};turn=${turn.turn};template=${turn.template}`;
   const agent = await api(request, user, password, { "X-Texera-Origin": origin, "X-Texera-Service-Token": service });
-  return Object.assign(agent, { end: () => as("DELETE", `/conversations/${conversation}/turns/${turn.turn}`) });
+  return Object.assign(agent, { turn: turn.turn as string, end: () => as("DELETE", `/conversations/${conversation}/turns/${turn.turn}`) });
 }
 
 /** The list of operators beside a canvas, opened when it is not: a workflow that has operators shows them, not the list. */
