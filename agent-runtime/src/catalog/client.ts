@@ -135,11 +135,11 @@ export class CatalogClient {
     return (await this.request<Page<Resource>>("GET", `${API}/resources?${query}`, auth)).items;
   }
 
-  /** The files of a dataset version, by path: the version's manifest. */
-  async datasetFiles(rid: string, vno: number, auth: CatalogAuth): Promise<string[]> {
+  /** The files of a dataset or model version, by path: the version's manifest. */
+  async versionFiles(plural: "datasets" | "models", rid: string, vno: number, auth: CatalogAuth): Promise<string[]> {
     const manifest = await this.request<{ files?: { path: string }[] }>(
       "GET",
-      `${API}/datasets/${rid}/versions/${vno}/files`,
+      `${API}/${plural}/${rid}/versions/${vno}/files`,
       auth,
     );
     return (manifest.files ?? []).map((f) => f.path);

@@ -47,7 +47,7 @@ const LINES_DOC =
   "`delete <id>` removes one. Inputs are other operators' ids, in port order (a join's left, then its right). " +
   'Values are JSON-like: "text", 1.5, true, null, ["a", "b"]; code over several lines goes in """...""". ' +
   "Expressions are text: where=\"glucose < 70\". Ids use letters, digits and '-', never '_'. " +
-  'A file is texera://datasets/<rid>@<version>/files/<path>, or by name: "CGM cohort@4/cgm.csv"; ' +
+  'A file is texera://datasets/<rid>@<version>/files/<path>, or by its dataset or model\'s name: "CGM cohort@4/cgm.csv"; ' +
   'a model is texera://models/<rid>@<version>, or by name: predict(cohort, model="Diabetes risk@2").';
 
 /** A workflow record as the agent reads it: where it stands and where it runs, without the JSON of its spec. */
@@ -298,19 +298,27 @@ async function resolveFiles(lines: Line[], deps: LineToolDeps): Promise<Line[]> 
   return out;
 }
 
-/** The one resource of a kind with a name in the project, and the version a `@n` after the name pins. */
-async function oneNamed(kind: "dataset" | "model", named: string, line: SetLine, deps: LineToolDeps) {
+/**
+ * The one resource of these kinds with a name in the project, and the version a `@n` after the
+ * name pins: a file is a dataset's or a model version's, a model only a model.
+ */
+async function oneNamed(kinds: ("dataset" | "model")[], named: string, line: SetLine, deps: LineToolDeps) {
   const at = /^(.*)@(\d+)$/.exec(named);
   const name = (at ? at[1] : named) as string;
-  const found = (await deps.catalog.searchResources(kind, name, deps.project, deps.auth())).filter(
-    (r) => r.metadata.name.toLowerCase() === name.trim().toLowerCase(),
-  );
+  const found = [];
+  for (const kind of kinds)
+    found.push(
+      ...(await deps.catalog.searchResources(kind, name, deps.project, deps.auth()))
+        .filter((r) => r.metadata.name.toLowerCase() === name.trim().toLowerCase())
+        .map((r) => ({ ...r, kind })),
+    );
+  const what = kinds.join(" or ");
   if (found.length === 0)
-    throw new LineError(line.line, `no ${kind} named "${name}" in this project; search_resources lists the ${kind}s`);
+    throw new LineError(line.line, `no ${what} named "${name}" in this project; search_resources lists them`);
   if (found.length > 1)
     throw new LineError(
       line.line,
-      `${found.length} ${kind}s are named "${name}": ${found.map((r) => r.metadata.uri).join(", ")}; use one's URI`,
+      `${found.length} resources are named "${name}": ${found.map((r) => r.metadata.uri).join(", ")}; use one's URI`,
     );
   const resource = found[0] as (typeof found)[number];
   return { resource, name, vno: at ? Number(at[2]) : (resource.metadata.head ?? 1) };
@@ -318,7 +326,7 @@ async function oneNamed(kind: "dataset" | "model", named: string, line: SetLine,
 
 /** A model named by its name, at the version named or its newest: texera://models/<rid>@<version>. */
 async function modelUri(named: string, line: SetLine, deps: LineToolDeps): Promise<Value> {
-  const { resource, vno } = await oneNamed("model", named, line, deps);
+  const { resource, vno } = await oneNamed(["model"], named, line, deps);
   return `${resource.metadata.uri}@${vno}`;
 }
 
@@ -326,10 +334,11 @@ async function fileUri(named: string, line: SetLine, deps: LineToolDeps): Promis
   const slash = named.indexOf("/");
   const head = slash < 0 ? named : named.slice(0, slash);
   const path = slash < 0 ? undefined : named.slice(slash + 1);
-  const { resource: dataset, name, vno } = await oneNamed("dataset", head, line, deps);
+  const { resource, name, vno } = await oneNamed(["dataset", "model"], head, line, deps);
   let file = path;
   if (!file) {
-    const files = await deps.catalog.datasetFiles(dataset.metadata.rid, vno, deps.auth());
+    const plural = resource.kind === "model" ? "models" : "datasets";
+    const files = await deps.catalog.versionFiles(plural, resource.metadata.rid, vno, deps.auth());
     if (files.length !== 1)
       throw new LineError(
         line.line,
@@ -337,7 +346,7 @@ async function fileUri(named: string, line: SetLine, deps: LineToolDeps): Promis
       );
     file = files[0] as string;
   }
-  return `${dataset.metadata.uri}@${vno}/files/${file}`;
+  return `${resource.metadata.uri}@${vno}/files/${file}`;
 }
 
 /** Saves a workflow's new spec and compiles it, answering in lines. */

@@ -214,7 +214,7 @@ describe("create_workflow", () => {
       error: "line 2: an operator id may not contain '_'; use '-', as in b-c",
     });
     const ambiguous = await call(toolsOf(fake), "create_workflow", { name: "x", lines: LINES });
-    expect(String(ambiguous.error)).toStartWith('line 1: 2 datasets are named "iris"');
+    expect(String(ambiguous.error)).toStartWith('line 1: 2 resources are named "iris"');
     expect(fake.calls.some((c) => c.method === "POST" && c.path === "/catalog/v1/workflows")).toBe(false);
   });
 });
@@ -297,7 +297,16 @@ describe("models", () => {
     expect(
       await call(tools, "create_workflow", { name: "x", lines: `${LINES}\nset s: predict(scan, model="${RISK}@1")` }),
     ).not.toHaveProperty("error");
-    expect(fake.calls.filter((c) => c.path.includes("kind=model"))).toHaveLength(2);
+    expect(fake.calls.filter((c) => c.path.includes("kind=model") && c.path.includes("risk"))).toHaveLength(2);
+  });
+
+  test("a file of a model version is named by the model's name", async () => {
+    const fake = fakeCatalog();
+    const out = await call(toolsOf(fake), "create_workflow", {
+      name: "held out",
+      lines: 'set held: scan(file="Diabetes risk@1/holdout.csv")',
+    });
+    expect(out.lines).toEqual([`set held: scan(file="${RISK}@1/files/holdout.csv")`]);
   });
 
   test("a model that is not there is said on its line", async () => {
@@ -308,7 +317,7 @@ describe("models", () => {
         lines: `${LINES}\nset s: predict(scan, model="Readmission@1")`,
       }),
     ).toEqual({
-      error: 'line 3: no model named "Readmission" in this project; search_resources lists the models',
+      error: 'line 3: no model named "Readmission" in this project; search_resources lists them',
     });
   });
 });
