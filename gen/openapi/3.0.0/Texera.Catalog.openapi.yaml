@@ -6293,6 +6293,16 @@ components:
         upTo:
           type: string
           description: 'The operator the execution was run up to: only what leads to it ran, and its result was kept.'
+        reused:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReusedResult'
+          description: 'The results read from earlier runs: each of these operators read the rows its port had stored instead of running.'
+        skipped:
+          type: array
+          items:
+            type: string
+          description: The operators that did not run because only reused results needed them.
     ExecutionStatus:
       type: object
       required:
@@ -7322,6 +7332,9 @@ components:
         table:
           type: string
           description: The table's name inside the execution's namespace.
+        fingerprint:
+          type: string
+          description: "The fingerprint of the work that makes the port's rows: its operator, its settings and the engine that runs it, and its inputs' fingerprints. The same work on the same data, in any workflow of the project, has the same fingerprint, so a later run reads these rows instead of making them again. Absent for rows that depend on more, such as a limit with no sort before it."
       description: One output port's table in the lake, named by the catalog before the execution starts.
     Principal:
       type: object
@@ -7750,6 +7763,22 @@ components:
           type: integer
           format: int32
       description: What one retention sweep did.
+    ReusedResult:
+      type: object
+      required:
+        - operatorID
+        - portID
+        - from
+      properties:
+        operatorID:
+          type: string
+        portID:
+          type: string
+        from:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: The earlier execution's port whose stored rows were read.
+      description: A result an execution read from an earlier run instead of making it again.
     Rid:
       type: string
       description: Resource id, a UUID.
@@ -7806,6 +7835,9 @@ components:
         name:
           type: string
           description: "The execution's name. Without one the catalog names it by its start, `execution <UTC time>`. A name is a label: another execution may have the same, and the rid tells them apart."
+        fresh:
+          type: boolean
+          description: 'Make every result again: reuse nothing an earlier run stored, though the same work on the same data would give the same rows.'
     RuntimeSpec:
       type: object
       properties:

@@ -135,6 +135,8 @@ model RunWorkflow {
   upTo?: string;
   @doc("The execution's name. Without one the catalog names it by its start, `execution <UTC time>`. A name is a label: another execution may have the same, and the rid tells them apart.")
   name?: string;
+  @doc("Make every result again: reuse nothing an earlier run stored, though the same work on the same data would give the same rows.")
+  fresh?: boolean;
 }
 
 namespace Routes {

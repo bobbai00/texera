@@ -339,7 +339,8 @@ export const zExecutionStatus = z.object({
 export const zPortTable = z.object({
     operatorID: z.string(),
     portID: z.string(),
-    table: z.string()
+    table: z.string(),
+    fingerprint: z.string().optional()
 });
 
 export const zPrincipalKind = z.enum(['user', 'group']);
@@ -673,17 +674,6 @@ export const zExecutionPort = z.object({
     boundTo: zUri.optional()
 });
 
-export const zExecutionSpec = z.object({
-    workflow: zUri,
-    computingUnit: zUri,
-    computing: zComputingRecord.optional(),
-    warehouse: zUri,
-    inputs: z.array(zUri).optional(),
-    parameters: z.record(z.string(), z.unknown()).optional(),
-    plan: zExecutionPlan.optional(),
-    upTo: z.string().optional()
-});
-
 export const zLeaseRequest = z.object({
     purpose: zUri
 });
@@ -803,6 +793,28 @@ export const zOrigin = z.object({
 export const zReplaceMessage = z.object({
     parts: z.array(zMessagePart),
     template: zUri.optional()
+});
+
+/**
+ * A result an execution read from an earlier run instead of making it again.
+ */
+export const zReusedResult = z.object({
+    operatorID: z.string(),
+    portID: z.string(),
+    from: zUri
+});
+
+export const zExecutionSpec = z.object({
+    workflow: zUri,
+    computingUnit: zUri,
+    computing: zComputingRecord.optional(),
+    warehouse: zUri,
+    inputs: z.array(zUri).optional(),
+    parameters: z.record(z.string(), z.unknown()).optional(),
+    plan: zExecutionPlan.optional(),
+    upTo: z.string().optional(),
+    reused: z.array(zReusedResult).optional(),
+    skipped: z.array(z.string()).optional()
 });
 
 /**
@@ -1337,7 +1349,8 @@ export const zRunWorkflow = z.object({
     parameters: z.record(z.string(), z.unknown()).optional(),
     waitSeconds: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     upTo: z.string().optional(),
-    name: z.string().optional()
+    name: z.string().optional(),
+    fresh: z.boolean().optional()
 });
 
 /**

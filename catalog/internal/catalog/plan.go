@@ -261,8 +261,15 @@ type compiled struct {
 	Custom map[int]customOp
 	// Operators are the custom operator versions compiled in, as URIs with @vno.
 	Operators []string
-	// Outputs are the execution's tables, one per output port, named by the catalog.
+	// Outputs are the execution's tables, one per output port, named by the catalog: those the
+	// run shows, and the kept results of its costliest operators.
 	Outputs []api.PortTable
+	// Shown are the ports the run must show, by port key.
+	Shown map[string]bool
+	// Reusable are the operators whose rows a later run could reuse.
+	Reusable map[string]bool
+	// Fingerprints are the work that makes each reusable port, once the unit is known.
+	Fingerprints map[string]string
 }
 
 // inputRef is a dataset file an operator property names.
@@ -434,6 +441,25 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 		if op.OutputPorts != nil {
 			for _, port := range *op.OutputPorts {
 				out.Outputs = append(out.Outputs, api.PortTable{OperatorID: op.OperatorID, PortID: port.PortID, Table: tableName(op.OperatorID, port.PortID)})
+			}
+		}
+	}
+	// The results that cost the most to make are kept even when nothing shows them, so a later
+	// run can read them instead of making them again.
+	out.Shown = map[string]bool{}
+	for _, o := range out.Outputs {
+		out.Shown[portKey(o.OperatorID, o.PortID)] = true
+	}
+	out.Reusable = reusableOps(plan)
+	for _, logical := range plan.Operators {
+		id := opID(logical)
+		if !keptTypes[opType(logical)] || !out.Reusable[id] {
+			continue
+		}
+		for _, port := range outputPortIDs(logical) {
+			if !out.Shown[portKey(id, port)] {
+				out.Outputs = append(out.Outputs, api.PortTable{OperatorID: id, PortID: port, Table: tableName(id, port)})
+				plan.OpsToViewResult = appendUnique(plan.OpsToViewResult, id)
 			}
 		}
 	}

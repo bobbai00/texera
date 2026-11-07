@@ -121,6 +121,7 @@ func (s *Server) routeWorkflows() {
 		if body.Parameters != nil {
 			in.Parameters = *body.Parameters
 		}
+		in.Fresh = body.Fresh != nil && *body.Fresh
 		exec, err := s.svc.Run(ctxOf(r), callerOf(r), rid, in)
 		if err != nil {
 			return err

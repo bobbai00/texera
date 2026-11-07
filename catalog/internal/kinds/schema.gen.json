@@ -1981,6 +1981,20 @@
           "$ref": "#/$defs/ExecutionPlan",
           "description": "The compiled plan the execution was started with."
         },
+        "reused": {
+          "description": "The results read from earlier runs: each of these operators read the rows its port had stored instead of running.",
+          "items": {
+            "$ref": "#/$defs/ReusedResult"
+          },
+          "type": "array"
+        },
+        "skipped": {
+          "description": "The operators that did not run because only reused results needed them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "upTo": {
           "description": "The operator the execution was run up to: only what leads to it ran, and its result was kept.",
           "type": "string"
@@ -3409,6 +3423,10 @@
     "PortTable": {
       "description": "One output port's table in the lake, named by the catalog before the execution starts.",
       "properties": {
+        "fingerprint": {
+          "description": "The fingerprint of the work that makes the port's rows: its operator, its settings and the engine that runs it, and its inputs' fingerprints. The same work on the same data, in any workflow of the project, has the same fingerprint, so a later run reads these rows instead of making them again. Absent for rows that depend on more, such as a limit with no sort before it.",
+          "type": "string"
+        },
         "operatorID": {
           "type": "string"
         },
@@ -4008,6 +4026,27 @@
       ],
       "type": "object"
     },
+    "ReusedResult": {
+      "description": "A result an execution read from an earlier run instead of making it again.",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/Uri",
+          "description": "The earlier execution's port whose stored rows were read."
+        },
+        "operatorID": {
+          "type": "string"
+        },
+        "portID": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operatorID",
+        "portID",
+        "from"
+      ],
+      "type": "object"
+    },
     "Rid": {
       "description": "Resource id, a UUID.",
       "type": "string"
@@ -4050,6 +4089,10 @@
         "computingUnit": {
           "$ref": "#/$defs/Uri",
           "description": "Overrides the workflow's and the project's default unit."
+        },
+        "fresh": {
+          "description": "Make every result again: reuse nothing an earlier run stored, though the same work on the same data would give the same rows.",
+          "type": "boolean"
         },
         "name": {
           "description": "The execution's name. Without one the catalog names it by its start, `execution \u003cUTC time\u003e`. A name is a label: another execution may have the same, and the rid tells them apart.",

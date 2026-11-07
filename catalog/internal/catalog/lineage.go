@@ -169,6 +169,10 @@ func (s *Service) applyOperatorEvent(ctx context.Context, exec *store.Resource, 
 				if p.Hash != nil {
 					attrs["hash"] = *p.Hash
 				}
+				// The work that made the rows, so a later run that would make them reads them instead.
+				if o := plannedOutput(exec, operatorID, portID); o != nil && o.Fingerprint != nil {
+					attrs["fingerprint"] = *o.Fingerprint
+				}
 				produced = append(produced, store.Edge{From: portURI, Relation: "produced", To: to, FromRID: exec.RID, ExecutionRID: &execRID, Attrs: mustJSON(attrs)})
 			}
 			if ev.Inputs != nil {

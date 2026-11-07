@@ -943,6 +943,14 @@ export type ExecutionSpec = {
      * The operator the execution was run up to: only what leads to it ran, and its result was kept.
      */
     upTo?: string;
+    /**
+     * The results read from earlier runs: each of these operators read the rows its port had stored instead of running.
+     */
+    reused?: Array<ReusedResult>;
+    /**
+     * The operators that did not run because only reused results needed them.
+     */
+    skipped?: Array<string>;
 };
 
 export type ExecutionStatus = {
@@ -1596,6 +1604,10 @@ export type PortTable = {
      * The table's name inside the execution's namespace.
      */
     table: string;
+    /**
+     * The fingerprint of the work that makes the port's rows: its operator, its settings and the engine that runs it, and its inputs' fingerprints. The same work on the same data, in any workflow of the project, has the same fingerprint, so a later run reads these rows instead of making them again. Absent for rows that depend on more, such as a limit with no sort before it.
+     */
+    fingerprint?: string;
 };
 
 export type Principal = {
@@ -1885,6 +1897,18 @@ export type RetentionSweep = {
 };
 
 /**
+ * A result an execution read from an earlier run instead of making it again.
+ */
+export type ReusedResult = {
+    operatorID: string;
+    portID: string;
+    /**
+     * The earlier execution's port whose stored rows were read.
+     */
+    from: Uri;
+};
+
+/**
  * Resource id, a UUID.
  */
 export type Rid = string;
@@ -1933,6 +1957,10 @@ export type RunWorkflow = {
      * The execution's name. Without one the catalog names it by its start, `execution <UTC time>`. A name is a label: another execution may have the same, and the rid tells them apart.
      */
     name?: string;
+    /**
+     * Make every result again: reuse nothing an earlier run stored, though the same work on the same data would give the same rows.
+     */
+    fresh?: boolean;
 };
 
 export type RuntimeSpec = {

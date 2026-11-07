@@ -23,6 +23,8 @@ import (
 
 // RunInput is what Run needs.
 type RunInput struct {
+	// Fresh makes every result again, reusing nothing an earlier run stored.
+	Fresh         bool
 	Vno           int
 	ComputingUnit string
 	Warehouse     string
@@ -108,6 +110,32 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	if status.Phase != api.ComputingUnitStatusPhaseReady {
 		return nil, Conflict("unit_not_ready", fmt.Sprintf("the unit %s is %s", unit.Name, status.Phase), nil)
 	}
+	// The unit's packages: installed once on the unit for this list, before the run starts.
+	var unitSpec api.ComputingUnitSpec
+	_ = json.Unmarshal(unit.Spec, &unitSpec)
+	environment := environmentFor(masterOf(&unitSpec))
+
+	// The work each stored port is, on this unit; then what earlier runs stored of it.
+	engineVersion, environmentKey := "unknown", ""
+	if status.Engine != nil && status.Engine.Version != nil {
+		engineVersion = *status.Engine.Version
+	}
+	if environment != nil {
+		environmentKey = environment.Key
+	}
+	c.Fingerprints = fingerprints(c.Plan, c.Reusable, engineVersion, environmentKey)
+	for i := range c.Outputs {
+		if fp := c.Fingerprints[portKey(c.Outputs[i].OperatorID, c.Outputs[i].PortID)]; fp != "" {
+			c.Outputs[i].Fingerprint = &fp
+		}
+	}
+	var served map[string]*storedRows
+	var skipped []string
+	if !in.Fresh {
+		served, skipped = c.reuse(func(port string) *storedRows {
+			return s.findStored(ctx, caller, c.Fingerprints[port], wf.ProjectRID, client)
+		})
+	}
 	unitURI := URI(unit).String()
 	running, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "execution", ParentRID: &wf.RID, Fields: map[string]string{"/spec/computingUnit": unitURI, "/status/phase": "running"}, Limit: 1})
 	if err != nil {
@@ -136,6 +164,13 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 	if in.UpTo != "" {
 		execSpec.UpTo = &in.UpTo
+	}
+	if len(served) > 0 {
+		reused := reusedRecord(served)
+		execSpec.Reused = &reused
+	}
+	if len(skipped) > 0 {
+		execSpec.Skipped = &skipped
 	}
 	// The ports are known from the plan: their tables exist in the status before the execution writes
 	// a row, and the unit may only ever report those.
@@ -190,9 +225,9 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	if err := s.bindSecrets(ctx, caller, &bound, c, execURI); err != nil {
 		return fail("leasing the credentials", err)
 	}
-	if edges := usedEdges(exec, execURI, c); len(edges) > 0 {
+	if edges := append(usedEdges(exec, execURI, c), reusedEdges(exec, execURI, served)...); len(edges) > 0 {
 		if err := s.Store.AddEdges(ctx, edges); err != nil {
-			s.Log.Warn("used edges", "execution", exec.RID, "err", err)
+			s.Log.Warn("used and reused edges", "execution", exec.RID, "err", err)
 		}
 	}
 	_, _ = s.Store.MergeStatus(ctx, wf.RID, mustJSON(map[string]any{"lastExecution": exec.RID.String()}))
@@ -216,10 +251,7 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 		params := in.Parameters
 		req.Parameters = &params
 	}
-	// The unit's packages: installed once on the unit for this list, before the run starts.
-	var unitSpec api.ComputingUnitSpec
-	_ = json.Unmarshal(unit.Spec, &unitSpec)
-	req.Environment = environmentFor(masterOf(&unitSpec))
+	req.Environment = environment
 	go s.drive(exec.RID, client, req, unit)
 
 	if in.WaitSeconds > 0 {
@@ -434,16 +466,25 @@ func (s *Service) DeleteExecution(ctx context.Context, caller *auth.Caller, work
 
 // plannedTable is the table the catalog named for a port, bare, "" when the plan has none.
 func plannedTable(exec *store.Resource, operatorID, portID string) string {
+	if o := plannedOutput(exec, operatorID, portID); o != nil {
+		return o.Table
+	}
+	return ""
+}
+
+// plannedOutput is what the plan says of an output port it keeps a table for: the table and
+// the fingerprint of the work that makes its rows; nil when it keeps none.
+func plannedOutput(exec *store.Resource, operatorID, portID string) *api.PortTable {
 	var spec api.ExecutionSpec
 	if err := json.Unmarshal(exec.Spec, &spec); err != nil || spec.Plan == nil {
-		return ""
+		return nil
 	}
 	for _, o := range spec.Plan.Outputs {
 		if o.OperatorID == operatorID && o.PortID == portID {
-			return o.Table
+			return &o
 		}
 	}
-	return ""
+	return nil
 }
 
 // executionNamespace is the namespace an execution's tables live in: the catalog makes it in

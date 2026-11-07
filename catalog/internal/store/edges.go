@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -221,4 +222,39 @@ func escapeLike(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `%`, `\%`)
 	return strings.ReplaceAll(s, `_`, `\_`)
+}
+
+// StoredResult is a port's rows that a run stored and a later run may read instead of making
+// them again: the port, its table and the run.
+type StoredResult struct {
+	// Port is the port's URI, texera://workflows/{w}/executions/{e}/operators/{o}/ports/{p}.
+	Port string
+	// Table is the table's name inside the run's namespace.
+	Table     string
+	Execution uuid.UUID
+	At        time.Time
+}
+
+// StoredResults are the ports that completed runs in a project stored under a fingerprint,
+// newest first; runs deleted, or whose results the retention policy dropped, have none.
+func (s *Store) StoredResults(ctx context.Context, fingerprint string, project uuid.UUID, limit int) ([]StoredResult, error) {
+	rows, err := s.pool.Query(ctx, `SELECT e.from_uri, coalesce(e.attrs->>'table', ''), e.from_rid, e.at
+		FROM edge e JOIN resource r ON r.rid = e.from_rid
+		WHERE e.relation = 'produced' AND e.attrs->>'fingerprint' = $1
+		  AND r.kind = 'execution' AND r.project_rid = $2 AND r.deleted_at IS NULL
+		  AND r.status->>'phase' = 'completed' AND NOT (r.status ? 'resultsExpiredAt')
+		ORDER BY e.at DESC LIMIT $3`, fingerprint, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StoredResult
+	for rows.Next() {
+		var r StoredResult
+		if err := rows.Scan(&r.Port, &r.Table, &r.Execution, &r.At); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }

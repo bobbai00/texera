@@ -29,6 +29,16 @@ model PortTable {
   portID: string;
   @doc("The table's name inside the execution's namespace.")
   table: string;
+  @doc("The fingerprint of the work that makes the port's rows: its operator, its settings and the engine that runs it, and its inputs' fingerprints. The same work on the same data, in any workflow of the project, has the same fingerprint, so a later run reads these rows instead of making them again. Absent for rows that depend on more, such as a limit with no sort before it.")
+  fingerprint?: string;
+}
+
+@doc("A result an execution read from an earlier run instead of making it again.")
+model ReusedResult {
+  operatorID: string;
+  portID: string;
+  @doc("The earlier execution's port whose stored rows were read.")
+  from: Uri;
 }
 
 @doc("What the catalog compiled for an execution, as data: what it reads and writes, by URI. No secret and no URL that expires; those are bound when the execution starts and never stored.")
@@ -73,6 +83,10 @@ model ExecutionSpec {
   plan?: ExecutionPlan;
   @doc("The operator the execution was run up to: only what leads to it ran, and its result was kept.")
   upTo?: string;
+  @doc("The results read from earlier runs: each of these operators read the rows its port had stored instead of running.")
+  reused?: ReusedResult[];
+  @doc("The operators that did not run because only reused results needed them.")
+  skipped?: string[];
 }
 
 model OperatorRunStatus {
