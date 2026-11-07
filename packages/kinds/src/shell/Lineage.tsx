@@ -29,9 +29,12 @@ const factsOf = (x: Execution | Resource): ExecutionFacts => {
   };
 };
 
-/** The executions of every workflow asked for, once all of them answered; one that cannot be listed has none. */
-const allListed = (results: { isPending: boolean; data?: { items: Execution[] } }[]) => ({
-  pending: results.some(r => r.isPending),
+/**
+ * The executions of every workflow asked for, once all of them answered; one that cannot be
+ * listed has none. "Answered" is once, not now: a list asked again keeps the graph on screen.
+ */
+const allListed = (results: { isFetched: boolean; data?: { items: Execution[] } }[]) => ({
+  pending: results.some(r => !r.isFetched),
   items: results.flatMap(r => r.data?.items ?? []),
 });
 
@@ -72,11 +75,15 @@ export function Lineage({ ref }: { ref: ResourceRef }) {
   // What each arrow names is asked for before anything is drawn: a resource that no longer
   // exists is left out with its arrows, and the cards have their names from the start.
   const names = useMemo(() => resourcesNamed(walked), [walked]);
+  // The graph waits for each name's first answer only. A card asks for its resource too, and
+  // asking again sets a query back to pending: waiting for every answer would take the cards
+  // off screen, they would ask again when drawn, and the graph would blink without end for a
+  // person who may not read one of them.
   const named = useQueries({
     queries: names.map(namedQuery),
     combine: useCallback(
-      (results: { isPending: boolean; error: unknown }[]) => ({
-        pending: results.some(r => r.isPending),
+      (results: { isFetched: boolean; error: unknown }[]) => ({
+        pending: results.some(r => !r.isFetched),
         gone: names.filter((_, i) => whyNot(results[i]?.error) === "not_found"),
       }),
       [names]

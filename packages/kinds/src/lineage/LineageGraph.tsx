@@ -41,7 +41,7 @@ import type { ResourceRef } from "../types";
 import { uriOf } from "../uri";
 import { type LabelPlace, layoutLineage, placeLabels } from "./layout";
 import type { LineageGraph as Graph, Level, LineageArrow, LineageNode } from "./model";
-import { namedQuery } from "./queries";
+import { cardNameQuery } from "./queries";
 
 /**
  * The cards of a level are all one size, so the graph is laid out before anything is measured.
@@ -157,7 +157,7 @@ function Frame({
 function ResourceCard({ card, level }: { card: LineageNode; level: Level }) {
   const ref = card.ref as ResourceRef;
   const { beside } = useOpenResource();
-  const { data, error, isPending } = useQuery(namedQuery(uriOf(ref, { version: false })));
+  const { data, error, isPending } = useQuery(cardNameQuery(uriOf(ref, { version: false })));
   const label = KINDS[ref.kind].label;
   const why = error ? whyNot(error) : undefined;
   const named = data?.metadata.name;

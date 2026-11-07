@@ -142,3 +142,52 @@ test("lineage says who made each thing: a person, or the agent in a chat someone
   await page.goto(`/conversations/${conversation}`);
   await expect(page.locator("[data-chat-header]")).toContainText(`started by ${me}`);
 });
+
+test("a person a workflow is shared with sees its lineage steadily, what is not shared with them named so", async ({ page, request }) => {
+  test.setTimeout(240_000);
+  const alice = await api(request);
+  const bob = await api(request, "bob", "bob");
+  const lab = await withIris(alice, "shared lineage");
+  const workflow = await alice("POST", "/workflows", {
+    name: `petals for bob ${Date.now()}`,
+    parent: lab.project,
+    spec: {
+      operators: [
+        { operatorID: "scan", operatorType: "CSVFileScan", operatorProperties: { fileName: `texera://datasets/${lab.dataset}@1/files/iris.csv`, fileEncoding: "UTF_8", hasHeader: true } },
+        { operatorID: "avg", operatorType: "Aggregate", viewResult: true, operatorProperties: { groupByKeys: ["Species"], aggregations: [{ aggFunction: "average", attribute: "PetalLengthCm", "result attribute": "avg" }] } },
+      ],
+      links: [{ linkID: "l1", source: { operatorID: "scan", portID: "output-0" }, target: { operatorID: "avg", portID: "input-0" } }],
+    },
+  });
+  const rid = workflow.metadata.rid as string;
+  cleanups.push(async () => {
+    await discard(alice, [rid], [lab.dataset]);
+    await alice.attempt("DELETE", `/projects/${lab.project}`);
+  });
+  expect((await alice("POST", `/workflows/${rid}/run`, { waitSeconds: 180 })).status.phase).toBe("completed");
+  // The workflow is shared with Bob; the dataset it reads is not.
+  const bobPid = (await bob("GET", "/me")).principal.pid as string;
+  await alice("PUT", `/resources/${rid}/grants/${bobPid}`, { relation: "viewer" });
+
+  await signIn(page, "bob", "bob");
+  await page.goto(`/workflows/${rid}`);
+  await page.getByRole("tab", { name: "Lineage" }).click();
+  const lineage = page.locator("[data-lineage]");
+  await expect(lineage.locator('[data-lineage-card="execution"]')).toHaveCount(1);
+  await expect(lineage.locator('[data-lineage-card="resource"]').filter({ hasText: "Not shared with you" })).toContainText("Dataset");
+  // Once drawn, the graph stays: it is not taken off screen and asked for again and again.
+  const resolved = { n: 0 };
+  page.on("request", r => {
+    if (r.url().includes("/catalog/v1/resources/resolve")) resolved.n++;
+  });
+  await lineage.evaluate(el => {
+    const w = window as unknown as { lineageGone: number };
+    w.lineageGone = 0;
+    new MutationObserver(() => {
+      if (!el.isConnected) w.lineageGone++;
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  await page.waitForTimeout(5000);
+  expect(await page.evaluate(() => (window as unknown as { lineageGone: number }).lineageGone)).toBe(0);
+  expect(resolved.n).toBeLessThan(5);
+});
