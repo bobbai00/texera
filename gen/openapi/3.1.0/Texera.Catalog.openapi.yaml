@@ -4707,7 +4707,7 @@ paths:
               $ref: '#/components/schemas/RunWorkflow'
       x-mcp:
         tool: run_workflow
-        description: Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the chat's unit; name one only when the person asks for another. Results are kept in the warehouse of the workflow, its project or the platform; name one only when the person asks.
+        description: Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the workflow's default unit, else its project's or the platform's; name one only when the person asks for another. Results are kept in the warehouse of the workflow, its project or the platform; name one only when the person asks.
         readOnlyHint: false
         destructiveHint: false
         idempotentHint: false
@@ -4743,7 +4743,7 @@ paths:
               $ref: '#/components/schemas/ValidateWorkflow'
       x-mcp:
         tool: validate_workflow
-        description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator. Leave computingUnit out to use the chat's unit."
+        description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator. Leave computingUnit out to use the workflow's default unit, else its project's or the platform's."
         readOnlyHint: true
       x-texera-permission: read
   /catalog/v1/workflows/{rid}/versions:

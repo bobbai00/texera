@@ -158,7 +158,7 @@ var Tools = []Tool{
 	},
 	{
 		Name:        "run_workflow",
-		Description: "Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the chat's unit; name one only when the person asks for another. Results are kept in the warehouse of the workflow, its project or the platform; name one only when the person asks.",
+		Description: "Run a workflow version on a computing unit. Returns the execution; with waitSeconds it waits for completion and includes operator states, errors and port results. Leave computingUnit out to use the workflow's default unit, else its project's or the platform's; name one only when the person asks for another. Results are kept in the warehouse of the workflow, its project or the platform; name one only when the person asks.",
 		ReadOnly:    false, Idempotent: false, Destructive: boolPtr(false),
 		Method: "POST", Path: "/catalog/v1/workflows/{rid}/run",
 		PathParams: []Param{{Name: "rid", Type: "string", Required: true}}, QueryParams: nil, Body: true,
@@ -190,7 +190,7 @@ var Tools = []Tool{
 	},
 	{
 		Name:        "validate_workflow",
-		Description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator. Leave computingUnit out to use the chat's unit.",
+		Description: "Compile a workflow version (or a draft spec) on a computing unit: returns each operator's output schema per port and any errors per operator. Leave computingUnit out to use the workflow's default unit, else its project's or the platform's.",
 		ReadOnly:    true, Idempotent: false, Destructive: nil,
 		Method: "POST", Path: "/catalog/v1/workflows/{rid}/validate",
 		PathParams: []Param{{Name: "rid", Type: "string", Required: true}}, QueryParams: nil, Body: true,
