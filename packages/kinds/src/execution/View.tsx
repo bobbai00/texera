@@ -300,7 +300,7 @@ function Ran({ execution, workflow }: { execution: Execution; workflow: string }
   const vno = parseUri(execution.spec.workflow)?.ref.vno;
   const { data: spec, error } = useQuery({ ...versionSpecQuery(workflow, vno ?? 0), enabled: vno !== undefined });
   const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
-  const overlay = useMemo(() => executionOverlay(execution.status), [execution.status]);
+  const overlay = useMemo(() => executionOverlay(execution.status, execution.spec), [execution.status, execution.spec]);
   const labelOf = useCallback((operatorID: string) => resultLabel(spec, schemas, operatorID), [spec, schemas]);
   // Without the version (it cannot be read, or is gone) the results stand alone.
   if (error || vno === undefined)

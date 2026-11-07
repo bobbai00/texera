@@ -2,7 +2,7 @@
 // read and put out, why it failed, which of its results are kept), which result is on screen
 // when nobody chose one, and whether a result is a table or a picture.
 
-import type { Attribute, ExecutionStatus, PortSummary } from "@texera/catalog-client/types";
+import type { Attribute, ExecutionSpec, ExecutionStatus, PortSummary } from "@texera/catalog-client/types";
 import { type OperatorOverlay, statusOf } from "@texera/workflow-model";
 import { portKey } from "../workflow/canvas-view";
 
@@ -13,12 +13,24 @@ const wordsOf = (error: unknown): string | undefined => {
   return JSON.stringify(error);
 };
 
-/** What each operator's card says of an execution. */
-export function executionOverlay(status: ExecutionStatus | undefined): Record<string, OperatorOverlay> {
+/** The execution a port's URI belongs to: texera://workflows/{w}/executions/{e}/operators/... */
+const executionOfPort = (port: string) => port.split("/operators/")[0] ?? port;
+
+/**
+ * What each operator's card says of an execution: from its status, how each did; from its
+ * spec, which read an earlier run's rows instead of running, and which did not run at all.
+ */
+export function executionOverlay(
+  status: ExecutionStatus | undefined,
+  spec?: Pick<ExecutionSpec, "reused" | "skipped">
+): Record<string, OperatorOverlay> {
   const overlay: Record<string, OperatorOverlay> = {};
+  for (const reused of spec?.reused ?? []) overlay[reused.operatorID] = { reusedFrom: executionOfPort(reused.from) };
+  for (const id of spec?.skipped ?? []) overlay[id] = { skipped: true };
   for (const [id, operator] of Object.entries(status?.operators ?? {})) {
     const error = wordsOf(operator.error);
     overlay[id] = {
+      ...overlay[id],
       status: statusOf(operator.state),
       ...(operator.rowsIn !== undefined ? { rowsIn: operator.rowsIn } : {}),
       ...(operator.rowsOut !== undefined ? { rowsOut: operator.rowsOut } : {}),

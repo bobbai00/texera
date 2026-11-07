@@ -24,6 +24,7 @@ export const executionKind: KindSpec = {
       status?.phase ?? "",
       vno ? `workflow v${vno}` : "",
       spec.upTo ? `up to ${spec.upTo}` : "",
+      spec.reused?.length ? `${spec.reused.length} read from earlier runs` : "",
       `${ports} result${ports === 1 ? "" : "s"}`,
       formatDuration(status?.startedAt, status?.finishedAt),
     ].filter(Boolean);

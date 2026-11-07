@@ -32,6 +32,7 @@ import {
   Clock,
   Eye,
   EyeOff,
+  History,
   Loader2,
   Pause,
   Pencil,
@@ -43,6 +44,7 @@ import {
 } from "lucide-react";
 import { memo, type ReactElement, useEffect, useMemo, useRef } from "react";
 import { useStore } from "zustand";
+import { UriChip } from "../shell/Chips";
 import { toneOf } from "./Cursors";
 import { type Canvas, useCanvas } from "./canvas-view";
 import type { EditorStore } from "./editor";
@@ -184,6 +186,21 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
         </p>
       )}
       {data.status && <Progress status={data.status} rowsIn={data.rowsIn} rowsOut={data.rowsOut} />}
+      {data.reusedFrom && (
+        // Its rows were read from an earlier run of the same work, which the chip opens.
+        <p
+          className="flex min-w-0 items-center gap-1.5 border-t bg-muted/40 px-3 py-1 text-xs text-muted-foreground"
+          data-operator-reused={data.reusedFrom}>
+          <History className="size-3.5 shrink-0" />
+          <span className="shrink-0">Read from</span>
+          <UriChip uri={data.reusedFrom} className="min-w-0" />
+        </p>
+      )}
+      {data.skipped && (
+        <p className="border-t bg-muted/40 px-3 py-1 text-xs text-muted-foreground" data-operator-skipped>
+          Not run: only results read from an earlier run needed it
+        </p>
+      )}
       {data.inputs.map((p, i) => (
         <Handle
           key={p.id}
@@ -430,7 +447,18 @@ function OperatorIcon({ type }: { type: string }) {
   return (
     // Operator icons are dark glyphs drawn for a white ground, so the tile stays white in dark mode too.
     <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-white p-1.5 dark:border-white/15">
-      <img src={operatorImage(type)} alt="" className="size-full object-contain" draggable={false} loading="lazy" />
+      <img
+        src={operatorImage(type)}
+        alt=""
+        className="size-full object-contain"
+        draggable={false}
+        loading="lazy"
+        // A type with no picture of its own shows Python's rather than a broken image.
+        onError={e => {
+          const img = e.currentTarget;
+          if (!img.src.endsWith("/PythonUDFV2.png")) img.src = "/operator-images/PythonUDFV2.png";
+        }}
+      />
     </span>
   );
 }

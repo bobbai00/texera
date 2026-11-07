@@ -16,6 +16,10 @@ export interface OperatorOverlay {
   error?: string;
   /** The output ports whose result the execution on screen keeps. */
   results?: string[];
+  /** The earlier execution whose stored rows it read instead of running, as its URI. */
+  reusedFrom?: string;
+  /** It did not run: only results read from earlier runs needed it. */
+  skipped?: boolean;
 }
 
 export interface OperatorNodeData extends Record<string, unknown>, OperatorOverlay {

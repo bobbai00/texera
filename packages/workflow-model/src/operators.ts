@@ -35,8 +35,28 @@ export const schemaMap = (operators: Operator[]): Map<string, OperatorSchema> =>
   new Map(operators.map(fromOperatorResource).map(s => [s.operatorType, s]));
 
 /** The icon of an operator type, served beside the app; custom operators share one. */
+/** The built-ins drawn as the classic operators they stand in for. */
+const BUILTIN_IMAGES: Record<string, string> = {
+  scan: "CSVFileScan",
+  filter: "Filter",
+  project: "Projection",
+  compute: "TypeCasting",
+  aggregate: "Aggregate",
+  join: "HashJoin",
+  union: "Union",
+  distinct: "Distinct",
+  sort: "Sort",
+  limit: "Limit",
+  function: "PythonUDFV2",
+  predict: "SklearnPrediction",
+  stored: "Projection",
+};
+
+/** An operator's picture: a custom operator's is Python's, a built-in's its classic counterpart's. */
 export const operatorImage = (operatorType: string) =>
-  operatorType.startsWith("texera://") ? "/operator-images/PythonUDFV2.png" : `/operator-images/${operatorType}.png`;
+  operatorType.startsWith("texera://")
+    ? "/operator-images/PythonUDFV2.png"
+    : `/operator-images/${BUILTIN_IMAGES[operatorType] ?? operatorType}.png`;
 
 export const EMPTY_SPEC: WorkflowSpec = { operators: [], links: [] };
 

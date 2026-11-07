@@ -618,3 +618,58 @@ test("an execution's page is the workflow as it ran, and a visualization's resul
   await expect(stage.locator("[data-port-rows]")).toContainText("Iris-virginica");
   await expect(portOf(page, "avg")).toHaveAttribute("data-result", "shown");
 });
+
+test("a run reads what an earlier run of the same work stored, and its cards say so; Run fresh makes everything again", async ({ page, request }) => {
+  test.setTimeout(300_000);
+  const alice = await api(request);
+  const stamp = Date.now();
+  const project: Envelope = await alice("POST", "/projects", { name: `reuse ${stamp}`, spec: {} });
+  const dataset: Envelope = await alice("POST", "/datasets", { name: "iris", parent: project.metadata.rid, spec: { format: "csv" } });
+  await alice("PUT", `/datasets/${dataset.metadata.rid}/files/iris.csv`, IRIS_CSV, "text/csv");
+  await alice("POST", `/datasets/${dataset.metadata.rid}/commit`, { message: "Fisher's iris flowers" });
+  const link = (from: string, to: string) => ({ linkID: `${from}-${to}`, source: { operatorID: from, portID: "output-0" }, target: { operatorID: to, portID: "input-0" } });
+  // A scan, an aggregate (costly: its rows are kept for later runs) and a filter that shows the rows.
+  const spec = {
+    operators: [
+      { operatorID: "readings", operatorType: "scan", operatorProperties: { file: `${dataset.metadata.uri}@1/files/iris.csv` } },
+      { operatorID: "means", operatorType: "aggregate", operatorProperties: { by: ["Species"], outputs: ["mean = avg(PetalLengthCm)"] } },
+      { operatorID: "long", operatorType: "filter", operatorProperties: { where: "mean > 2" } },
+    ],
+    links: [link("readings", "means"), link("means", "long")],
+  };
+  const workflow: Envelope = await alice("POST", "/workflows", { name: `reuse ${stamp}`, parent: project.metadata.rid, spec });
+  cleanups.push(async () => {
+    await discard(alice, [workflow.metadata.rid], [dataset.metadata.rid]);
+    await alice.attempt("DELETE", `/projects/${project.metadata.rid}`);
+  });
+  await signIn(page);
+  await page.goto(`/workflows/${workflow.metadata.rid}`);
+  const latest = page.locator("[data-latest-execution]");
+  const results = page.locator("[data-results]");
+  const means = operatorCard(page, "means");
+  const readings = operatorCard(page, "readings");
+  // Runs, and waits for the run to take over the cards and to end.
+  const runWith = async (button: string) => {
+    const before = (await results.count()) > 0 ? await results.getAttribute("data-results") : null;
+    await page.locator(button).click();
+    await expect(results).not.toHaveAttribute("data-results", before ?? "", { timeout: 60_000 });
+    await expect(latest).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
+  };
+
+  // The first run makes everything.
+  await runWith("[data-run]");
+  await expect(means.locator("[data-operator-reused]")).toHaveCount(0);
+  await expect(results.locator("[data-port-rows]")).toContainText("Iris-virginica");
+
+  // The second reads the aggregate's rows from the first, which its card names, and does not scan the file.
+  await runWith("[data-run]");
+  await expect(means.locator("[data-operator-reused]")).toContainText("Read from");
+  await expect(readings.locator("[data-operator-skipped]")).toBeVisible();
+  await expect(results.locator("[data-port-rows]")).toContainText("Iris-virginica");
+  await page.screenshot({ path: "test-results/canvas-reused.png" });
+
+  // Run fresh makes everything again.
+  await runWith("[data-run-fresh]");
+  await expect(means.locator("[data-operator-reused]")).toHaveCount(0);
+  await expect(readings.locator("[data-operator-skipped]")).toHaveCount(0);
+});

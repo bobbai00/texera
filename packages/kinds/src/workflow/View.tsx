@@ -31,6 +31,7 @@ import {
   Loader2,
   Lock,
   Play,
+  RotateCcw,
   Table2,
   Users,
   Workflow,
@@ -183,8 +184,8 @@ function Editor({
 }
 
 /** What the cards say: how each operator did in the execution on screen, and what the compiler says is wrong with it now. */
-function overlayFor(spec: WorkflowSpec, compilation: Compilation | undefined, execution: ExecutionStatus | undefined) {
-  const ran = executionOverlay(execution);
+function overlayFor(spec: WorkflowSpec, compilation: Compilation | undefined, execution: Execution | undefined) {
+  const ran = executionOverlay(execution?.status, execution?.spec);
   const overlay: Record<string, OperatorOverlay> = {};
   for (const op of spec.operators) {
     const error = compilation?.errors[op.operatorID];
@@ -271,7 +272,7 @@ function EditorLayout({
 
   // Runs the workflow, or up to one operator: only what leads to it, and its result is kept.
   const run = useMutation({
-    mutationFn: async (upTo: string | undefined) => {
+    mutationFn: async ({ upTo, fresh }: { upTo?: string; fresh?: boolean }) => {
       if (!unit) throw new Error("No computing unit is available.");
       // What runs is the version the session has just saved: exactly what is on screen.
       const vno = (await store.getState().flush()) ?? store.getState().headVno;
@@ -279,11 +280,17 @@ function EditorLayout({
       return unwrap(
         workflowsRun({
           path: { rid },
-          body: { vno, computingUnit: unit.metadata.uri, ...(warehousePick ? { warehouse: warehousePick } : {}), ...(upTo ? { upTo } : {}) },
+          body: {
+            vno,
+            computingUnit: unit.metadata.uri,
+            ...(warehousePick ? { warehouse: warehousePick } : {}),
+            ...(upTo ? { upTo } : {}),
+            ...(fresh ? { fresh } : {}),
+          },
         })
       );
     },
-    onSuccess: (_, upTo) => {
+    onSuccess: (_, { upTo }) => {
       // The execution shows where it runs: on the cards of this canvas, its results under it.
       queryClient.invalidateQueries({ queryKey: [{ _id: "workflowsListExecutions", path: { rid } }] });
       queryClient.invalidateQueries({ queryKey: [{ _id: "resourcesSearch" }] });
@@ -294,16 +301,16 @@ function EditorLayout({
       setTab("canvas");
     },
   });
-  const runTo = useCallback((operatorID: string) => run.mutate(operatorID), [run.mutate]);
+  const runTo = useCallback((operatorID: string) => run.mutate({ upTo: operatorID }), [run.mutate]);
   // A person who may look at the workflow but lacks something it needs to run (a dataset not
   // shared with them, the unit) is told what, by the dry run before they press Run, or by Run.
   const blocked = isRefusal(compiled.error) ? compiled.error : isRefusal(run.error) ? run.error : undefined;
   const overlay = useMemo(() => {
-    const said = overlayFor(spec, compilation, latest?.status);
+    const said = overlayFor(spec, compilation, latest);
     const operator = blocked && refusedOperator(blocked);
     if (operator && said[operator]) said[operator] = { ...said[operator], error: "Not shared with you: ask the workflow's owner" };
     return said;
-  }, [spec, compilation, latest?.status, blocked]);
+  }, [spec, compilation, latest, blocked]);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-workflow-view={rid}>
@@ -373,9 +380,19 @@ function EditorLayout({
                 <Loader2 className="size-3 animate-spin" /> {latest.status?.phase}
               </Badge>
             )}
+            {/* A run reads what earlier runs of the same work stored; Run fresh makes everything again. */}
             <Button
               size="sm"
-              onClick={() => run.mutate(undefined)}
+              variant="outline"
+              onClick={() => run.mutate({ fresh: true })}
+              disabled={!unit || run.isPending || spec.operators.length === 0 || pinned}
+              title="Make every result again, reading nothing earlier runs stored"
+              data-run-fresh>
+              <RotateCcw /> Run fresh
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => run.mutate({})}
               disabled={!unit || run.isPending || spec.operators.length === 0 || pinned}
               data-run>
               {run.isPending ? <Loader2 className="animate-spin" /> : <Play />} Run

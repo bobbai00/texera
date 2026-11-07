@@ -46,6 +46,18 @@ describe("what the cards say of an execution", () => {
     expect(overlay.avg?.rowsOut).toBe(2);
   });
 
+  it("says which operators read an earlier run's rows, from which run, and which did not run", () => {
+    const overlay = executionOverlay(
+      { phase: "completed", operators: { avg: { state: "Completed", rowsOut: 2 } } },
+      {
+        reused: [{ operatorID: "avg", portID: "output-0", from: "texera://workflows/w/executions/e1/operators/avg/ports/output-0" }],
+        skipped: ["scan"],
+      }
+    );
+    expect(overlay.avg).toMatchObject({ status: "completed", rowsOut: 2, reusedFrom: "texera://workflows/w/executions/e1" });
+    expect(overlay.scan).toEqual({ skipped: true });
+  });
+
   it("is empty for no execution", () => {
     expect(executionOverlay(undefined)).toEqual({});
   });

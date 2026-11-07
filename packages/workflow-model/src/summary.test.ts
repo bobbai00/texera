@@ -83,6 +83,13 @@ describe("what an operator's card says about its settings", () => {
     ]);
   });
 
+  it("names the built-in scan's file by its name too", () => {
+    const builtin: JsonSchema = { properties: { file: { type: "string", title: "File" } } };
+    expect(describeProperties(builtin, { file: "texera://datasets/0109aa4a@1/files/cgm.csv" })).toEqual([
+      { key: "file", label: "File", value: "cgm.csv", short: "cgm.csv" },
+    ]);
+  });
+
   it("leaves out what is not set, what is the default, and what nobody edits", () => {
     expect(
       describeProperties(scan, { fileName: "", limit: undefined, hasHeader: true, dummyPropertyList: [{ a: 1 }] })

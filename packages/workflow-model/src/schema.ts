@@ -54,7 +54,8 @@ const CODE_DESCRIPTION = "input your code here";
 
 export function fieldKind(key: string, raw: JsonSchema, root: JsonSchema): FieldKind {
   const schema = resolve(raw, root);
-  if (key === "fileName") return "file";
+  // A dataset's file: the classic scans' fileName, the built-in scan's file.
+  if (key === "fileName" || key === "file") return "file";
   if (key === "datasetVersionPath") return "datasetVersion";
   if (schema.format === "credential") return "credential";
   if (schema.autofill === "attributeName") return "attribute";

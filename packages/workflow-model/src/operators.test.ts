@@ -39,6 +39,9 @@ describe("operator resources", () => {
     expect(schema.jsonSchema.required).toEqual(["fileName"]);
     expect(schema.custom).toBeUndefined();
     expect(operatorImage("CSVFileScan")).toBe("/operator-images/CSVFileScan.png");
+    // A built-in is drawn as the classic operator it stands in for.
+    expect(operatorImage("aggregate")).toBe("/operator-images/Aggregate.png");
+    expect(operatorImage("predict")).toBe("/operator-images/SklearnPrediction.png");
   });
 
   it("types a custom operator by its URI at the head version", () => {
