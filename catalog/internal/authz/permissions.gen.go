@@ -37,6 +37,7 @@ var Permissions = map[string]string{
 	"GET /catalog/v1/computing-units/{rid}/operators":                                             "run_on",
 	"GET /catalog/v1/conversations":                                                               "list",
 	"GET /catalog/v1/conversations/{rid}":                                                         "read",
+	"GET /catalog/v1/conversations/{rid}/graph":                                                   "read",
 	"GET /catalog/v1/conversations/{rid}/messages":                                                "read",
 	"GET /catalog/v1/conversations/{rid}/resources":                                               "read",
 	"GET /catalog/v1/conversations/{rid}/settings":                                                "read",
