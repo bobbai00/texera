@@ -3608,6 +3608,10 @@
         "portID": {
           "type": "string"
         },
+        "shown": {
+          "description": "The run shows the port's rows: its operator is marked to show them, nothing reads from it, or the run went up to it. Otherwise the run keeps them only for a later run to reuse.",
+          "type": "boolean"
+        },
         "table": {
           "description": "The table's name inside the execution's namespace.",
           "type": "string"

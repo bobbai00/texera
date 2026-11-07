@@ -52,7 +52,10 @@ func TestRunInThreePhases(t *testing.T) {
 	var validation api.WorkflowValidation
 	h.mustJSON("alice", "POST", p+"/workflows/"+rid(wf)+"/validate", map[string]any{}, &validation)
 	// scan feeds tag and shows no result: the plan names tag's table alone.
-	if validation.Plan == nil || len(validation.Plan.Outputs) != 1 || validation.Plan.Outputs[0] != (api.PortTable{OperatorID: "tag", PortID: "output-0", Table: "tag_output_0"}) || validation.Plan.Credentials == nil || len(*validation.Plan.Credentials) != 1 {
+	if validation.Plan == nil || len(validation.Plan.Outputs) != 1 || validation.Plan.Credentials == nil || len(*validation.Plan.Credentials) != 1 {
+		t.Fatalf("the dry run returns the plan: %+v", validation.Plan)
+	}
+	if o := validation.Plan.Outputs[0]; o.OperatorID != "tag" || o.PortID != "output-0" || o.Table != "tag_output_0" || o.Shown == nil || !*o.Shown {
 		t.Fatalf("the dry run returns the plan: %+v", validation.Plan)
 	}
 	var exec envelope

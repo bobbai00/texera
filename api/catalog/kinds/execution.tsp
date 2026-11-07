@@ -31,6 +31,8 @@ model PortTable {
   table: string;
   @doc("The fingerprint of the work that makes the port's rows: its operator, its settings and the engine that runs it, and its inputs' fingerprints. The same work on the same data, in any workflow of the project, has the same fingerprint, so a later run reads these rows instead of making them again. Absent for rows that depend on more, such as a limit with no sort before it.")
   fingerprint?: string;
+  @doc("The run shows the port's rows: its operator is marked to show them, nothing reads from it, or the run went up to it. Otherwise the run keeps them only for a later run to reuse.")
+  shown?: boolean;
 }
 
 @doc("A result an execution read from an earlier run instead of making it again.")

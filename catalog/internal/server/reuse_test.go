@@ -89,6 +89,10 @@ func TestARunReadsWhatAnEarlierRunOfTheSameWorkStored(t *testing.T) {
 	if len(outputs) != 2 || outputs["lows"].Fingerprint == nil || outputs["many"].Fingerprint == nil || len(operatorsOf(start1)) != 3 {
 		t.Fatalf("the first run's plan: %+v", outputs)
 	}
+	// The filter's rows are shown; the aggregate's are kept only for a later run.
+	if outputs["many"].Shown == nil || !*outputs["many"].Shown || outputs["lows"].Shown != nil {
+		t.Fatalf("which ports the run shows: many %v, lows %v", outputs["many"].Shown, outputs["lows"].Shown)
+	}
 	ns1 := "e_" + strings.ReplaceAll(rid(exec1), "-", "")
 	report(t, h, exec1, "lows", map[string]any{"opid": "lows", "state": "Completed", "rowsOut": 1}, map[string]map[string]any{"output-0": {"table": ns1 + ".lows_output_0", "tupleCount": 1}})
 	report(t, h, exec1, "many", map[string]any{"opid": "many", "state": "Completed", "rowsOut": 0}, map[string]map[string]any{"output-0": {"table": ns1 + ".many_output_0", "tupleCount": 0}})

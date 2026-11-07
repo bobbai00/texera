@@ -165,7 +165,8 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 		}
 		newest[workflow] = true
 		for _, p := range *status.Ports {
-			if p.Table == nil || strings.HasPrefix(*p.Table, "vfs:") {
+			// What the run shows is what it made; what it keeps only to reuse is not drawn.
+			if p.Table == nil || strings.HasPrefix(*p.Table, "vfs:") || !shownPort(spec, p.OperatorID, p.PortID) {
 				continue
 			}
 			port := URI(exec).String() + "/operators/" + p.OperatorID + "/ports/" + p.PortID
@@ -291,4 +292,20 @@ func planOf(args any) []planItem {
 	}
 	_ = json.Unmarshal([]byte(raw), &plan)
 	return plan.Makes
+}
+
+// shownPort tells whether a run shows a port's rows rather than keeping them only for reuse; a
+// run of an earlier release, whose plan says neither, shows all it kept.
+func shownPort(spec api.ExecutionSpec, operatorID, portID string) bool {
+	if spec.Plan == nil {
+		return true
+	}
+	// A plan that marks the ports it shows marks every one of them.
+	marks := slices.ContainsFunc(spec.Plan.Outputs, func(o api.PortTable) bool { return o.Shown != nil })
+	for _, o := range spec.Plan.Outputs {
+		if o.OperatorID == operatorID && o.PortID == portID {
+			return !marks || (o.Shown != nil && *o.Shown)
+		}
+	}
+	return !marks
 }

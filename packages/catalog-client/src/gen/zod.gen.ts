@@ -361,7 +361,8 @@ export const zPortTable = z.object({
     operatorID: z.string(),
     portID: z.string(),
     table: z.string(),
-    fingerprint: z.string().optional()
+    fingerprint: z.string().optional(),
+    shown: z.boolean().optional()
 });
 
 export const zPrincipalKind = z.enum(['user', 'group']);

@@ -447,8 +447,10 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 	// The results that cost the most to make are kept even when nothing shows them, so a later
 	// run can read them instead of making them again.
 	out.Shown = map[string]bool{}
-	for _, o := range out.Outputs {
+	shown := true
+	for i, o := range out.Outputs {
 		out.Shown[portKey(o.OperatorID, o.PortID)] = true
+		out.Outputs[i].Shown = &shown
 	}
 	out.Reusable = reusableOps(plan)
 	for _, logical := range plan.Operators {
