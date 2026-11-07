@@ -27,6 +27,7 @@ patient's readings, once on its share of the groups, putting out a row per what 
 import hashlib
 import importlib.util
 import os
+import shutil
 import tempfile
 import urllib.request
 from abc import ABC, abstractmethod
@@ -41,29 +42,37 @@ from .udf_operator import UDFBatchOperator, UDFTableOperator
 
 def fetch(model: str, files: Dict[str, str]) -> str:
     """
-    The directory a model version's files are in, fetched once per process: each file's URL
-    is the catalog's, presigned for this run.
+    The directory a model version's files are in, fetched once per host: each file's URL is the
+    catalog's, presigned for this run. Workers on one host may fetch at once: each fetches into
+    a folder of its own and moves it into place whole, and one that finds the place taken uses
+    what is there.
     """
-    root = os.path.join(
-        tempfile.gettempdir(),
-        "texera-models",
-        hashlib.sha256(model.encode()).hexdigest()[:24],
-    )
+    parent = os.path.join(tempfile.gettempdir(), "texera-models")
+    root = os.path.join(parent, hashlib.sha256(model.encode()).hexdigest()[:24])
     done = os.path.join(root, ".fetched")
     if os.path.exists(done):
         return root
-    for path, url in files.items():
-        target = os.path.join(root, *path.split("/"))
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with (
-            urllib.request.urlopen(url) as response,
-            open(target + ".part", "wb") as out,
-        ):
-            while chunk := response.read(1 << 20):
-                out.write(chunk)
-        os.replace(target + ".part", target)
-    with open(done, "w") as marker:
-        marker.write(model)
+    os.makedirs(parent, exist_ok=True)
+    staging = tempfile.mkdtemp(dir=parent, prefix=".fetching-")
+    try:
+        for path, url in files.items():
+            target = os.path.join(staging, *path.split("/"))
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with urllib.request.urlopen(url) as response, open(target, "wb") as out:
+                while chunk := response.read(1 << 20):
+                    out.write(chunk)
+        with open(os.path.join(staging, ".fetched"), "w") as marker:
+            marker.write(model)
+        if os.path.isdir(root) and not os.path.exists(done):
+            # Left half-made by a worker that stopped: it holds no version.
+            shutil.rmtree(root, ignore_errors=True)
+        try:
+            os.rename(staging, root)
+        except OSError:
+            if not os.path.exists(done):
+                raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     return root
 
 

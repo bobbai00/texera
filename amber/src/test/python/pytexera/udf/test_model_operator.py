@@ -18,6 +18,7 @@
 import json
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import joblib
 import numpy
@@ -162,6 +163,19 @@ class TestModelOperator:
         loaded = load("sklearn", fetch(unique_model(), sk_files), "model.joblib")
         with pytest.raises(ValueError, match="one or two outputs"):
             predict(loaded, COHORT[["Glucose", "BMI"]], OUTPUTS + [["third", "double"]])
+
+    def test_workers_fetching_at_once_end_with_one_whole_copy(self, fitted):
+        _, files = fitted
+        model = unique_model()
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            places = list(pool.map(lambda _: fetch(model, files), range(6)))
+        assert len(set(places)) == 1
+        assert sorted(os.listdir(places[0])) == [".fetched", "model.joblib"]
+        assert not [
+            p
+            for p in os.listdir(os.path.dirname(places[0]))
+            if p.startswith(".fetching-")
+        ]
 
     def test_a_version_is_fetched_once_per_process(self, fitted, tmp_path):
         _, files = fitted
