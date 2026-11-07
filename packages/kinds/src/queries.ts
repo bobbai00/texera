@@ -2,7 +2,7 @@
 // grants, principals, search, units and operator types.
 
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
-import { evaluationEvaluate, operatorsList, resourcesRead, resourcesResolve } from "@texera/catalog-client";
+import { evaluationEvaluate, operatorsList, resourcesRead, resourcesResolve, resourcesSearch } from "@texera/catalog-client";
 import {
   computingUnitsAvailableOptions,
   conversationsSettingsOptions,
@@ -74,6 +74,28 @@ export interface SearchFilter {
 }
 
 export const searchQuery = (filter: SearchFilter) => resourcesSearchOptions({ query: { limit: 100, ...filter } });
+
+/** How many a list reads at most: past this a list is searched, not scrolled. */
+const LIST_AT_MOST = 2000;
+
+/**
+ * Every resource a filter finds, page after page, for a list that shows them all (a library):
+ * a single page would stop at 100 and look complete.
+ */
+export const searchAllQuery = (filter: Omit<SearchFilter, "limit">) =>
+  queryOptions({
+    // Under the search's own key, so whatever asks the searches again after a change asks this too.
+    queryKey: [{ _id: "resourcesSearch", all: true, query: filter }],
+    queryFn: async () => {
+      const items: Resource[] = [];
+      for (let cursor: string | undefined; ; ) {
+        const page = (await resourcesSearch({ query: { ...filter, limit: 200, ...(cursor ? { cursor } : {}) }, throwOnError: true })).data;
+        items.push(...page.items);
+        if (!page.nextCursor || items.length >= LIST_AT_MOST) return { items };
+        cursor = page.nextCursor;
+      }
+    },
+  });
 
 /** The units the caller may run on, in a scope. */
 export const unitsQuery = (scope?: string) => ({ ...computingUnitsAvailableOptions({ query: { scope } }), staleTime: 30_000 });

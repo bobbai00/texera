@@ -343,12 +343,13 @@ function EditorLayout({
                   options={units.map(u => ({ value: u.metadata.uri, label: u.metadata.name }))}
                   className="w-36"
                 />
-                {madeFrom && (
+                {/* Beside a chat the panel is narrow: the unit says where, the page says the rest. */}
+                {madeFrom && mode === "page" && (
                   <span className="truncate" data-run-profile>
                     (<Named uri={madeFrom} />)
                   </span>
                 )}
-                {warehouses && warehouses.items.length > 0 && (
+                {warehouses && warehouses.items.length > 0 && mode === "page" && (
                   <>
                     <span className="shrink-0">· results in</span>
                     <Select

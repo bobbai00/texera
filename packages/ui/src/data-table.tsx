@@ -80,6 +80,8 @@ export function DataTable({ columns, rows, className }: { columns: Column[]; row
             );
           })}
         </div>
+        {/* Room under the last row: the chat beside the page floats over the bottom right corner. */}
+        <div className="h-16" aria-hidden />
       </div>
     </div>
   );

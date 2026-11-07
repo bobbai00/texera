@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@texera/ui";
 import { Plus } from "lucide-react";
 import { useState } from "react";
-import { searchQuery } from "../queries";
+import { searchAllQuery } from "../queries";
 import { KINDS } from "../registry";
 import { useScope, useWorkingProject } from "../scope";
 import { KindIcon } from "../shell/KindIcon";
@@ -20,7 +20,7 @@ export function Library({ kind }: { kind: KindId }) {
   // The list waits for the working project: until it is known there is nothing to scope to.
   const known = useWorkingProject().current !== undefined;
   const [creating, setCreating] = useState(false);
-  const { data, isPending } = useQuery({ ...searchQuery({ kind, scope }), enabled: known });
+  const { data, isPending } = useQuery({ ...searchAllQuery({ kind, scope }), enabled: known });
   return (
     <div className="scrollbar-thin h-full overflow-y-auto" data-library={kind}>
       <div className="mx-auto max-w-5xl px-6 py-10">

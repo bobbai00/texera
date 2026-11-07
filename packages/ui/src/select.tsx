@@ -49,7 +49,9 @@ export function Select<T extends string>({
         </BaseSelect.Icon>
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
-        <BaseSelect.Positioner sideOffset={6} className="z-50">
+        {/* A list that opens below its trigger, from its first option: aligned with the item picked, a
+            long list opened scrolled and hid the options above it with no sign they were there. */}
+        <BaseSelect.Positioner sideOffset={6} alignItemWithTrigger={false} className="z-50">
           <BaseSelect.Popup className="max-h-72 min-w-[var(--anchor-width)] overflow-y-auto rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg outline-none">
             {options.map(o => (
               <BaseSelect.Item

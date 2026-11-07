@@ -41,7 +41,8 @@ export function ResourceHeader({
       <span title={kindLabel} className="shrink-0">
         {icon}
       </span>
-      <div className="min-w-0 flex-1">
+      {/* The name keeps room to be read, however many actions stand beside it. */}
+      <div className="min-w-32 flex-1">
         <div className={cn("truncate font-semibold", mode === "page" ? "text-base" : "text-sm")}>{name}</div>
         {meta && <div className="truncate text-xs text-muted-foreground">{meta}</div>}
       </div>

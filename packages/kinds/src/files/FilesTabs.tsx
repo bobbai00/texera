@@ -70,7 +70,15 @@ function FilePreview({ kind, rid, vno, path }: { kind: Resource["kind"]; rid: st
       ) : isPending ? (
         <Skeleton className="m-4 h-48" />
       ) : (
-        <DataTable columns={data.columns} rows={data.rows} className="min-h-0 flex-1 border-t" />
+        <>
+          <DataTable columns={data.columns} rows={data.rows} className="min-h-0 flex-1 border-t" />
+          {(data.rows.length < data.total || data.partial) && (
+            // A preview says it is one: the first rows, of how many.
+            <p className="shrink-0 border-t px-4 py-1.5 text-xs text-muted-foreground" data-preview-count>
+              The first {data.rows.length} rows, of {data.partial ? `more than ${data.total}` : data.total}.
+            </p>
+          )}
+        </>
       )}
     </div>
   );

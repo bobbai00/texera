@@ -55,6 +55,10 @@ export function inferType(values: string[]): string {
 export interface TablePreview {
   columns: Column[];
   rows: string[][];
+  /** How many rows the file has, as far as it was read; more when it was read only in part. */
+  total: number;
+  /** Only the file's beginning was read. */
+  partial: boolean;
 }
 
 /** The delimiter a file scan would use for this file name. */
@@ -65,7 +69,7 @@ export function previewCsv(text: string, { limit = 100, truncated = false, delim
   const [header = [], ...body] = parseCsv(text, { truncated, delimiter });
   const rows = body.slice(0, limit);
   const columns = header.map((name, i) => ({ name, type: inferType(rows.map(r => r[i] ?? "")) }));
-  return { columns, rows };
+  return { columns, rows, total: body.length, partial: truncated };
 }
 
 export const TABULAR = /\.(csv|tsv|txt)$/i;
