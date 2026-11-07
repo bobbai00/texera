@@ -162,6 +162,8 @@ export const events = {
 export interface MapperOptions {
   /** Id generator; injectable for deterministic tests. */
   newId?: () => string;
+  /** The MCP server each mounted tool is from, by tool name: a call to it records the server. */
+  servers?: ReadonlyMap<string, string>;
 }
 
 /** What the mapper has seen, so a turn can be persisted while and after it streams. */
@@ -188,6 +190,7 @@ export function stringifyToolOutput(output: unknown): string {
 /** Maps AI SDK stream parts to AG-UI events, one part at a time, and collects the turn. */
 export class StreamMapper {
   private readonly newId: () => string;
+  private readonly servers: ReadonlyMap<string, string>;
   private step = 0;
   private openStep?: string;
   private currentMessageId?: string;
@@ -207,6 +210,7 @@ export class StreamMapper {
 
   constructor(options: MapperOptions = {}) {
     this.newId = options.newId ?? (() => crypto.randomUUID());
+    this.servers = options.servers ?? new Map();
   }
 
   map(part: TextStreamPart<ToolSet>): AGUIEvent[] {
@@ -250,11 +254,13 @@ export class StreamMapper {
       case "tool-call": {
         this.collected.toolCalls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
         this.openText = undefined;
+        const server = this.servers.get(part.toolName);
         this.collected.parts.push({
           type: "tool_call",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           args: part.input,
+          ...(server ? { server } : {}),
         });
         if (this.startedToolCalls.has(part.toolCallId)) return [];
         this.startedToolCalls.add(part.toolCallId);

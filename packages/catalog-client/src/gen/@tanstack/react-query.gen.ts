@@ -592,7 +592,7 @@ export const conversationsUpdateMutation = (options?: Partial<Options<Conversati
 export const conversationsGraphQueryKey = (options: Options<ConversationsGraphData>) => createQueryKey('conversationsGraph', options);
 
 /**
- * The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet.
+ * The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet, and the outside sources its agent consulted.
  */
 export const conversationsGraphOptions = (options: Options<ConversationsGraphData>) => queryOptions<ConversationsGraphResponse, ConversationsGraphError, ConversationsGraphResponse, ReturnType<typeof conversationsGraphQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {

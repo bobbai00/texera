@@ -167,6 +167,15 @@ export const zFileLink = z.object({
 });
 
 /**
+ * A call the chat's agent made to an outside MCP server's tool.
+ */
+export const zGraphCall = z.object({
+    tool: z.string(),
+    asked: z.string(),
+    turn: z.string()
+});
+
+/**
  * What a node of a chat's graph stands for: data (a dataset, or a table a run made), a workflow, a model, a function (a custom operator) or a computing unit.
  */
 export const zGraphRole = z.enum([
@@ -725,6 +734,15 @@ export const zGraphRun = z.object({
     finishedAt: z.iso.datetime().optional()
 });
 
+/**
+ * An outside MCP server the chat's agent consulted, and its calls, oldest first.
+ */
+export const zGraphSource = z.object({
+    uri: zUri,
+    name: z.string(),
+    calls: z.array(zGraphCall)
+});
+
 export const zLeaseRequest = z.object({
     purpose: zUri
 });
@@ -775,7 +793,8 @@ export const zMessagePart = z.object({
         'approved',
         'declined'
     ]).optional(),
-    decidedBy: zPid.optional()
+    decidedBy: zPid.optional(),
+    server: zUri.optional()
 });
 
 export const zAppendMessage = z.object({
@@ -1123,7 +1142,8 @@ export const zGraphNode = z.object({
 export const zConversationGraph = z.object({
     nodes: z.array(zGraphNode),
     edges: z.array(zGraphEdge),
-    planned: z.array(zPlannedItem)
+    planned: z.array(zPlannedItem),
+    sources: z.array(zGraphSource)
 });
 
 /**

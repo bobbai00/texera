@@ -842,12 +842,20 @@
             "$ref": "#/$defs/PlannedItem"
           },
           "type": "array"
+        },
+        "sources": {
+          "description": "The outside MCP servers the chat's agent consulted, in the order it first did; the platform's own server is not among them.",
+          "items": {
+            "$ref": "#/$defs/GraphSource"
+          },
+          "type": "array"
         }
       },
       "required": [
         "nodes",
         "edges",
-        "planned"
+        "planned",
+        "sources"
       ],
       "type": "object"
     },
@@ -2133,6 +2141,28 @@
       ],
       "type": "object"
     },
+    "GraphCall": {
+      "description": "A call the chat's agent made to an outside MCP server's tool.",
+      "properties": {
+        "asked": {
+          "description": "What the call asked: its arguments, in short.",
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "turn": {
+          "description": "The turn it was made in.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "asked",
+        "turn"
+      ],
+      "type": "object"
+    },
     "GraphEdge": {
       "description": "An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on.",
       "properties": {
@@ -2253,6 +2283,29 @@
         "phase",
         "steps",
         "reused"
+      ],
+      "type": "object"
+    },
+    "GraphSource": {
+      "description": "An outside MCP server the chat's agent consulted, and its calls, oldest first.",
+      "properties": {
+        "calls": {
+          "items": {
+            "$ref": "#/$defs/GraphCall"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri",
+        "name",
+        "calls"
       ],
       "type": "object"
     },
@@ -2838,6 +2891,10 @@
           "description": "A resource URI, with `@vno` when a version is meant."
         },
         "result": {},
+        "server": {
+          "$ref": "#/$defs/Uri",
+          "description": "For a tool call: the MCP server whose tool it is; absent for the agent's own tools."
+        },
         "state": {
           "description": "For an approval: whether it waits, or what the person decided.",
           "enum": [

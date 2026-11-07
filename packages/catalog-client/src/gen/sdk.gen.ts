@@ -247,7 +247,7 @@ export const conversationsUpdate = <ThrowOnError extends boolean = false>(option
 });
 
 /**
- * The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet.
+ * The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet, and the outside sources its agent consulted.
  */
 export const conversationsGraph = <ThrowOnError extends boolean = false>(options: Options<ConversationsGraphData, ThrowOnError>): RequestResult<ConversationsGraphResponses, ConversationsGraphErrors, ThrowOnError> => (options.client ?? client).get<ConversationsGraphResponses, ConversationsGraphErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],

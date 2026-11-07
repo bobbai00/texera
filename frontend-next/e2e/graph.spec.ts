@@ -37,12 +37,17 @@ test("a chat that started work shows what it read, made and ran as a graph, and 
     links: [link("readings", "means"), link("means", "long")],
   });
 
-  // The agent says its plan, makes a workflow over the person's iris and runs it.
+  // The agent reads up in an outside source, says its plan, makes a workflow over the person's
+  // iris and runs it.
+  const servers = (await alice("GET", "/mcp-servers?limit=200")).items as { metadata: { name: string; uri: string } }[];
+  const biomcp = servers.find(s => s.metadata.name === "biomcp")?.metadata.uri;
+  expect(biomcp).toBeDefined();
   let agent = await inTurn(request, alice, conversation);
   await agent("POST", `/conversations/${conversation}/messages`, {
     turn: agent.turn,
     role: "assistant",
     parts: [
+      { type: "tool_call", toolName: "search_pubmed", toolCallId: "c0", server: biomcp, args: { query: "iris petal length" } },
       {
         type: "tool_call",
         toolName: "start_work",
@@ -68,6 +73,12 @@ test("a chat that started work shows what it read, made and ran as a graph, and 
   await expect(graph.locator('[data-graph-edge="runsOn"]')).toHaveCount(1);
   await expect(graph.locator('[data-graph-edge="makes"]')).not.toHaveCount(0);
   await expect(graph.locator("[data-graph-band='0']")).toHaveText("Used");
+  // Above it, the outside source the agent consulted; a click lists what it asked.
+  const source = graph.locator('[data-graph-sources] [data-graph-source="biomcp"]');
+  await expect(source).toContainText("1 call");
+  await source.click();
+  await expect(graph.locator("[data-graph-calls] li")).toHaveCount(1);
+  await expect(graph.locator("[data-graph-calls] li")).toContainText("iris petal length");
   await page.screenshot({ path: "test-results/resource-graph.png" });
   const before = await positions(graph);
 

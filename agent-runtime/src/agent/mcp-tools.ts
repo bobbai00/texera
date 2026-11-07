@@ -137,6 +137,13 @@ function sanitize(name: string): string {
   return name.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "server";
 }
 
+/** The server each mounted tool is from, by the name the agent calls it. */
+export function serverOfTool(servers: MountedServer[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const server of servers) for (const name of server.toolNames) out.set(name, server.uri);
+  return out;
+}
+
 export async function mountMcpServers(options: McpMountOptions): Promise<McpMount> {
   const clients: MCPClient[] = [];
   const tools: ToolSet = {};

@@ -105,3 +105,47 @@ func TestAChatsGraphIsWhatItReadMadeAndRan(t *testing.T) {
 		t.Fatalf("what the plan said and was not made: %+v", graph.Planned)
 	}
 }
+
+// Above the graph, the outside sources the chat's agent consulted, each with what it asked of
+// them; not the platform's own server, which every chat calls, and not the agent's own tools.
+func TestAChatsGraphSaysWhatOutsideSourcesItConsulted(t *testing.T) {
+	h := newHarness(t)
+	agent := theAgent(t, h)
+	servers := map[string]string{}
+	for u, name := range namesByURI(t, h, "mcp-servers") {
+		servers[name] = u
+	}
+	conv := h.create("alice", "conversations", "the reading", map[string]any{"template": string(agent.Metadata.Uri)})
+	var turn api.Turn
+	h.mustJSON("alice", "POST", p+"/conversations/"+rid(conv)+"/turns", map[string]any{}, &turn)
+	call := func(id, tool, server string, args any) map[string]any {
+		part := map[string]any{"type": "tool_call", "toolName": tool, "toolCallId": id, "args": args}
+		if server != "" {
+			part["server"] = server
+		}
+		return part
+	}
+	h.mustJSON("alice", "POST", p+"/conversations/"+rid(conv)+"/messages", map[string]any{"turn": turn.Turn, "role": "assistant", "parts": []any{
+		call("c1", "search_resources", servers["catalog"], map[string]any{"q": "diabetes"}),
+		call("c2", "search_pubmed", servers["biomcp"], map[string]any{"query": "HbA1c measurement and readmission"}),
+		call("c3", "start_work", "", map[string]any{"goal": "Readmission by HbA1c"}),
+		call("c4", "search_pubmed", servers["biomcp"], map[string]any{"query": "Strack 2014", "max_results": 5}),
+	}}, nil)
+
+	var graph api.ConversationGraph
+	h.mustJSON("alice", "GET", p+"/conversations/"+rid(conv)+"/graph", nil, &graph)
+	if len(graph.Sources) != 1 || graph.Sources[0].Name != "biomcp" || string(graph.Sources[0].Uri) != servers["biomcp"] {
+		t.Fatalf("the sources: %+v", graph.Sources)
+	}
+	var calls []string
+	for _, c := range graph.Sources[0].Calls {
+		if c.Turn != turn.Turn {
+			t.Errorf("the call's turn: %q", c.Turn)
+		}
+		calls = append(calls, c.Tool+" "+c.Asked)
+	}
+	want := []string{"search_pubmed HbA1c measurement and readmission", "search_pubmed query: Strack 2014, max_results: 5"}
+	if strings.Join(calls, "; ") != strings.Join(want, "; ") {
+		t.Fatalf("the calls:\n got %q\nwant %q", calls, want)
+	}
+}

@@ -24,6 +24,7 @@ const graph: ConversationGraph = {
     { from: "lows", to: "unit", relation: "runsOn" },
   ],
   planned: [{ kind: "dataset", name: "Overnight risk", turn: "t1" }],
+  sources: [],
 };
 
 describe("the resource graph's layout", () => {

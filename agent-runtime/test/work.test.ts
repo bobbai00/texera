@@ -328,6 +328,13 @@ describe("a turn in manual work mode", () => {
       toolName: "create_computing_unit",
       state: "pending",
     });
+    // A call records the server its tool is from; start_work is the agent's own.
+    const calls = asked?.parts.filter((p) => p.type === "tool_call").map((p) => [p.toolName, p.server]);
+    expect(calls).toEqual([
+      ["get_resource", `texera://mcp-servers/${MCP_RID}`],
+      [START_WORK_TOOL, undefined],
+      ["create_computing_unit", `texera://mcp-servers/${MCP_RID}`],
+    ]);
 
     const second = await turnOf(app, decided("c3", true));
     expect(created).toEqual(["means"]);

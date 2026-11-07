@@ -143,4 +143,23 @@ describe("StreamMapper collected parts", () => {
     expect(mapper.collected.parts[3]).toEqual({ type: "text", text: "Found it." });
     expect(mapper.collected.text).toBe("Checking.\n\nFound it.");
   });
+
+  test("a call to a mounted tool records its server; the agent's own tools record none", () => {
+    const mapper = new StreamMapper({
+      newId: () => "id",
+      servers: new Map([["search_pubmed", "texera://mcp-servers/bio"]]),
+    });
+    mapper.map({ type: "tool-call", toolCallId: "c1", toolName: "search_pubmed", input: { query: "HbA1c" } } as never);
+    mapper.map({ type: "tool-call", toolCallId: "c2", toolName: "start_work", input: {} } as never);
+    expect(mapper.collected.parts).toEqual([
+      {
+        type: "tool_call",
+        toolCallId: "c1",
+        toolName: "search_pubmed",
+        args: { query: "HbA1c" },
+        server: "texera://mcp-servers/bio",
+      },
+      { type: "tool_call", toolCallId: "c2", toolName: "start_work", args: {} },
+    ]);
+  });
 });

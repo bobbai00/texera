@@ -197,11 +197,16 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 		g.edge(uri.Of(ref.Kind, ref.Rid).String(), uri.Of(from.Kind, from.Rid).String(), api.GraphEdgeRelationUses)
 	}
 
-	planned, err := s.plannedNotMade(ctx, rid, g)
+	said, err := s.chatSaid(ctx, rid)
 	if err != nil {
 		return nil, err
 	}
-	out := &api.ConversationGraph{Nodes: make([]api.GraphNode, 0, len(g.nodes)), Edges: g.edges, Planned: planned}
+	out := &api.ConversationGraph{
+		Nodes:   make([]api.GraphNode, 0, len(g.nodes)),
+		Edges:   g.edges,
+		Planned: said.notMade(g),
+		Sources: s.consulted(ctx, caller, said),
+	}
 	if out.Edges == nil {
 		out.Edges = []api.GraphEdge{}
 	}
@@ -227,16 +232,22 @@ func planSteps(spec api.ExecutionSpec) int {
 	return n
 }
 
-// plannedNotMade is what the chat's start_work calls said they would make that the graph does
-// not hold yet, by kind and name.
-func (s *Service) plannedNotMade(ctx context.Context, rid uuid.UUID, g *chatGraph) ([]api.PlannedItem, error) {
-	made := map[string]bool{}
-	for _, n := range g.nodes {
-		if n.Made {
-			made[string(n.Kind)+"\x00"+strings.ToLower(n.Name)] = true
-		}
-	}
-	out := []api.PlannedItem{}
+// chatSaid is what a chat's messages say beyond their text: what its start_work calls said they
+// would make, and the calls its agent made to MCP servers' tools.
+type chatSaid struct {
+	plans []plannedIn
+	// The calls to each server's tools, and the servers in the order they were first called.
+	calls   map[string][]api.GraphCall
+	servers []string
+}
+
+type plannedIn struct {
+	planItem
+	turn string
+}
+
+func (s *Service) chatSaid(ctx context.Context, rid uuid.UUID) (*chatSaid, error) {
+	out := &chatSaid{calls: map[string][]api.GraphCall{}}
 	var after int64
 	for {
 		messages, err := s.Store.ListMessages(ctx, rid, after, 500)
@@ -250,21 +261,20 @@ func (s *Service) plannedNotMade(ctx context.Context, rid uuid.UUID, g *chatGrap
 				continue
 			}
 			for _, p := range parts {
-				if p.Type != api.MessagePartTypeToolCall || p.ToolName == nil || *p.ToolName != "start_work" {
+				if p.Type != api.MessagePartTypeToolCall || p.ToolName == nil {
 					continue
 				}
-				for _, item := range planOf(p.Args) {
-					if item.Name == "" || made[item.Kind+"\x00"+strings.ToLower(item.Name)] {
-						continue
+				if *p.ToolName == "start_work" {
+					for _, item := range planOf(p.Args) {
+						out.plans = append(out.plans, plannedIn{item, deref(m.Turn)})
 					}
-					planned := api.PlannedItem{Name: item.Name, Turn: deref(m.Turn)}
-					if item.Kind != "" {
-						planned.Kind = &item.Kind
+				}
+				if p.Server != nil {
+					server := string(*p.Server)
+					if _, ok := out.calls[server]; !ok {
+						out.servers = append(out.servers, server)
 					}
-					if item.Detail != "" {
-						planned.Detail = &item.Detail
-					}
-					out = append(out, planned)
+					out.calls[server] = append(out.calls[server], api.GraphCall{Tool: *p.ToolName, Asked: askedOf(p.Args), Turn: deref(m.Turn)})
 				}
 			}
 		}
@@ -272,6 +282,102 @@ func (s *Service) plannedNotMade(ctx context.Context, rid uuid.UUID, g *chatGrap
 			return out, nil
 		}
 	}
+}
+
+// notMade is what the plans said they would make that the graph does not hold yet, by kind and
+// name.
+func (c *chatSaid) notMade(g *chatGraph) []api.PlannedItem {
+	made := map[string]bool{}
+	for _, n := range g.nodes {
+		if n.Made {
+			made[string(n.Kind)+"\x00"+strings.ToLower(n.Name)] = true
+		}
+	}
+	out := []api.PlannedItem{}
+	for _, item := range c.plans {
+		if item.Name == "" || made[item.Kind+"\x00"+strings.ToLower(item.Name)] {
+			continue
+		}
+		planned := api.PlannedItem{Name: item.Name, Turn: item.turn}
+		if item.Kind != "" {
+			planned.Kind = &item.Kind
+		}
+		if item.Detail != "" {
+			planned.Detail = &item.Detail
+		}
+		out = append(out, planned)
+	}
+	return out
+}
+
+// consulted is the outside servers the chat's agent called, as the caller may see them: not the
+// platform's own server, which every chat calls.
+func (s *Service) consulted(ctx context.Context, caller *auth.Caller, c *chatSaid) []api.GraphSource {
+	out := []api.GraphSource{}
+	for _, server := range c.servers {
+		r, err := s.resourceByURI(ctx, caller, server, &mcpServerKind)
+		if err != nil || s.ownMcpServer(r) {
+			continue
+		}
+		out = append(out, api.GraphSource{Uri: api.Uri(URI(r).String()), Name: r.Name, Calls: c.calls[server]})
+	}
+	return out
+}
+
+// askedOf says in short what a call asked: its text arguments first, then the others, each as
+// name: value; a call with one argument says only its value.
+func askedOf(args any) string {
+	if text, ok := args.(string); ok {
+		var decoded any
+		if json.Unmarshal([]byte(text), &decoded) != nil {
+			return cut(text)
+		}
+		args = decoded
+	}
+	m, ok := args.(map[string]any)
+	if !ok {
+		if args == nil {
+			return ""
+		}
+		return cut(string(mustJSON(args)))
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.SortFunc(keys, func(a, b string) int {
+		_, at := m[a].(string)
+		_, bt := m[b].(string)
+		if at != bt {
+			if at {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a, b)
+	})
+	said := make([]string, 0, len(keys))
+	for _, k := range keys {
+		v, ok := m[k].(string)
+		if !ok {
+			v = string(mustJSON(m[k]))
+		}
+		if len(keys) == 1 {
+			return cut(v)
+		}
+		said = append(said, k+": "+v)
+	}
+	return cut(strings.Join(said, ", "))
+}
+
+// cut puts text on one line, and no more of it than fits there.
+func cut(text string) string {
+	const most = 140
+	text = strings.Join(strings.Fields(text), " ")
+	if r := []rune(text); len(r) > most {
+		return string(r[:most-1]) + "…"
+	}
+	return text
 }
 
 type planItem struct {

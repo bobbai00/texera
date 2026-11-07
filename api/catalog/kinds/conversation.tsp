@@ -155,11 +155,29 @@ model PlannedItem {
   turn: string;
 }
 
+@doc("A call the chat's agent made to an outside MCP server's tool.")
+model GraphCall {
+  tool: string;
+  @doc("What the call asked: its arguments, in short.")
+  asked: string;
+  @doc("The turn it was made in.")
+  turn: string;
+}
+
+@doc("An outside MCP server the chat's agent consulted, and its calls, oldest first.")
+model GraphSource {
+  uri: Uri;
+  name: string;
+  calls: GraphCall[];
+}
+
 @doc("What a chat read, made and ran, and how they connect.")
 model ConversationGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   planned: PlannedItem[];
+  @doc("The outside MCP servers the chat's agent consulted, in the order it first did; the platform's own server is not among them.")
+  sources: GraphSource[];
 }
 
 @doc("A resource as a chat knows it, with the versions that count.")
@@ -197,6 +215,8 @@ model MessagePart {
   state?: "pending" | "approved" | "declined";
   @doc("For a decided approval: the person who decided.")
   decidedBy?: Pid;
+  @doc("For a tool call: the MCP server whose tool it is; absent for the agent's own tools.")
+  server?: Uri;
 }
 
 model Message {
@@ -290,7 +310,7 @@ namespace Routes {
     @extension("x-texera-permission", "read")
     resources(@path rid: Rid): ChatResource[] | Error;
 
-    @doc("The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet.")
+    @doc("The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet, and the outside sources its agent consulted.")
     @get
     @route("/{rid}/graph")
     @extension("x-texera-permission", "read")

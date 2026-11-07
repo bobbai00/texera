@@ -1,11 +1,12 @@
 // The resource graph beside a chat: what the chat read, made and ran, and how they connect. It
 // shares nothing visible with the workflow canvas: round icons by kind with the name beneath,
 // straight labelled arrows, columns of dependency on a plain ground with bands, Used first and
-// Made last. A click on a node shows what it is; Open opens it beside. It changes nothing.
+// Made last. A click on a node shows what it is; Open opens it beside. The outside sources the
+// agent consulted sit in a strip above. It changes nothing.
 
 import { useQuery } from "@tanstack/react-query";
 import { conversationsGraphOptions } from "@texera/catalog-client/query";
-import type { ConversationGraph, GraphNode, GraphRun } from "@texera/catalog-client/types";
+import type { ConversationGraph, GraphNode, GraphRun, GraphSource } from "@texera/catalog-client/types";
 import { Button, cn, formatDuration, timeAgo } from "@texera/ui";
 import { ArrowUpRight, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -90,7 +91,10 @@ export function ResourceGraph({ rid, graph, className }: { rid: string; graph: C
   const height = HEAD + PAD * 2 + layout.rows * ROW;
   const picked = layout.nodes.find(d => d.id === chosen);
   return (
-    <div className={cn("relative min-h-0 overflow-auto bg-background", className)} data-resource-graph>
+    <div className={cn("flex min-h-0 flex-col bg-background", className)} data-resource-graph>
+      {graph.sources.length > 0 && <Consulted sources={graph.sources} />}
+      <div className="relative min-h-0 flex-1">
+        <div className="absolute inset-0 overflow-auto">
       <div className="relative" style={{ width, height }}>
         {/* Columns of dependency: data and work alternate, Used first and Made last. */}
         {Array.from({ length: layout.columns }, (_, col) => (
@@ -166,7 +170,50 @@ export function ResourceGraph({ rid, graph, className }: { rid: string; graph: C
           return <Node key={d.id} drawn={d} x={c.x} y={c.y} chosen={chosen === d.id} onChoose={() => setChosen(chosen === d.id ? undefined : d.id)} />;
         })}
       </div>
-      {picked && <Detail drawn={picked} onClose={() => setChosen(undefined)} />}
+        </div>
+        {picked && <Detail drawn={picked} onClose={() => setChosen(undefined)} />}
+      </div>
+    </div>
+  );
+}
+
+/** The outside sources the agent consulted, each with its calls; a click lists what it asked. */
+function Consulted({ sources }: { sources: GraphSource[] }) {
+  const [open, setOpen] = useState<string>();
+  const shown = sources.find(s => s.uri === open);
+  return (
+    <div className="shrink-0 border-b px-3 py-1.5 text-xs" data-graph-sources>
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="text-muted-foreground">Consulted:</span>
+        {sources.map(s => (
+          <button
+            key={s.uri}
+            type="button"
+            aria-expanded={open === s.uri}
+            onClick={() => setOpen(open === s.uri ? undefined : s.uri)}
+            className={cn("flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-muted", open === s.uri && "bg-muted")}
+            data-graph-source={s.name}>
+            <KindIcon kind="mcp-server" className="size-4 rounded-sm [&_svg]:size-3" />
+            <span className="font-medium">{s.name}</span>
+            <span className="text-muted-foreground">
+              {s.calls.length} call{s.calls.length === 1 ? "" : "s"}
+            </span>
+          </button>
+        ))}
+      </div>
+      {shown && (
+        <ol className="mt-1 max-h-40 space-y-0.5 overflow-y-auto" data-graph-calls>
+          {shown.calls.map((c, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: a call is its place in the chat
+            <li key={i} className="flex min-w-0 gap-2">
+              <span className="shrink-0 font-mono text-2xs leading-4 text-muted-foreground">{c.tool}</span>
+              <span className="truncate" title={c.asked}>
+                {c.asked}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }

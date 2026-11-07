@@ -745,7 +745,7 @@ paths:
   /catalog/v1/conversations/{rid}/graph:
     get:
       operationId: Conversations_graph
-      description: 'The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet.'
+      description: 'The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet, and the outside sources its agent consulted.'
       parameters:
         - name: rid
           in: path
@@ -5467,6 +5467,7 @@ components:
         - nodes
         - edges
         - planned
+        - sources
       properties:
         nodes:
           type: array
@@ -5480,6 +5481,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PlannedItem'
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphSource'
+          description: The outside MCP servers the chat's agent consulted, in the order it first did; the platform's own server is not among them.
       description: What a chat read, made and ran, and how they connect.
     ConversationPage:
       type: object
@@ -6409,6 +6415,22 @@ components:
       properties:
         relation:
           $ref: '#/components/schemas/Relation'
+    GraphCall:
+      type: object
+      required:
+        - tool
+        - asked
+        - turn
+      properties:
+        tool:
+          type: string
+        asked:
+          type: string
+          description: 'What the call asked: its arguments, in short.'
+        turn:
+          type: string
+          description: The turn it was made in.
+      description: A call the chat's agent made to an outside MCP server's tool.
     GraphEdge:
       type: object
       required:
@@ -6503,6 +6525,22 @@ components:
           type: string
           format: date-time
       description: A run of a workflow, as its node in a chat's graph lists it.
+    GraphSource:
+      type: object
+      required:
+        - uri
+        - name
+        - calls
+      properties:
+        uri:
+          $ref: '#/components/schemas/Uri'
+        name:
+          type: string
+        calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphCall'
+      description: An outside MCP server the chat's agent consulted, and its calls, oldest first.
     JsonPatchOperation:
       type: object
       required:
@@ -6957,6 +6995,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/Pid'
           description: 'For a decided approval: the person who decided.'
+        server:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: "For a tool call: the MCP server whose tool it is; absent for the agent's own tools."
       description: "One message part: text, reasoning, a tool call, a tool result, a resource reference, a file, an error, or an approval: a change the agent asked to make, waiting for a person's yes or no (in `manual` work mode)."
     Model:
       type: object

@@ -18,6 +18,7 @@ import type { ToolSet } from "ai";
 import type { BuildInput, BuiltAgent } from "../agent/build.ts";
 import type { ChatPeople } from "../agent/chat-context.ts";
 import { HANDOFF_TOOL, handoffTarget } from "../agent/handoff.ts";
+import { serverOfTool } from "../agent/mcp-tools.ts";
 import { TurnContext } from "../agent/turn-context.ts";
 import { Work, type WorkMode } from "../agent/work.ts";
 import { type CatalogClient, CatalogError } from "../catalog/client.ts";
@@ -302,7 +303,7 @@ export async function* runTurn(deps: TurnDeps, req: TurnRequest): AsyncGenerator
           },
           auth(),
         );
-        const mapper = new StreamMapper({ newId });
+        const mapper = new StreamMapper({ newId, servers: serverOfTool(built.servers) });
         const persist = async () => {
           try {
             await deps.catalog.replaceMessage(rid, assistant.seq, { parts: assistantParts(mapper.collected) }, auth());

@@ -360,6 +360,10 @@ export type ConversationGraph = {
     nodes: Array<GraphNode>;
     edges: Array<GraphEdge>;
     planned: Array<PlannedItem>;
+    /**
+     * The outside MCP servers the chat's agent consulted, in the order it first did; the platform's own server is not among them.
+     */
+    sources: Array<GraphSource>;
 };
 
 export type ConversationPage = {
@@ -997,6 +1001,21 @@ export type GrantRequest = {
 };
 
 /**
+ * A call the chat's agent made to an outside MCP server's tool.
+ */
+export type GraphCall = {
+    tool: string;
+    /**
+     * What the call asked: its arguments, in short.
+     */
+    asked: string;
+    /**
+     * The turn it was made in.
+     */
+    turn: string;
+};
+
+/**
  * An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on.
  */
 export type GraphEdge = {
@@ -1059,6 +1078,15 @@ export type GraphRun = {
     reused: number;
     startedAt?: string;
     finishedAt?: string;
+};
+
+/**
+ * An outside MCP server the chat's agent consulted, and its calls, oldest first.
+ */
+export type GraphSource = {
+    uri: Uri;
+    name: string;
+    calls: Array<GraphCall>;
 };
 
 /**
@@ -1339,6 +1367,10 @@ export type MessagePart = {
      * For a decided approval: the person who decided.
      */
     decidedBy?: Pid;
+    /**
+     * For a tool call: the MCP server whose tool it is; absent for the agent's own tools.
+     */
+    server?: Uri;
 };
 
 /**
