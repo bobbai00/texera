@@ -2,6 +2,26 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-06 (session 13, part 5): two fixes found by using it
+
+- **A Keycloak restart no longer breaks making units**: the catalog keeps Keycloak's admin token
+  for an hour, so after Keycloak restarted every admin call answered 401 and "Create computing
+  unit" failed with 502. An admin call refused with 401 now gets a new token and tries once more
+  (`adapters/keycloak/workloads.go`; `TestAnAdminCallAfterKeycloakRestartedGetsANewToken`).
+- **An operatorID with `_` is refused before it runs**: the engine names a port's results with
+  `_` between the parts and throws on an operatorID that has one, while it lays out regions; it
+  only logs that, so the execution stayed "running" for good (charlie's two runs, `join_geo`).
+  Validate and Run now answer 400 naming the operator and its `-` spelling, and the workflow
+  skill says so (`catalog/plan.go`; `TestAnOperatorIDWithAnUnderscoreIsRefusedBeforeItRuns`).
+  Charlie's two runs were cancelled; the two workflows still carry `_` IDs, left for charlie or
+  the agent to rename.
+
+Verified: Go suite green; on the stack, a unit made right after restarting Keycloak (201),
+charlie's workflow refused with the message, and a copy with `-` IDs ran to completed (deleted
+after). Next: the engine reports nothing when a run fails while it starts (an actor's
+`preStart`), so another such failure would hang a run the same way; it should end the execution
+as failed.
+
 ## 2026-11-06 (session 13, part 4): polish: a chat window, sharing that says what is missing, the sign-in page, Executions under Work
 
 The user asked for four details, designed and agreed first, and to get them done fast.
