@@ -35,6 +35,35 @@ automated checks, and the close gate (`down.sh --wipe && up.sh && test.sh`) is g
 | Keycloak, OpenFGA, OpenBao, Postgres, RustFS, Lakekeeper | Compose project `texera2` | see `bin/texera-2-0/README.md` for ports; Lakekeeper takes a token (the catalog is its operator, the dev unit is `texera-unit`) |
 | The same stack on Kubernetes | kind cluster `texera2`, namespace `texera2` | `bin/texera-2-0/k8s.sh up`, then http://localhost:28088; `k8s.sh check` proves a unit made as a resource |
 
+## Since Nov 6: operators as lines, functions and models, caching, the resource graph
+
+Built on Nov 7 (session 15; `docs/texera-2-0/PROGRESS.md` has the details and the checks), from
+the plans in the Claude Docs "Texera 2.0: Operators, Runtimes and Caching" and "Texera 2.0: The
+Resource Graph", each of which now carries a dated status under its Plan heading.
+
+- The agent works in four phases: it reads and asks (`ask`), says its plan (`start_work`), then
+  changes things; in a chat's manual work mode each change is an approval card
+  (`agent-runtime/src/agent/work.ts`, `src/run/turn.ts`).
+- Ten built-in operators with flat settings and a SQL expression language
+  (`common/workflow-operator/.../operator/builtin/`), written by the agent as lines,
+  `set night: filter(readings, where="...")` (`packages/workflow-model/src/lines.ts`,
+  `agent-runtime/src/agent/workflow-lines.ts`): files and models by name, ports per type, each
+  mistake on its line.
+- A Python function under `@returns(...)` is a custom operator the catalog reads from its code
+  (`catalog/internal/catalog/pyfunc.go`); the engine's `function` operator calls it per worker,
+  whole groups with `by` (`Function.scala`, `pytexera/udf/function_operator.py`).
+- A model version has a contract; `predict` runs it through a loader on Python workers and the run
+  records that it used the version (`predict.go`, `Predict.scala`, `pytexera/udf/model_operator.py`).
+- Caching: stored ports carry a fingerprint of the work; a run serves costly operators from what
+  the project's runs stored, through the engine's `stored` source (`reuse.go`, `Stored.scala`).
+- Profiles Small, Medium, Large, ML and GPU, each saying whether this deployment can start it.
+- The resource graph beside a chat that started work: `GET /conversations/{rid}/graph`
+  (`chat_graph.go`) and `packages/kinds/src/graph/`.
+- Skills: texera-workflows, python-udf, reading-results, computing-units, exploring-resources,
+  using-models (`catalog/internal/catalog/skills/`).
+- A diabetes research team's project from public data, with a scientist's session through the
+  real model: `bin/texera-2-0/examples/diabetes/`.
+
 ## What is done
 
 - One contract (`api/catalog/`, TypeSpec) for sixteen kinds behind one envelope, with `texera://`
