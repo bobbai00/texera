@@ -2,13 +2,29 @@ import type { OperatorSpec } from "@texera/catalog-client/types";
 import { Blocks } from "lucide-react";
 import type { KindSpec } from "../types";
 
-const STARTER = `from pytexera import *
+/** The Python name of an operator called so: "Time in range" is time_in_range. */
+export const functionName = (name: string) => {
+  const snake = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (!snake) return "my_function";
+  return /^[0-9]/.test(snake) ? `f_${snake}` : snake;
+};
+
+/**
+ * A custom operator's code: a Python function under @returns. Its tables are its positional
+ * parameters, its settings those after the `*`, and the catalog reads both, with the columns
+ * @returns names, when the operator is saved. The classes that run it are the engine's.
+ */
+export const starterCode = (fn: string) => `import pandas as pd
 
 
-class ProcessTupleOperator(UDFOperatorV2):
-    @overrides
-    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
-        yield tuple_
+@returns(rows=int)
+def ${fn}(table: pd.DataFrame, *, label: str = "") -> pd.DataFrame:
+    """Counts the rows it reads."""
+    return pd.DataFrame({"rows": [len(table)]})
 `;
 
 export const operatorKind: KindSpec = {
@@ -18,21 +34,25 @@ export const operatorKind: KindSpec = {
   icon: Blocks,
   accent: "bg-kind-operator/12 text-kind-operator",
   long: ["code", "description"],
-  /** A custom Python operator: one input, one output, the engine's UDF interface. */
-  defaultSpec: ({ name, description }) =>
-    ({
-      operatorType: name.replace(/[^A-Za-z0-9]+/g, ""),
+  // What the catalog reads from the code when it saves the operator.
+  hidden: ["inputPorts", "outputPorts", "propertiesSchema", "outputColumns", "nondeterministic"],
+  /** A custom operator: a Python function, named after the operator. */
+  defaultSpec: ({ name, description }) => {
+    const fn = functionName(name);
+    return {
+      operatorType: fn,
       displayName: name,
       group: "Custom",
       ...(description ? { description } : {}),
-      inputPorts: [{ portID: "input-0" }],
-      outputPorts: [{ portID: "output-0" }],
-      implementation: { python: { code: STARTER } },
-    }) satisfies OperatorSpec,
+      implementation: { python: { code: starterCode(fn), function: fn } },
+    } satisfies OperatorSpec;
+  },
   facts: r => {
     const spec = r.spec as Partial<OperatorSpec>;
+    // A function that reads no table makes its rows: a source.
+    const source = spec.implementation && spec.inputPorts?.length === 0 ? "source" : "";
     // A function that may give other rows for the same input is made again on every run.
     const fresh = spec.implementation?.python?.nondeterministic ? "nondeterministic" : "";
-    return [spec.implementation ? "custom" : "engine", spec.group ?? "", fresh].filter(Boolean);
+    return [spec.implementation ? "custom" : "engine", spec.group ?? "", source, fresh].filter(Boolean);
   },
 };

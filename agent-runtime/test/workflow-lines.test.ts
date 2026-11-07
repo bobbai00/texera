@@ -14,6 +14,7 @@ const WF = "22222222-2222-4222-8222-222222222222";
 const RISK = "texera://models/77777777-7777-4777-8777-777777777777";
 
 const METRICS = "44444444-4444-4444-8444-444444444444";
+const SQUARES = "77777777-7777-7777-8777-777777777777";
 const port = (displayName?: string, many = false) => ({
   portID: "input-0",
   ...(displayName ? { displayName } : {}),
@@ -35,6 +36,8 @@ const OPERATORS = [
   operator("union", [port(undefined, true)]),
   operator("predict", [port()]),
   operator("cgm_metrics", [port()], METRICS, "def cgm_metrics(readings): ..."),
+  // A function that reads no table: a source.
+  operator("squares", [], SQUARES, "def squares(*, upto: int = 3): ..."),
   // A custom operator that does not say its ports: its inputs link in order.
   {
     kind: "operator",
@@ -254,10 +257,33 @@ describe("operator types", () => {
     ).toEqual(["input-0", "input-1"]);
   });
 
+  test("a function that reads no table is called with its settings alone", async () => {
+    const fake = fakeCatalog();
+    const out = await call(toolsOf(fake), "create_workflow", {
+      name: "x",
+      lines: "set sq: squares(upto=5)\nset top: limit(sq, n=2)",
+    });
+    expect(out.error).toBeUndefined();
+    const squares = fake.spec().operators.find((o) => o.operatorID === "sq");
+    expect(squares?.operatorType).toBe(`texera://operators/${SQUARES}@2`);
+    expect(squares?.operatorProperties).toEqual({ upto: 5 });
+    expect(fake.spec().links.filter((l) => l.target.operatorID === "sq")).toEqual([]);
+    expect(
+      await call(toolsOf(fake), "create_workflow", { name: "x", lines: `${LINES}\nset sq: squares(scan)` }),
+    ).toEqual({
+      error: `line 3: texera://operators/${SQUARES}@2 reads no input; this line gives 1`,
+    });
+  });
+
   test("says which type was meant, and how many inputs a type reads", async () => {
     const fake = fakeCatalog();
     expect(await call(toolsOf(fake), "create_workflow", { name: "x", lines: "set a: fliter(where='y')" })).toEqual({
       error: "line 1: there is no operator fliter; did you mean filter?",
+    });
+    // The engine's own are not offered: code of the project's own is a function.
+    expect(await call(toolsOf(fake), "create_workflow", { name: "x", lines: "set a: PythonUDFV2(code='x')" })).toEqual({
+      error:
+        "line 1: there is no operator PythonUDFV2; list_operators with q finds one by name, and code of your own is a function under @returns(...) in python, called by its name",
     });
     expect(
       await call(toolsOf(fake), "create_workflow", { name: "x", lines: `${LINES}\nset j: join(avg, on=["Species"])` }),

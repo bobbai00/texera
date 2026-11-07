@@ -65,7 +65,9 @@ const PYTHON_DOC =
   "are its inputs, one table each, and its parameters with defaults its settings. A line calls it by its name, " +
   'with by=["patient_id"] to call it once per worker on whole groups: set m: cgm_metrics(night, by=["patient_id"], low=70). ' +
   "A function that may give other rows for the same input (it samples without a seed, reads the clock or calls out) " +
-  "adds nondeterministic=True to its @returns, so no run reuses its rows.";
+  "adds nondeterministic=True to its @returns, so no run reuses its rows. One with no positional parameter is a source; " +
+  "one may yield DataFrames as it makes them; a setting typed Credential gets the secret of the credential its line names. " +
+  "Write functions only: the engine's classes are refused.";
 
 const UNIT_DOC =
   "The computing unit its runs and compiles go to when a call names none, as texera://computing-units/<rid>: " +
@@ -146,7 +148,7 @@ async function unknownType(op: string, deps: LineToolDeps): Promise<string> {
     .sort((a, b) => a.d - b.d || Number(b.t === b.t.toLowerCase()) - Number(a.t === a.t.toLowerCase()));
   return close[0]
     ? `there is no operator ${op}; did you mean ${close[0].t}?`
-    : `there is no operator ${op}; list_operators with q finds one by name`;
+    : `there is no operator ${op}; list_operators with q finds one by name, and code of your own is a function under @returns(...) in python, called by its name`;
 }
 
 /**

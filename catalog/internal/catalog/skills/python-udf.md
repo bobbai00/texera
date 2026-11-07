@@ -18,16 +18,16 @@
 -->
 ---
 name: python-udf
-description: Compute what SQL cannot with Python - the team's own functions as operators, writing a function with @returns that becomes one, by to spread whole groups over workers, a PythonUDFV2 line for row-by-row code, and the packages a computing unit brings.
+description: Compute what SQL cannot with Python - the project's own functions as operators, writing a function with @returns that becomes one, by to spread whole groups over workers, functions that make rows from nothing or yield them as they go, a Credential setting for a secret, and the packages a computing unit brings.
 ---
 
 # Python in a workflow
 
 Use Python for what the core operators and their SQL cannot say: a statistic over each patient's rows, a model fit or a forecast, a test. Keep the selecting, joining and counting in core operators around it, so the Python gets only the rows and columns it needs.
 
-## The team's functions first
+## The project's functions first
 
-A team keeps the Python it reuses as functions, each one of the project's operators. `search_resources` with kind `operator` and `project` set to the chat's project finds them; `get_resource` shows one's description, settings, output columns and code. A line calls one by its name, with its settings:
+A project keeps the Python it reuses as functions, each one of its operators. `search_resources` with kind `operator` and `project` set to the chat's project finds them; `get_resource` shows one's description, settings, output columns and code. A line calls one by its name, with its settings:
 
 ```
 set metrics: cgm_metrics(night, by=["patient_id"], tir_low=70)
@@ -62,22 +62,12 @@ set lows: overnight_lows(night, by=["patient_id"], threshold=54)
 - `by=["patient_id"]` sends the rows of each patient to one worker, whole, and each worker calls the function once on its share, which may hold many patients: group inside the function, as above. Without `by`, one worker gets every row, which is fine for a small table.
 - The catalog refuses a function it cannot read, saying on which line of the python. An exception fails the run with a traceback that points at your line: fix the function and send the module again with `edit_workflow`; the workflow's calls move to the new version.
 
-## A Python line
+## Sources, streams and secrets
 
-For code that goes row by row, or makes rows from nothing, a `PythonUDFV2` line takes the code itself:
-
-```
-set ratio: PythonUDFV2(petals, code="""from pytexera import *
-
-class ProcessTupleOperator(UDFOperatorV2):
-    @overrides
-    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
-        tuple_["ratio"] = tuple_["PetalLengthCm"] / tuple_["SepalLengthCm"]
-        yield tuple_
-""", outputColumns=[{"attributeName": "ratio", "attributeType": "double"}], retainInputColumns=true, workers=1, defaultEnv=true)
-```
-
-`outputColumns` lists every column the code adds, with its type (`string`, `integer`, `long`, `double`, `boolean` or `timestamp`); with `retainInputColumns` `true` the output is the input's columns and then these. Keep the class name `ProcessTupleOperator`, and no code at the top level besides imports and the class; yield nothing to drop a row. A source reads no input: `set rows: PythonUDFSourceV2(code="""...""", columns=[{"attributeName": "n", "attributeType": "integer"}], workers=1, defaultEnv=true)`, with `class GenerateOperator(UDFSourceOperator)` and `def produce(self)`.
+- A function with no positional parameter reads no table: it is a source, called once, as one that fetches from a service or generates rows. Its line names no input: `set trials: fetch_trials(query="type 1 diabetes", limit=50)`.
+- A function may `yield` DataFrames as it makes them instead of returning one: each goes on as it comes, so what follows starts on it and the person sees rows arrive. Work row by row as one DataFrame expression (`rows.assign(ratio=rows.a / rows.b)`), or with the core `compute` operator's SQL, not a loop over rows.
+- A setting typed `Credential` (`api_key: Credential`) names one of the project's credentials: the line gives its URI, `api_key="texera://credentials/<rid>"`, and the function gets the secret for the run, which no workflow or result keeps. `search_resources` with kind `credential` finds them. Never write a secret into code or a setting.
+- Write functions, never classes. The classes that run a function (`UDFOperatorV2`, `process_tuple` and the like) and the operators that run code by itself (`PythonUDFV2`, `function`) are the engine's: the catalog refuses them in a workflow and as an operator's code.
 
 ## Packages
 
