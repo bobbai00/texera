@@ -89,10 +89,17 @@ export function EditorCanvas({
   const editing = useStore(view, s => s.editing);
   const density = useStore(view, s => s.density);
   const [fitOnOpen] = useState(() => store.getState().spec.operators.length <= FIT_UP_TO);
-  // An empty workflow opens with the operators to choose from; one with operators shows them.
+  // An empty workflow opens with the operators to choose from, once it can be edited (the page
+  // shows the head before the live session is joined); one with operators shows them.
   const [paletteOpen, setPaletteOpen] = useState(
     () => !store.getState().readonly && store.getState().spec.operators.length === 0
   );
+  const offered = useRef(!store.getState().readonly);
+  useEffect(() => {
+    if (readonly || offered.current) return;
+    offered.current = true;
+    if (store.getState().spec.operators.length === 0) setPaletteOpen(true);
+  }, [readonly, store]);
   const wrapper = useRef<HTMLDivElement>(null);
   const userMoved = useRef(false);
   const { screenToFlowPosition, setCenter, getViewport, getNodes, getEdges } = useReactFlow();

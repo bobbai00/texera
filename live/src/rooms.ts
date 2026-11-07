@@ -170,9 +170,12 @@ export function rooms({ catalog, log }: { catalog: Catalog; log: Logger }): Room
   return {
     async onAuthenticate({ token, documentName, connectionConfig }) {
       if (!RID.test(documentName)) throw new Error("a session is named by a resource's rid");
+      // The three questions go at once, so joining waits for the slowest, not for their sum;
+      // whether the person may write matters only for a workflow.
+      const write = catalog.mayWrite(documentName, token).catch(() => false);
       const [person, kind] = await Promise.all([catalog.person(token), catalog.kindOf(documentName, token)]);
       // Only a workflow has a document to change; elsewhere a session is who is there.
-      connectionConfig.readOnly = !(kind === WORKFLOW && (await catalog.mayWrite(documentName, token)));
+      connectionConfig.readOnly = !(kind === WORKFLOW && (await write));
       return { ...person, kind } satisfies Member;
     },
 

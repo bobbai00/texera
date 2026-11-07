@@ -97,15 +97,20 @@ export default function WorkflowView({ ref, mode }: KindViewProps) {
   );
 }
 
-/** How long the page waits for the workflow's session before it shows the workflow without one. */
+/** How long the page waits for the workflow's session before it says it cannot be reached. */
 const JOIN_WITHIN_MS = 8000;
 
 /**
  * The document the editor shows. The head is edited in the workflow's live session, with
- * whoever else is there; an older version is only shown. A session that cannot be joined
- * leaves the head on screen as the catalog has it, to look at.
+ * whoever else is there; an older version is only shown. Until the session is joined the head
+ * is shown as the catalog has it, to look at, so the canvas is there at once; a session that
+ * cannot be joined leaves it so, and says why.
  */
-function useWorkflowDocument(rid: string, shown: WorkflowSpec | undefined, fallback: WorkflowSpec): { document?: WorkflowDocument; readonly: boolean; unreachable: boolean } {
+function useWorkflowDocument(
+  rid: string,
+  shown: WorkflowSpec | undefined,
+  fallback: WorkflowSpec
+): { document: WorkflowDocument; readonly: boolean; unreachable: boolean; connecting: boolean } {
   const room = useRoom(shown ? undefined : rid);
   const [joined, setJoined] = useState(false);
   const [unreachable, setUnreachable] = useState(false);
@@ -121,12 +126,14 @@ function useWorkflowDocument(rid: string, shown: WorkflowSpec | undefined, fallb
       setJoined(false);
     };
   }, [room]);
+  // The head the catalog has is what is shown while the session is joined: kept as it was
+  // when the page opened, so a version saved meanwhile does not redraw it for nothing.
+  const [first] = useState(fallback);
   return useMemo(() => {
-    if (shown) return { document: fixedDocument(shown), readonly: true, unreachable: false };
-    if (room && joined) return { document: liveDocument(room), readonly: room.authorizedScope === "readonly", unreachable: false };
-    if (unreachable) return { document: fixedDocument(fallback), readonly: true, unreachable: true };
-    return { readonly: true, unreachable: false };
-  }, [shown, room, joined, unreachable, fallback]);
+    if (shown) return { document: fixedDocument(shown), readonly: true, unreachable: false, connecting: false };
+    if (room && joined) return { document: liveDocument(room), readonly: room.authorizedScope === "readonly", unreachable: false, connecting: false };
+    return { document: fixedDocument(first), readonly: true, unreachable, connecting: !unreachable };
+  }, [shown, room, joined, unreachable, first]);
 }
 
 function Editor({
@@ -151,10 +158,10 @@ function Editor({
   onPin: (vno: number | undefined) => void;
 }) {
   const queryClient = useQueryClient();
-  const { document, readonly, unreachable } = useWorkflowDocument(rid, shown, fallback);
+  const { document, readonly, unreachable, connecting } = useWorkflowDocument(rid, shown, fallback);
   // The store is made once per document; the head and the name reach it through follow below.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
-  const store = useMemo(() => (document ? createEditorStore({ rid, name, headVno, readonly }, document) : undefined), [document, readonly]);
+  const store = useMemo(() => createEditorStore({ rid, name, headVno, readonly }, document), [document, readonly]);
   useEffect(() => () => store?.getState().close(), [store]);
   useEffect(() => {
     store?.getState().follow(headVno, name);
@@ -163,7 +170,6 @@ function Editor({
     // A new version: the lists that name it follow.
     for (const key of keysOf(rid)) if (key[0] !== "resource") queryClient.invalidateQueries({ queryKey: key });
   }, [headVno, queryClient, rid]);
-  if (!store) return <Skeleton className="m-4 h-[calc(100%-2rem)]" />;
   return (
     <ReactFlowProvider>
       {unreachable && (
@@ -171,7 +177,7 @@ function Editor({
           The workflow's live session cannot be reached, so it is shown as it was last saved and cannot be edited right now.
         </p>
       )}
-      <EditorLayout store={store} mode={mode} meta={meta} headVno={headVno} pinned={shown !== undefined} onPin={onPin} />
+      <EditorLayout store={store} mode={mode} meta={meta} headVno={headVno} pinned={shown !== undefined} onPin={onPin} connecting={connecting} />
     </ReactFlowProvider>
   );
 }
@@ -194,6 +200,7 @@ function EditorLayout({
   headVno,
   pinned,
   onPin,
+  connecting,
 }: {
   store: EditorStore;
   mode: "panel" | "page";
@@ -201,6 +208,8 @@ function EditorLayout({
   headVno: number;
   pinned: boolean;
   onPin: (vno: number | undefined) => void;
+  /** The workflow's live session is being joined: what is shown is the head, to look at. */
+  connecting: boolean;
 }) {
   const rid = store.getState().rid;
   const spec = useStore(store, s => s.spec);
@@ -311,6 +320,10 @@ function EditorLayout({
                   back to head
                 </button>
               </Badge>
+            ) : connecting ? (
+              <span className="inline-flex items-center gap-1" title="Joining the workflow's live session" data-save-state="connecting">
+                <Loader2 className="size-3 animate-spin" /> Connecting
+              </span>
             ) : (
               <SaveIndicator store={store} />
             )}
