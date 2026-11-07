@@ -24,9 +24,8 @@ func TestRunInThreePhases(t *testing.T) {
 	cred := h.create("alice", "credentials", "key", map[string]any{"kind": "api_key"})
 	h.mustJSON("alice", "PUT", p+"/credentials/"+rid(cred)+"/secret", map[string]any{"fields": map[string]any{"value": "s3cret"}}, nil)
 	op := h.create("alice", "operators", "tagger", map[string]any{
-		"operatorType": "Tagger", "inputPorts": []any{map[string]any{"portID": "input-0"}}, "outputPorts": []any{map[string]any{"portID": "output-0"}},
-		"propertiesSchema": map[string]any{"type": "object", "properties": map[string]any{"apiKey": map[string]any{"type": "string", "format": "credential"}}},
-		"implementation":   map[string]any{"python": map[string]any{"code": "class Tagger:\n    pass\n"}},
+		"implementation": map[string]any{"python": map[string]any{
+			"code": "@returns(Species=str, tag=str)\ndef tag(rows, *, apiKey: Credential):\n    return rows\n", "function": "tag"}},
 	})
 	spec := map[string]any{
 		"operators": []any{

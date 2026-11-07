@@ -96,7 +96,7 @@ func TestTheSameWorkHasTheSameFingerprintWhereverItIsDone(t *testing.T) {
 }
 
 func compiledOf(plan logicalPlan, shown ...string) *compiled {
-	c := &compiled{Plan: plan, Custom: map[int]customOp{}, Shown: map[string]bool{}}
+	c := &compiled{Plan: plan, Shown: map[string]bool{}}
 	for _, id := range shown {
 		c.Shown[portKey(id, "output-0")] = true
 		c.Outputs = append(c.Outputs, api.PortTable{OperatorID: id, PortID: "output-0", Table: tableName(id, "output-0")})

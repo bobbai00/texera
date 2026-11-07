@@ -332,12 +332,6 @@ func (c *compiled) reuse(find func(port string) *storedRows) (served map[string]
 			secrets = append(secrets, ref)
 		}
 	}
-	custom := map[int]customOp{}
-	for i, op := range c.Custom {
-		if j, ok := newIndex[i]; ok {
-			custom[j] = op
-		}
-	}
 	c.Plan.Operators, c.Plan.Links, c.Plan.OpsToViewResult = operators, links, views
 	if c.Plan.Links == nil {
 		c.Plan.Links = []logicalLink{}
@@ -345,7 +339,7 @@ func (c *compiled) reuse(find func(port string) *storedRows) (served map[string]
 	if c.Plan.OpsToViewResult == nil {
 		c.Plan.OpsToViewResult = []string{}
 	}
-	c.Outputs, c.Inputs, c.Secrets, c.Custom = outputs, inputs, secrets, custom
+	c.Outputs, c.Inputs, c.Secrets = outputs, inputs, secrets
 	return served, skipped
 }
 

@@ -111,7 +111,6 @@ func TestWhatIsWrongWithAFunctionIsSaidOnItsLine(t *testing.T) {
 		"@returns()\ndef f(x):\n    return x\n":                          "line 1: @returns names no column; f's output needs at least one",
 		"@returns(str)\ndef f(x):\n    return x\n":                       "line 1: @returns names each column as name=type, as @returns(patient_id=str, mean=float)",
 		"@returns(a=str, nondeterministic=1)\ndef f(x):\n    return x\n": "line 1: @returns takes nondeterministic=True or nondeterministic=False",
-		"@returns(a=str)\ndef f(*, n: int = 1):\n    return x\n":         "f reads no table: its first parameters are its inputs, as def f(readings, *, ...)",
 		"@returns(a=str)\ndef f(x='a', y):\n    return x\n":              "line 2: input y comes after a setting; inputs come first",
 		"@returns(a=str)\ndef f(x):\n    s = 'never closed\n":            "line 3: a string is not closed",
 		"class C:\n    @returns(a=str)\n    def f(x):\n        pass\n":   "the code has no function f at its top level",
@@ -148,7 +147,7 @@ func TestSavingAFunctionOperatorFillsItsSpecFromItsCode(t *testing.T) {
 		t.Fatalf("columns: %s", columns)
 	}
 
-	// A name given stays; two inputs are named by their parameters; a class is left as it is.
+	// A name given stays; two inputs are named by their parameters.
 	named := map[string]any{"operatorType": "CGM metrics", "description": "mine", "implementation": map[string]any{"python": map[string]any{
 		"code": "@returns(n=int)\ndef pair(left, right):\n    return left\n", "function": "pair"}}}
 	if err := functionOperator(named); err != nil {
@@ -175,8 +174,64 @@ func TestSavingAFunctionOperatorFillsItsSpecFromItsCode(t *testing.T) {
 	if _, ok := claimed["implementation"].(map[string]any)["python"].(map[string]any)["nondeterministic"]; ok {
 		t.Fatalf("a function its code does not declare nondeterministic is marked so")
 	}
-	class := map[string]any{"implementation": map[string]any{"python": map[string]any{"code": "class X: pass"}}}
-	if err := functionOperator(class); err != nil || class["inputPorts"] != nil {
-		t.Fatalf("a class changed: %v %v", err, class)
+}
+
+// An operator's Python is a function: the one under @returns when the spec names none, and
+// never a class, which is the engine's.
+func TestAnOperatorsPythonIsAlwaysAFunction(t *testing.T) {
+	unnamed := map[string]any{"implementation": map[string]any{"python": map[string]any{
+		"code": "import pandas as pd\n\ndef helper(x):\n    return x\n\n@returns(n=int)\ndef count_rows(rows):\n    return pd.DataFrame({'n': [len(rows)]})\n"}}}
+	if err := functionOperator(unnamed); err != nil {
+		t.Fatal(err)
+	}
+	if py := unnamed["implementation"].(map[string]any)["python"].(map[string]any); py["function"] != "count_rows" || unnamed["operatorType"] != "count_rows" {
+		t.Fatalf("the function under @returns is the operator: %v, type %v", py["function"], unnamed["operatorType"])
+	}
+	refused := map[string]string{
+		"from pytexera import *\n\nclass ProcessTupleOperator(UDFOperatorV2):\n    @overrides\n    def process_tuple(self, tuple_, port):\n        yield tuple_\n": "the code defines no function under @returns(...): an operator is one, as @returns(patient_id=str, mean=float) above def mean_glucose(readings, *, low: int = 70); a class such as UDFOperatorV2 is the engine's own",
+		"pass\n": "the code defines no function under @returns(...): an operator is one, as @returns(patient_id=str, mean=float) above def mean_glucose(readings, *, low: int = 70); a class such as UDFOperatorV2 is the engine's own",
+		"@returns(n=int)\ndef a(rows):\n    return rows\n\n@returns(n=int)\ndef b(rows):\n    return rows\n": "the code defines 2 functions under @returns(...), a, b: name the operator's in function",
+	}
+	for code, want := range refused {
+		doc := map[string]any{"implementation": map[string]any{"python": map[string]any{"code": code}}}
+		if err := functionOperator(doc); err == nil || err.Error() != want {
+			t.Errorf("%q:\n got  %v\n want %s", code, err, want)
+		}
+	}
+	// A built-in has no Python of its own: its code is in the engine.
+	builtin := map[string]any{"operatorType": "filter"}
+	if err := functionOperator(builtin); err != nil || builtin["inputPorts"] != nil {
+		t.Fatalf("a built-in changed: %v %v", err, builtin)
+	}
+}
+
+// A function that reads no table is a source: no input, nothing to group. A setting typed
+// Credential names a credential, whose secret the function gets.
+func TestAFunctionWithNoInputIsASourceAndACredentialSettingNamesOne(t *testing.T) {
+	doc := map[string]any{"implementation": map[string]any{"python": map[string]any{
+		"code": "@returns(id=str, title=str)\ndef fetch_trials(*, query: str, api_key: Credential, limit: int = 20):\n    \"\"\"Trials matching a query, from a registry.\"\"\"\n    ...\n", "function": "fetch_trials"}}}
+	if err := functionOperator(doc); err != nil {
+		t.Fatal(err)
+	}
+	ports, _ := json.Marshal([]any{doc["inputPorts"], doc["outputPorts"]})
+	if string(ports) != `[[],[{"portID":"output-0"}]]` {
+		t.Fatalf("a source's ports: %s", ports)
+	}
+	schema, _ := json.Marshal(doc["propertiesSchema"])
+	if strings.Contains(string(schema), `"by"`) {
+		t.Fatalf("a source has nothing to group: %s", schema)
+	}
+	for _, want := range []string{`"api_key":{"format":"credential","propertyOrder":2,"type":"string"}`, `"required":["query","api_key"]`} {
+		if !strings.Contains(string(schema), want) {
+			t.Errorf("schema %s lacks %s", schema, want)
+		}
+	}
+	optional := map[string]any{"implementation": map[string]any{"python": map[string]any{
+		"code": "@returns(n=int)\ndef f(rows, *, key: Optional[Credential] = None):\n    return rows\n", "function": "f"}}}
+	if err := functionOperator(optional); err != nil {
+		t.Fatal(err)
+	}
+	if schema, _ := json.Marshal(optional["propertiesSchema"]); !strings.Contains(string(schema), `"key":{"format":"credential","propertyOrder":1,"type":"string"}`) {
+		t.Fatalf("an optional credential: %s", schema)
 	}
 }

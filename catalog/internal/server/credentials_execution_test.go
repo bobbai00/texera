@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -10,8 +11,8 @@ import (
 )
 
 // A property holding a credential URI reaches the engine as the secret, leased for the execution,
-// while every stored document keeps the URI; a custom operator reads its properties as PROPS;
-// and someone who may run the workflow but not use the credential is refused.
+// while every stored document keeps the URI; a function gets it as its Credential setting; and
+// someone who may run the workflow but not use the credential is refused.
 func TestCredentialsInOperatorProperties(t *testing.T) {
 	h := newHarness(t)
 	ds := h.create("alice", "datasets", "iris", map[string]any{"format": "csv"})
@@ -20,11 +21,15 @@ func TestCredentialsInOperatorProperties(t *testing.T) {
 	fileURI := string(ds.Metadata.Uri) + "@1/files/iris.csv"
 	cred := h.create("alice", "credentials", "api key", map[string]any{"kind": "api_key"})
 	h.mustJSON("alice", "PUT", p+"/credentials/"+rid(cred)+"/secret", map[string]any{"fields": map[string]any{"value": "s3cret-token"}}, nil)
+	ranker := "@returns(Species=str, rank=int)\ndef rank(rows, *, apiKey: Credential, label: str = \"\"):\n    return rows\n"
 	op := h.create("alice", "operators", "ranker", map[string]any{
-		"operatorType": "Ranker", "inputPorts": []any{map[string]any{"portID": "input-0"}}, "outputPorts": []any{map[string]any{"portID": "output-0"}},
-		"propertiesSchema": map[string]any{"type": "object", "properties": map[string]any{"apiKey": map[string]any{"type": "string", "format": "credential"}}},
-		"implementation":   map[string]any{"python": map[string]any{"code": "class Ranker:\n    pass\n"}},
+		"implementation": map[string]any{"python": map[string]any{"code": ranker, "function": "rank"}},
 	})
+	var opSpec api.OperatorSpec
+	mustDecode(t, op.Spec, &opSpec)
+	if schema, _ := json.Marshal(opSpec.PropertiesSchema); !strings.Contains(string(schema), `"apiKey":{"format":"credential"`) {
+		t.Fatalf("a Credential setting is a credential property: %s", schema)
+	}
 	spec := map[string]any{
 		"operators": []any{
 			map[string]any{"operatorID": "scan", "operatorType": "CSVFileScan", "operatorProperties": map[string]any{"fileName": fileURI}},
@@ -52,12 +57,12 @@ func TestCredentialsInOperatorProperties(t *testing.T) {
 		t.Fatalf("unit starts: %d", len(starts))
 	}
 	rank := starts[0]["logicalPlan"].(map[string]any)["operators"].([]any)[1].(map[string]any)
-	code, _ := rank["code"].(string)
-	if rank["operatorType"] != "PythonUDFV2" || !strings.Contains(code, `s3cret-token`) || !strings.Contains(code, `\"label\":\"x\"`) || !strings.Contains(code, "class Ranker") {
-		t.Fatalf("the engine's operator should carry PROPS with the secret and the code: %v", code)
+	args, _ := rank["args"].(map[string]any)
+	if rank["operatorType"] != "function" || rank["function"] != "rank" || args["apiKey"] != "s3cret-token" || args["label"] != "x" {
+		t.Fatalf("the function should get the secret and the label as its arguments: %v", rank)
 	}
-	if _, leaked := rank["apiKey"]; leaked {
-		t.Fatalf("a custom operator's properties must not reach the engine as properties: %v", rank)
+	if code, _ := rank["code"].(string); strings.Contains(code, "s3cret-token") {
+		t.Fatalf("the secret is an argument, not code: %v", code)
 	}
 	// The stored documents keep the URI and never the secret: the version names the credential,
 	// the execution names its inputs, and the lease records the use.

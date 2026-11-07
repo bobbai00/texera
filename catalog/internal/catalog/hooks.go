@@ -41,6 +41,9 @@ func (s *Service) prepareSpec(ctx context.Context, caller *auth.Caller, k kinds.
 			doc["links"] = []any{}
 		}
 		placesOfOperators(doc)
+		if err := refuseEngineOnly(doc); err != nil {
+			return nil, err
+		}
 	}
 	normalized := mustJSON(doc)
 	if err := k.ValidateSpec(normalized); err != nil {

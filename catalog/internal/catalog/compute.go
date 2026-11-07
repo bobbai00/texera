@@ -259,6 +259,11 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 	k, _ := kinds.ByName("operator")
 	count := 0
 	for _, op := range list.Operators {
+		if engineOnly[op.OperatorType] {
+			// Not one anybody calls: no workflow names it, so the list does not offer it.
+			s.dropOperatorType(ctx, caller, project.RID, op.OperatorType)
+			continue
+		}
 		spec := api.OperatorSpec{OperatorType: op.OperatorType, DisplayName: &op.UserFriendlyName, Group: &op.OperatorGroupName, Description: op.OperatorDescription, PropertiesSchema: op.JsonSchema}
 		if ports := portSpecs(op.InputPorts, "input"); len(ports) > 0 {
 			spec.InputPorts = &ports
@@ -313,6 +318,20 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 		s.Log.Info("operators synced", "unit", unit.Name, "engine", engineID, "changed", count, "total", len(list.Operators))
 	}
 	return nil
+}
+
+// dropOperatorType deletes the system's operator resources of a type, as an earlier sync made.
+func (s *Service) dropOperatorType(ctx context.Context, caller *auth.Caller, project uuid.UUID, operatorType string) {
+	named, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "operator", ParentRID: &project, Name: operatorType, Limit: 20})
+	if err != nil {
+		return
+	}
+	k, _ := kinds.ByName("operator")
+	for _, r := range ofOperatorType(named, operatorType) {
+		if err := s.Delete(ctx, caller, &k, r.RID); err != nil {
+			s.Log.Warn("drop engine operator", "type", operatorType, "err", err)
+		}
+	}
 }
 
 // ofOperatorType keeps the operator resources whose spec is of exactly this type.

@@ -21,11 +21,11 @@ model OperatorPortSpec {
 }
 
 model PythonOperator {
-  @doc("The operator's Python source: a class with the engine's UDF interface, or a module with the function named by function.")
+  @doc("The operator's Python: a module whose function under `@returns(...)` is the operator, with the helpers and imports it needs. Never a class: the classes that run a function are the engine's, and the catalog refuses code that defines none under @returns.")
   code: string;
-  @doc("The function in code that is the operator, `def cgm_metrics(readings, *, tir_low=70)` under `@returns(...)`: its positional parameters are its inputs, one table each, its parameters with defaults its settings, its docstring its description, and @returns its output columns. The catalog reads them from the code when the operator is saved, into inputPorts, propertiesSchema and outputColumns.")
+  @doc("The function in code that is the operator, `def cgm_metrics(readings, *, tir_low=70)` under `@returns(...)`; absent, the code's one function under @returns. Its positional parameters are its inputs, one table each, and a function with none is a source; its parameters with defaults are its settings, one typed `Credential` naming a credential whose secret it gets; its docstring is its description, and @returns its output columns. It returns a DataFrame, or yields DataFrames as it makes them. The catalog reads all this from the code when the operator is saved, into inputPorts, propertiesSchema and outputColumns.")
   function?: string;
-  @doc("For a class, the columns the code adds to each tuple, declared so the engine can type the output; input columns pass through. For a function, every output column, read from its @returns.")
+  @doc("Every output column, in order, read from the function's @returns.")
   outputColumns?: Attribute[];
   @doc("For a function, read from `@returns(..., nondeterministic=True)`: it may give other rows for the same input, as a function that samples without a seed, reads the clock or calls out does. No run reuses its rows, nor those of anything after it.")
   nondeterministic?: boolean;

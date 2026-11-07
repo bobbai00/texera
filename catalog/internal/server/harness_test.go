@@ -116,6 +116,14 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "")}, "outputPorts": []any{enginePort(0, "")}},
 			map[string]any{"operatorType": "HashJoin", "userFriendlyName": "Hash Join", "operatorGroupName": "Join", "operatorDescription": "Joins two inputs",
 				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "left"), enginePort(1, "right")}, "outputPorts": []any{enginePort(0, "")}},
+			// The engine's own, which the catalog never offers: a class that runs code, and the
+			// operators a workflow is compiled into.
+			map[string]any{"operatorType": "PythonUDFV2", "userFriendlyName": "Python UDF", "operatorGroupName": "Python", "operatorDescription": "Runs a class",
+				"jsonSchema": map[string]any{"type": "object", "properties": map[string]any{"code": map[string]any{"type": "string"}}}, "inputPorts": []any{enginePort(0, "")}, "outputPorts": []any{enginePort(0, "")}},
+			map[string]any{"operatorType": "function", "userFriendlyName": "function", "operatorGroupName": "Python", "operatorDescription": "Calls a function",
+				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "")}, "outputPorts": []any{enginePort(0, "")}},
+			map[string]any{"operatorType": "stored", "userFriendlyName": "stored", "operatorGroupName": "Core", "operatorDescription": "Reads stored rows",
+				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{}, "outputPorts": []any{enginePort(0, "")}},
 		}})
 	})
 	mux.HandleFunc("POST /api/compile", func(w http.ResponseWriter, r *http.Request) {

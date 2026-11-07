@@ -1,16 +1,21 @@
 package catalog
 
-// A Python function as an operator. A team keeps the Python it reuses as functions:
+// A Python function as an operator. A project keeps the Python it reuses as functions, each one
+// of its operators:
 //
 //	@returns(patient_id=str, time_in_range=float)
 //	def cgm_metrics(readings: pd.DataFrame, *, tir_low: int = 70, tir_high: int = 180) -> pd.DataFrame:
 //	    """Time in range, one row per patient."""
 //
-// Its positional parameters are its inputs, one table each; its parameters with defaults, and
-// those after a bare *, are its settings; its docstring is its description; @returns names its
-// output columns and their types, and with nondeterministic=True says the function may give
-// other rows for the same input. The catalog reads them from the code when the operator is
-// saved, so every client that saves the code gets the same operator.
+// Its positional parameters are its inputs, one table each, and a function with none is a
+// source; its parameters with defaults, and those after a bare *, are its settings, a
+// `Credential` one naming a credential whose secret it gets; its docstring is its description;
+// @returns names its output columns and their types, and with nondeterministic=True says the
+// function may give other rows for the same input. The catalog reads them from the code when
+// the operator is saved, so every client that saves the code gets the same operator.
+//
+// An operator's Python is always a function: the classes that run one are the engine's, and
+// nobody writes them.
 
 import (
 	"fmt"
@@ -283,15 +288,33 @@ func parsePyFunction(code, name string) (*pyFunction, error) {
 		}
 		fn.Settings = append(fn.Settings, s)
 	}
-	if len(fn.Inputs) == 0 {
-		return nil, fmt.Errorf("%s reads no table: its first parameters are its inputs, as def %s(readings, *, ...)", name, name)
-	}
-
 	// The docstring: the body's first statement, when it is a string alone.
 	if at+1 < len(lines) && lines[at+1].col > 0 && len(lines[at+1].tokens) == 1 && lines[at+1].tokens[0].kind == "string" {
 		fn.Doc = docstring(lines[at+1].tokens[0].text)
 	}
 	return fn, nil
+}
+
+// returningFunctions names the code's top-level functions under @returns, in order.
+func returningFunctions(code string) ([]string, error) {
+	tokens, err := pyTokens(code)
+	if err != nil {
+		return nil, err
+	}
+	lines := pyLines(tokens)
+	var names []string
+	for i, l := range lines {
+		if l.col != 0 || len(l.tokens) < 2 || l.tokens[0].text != "def" {
+			continue
+		}
+		for j := i - 1; j >= 0 && lines[j].col == 0 && len(lines[j].tokens) > 0 && lines[j].tokens[0].text == "@"; j-- {
+			if d := lines[j].tokens; len(d) >= 3 && d[1].text == "returns" && d[2].text == "(" {
+				names = append(names, l.tokens[1].text)
+				break
+			}
+		}
+	}
+	return names, nil
 }
 
 // splitTop splits tokens at the commas outside brackets, up to the bracket that closes them.
@@ -453,6 +476,10 @@ func schemaOfAnnotation(tokens []pyToken) map[string]any {
 	if t, ok := scalar[text]; ok {
 		return map[string]any{"type": t}
 	}
+	// A credential's URI, whose secret the function gets for the run.
+	if text == "Credential" {
+		return map[string]any{"type": "string", "format": "credential"}
+	}
 	for _, list := range []string{"list", "List", "tuple", "Tuple", "Sequence", "typing.List"} {
 		if text == list {
 			return map[string]any{"type": "array"}
@@ -586,11 +613,28 @@ func docstring(s string) string {
 func functionOperator(doc map[string]any) error {
 	impl, _ := doc["implementation"].(map[string]any)
 	py, _ := impl["python"].(map[string]any)
-	name, _ := py["function"].(string)
-	if py == nil || strings.TrimSpace(name) == "" {
+	if py == nil {
+		// A built-in: its code is in the engine image.
 		return nil
 	}
 	code, _ := py["code"].(string)
+	name, _ := py["function"].(string)
+	if strings.TrimSpace(name) == "" {
+		// The code's one function under @returns is the operator.
+		names, err := returningFunctions(code)
+		if err != nil {
+			return err
+		}
+		switch len(names) {
+		case 0:
+			return fmt.Errorf("the code defines no function under @returns(...): an operator is one, as @returns(patient_id=str, mean=float) above def mean_glucose(readings, *, low: int = 70); a class such as UDFOperatorV2 is the engine's own")
+		case 1:
+			name = names[0]
+			py["function"] = name
+		default:
+			return fmt.Errorf("the code defines %d functions under @returns(...), %s: name the operator's in function", len(names), strings.Join(names, ", "))
+		}
+	}
 	fn, err := parsePyFunction(code, name)
 	if err != nil {
 		return err
@@ -611,12 +655,13 @@ func functionOperator(doc map[string]any) error {
 	}
 	doc["inputPorts"] = inputs
 	doc["outputPorts"] = []any{map[string]any{"portID": "output-0"}}
-	properties := map[string]any{
-		bySetting: map[string]any{
+	properties := map[string]any{}
+	if len(fn.Inputs) > 0 {
+		properties[bySetting] = map[string]any{
 			"type":        "array",
 			"items":       map[string]any{"type": "string"},
 			"description": "The columns whose rows reach one call together: each group whole on one worker. Absent: one worker gets every row.",
-		},
+		}
 	}
 	var required []any
 	for i, s := range fn.Settings {

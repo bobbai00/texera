@@ -108,6 +108,9 @@ func validateGraph(spec *api.WorkflowSpec) error {
 		if op.OperatorType == "" {
 			return Invalid("operator "+op.OperatorID+" has no operatorType", nil)
 		}
+		if engineOnly[op.OperatorType] {
+			return engineOnlyRefusal(op.OperatorID, op.OperatorType)
+		}
 		// The engine names what a port keeps after its operator and refuses '_' in that name, so
 		// an execution would start and never end.
 		if strings.Contains(op.OperatorID, "_") {
@@ -187,15 +190,6 @@ func credentialRefs(props map[string]any) []secretRef {
 	return out
 }
 
-// customHeader hands a custom operator its instance properties as PROPS, a dict the code reads.
-func customHeader(props map[string]any) string {
-	b, err := json.Marshal(props)
-	if err != nil {
-		b = []byte("{}")
-	}
-	return "PROPS = __import__(\"json\").loads(" + strconv.Quote(string(b)) + ")\n"
-}
-
 func portsJSON(ports *[]api.WorkflowPort) []map[string]any {
 	out := []map[string]any{}
 	if ports == nil {
@@ -256,9 +250,6 @@ type compiled struct {
 	Inputs []inputRef
 	// Secrets are the credentials the properties name, each at a JSON pointer of its operator.
 	Secrets []secretRef
-	// Custom holds, per operator index, a custom operator's code and the instance properties
-	// it receives as PROPS, so a bound property can regenerate the code.
-	Custom map[int]customOp
 	// Operators are the custom operator versions compiled in, as URIs with @vno.
 	Operators []string
 	// Outputs are the execution's tables, one per output port, named by the catalog: those the
@@ -288,11 +279,6 @@ type secretRef struct {
 	RID      uuid.UUID
 	Field    string
 	URI      string
-}
-
-type customOp struct {
-	Code  string
-	Props map[string]any
 }
 
 const credentialPrefix = uri.Scheme + "credentials/"
@@ -350,7 +336,7 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 	if err := validateGraph(&spec); err != nil {
 		return nil, err
 	}
-	out := &compiled{Custom: map[int]customOp{}, Outputs: []api.PortTable{}}
+	out := &compiled{Outputs: []api.PortTable{}}
 	enabled := map[string]*api.WorkflowOperator{}
 	// The functions that may give other rows for the same input, by operator id.
 	nondeterministic := map[string]bool{}
@@ -378,14 +364,16 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 			if custom.nondeterministic {
 				nondeterministic[op.OperatorID] = true
 			}
-			if custom.engineType == functionType {
-				// A function's settings are its arguments, so a secret goes where they are.
-				for i := range refs {
-					refs[i].Pointer = "/args" + refs[i].Pointer
+			if custom.inputs == 0 {
+				// A function that reads no table is a source: nothing links into it.
+				if len(usedPorts(spec.Links, op.OperatorID, true)) > 0 {
+					return nil, Invalid(fmt.Sprintf("operator %s reads no table, so nothing links into it", op.OperatorID), map[string]any{"operator": op.OperatorID})
 				}
-			} else {
-				// A class's own properties go to its code as PROPS, not to the engine.
-				out.Custom[index] = customOp{Code: custom.code, Props: props}
+				op.InputPorts = &[]api.WorkflowPort{}
+			}
+			// A function's settings are its arguments, so a secret goes where they are.
+			for i := range refs {
+				refs[i].Pointer = "/args" + refs[i].Pointer
 			}
 			out.Operators = appendUnique(out.Operators, custom.version)
 		} else {
@@ -527,19 +515,19 @@ func (s *Service) fileExists(ctx context.Context, ref uri.Ref) error {
 const functionType = "function"
 
 // compiledCustom is a custom operator as the engine runs it: the engine's operator type and its
-// properties, the operator's code, and the version compiled in, as a URI with @vno.
+// properties, and the version compiled in, as a URI with @vno.
 type compiledCustom struct {
 	engineType string
 	logical    map[string]any
-	code       string
 	version    string
+	// inputs is how many tables it reads: none for a source.
+	inputs int
 	// nondeterministic: a function that may give other rows for the same input.
 	nondeterministic bool
 }
 
 // compileCustomOperator turns a custom operator, at the version its URI names, into the engine
-// operator that runs it: a function into `function`, called with the instance's settings; a
-// class into PythonUDFV2, which reads them as PROPS.
+// operator that runs it: its function into `function`, called with the instance's settings.
 func (s *Service) compileCustomOperator(ctx context.Context, name string, instance map[string]any) (*compiledCustom, error) {
 	ref, err := uri.Parse(name)
 	if err != nil || ref.Kind.Name != "operator" {
@@ -574,36 +562,36 @@ func (s *Service) compileCustomOperator(ctx context.Context, name string, instan
 		columns = *py.OutputColumns
 	}
 	version := URI(r).WithVersion(vno).String()
-	if py.Function != nil && *py.Function != "" {
-		returns := make([]string, len(columns))
-		for i, a := range columns {
-			returns[i] = a.AttributeName + " " + a.AttributeType
-		}
-		inputs := []string{}
-		if spec.InputPorts != nil {
-			for _, p := range *spec.InputPorts {
-				name := ""
-				if p.DisplayName != nil {
-					name = *p.DisplayName
-				}
-				inputs = append(inputs, name)
-			}
-		}
-		args := map[string]any{}
-		props := map[string]any{"code": py.Code, "function": *py.Function, "returns": returns, "inputs": inputs, "args": args}
-		for k, value := range instance {
-			if k == bySetting {
-				props[bySetting] = value
-			} else {
-				args[k] = value
-			}
-		}
-		nondeterministic := py.Nondeterministic != nil && *py.Nondeterministic
-		return &compiledCustom{engineType: functionType, logical: props, code: py.Code, version: version, nondeterministic: nondeterministic}, nil
+	if py.Function == nil || *py.Function == "" {
+		// Saved before an operator had to be a function: its code is a class of the engine's.
+		return nil, Invalid(fmt.Sprintf("%s is not a function under @returns(...): save its code again as one", name), map[string]any{"field": "operatorType"})
 	}
-	// The engine's Python operator keeps the input columns and needs the added ones declared.
-	props := map[string]any{"code": customHeader(instance) + py.Code, "workers": 1, "retainInputColumns": true, "defaultEnv": true, "outputColumns": columns}
-	return &compiledCustom{engineType: "PythonUDFV2", logical: props, code: py.Code, version: version}, nil
+	returns := make([]string, len(columns))
+	for i, a := range columns {
+		returns[i] = a.AttributeName + " " + a.AttributeType
+	}
+	// Its inputs, by name; none for a function that reads no table, a source.
+	inputs := []string{}
+	if spec.InputPorts != nil {
+		for _, p := range *spec.InputPorts {
+			name := ""
+			if p.DisplayName != nil {
+				name = *p.DisplayName
+			}
+			inputs = append(inputs, name)
+		}
+	}
+	args := map[string]any{}
+	props := map[string]any{"code": py.Code, "function": *py.Function, "returns": returns, "inputs": inputs, "args": args}
+	for k, value := range instance {
+		if k == bySetting {
+			props[bySetting] = value
+		} else {
+			args[k] = value
+		}
+	}
+	nondeterministic := py.Nondeterministic != nil && *py.Nondeterministic
+	return &compiledCustom{engineType: functionType, logical: props, version: version, inputs: len(inputs), nondeterministic: nondeterministic}, nil
 }
 
 // versionURI pins a resource URI to a version: the one it names, else the head.
@@ -720,10 +708,9 @@ func (s *Service) bindInputs(ctx context.Context, caller *auth.Caller, c *compil
 }
 
 // bindSecrets leases every credential the plan names, for the execution given as the purpose,
-// and puts the secret where the URI was in the copy: into the operator's properties, or into
-// a custom operator's PROPS.
+// and puts the secret where the URI was in the copy: into the operator's properties, which for
+// a function are its arguments.
 func (s *Service) bindSecrets(ctx context.Context, caller *auth.Caller, plan *logicalPlan, c *compiled, purpose string) error {
-	props := map[int]map[string]any{}
 	for _, ref := range c.Secrets {
 		lease, err := s.Lease(ctx, caller, ref.RID, purpose)
 		if err != nil {
@@ -739,16 +726,7 @@ func (s *Service) bindSecrets(ctx context.Context, caller *auth.Caller, plan *lo
 				return Invalid(fmt.Sprintf("credential %s has no field %q", ref.URI, ref.Field), nil)
 			}
 		}
-		op := plan.Operators[ref.Operator]
-		if custom, ok := c.Custom[ref.Operator]; ok {
-			if props[ref.Operator] == nil {
-				props[ref.Operator] = cloneMap(custom.Props)
-			}
-			setPointer(props[ref.Operator], ref.Pointer, value)
-			op["code"] = customHeader(props[ref.Operator]) + custom.Code
-		} else {
-			setPointer(op, ref.Pointer, value)
-		}
+		setPointer(plan.Operators[ref.Operator], ref.Pointer, value)
 	}
 	return nil
 }
@@ -757,12 +735,6 @@ func (s *Service) bindSecrets(ctx context.Context, caller *auth.Caller, plan *lo
 func (p logicalPlan) clone() logicalPlan {
 	var out logicalPlan
 	_ = json.Unmarshal(mustJSON(p), &out)
-	return out
-}
-
-func cloneMap(m map[string]any) map[string]any {
-	var out map[string]any
-	_ = json.Unmarshal(mustJSON(m), &out)
 	return out
 }
 
