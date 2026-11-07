@@ -19,7 +19,14 @@
 
 package org.apache.texera.amber.engine.common.client
 
-import org.apache.pekko.actor.{Actor, ActorRef}
+import org.apache.pekko.actor.SupervisorStrategy.Stop
+import org.apache.pekko.actor.{
+  Actor,
+  ActorInitializationException,
+  ActorRef,
+  OneForOneStrategy,
+  SupervisorStrategy
+}
 import org.apache.pekko.pattern.StatusReply.Ack
 import com.twitter.util.Promise
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, ChannelIdentity}
@@ -33,7 +40,8 @@ import org.apache.texera.amber.engine.architecture.common.WorkflowActor.{
 import org.apache.texera.amber.engine.architecture.coordinator.{
   ClientEvent,
   Coordinator,
-  CoordinatorConfig
+  CoordinatorConfig,
+  FatalError
 }
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   AsyncRPCContext,
@@ -91,11 +99,36 @@ private[client] class ClientActor extends Actor with AmberLogging {
     0L // client does not have queued credits
   }
 
+  // A fatal error that arrives before anyone listens for one is kept for the first who does:
+  // the coordinator can fail as it starts, before the execution's callbacks are registered.
+  private var unheard: Option[FatalError] = None
+
   private def handleClientEvent(evt: ClientEvent): Unit = {
     if (handlers.isDefinedAt(evt)) {
       handlers(evt)
+    } else {
+      evt match {
+        case fatal: FatalError => unheard = Some(fatal)
+        case _                 =>
+      }
     }
   }
+
+  // The coordinator failing, also while it starts (planning the regions of a plan it cannot
+  // run), ends the execution with a fatal error, as a worker failing does. By default an actor
+  // that fails as it starts is stopped without a word: the execution then stayed running for
+  // good, and nobody was told why.
+  override val supervisorStrategy: SupervisorStrategy =
+    OneForOneStrategy(maxNrOfRetries = 0) {
+      case e: Throwable =>
+        val cause = e match {
+          case init: ActorInitializationException if init.getCause != null => init.getCause
+          case other                                                       => other
+        }
+        logger.error("the coordinator failed", cause)
+        handleClientEvent(FatalError(cause, None))
+        Stop
+    }
 
   override def receive: Receive = {
     case InitializeRequest(workflowContext, physicalPlan, coordinatorConfig) =>
@@ -117,6 +150,10 @@ private[client] class ClientActor extends Actor with AmberLogging {
       controlId += 1
     case req: ObservableRequest =>
       handlers = req.pf orElse handlers
+      unheard.filter(handlers.isDefinedAt).foreach { fatal =>
+        unheard = None
+        handlers(fatal)
+      }
       sender() ! scala.runtime.BoxedUnit.UNIT
     case NetworkMessage(
           mId,

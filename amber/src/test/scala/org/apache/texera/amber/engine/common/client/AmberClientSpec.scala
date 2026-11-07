@@ -23,12 +23,22 @@ import com.twitter.util.{Await => TwitterAwait, Duration => TwitterDuration}
 import org.apache.pekko.actor.{ActorRef, ActorSystem, Address, UnhandledMessage}
 import org.apache.pekko.pattern.StatusReply.Ack
 import org.apache.pekko.testkit.{TestKit, TestProbe}
-import org.apache.texera.amber.core.virtualidentity.ChannelIdentity
-import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
+import org.apache.texera.amber.core.virtualidentity.{
+  ChannelIdentity,
+  OperatorIdentity,
+  PhysicalOpIdentity
+}
+import org.apache.texera.amber.core.workflow.{
+  PhysicalLink,
+  PhysicalPlan,
+  PortIdentity,
+  WorkflowContext
+}
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor.{NetworkAck, NetworkMessage}
 import org.apache.texera.amber.engine.architecture.coordinator.{
   CoordinatorConfig,
   ExecutionStateUpdate,
+  FatalError,
   WorkflowRecoveryStatus
 }
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
@@ -101,6 +111,38 @@ class AmberClientSpec
     val client = newClient()
     try body(client)
     finally client.shutdown()
+  }
+
+  // ---------------------------------------------------------------------------
+  // a coordinator that fails as it starts
+  // ---------------------------------------------------------------------------
+
+  "A coordinator that fails as it starts" should "be told to the client as a fatal error, also to a callback registered after it failed" in {
+    // A link between operators the plan does not have: planning its regions throws while the
+    // coordinator starts. Before, the coordinator was stopped without a word and an execution
+    // of such a plan stayed running for good.
+    val gone = PhysicalOpIdentity(OperatorIdentity("gone"), "main")
+    val plan =
+      PhysicalPlan(Set.empty, Set(PhysicalLink(gone, PortIdentity(), gone, PortIdentity(1))))
+    val client = new AmberClient(
+      system,
+      new WorkflowContext(),
+      plan,
+      CoordinatorConfig(None, None, None, None),
+      _ => ()
+    )
+    try {
+      // Long enough for the coordinator to have failed before anyone listens.
+      Thread.sleep(1000)
+      val heard = new CountDownLatch(1)
+      val said = new ConcurrentLinkedQueue[String]()
+      client.registerCallback[FatalError] { evt =>
+        said.add(String.valueOf(evt.e.getMessage))
+        heard.countDown()
+      }
+      heard.await(10, TimeUnit.SECONDS) shouldBe true
+      said.size() shouldBe 1
+    } finally client.shutdown()
   }
 
   // ---------------------------------------------------------------------------

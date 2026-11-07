@@ -122,28 +122,32 @@ class AmberClient(
       "get observable with a remote client actor is not supported"
     )
     val clazz = ct.runtimeClass
-    val observable =
-      if (registeredObservables.contains(clazz)) {
-        registeredObservables(clazz).asInstanceOf[Observable[T]]
-      } else {
-        val sub = PublishSubject.create[T]()
-        val req = ObservableRequest({
-          case x: T =>
-            sub.onNext(x)
-        })
-        Await.result(clientActor ? req, atMost = 2.seconds)
-        val ob = sub.onTerminateDetach
-        registeredObservables(clazz) = ob
-        ob
-      }
-    observable.subscribe { evt: T =>
-      {
-        try {
-          callback(evt)
-        } catch {
-          case t: Throwable => errorHandler(t)
+    def subscribe(observable: Observable[T]): Disposable =
+      observable.subscribe { evt: T =>
+        {
+          try {
+            callback(evt)
+          } catch {
+            case t: Throwable => errorHandler(t)
+          }
         }
       }
+    if (registeredObservables.contains(clazz)) {
+      subscribe(registeredObservables(clazz).asInstanceOf[Observable[T]])
+    } else {
+      // The callback listens before the client actor is told of the type: the actor hands
+      // over at once an event that came before anyone listened (a coordinator that failed as
+      // it started), and a subject keeps nothing for a subscriber that comes later.
+      val sub = PublishSubject.create[T]()
+      val ob = sub.onTerminateDetach
+      registeredObservables(clazz) = ob
+      val subscription = subscribe(ob)
+      val req = ObservableRequest({
+        case x: T =>
+          sub.onNext(x)
+      })
+      Await.result(clientActor ? req, atMost = 2.seconds)
+      subscription
     }
   }
 
