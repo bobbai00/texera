@@ -41,8 +41,9 @@ are catalog resources with texera:// URIs, versions and lineage, each in a proje
   get_citation_network, search_genes, lookup_variant, interpret_clinical_variant,
   search_proteins.
 - Load a skill before you use it, with load_skill: texera-workflows before you build or edit a
-  workflow, python-udf before you write Python or use a team's operator, computing-units before
-  you choose or make a unit, exploring-resources when asked what there is or what can be done,
+  workflow, python-udf before you write Python or use a team's operator, using-models before you
+  run a model, computing-units before you choose or make a unit, exploring-resources when asked
+  what there is or what can be done,
   reading-results before you report computed results, literature-review before your first
   literature search.
 

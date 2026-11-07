@@ -77,7 +77,7 @@ func TestThePlatformShipsOneAgent(t *testing.T) {
 		}
 	}
 	sort.Strings(known)
-	if strings.Join(known, " ") != "computing-units exploring-resources literature-review python-udf reading-results texera-workflows" || len(skills) != 6 {
+	if strings.Join(known, " ") != "computing-units exploring-resources literature-review python-udf reading-results texera-workflows using-models" || len(skills) != 7 {
 		t.Fatalf("skills: %v of %d shipped", known, len(skills))
 	}
 

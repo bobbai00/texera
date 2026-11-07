@@ -11,6 +11,7 @@ import type { WorkflowSpec } from "../src/catalog/types.ts";
 
 const IRIS = "texera://datasets/11111111-1111-4111-8111-111111111111";
 const WF = "22222222-2222-4222-8222-222222222222";
+const RISK = "texera://models/77777777-7777-4777-8777-777777777777";
 
 const METRICS = "44444444-4444-4444-8444-444444444444";
 const port = (displayName?: string, many = false) => ({
@@ -32,6 +33,7 @@ const OPERATORS = [
   operator("filter", [port()]),
   operator("join", [port("left"), port("right")]),
   operator("union", [port(undefined, true)]),
+  operator("predict", [port()]),
   operator("cgm_metrics", [port()], METRICS, "def cgm_metrics(readings): ..."),
   // A custom operator that does not say its ports: its inputs link in order.
   {
@@ -73,6 +75,10 @@ function fakeCatalog(options: { errors?: Record<string, string>; conflictOnce?: 
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     const method = init?.method ?? "GET";
     calls.push({ method, path: url.pathname + url.search, body });
+    if (url.pathname === "/catalog/v1/resources" && url.searchParams.get("kind") === "model")
+      return json(200, {
+        items: [{ kind: "model", metadata: { rid: RISK.slice(-36), uri: RISK, name: "Diabetes risk", head: 2 } }],
+      });
     if (url.pathname === "/catalog/v1/resources")
       return json(200, {
         items: (options.datasets ?? [IRIS]).map((uri) => ({
@@ -274,6 +280,38 @@ def tir(readings, *, low: int = 70):
     g = readings.groupby("patient_id")["glucose"]
     return g.apply(lambda s: _share(s, low, 180)).rename("time_in_range").reset_index()
 `;
+
+describe("models", () => {
+  test("a model named by its name is its newest version, or the one named", async () => {
+    const fake = fakeCatalog();
+    const tools = toolsOf(fake);
+    const out = await call(tools, "create_workflow", {
+      name: "scored",
+      lines: `${LINES}\nset scored: predict(scan, model="diabetes risk")\nset pinned: predict(scan, model="Diabetes risk@1")`,
+    });
+    expect(out.error).toBeUndefined();
+    expect((out.lines as string[]).slice(-2)).toEqual([
+      `set scored: predict(scan, model="${RISK}@2")`,
+      `set pinned: predict(scan, model="${RISK}@1")`,
+    ]);
+    expect(
+      await call(tools, "create_workflow", { name: "x", lines: `${LINES}\nset s: predict(scan, model="${RISK}@1")` }),
+    ).not.toHaveProperty("error");
+    expect(fake.calls.filter((c) => c.path.includes("kind=model"))).toHaveLength(2);
+  });
+
+  test("a model that is not there is said on its line", async () => {
+    const fake = fakeCatalog();
+    expect(
+      await call(toolsOf(fake), "create_workflow", {
+        name: "x",
+        lines: `${LINES}\nset s: predict(scan, model="Readmission@1")`,
+      }),
+    ).toEqual({
+      error: 'line 3: no model named "Readmission" in this project; search_resources lists the models',
+    });
+  });
+});
 
 describe("python functions", () => {
   test("finds the module's functions under @returns, whatever decorates them", () => {
