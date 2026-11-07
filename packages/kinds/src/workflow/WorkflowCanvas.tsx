@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useDark } from "@texera/ui";
+import { cn, useDark } from "@texera/ui";
 import {
   type OperatorNode,
   type OperatorOverlay,
@@ -21,7 +21,7 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
 import { useStore } from "zustand";
 import { operatorSchemasQuery } from "../queries";
 import { useScope } from "../scope";
@@ -45,6 +45,8 @@ interface Props {
    */
   view?: CanvasView;
   className?: string;
+  /** What floats over the canvas, within it: the results of the execution. */
+  children?: ReactNode;
 }
 
 /**
@@ -61,7 +63,7 @@ export function WorkflowCanvas({ provided = false, ...props }: Props & { provide
   );
 }
 
-function Shown({ spec, overlay, view: shared, className }: Props) {
+function Shown({ spec, overlay, view: shared, className, children }: Props) {
   const view = useMemo(() => shared ?? createCanvasView(), [shared]);
   const density = useStore(view, s => s.density);
   const k = useRowSpread(null);
@@ -106,10 +108,21 @@ function Shown({ spec, overlay, view: shared, className }: Props) {
   const userMoved = useRef(false);
   const still = useCallback(() => !picture && !userMoved.current, [picture]);
   useReframe(wrapper, frame, still);
+  // The results window opening over the canvas, or put away: framed again around it.
+  const covering = useStore(view, s => (s.covered ? "covered" : "clear"));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: when the window comes or goes
+  useEffect(() => {
+    if (shared && measured && still()) void frame();
+  }, [covering]);
 
   return (
     <CanvasContext value={canvas}>
-      <div ref={wrapper} className={className} data-workflow-canvas data-editable="false" data-density={density}>
+      <div
+        ref={wrapper}
+        className={cn("relative", className)}
+        data-workflow-canvas
+        data-editable="false"
+        data-density={density}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -145,6 +158,7 @@ function Shown({ spec, overlay, view: shared, className }: Props) {
             </>
           )}
         </ReactFlow>
+        {children}
       </div>
     </CanvasContext>
   );

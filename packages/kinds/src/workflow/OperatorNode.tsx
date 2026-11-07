@@ -92,6 +92,8 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
     s.result?.startsWith(`${id}:`) ? s.result.slice(id.length + 1) : undefined
   );
   const readonly = useStore(canvas.editor ?? NO_EDITOR, s => s.readonly);
+  // A result pointed at in the results window points out the card it came from.
+  const pointed = useStore(canvas.view, s => s.pointed === id);
   const schema = canvas.schemas?.get(data.operatorType);
   const lines = useMemo(
     () => (schema ? describeProperties(schema.jsonSchema, data.properties) : []),
@@ -124,7 +126,8 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
         selected && !shown && "border-primary ring-2 ring-primary/25",
         // The card whose result is on screen.
         shown !== undefined && "border-primary ring-2 ring-primary/60",
-        arrived && "ring-4 ring-primary/40 animate-pulse"
+        arrived && "ring-4 ring-primary/40 animate-pulse",
+        pointed && "border-primary ring-4 ring-primary/35"
       )}
       style={{
         minHeight: HANDLE_TOP * 2 + Math.max(0, ports - 1) * HANDLE_STEP,
@@ -135,6 +138,7 @@ function Card({ id, data, selected, canvas }: NodeProps<OperatorNodeType> & { ca
       data-operator-status={data.status ?? ""}
       data-operator-view={editing ? "editing" : detailed ? "detailed" : "compact"}
       data-result-shown={shown ?? ""}
+      data-pointed={pointed ? "true" : undefined}
       data-arrived={arrived ? "true" : undefined}>
       {openBy && (
         <span

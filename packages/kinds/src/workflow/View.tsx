@@ -12,7 +12,6 @@ import {
   TabPanel,
   Tabs,
   TabsList,
-  formatDuration,
   timeAgo,
 } from "@texera/ui";
 import {
@@ -25,28 +24,26 @@ import {
 import { ReactFlowProvider } from "@xyflow/react";
 import {
   AlertTriangle,
-  ArrowUpRight,
   Check,
-  ChevronDown,
-  ChevronUp,
   Cpu,
   GitBranch,
   History,
   Loader2,
   Lock,
   Play,
+  Table2,
   Users,
   Workflow,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Group, Panel, Separator } from "react-resizable-panels";
 import { useStore } from "zustand";
 import { unwrap } from "../api";
 import { executionOverlay } from "../execution/overlay";
 import { useRoom } from "../live/room";
 import { masterOf } from "../kinds/profiles";
 import { keysOf, operatorSchemasQuery, resourceQuery, searchQuery, settingsQuery, unitsQuery } from "../queries";
-import { ResultsPanel } from "../results/ResultsPanel";
+import { resultLabel } from "../results/labels";
+import { ResultsWindow } from "../results/ResultsWindow";
 import { ProjectScope, useScope } from "../scope";
 import { Access } from "../shell/Access";
 import { EditableName, KindHeader } from "../shell/KindHeader";
@@ -61,6 +58,7 @@ import type { KindViewProps } from "../types";
 import { uriOf } from "../uri";
 import { useWatch } from "../watch";
 import { createCanvasView, portKey } from "./canvas-view";
+import { useShow } from "./framing";
 import { fixedDocument, liveDocument, type WorkflowDocument } from "./document";
 import { createEditorStore, type EditorStore } from "./editor";
 import { EditorCanvas } from "./EditorCanvas";
@@ -257,6 +255,11 @@ function EditorLayout({
     [spec, schemas]
   );
 
+  // A result is named as its operator's card names it; picking one brings the card into view.
+  const labelOf = useCallback((operatorID: string) => resultLabel(spec, schemas, operatorID), [spec, schemas]);
+  const show = useShow(view);
+  const showCard = useCallback((operatorID: string) => show(operatorID), [show]);
+
   // Runs the workflow, or up to one operator: only what leads to it, and its result is kept.
   const run = useMutation({
     mutationFn: async (upTo: string | undefined) => {
@@ -399,57 +402,35 @@ function EditorLayout({
         </TabsList>
         <TabPanel value="canvas" className="flex min-h-0 flex-1" keepMounted>
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-            {latest && resultsOpen ? (
-              <Group orientation="vertical" className="min-h-0 flex-1">
-                <Panel id="canvas" minSize="25%">
-                  <EditorCanvas
-                    store={store}
-                    view={view}
-                    overlay={overlay}
-                    compilation={compilation}
-                    onRunTo={pinned ? undefined : runTo}
-                    className="flex h-full min-w-0"
-                  />
-                </Panel>
-                <Separator className="h-px bg-border transition-colors hover:bg-primary data-[separator=active]:bg-primary" />
-                <Panel id="results" defaultSize="38%" minSize="15%">
-                  <ResultsPanel
+            <EditorCanvas
+              store={store}
+              view={view}
+              overlay={overlay}
+              compilation={compilation}
+              onRunTo={pinned ? undefined : runTo}
+              className="flex min-h-0 min-w-0 flex-1">
+              {latest &&
+                (resultsOpen ? (
+                  <ResultsWindow
                     execution={latest}
                     workflow={rid}
                     view={view}
-                    nameOf={nameOf}
-                    className="h-full"
-                    trailing={
-                      <LatestExecution
-                        execution={latest}
-                        onOpen={() => beside({ kind: "execution", rid: latest.metadata.rid, parent: rid })}
-                        onHide={() => setResultsOpen(false)}
-                      />
-                    }
+                    labelOf={labelOf}
+                    onShowOperator={showCard}
+                    onOpen={() => beside({ kind: "execution", rid: latest.metadata.rid, parent: rid })}
+                    onClose={() => setResultsOpen(false)}
+                    showing={vno}
                   />
-                </Panel>
-              </Group>
-            ) : (
-              <>
-                <EditorCanvas
-                  store={store}
-                  view={view}
-                  overlay={overlay}
-                  compilation={compilation}
-                  onRunTo={pinned ? undefined : runTo}
-                  className="flex min-h-0 min-w-0 flex-1"
-                />
-                {latest && (
+                ) : (
                   <button
                     type="button"
                     onClick={() => setResultsOpen(true)}
-                    className="flex shrink-0 items-center gap-2 border-t px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent/60"
+                    className="nokey absolute bottom-4 left-4 z-20 flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md hover:bg-accent"
                     data-show-results>
-                    <ChevronUp className="size-3.5" /> Results of {latest.metadata.name}
+                    <Table2 className="size-3.5 text-primary" /> Results of {latest.metadata.name}
                   </button>
-                )}
-              </>
-            )}
+                ))}
+            </EditorCanvas>
           </div>
         </TabPanel>
         <TabPanel value="executions" className="scrollbar-thin overflow-y-auto">
@@ -466,50 +447,6 @@ function EditorLayout({
         </TabPanel>
       </Tabs>
     </div>
-  );
-}
-
-/** Which execution the results under the canvas are of, and the way to its own page. */
-function LatestExecution({
-  execution,
-  onOpen,
-  onHide,
-}: {
-  execution: Execution;
-  onOpen: () => void;
-  onHide: () => void;
-}) {
-  const status = execution.status;
-  const phase = status?.phase ?? "pending";
-  const operators = Object.values(status?.operators ?? {});
-  const done = operators.filter(o => o.state.toLowerCase() === "completed").length;
-  // While it goes: how far it is and for how long; once over: when it ran.
-  const progress = LIVE.has(phase)
-    ? [operators.length ? `${done} of ${operators.length} done` : "", formatDuration(status?.startedAt, undefined)]
-    : [timeAgo(execution.metadata.createdAt)];
-  return (
-    <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground" data-latest-execution={phase}>
-      <Badge
-        tone={phase === "completed" ? "success" : phase === "failed" || phase === "cancelled" ? "danger" : "warning"}
-        className="capitalize">
-        {LIVE.has(phase) && <Loader2 className="size-3 animate-spin" />}
-        {phase}
-      </Badge>
-      <span className="hidden max-w-56 truncate tabular-nums lg:inline" data-execution-progress>
-        {progress.filter(Boolean).join(" · ")}
-      </span>
-      <Button
-        variant="ghost"
-        size="xs"
-        onClick={onOpen}
-        title="Open this execution beside the workflow"
-        data-open-execution>
-        <ArrowUpRight /> Execution
-      </Button>
-      <Button variant="ghost" size="icon-xs" onClick={onHide} aria-label="Hide the results">
-        <ChevronDown />
-      </Button>
-    </span>
   );
 }
 

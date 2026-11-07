@@ -22,7 +22,7 @@ import {
   TabsList,
   timeAgo,
 } from "@texera/ui";
-import { operatorLabel } from "@texera/workflow-model";
+import type { WorkflowSpec } from "@texera/workflow-model";
 import { ReactFlowProvider } from "@xyflow/react";
 import {
   Bookmark,
@@ -37,11 +37,11 @@ import {
   Workflow,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
-import { Group, Panel, Separator } from "react-resizable-panels";
 import { unwrap } from "../api";
 import { sizeLabel } from "../kinds/profiles";
 import { operatorSchemasQuery } from "../queries";
-import { ResultsPanel } from "../results/ResultsPanel";
+import { resultLabel } from "../results/labels";
+import { type ResultLabel, ResultsWindow } from "../results/ResultsWindow";
 import { ProjectScope, useScope } from "../scope";
 import { UriChip } from "../shell/Chips";
 import { JsonBlock } from "../shell/JsonBlock";
@@ -54,6 +54,7 @@ import type { KindViewProps } from "../types";
 import { parseUri } from "../uri";
 import { useWatch } from "../watch";
 import { createCanvasView } from "../workflow/canvas-view";
+import { useShow } from "../workflow/framing";
 import { versionSpecQuery } from "../workflow/queries";
 import { WorkflowCanvas } from "../workflow/WorkflowCanvas";
 import { executionOverlay } from "./overlay";
@@ -284,8 +285,9 @@ export default function ExecutionView({ ref, mode }: KindViewProps) {
 }
 
 /**
- * The workflow version the execution ran, laid out from its graph, with the results under it.
- * A click on a card shows its result; the port the result on screen came out of is lit.
+ * The workflow version the execution ran, laid out from its graph, with its results in a window
+ * over it. A click on a card shows its result; the port the result on screen came out of is
+ * lit, and a result pointed at points its card out.
  */
 function Ran({ execution, workflow }: { execution: Execution; workflow: string }) {
   const view = useMemo(() => createCanvasView(), []);
@@ -293,34 +295,41 @@ function Ran({ execution, workflow }: { execution: Execution; workflow: string }
   const { data: spec, error } = useQuery({ ...versionSpecQuery(workflow, vno ?? 0), enabled: vno !== undefined });
   const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
   const overlay = useMemo(() => executionOverlay(execution.status), [execution.status]);
-  const nameOf = useCallback(
-    (operatorID: string) => {
-      const op = spec?.operators.find(o => o.operatorID === operatorID);
-      if (!op) return operatorID;
-      return op.customDisplayName || (schemas?.get(op.operatorType)?.userFriendlyName ?? operatorLabel(op));
-    },
-    [spec, schemas]
-  );
-  const results = (
-    <ResultsPanel execution={execution} workflow={workflow} view={view} nameOf={nameOf} className="h-full" />
-  );
+  const labelOf = useCallback((operatorID: string) => resultLabel(spec, schemas, operatorID), [spec, schemas]);
   // Without the version (it cannot be read, or is gone) the results stand alone.
-  if (error || vno === undefined) return results;
+  if (error || vno === undefined)
+    return <ResultsWindow execution={execution} workflow={workflow} view={view} labelOf={labelOf} floating={false} />;
   if (!spec) return <Skeleton className="m-4 h-64" />;
   if (spec.operators.length === 0) return <EmptyState>The workflow had no operators.</EmptyState>;
   return (
     <ReactFlowProvider>
       <div className="relative flex min-h-0 flex-1 flex-col" data-execution-stage>
-        <Group orientation="vertical" className="min-h-0 flex-1">
-          <Panel id="canvas" minSize="20%">
-            <WorkflowCanvas provided spec={spec} overlay={overlay} view={view} className="h-full bg-canvas" />
-          </Panel>
-          <Separator className="h-px bg-border transition-colors hover:bg-primary data-[separator=active]:bg-primary" />
-          <Panel id="results" defaultSize="45%" minSize="15%">
-            {results}
-          </Panel>
-        </Group>
+        <Stage execution={execution} workflow={workflow} spec={spec} overlay={overlay} view={view} labelOf={labelOf} />
       </div>
     </ReactFlowProvider>
+  );
+}
+
+/** The canvas of the version that ran, its results floating over it; within the canvas's provider. */
+function Stage({
+  execution,
+  workflow,
+  spec,
+  overlay,
+  view,
+  labelOf,
+}: {
+  execution: Execution;
+  workflow: string;
+  spec: WorkflowSpec;
+  overlay: ReturnType<typeof executionOverlay>;
+  view: ReturnType<typeof createCanvasView>;
+  labelOf: (operatorID: string) => ResultLabel;
+}) {
+  const show = useShow(view);
+  return (
+    <WorkflowCanvas provided spec={spec} overlay={overlay} view={view} className="h-full min-h-0 flex-1 bg-canvas">
+      <ResultsWindow execution={execution} workflow={workflow} view={view} labelOf={labelOf} onShowOperator={id => show(id)} />
+    </WorkflowCanvas>
   );
 }

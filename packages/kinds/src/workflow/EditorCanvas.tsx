@@ -32,7 +32,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { LayoutGrid, Plus, Redo2, Undo2, X } from "lucide-react";
-import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { operatorSchemasQuery } from "../queries";
 import { useScope } from "../scope";
@@ -68,6 +68,7 @@ export function EditorCanvas({
   compilation,
   onRunTo,
   className,
+  children,
 }: {
   store: EditorStore;
   view: CanvasView;
@@ -76,6 +77,8 @@ export function EditorCanvas({
   /** Runs the workflow up to an operator; without it, a card has no run button. */
   onRunTo?: (operatorID: string) => void;
   className?: string;
+  /** What floats over the canvas, within it: the results of the execution on screen. */
+  children?: ReactNode;
 }) {
   const spec = useStore(store, s => s.spec);
   const positions = useStore(store, s => s.positions);
@@ -102,6 +105,13 @@ export function EditorCanvas({
   // Until the person has moved the canvas themselves, it is the app's to frame.
   const still = useCallback(() => fitOnOpen && !userMoved.current, [fitOnOpen]);
   useReframe(wrapper, frame, still);
+  // The results window opening over the canvas, or put away: the workflow is framed again
+  // around it, until the person has moved the canvas themselves.
+  const covering = useStore(view, s => (s.covered ? "covered" : "clear"));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: when the window comes or goes
+  useEffect(() => {
+    if (measured && still()) void frame();
+  }, [covering]);
   // The workflow is brought into view when it opens, and again when how much the cards say
   // changes how far it reaches, until the person has moved the canvas themselves.
   // biome-ignore lint/correctness/useExhaustiveDependencies: on opening, and on a change of density and of the spread it causes
@@ -181,7 +191,7 @@ export function EditorCanvas({
   const { data: schemas } = useQuery(operatorSchemasQuery(useScope()));
   // What arrives from elsewhere (the agent, another person) is pointed out and brought into view.
   const mine = useRef(new Set<string>()).current;
-  const show = useShow();
+  const show = useShow(view);
   const onArrive = useCallback((ids: string[]) => setTimeout(() => ids[0] && show(ids[0]), 150), [show]);
   const arrived = useArrivals(spec, mine, onArrive);
   // The others here: where they point, and the cards they have open.
@@ -417,6 +427,7 @@ export function EditorCanvas({
             <Cursors people={others} />
             <CanvasControls view={view} />
           </ReactFlow>
+          {children}
         </div>
       </div>
     </CanvasContext>

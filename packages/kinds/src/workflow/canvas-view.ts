@@ -33,6 +33,14 @@ function remember(key: string, value: string): void {
 /** An output port of an operator, as one key: the result it holds is named by it. */
 export const portKey = (operatorID: string, portID: string) => `${operatorID}:${portID}`;
 
+/** The part of a canvas something floats over (the results window), from its bottom left corner, in pixels. */
+export interface Covered {
+  left: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
 export interface CanvasViewState {
   density: Density;
   /** Whether the map of a workflow too large to see at once is open. It lies over the canvas, so it is closed until asked for. */
@@ -41,12 +49,18 @@ export interface CanvasViewState {
   editing: string | null;
   /** Whether the card open was just made: its first setting takes the keyboard. */
   fresh: boolean;
-  /** The result on screen under the canvas, by its port's key. */
+  /** The result on screen, by its port's key. */
   result: string | null;
+  /** The operator a result points out, while the result is pointed at. */
+  pointed: string | null;
+  /** What the results window covers of the canvas: cards brought into view stay clear of it. */
+  covered: Covered | null;
   setDensity: (density: Density) => void;
   setMap: (open: boolean) => void;
   edit: (operatorID: string | null, fresh?: boolean) => void;
   show: (result: string | null) => void;
+  point: (operatorID: string | null) => void;
+  cover: (covered: Covered | null) => void;
 }
 
 export type CanvasView = StoreApi<CanvasViewState>;
@@ -58,6 +72,8 @@ export function createCanvasView(): CanvasView {
     editing: null,
     fresh: false,
     result: null,
+    pointed: null,
+    covered: null,
     setDensity: density => {
       remember(DENSITY_KEY, density);
       set({ density });
@@ -68,6 +84,8 @@ export function createCanvasView(): CanvasView {
     },
     edit: (operatorID, fresh = false) => set({ editing: operatorID, fresh: operatorID !== null && fresh }),
     show: result => set({ result }),
+    point: operatorID => set({ pointed: operatorID }),
+    cover: covered => set({ covered }),
   }));
 }
 

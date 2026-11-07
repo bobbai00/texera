@@ -426,6 +426,68 @@ test("an execution shows on the workflow's canvas, a click on a card shows its r
   expect((await alice("GET", `/workflows/${rid}`)).metadata.head).toBe(head);
 });
 
+test("the results float in a window over the canvas, named as their cards and pointing them out; it moves, folds and stays where it was put", async ({ page, request }) => {
+  test.setTimeout(300_000);
+  const alice = await api(request);
+  const { rid } = await irisWorkflow(alice, "results window", { beside: true });
+  await signIn(page);
+  await page.goto(`/workflows/${rid}`);
+  await expect(page.locator('[data-workflow-canvas][data-editable="true"]')).toBeVisible();
+  await page.locator("[data-run]").click();
+  const results = page.locator("[data-results]");
+  await expect(page.locator("[data-latest-execution]")).toHaveAttribute("data-latest-execution", "completed", { timeout: 180_000 });
+  // A window over the canvas, not a panel under it; the canvas keeps its whole height.
+  await expect(results).toHaveAttribute("data-results-window", "open");
+  const canvas = await box(page.locator("[data-workflow-canvas]"));
+  const window = await box(results);
+  expect(window.y + window.height).toBeLessThanOrEqual(canvas.y + canvas.height);
+  expect(window.y).toBeGreaterThan(canvas.y);
+  // Two aggregates are told apart: each result says what its operator does, as its card does.
+  const avgTab = results.locator('[data-result-tab="avg:output-0"]');
+  const mostTab = results.locator('[data-result-tab="most:output-0"]');
+  await expect(avgTab).toContainText("average PetalLengthCm");
+  await expect(mostTab).toContainText("max PetalLengthCm");
+  await expect(avgTab.locator("img")).toHaveAttribute("src", /Aggregate/);
+  // Pointing at a result points its card out; leaving it, no more.
+  await mostTab.hover();
+  await expect(operatorCard(page, "most").locator("[data-pointed]")).toHaveAttribute("data-pointed", "true");
+  await expect(operatorCard(page, "avg").locator("[data-pointed]")).toHaveCount(0);
+  await page.locator("[data-results-title]").hover();
+  await expect(page.locator("[data-pointed]")).toHaveCount(0);
+  // No card lies under the window when it opens on a canvas nobody moved.
+  for (const id of ["scan", "avg", "most"]) expect(await overlap(operatorCard(page, id), results)).toBe(false);
+
+  // Moved by its title bar, it stays where it was put, also after a reload.
+  const title = await box(page.locator("[data-results-title]"));
+  await page.mouse.move(title.x + 260, title.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(title.x + 460, title.y + 12 - 120, { steps: 8 });
+  await page.mouse.up();
+  // It is held by its bottom left corner: that corner went where the pointer took it.
+  const moved = await box(results);
+  const before = await box(results.locator("[data-results-title]"));
+  expect(Math.round(moved.x - window.x)).toBe(200);
+  expect(Math.round(before.y - title.y)).toBe(-120);
+  await page.reload();
+  await expect(results.locator("[data-port-rows]")).toBeVisible();
+  const kept = await box(results);
+  expect([Math.round(kept.x), Math.round(kept.y + kept.height)]).toEqual([Math.round(moved.x), Math.round(moved.y + moved.height)]);
+  // Folded to its title bar, and back.
+  await page.locator("[data-fold-results]").click();
+  await expect(results).toHaveAttribute("data-results-window", "folded");
+  await expect(results.locator("[data-result-tab]")).toHaveCount(0);
+  await page.locator("[data-fold-results]").click();
+  await expect(results.locator("[data-result-tab]")).toHaveCount(2);
+  // A double click on its title bar puts it back where it started.
+  await page.locator("[data-results-title] >> text=Results").dblclick();
+  await expect.poll(async () => Math.round((await box(results)).x)).toBe(Math.round(window.x));
+
+  // Once the workflow moves on, the window says which version the results are of.
+  await operatorCard(page, "most").click({ position: { x: 100, y: 14 } });
+  await page.keyboard.press("Delete");
+  await expect(results.locator("[data-ran-version]")).toHaveText("ran v1", { timeout: 20_000 });
+});
+
 test("the bar says where a run goes, and it goes there: on a unit made from a profile, results in the warehouse picked", async ({ page, request }) => {
   test.setTimeout(240_000);
   const alice = await api(request);

@@ -7,27 +7,34 @@ import { CARD } from "@texera/workflow-model";
 import { useNodesInitialized, useReactFlow, useStoreApi } from "@xyflow/react";
 import { type RefObject, useCallback, useEffect } from "react";
 import { useStore } from "zustand";
-import type { CanvasView } from "./canvas-view";
+import type { CanvasView, Covered } from "./canvas-view";
 
 /** Never smaller than this by itself: a card's words stay readable. */
 export const FIT = { padding: 0.18, minZoom: 0.85, maxZoom: 1 };
 const MARGIN = 48;
 
-/** Moves the canvas, only as far as needed, so an operator's card is in view. */
-export function useShow(): (operatorID: string, animate?: boolean) => void {
+/** How far the bottom of a canvas is out of use at a card's place: under the results window when the card is above it. */
+function coveredBelow(covered: Covered | null | undefined, left: number, right: number): number {
+  if (!covered || right < covered.left || left > covered.left + covered.width) return 0;
+  return covered.bottom + covered.height;
+}
+
+/** Moves the canvas, only as far as needed, so an operator's card is in view, clear of the results window. */
+export function useShow(view?: CanvasView): (operatorID: string, animate?: boolean) => void {
   const flow = useReactFlow();
   const store = useStoreApi();
   return useCallback(
     (operatorID, animate = true) => {
       const node = store.getState().nodeLookup.get(operatorID);
-      const { width, height, transform } = store.getState();
+      const { width, height: whole, transform } = store.getState();
       // A canvas that is not on screen (its tab is not the one shown) has no size to move within.
-      if (!node || !width || !height) return;
+      if (!node || !width || !whole) return;
       const [x, y, zoom] = transform;
       const left = node.internals.positionAbsolute.x * zoom + x;
       const top = node.internals.positionAbsolute.y * zoom + y;
       const right = left + (node.measured.width ?? CARD.width) * zoom;
       const bottom = top + (node.measured.height ?? CARD.height) * zoom;
+      const height = whole - coveredBelow(view?.getState().covered, left, right);
       // Room on the right for the line that arrives at the card's output port. A card taller
       // than the canvas shows its top.
       const dx = left < MARGIN ? MARGIN - left : right > width - 2 * MARGIN ? width - 2 * MARGIN - right : 0;
@@ -40,7 +47,7 @@ export function useShow(): (operatorID: string, animate?: boolean) => void {
       if ((dx !== 0 || dy !== 0) && Number.isFinite(dx) && Number.isFinite(dy))
         void flow.setViewport({ x: x + dx, y: y + dy, zoom }, animate ? { duration: 250 } : undefined);
     },
-    [flow, store]
+    [flow, store, view]
   );
 }
 
@@ -53,12 +60,21 @@ const operatorOf = (result: string | null) => (result ? result.slice(0, result.l
 export function useFrame(view: CanvasView): () => Promise<void> {
   const flow = useReactFlow();
   const store = useStoreApi();
-  const show = useShow();
+  const show = useShow(view);
   return useCallback(async () => {
     // A canvas that is not on screen has no size to fit anything into.
     const seen = () => store.getState().width > 0 && store.getState().height > 0;
     if (!seen() || flow.getNodes().length === 0) return;
-    await flow.fitView(FIT);
+    // Over the results window's top, when it lies over the canvas.
+    const covered = view.getState().covered;
+    await flow.fitView(
+      covered
+        ? {
+            ...FIT,
+            padding: { top: "8%", left: "8%", right: "8%", bottom: `${covered.bottom + covered.height + 24}px` },
+          }
+        : FIT
+    );
     // It may have gone from the screen meanwhile (another tab was picked): what was fitted
     // into no room is put right when it is back (`useReframe`).
     if (!seen()) return;
@@ -77,7 +93,7 @@ export function useFrame(view: CanvasView): () => Promise<void> {
 export function useFollow(view: CanvasView): void {
   const shown = useStore(view, s => operatorOf(s.result));
   const editing = useStore(view, s => s.editing);
-  const show = useShow();
+  const show = useShow(view);
   const measured = useNodesInitialized();
   useEffect(() => {
     if (!shown || !measured) return;

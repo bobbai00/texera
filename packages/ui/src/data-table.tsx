@@ -10,8 +10,18 @@ export interface Column {
 const ROW_HEIGHT = 32;
 const NUMERIC = new Set(["integer", "long", "double"]);
 
-const cell = (v: unknown) =>
-  v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+/**
+ * A cell as text. A double says its value without the noise of binary fractions (5.552, not
+ * 5.551999999999999); the exact value is the cell's title.
+ */
+export const cell = (v: unknown, type?: string) =>
+  v === null || v === undefined
+    ? ""
+    : type === "double" && typeof v === "number" && Number.isFinite(v)
+      ? String(Number(v.toPrecision(12)))
+      : typeof v === "object"
+        ? JSON.stringify(v)
+        : String(v);
 
 /**
  * A table for results and dataset previews. Only the rows in view are in the DOM, so a
@@ -61,8 +71,9 @@ export function DataTable({ columns, rows, className }: { columns: Column[]; row
                   <div
                     key={c.name}
                     role="cell"
-                    className={cn("truncate px-3 py-1.5", NUMERIC.has(c.type ?? "") && "text-right font-mono tabular-nums")}>
-                    {cell(row[i])}
+                    className={cn("truncate px-3 py-1.5", NUMERIC.has(c.type ?? "") && "text-right font-mono tabular-nums")}
+                    title={c.type === "double" && typeof row[i] === "number" ? String(row[i]) : undefined}>
+                    {cell(row[i], c.type)}
                   </div>
                 ))}
               </div>
