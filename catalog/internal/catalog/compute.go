@@ -270,10 +270,13 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 			spec.Requires = &api.RuntimeSpec{Isolation: op.Requires.Isolation, Resources: op.Requires.Resources}
 		}
 		status := mustJSON(api.OperatorStatus{Engine: &engineID})
-		existing, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "operator", ParentRID: &project.RID, Name: op.OperatorType, Limit: 1})
+		// The name filter ignores case, and the engine has both "Filter" and "filter": the
+		// resource of this type is the one whose spec names it.
+		named, err := s.Store.ListResources(ctx, store.ResourceFilter{Kind: "operator", ParentRID: &project.RID, Name: op.OperatorType, Limit: 20})
 		if err != nil {
 			return err
 		}
+		existing := ofOperatorType(named, op.OperatorType)
 		specJSON := mustJSON(spec)
 		if len(existing) == 0 {
 			desc := op.OperatorDescription
@@ -285,6 +288,13 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 			continue
 		}
 		cur := existing[0]
+		if cur.Name != op.OperatorType {
+			// Named after another type's spelling by an earlier sync that matched on the name alone.
+			name := op.OperatorType
+			if _, err := s.UpdateMetadata(ctx, caller, MetadataInput{RID: cur.RID, Name: &name}); err != nil {
+				s.Log.Warn("rename operator", "type", op.OperatorType, "err", err)
+			}
+		}
 		curCanon, _ := store.Canonical(cur.Spec)
 		newCanon, _ := store.Canonical(specJSON)
 		if string(curCanon) != string(newCanon) {
@@ -303,6 +313,20 @@ func (s *Service) SyncOperators(ctx context.Context, unit *store.Resource) error
 		s.Log.Info("operators synced", "unit", unit.Name, "engine", engineID, "changed", count, "total", len(list.Operators))
 	}
 	return nil
+}
+
+// ofOperatorType keeps the operator resources whose spec is of exactly this type.
+func ofOperatorType(resources []store.Resource, operatorType string) []store.Resource {
+	var out []store.Resource
+	for _, r := range resources {
+		var spec struct {
+			OperatorType string `json:"operatorType"`
+		}
+		if json.Unmarshal(r.Spec, &spec) == nil && spec.OperatorType == operatorType {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // portSpecs reads the ports a unit describes for an operator type. The engine sends each port

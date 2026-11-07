@@ -111,6 +111,9 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 				"jsonSchema": map[string]any{"type": "object", "properties": map[string]any{"fileName": map[string]any{"type": "string"}}}, "inputPorts": []any{}, "outputPorts": []any{enginePort(0, "")}},
 			map[string]any{"operatorType": "Aggregate", "userFriendlyName": "Aggregate", "operatorGroupName": "Analysis", "operatorDescription": "Aggregates",
 				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "")}, "outputPorts": []any{enginePort(0, "")}},
+			// A built-in whose type differs from a classic one's only in case.
+			map[string]any{"operatorType": "aggregate", "userFriendlyName": "aggregate", "operatorGroupName": "Core", "operatorDescription": "One row per group",
+				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "")}, "outputPorts": []any{enginePort(0, "")}},
 			map[string]any{"operatorType": "HashJoin", "userFriendlyName": "Hash Join", "operatorGroupName": "Join", "operatorDescription": "Joins two inputs",
 				"jsonSchema": map[string]any{"type": "object"}, "inputPorts": []any{enginePort(0, "left"), enginePort(1, "right")}, "outputPorts": []any{enginePort(0, "")}},
 		}})

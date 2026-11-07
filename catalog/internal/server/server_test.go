@@ -397,8 +397,25 @@ func TestExecutionResultsAndLineage(t *testing.T) {
 	}
 	var compact api.ResourcePage
 	h.mustJSON("alice", "GET", p+"/operators", nil, &compact)
-	if len(compact.Items) != 3 || compact.Items[0].Spec["propertiesSchema"] != nil {
+	if len(compact.Items) != 4 || compact.Items[0].Spec["propertiesSchema"] != nil {
 		t.Fatalf("compact operators: %+v", compact.Items)
+	}
+	// Types that differ only in case are two operators, each named by its type, and syncing
+	// again changes neither.
+	if err := h.svc.SyncOperators(t.Context(), unitOf(h)); err != nil {
+		t.Fatal(err)
+	}
+	var aggregates api.ResourcePage
+	h.mustJSON("alice", "GET", p+"/operators?q=aggregate", nil, &aggregates)
+	types := map[string]string{}
+	for _, it := range aggregates.Items {
+		types[it.Spec["operatorType"].(string)] = it.Metadata.Name
+		if it.Metadata.Head != 1 {
+			t.Fatalf("%s has %d versions after two syncs", it.Metadata.Name, it.Metadata.Head)
+		}
+	}
+	if len(types) != 2 || types["Aggregate"] != "Aggregate" || types["aggregate"] != "aggregate" {
+		t.Fatalf("aggregates: %v", types)
 	}
 	// Each built-in keeps the ports its unit describes, named as workflows name them.
 	var join api.ResourcePage
