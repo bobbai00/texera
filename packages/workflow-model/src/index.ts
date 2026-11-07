@@ -8,3 +8,4 @@ export * from "./summary";
 export * from "./compile";
 export * from "./to-flow";
 export * from "./live";
+export * from "./lines";
