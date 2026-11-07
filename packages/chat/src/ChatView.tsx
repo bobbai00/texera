@@ -208,7 +208,10 @@ function Conversation({ rid, conversation, getToken, context, dock = false }: Ch
               {items.map(({ message, showLabel }, i) => (
                 // Older messages skip layout until scrolled to; the newest ones must have their real
                 // height, or the chat cannot find its end when the persisted copy replaces the live one.
-                <div key={message.id} className={cn(i < items.length - NEWEST_LAID_OUT && "[content-visibility:auto] [contain-intrinsic-size:auto_120px]")}>
+                <div
+                  key={message.id}
+                  data-message-seq={message.seq}
+                  className={cn(i < items.length - NEWEST_LAID_OUT && "[content-visibility:auto] [contain-intrinsic-size:auto_120px]")}>
                   <MessageItem
                     message={message}
                     streaming={chat.running && i === items.length - 1}

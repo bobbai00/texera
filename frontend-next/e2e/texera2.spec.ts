@@ -428,8 +428,10 @@ test("a long first answer ends up on screen", async ({ page, request }) => {
   });
   await say(page, "Tell me everything.");
   await expect(page.locator("[data-composer] button[aria-label='Send message']")).toBeVisible();
-  // One copy: the catalog's has replaced the live one.
+  // One copy: the catalog's has replaced the live one. Until it has, the page may show the live
+  // copy alone, and the browser keeps that one in place while the catalog's lands above it.
   const end = page.getByText("The end of the answer.");
+  await expect(page.locator("[data-message-seq]").filter({ hasText: "The end of the answer." })).toHaveCount(1);
   await expect(end).toHaveCount(1);
   await expect(end).toBeInViewport();
   // Someone who scrolled up to read is left where they are.
