@@ -167,6 +167,17 @@ export const zFileLink = z.object({
 });
 
 /**
+ * What a node of a chat's graph stands for: data (a dataset, or a table a run made), a workflow, a model, a function (a custom operator) or a computing unit.
+ */
+export const zGraphRole = z.enum([
+    'data',
+    'workflow',
+    'model',
+    'function',
+    'unit'
+]);
+
+/**
  * One RFC 6902 JSON Patch operation.
  */
 export const zJsonPatchOperation = z.object({
@@ -308,6 +319,16 @@ export const zOperatorStatus = z.object({
  * Principal id, a UUID.
  */
 export const zPid = z.string();
+
+/**
+ * Something a chat's plan said it would make that it has not made yet.
+ */
+export const zPlannedItem = z.object({
+    kind: z.string().optional(),
+    name: z.string(),
+    detail: z.string().optional(),
+    turn: z.string()
+});
 
 /**
  * An output port's result, as the unit reported it at completion.
@@ -675,6 +696,32 @@ export const zExecutionPort = z.object({
     direction: z.enum(['input', 'output']),
     result: zPortSummary.optional(),
     boundTo: zUri.optional()
+});
+
+/**
+ * An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on.
+ */
+export const zGraphEdge = z.object({
+    from: zUri,
+    to: zUri,
+    relation: z.enum([
+        'reads',
+        'makes',
+        'uses',
+        'runsOn'
+    ])
+});
+
+/**
+ * A run of a workflow, as its node in a chat's graph lists it.
+ */
+export const zGraphRun = z.object({
+    uri: zUri,
+    phase: z.string(),
+    steps: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
+    reused: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
+    startedAt: z.iso.datetime().optional(),
+    finishedAt: z.iso.datetime().optional()
 });
 
 export const zLeaseRequest = z.object({
@@ -1052,6 +1099,30 @@ export const zDatasetVersion = z.object({
     contributors: z.array(zPid).optional(),
     origin: zOrigin.optional(),
     createdAt: z.iso.datetime()
+});
+
+/**
+ * A node of a chat's graph.
+ */
+export const zGraphNode = z.object({
+    uri: zUri,
+    role: zGraphRole,
+    kind: zResourceKind,
+    name: z.string(),
+    version: zVno.optional(),
+    made: z.boolean(),
+    state: z.string().optional(),
+    runs: z.array(zGraphRun).optional(),
+    rows: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).optional()
+});
+
+/**
+ * What a chat read, made and ran, and how they connect.
+ */
+export const zConversationGraph = z.object({
+    nodes: z.array(zGraphNode),
+    edges: z.array(zGraphEdge),
+    planned: z.array(zPlannedItem)
 });
 
 /**
@@ -2107,6 +2178,15 @@ export const zConversationsUpdatePath = z.object({
  * The request has succeeded.
  */
 export const zConversationsUpdateResponse = zConversation;
+
+export const zConversationsGraphPath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zConversationsGraphResponse = zConversationGraph;
 
 export const zConversationsListMessagesPath = z.object({
     rid: zRid

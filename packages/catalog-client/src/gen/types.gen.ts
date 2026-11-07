@@ -353,6 +353,15 @@ export type Conversation = {
     status?: ConversationStatus;
 };
 
+/**
+ * What a chat read, made and ran, and how they connect.
+ */
+export type ConversationGraph = {
+    nodes: Array<GraphNode>;
+    edges: Array<GraphEdge>;
+    planned: Array<PlannedItem>;
+};
+
 export type ConversationPage = {
     items: Array<Conversation>;
     /**
@@ -988,6 +997,71 @@ export type GrantRequest = {
 };
 
 /**
+ * An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on.
+ */
+export type GraphEdge = {
+    from: Uri;
+    to: Uri;
+    relation: 'reads' | 'makes' | 'uses' | 'runsOn';
+};
+
+/**
+ * A node of a chat's graph.
+ */
+export type GraphNode = {
+    /**
+     * What the node opens: a resource's URI, or for a table a run made, its port's.
+     */
+    uri: Uri;
+    role: GraphRole;
+    kind: ResourceKind;
+    name: string;
+    /**
+     * The version the chat worked from or made, the newest when there are several.
+     */
+    version?: Vno;
+    /**
+     * The chat made it, or a version of it.
+     */
+    made: boolean;
+    /**
+     * For a workflow, its last run's phase; for a unit, its phase.
+     */
+    state?: string;
+    /**
+     * For a workflow, its runs in the chat, newest first.
+     */
+    runs?: Array<GraphRun>;
+    /**
+     * For a table a run made, its rows.
+     */
+    rows?: number;
+};
+
+/**
+ * What a node of a chat's graph stands for: data (a dataset, or a table a run made), a workflow, a model, a function (a custom operator) or a computing unit.
+ */
+export type GraphRole = 'data' | 'workflow' | 'model' | 'function' | 'unit';
+
+/**
+ * A run of a workflow, as its node in a chat's graph lists it.
+ */
+export type GraphRun = {
+    uri: Uri;
+    phase: string;
+    /**
+     * The operators its plan had.
+     */
+    steps: number;
+    /**
+     * Those that read an earlier run's rows instead of running.
+     */
+    reused: number;
+    startedAt?: string;
+    finishedAt?: string;
+};
+
+/**
  * One RFC 6902 JSON Patch operation.
  */
 export type JsonPatchOperation = {
@@ -1573,6 +1647,19 @@ export type Origin = {
  * Principal id, a UUID.
  */
 export type Pid = string;
+
+/**
+ * Something a chat's plan said it would make that it has not made yet.
+ */
+export type PlannedItem = {
+    kind?: string;
+    name: string;
+    detail?: string;
+    /**
+     * The turn whose start_work said so.
+     */
+    turn: string;
+};
 
 /**
  * An output port's result, as the unit reported it at completion.
@@ -3383,6 +3470,33 @@ export type ConversationsUpdateResponses = {
 };
 
 export type ConversationsUpdateResponse = ConversationsUpdateResponses[keyof ConversationsUpdateResponses];
+
+export type ConversationsGraphData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/conversations/{rid}/graph';
+};
+
+export type ConversationsGraphErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ConversationsGraphError = ConversationsGraphErrors[keyof ConversationsGraphErrors];
+
+export type ConversationsGraphResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: ConversationGraph;
+};
+
+export type ConversationsGraphResponse = ConversationsGraphResponses[keyof ConversationsGraphResponses];
 
 export type ConversationsListMessagesData = {
     body?: never;

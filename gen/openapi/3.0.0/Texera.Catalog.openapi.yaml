@@ -742,6 +742,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       x-texera-permission: delete
+  /catalog/v1/conversations/{rid}/graph:
+    get:
+      operationId: Conversations_graph
+      description: 'The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet.'
+      parameters:
+        - name: rid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Rid'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationGraph'
+        default:
+          description: An unexpected error response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-texera-permission: read
   /catalog/v1/conversations/{rid}/messages:
     get:
       operationId: Conversations_listMessages
@@ -5437,6 +5461,26 @@ components:
         versioned: false
         content: spec
         parent: project
+    ConversationGraph:
+      type: object
+      required:
+        - nodes
+        - edges
+        - planned
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphEdge'
+        planned:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlannedItem'
+      description: What a chat read, made and ran, and how they connect.
     ConversationPage:
       type: object
       required:
@@ -6365,6 +6409,100 @@ components:
       properties:
         relation:
           $ref: '#/components/schemas/Relation'
+    GraphEdge:
+      type: object
+      required:
+        - from
+        - to
+        - relation
+      properties:
+        from:
+          $ref: '#/components/schemas/Uri'
+        to:
+          $ref: '#/components/schemas/Uri'
+        relation:
+          type: string
+          enum:
+            - reads
+            - makes
+            - uses
+            - runsOn
+      description: "An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on."
+    GraphNode:
+      type: object
+      required:
+        - uri
+        - role
+        - kind
+        - name
+        - made
+      properties:
+        uri:
+          allOf:
+            - $ref: '#/components/schemas/Uri'
+          description: "What the node opens: a resource's URI, or for a table a run made, its port's."
+        role:
+          $ref: '#/components/schemas/GraphRole'
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        name:
+          type: string
+        version:
+          allOf:
+            - $ref: '#/components/schemas/Vno'
+          description: The version the chat worked from or made, the newest when there are several.
+        made:
+          type: boolean
+          description: The chat made it, or a version of it.
+        state:
+          type: string
+          description: For a workflow, its last run's phase; for a unit, its phase.
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphRun'
+          description: For a workflow, its runs in the chat, newest first.
+        rows:
+          type: integer
+          format: int64
+          description: For a table a run made, its rows.
+      description: A node of a chat's graph.
+    GraphRole:
+      type: string
+      enum:
+        - data
+        - workflow
+        - model
+        - function
+        - unit
+      description: "What a node of a chat's graph stands for: data (a dataset, or a table a run made), a workflow, a model, a function (a custom operator) or a computing unit."
+    GraphRun:
+      type: object
+      required:
+        - uri
+        - phase
+        - steps
+        - reused
+      properties:
+        uri:
+          $ref: '#/components/schemas/Uri'
+        phase:
+          type: string
+        steps:
+          type: integer
+          format: int32
+          description: The operators its plan had.
+        reused:
+          type: integer
+          format: int32
+          description: Those that read an earlier run's rows instead of running.
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+      description: A run of a workflow, as its node in a chat's graph lists it.
     JsonPatchOperation:
       type: object
       required:
@@ -7289,6 +7427,22 @@ components:
     Pid:
       type: string
       description: Principal id, a UUID.
+    PlannedItem:
+      type: object
+      required:
+        - name
+        - turn
+      properties:
+        kind:
+          type: string
+        name:
+          type: string
+        detail:
+          type: string
+        turn:
+          type: string
+          description: The turn whose start_work said so.
+      description: Something a chat's plan said it would make that it has not made yet.
     PortSummary:
       type: object
       required:

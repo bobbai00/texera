@@ -99,6 +99,69 @@ model ChatVersion {
   made: boolean;
 }
 
+@doc("What a node of a chat's graph stands for: data (a dataset, or a table a run made), a workflow, a model, a function (a custom operator) or a computing unit.")
+enum GraphRole {
+  data,
+  workflow,
+  `model`,
+  `function`,
+  unit,
+}
+
+@doc("A run of a workflow, as its node in a chat's graph lists it.")
+model GraphRun {
+  uri: Uri;
+  phase: string;
+  @doc("The operators its plan had.")
+  steps: int32;
+  @doc("Those that read an earlier run's rows instead of running.")
+  reused: int32;
+  startedAt?: utcDateTime;
+  finishedAt?: utcDateTime;
+}
+
+@doc("A node of a chat's graph.")
+model GraphNode {
+  @doc("What the node opens: a resource's URI, or for a table a run made, its port's.")
+  uri: Uri;
+  role: GraphRole;
+  kind: ResourceKind;
+  name: string;
+  @doc("The version the chat worked from or made, the newest when there are several.")
+  version?: Vno;
+  @doc("The chat made it, or a version of it.")
+  made: boolean;
+  @doc("For a workflow, its last run's phase; for a unit, its phase.")
+  state?: string;
+  @doc("For a workflow, its runs in the chat, newest first.")
+  runs?: GraphRun[];
+  @doc("For a table a run made, its rows.")
+  rows?: int64;
+}
+
+@doc("An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on.")
+model GraphEdge {
+  from: Uri;
+  to: Uri;
+  relation: "reads" | "makes" | "uses" | "runsOn";
+}
+
+@doc("Something a chat's plan said it would make that it has not made yet.")
+model PlannedItem {
+  kind?: string;
+  name: string;
+  detail?: string;
+  @doc("The turn whose start_work said so.")
+  turn: string;
+}
+
+@doc("What a chat read, made and ran, and how they connect.")
+model ConversationGraph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  planned: PlannedItem[];
+}
+
 @doc("A resource as a chat knows it, with the versions that count.")
 model ChatResource {
   resource: Resource;
@@ -226,6 +289,12 @@ namespace Routes {
     @route("/{rid}/resources")
     @extension("x-texera-permission", "read")
     resources(@path rid: Rid): ChatResource[] | Error;
+
+    @doc("The resource graph beside the chat: what it read, made and ran, and how they connect, with what its plans said it would make and has not made yet.")
+    @get
+    @route("/{rid}/graph")
+    @extension("x-texera-permission", "read")
+    graph(@path rid: Rid): ConversationGraph | Error;
 
     @doc("What a turn of this chat runs with, for the caller.")
     @get

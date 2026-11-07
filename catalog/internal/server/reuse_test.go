@@ -30,11 +30,11 @@ func overnightSpec(file string) map[string]any {
 }
 
 // runOnUnit runs a workflow and returns the execution once the unit has it, with the request the unit got.
-func runOnUnit(t *testing.T, h *harness, who, workflow string, body map[string]any) (envelope, map[string]any) {
+func runOnUnit(t *testing.T, h *harness, who, workflow string, body map[string]any, headers ...string) (envelope, map[string]any) {
 	t.Helper()
 	before := len(h.unit.starts())
 	var exec envelope
-	h.mustJSON(who, "POST", p+"/workflows/"+workflow+"/run", body, &exec)
+	h.mustJSON(who, "POST", p+"/workflows/"+workflow+"/run", body, &exec, headers...)
 	deadline := time.Now().Add(10 * time.Second)
 	for len(h.unit.starts()) == before && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)

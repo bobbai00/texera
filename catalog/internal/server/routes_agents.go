@@ -136,6 +136,19 @@ func (s *Server) routeAgents() {
 		return nil
 	})
 
+	s.handle("GET "+conv+"/graph", func(w http.ResponseWriter, r *http.Request) error {
+		rid, err := ridParam(r, "rid")
+		if err != nil {
+			return err
+		}
+		graph, err := s.svc.ConversationGraph(ctxOf(r), callerOf(r), rid)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, graph)
+		return nil
+	})
+
 	cred := Prefix + "/credentials/{rid}"
 	s.handle("PUT "+cred+"/secret", func(w http.ResponseWriter, r *http.Request) error {
 		rid, err := ridParam(r, "rid")
