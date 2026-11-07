@@ -133,7 +133,7 @@ model RunWorkflow {
   waitSeconds?: int32;
   @doc("Run up to this operator: only the operators it reads from, directly or not, and itself. Its result is kept; the workflow does not change.")
   upTo?: string;
-  @doc("The execution's name, which no other execution of the workflow has. Without one the catalog names it by its start, `execution <UTC time>`, and numbers the name when two start within a second.")
+  @doc("The execution's name. Without one the catalog names it by its start, `execution <UTC time>`. A name is a label: another execution may have the same, and the rid tells them apart.")
   name?: string;
 }
 

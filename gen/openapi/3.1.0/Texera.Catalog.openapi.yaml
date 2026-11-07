@@ -7546,6 +7546,7 @@ components:
           $ref: '#/components/schemas/Uri'
         name:
           type: string
+          description: 'What people call it: a label, not an identity. Two resources of a kind in one place may have the same name; the rid and the URI tell them apart.'
         description:
           type: string
         parent:
@@ -7667,7 +7668,7 @@ components:
           description: 'Run up to this operator: only the operators it reads from, directly or not, and itself. Its result is kept; the workflow does not change.'
         name:
           type: string
-          description: The execution's name, which no other execution of the workflow has. Without one the catalog names it by its start, `execution <UTC time>`, and numbers the name when two start within a second.
+          description: "The execution's name. Without one the catalog names it by its start, `execution <UTC time>`. A name is a label: another execution may have the same, and the rid tells them apart."
     RuntimeSpec:
       type: object
       properties:

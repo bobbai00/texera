@@ -99,7 +99,7 @@ def main() -> None:
     print(f"   {me['principal']['displayName']}, home project {me['homeProject']}")
     bob_pid = bob.must("GET", "/me")["principal"]["pid"]
 
-    step("a project for the tour (names are unique per project and kind)")
+    step("a project for the tour (a name is a label; the rid is the identity)")
     stamp = time.strftime("%H%M%S")
     project = alice.must("POST", "/projects", {"name": f"tour {stamp}", "spec": {}})["metadata"]["rid"]
     show("POST", "/projects", '{"name": "tour", "spec": {}}')

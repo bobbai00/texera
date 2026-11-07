@@ -77,9 +77,14 @@ func TestResourcesVersionsAndGrants(t *testing.T) {
 	if wf.HeadVno != 1 || v1 == nil || v1.Vno != 1 || v1.Digest[:7] != "sha256:" {
 		t.Fatalf("first version: head %d, %+v", wf.HeadVno, v1)
 	}
-	// A second workflow with the same name in the same project is refused.
-	if _, _, err := st.CreateResource(ctx, store.NewResource{Kind: "workflow", Name: "Iris", ParentRID: &lab.RID, ProjectRID: &lab.RID, OwnerPID: alice.PID, CreatedByPID: alice.PID, Versioned: true, ContentKind: "spec", Content: spec}); !store.IsConflict(err) {
-		t.Fatalf("duplicate name: %v", err)
+	// A second workflow with the same name in the same project is made: a name is a label,
+	// and the rid tells the two apart.
+	twin, _, err := st.CreateResource(ctx, store.NewResource{Kind: "workflow", Name: "Iris", ParentRID: &lab.RID, ProjectRID: &lab.RID, OwnerPID: alice.PID, CreatedByPID: alice.PID, Spec: spec, Versioned: true, ContentKind: "spec", Content: spec})
+	if err != nil || twin.RID == wf.RID {
+		t.Fatalf("the same name twice: %v", err)
+	}
+	if err := st.DeleteResource(ctx, twin.RID); err != nil {
+		t.Fatal(err)
 	}
 
 	// A spec write makes version 2; the stale head is refused; the etag moves.

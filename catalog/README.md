@@ -50,7 +50,8 @@ go test -tags integration ./internal/adapters/...   # the port contract suites a
   every operation of the permission table is routed.
 - The catalog is a client of its peers and copies only immutable facts: no secret in Postgres,
   no authorization decision cached, a peer's storage never read directly.
-- Names are unique per project and kind; the rid is the identity and URIs carry rids.
+- A name is a label, not an identity: two resources of a kind in one place may share one.
+  The rid is the identity and URIs carry rids.
 - A watch is for someone who may read: the right is asked again on every beat of an open
   stream (15 seconds), so a grant taken back ends it.
 - The live service is a service like the runtime: only it reads and writes the document of a

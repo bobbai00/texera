@@ -95,8 +95,8 @@ a page), and so does what the agent makes in a chat of that project. The "New â€
 which project that is. With "All projects" there is no one project to make things in, so the
 dialog and the chat box ask which; beside a page the chat box proposes that page's project.
 A project you make is the one you work in from then on, and a project's page has "Work in
-this project". Names are unique per
-project and kind (a duplicate is refused with 409). Share a project and everything in it is
+this project". A name is a label, so two
+things in a project may have the same name; each has its own address. Share a project and everything in it is
 shared the same way; make it public and everyone can read what is in it. A project can name
 its own defaults: the agent, the model, the computing unit, the warehouse, and add-on tools
 for all its chats.

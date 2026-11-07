@@ -155,7 +155,8 @@ reaches the warehouse's files; a key scoped to the objects prefix closes that.
   Keycloak's discovery document names the public issuer, which Lakekeeper reaches through a
   `socat` forward in its own network namespace (`lakekeeper-net` in Compose, the `auth`
   sidecar in the pod).
-- **Names are unique per project and kind**; the catalog answers 409 on a duplicate.
+- **A name is a label**: two resources of a kind in one place may share one (since Nov 6);
+  the rid and the URI are the identity.
 - **The authorizer is a copy.** Grants reach OpenFGA through the outbox relay, one relay at a
   time and idempotently (`on_duplicate: ignore`); before Nov 5 two relays at the same moment
   could drop a new tuple that shared a request with one already there, leaving an owner

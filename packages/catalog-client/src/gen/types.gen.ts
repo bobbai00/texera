@@ -1760,6 +1760,9 @@ export type ResourceKind = 'project' | 'workflow' | 'execution' | 'dataset' | 'm
 export type ResourceMetadata = {
     rid: Rid;
     uri: Uri;
+    /**
+     * What people call it: a label, not an identity. Two resources of a kind in one place may have the same name; the rid and the URI tell them apart.
+     */
     name: string;
     description?: string;
     /**
@@ -1865,7 +1868,7 @@ export type RunWorkflow = {
      */
     upTo?: string;
     /**
-     * The execution's name, which no other execution of the workflow has. Without one the catalog names it by its start, `execution <UTC time>`, and numbers the name when two start within a second.
+     * The execution's name. Without one the catalog names it by its start, `execution <UTC time>`. A name is a label: another execution may have the same, and the rid tells them apart.
      */
     name?: string;
 };

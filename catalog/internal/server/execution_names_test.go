@@ -27,46 +27,63 @@ func runToItsEnd(t *testing.T, h *harness, workflow string, body map[string]any)
 }
 
 // A workflow is run again and again, the same version on the same unit. An execution nobody
-// named is named by the catalog, and the name is its own: two that start within one second
-// do not collide.
-func TestExecutionsNobodyNamedEachGetANameOfTheirOwn(t *testing.T) {
+// named is named by its start; two that start within one second share the name, and both are
+// made: the rid tells them apart.
+func TestAWorkflowIsRunAgainAndAgainEachExecutionNamedByItsStart(t *testing.T) {
 	h := newHarness(t)
 	execPath, first := anExecution(t, h)
 	finish(t, h, first, "completed")
 	workflow := strings.SplitN(execPath, "/executions/", 2)[0]
-	names := map[string]bool{first.Metadata.Name: true}
-	said := regexp.MustCompile(`^execution \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}( \(\d+\))?$`)
-	numbered := 0
+	said := regexp.MustCompile(`^execution \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`)
+	rids := map[string]bool{rid(first): true}
 	// Five more, faster than a second apart.
 	for i := 0; i < 5; i++ {
 		next := runToItsEnd(t, h, workflow, map[string]any{})
 		if !said.MatchString(next.Metadata.Name) {
 			t.Fatalf("its name: %q", next.Metadata.Name)
 		}
-		if names[next.Metadata.Name] {
-			t.Fatalf("the name %q was given twice", next.Metadata.Name)
+		if rids[rid(next)] {
+			t.Fatalf("the rid %s was given twice", rid(next))
 		}
-		names[next.Metadata.Name] = true
-		if strings.HasSuffix(next.Metadata.Name, ")") {
-			numbered++
-		}
-	}
-	// Six executions in less than five seconds: at least one shared its second with another.
-	if numbered == 0 {
-		t.Fatalf("none was numbered: %v", names)
+		rids[rid(next)] = true
 	}
 }
 
-// A name the caller chose is the caller's to keep free: when another execution of the
-// workflow has it, the refusal says so in words, not in the name of an index.
-func TestAnExecutionNamedLikeAnotherIsRefusedInWords(t *testing.T) {
+// A name is a label people read, not an identity: two workflows of one project, two
+// executions of one workflow, may have the same name, made so or renamed so; each keeps its
+// own rid and URI, and a list shows both.
+func TestNamesAreLabelsTwoResourcesInOnePlaceMayShareOne(t *testing.T) {
 	h := newHarness(t)
 	execPath, first := anExecution(t, h)
 	finish(t, h, first, "completed")
 	workflow := strings.SplitN(execPath, "/executions/", 2)[0]
-	runToItsEnd(t, h, workflow, map[string]any{"name": "nightly"})
-	wantError(t, h, "POST", workflow+"/run", map[string]any{"name": "nightly"}, http.StatusConflict, "name_taken", "another execution here already has this name")
-	// The same for anything made under a name: two workflows of one project.
-	h.create("alice", "workflows", "twice", map[string]any{"operators": []any{}, "links": []any{}})
-	wantError(t, h, "POST", p+"/workflows", map[string]any{"name": "twice", "spec": map[string]any{"operators": []any{}, "links": []any{}}}, http.StatusConflict, "name_taken", "another workflow here already has this name")
+	a := runToItsEnd(t, h, workflow, map[string]any{"name": "nightly"})
+	b := runToItsEnd(t, h, workflow, map[string]any{"name": "nightly"})
+	if rid(a) == rid(b) || a.Metadata.Name != "nightly" || b.Metadata.Name != "nightly" {
+		t.Fatalf("two executions named nightly: %s %q, %s %q", rid(a), a.Metadata.Name, rid(b), b.Metadata.Name)
+	}
+
+	empty := map[string]any{"operators": []any{}, "links": []any{}}
+	one := h.create("alice", "workflows", "twice", empty)
+	two := h.create("alice", "workflows", "twice", empty)
+	if rid(one) == rid(two) || one.Metadata.Uri == two.Metadata.Uri {
+		t.Fatalf("the two share an identity: %s %s", one.Metadata.Uri, two.Metadata.Uri)
+	}
+	third := h.create("alice", "workflows", "another", empty)
+	if status := h.json("alice", "PATCH", p+"/resources/"+rid(third), map[string]any{"name": "twice"}, nil); status != http.StatusOK {
+		t.Fatalf("renaming to a name another has: %d", status)
+	}
+	var listed struct {
+		Items []envelope `json:"items"`
+	}
+	h.mustJSON("alice", "GET", p+"/resources?kind=workflow&q=twice", nil, &listed)
+	n := 0
+	for _, w := range listed.Items {
+		if w.Metadata.Name == "twice" {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Fatalf("workflows named twice in the list: %d of %d", n, len(listed.Items))
+	}
 }

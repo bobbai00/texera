@@ -2,7 +2,7 @@
 // file into its staging area, commit a version.
 
 import type { Version } from "@texera/catalog-client/types";
-import { CatalogError, createResource } from "../api";
+import { createResource } from "../api";
 import type { ResourceRef } from "../types";
 import { fileApi } from "./api";
 
@@ -29,12 +29,8 @@ export async function createDatasetVersion(files: File[], options: UploadOptions
   if (!rid) {
     status("Creating the dataset");
     const name = options.name ?? defaultName(files);
-    const create = (n: string) => createResource("dataset", { name: n, description: options.description, parent: options.parent, spec: {} });
-    // Names are unique per project and kind; a second upload of the same file name gets its own dataset.
-    const dataset = await create(name).catch(e => {
-      if (e instanceof CatalogError && e.status === 409) return create(`${name} (${new Date().toLocaleTimeString("en", { hour12: false })})`);
-      throw e;
-    });
+    // A second upload of the same file name is a dataset of its own, of the same name: a name is a label.
+    const dataset = await createResource("dataset", { name, description: options.description, parent: options.parent, spec: {} });
     rid = dataset.metadata.rid;
   }
   for (const [i, file] of files.entries()) {

@@ -158,11 +158,11 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	// one takes a number.
 	name := in.Name
 	var exec *store.Resource
-	if name != "" {
-		exec, err = create(name)
-	} else {
-		name, exec, err = createNumbered("execution "+time.Now().UTC().Format("2006-01-02 15:04:05"), create)
+	if name == "" {
+		// Named by its start; a name is a label, so two started in the same second share it.
+		name = "execution " + time.Now().UTC().Format("2006-01-02 15:04:05")
 	}
+	exec, err = create(name)
 	if err != nil {
 		return nil, wrap(err, "execution")
 	}
@@ -227,24 +227,6 @@ func (s *Service) Run(ctx context.Context, caller *auth.Caller, workflowRID uuid
 	}
 	r, err := s.Store.GetResource(ctx, exec.RID)
 	return r, wrap(err, "execution")
-}
-
-// numberedNames is how many names are tried for something the catalog names itself.
-const numberedNames = 20
-
-// createNumbered makes something under a name the catalog chose, numbering the name while
-// another has it: "x", then "x (2)", "x (3)". It returns the name it was made under.
-func createNumbered(base string, create func(name string) (*store.Resource, error)) (string, *store.Resource, error) {
-	for n := 1; ; n++ {
-		name := base
-		if n > 1 {
-			name = fmt.Sprintf("%s (%d)", base, n)
-		}
-		r, err := create(name)
-		if !errors.Is(err, store.ErrNameTaken) || n == numberedNames {
-			return name, r, err
-		}
-	}
 }
 
 // drive installs the unit's packages and starts the execution; failures become its status.

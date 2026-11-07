@@ -44,11 +44,14 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    places. A place is where an operator's card sits while cards say their settings in one
    line; how much the cards say is each viewer's own choice and is not in the document, so a
    canvas whose cards say more draws its rows further apart without moving anything.
-6. **Compile result port keys.** `CompileResult.operatorOutputSchemas[op]` keyed by
-   `"<port>_false"` (the engine's serializer) or `"<port>"`; both are read.
-7. **Names.** Names are unique per project and kind (the catalog refuses a duplicate with
-   409), so the app names a new chat by its agent and start time, and a second upload of the
-   same file name gets its own dataset.
+6. **Compile result port keys.** `CompileResult.operatorOutputSchemas[op]` is keyed by the
+   port's id, `"output-<n>"`, as the unit answers; the engine's own `"<n>_false"` and `"<n>"`
+   are read too.
+7. **Names.** A name is a label, not an identity: two resources of a kind in one place may
+   have the same name (since Nov 6; until then a duplicate was refused with 409). The rid
+   and the URI tell them apart. The app names a new chat by its start time, an execution
+   nobody named is named by its start, and a second upload of the same file name is a
+   dataset of the same name.
 
 8. **Principals.** `search_principals` and the share form find people who have logged in
    and, through the Identity port's user search (Keycloak's admin API with the service

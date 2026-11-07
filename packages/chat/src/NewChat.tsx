@@ -6,7 +6,7 @@ import { FolderKanban } from "lucide-react";
 import { useState } from "react";
 import { ChatSettingsBar, PassedOver } from "./ChatSettingsBar";
 import { Composer } from "./Composer";
-import { chatName, createNamed } from "./naming";
+import { chatName } from "./naming";
 import { leaveFirstMessage } from "./pending";
 
 /**
@@ -38,7 +38,7 @@ export function NewChat({
   const start = useMutation({
     mutationFn: async (first: { text: string; files: File[] }) => {
       if (project === undefined) throw new Error("Choose the project this chat goes into first.");
-      const conversation = await createNamed(chatName(about, new Date()), name => createResource("conversation", { name, parent: project, spec: choices }));
+      const conversation = await createResource("conversation", { name: chatName(about, new Date()), parent: project, spec: choices });
       leaveFirstMessage(conversation.metadata.rid, first);
       return conversation.metadata.rid;
     },

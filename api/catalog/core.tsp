@@ -67,6 +67,7 @@ model Origin {
 model ResourceMetadata {
   rid: Rid;
   uri: Uri;
+  @doc("What people call it: a label, not an identity. Two resources of a kind in one place may have the same name; the rid and the URI tell them apart.")
   name: string;
   description?: string;
   @doc("The immediate parent: the project of a top-level resource, the workflow of an execution. Absent for a project.")
