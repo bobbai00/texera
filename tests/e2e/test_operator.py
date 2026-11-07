@@ -1,5 +1,5 @@
 """A custom operator: a Python function saved as a resource, used in a workflow by its URI and
-run, listed beside the built-ins; deleting it is refused while a workflow references it.
+run, listed beside the engine's operators; deleting it is refused while a workflow references it.
 Acceptance item 5."""
 import json
 

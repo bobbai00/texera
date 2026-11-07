@@ -37,9 +37,8 @@ def test_results_are_kept_per_execution(alice, project, iris, unit):
     assert alice.status("GET", f"{path}/operators/avg/ports/output-0/rows") == 404
 
 
-@pytest.mark.destructive
-def test_results_expire_under_the_policy(alice, admin, project, iris, unit, settings_guard):
-    """Expires every finished run on the stack: a dev stack only."""
+def test_results_expire_under_the_projects_limit(alice, admin, project, iris, unit):
+    """A project's limit expires its own finished runs, nobody else's; Texera's admins sweep."""
     wf = alice.create("workflows", "expiring", w.average_by_species(iris.file), project=project)
     rid = wf["metadata"]["rid"]
     run = w.run(alice, rid, "to expire", computingUnit=unit)
@@ -49,10 +48,10 @@ def test_results_expire_under_the_policy(alice, admin, project, iris, unit, sett
     assert kept["status"]["phase"] == "completed", w.error_text(kept)
     keid = kept["metadata"]["rid"]
     alice.call("PATCH", f"/resources/{keid}", {"labels": {"texera.keep": "true"}})
-    assert alice.status("POST", "/settings/retention/sweep") == 403, "a sweep is the administrator's"
-    admin.put("/settings", {"spec": {**settings_guard, "retention": {"results": "PT0S"}}})
+    assert alice.status("POST", "/retention/sweep") == 403, "a sweep is Texera's admins'"
+    alice.put(f"/projects/{project}", {"spec": {"limits": {"results": "PT0S"}}})
     time.sleep(1)
-    sweep = admin.post("/settings/retention/sweep")
+    sweep = admin.post("/retention/sweep")
     assert sweep["executionsExpired"] >= 1
     status = alice.get(f"/workflows/{rid}/executions/{eid}")["status"]
     assert status["phase"] == "completed" and status.get("resultsExpiredAt"), "the record stays, marked"

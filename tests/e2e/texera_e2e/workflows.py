@@ -26,7 +26,7 @@ def with_operator(file_uri: str, operator_type: str, properties: dict | None = N
     return {"operators": [scan(file_uri), op], "links": [link("scan", opid)]}
 
 
-# Each iris row's Id as an ordinal, by humanize: a package the platform's units lack.
+# Each iris row's Id as an ordinal, by humanize: a package the deployment's unit lacks.
 RANK = '''import humanize
 import pandas as pd
 

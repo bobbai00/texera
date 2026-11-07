@@ -92,6 +92,15 @@ class Api:
     def home(self) -> str:
         return self.me()["homeProject"]
 
+    def root(self) -> str:
+        """Texera: the project every project inherits from."""
+        return self.me()["rootProject"]
+
+    def settings(self, project: str) -> dict:
+        """What a project's work runs with: its settings with what it inherits filled in, each
+        value's source by its path."""
+        return self.get(f"/projects/{project}/settings")
+
     # --- resources ---
     def create(self, plural: str, name: str, spec: Any, *, project: str | None = None, **more) -> dict:
         body = {"name": name, "spec": spec, **more}

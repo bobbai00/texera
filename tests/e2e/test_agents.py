@@ -126,7 +126,7 @@ def test_the_agent_makes_a_unit_from_a_profile_and_keeps_results_where_asked(ali
     from a profile, runs a workflow on it, and keeps the results in the warehouse it is asked for."""
     name = my_iris["metadata"]["name"]
     lab = alice.create("warehouses", f"lab results {project[:8]}", {}, project=project)
-    profile = alice.get("/settings")["spec"]["defaults"]["profile"]
+    profile = alice.settings(alice.home())["defaults"]["profile"]
     profile_name = alice.get(profile.replace("texera://", "/"))["metadata"]["name"]
     crid = chat.conversation(alice, "a unit of its own", project)
     turn = chat.say(alice, crid, (

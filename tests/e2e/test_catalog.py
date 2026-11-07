@@ -12,23 +12,21 @@ from texera_e2e.client import uri_rid
 CSV = b"sepal_length,species\n5.1,setosa\n4.9,setosa\n"
 
 
-def test_me_and_the_public_settings(alice, anon):
+def test_me_and_what_the_app_reads_before_sign_in(alice, anon):
     me = alice.me()
-    assert me["principal"]["displayName"] and me["homeProject"] and me["systemProject"]
-    assert me["admin"] is False
-    public = anon.get("/settings/public")
+    assert me["principal"]["displayName"] and me["homeProject"] and me["rootProject"] and "admin" not in me
+    public = anon.get("/public")
     assert public["branding"]["name"] and public["auth"]["clientId"] == "texera-app"
 
 
 def test_the_seeds(alice):
-    # One agent is the entry to every chat: the platform ships it, and it is the default. What
-    # the platform ships is what lives in its project, which is public; nothing else marks it.
-    platform = alice.me()["systemProject"]
-    assert alice.get(f"/projects/{platform}")["metadata"]["name"] == "Built-in"
+    # One agent is the entry to every chat: the release ships it into Texera, and Texera names it
+    # the default, which every project inherits.
+    platform = alice.root()
+    assert alice.get(f"/projects/{platform}")["metadata"]["visibility"] == "public"
     agents = [t for t in alice.get("/agent-templates")["items"] if t["metadata"]["project"] == platform]
-    assert all("texera.builtin" not in t["metadata"].get("labels", {}) and t["metadata"]["visibility"] == "private" for t in agents)
     assert [t["metadata"]["name"] for t in agents] == ["Texera Agent"]
-    assert alice.get("/settings")["spec"]["defaults"]["agentTemplate"] == agents[0]["metadata"]["uri"]
+    assert alice.settings(alice.home())["defaults"]["agentTemplate"] == agents[0]["metadata"]["uri"]
     assert any(u["status"]["phase"] == "ready" for u in alice.get("/computing-units/available")), "a ready unit"
     # One MCP server is the platform's own, the catalog; whatever else it ships is an add-on.
     servers = {s["metadata"]["name"] for s in alice.get("/mcp-servers")["items"]}
@@ -40,7 +38,7 @@ def test_the_seeds(alice):
             break
         time.sleep(3)
     scan = [o for o in alice.get("/operators?q=CSVFileScan")["items"] if o["spec"]["operatorType"] == "CSVFileScan"]
-    # The engine's operators are built in like the rest: they live in the platform's project.
+    # The engine's operators live in Texera like the rest of what the release ships.
     assert scan and "propertiesSchema" in scan[0]["spec"] and scan[0]["metadata"]["project"] == platform
 
 
@@ -98,7 +96,8 @@ def test_conversation_turn_and_origin(alice, service, project):
     # and a turn pins the agent's version.
     assert conv["spec"] == {}
     settings = alice.get(f"/conversations/{crid}/settings")
-    assert settings["agent"]["from"] == "platform" and settings["modelEndpoint"]["from"] == "agent"
+    assert settings["agent"]["from"] == "project" and settings["agent"]["project"]["rid"] == alice.root(), "Texera's default"
+    assert settings["modelEndpoint"]["from"] == "agent"
     assert [(m["name"], m["platform"]) for m in settings["mcpServers"]] == [("catalog", True), ("biomcp", False)]
     assert settings == alice.get(f"/projects/{project}/chat-settings"), "a chat not started yet runs with the same"
     turn = alice.post(f"/conversations/{crid}/turns", {})
@@ -127,7 +126,11 @@ def test_the_mcp_server(alice, anon, project):
         "search_principals", "whoami", "list_dataset_files", "read_dataset_file", "commit_dataset_version",
         "list_operators", "list_computing_units", "create_computing_unit", "save_unit_as_profile",
         "create_workflow", "get_workflow", "edit_workflow", "validate_workflow", "run_workflow",
-        "get_execution", "pause_execution", "resume_execution", "get_port_result"}
+        "get_execution", "pause_execution", "resume_execution", "get_port_result", "project_settings"}
+    # What a project's work runs with, and where each value comes from.
+    _, runs_with = alice.mcp("tools/call", {"name": "project_settings", "arguments": {"rid": project}})
+    settings = runs_with["result"]["structuredContent"]
+    assert settings["chain"][-1]["rid"] == alice.root() and settings["from"]["defaults.agentTemplate"] == alice.root(), settings
     # There is no second server: the address the dataflow server had answers nothing.
     gone = urllib.request.Request(f"{alice.gw}/mcp/dataflow", method="POST", data=b"{}", headers={"Authorization": f"Bearer {alice.token}"})
     with pytest.raises(urllib.error.HTTPError) as refused:

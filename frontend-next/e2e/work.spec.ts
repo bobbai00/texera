@@ -28,7 +28,7 @@ test("in manual mode the agent says its plan, and each change waits for an appro
   const asAlice = await api(request);
   const iris = await withIris(asAlice, "manual work e2e");
   // Every chat of this project asks before each change.
-  await asAlice("PUT", `/projects/${iris.project}`, { spec: { defaultWorkMode: "manual" } });
+  await asAlice("PUT", `/projects/${iris.project}`, { spec: { defaults: { workMode: "manual" } } });
   let conversation: string | undefined;
   cleanups.push(() => iris.clear(conversation));
 

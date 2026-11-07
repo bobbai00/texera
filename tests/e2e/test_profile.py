@@ -29,9 +29,9 @@ def test_a_unit_made_from_a_profile_has_its_packages(alice, project, iris, unit)
     wrid = wf["metadata"]["rid"]
     assert alice.post(f"/workflows/{wrid}/validate", {})["ok"]
 
-    # The platform's unit has no humanize. The engine names the missing module when its Python
+    # The deployment's unit has no humanize. The engine names the missing module when its Python
     # is 3.11 or newer; the cluster image's 3.10 cannot (`add_note`): a bare ModuleNotFoundError.
-    plain = w.run(alice, wrid, "on the platform's unit", computingUnit=unit)
+    plain = w.run(alice, wrid, "on the deployment's unit", computingUnit=unit)
     assert plain["status"]["phase"] == "failed" and w.missing_module(plain, "humanize")
 
     run = w.run(alice, wrid, "on the humanize unit", wait=600, computingUnit=uri)

@@ -239,15 +239,15 @@ export async function aPageOfEveryKind(as: Caller): Promise<{ pages: PageOf[]; p
     await as.attempt("DELETE", `/projects/${P}`);
   });
 
-  // What the platform ships, for the kinds a person does not make in a moment.
-  const platform = (await as("GET", "/me")).systemProject as string;
-  const builtIn: Envelope[] = [];
+  // What Texera holds, which every project inherits, for the kinds a person does not make in a moment.
+  const texera = (await as("GET", "/me")).rootProject as string;
+  const inherited: Envelope[] = [];
   for (const plural of ["operators", "computing-units", "mcp-servers", "agent-templates"]) {
-    const { items } = (await as("GET", `/${plural}?scope=${platform}&limit=5`)) as { items: Envelope[] };
-    expect(items.length, `a built-in of ${plural}`).toBeGreaterThan(0);
-    builtIn.push(items[0] as Envelope);
+    const { items } = (await as("GET", `/${plural}?project=${texera}&limit=5`)) as { items: Envelope[] };
+    expect(items.length, `Texera's ${plural}`).toBeGreaterThan(0);
+    inherited.push(items[0] as Envelope);
   }
 
   const pageOf = (r: Envelope, mine: boolean): PageOf => ({ kind: r.kind, path: `/${r.metadata.uri.replace("texera://", "")}`, uri: r.metadata.uri, name: r.metadata.name, mine });
-  return { project: P, pages: [pageOf(project, true), ...made.map(r => pageOf(r, true)), pageOf(execution, true), ...builtIn.map(r => pageOf(r, false))] };
+  return { project: P, pages: [pageOf(project, true), ...made.map(r => pageOf(r, true)), pageOf(execution, true), ...inherited.map(r => pageOf(r, false))] };
 }

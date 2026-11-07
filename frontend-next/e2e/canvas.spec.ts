@@ -500,7 +500,7 @@ test("the bar says where a run goes, and it goes there: on a unit made from a pr
     for (const x of executions.items as Envelope[]) await alice.attempt("DELETE", `/workflows/${rid}/executions/${x.metadata.rid}`);
     await alice.attempt("DELETE", `/resources/${lab.metadata.rid}`);
   });
-  const defaults = (await alice("GET", "/settings")).spec.defaults;
+  const defaults = (await alice("GET", `/projects/${(await alice("GET", "/me")).rootProject}/settings`)).defaults;
   const profile = await alice("GET", defaults.profile.replace("texera://", "/"));
   const platform = await alice("GET", defaults.warehouse.replace("texera://", "/"));
   await signIn(page);
@@ -536,7 +536,7 @@ test("the bar says where a run goes, and it goes there: on a unit made from a pr
 // bar is for this page's runs and is not remembered past it.
 test("the bar proposes the workflow's own unit, else the platform's, and a pick is the page's alone", async ({ page, request }) => {
   const alice = await api(request);
-  const defaults = (await alice("GET", "/settings")).spec.defaults;
+  const defaults = (await alice("GET", `/projects/${(await alice("GET", "/me")).rootProject}/settings`)).defaults;
   const platform: Envelope & { spec: { endpoint?: string; clientId?: string } } = await alice("GET", defaults.computingUnit.replace("texera://", "/"));
   const { endpoint, clientId } = platform.spec;
   const stamp = Date.now();

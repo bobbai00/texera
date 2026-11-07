@@ -112,18 +112,18 @@ test("a turn that fails says why, and the chat keeps saying it", async ({ page, 
   await page.screenshot({ path: "test-results/failed-turn.png", fullPage: true });
 });
 
-// The agent every chat runs is on show: what it is made of, and that it is the platform's.
-test("the agent every chat runs is on show and is nobody's to change", async ({ page }) => {
+// The agent every chat runs is on show: what it is made of, and that it is Texera's, which every
+// project inherits and only Texera's admins change.
+test("the agent every chat runs is on show and is not alice's to change", async ({ page }) => {
   await signIn(page);
   await page.locator('[data-library-link="agent-template"]').click();
   await expect(page.locator('[data-library="agent-template"]').getByRole("heading", { name: "Agents" })).toBeVisible();
-  // The platform ships it: there is none to make here.
+  // Texera holds it: there is none to make here.
   await expect(page.locator('[data-new="agent-template"]')).toHaveCount(0);
   const row = page.locator('[data-resource-row="agent-template"]').filter({ hasText: AGENT });
-  await expect(row.locator("[data-built-in]")).toBeVisible();
+  await expect(row.locator("[data-inherited-from]")).toHaveText("from Texera");
   await row.getByRole("button", { name: AGENT }).click();
   const view = page.locator('[data-resource-view="agent-template"]');
-  await expect(view).toContainText("built-in");
   // Its prompt, its model, its skills and its servers are there to read, and not to edit.
   await expect(view.locator('[data-field="prompt"]')).toHaveValue(/You are the Texera Agent/);
   await expect(view.locator('[data-field="prompt"]')).toBeDisabled();
@@ -132,12 +132,13 @@ test("the agent every chat runs is on show and is nobody's to change", async ({ 
   await expect(view.locator("[data-save-template]")).toHaveCount(0);
   await expect(view.getByLabel(/^Delete/)).toHaveCount(0);
   await view.getByRole("tab", { name: "Access" }).click();
-  await expect(view.locator('[data-access="built-in"]')).toContainText("everyone can view and use it");
+  await expect(view.locator('[data-visibility="through-project"]')).toContainText("everyone can read it: Texera is public");
+  await expect(view.locator("[data-access]")).toContainText("Only someone who may share this resource");
   await page.screenshot({ path: "test-results/agent.png", fullPage: true });
 });
 
-// A project is where a person works: the lists show it and what it inherits, the built-ins, and
-// what is made goes into it. The pick is the person's and follows them.
+// A project is where a person works: the lists show it and what it inherits, Texera's things among
+// it, each saying where it comes from, and what is made goes into it. The pick is the person's and follows them.
 test("the project a person works in scopes what they see and where things go", async ({ page, request }) => {
   const call = await api(request);
   const stamp = Date.now();
@@ -155,17 +156,18 @@ test("the project a person works in scopes what they see and where things go", a
   const rows = page.locator('[data-resource-row="skill"]');
   const row = (name: string) => rows.filter({ hasText: name });
 
-  // Personal until another is picked: the person's own and the built-ins, not the lab's.
+  // Personal until another is picked: the person's own and what it inherits, not the lab's.
   await expect(page.getByLabel("Project", { exact: true })).toHaveText("Personal");
   await page.locator('[data-library-link="skill"]').click();
   await expect(row(`home skill ${stamp}`)).toBeVisible();
-  await expect(row("texera-workflows").locator("[data-built-in]")).toBeVisible();
+  await expect(row("texera-workflows").locator("[data-inherited-from]")).toHaveText("from Texera");
+  await expect(row(`home skill ${stamp}`).locator("[data-inherited-from]")).toHaveCount(0);
   await expect(row(`lab skill ${stamp}`)).toHaveCount(0);
 
-  // In the lab: the lab's and the built-ins.
+  // In the lab: the lab's and what it inherits.
   await workIn(page, `lab ${stamp}`);
   await expect(row(`lab skill ${stamp}`)).toBeVisible();
-  await expect(row("texera-workflows").locator("[data-built-in]")).toBeVisible();
+  await expect(row("texera-workflows").locator("[data-inherited-from]")).toHaveText("from Texera");
   await expect(row(`home skill ${stamp}`)).toHaveCount(0);
 
   // What is made goes into the lab.
@@ -187,6 +189,48 @@ test("the project a person works in scopes what they see and where things go", a
   await page.locator('[data-library-link="skill"]').click();
   await expect(row(`lab skill ${stamp}`)).toBeVisible();
   await expect(row(`home skill ${stamp}`)).toBeVisible();
+});
+
+// A project inherits from another, up to Texera: its page says from which, what its work runs
+// with and where each value comes from; its admins choose another base, and give it a look the app
+// wears inside it.
+test("a project's page says what it inherits and runs with, and its admins change it", async ({ page, request }) => {
+  const call = await api(request);
+  const stamp = Date.now();
+  const lab = await call("POST", "/projects", { name: `lab ${stamp}`, spec: { defaults: { workMode: "manual" } } });
+  const study = await call("POST", "/projects", { name: `study ${stamp}`, base: lab.metadata.rid, spec: { branding: { name: `Study look ${stamp}` } } });
+  cleanups.push(async () => {
+    await workAtHome(call);
+    await call.attempt("DELETE", `/projects/${study.metadata.rid}`);
+    await call.attempt("DELETE", `/projects/${lab.metadata.rid}`);
+  });
+  const texera = (await call("GET", "/me")).rootProject as string;
+  await signIn(page);
+  await page.goto(`/projects/${study.metadata.rid}`);
+  const view = page.locator('[data-resource-view="project"]');
+  await view.getByRole("tab", { name: "Settings" }).click();
+  const settings = view.locator("[data-project-settings]");
+  await expect(settings.locator(`[data-inherits="${lab.metadata.rid}"]`)).toBeVisible();
+  const mode = settings.locator('[data-setting="defaults.workMode"]');
+  await expect(mode).toContainText("manual");
+  await expect(mode.locator("[data-setting-from]")).toHaveText(`from lab ${stamp}`);
+  await expect(settings.locator('[data-setting="defaults.agentTemplate"] [data-setting-from]')).toHaveText("from Texera");
+  await expect(settings.locator('[data-setting="branding.name"] [data-setting-from]')).toHaveText("set here");
+  await page.screenshot({ path: "test-results/project-settings.png", fullPage: true });
+
+  // Its admin sends it back to Texera: the lab's work mode no longer holds.
+  await settings.locator("[data-base-select]").selectOption(texera);
+  await expect(settings.locator(`[data-inherits="${texera}"]`)).toBeVisible();
+  await expect(mode).toContainText("auto");
+  expect((await call("GET", `/projects/${study.metadata.rid}`)).metadata.base).toBe(texera);
+
+  // Its people: alice, who made it, is its admin.
+  await view.getByRole("tab", { name: "People" }).click();
+  await expect(view.locator('[data-grant="owner"]')).toContainText("admin");
+
+  // Working in it, the app wears its look.
+  await page.locator("[data-work-here]").click();
+  await expect(page.locator("[data-look]")).toHaveAttribute("data-look", `Study look ${stamp}`);
 });
 
 test("a project made in the app is worked in at once, and what is made then goes into it", async ({ page, request }) => {
@@ -458,14 +502,15 @@ test("creates a custom operator from its page and finds it in a workflow's palet
 test("a computing unit is made from a profile, with the size asked for, and says how it differs", async ({ page, request }) => {
   const call = await api(request);
   const name = `sized unit ${Date.now()}`;
-  const profile: string = (await call("GET", "/settings")).spec.defaults.profile;
+  const me = await call("GET", "/me");
+  const profile: string = (await call("GET", `/projects/${me.homeProject}/settings`)).defaults.profile;
   const made = await call("GET", profile.replace("texera://", "/"));
   await signIn(page);
   await page.locator('[data-library-link="computing-unit"]').click();
   await page.locator('[data-new="computing-unit"]').click();
   const dialog = page.locator('[data-new-resource="computing-unit"]');
   await dialog.locator("input").first().fill(name);
-  // The dialog proposes the platform's profile and its size; the person asks for more.
+  // The dialog proposes the profile the project inherits from Texera, and its size; the person asks for more.
   await expect(dialog.locator('[data-field="profile"]')).toHaveValue(profile);
   await expect(dialog.locator('[data-field="memory"]')).toHaveValue(made.spec.memory);
   await expect(dialog.locator('[data-field="cpu"]')).toHaveValue("");
@@ -500,9 +545,9 @@ test("a computing unit is made from a profile, with the size asked for, and says
   await page.screenshot({ path: "test-results/unit-made-of.png", fullPage: true });
 });
 
-test("the platform's unit is saved as a profile of one's own, which units can be made from", async ({ page, request }) => {
+test("the deployment's unit is saved as a profile of one's own, which units can be made from", async ({ page, request }) => {
   const call = await api(request);
-  const settings = (await call("GET", "/settings")).spec.defaults;
+  const settings = (await call("GET", `/projects/${(await call("GET", "/me")).rootProject}/settings`)).defaults;
   const unit = await call("GET", settings.computingUnit.replace("texera://", "/"));
   const profile = await call("GET", settings.profile.replace("texera://", "/"));
   const home: string = (await call("GET", "/me")).homeProject;
@@ -558,14 +603,14 @@ test("a project keeps its results in a warehouse made for it, and an execution s
   await signIn(page);
   await workIn(page, lab.name);
 
-  // The platform's warehouse is on show, built in; a project makes its own from the same page.
+  // The deployment's warehouse is on show, inherited from Texera; a project makes its own from the same page.
   await page.locator('[data-library-link="warehouse"]').click();
   await expect(page.locator('[data-library="warehouse"]').getByRole("heading", { name: "Warehouses" })).toBeVisible();
-  await expect(page.locator('[data-resource-row="warehouse"]').filter({ hasText: "texera" }).locator("[data-built-in]")).toBeVisible();
+  await expect(page.locator('[data-resource-row="warehouse"]').filter({ hasText: "texera" }).locator("[data-inherited-from]")).toHaveText("from Texera");
   await page.locator('[data-new="warehouse"]').click();
   const dialog = page.locator('[data-new-resource="warehouse"]');
   await dialog.locator("input").first().fill(`lab results ${stamp}`);
-  // The dialog proposes the platform's store; a store of one's own is asked for its place.
+  // The dialog proposes the deployment's store; a store of one's own is asked for its place.
   await expect(dialog.locator('[data-field="where"]')).toHaveValue("platform");
   await dialog.locator('[data-field="where"]').selectOption("own");
   await expect(dialog.locator('[data-field="endpoint"]')).toBeVisible();
@@ -583,11 +628,11 @@ test("a project keeps its results in a warehouse made for it, and an execution s
 
   // Its page says where it keeps its tables; one click makes it where the project keeps its results.
   const view = page.locator('[data-resource-view="warehouse"]');
-  await expect(view.locator("[data-warehouse-place]")).toContainText("The platform's own");
+  await expect(view.locator("[data-warehouse-place]")).toContainText("The deployment's own");
   await expect(view.locator("[data-warehouse-place]")).toContainText(warehouse.status.name);
   await view.locator('[data-warehouse-use="start"]').click();
   await expect(view.locator('[data-warehouse-default="project"]')).toContainText(`${lab.name} keeps its results here`);
-  expect((await call("GET", `/projects/${lab.project}`)).spec.defaultWarehouse).toBe(warehouse.metadata.uri);
+  expect((await call("GET", `/projects/${lab.project}`)).spec.defaults.warehouse).toBe(warehouse.metadata.uri);
 
   // An execution in the project keeps its results there: its page names the warehouse and shows the rows.
   const wf = await call("POST", "/workflows", {
@@ -765,7 +810,7 @@ test("the agent answers from a workflow it built, in the chat's project and on t
   const asBob = await api(request, "bob", "bob");
   const iris = await withIris(asBob, "core loop e2e");
   // A second unit at the deployment's engine, so the execution's unit tells where the agent sent it.
-  const platform = (await asBob("GET", "/me")).systemProject as string;
+  const platform = (await asBob("GET", "/me")).rootProject as string;
   const units: Array<{ metadata: { uri: string }; spec: { provider: string; endpoint?: string; clientId?: string } }> = await asBob("GET", `/computing-units/available?scope=${platform}`);
   const base = units.find(u => u.spec.provider === "static");
   expect(base, "the deployment's own unit").toBeDefined();

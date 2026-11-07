@@ -1,8 +1,8 @@
 """An execution runs on a computing unit and keeps its results in a warehouse. A warehouse is a
-resource like a unit: the platform's is built in, a project can have its own (on the platform's
-store, or on a store of its own that the lake has tried), the one an execution uses is chosen
-the same way, using one is a permission of its own, and one goes only when nothing keeps
-results in it."""
+resource like a unit: Texera holds the deployment's, a project can have its own (on the
+deployment's store, or on a store Texera's admins allow and the lake has tried), the one an
+execution uses is chosen the same way, along the project's chain, using one is a permission of
+its own, and one goes only when nothing keeps results in it."""
 import os
 
 import pytest
@@ -17,26 +17,28 @@ def lake_name(api: Api, warehouse: dict) -> str:
 
 
 def platform_warehouse(api: Api) -> dict:
-    uri = api.get("/settings")["spec"]["defaults"]["warehouse"]
+    """The deployment's warehouse: Texera's default, which every project inherits."""
+    uri = api.settings(api.root())["defaults"]["warehouse"]
     return api.get(f"/warehouses/{uri.rsplit('/', 1)[-1]}")
 
 
 def test_an_execution_keeps_its_results_in_a_warehouse_chosen_like_a_unit(alice, project, iris, unit):
     platform = platform_warehouse(alice)
-    assert platform["metadata"]["project"] == alice.me()["systemProject"], "the platform's warehouse is built in"
-    assert alice.status("DELETE", f"/warehouses/{platform['metadata']['rid']}") == 409
+    assert platform["metadata"]["project"] == alice.root(), "the deployment's warehouse is Texera's"
+    assert alice.status("DELETE", f"/warehouses/{platform['metadata']['rid']}") == 403, "Texera's admins'"
+    assert alice.settings(project)["from"]["defaults.warehouse"] == alice.root(), "the project inherits it"
     wf = alice.create("workflows", "petal lengths", w.average_by_species(iris.file), project=project)["metadata"]["rid"]
 
-    # Nothing names another: the platform's.
-    first = w.run(alice, wf, "to the platform's", computingUnit=unit)
+    # Nothing names another: the one the project inherits from Texera.
+    first = w.run(alice, wf, "to Texera's", computingUnit=unit)
     assert first["status"]["phase"] == "completed", w.error_text(first)
     assert first["spec"]["warehouse"] == platform["metadata"]["uri"]
 
-    # A warehouse of the project's own, with no store of its own: a place on the platform's store.
+    # A warehouse of the project's own, with no store of its own: a place on the deployment's store.
     own = alice.create("warehouses", "lab results", {}, project=project)
     name = lake_name(alice, own)
     assert name == "w_" + own["metadata"]["rid"].replace("-", "") and own["spec"] == {}
-    alice.put(f"/projects/{project}", {"spec": {"defaultWarehouse": own["metadata"]["uri"]}})
+    alice.put(f"/projects/{project}", {"spec": {"defaults": {"warehouse": own["metadata"]["uri"]}}})
     second = w.run(alice, wf, "to the lab's", computingUnit=unit)
     assert second["status"]["phase"] == "completed", w.error_text(second)
     assert second["spec"]["warehouse"] == own["metadata"]["uri"]
@@ -46,7 +48,7 @@ def test_an_execution_keeps_its_results_in_a_warehouse_chosen_like_a_unit(alice,
     assert len(w.rows(alice, wf, first["metadata"]["rid"])["rows"]) == 3, "the earlier execution is read from its own"
 
     # The request's choice wins over the project's; what it names must be a warehouse.
-    third = w.run(alice, wf, "back to the platform's", computingUnit=unit, warehouse=platform["metadata"]["uri"])
+    third = w.run(alice, wf, "back to Texera's", computingUnit=unit, warehouse=platform["metadata"]["uri"])
     assert third["spec"]["warehouse"] == platform["metadata"]["uri"]
     assert alice.status("POST", f"/workflows/{wf}/run", {"warehouse": unit}) == 400
 
@@ -54,7 +56,7 @@ def test_an_execution_keeps_its_results_in_a_warehouse_chosen_like_a_unit(alice,
 @pytest.mark.cluster
 def test_the_lake_holds_an_execution_in_its_own_warehouse(alice, service, project, iris, unit):
     """Asked inside the cluster, the lake lists the execution's namespace in the warehouse it
-    names, and not in the platform's."""
+    names, and not in the deployment's."""
     wf = alice.create("workflows", "petal lengths", w.average_by_species(iris.file), project=project)["metadata"]["rid"]
     own = alice.create("warehouses", "lab results", {}, project=project)
     run = w.run(alice, wf, "to the lab's", computingUnit=unit, warehouse=own["metadata"]["uri"])
@@ -70,7 +72,7 @@ def test_using_a_warehouse_is_a_permission_of_its_own(alice, bob, project, iris,
     wf = alice.create("workflows", "petal lengths", w.average_by_species(iris.file), project=project)["metadata"]["rid"]
     own = alice.create("warehouses", "lab results", {}, project=project)
     grants_guard(project, bob.pid(), "viewer")
-    # A viewer runs the project's workflow into the platform's warehouse, which is everyone's.
+    # A viewer runs the project's workflow into the warehouse it inherits from Texera, which is everyone's.
     run = w.run(bob, wf, "bob's", computingUnit=unit)
     assert run["status"]["phase"] == "completed", w.error_text(run)
     # The project's own is not his to fill, until he is given the use of it.
@@ -80,7 +82,7 @@ def test_using_a_warehouse_is_a_permission_of_its_own(alice, bob, project, iris,
     assert run["status"]["phase"] == "completed" and run["spec"]["warehouse"] == own["metadata"]["uri"], w.error_text(run)
 
 
-def test_a_warehouse_on_a_store_of_its_own(alice, admin, project, iris, unit, settings_guard, request):
+def test_a_warehouse_on_a_store_of_its_own(alice, admin, project, iris, unit, texera_guard, request):
     """A store the owner names: the deployment's own here, in a place of the test's, with the
     key in a credential. The lake tries it before it takes it."""
     # The deployment's store as the lake and the units reach it; a warehouse may always be on it.
@@ -95,9 +97,13 @@ def test_a_warehouse_on_a_store_of_its_own(alice, admin, project, iris, unit, se
     def make(storage: dict, name: str = "ours") -> tuple[int, dict]:
         return alice.call("POST", "/warehouses", {"name": name, "parent": project, "spec": {"storage": storage}})
 
-    # An address nobody listed: the lake and the units would connect to it.
+    # An address nobody listed: the lake and the units would connect to it. The project's own
+    # list does not open it either: it narrows what Texera allows, which is nothing.
     status, body = make({**place, "endpoint": "http://somewhere.example:9000", "credential": key["metadata"]["uri"]})
-    assert status == 400 and "administrator" in body["message"], body
+    assert status == 400 and "limits" in body["message"], body
+    alice.put(f"/projects/{project}", {"spec": {"limits": {"warehouseEndpoints": ["http://somewhere.example:9000"]}}})
+    status, body = make({**place, "endpoint": "http://somewhere.example:9000", "credential": key["metadata"]["uri"]})
+    assert status == 400 and "limits" in body["message"], body
     # A key the store does not take: the lake's own refusal, and nothing is made.
     status, body = make({**place, "credential": wrong["metadata"]["uri"]})
     assert status == 400 and body["details"]["field"] == "/storage", body
@@ -115,9 +121,10 @@ def test_a_warehouse_on_a_store_of_its_own(alice, admin, project, iris, unit, se
     moved = {"spec": {"storage": {**place, "bucket": "elsewhere", "credential": key["metadata"]["uri"]}}}
     assert alice.status("PUT", f"/warehouses/{own['metadata']['rid']}", moved) == 400
     assert alice.status("DELETE", f"/credentials/{key['metadata']['rid']}") == 409
-    admin.put("/settings", {"spec": {**settings_guard, "warehouseEndpoints": ["http://somewhere.example:9000"]}})
+    root, texeras = texera_guard
+    admin.put(f"/projects/{root}", {"spec": {**texeras, "limits": {"warehouseEndpoints": ["http://somewhere.example:9000"]}}})
     status, body = make({**place, "endpoint": "http://somewhere.example:9000", "credential": key["metadata"]["uri"]}, "listed")
-    assert status == 400 and "administrator" not in body["message"], "listed, the address is the lake's to try"
+    assert status == 400 and "limits" not in body["message"], "listed by Texera and the project, the address is the lake's to try"
 
 
 def test_a_warehouse_goes_only_when_nothing_keeps_results_in_it(alice, project, iris, unit):
@@ -130,7 +137,7 @@ def test_a_warehouse_goes_only_when_nothing_keeps_results_in_it(alice, project, 
     status, body = alice.call("DELETE", f"/warehouses/{rid}")
     assert status == 409 and body["code"] == "in_use", body
     # Named as the project's default it is referenced; with the execution gone and nothing naming it, it goes.
-    alice.put(f"/projects/{project}", {"spec": {"defaultWarehouse": own["metadata"]["uri"]}})
+    alice.put(f"/projects/{project}", {"spec": {"defaults": {"warehouse": own["metadata"]["uri"]}}})
     alice.delete(f"/workflows/{wf}/executions/{run['metadata']['rid']}")
     status, body = alice.call("DELETE", f"/warehouses/{rid}")
     assert status == 409 and body["code"] == "referenced", body

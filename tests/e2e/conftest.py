@@ -163,11 +163,11 @@ def iris(alice, project) -> Iris:
 
 @pytest.fixture(scope="session")
 def unit(alice) -> str:
-    """The URI of a ready unit everyone may run on: one of the platform's own, whatever units
-    of their own the people of a long-lived stack have made."""
-    platform = alice.me()["systemProject"]
+    """The URI of a ready unit everyone may run on: one of Texera's, whatever units of their own
+    the people of a long-lived stack have made."""
+    texera = alice.root()
     for _ in range(60):
-        ready = [u for u in alice.get(f"/computing-units/available?scope={platform}") if u["status"]["phase"] == "ready"]
+        ready = [u for u in alice.get(f"/computing-units/available?scope={texera}") if u["status"]["phase"] == "ready" and u["metadata"]["project"] == texera]
         if ready:
             return ready[0]["metadata"]["uri"]
         time.sleep(5)
@@ -175,11 +175,13 @@ def unit(alice) -> str:
 
 
 @pytest.fixture
-def settings_guard(admin):
-    """Puts the platform settings back as they were."""
-    before = admin.get("/settings")["spec"]
-    yield before
-    admin.put("/settings", {"spec": before})
+def texera_guard(admin):
+    """Puts Texera's settings back as they were: what every project inherits. Yields Texera's
+    rid and its spec."""
+    root = admin.root()
+    before = admin.get(f"/projects/{root}")["spec"]
+    yield root, before
+    admin.put(f"/projects/{root}", {"spec": before})
 
 
 @pytest.fixture

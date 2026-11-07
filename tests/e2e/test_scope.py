@@ -1,5 +1,5 @@
-"""A project is the scope of what a person sees: its own resources and what it inherits, the
-platform's built-ins. A call made in a chat is scoped to the chat's project when it names no
+"""A project is the scope of what a person sees: its own resources and what it inherits from the
+projects up its chain, to Texera. A call made in a chat is scoped to the chat's project when it names no
 scope, and what it makes goes into that project: an agent works where the chat is."""
 import json
 
@@ -28,7 +28,7 @@ def test_a_scope_is_a_project_and_what_it_inherits(alice, bob, project, run_id):
             assert {there, SHIPPED} <= scoped and here not in scoped, path
         # An exact project inherits nothing; projects themselves are never narrowed.
         assert _names(alice, f"/skills?project={project}") == {here}
-        assert "Built-in" in _names(alice, f"/projects?limit=200&scope={project}")
+        assert alice.get(f"/projects/{alice.root()}")["metadata"]["name"] in _names(alice, f"/projects?limit=200&scope={project}")
         # A scope names a project, and shows someone else only what they may read of it.
         assert alice.status("GET", f"/skills?scope={at_home}") == 400
         theirs = _names(bob, f"/skills?limit=200&scope={project}")
@@ -46,7 +46,7 @@ def test_a_call_in_a_chat_works_in_the_chats_project(alice, project, service, ru
     turn, in_chat = chat.in_turn(alice, crid, service)
     made = None
     try:
-        # What an agent's search sees: the chat's project and the built-ins.
+        # What an agent's search sees: the chat's project and what it inherits, Texera's skills among it.
         failed, text = chat.tool(alice, "search_resources", headers=in_chat, kind="skill", limit=200)
         found = {r["metadata"]["name"] for r in json.loads(text)["items"]}
         assert not failed and {here, SHIPPED} <= found and there not in found
