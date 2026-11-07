@@ -48,6 +48,7 @@ import org.apache.texera.amber.operator.builtin.{
   ProjectOp,
   ScanOp,
   SortOp,
+  StoredOp,
   UnionOp
 }
 import org.apache.texera.amber.operator.cartesianProduct.CartesianProductOpDesc
@@ -222,6 +223,7 @@ trait StateTransferFunc
     new Type(value = classOf[JoinOp], name = "join"),
     new Type(value = classOf[FunctionOp], name = "function"),
     new Type(value = classOf[PredictOp], name = "predict"),
+    new Type(value = classOf[StoredOp], name = "stored"),
     new Type(value = classOf[UnionOp], name = "union"),
     new Type(value = classOf[DistinctOp], name = "distinct"),
     new Type(value = classOf[SortOp], name = "sort"),
