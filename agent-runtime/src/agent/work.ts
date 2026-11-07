@@ -121,12 +121,18 @@ export function describeChange(toolName: string, input: unknown): string {
     case "create_workflow":
       return name ? `Create the workflow "${name}"` : "Create a workflow";
     case "edit_workflow": {
-      // The lines' statements, as the card names them: "set night, delete old".
+      // The lines' statements, as the card names them: "set night, delete old"; and where it runs.
       const said = [...(text(a.lines) ?? "").matchAll(/^\s*(set|delete)\s+([A-Za-z0-9-]+)/gm)].map(
         (m) => `${m[1]} ${m[2]}`,
       );
-      if (said.length === 0) return text(a.message) ? `Change the workflow: ${text(a.message)}` : "Change the workflow";
-      return `Change the workflow: ${said.slice(0, 4).join(", ")}${said.length > 4 ? `, and ${said.length - 4} more` : ""}`;
+      const parts = [
+        ...(said.length > 0
+          ? [`${said.slice(0, 4).join(", ")}${said.length > 4 ? `, and ${said.length - 4} more` : ""}`]
+          : []),
+        ...(text(a.defaultComputingUnit) ? [`its runs go to ${text(a.defaultComputingUnit)}`] : []),
+        ...(said.length === 0 && text(a.message) ? [text(a.message) as string] : []),
+      ];
+      return parts.length > 0 ? `Change the workflow: ${parts.join("; ")}` : "Change the workflow";
     }
     case "run_workflow":
       return text(a.computingUnit) ? `Run the workflow on ${text(a.computingUnit)}` : "Run the workflow";

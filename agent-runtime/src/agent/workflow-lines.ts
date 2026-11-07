@@ -49,13 +49,18 @@ const LINES_DOC =
   "Expressions are text: where=\"glucose < 70\". Ids use letters, digits and '-', never '_'. " +
   'A file is texera://datasets/<rid>@<version>/files/<path>, or by name: "CGM cohort@4/cgm.csv".';
 
-/** A workflow record as the agent reads it: where it stands, without the JSON of its spec. */
+/** A workflow record as the agent reads it: where it stands and where it runs, without the JSON of its spec. */
 function standing(w: WorkflowRecord) {
   return {
     kind: "workflow",
     metadata: { rid: w.metadata.rid, uri: w.metadata.uri, name: w.metadata.name, head: w.metadata.head },
+    ...(w.spec.defaultComputingUnit ? { defaultComputingUnit: w.spec.defaultComputingUnit } : {}),
   };
 }
+
+const UNIT_DOC =
+  "The computing unit its runs and compiles go to when a call names none, as texera://computing-units/<rid>: " +
+  "set it when the workflow needs a unit of its own, such as one with the packages its Python uses.";
 
 /** The operators of a workflow's lines, in the order the lines give them. */
 const idsOf = (lines: string[]) => lines.map((l) => /^set ([A-Za-z0-9-]+):/.exec(l)?.[1] ?? "");
@@ -97,8 +102,12 @@ function mistakes(v: Validation, lines: string[]): { errors: { line: string; err
 /** The settings that take a dataset's file: the built-in scan's, and the classic scans'. */
 const FILE_SETTINGS = ["file", "fileName"];
 
-/** The input ports of an operator type, as its spec describes them. */
-function inputPorts(spec: OperatorSpec): InputPorts {
+/**
+ * The input ports of an operator type, as its spec describes them. A built-in without them reads
+ * nothing, as a scan; a custom operator without them is not known, and its inputs link in order.
+ */
+function inputPorts(spec: OperatorSpec): InputPorts | undefined {
+  if (!spec.inputPorts && spec.implementation) return undefined;
   const ports = spec.inputPorts ?? [];
   return { names: ports.map((p) => p.displayName ?? ""), manyOnLast: ports.at(-1)?.allowMultiInputs === true };
 }
@@ -136,7 +145,7 @@ async function unknownType(op: string, deps: LineToolDeps): Promise<string> {
  * named by its type is written as its URI at its newest version.
  */
 async function typesOf(lines: Line[], deps: LineToolDeps): Promise<{ lines: Line[]; ports: PortsOf }> {
-  const ports = new Map<string, InputPorts>();
+  const ports = new Map<string, InputPorts | undefined>();
   const custom = new Map<string, string>();
   for (const l of lines) {
     if (l.kind !== "set" || ports.has(l.op) || custom.has(l.op)) continue;
@@ -145,7 +154,8 @@ async function typesOf(lines: Line[], deps: LineToolDeps): Promise<{ lines: Line
       if (plural !== "operators" || vno === undefined)
         throw new LineError(l.line, `${l.op} is not an operator at a version: texera://operators/<rid>@<version>`);
       try {
-        ports.set(l.op, inputPorts(await deps.catalog.operatorAt(rid, vno, deps.auth())));
+        const spec = await deps.catalog.operatorAt(rid, vno, deps.auth());
+        ports.set(l.op, inputPorts({ implementation: {}, ...spec }));
       } catch (e) {
         if (e instanceof CatalogError && (e.status === 404 || e.status === 403))
           throw new LineError(l.line, `there is no operator ${l.op} you may use`);
@@ -261,11 +271,15 @@ export function workflowLineTools(deps: LineToolDeps): ToolSet {
   return {
     create_workflow: tool({
       description: `Create a workflow from lines, in this chat's project. ${LINES_DOC}`,
-      inputSchema: z.object({ name: z.string().min(1), lines: z.string().min(1).describe("The workflow's lines.") }),
-      execute: async ({ name, lines }) => {
+      inputSchema: z.object({
+        name: z.string().min(1),
+        lines: z.string().min(1).describe("The workflow's lines."),
+        defaultComputingUnit: z.string().startsWith("texera://computing-units/").optional().describe(UNIT_DOC),
+      }),
+      execute: async ({ name, lines, defaultComputingUnit }) => {
         try {
           const { edit, ports } = await readLines(lines, deps);
-          const spec = applyLines(empty, edit, ports);
+          const spec = { ...applyLines(empty, edit, ports), ...(defaultComputingUnit ? { defaultComputingUnit } : {}) };
           const w = await deps.catalog.createWorkflow(name, spec, deps.project, deps.auth());
           return await saved(w, deps);
         } catch (e) {
@@ -275,22 +289,31 @@ export function workflowLineTools(deps: LineToolDeps): ToolSet {
     }),
     edit_workflow: tool({
       description: `Change a workflow with lines; it becomes a new version. ${LINES_DOC} Only the lines you send change: the other operators stay.`,
-      inputSchema: z.object({ rid: z.string().min(1), lines: z.string().min(1).describe("The lines of the change.") }),
-      execute: async ({ rid, lines }) => {
+      inputSchema: z
+        .object({
+          rid: z.string().min(1),
+          lines: z.string().optional().describe("The lines of the change."),
+          defaultComputingUnit: z.string().startsWith("texera://computing-units/").optional().describe(UNIT_DOC),
+        })
+        .refine((a) => (a.lines ?? "").trim() !== "" || a.defaultComputingUnit, {
+          message: "send lines, a defaultComputingUnit, or both",
+        }),
+      execute: async ({ rid, lines, defaultComputingUnit }) => {
         try {
-          const { edit, ports } = await readLines(lines, deps);
+          const { edit, ports } = await readLines(lines ?? "", deps);
+          const said = [
+            ...(edit.length > 0 ? [`${edit.length} line${edit.length === 1 ? "" : "s"} from the agent`] : []),
+            ...(defaultComputingUnit ? [`runs on ${defaultComputingUnit}`] : []),
+          ].join("; ");
           // Someone may save in between: the change goes onto the head it was made against, once more if it moved.
           for (let attempt = 0; ; attempt++) {
             const current = await deps.catalog.getWorkflow(rid, deps.auth());
-            const spec = applyLines(current.spec, edit, ports);
+            const spec = {
+              ...applyLines(current.spec, edit, ports),
+              ...(defaultComputingUnit ? { defaultComputingUnit } : {}),
+            };
             try {
-              const w = await deps.catalog.updateWorkflowSpec(
-                rid,
-                spec,
-                current.metadata.head,
-                `${edit.length} line${edit.length === 1 ? "" : "s"} from the agent`,
-                deps.auth(),
-              );
+              const w = await deps.catalog.updateWorkflowSpec(rid, spec, current.metadata.head, said, deps.auth());
               return await saved(w, deps);
             } catch (e) {
               if (e instanceof CatalogError && e.status === 409 && attempt < 1) continue;

@@ -76,6 +76,9 @@ describe("the gate", () => {
     expect(describeChange("edit_workflow", { rid: "w", lines: "set night: filter(r, where='x')\ndelete old" })).toBe(
       "Change the workflow: set night, delete old",
     );
+    expect(describeChange("edit_workflow", { rid: "w", defaultComputingUnit: "texera://computing-units/u" })).toBe(
+      "Change the workflow: its runs go to texera://computing-units/u",
+    );
     expect(describeChange("something_new", {})).toBe("Call something_new");
   });
 });

@@ -18,66 +18,73 @@
 -->
 ---
 name: texera-workflows
-description: Build, validate, run and edit Texera workflows - the spec JSON, dataset file URIs, the common operators with their exact properties, and JSON Patch edits.
+description: Build, run and change Texera workflows written as lines - the core operators and their settings, the SQL expressions they take, dataset files by name, and how a mistake comes back.
 ---
 
 # Texera workflows
 
-A workflow's spec is a dataflow graph: `operators` and `links`. Each operator has an `operatorID` you choose (short, unique, lowercase letters, digits and `-`; never `_`, which the engine cannot keep results under: `join-geo`, not `join_geo`), an exact `operatorType` from the registry, and `operatorProperties` named exactly as the operator's JSON Schema names them. Ports are `input-0`, `input-1`, ... and `output-0`; a link joins `{operatorID, portID}` to `{operatorID, portID}`. Set `"viewResult": true` on every operator whose output you will read.
+A workflow is written as lines, one per operator. Each line names the operators it reads in its parentheses:
 
-```json
-{"operators": [
-  {"operatorID": "scan", "operatorType": "CSVFileScan",
-   "operatorProperties": {"fileName": "texera://datasets/<rid>@<vno>/files/iris.csv", "fileEncoding": "UTF_8", "hasHeader": true, "customDelimiter": ","},
-   "outputPorts": [{"portID": "output-0"}]},
-  {"operatorID": "avg", "operatorType": "Aggregate", "viewResult": true,
-   "operatorProperties": {"groupByKeys": ["Species"], "aggregations": [{"aggFunction": "average", "attribute": "PetalLengthCm", "result attribute": "avg_petal_length"}]},
-   "inputPorts": [{"portID": "input-0"}], "outputPorts": [{"portID": "output-0"}]}],
- "links": [{"linkID": "l1", "source": {"operatorID": "scan", "portID": "output-0"}, "target": {"operatorID": "avg", "portID": "input-0"}}]}
+```
+set readings: scan(file="CGM readings/cgm.csv")
+set night: filter(readings, where="hour(taken_at) >= 22 or hour(taken_at) < 6")
+set lows: aggregate(night, by=["patient_id"], outputs=["readings = count(*)", "lows = count_if(glucose < 70)"])
+set labs: scan(file="Clinical labs@2/labs.csv")
+set risk: join(lows, labs, on=["patient_id"])
+set ranked: sort(risk, by=["lows desc", "patient_id"])
 ```
 
-## Data
-
-A property whose schema says `format: credential` takes a credential URI, `texera://credentials/<rid>` (find them with `search_resources` kind `credential`); the catalog leases the secret when the workflow runs and puts it in the plan, so the spec never holds a value. A custom operator (an `operatorType` that is an operator URI) receives its instance properties in its code as the dict `PROPS`.
-
-A scan reads a dataset file through its URI `texera://datasets/<dataset rid>@<version>/files/<path>`: the dataset URI `search_resources` returns, the version number, and the path `list_dataset_files` returns. Read the file's first lines with `read_dataset_file` first: they settle the header, the delimiter, and how numbers and missing values are written. The columns of a CSV scan are the header's cells verbatim, case and spaces included; types are inferred from the values.
+- `set <id>: <operator>(<inputs>, <setting>=<value>, ...)` creates an operator, or replaces it whole when the id exists, settings and inputs; what reads it keeps reading it. `delete <id>` removes one, once nothing reads it.
+- An id is short: letters, digits and `-`, never `_` (`join-labs`, not `join_labs`).
+- Inputs come first, in port order: a join's left, then its right. A scan reads none; a union reads one or more.
+- Values: `"text"` or `'text'`, `12`, `1.5`, `true`, `false`, `null`, lists `["a", "b"]`, maps `{"old": "new"}`. An expression is text, so it is quoted: `where="glucose < 70"`. Code over several lines goes in `"""..."""`, taken as it is.
 
 ## The cycle
 
-1. `create_workflow` with the whole plan as `spec` (plus a `name`), or `edit_workflow` on an existing workflow.
-2. `validate_workflow`: it compiles the plan on the unit and returns each operator's output schema per port and the errors per operator. Fix every error, then validate again. The schemas give the exact column names and types the next operator sees.
-3. `run_workflow` with `waitSeconds` (120 for small data) so the execution comes back with `status.phase`, the operators' states and the port results it kept (`status.ports`). A failed execution names the operator and the error: fix the plan (a new version) and run again.
-4. `get_port_result` with the workflow rid, the execution rid (`eid`), the `operatorID` and the `portID` for the rows you need, paged. A run keeps the rows of the operators with `viewResult`, of the operators nothing reads from, and of the operator it went up to: `run_workflow` with `upTo` runs only what leads to that operator and keeps its rows, without changing the workflow.
+1. `create_workflow` with a `name` and its `lines` saves the workflow in the chat's project and compiles it on a unit. It answers with `lines` (the workflow as it stands), `columns` (each operator's output columns and types) and, when something is wrong, `errors`: each with the `line` that made it and what is wrong, such as `where: the input has no column "taken"; did you mean "taken_at"?`. `waitingOnTheFix` names the operators that only read a broken one: they compile once it is fixed. A line that cannot be read, or an input that is not there, refuses the whole call with the line's number, and nothing is saved.
+2. Fix it with `edit_workflow`, sending only the lines that change: `set` the operator again, whole. Write each line against the `columns` of what it reads. Repeat until no errors are left.
+3. `run_workflow` with `waitSeconds` (120 for small data) runs it and returns the execution: `status.phase`, each operator's state and row counts, and the results it kept. A run keeps the rows of the operators nothing reads from, and of the operator `upTo` names: `run_workflow` with `upTo` runs only what leads to that operator, without changing the workflow. A failed execution names the operator and its error: fix that line and run again.
+4. `get_port_result` with the workflow rid, the execution rid (`eid`), the `operatorID` and `portID` `output-0` returns the rows, paged.
 
-Every `create_workflow` and `edit_workflow` makes a new version; an execution names the version it ran. Reuse the workflow rid from the turn state; never invent ids.
+Every create and edit makes a version, and an execution names the version it ran. `get_workflow` reads a workflow as lines. People may have a workflow open and change it while you work, and an edit lands on the newest version: read the lines with `get_workflow` before you change a workflow you did not just write. Reuse the workflow rid from the turn state; never invent ids.
 
-## Common operators (exact types and properties)
+## Files
 
-| Operator | Inputs -> outputs | Properties |
+`file` takes a dataset file:
+
+- by name: `"CGM readings/cgm.csv"` reads the dataset's newest version, `"CGM readings@3/cgm.csv"` pins version 3, and a dataset of one file needs no path: `"CGM readings"`. A name is looked up in the chat's project; when two datasets share it, use the URI.
+- by URI: `texera://datasets/<rid>@<version>/files/<path>`, from `search_resources` and `list_dataset_files`.
+
+The answer's lines show the URI at the version used. Before you write a scan, read the file's first lines with `read_dataset_file`: they settle the header, the delimiter, and how numbers and missing values are written. A column is named by its header cell as written, case and spaces included; its type is read off the first rows.
+
+## The core operators
+
+| Operator | Reads | Settings |
 | --- | --- | --- |
-| `CSVFileScan` | -> 1 | `fileName` (a dataset file URI), `fileEncoding` `"UTF_8"`, `hasHeader` `true`, `customDelimiter` `","`; optional `limit`, `offset` |
-| `JSONLFileScan` | -> 1 | `fileName`, `fileEncoding`, `flatten` `false` |
-| `Projection` | 1 -> 1 | `attributes: [{"originalAttribute": "col", "alias": "new name"}]` (alias optional); `isDrop` `false` keeps only these columns, `true` drops them |
-| `Filter` | 1 -> 1 | `predicates: [{"attribute": "col", "condition": "=", "value": "x"}]`; conditions `=`, `!=`, `>`, `>=`, `<`, `<=`, `is null`, `is not null`; several predicates are OR-ed, so chain Filters for AND; `value` is a string compared as the column's type |
-| `Aggregate` | 1 -> 1 | `groupByKeys: ["col"]` (omit for one overall row); `aggregations: [{"aggFunction": "sum", "attribute": "col", "result attribute": "total"}]`; functions `sum`, `count`, `average`, `min`, `max`, `concat`; `count` needs no `attribute`; `sum`/`average`/`min`/`max` need a numeric or timestamp column, so cast text first |
-| `Sort` | 1 -> 1 | `attributes: [{"attribute": "col", "sortPreference": "DESC"}]` (`ASC` or `DESC`) |
-| `Limit` | 1 -> 1 | `limit`; sort first for a top-k |
-| `Distinct` | 1 -> 1 | none; whole-row distinct |
-| `HashJoin` | 2 -> 1 | `buildAttributeName` (the left input, `input-0`), `probeAttributeName` (the right input, `input-1`), `joinType` `inner`, `left outer`, `right outer` or `full outer` |
-| `Union` | n -> 1 | none; link every input to `input-0`; schemas must match |
-| `TypeCasting` | 1 -> 1 | `typeCastingUnits: [{"attribute": "col", "resultType": "double"}]`; types `string`, `integer`, `long`, `double`, `boolean`, `timestamp` |
-| `KeywordSearch` | 1 -> 1 | `attribute`, `keyword`, `isCaseSensitive` |
-| `Regex` | 1 -> 1 | `attribute`, `regex`, `caseInsensitive` |
-| `RandomKSampling` | 1 -> 1 | `random k sample percentage` (an integer) |
-| `Difference`, `Intersect`, `SymmetricDifference` | 2 -> 1 | none |
-| `PythonUDFV2` | 1 -> 1 | the `python-udf` skill |
+| `scan` | nothing | `file`; `format` `"auto"` (by the extension), `"csv"`, `"tsv"` or `"json"` (one object per line); `header` `true`; `delimiter`, one character |
+| `filter` | 1 | `where`: a condition; keeps the rows where it is true, so a NULL drops the row |
+| `project` | 1 | `keep`: the columns to keep, in order; `drop`: the columns to leave out; `rename`: `{"old": "new"}` |
+| `compute` | 1 | `columns`: `["name = expression", ...]`; a name the input has is replaced where it stands, a new one is added at the end |
+| `aggregate` | 1 | `by`: the group columns (none: one row of everything); `outputs`: `["name = aggregate", ...]` |
+| `join` | 2: left, right | `on`: `["patient_id"]`, or `["left_column = right_column"]`; `how`: `"inner"` (the default), `"left"`, `"right"`, `"full"`, `"semi"` or `"anti"` |
+| `union` | 1 or more | none; every input has the same columns |
+| `distinct` | 1 | `columns`: those that make two rows the same (none: all of them); keeps the first row of each |
+| `sort` | 1 | `by`: `["glucose desc", "patient_id"]`; `nulls`: `"last"` (the default) or `"first"` |
+| `limit` | 1 | `n`; `offset` |
 
-Charts (`BarChart`: `fields`, `value`; `LineChart`: `lines: [{"x": "col", "y": "col", "mode": "line"}]`; `Scatterplot`: `xColumn`, `yColumn`; `Histogram`: `value`; `PieChart`: `name`, `value`) render on the execution's page; compute the numbers you report with table operators.
+A join's output has the left's columns, then the right's without its keys; NULL keys never match. A column both sides have, other than a key, is an error: rename one with `project` first. `semi` and `anti` keep the left rows with a match, or without one, each once, with the left's columns. For a top-k, sort, then limit.
 
-For any other operator, `list_operators` with `q` set to its name returns its JSON Schema. Never call it without `q`: the whole registry is far too large to read.
+## Expressions
 
-## Editing
+`where`, `columns` and `outputs` take SQL, checked against the input's columns before anything runs.
 
-`edit_workflow` applies an RFC 6902 JSON Patch to the head spec: `[{"op": "add", "path": "/operators/-", "value": {...}}, {"op": "add", "path": "/links/-", "value": {...}}, {"op": "replace", "path": "/operators/1/operatorProperties/limit", "value": 5}]`. Indexes follow the operator order `get_workflow` shows. Validate after editing, then rerun: earlier results are stale.
+- A column is its name: `glucose`. A name with spaces or other characters is in double quotes, `"Blood Pressure"`, and then must match exactly; an unquoted name matches whatever its case. Text is in single quotes: `sex = 'F'`. Quote the line's text with the other kind: `where='"Blood Pressure" >= 80'`, `where="sex = 'F'"`. An output name with spaces is quoted too: `"time in range" = avg(...)`.
+- Operators: `+ - * / %`; `/` always gives a double, and dividing by zero gives NULL; `||` joins text; `= != <> < <= > >=`; `and`, `or`, `not`; `is [not] null`; `[not] in (1, 2)`; `[not] between 70 and 180`; `[not] like 'P-%'`; `case when glucose < 70 then 'low' when glucose > 180 then 'high' else 'in range' end`.
+- Types: `cast(x as double)` fails on a value it cannot read; `try_cast(x as integer)` gives NULL instead. Types are `integer`, `long`, `double`, `text`, `boolean` and `timestamp`. A timestamp compares with text written as a time: `taken_at >= '2026-11-01'`.
+- Functions: `abs`, `round(x, digits)`, `floor`, `ceil`, `sqrt`, `ln`, `log10`, `exp`, `power`, `greatest`, `least`; `coalesce`, `nullif`; `lower`, `upper`, `trim`, `length`, `substr`, `replace`, `concat`, `starts_with`, `ends_with`, `contains`, `regexp_matches`, `regexp_replace`, `split_part`; `year`, `month`, `day`, `hour`, `minute`, `second`, `dayofweek`, `date`, `date_trunc('hour', t)`, `date_diff('day', a, b)`.
+- Aggregates, in `outputs` only: `count(*)`, `count(x)`, `count(distinct x)`, `count_if(condition)`, `sum`, `avg` (or `mean`), `min`, `max`, `median`, and `stddev` and `variance` of a sample. They skip NULLs; a group with nothing to aggregate gives NULL, and a count gives 0. An output can combine them: `"share_low = count_if(glucose < 70) / count(*)"`, `"mean = round(avg(glucose), 1)"`.
+- A NULL in arithmetic or a comparison gives NULL. Write `coalesce(x, 0)` or `x is null` when a missing value has a meaning.
 
-People can have the workflow open in the editor and change it while you work. Pass `expectedHead`: the `head` that `get_workflow`, or your own last edit, returned. If someone changed the workflow in between, the edit is refused as a conflict instead of landing on the wrong operator; `get_workflow` again and redo the edit on what is there now.
+## Other operators
+
+The core operators cover tables. Python covers what SQL cannot say, such as a model fit, a statistic over each patient's rows, or a forecast: the `python-udf` skill. The classic operators remain for charts and the rest. `list_operators` with `q` naming one returns its settings as a JSON Schema, and a line sets them by the schema's names: `set chart: BarChart(lows, fields="patient_id", value="lows")`. A name with spaces is quoted: `"result attribute"="total"`. Never call `list_operators` without `q`: the registry is far too large to read. A chart draws on the execution's page; compute the numbers you report with the core operators.

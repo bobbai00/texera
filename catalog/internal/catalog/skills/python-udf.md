@@ -18,27 +18,46 @@
 -->
 ---
 name: python-udf
-description: Compute what the built-in operators cannot with a PythonUDFV2 operator - the pytexera interface (tuple, table and source operators), extra output columns, pandas, and the packages a computing unit adds.
+description: Compute what SQL cannot with Python in a workflow line - the team's own Python operators, a PythonUDFV2 line with its code in triple quotes, the row, table and source interfaces, the columns it adds, and the packages a computing unit brings.
 ---
 
-# Python UDF operators
+# Python in a workflow
 
-`PythonUDFV2` runs your Python on every row (or the whole table) of its one input and emits rows on `output-0`:
+Use Python for what the core operators and their SQL cannot say: a statistic over each patient's rows, a model fit or a forecast, a test. Keep the selecting, joining and counting in core operators around it, so the Python gets only the rows and columns it needs.
 
-```json
-{"operatorID": "udf", "operatorType": "PythonUDFV2", "viewResult": true,
- "operatorProperties": {"code": "<python>", "workers": 1, "retainInputColumns": true, "defaultEnv": true,
-                        "outputColumns": [{"attributeName": "score", "attributeType": "double"}]},
- "inputPorts": [{"portID": "input-0"}], "outputPorts": [{"portID": "output-0"}]}
+## The team's own operators first
+
+A team keeps the Python it reuses as custom operators. `search_resources` with kind `operator` finds them in the chat's project; `get_resource` shows one's description, its code, its settings and the columns it adds. A line calls one by its type, with its settings, which its code reads as the dict `PROPS`:
+
+```
+set metrics: cgm_metrics(night, tir_low=70, tir_high=180)
 ```
 
-- `outputColumns` declares every column the code adds that the input lacks (`string`, `integer`, `long`, `double`, `boolean`, `timestamp`); with `retainInputColumns` `true` the output is the input columns plus these.
+The answer writes it at its version, `texera://operators/<rid>@<version>(night, ...)`, so later changes to the operator do not change this workflow.
+
+## A Python line
+
+`PythonUDFV2` runs code on its one input:
+
+```
+set ratio: PythonUDFV2(petals, code="""from pytexera import *
+
+class ProcessTupleOperator(UDFOperatorV2):
+    @overrides
+    def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+        tuple_["ratio"] = tuple_["PetalLengthCm"] / tuple_["SepalLengthCm"]
+        yield tuple_
+""", outputColumns=[{"attributeName": "ratio", "attributeType": "double"}], retainInputColumns=true, workers=1, defaultEnv=true)
+```
+
+- `code`: the Python, in `"""..."""`, taken as it is.
+- `outputColumns`: every column the code adds that its input lacks, with its type: `string`, `integer`, `long`, `double`, `boolean` or `timestamp`. With `retainInputColumns` `true` the output is the input's columns and then these; with `false`, only these. Always set both.
 - `workers` `1` keeps row order and state simple.
-- `defaultEnv` `true` runs with the packages of the unit it runs on: the platform's (pandas, numpy, pyarrow) and those the unit's profile adds. For another package, run on a unit that has it: `search_resources` with kind `profile` finds a profile that lists it, `create_computing_unit` makes a unit from that profile, and the workflow's `defaultComputingUnit` names it (`edit_workflow`), so this run and every later one go there, the person's from the Run bar too. Keep `defaultEnv` `true`. If no profile has the package, ask the person to add it to a unit or a profile.
+- `defaultEnv` `true` runs with the packages of the unit it runs on.
 
-## Code
+## The interfaces
 
-Row by row (one row in, zero or more rows out). A tuple is read and written like a dict by column name:
+Row by row, one row in and zero or more out; a row reads and writes like a dict, by column name:
 
 ```python
 from pytexera import *
@@ -46,22 +65,30 @@ from pytexera import *
 class ProcessTupleOperator(UDFOperatorV2):
     @overrides
     def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
-        tuple_["score"] = float(tuple_["PetalLengthCm"]) / float(tuple_["SepalLengthCm"])
-        yield tuple_
+        if tuple_["glucose"] is not None:
+            tuple_["mmol"] = tuple_["glucose"] / 18.016
+            yield tuple_
 ```
 
-The whole table as a pandas DataFrame, for cross-row logic:
+The whole input as a pandas DataFrame, for logic across rows; it runs once, after the last row:
 
 ```python
 from pytexera import *
+import pandas as pd
 
 class ProcessTableOperator(UDFTableOperator):
     @overrides
     def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
-        table["rank"] = table["PetalLengthCm"].rank(method="min").astype(int)
-        yield table
+        g = table.groupby("patient_id")["glucose"]
+        yield pd.DataFrame({"mean": g.mean(), "cv": g.std() / g.mean()}).reset_index()
 ```
 
-A source without input (`operatorType` `PythonUDFSourceV2`, no input port): `class GenerateOperator(UDFSourceOperator)` with `def produce(self) -> Iterator[Optional[Union[TupleLike, TableLike]]]`.
+A `Table` is a pandas DataFrame; import pandas or numpy yourself. A table operator that returns new columns lists them all in `outputColumns`, with `retainInputColumns` `false`.
 
-Rules: keep the class names above; no top-level code besides imports and the class; yield nothing to drop a row; `logger.info(...)` writes to the operator's console. An exception fails the execution with a traceback that points at your line: fix the code (a new workflow version) and rerun.
+A source reads no input: `set rows: PythonUDFSourceV2(code="""...""", columns=[{"attributeName": "n", "attributeType": "integer"}], workers=1, defaultEnv=true)`, with `class GenerateOperator(UDFSourceOperator)` and `def produce(self) -> Iterator[Optional[Union[TupleLike, TableLike]]]`.
+
+Rules: keep the class names above; no code at the top level besides imports and the class; yield nothing to drop a row; `logger.info(...)` writes to the operator's console. An exception fails the execution with a traceback that points at your line: fix the code with `edit_workflow` and run again. If the same error repeats, read the operator's input before you change the code again.
+
+## Packages
+
+The platform's units have pandas, numpy and pyarrow. For another package, the workflow runs on a unit that has it: `search_resources` with kind `profile` finds a profile that lists it, `create_computing_unit` makes a unit from that profile, and `edit_workflow` with `defaultComputingUnit` set to the unit sends this run and every later one there, the person's own runs from the Run bar included. A new unit costs money: ask before you create one, and say which profile and why (the `computing-units` skill). If no profile has the package, ask the person to add it to a profile.

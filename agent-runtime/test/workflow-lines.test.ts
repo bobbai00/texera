@@ -33,6 +33,17 @@ const OPERATORS = [
   operator("join", [port("left"), port("right")]),
   operator("union", [port(undefined, true)]),
   operator("cgm_metrics", [port()], METRICS, "def cgm_metrics(readings): ..."),
+  // A custom operator that does not say its ports: its inputs link in order.
+  {
+    kind: "operator",
+    metadata: {
+      rid: METRICS.replaceAll("4", "6"),
+      uri: `texera://operators/${METRICS.replaceAll("4", "6")}`,
+      name: "loose",
+      head: 1,
+    },
+    spec: { operatorType: "loose", implementation: { python: { code: "..." } } },
+  },
 ];
 
 /** A catalog with one dataset of one file and one workflow, recording what is asked of it. */
@@ -193,6 +204,18 @@ describe("operator types", () => {
     expect(again.error).toBeUndefined();
   });
 
+  test("links the inputs of a custom operator that does not say its ports in order", async () => {
+    const fake = fakeCatalog();
+    const out = await call(toolsOf(fake), "create_workflow", { name: "x", lines: `${LINES}\nset l: loose(scan, avg)` });
+    expect(out.error).toBeUndefined();
+    expect(
+      fake
+        .spec()
+        .links.filter((k) => k.target.operatorID === "l")
+        .map((k) => k.target.portID),
+    ).toEqual(["input-0", "input-1"]);
+  });
+
   test("says which type was meant, and how many inputs a type reads", async () => {
     const fake = fakeCatalog();
     expect(await call(toolsOf(fake), "create_workflow", { name: "x", lines: "set a: fliter(where='y')" })).toEqual({
@@ -215,6 +238,19 @@ describe("edit_workflow", () => {
     expect((out.lines as string[]).length).toBe(3);
     const puts = fake.calls.filter((c) => c.method === "PUT");
     expect(puts.map((c) => (c.body as { expectedHead: number }).expectedHead)).toEqual([1, 2]);
+  });
+
+  test("sets where the workflow runs, with lines or alone", async () => {
+    const fake = fakeCatalog();
+    const tools = toolsOf(fake);
+    await call(tools, "create_workflow", { name: "means", lines: LINES });
+    const unit = "texera://computing-units/55555555-5555-4555-8555-555555555555";
+    const out = await call(tools, "edit_workflow", { rid: WF, defaultComputingUnit: unit });
+    expect(out.workflow).toMatchObject({ defaultComputingUnit: unit });
+    expect(fake.spec().defaultComputingUnit).toBe(unit);
+    expect((out.lines as string[]).length).toBe(2);
+    const put = fake.calls.findLast((c) => c.method === "PUT");
+    expect(put?.body).toMatchObject({ message: `runs on ${unit}` });
   });
 
   test("refuses a change that leaves an operator reading one that is gone", async () => {
