@@ -51,6 +51,19 @@ func TestEndpointReconcilesAndTerminateDeletes(t *testing.T) {
 	if c.Image != image || c.Resources.Requests.Memory().String() != "3Gi" || c.Resources.Requests.Cpu().String() != "500m" {
 		t.Fatalf("the spec's image and master node resources: %s %v", c.Image, c.Resources.Requests)
 	}
+	// Half a CPU still runs one worker per operator.
+	workers := ""
+	for _, e := range c.Env {
+		if e.Name == "CONSTANTS_NUM_WORKER_PER_OPERATOR" {
+			workers = e.Value
+		}
+	}
+	if workers != "1" {
+		t.Fatalf("workers per operator on half a CPU: %q", workers)
+	}
+	if workersFor("8") != 8 || workersFor("2500m") != 2 || workersFor("") != 0 {
+		t.Fatalf("workers per CPU: %d %d %d", workersFor("8"), workersFor("2500m"), workersFor(""))
+	}
 	// A size holds: the limits are the requests.
 	if c.Resources.Limits.Memory().String() != "3Gi" || c.Resources.Limits.Cpu().String() != "500m" {
 		t.Fatalf("the limits: %v", c.Resources.Limits)

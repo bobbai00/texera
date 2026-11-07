@@ -174,6 +174,19 @@ func (p *Provider) labels(rid string) map[string]string {
 	return map[string]string{labelApp: name(rid), labelRID: rid, labelOwner: managedBy}
 }
 
+// workersFor is how many workers an operator that splits gets on a node of that many CPUs:
+// one per whole CPU, at least one; 0 when the node names no CPU and the engine's default holds.
+func workersFor(cpu string) int64 {
+	if cpu == "" {
+		return 0
+	}
+	q, err := resource.ParseQuantity(cpu)
+	if err != nil {
+		return 0
+	}
+	return max(1, q.MilliValue()/1000)
+}
+
 // sizeOf is what a unit's master node asks for: memory (the deployment's default when it says
 // none), CPU ("" for none) and GPUs.
 func (p *Provider) sizeOf(spec api.ComputingUnitSpec) (memory, cpu string, gpu int32) {
@@ -277,6 +290,10 @@ func (p *Provider) deployment(rid string, spec api.ComputingUnitSpec) *appsv1.De
 		limits = nil
 	}
 	env := []corev1.EnvVar{{Name: "TEXERA_UNIT_PORT", Value: fmt.Sprint(port)}}
+	// An operator that splits gets a worker per CPU the unit has: a larger unit runs it wider.
+	if workers := workersFor(cpu); workers > 0 {
+		env = append(env, corev1.EnvVar{Name: "CONSTANTS_NUM_WORKER_PER_OPERATOR", Value: fmt.Sprint(workers)})
+	}
 	for k, v := range p.opts.Env {
 		env = append(env, corev1.EnvVar{Name: k, Value: v})
 	}
