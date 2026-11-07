@@ -357,24 +357,31 @@ func (s *Service) compile(ctx context.Context, spec api.WorkflowSpec) (*compiled
 			props[k] = v
 		}
 		index := len(plan.Operators)
-		for _, ref := range credentialRefs(props) {
-			ref.Operator = index
-			out.Secrets = append(out.Secrets, ref)
-		}
+		refs := credentialRefs(props)
 		var logical map[string]any
 		operatorType := op.OperatorType
 		if uri.Is(operatorType) {
-			// A custom operator's own properties go to its code as PROPS, not to the engine.
-			compiledOp, code, version, err := s.compileCustomOperator(ctx, operatorType, props)
+			custom, err := s.compileCustomOperator(ctx, operatorType, props)
 			if err != nil {
 				return nil, err
 			}
-			operatorType = "PythonUDFV2"
-			logical = compiledOp
-			out.Custom[index] = customOp{Code: code, Props: props}
-			out.Operators = appendUnique(out.Operators, version)
+			operatorType, logical = custom.engineType, custom.logical
+			if custom.engineType == functionType {
+				// A function's settings are its arguments, so a secret goes where they are.
+				for i := range refs {
+					refs[i].Pointer = "/args" + refs[i].Pointer
+				}
+			} else {
+				// A class's own properties go to its code as PROPS, not to the engine.
+				out.Custom[index] = customOp{Code: custom.code, Props: props}
+			}
+			out.Operators = appendUnique(out.Operators, custom.version)
 		} else {
 			logical = props
+		}
+		for _, ref := range refs {
+			ref.Operator = index
+			out.Secrets = append(out.Secrets, ref)
 		}
 		for pointer, ref := range uri.Extract(logical) {
 			if ref.Kind.Name != "dataset" || ref.Vno == 0 || !strings.HasPrefix(ref.Subresource, "files/") {
@@ -477,20 +484,33 @@ func (s *Service) fileExists(ctx context.Context, ref uri.Ref) error {
 	return fmt.Errorf("%s: no such file", ref.String())
 }
 
-// compileCustomOperator turns a custom operator version into the properties of the engine's
-// Python UDF operator; it also returns the code and the version URI compiled.
-func (s *Service) compileCustomOperator(ctx context.Context, name string, instance map[string]any) (map[string]any, string, string, error) {
+// functionType is the engine's operator a Python function runs as.
+const functionType = "function"
+
+// compiledCustom is a custom operator as the engine runs it: the engine's operator type and its
+// properties, the operator's code, and the version compiled in, as a URI with @vno.
+type compiledCustom struct {
+	engineType string
+	logical    map[string]any
+	code       string
+	version    string
+}
+
+// compileCustomOperator turns a custom operator, at the version its URI names, into the engine
+// operator that runs it: a function into `function`, called with the instance's settings; a
+// class into PythonUDFV2, which reads them as PROPS.
+func (s *Service) compileCustomOperator(ctx context.Context, name string, instance map[string]any) (*compiledCustom, error) {
 	ref, err := uri.Parse(name)
 	if err != nil || ref.Kind.Name != "operator" {
-		return nil, "", "", Invalid("operatorType "+name+" is not an operator URI", nil)
+		return nil, Invalid("operatorType "+name+" is not an operator URI", nil)
 	}
 	rid, err := uuid.Parse(ref.Rid)
 	if err != nil {
-		return nil, "", "", Invalid("operatorType "+name+": bad id", nil)
+		return nil, Invalid("operatorType "+name+": bad id", nil)
 	}
 	r, err := s.Store.GetResource(ctx, rid)
 	if err != nil || r.Kind != "operator" {
-		return nil, "", "", NotFound("operator " + ref.Rid)
+		return nil, NotFound("operator " + ref.Rid)
 	}
 	vno := ref.Vno
 	if vno == 0 {
@@ -498,23 +518,50 @@ func (s *Service) compileCustomOperator(ctx context.Context, name string, instan
 	}
 	v, err := s.Store.GetVersion(ctx, rid, vno)
 	if err != nil {
-		return nil, "", "", NotFound(fmt.Sprintf("version %d of operator %s", vno, r.Name))
+		return nil, NotFound(fmt.Sprintf("version %d of operator %s", vno, r.Name))
 	}
 	var spec api.OperatorSpec
 	if err := json.Unmarshal(v.Content, &spec); err != nil {
-		return nil, "", "", err
+		return nil, err
 	}
 	if spec.Implementation == nil || spec.Implementation.Python == nil || strings.TrimSpace(spec.Implementation.Python.Code) == "" {
-		return nil, "", "", Invalid(name+" has no Python implementation", nil)
+		return nil, Invalid(name+" has no Python implementation", nil)
+	}
+	py := spec.Implementation.Python
+	columns := []api.Attribute{}
+	if py.OutputColumns != nil {
+		columns = *py.OutputColumns
+	}
+	version := URI(r).WithVersion(vno).String()
+	if py.Function != nil && *py.Function != "" {
+		returns := make([]string, len(columns))
+		for i, a := range columns {
+			returns[i] = a.AttributeName + " " + a.AttributeType
+		}
+		inputs := []string{}
+		if spec.InputPorts != nil {
+			for _, p := range *spec.InputPorts {
+				name := ""
+				if p.DisplayName != nil {
+					name = *p.DisplayName
+				}
+				inputs = append(inputs, name)
+			}
+		}
+		args := map[string]any{}
+		props := map[string]any{"code": py.Code, "function": *py.Function, "returns": returns, "inputs": inputs, "args": args}
+		for k, value := range instance {
+			if k == bySetting {
+				props[bySetting] = value
+			} else {
+				args[k] = value
+			}
+		}
+		return &compiledCustom{engineType: functionType, logical: props, code: py.Code, version: version}, nil
 	}
 	// The engine's Python operator keeps the input columns and needs the added ones declared.
-	columns := []api.Attribute{}
-	if spec.Implementation.Python.OutputColumns != nil {
-		columns = *spec.Implementation.Python.OutputColumns
-	}
-	code := spec.Implementation.Python.Code
-	props := map[string]any{"code": customHeader(instance) + code, "workers": 1, "retainInputColumns": true, "defaultEnv": true, "outputColumns": columns}
-	return props, code, URI(r).WithVersion(vno).String(), nil
+	props := map[string]any{"code": customHeader(instance) + py.Code, "workers": 1, "retainInputColumns": true, "defaultEnv": true, "outputColumns": columns}
+	return &compiledCustom{engineType: "PythonUDFV2", logical: props, code: py.Code, version: version}, nil
 }
 
 // versionURI pins a resource URI to a version: the one it names, else the head.

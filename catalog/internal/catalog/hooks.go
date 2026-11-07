@@ -25,6 +25,10 @@ func (s *Service) prepareSpec(ctx context.Context, caller *auth.Caller, k kinds.
 	}
 	switch k.Name {
 	case "operator":
+		// A function's ports, settings and columns are what its code says.
+		if err := functionOperator(doc); err != nil {
+			return nil, Invalid("the function: "+err.Error(), map[string]any{"field": "implementation.python.code"})
+		}
 		// A custom operator's type is its name unless the author named it.
 		if t, _ := doc["operatorType"].(string); strings.TrimSpace(t) == "" {
 			doc["operatorType"] = name

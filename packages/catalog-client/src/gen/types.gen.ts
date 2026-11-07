@@ -1723,11 +1723,15 @@ export type PublicSettings = {
 
 export type PythonOperator = {
     /**
-     * The operator's Python source: a class with the engine's UDF interface.
+     * The operator's Python source: a class with the engine's UDF interface, or a module with the function named by function.
      */
     code: string;
     /**
-     * The columns the code adds to each tuple, declared so the engine can type the output; input columns pass through.
+     * The function in code that is the operator, `def cgm_metrics(readings, *, tir_low=70)` under `@returns(...)`: its positional parameters are its inputs, one table each, its parameters with defaults its settings, its docstring its description, and @returns its output columns. The catalog reads them from the code when the operator is saved, into inputPorts, propertiesSchema and outputColumns.
+     */
+    function?: string;
+    /**
+     * For a class, the columns the code adds to each tuple, declared so the engine can type the output; input columns pass through. For a function, every output column, read from its @returns.
      */
     outputColumns?: Array<Attribute>;
 };

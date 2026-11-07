@@ -374,6 +374,7 @@ export const zPublicSettings = z.object({
 
 export const zPythonOperator = z.object({
     code: z.string(),
+    function: z.string().optional(),
     outputColumns: z.array(zAttribute).optional()
 });
 
