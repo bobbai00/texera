@@ -179,8 +179,9 @@ func TestSavingAFunctionOperatorFillsItsSpecFromItsCode(t *testing.T) {
 // An operator's Python is a function: the one under @returns when the spec names none, and
 // never a class, which is the engine's.
 func TestAnOperatorsPythonIsAlwaysAFunction(t *testing.T) {
+	// A helper class of its own is the code's business.
 	unnamed := map[string]any{"implementation": map[string]any{"python": map[string]any{
-		"code": "import pandas as pd\n\ndef helper(x):\n    return x\n\n@returns(n=int)\ndef count_rows(rows):\n    return pd.DataFrame({'n': [len(rows)]})\n"}}}
+		"code": "import pandas as pd\n\nclass Window:\n    size = 3\n\ndef helper(x):\n    return x\n\n@returns(n=int)\ndef count_rows(rows):\n    return pd.DataFrame({'n': [len(rows)]})\n"}}}
 	if err := functionOperator(unnamed); err != nil {
 		t.Fatal(err)
 	}
@@ -188,8 +189,11 @@ func TestAnOperatorsPythonIsAlwaysAFunction(t *testing.T) {
 		t.Fatalf("the function under @returns is the operator: %v, type %v", py["function"], unnamed["operatorType"])
 	}
 	refused := map[string]string{
-		"from pytexera import *\n\nclass ProcessTupleOperator(UDFOperatorV2):\n    @overrides\n    def process_tuple(self, tuple_, port):\n        yield tuple_\n": "the code defines no function under @returns(...): an operator is one, as @returns(patient_id=str, mean=float) above def mean_glucose(readings, *, low: int = 70); a class such as UDFOperatorV2 is the engine's own",
-		"pass\n": "the code defines no function under @returns(...): an operator is one, as @returns(patient_id=str, mean=float) above def mean_glucose(readings, *, low: int = 70); a class such as UDFOperatorV2 is the engine's own",
+		"from pytexera import *\n\nclass ProcessTupleOperator(UDFOperatorV2):\n    @overrides\n    def process_tuple(self, tuple_, port):\n        yield tuple_\n": "the code defines class ProcessTupleOperator(UDFOperatorV2), and the classes that run code are the engine's: an operator is a function under @returns(...), as @returns(patient_id=str, mean=float) above def mean_glucose(readings, *, low: int = 70)",
+		// Beside a function, too: the module the engine runs holds one operator class, its own.
+		"import pytexera\n\n@returns(n=int)\ndef f(rows):\n    return rows\n\nclass Mine(pytexera.UDFTableOperator):\n    pass\n": "the code defines class Mine(UDFTableOperator), and the classes that run code are the engine's: an operator is a function under @returns(...), as @returns(patient_id=str, mean=float) above def mean_glucose(readings, *, low: int = 70)",
+		"class Helper:\n    pass\n": "the code defines no function under @returns(...): an operator is one, as @returns(patient_id=str, mean=float) above def mean_glucose(readings, *, low: int = 70); a class such as UDFOperatorV2 is the engine's own",
+		"pass\n":                    "the code defines no function under @returns(...): an operator is one, as @returns(patient_id=str, mean=float) above def mean_glucose(readings, *, low: int = 70); a class such as UDFOperatorV2 is the engine's own",
 		"@returns(n=int)\ndef a(rows):\n    return rows\n\n@returns(n=int)\ndef b(rows):\n    return rows\n": "the code defines 2 functions under @returns(...), a, b: name the operator's in function",
 	}
 	for code, want := range refused {

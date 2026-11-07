@@ -295,6 +295,37 @@ func parsePyFunction(code, name string) (*pyFunction, error) {
 	return fn, nil
 }
 
+// engineBases are the engine's classes that run an operator's code.
+var engineBases = map[string]bool{
+	"TupleOperatorV2": true, "TableOperator": true, "BatchOperator": true, "SourceOperator": true,
+	"UDFOperatorV2": true, "UDFTableOperator": true, "UDFBatchOperator": true, "UDFSourceOperator": true,
+	"FunctionOperator": true, "FunctionSourceOperator": true, "ModelBatchOperator": true, "ModelTableOperator": true,
+}
+
+// engineClass names the first top-level class of the code built on one of the engine's
+// classes, and that base.
+func engineClass(code string) (string, string, error) {
+	tokens, err := pyTokens(code)
+	if err != nil {
+		return "", "", err
+	}
+	for _, l := range pyLines(tokens) {
+		if l.col != 0 || len(l.tokens) < 3 || l.tokens[0].text != "class" || l.tokens[2].text != "(" {
+			continue
+		}
+		for _, t := range l.tokens[3:] {
+			if t.text == ")" {
+				break
+			}
+			// A base named through its module, as pytexera.UDFOperatorV2, is the same class.
+			if t.kind == "name" && engineBases[t.text] {
+				return l.tokens[1].text, t.text, nil
+			}
+		}
+	}
+	return "", "", nil
+}
+
 // returningFunctions names the code's top-level functions under @returns, in order.
 func returningFunctions(code string) ([]string, error) {
 	tokens, err := pyTokens(code)
@@ -618,6 +649,12 @@ func functionOperator(doc map[string]any) error {
 		return nil
 	}
 	code, _ := py["code"].(string)
+	// The classes that run code are the engine's: an operator never defines one.
+	if class, base, err := engineClass(code); err != nil {
+		return err
+	} else if class != "" {
+		return fmt.Errorf("the code defines class %s(%s), and the classes that run code are the engine's: an operator is a function under @returns(...), as @returns(patient_id=str, mean=float) above def mean_glucose(readings, *, low: int = 70)", class, base)
+	}
 	name, _ := py["function"].(string)
 	if strings.TrimSpace(name) == "" {
 		// The code's one function under @returns is the operator.

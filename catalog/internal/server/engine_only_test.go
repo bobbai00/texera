@@ -73,7 +73,7 @@ func TestTheEnginesOwnOperatorsAreNotWrittenByHand(t *testing.T) {
 	// An operator's code is a function: a class is refused, before anything is saved.
 	status, body := h.do("alice", "POST", p+"/operators", map[string]any{"name": "classy", "spec": map[string]any{
 		"implementation": map[string]any{"python": map[string]any{"code": classCode}}}})
-	if status != http.StatusBadRequest || !strings.Contains(string(body), "the code defines no function under @returns(...)") || !strings.Contains(string(body), "a class such as UDFOperatorV2 is the engine's own") {
+	if status != http.StatusBadRequest || !strings.Contains(string(body), "the code defines class ProcessTupleOperator(UDFOperatorV2), and the classes that run code are the engine's") {
 		t.Fatalf("an operator written as a class: %d %s", status, body)
 	}
 
