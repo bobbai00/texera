@@ -407,19 +407,25 @@ class UnitApiResourceSpec extends AnyFlatSpec with Matchers {
     UnitApiResource.settledState(PAUSED, KILLED, failed = false) shouldBe KILLED
   }
 
-  "applyEnvironment" should "point every operator that runs Python at the unit's environment, and no other" in {
+  "applyEnvironment" should "point every operator that runs Python at the unit's environment, and leave a plan the engine reads" in {
+    import org.apache.texera.common.compiler.model.LogicalPlanPojo
     val plan = objectMapper.readTree(
       """{"operators": [
-        |  {"operatorID": "udf", "operatorType": "PythonUDFV2", "defaultEnv": true},
-        |  {"operatorID": "tir", "operatorType": "function"},
-        |  {"operatorID": "risk", "operatorType": "predict"},
-        |  {"operatorID": "lows", "operatorType": "filter"}
-        |]}""".stripMargin
+        |  {"operatorID": "udf", "operatorType": "PythonUDFV2", "code": "", "workers": 1, "defaultEnv": true, "retainInputColumns": true, "outputColumns": []},
+        |  {"operatorID": "tir", "operatorType": "function", "code": "", "function": "tir", "returns": ["n long"]},
+        |  {"operatorID": "risk", "operatorType": "predict", "model": "texera://models/m@2"},
+        |  {"operatorID": "lows", "operatorType": "filter", "where": "n > 1"}
+        |], "links": [], "opsToViewResult": [], "opsToReuseResult": []}""".stripMargin
     )
     UnitApiResource.applyEnvironment(plan, "env-humanize")
     val ops = plan.get("operators")
     (0 until 3).map(i => ops.get(i).get("envName").asText()) shouldBe Seq.fill(3)("env-humanize")
     ops.get(0).get("defaultEnv").asBoolean() shouldBe false
+    // Only the UDFs have the switch; an operator given a property it does not have fails the plan.
+    ops.get(1).has("defaultEnv") shouldBe false
+    ops.get(2).has("defaultEnv") shouldBe false
     ops.get(3).has("envName") shouldBe false
+    val read = objectMapper.treeToValue(plan, classOf[LogicalPlanPojo])
+    read.operators.map(_.operatorIdentifier.id) shouldBe List("udf", "tir", "risk", "lows")
   }
 }

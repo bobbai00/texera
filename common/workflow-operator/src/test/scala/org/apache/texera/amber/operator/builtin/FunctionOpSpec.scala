@@ -162,4 +162,12 @@ class FunctionOpSpec extends AnyFlatSpec with Matchers {
       .getPhysicalOp(ids._1, ids._2)
       .pveName shouldBe "env-humanize"
   }
+
+  it should "go through JSON and back, as the engine copies a plan" in {
+    val tir = function(""""returns": ["n long"], "envName": "env-humanize"""")
+    val json = objectMapper.writeValueAsString(tir)
+    val again = objectMapper.readValue(json, classOf[LogicalOp]).asInstanceOf[FunctionOp]
+    again.pveName shouldBe "env-humanize"
+    again.columns shouldBe tir.columns
+  }
 }

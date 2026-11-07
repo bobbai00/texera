@@ -244,8 +244,11 @@ object UnitApiResource {
     operators.elements().asScala.foreach {
       case op: ObjectNode =>
         val opType = Option(op.get("operatorType")).map(_.asText()).getOrElse("")
-        if (opType.contains("PythonUDF") || PythonRunners(opType) || op.has("envName")) {
-          op.put("defaultEnv", false)
+        val udf = opType.contains("PythonUDF")
+        if (udf || PythonRunners(opType) || op.has("envName")) {
+          // Only the UDFs have a switch to their default environment; the others take the name
+          // alone, and a property an operator does not have makes the plan unreadable.
+          if (udf || op.has("defaultEnv")) op.put("defaultEnv", false)
           op.put("envName", envName)
         }
       case _ =>
