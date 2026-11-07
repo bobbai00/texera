@@ -69,7 +69,7 @@ function Place({ resource }: { resource: Resource }) {
         ["Region", storage.region],
         ["Credential", <UriChip key="credential" uri={storage.credential} />],
       ]
-    : [["Store", "The platform's own"]];
+    : [["Store", "The deployment's own"]];
   if (name) rows.push(["Name in the lake", <code key="name">{name}</code>]);
   return (
     <section className="space-y-2 p-4" data-warehouse-place>
@@ -91,7 +91,7 @@ const OWN_STORE: WarehouseStorage = { endpoint: "", region: "us-east-1", bucket:
 
 /**
  * Where a new warehouse keeps its tables: asked when it is made, since a warehouse does not
- * move. The platform's store needs nothing; a store of one's own needs its address, the
+ * move. The deployment's store needs nothing; a store of one's own needs its address, the
  * bucket and the credential that holds its key.
  */
 function ChoosePlace({ spec, onChange }: { spec: unknown; onChange: (spec: unknown) => void }) {
@@ -105,7 +105,7 @@ function ChoosePlace({ spec, onChange }: { spec: unknown; onChange: (spec: unkno
     <div className="space-y-3" data-warehouse-choose-place>
       <Field label="Where it keeps its tables" htmlFor={ids.where} help="A warehouse does not move: this is chosen once.">
         <NativeSelect id={ids.where} value={storage ? "own" : "platform"} onChange={e => onChange(e.target.value === "own" ? { storage: OWN_STORE } : {})} className="w-full" data-field="where">
-          <option value="platform">On the platform's store</option>
+          <option value="platform">On the deployment's store</option>
           <option value="own">On a store of your own</option>
         </NativeSelect>
       </Field>
@@ -140,7 +140,7 @@ export const warehouseKind: KindSpec = {
   plural: "Warehouses",
   icon: Warehouse,
   accent: "bg-kind-warehouse/12 text-kind-warehouse",
-  // With no store of its own, a warehouse gets a place on the platform's.
+  // With no store of its own, a warehouse gets a place on the deployment's.
   defaultSpec: () => ({}) satisfies WarehouseSpec,
   CreateFields: ChoosePlace,
   Editor: Place,

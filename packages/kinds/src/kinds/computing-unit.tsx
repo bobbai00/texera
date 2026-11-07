@@ -401,7 +401,7 @@ export const computingUnitKind: KindSpec = {
   tabs: [{ value: "node", label: "Node", icon: Server, Component: Node }],
   Actions,
   // A new unit is one the platform runs (on Kubernetes, a Deployment the catalog reconciles),
-  // made from the platform's default profile.
+  // made from the profile its project's settings name, which may come from up its chain.
   defaultSpec: (_, defaults) => madeFrom({ provider: "kubernetes" }, defaults.profile),
   CreateFields: NewUnit,
   facts: r => {

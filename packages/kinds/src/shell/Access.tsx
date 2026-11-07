@@ -11,7 +11,7 @@ import { Avatar, Badge, Button, EmptyState, ErrorNote, Input, NativeSelect, Sect
 import { Globe, Loader2, Lock, Trash2, TriangleAlert, UserPlus } from "lucide-react";
 import { useDeferredValue, useState } from "react";
 import { CatalogError, unwrap, updateMetadata } from "../api";
-import { grantsQuery, keysOf, principalsQuery } from "../queries";
+import { grantsQuery, keysOf, principalsQuery, resourceQuery } from "../queries";
 import { kindEntry } from "../types";
 import { PrincipalName } from "./Chips";
 
@@ -52,6 +52,11 @@ function Grants({ resource }: { resource: Resource }) {
   });
   const forbidden = grants.error instanceof CatalogError && grants.error.status === 403;
   const isPublic = resource.metadata.visibility === "public";
+  // A resource of a public project is everyone's to read through the project, however it is set
+  // itself: what Texera holds among it, which every project inherits.
+  const inProject = resource.kind !== "project" ? resource.metadata.project : undefined;
+  const { data: project } = useQuery({ ...resourceQuery(inProject ?? ""), enabled: !!inProject && !isPublic });
+  const throughProject = !isPublic && project?.metadata.visibility === "public" ? project.metadata.name : undefined;
   // What is shared to be used rather than read: where executions run and where they keep results.
   const used = ["computing-unit", "warehouse"].includes(kindEntry(resource.kind).kind);
   return (
@@ -59,8 +64,13 @@ function Grants({ resource }: { resource: Resource }) {
       <section className="space-y-2">
         <SectionTitle>Visibility</SectionTitle>
         <div className="flex items-center gap-3">
-          <Badge tone={isPublic ? "primary" : "neutral"}>
-            {isPublic ? <Globe className="size-3" /> : <Lock className="size-3" />} {isPublic ? "public: everyone can read it" : "private: only people it is shared with"}
+          <Badge tone={isPublic || throughProject ? "primary" : "neutral"} data-visibility={isPublic ? "public" : throughProject ? "through-project" : "private"}>
+            {isPublic || throughProject ? <Globe className="size-3" /> : <Lock className="size-3" />}{" "}
+            {isPublic
+              ? "public: everyone can read it"
+              : throughProject
+                ? `everyone can read it: ${throughProject} is public`
+                : "private: only people it is shared with"}
           </Badge>
           {!forbidden && (
             <Button variant="outline" size="xs" onClick={() => visibility.mutate(isPublic ? "private" : "public")} disabled={visibility.isPending} data-toggle-visibility>
