@@ -80,7 +80,7 @@ def service(gw) -> str:
 
 
 # Kinds a project may hold, in the order their references allow deleting them.
-KINDS = ["conversations", "workflows", "operators", "warehouses", "credentials", "datasets", "mcp-servers", "model-endpoints", "agent-templates", "skills", "computing-units", "profiles"]
+KINDS = ["conversations", "workflows", "operators", "warehouses", "credentials", "datasets", "models", "mcp-servers", "model-endpoints", "agent-templates", "skills", "computing-units", "profiles"]
 
 
 def _delete_execution(api: Api, workflow: str, eid: str, phase: str) -> None:

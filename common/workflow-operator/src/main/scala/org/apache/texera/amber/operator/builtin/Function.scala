@@ -125,10 +125,7 @@ class FunctionOp extends LogicalOp {
   @JsonIgnore def module: String = {
     val declared = columns.map(a => List(a.getName, a.getType.getName).asJava).asJava
     val arguments = Option(args).getOrElse(new java.util.HashMap[String, Object]())
-    // A JSON text as a Python string: JSON's escapes are Python's. Written by a plain mapper,
-    // which keeps an argument set to null: the function gets None, not its default.
-    def literal(value: Object): String =
-      FunctionOp.Json.writeValueAsString(FunctionOp.Json.writeValueAsString(value))
+    def literal(value: Object): String = PythonModule.json(value)
     List(
       "from pytexera import *",
       "from pytexera import FunctionOperator, returns",
@@ -184,10 +181,20 @@ class FunctionOp extends LogicalOp {
     )
 }
 
-object FunctionOp {
+/** How the engine writes values into the Python modules its operators run. */
+object PythonModule {
 
-  /** JSON as written, nulls included. */
+  /** JSON as written, nulls included: an argument set to null reaches Python as None. */
   private val Json = new ObjectMapper()
+
+  /** A value as a Python string holding its JSON, for `json.loads`: JSON's escapes are Python's. */
+  def json(value: Object): String = Json.writeValueAsString(Json.writeValueAsString(value))
+
+  /** A text as a Python string. */
+  def text(value: String): String = Json.writeValueAsString(value)
+}
+
+object FunctionOp {
 
   /** A Python identifier, which a function's name must be. */
   val Identifier = "[A-Za-z_][A-Za-z0-9_]*".r
