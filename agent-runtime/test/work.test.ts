@@ -73,6 +73,9 @@ describe("the gate", () => {
       'Start a computing unit "GPU unit" from the profile texera://profiles/p@2',
     );
     expect(describeChange("run_workflow", {})).toBe("Run the workflow");
+    expect(describeChange("edit_workflow", { rid: "w", lines: "set night: filter(r, where='x')\ndelete old" })).toBe(
+      "Change the workflow: set night, delete old",
+    );
     expect(describeChange("something_new", {})).toBe("Call something_new");
   });
 });
@@ -196,8 +199,8 @@ async function platformServer(created: string[]) {
     async ({ rid }) => ({ content: [{ type: "text", text: JSON.stringify({ rid, name: "iris" }) }] }),
   );
   server.registerTool(
-    "create_workflow",
-    { description: "Create a workflow", inputSchema: { name: z.string() }, annotations: { readOnlyHint: false } },
+    "create_computing_unit",
+    { description: "Start a computing unit", inputSchema: { name: z.string() }, annotations: { readOnlyHint: false } },
     async ({ name }) => {
       created.push(name);
       return { content: [{ type: "text", text: JSON.stringify({ created: name }) }] };
@@ -278,12 +281,12 @@ async function turnOf(app: Awaited<ReturnType<typeof workApp>>["app"], body: unk
 const planned = [
   { toolCalls: [{ id: "c1", toolName: "get_resource", input: { rid: "d1" } }] },
   { toolCalls: [{ id: "c2", toolName: START_WORK_TOOL, input: PLAN }] },
-  { toolCalls: [{ id: "c3", toolName: "create_workflow", input: { name: "means" } }] },
+  { toolCalls: [{ id: "c3", toolName: "create_computing_unit", input: { name: "means" } }] },
 ];
 
 describe("a turn in manual work mode", () => {
   test("stops at the change for approval, and an approval runs it and goes on", async () => {
-    const { app, fake, created } = await workApp([...planned, { text: "The workflow means is made." }], "manual");
+    const { app, fake, created } = await workApp([...planned, { text: "The unit means is made." }], "manual");
 
     const first = await turnOf(app, said("Make a workflow of the mean petal length"));
     const finished = first.at(-1);
@@ -291,11 +294,11 @@ describe("a turn in manual work mode", () => {
       type: EventType.RUN_FINISHED,
       outcome: {
         type: "interrupt",
-        interrupts: [{ id: "c3", reason: "approval", toolCallId: "c3", message: 'Create the workflow "means"' }],
+        interrupts: [{ id: "c3", reason: "approval", toolCallId: "c3", message: 'Start a computing unit "means"' }],
       },
     });
     expect(first.find((e) => e.type === EventType.CUSTOM && e.name === APPROVAL_EVENT)).toMatchObject({
-      value: { toolCallId: "c3", toolName: "create_workflow", state: "pending" },
+      value: { toolCallId: "c3", toolName: "create_computing_unit", state: "pending" },
     });
     expect(created).toEqual([]);
     const asked = fake.messages.at(-1);
@@ -307,7 +310,11 @@ describe("a turn in manual work mode", () => {
       "tool_call",
       "approval",
     ]);
-    expect(asked?.parts.at(-1)).toMatchObject({ type: "approval", toolName: "create_workflow", state: "pending" });
+    expect(asked?.parts.at(-1)).toMatchObject({
+      type: "approval",
+      toolName: "create_computing_unit",
+      state: "pending",
+    });
 
     const second = await turnOf(app, decided("c3", true));
     expect(created).toEqual(["means"]);
@@ -318,7 +325,7 @@ describe("a turn in manual work mode", () => {
     // The asking message records the decision and the change's result; the answer follows.
     expect(asked?.parts.at(-2)).toMatchObject({ type: "approval", state: "approved", decidedBy: USER_PID });
     expect(asked?.parts.at(-1)).toMatchObject({ type: "tool_result", toolCallId: "c3" });
-    expect(fake.messages.at(-1)?.parts.map((p) => p.text)).toEqual(["The workflow means is made."]);
+    expect(fake.messages.at(-1)?.parts.map((p) => p.text)).toEqual(["The unit means is made."]);
     expect(fake.messages.map((m) => m.role)).toEqual(["user", "assistant", "assistant"]);
   });
 

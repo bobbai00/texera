@@ -24,6 +24,9 @@ import {
   type SkillSpec,
   type TemplateRecord,
   type Turn,
+  type Validation,
+  type WorkflowRecord,
+  type WorkflowSpec,
 } from "./types.ts";
 
 /** An error returned by the catalog, with its HTTP status. */
@@ -97,6 +100,47 @@ export class CatalogClient {
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
+  }
+
+  /** A workflow at its head: its spec and where it stands. */
+  getWorkflow(rid: string, auth: CatalogAuth): Promise<WorkflowRecord> {
+    return this.request("GET", `${API}/workflows/${rid}`, auth);
+  }
+
+  createWorkflow(name: string, spec: WorkflowSpec, project: string, auth: CatalogAuth): Promise<WorkflowRecord> {
+    return this.request("POST", `${API}/workflows`, auth, { name, spec, parent: project });
+  }
+
+  /** A new version of a workflow, refused with 409 when its head moved since `expectedHead`. */
+  updateWorkflowSpec(
+    rid: string,
+    spec: WorkflowSpec,
+    expectedHead: number,
+    message: string,
+    auth: CatalogAuth,
+  ): Promise<WorkflowRecord> {
+    return this.request("PUT", `${API}/workflows/${rid}`, auth, { spec, expectedHead, message });
+  }
+
+  /** Compiles a workflow on a unit: its output columns, and each operator's error. */
+  validateWorkflow(rid: string, auth: CatalogAuth): Promise<Validation> {
+    return this.request("POST", `${API}/workflows/${rid}/validate`, auth, {});
+  }
+
+  /** Resources of a kind whose name matches, in a project and the built-ins. */
+  async searchResources(kind: string, q: string, scope: string, auth: CatalogAuth): Promise<Resource[]> {
+    const query = new URLSearchParams({ kind, q, scope, limit: "50" });
+    return (await this.request<Page<Resource>>("GET", `${API}/resources?${query}`, auth)).items;
+  }
+
+  /** The files of a dataset version, by path: the version's manifest. */
+  async datasetFiles(rid: string, vno: number, auth: CatalogAuth): Promise<string[]> {
+    const manifest = await this.request<{ files?: { path: string }[] }>(
+      "GET",
+      `${API}/datasets/${rid}/versions/${vno}/files`,
+      auth,
+    );
+    return (manifest.files ?? []).map((f) => f.path);
   }
 
   getConversation(rid: string, auth: CatalogAuth): Promise<Conversation> {

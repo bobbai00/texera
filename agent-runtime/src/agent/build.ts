@@ -31,6 +31,7 @@ import { LOAD_SKILL_TOOL, loadSkillTool } from "./skills.ts";
 import { composeSystemPrompt } from "./system-prompt.ts";
 import type { TurnContext } from "./turn-context.ts";
 import { ASK_TOOL, approvalOf, type Work, workTools } from "./work.ts";
+import { LINE_TOOLS, workflowLineTools } from "./workflow-lines.ts";
 
 /** The Dataflow Agent's sampling temperature. */
 export const DEFAULT_TEMPERATURE = 0.2;
@@ -139,6 +140,13 @@ export async function buildAgent(deps: BuildDeps, input: BuildInput): Promise<Bu
   });
 
   const tools: ToolSet = { ...mcp.tools, ...workTools(input.work), ...(deps.extraTools ?? {}) };
+  // The agent writes workflows as lines: the platform's JSON workflow tools give way to line tools.
+  const lineTools = workflowLineTools({
+    catalog,
+    auth: () => ({ ...auth, origin: input.turn.current }),
+    project: settings.project.rid,
+  });
+  for (const name of LINE_TOOLS) if (name in mcp.tools) tools[name] = lineTools[name] as ToolSet[string];
   if (skills.length > 0) tools[LOAD_SKILL_TOOL] = loadSkillTool(skills);
   if (handoffs.length > 0) tools[HANDOFF_TOOL] = handoffTool(handoffs);
   const instructions = composeSystemPrompt(template, skills, handoffs);

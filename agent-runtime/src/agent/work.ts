@@ -120,8 +120,14 @@ export function describeChange(toolName: string, input: unknown): string {
   switch (toolName) {
     case "create_workflow":
       return name ? `Create the workflow "${name}"` : "Create a workflow";
-    case "edit_workflow":
-      return text(a.message) ? `Change the workflow: ${text(a.message)}` : "Change the workflow";
+    case "edit_workflow": {
+      // The lines' statements, as the card names them: "set night, delete old".
+      const said = [...(text(a.lines) ?? "").matchAll(/^\s*(set|delete)\s+([A-Za-z0-9-]+)/gm)].map(
+        (m) => `${m[1]} ${m[2]}`,
+      );
+      if (said.length === 0) return text(a.message) ? `Change the workflow: ${text(a.message)}` : "Change the workflow";
+      return `Change the workflow: ${said.slice(0, 4).join(", ")}${said.length > 4 ? `, and ${said.length - 4} more` : ""}`;
+    }
     case "run_workflow":
       return text(a.computingUnit) ? `Run the workflow on ${text(a.computingUnit)}` : "Run the workflow";
     case "create_computing_unit":

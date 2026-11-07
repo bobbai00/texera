@@ -18,6 +18,7 @@ import type {
   SkillSpec,
   Turn,
   Version,
+  WorkflowSpec,
 } from "@texera/catalog-client/types";
 
 export type {
@@ -40,6 +41,7 @@ export type {
   SkillSpec,
   Turn,
   Version,
+  WorkflowSpec,
 };
 
 /** The chat turn a call acts in; the catalog records it as the origin of what the call creates. */
@@ -126,4 +128,18 @@ export function parseUri(uri: string): ParsedUri {
 export function baseUri(uri: string): string {
   const { plural, rid } = parseUri(uri);
   return `texera://${plural}/${rid}`;
+}
+
+/** A workflow as the catalog answers for it: where it stands and its spec at the head. */
+export interface WorkflowRecord {
+  kind: "workflow";
+  metadata: { rid: string; uri: string; name: string; head: number; project?: string };
+  spec: WorkflowSpec;
+}
+
+/** What compiling a workflow on a unit says: per operator, its output columns or its error. */
+export interface Validation {
+  ok: boolean;
+  operatorErrors?: Record<string, unknown>;
+  operatorOutputSchemas?: Record<string, Record<string, { attributeName: string; attributeType: string }[] | null>>;
 }
