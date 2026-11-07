@@ -11,9 +11,9 @@ process over a Compose stack; the same stack also deploys to a local Kubernetes 
 command, where computing units are created as resources. The lake (Lakekeeper) authenticates
 every caller and authorizes with OpenFGA: each unit runs as a client of its own and reaches only
 the namespaces of the executions it ran, which the catalog opens for it. An execution runs on a
-computing unit and keeps its results in a warehouse, and both are resources: the platform's
-warehouse is built in, a project can have its own, on the platform's store or on a store of
-its own. Running a workflow goes through the
+computing unit and keeps its results in a warehouse, and both are resources: the deployment's
+warehouse is Texera's, a project can have its own, on the deployment's store or on a store
+Texera allows. Running a workflow goes through the
 catalog in three phases: authorize (everything the plan names, before anything is written),
 compile (one plan, as data, the same a dry run returns), materialize (the execution with its
 plan, its namespace, a bound copy with presigned inputs and leased secrets to the engine, which
@@ -92,23 +92,29 @@ Resource Graph", each of which now carries a dated status under its Plan heading
   conversation as the person; the platform key leased from OpenBao per turn. One seeded
   agent since Nov 5, the Texera Agent, the entry to every chat (it replaced the Data Analyst
   and the Bio Researcher). What a turn runs with is resolved by the catalog, in one place
-  (`GET /conversations/{rid}/settings`): the chat's own choice, else its project's default,
-  else the agent's own or the platform's. A chat stores choices only (agent, model, computing
+  (`GET /conversations/{rid}/settings`): the chat's own choice, else the default of the nearest
+  project up its chain, Texera's at the top, else the agent's own. A chat stores choices only (agent, model, computing
   unit, add-on servers; a new chat stores `{}`) and is bound to no unit. The catalog's server
   holds the basic tools and always stays; the bio server is an add-on a chat can switch off and
   a turn can go without. Handoffs between templates and `/mode` remain in the runtime, unused
   by the shipped agent.
-- Built in means "in the platform's project" (named Built-in, public, usable by everyone):
-  the agent, the skills, the two MCP servers, the model endpoint, the unit, the operators.
-  Nothing on a resource marks it; nobody but the platform changes one or adds to the project
-  (`409 builtin`, administrators included), and each start makes the project what the release
-  ships. Lists are scoped to a project plus the platform's (`?scope=`); a call made in a chat
-  defaults to the chat's project, for lists and for where new resources go.
+- Projects inherit from one another (since Nov 7): every project but Texera has a base, up to
+  Texera, the root; its people read and use what the chain holds and change none of it
+  (OpenFGA `inheritor`: only viewer and user pass up). Texera replaced the Built-in project and
+  the settings singleton: it holds what the release ships (agent, skills, MCP servers, model
+  endpoint, the unit, the profiles, the warehouse, the engine's operators), its admins (owners;
+  the identity provider's administrators at sign-in) change it like any project, and a release
+  updates only what they left alone (the `shipped` ledger). A project's spec is its settings
+  (branding, defaults, limits): a preference from the nearest project, a limit the strictest
+  (`GET /projects/{rid}/settings`). Admin is a project role, never a bypass. Lists are scoped to
+  a project and its chain (`?scope=`); a call made in a chat defaults to the chat's project, for
+  lists and for where new resources go; a workflow runs only operators its chain offers.
 - The frontend: a generic page for every kind from its JSON Schema (spec, versions, access,
   lineage), the workflow editor, the execution page with the port view, and the chat. The
   sidebar picks the project a person works in (Personal by default); a chat starts by typing,
   and its box shows the agent and picks the model and the add-ons (a chat names no computing
-  unit: a run goes where any run goes); the Agents page shows the built-in agent, read-only.
+  unit: a run goes where any run goes); the Agents page shows Texera's agent, read-only for
+  all but Texera's admins. A project's Settings tab says what it inherits and runs with.
   The canvas edits like an editor (several cards picked and deleted at once, undo and redo of
   one's own edits, column settings picked from the input's columns), and an execution's
   results float in a window over the canvas, named as their operators' cards. Every page

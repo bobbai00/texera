@@ -2,6 +2,72 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-07 (session 15, part 5): everything under a project; projects inherit, up to Texera
+
+The user's design: no "built-in", no global settings, no global admin. Projects inherit from
+one another; by default every project inherits from Texera, the project made at install that
+holds operators, profiles and the rest, controlled like any other project, with a default
+admin. Each project has admins and members, through OpenFGA. Branding and the defaults belong
+to a project, inherited, not duplicated. A clean migration without backward compatibility;
+quotas are low priority and were not built.
+
+- **Inheritance.** `metadata.base` names the one project a project inherits from; a chain ends
+  at Texera (`texera.root`, public, `user:*`). OpenFGA's `inheritor` relation carries only
+  `viewer` and `user` up a chain, never editing or owning, and nothing down: a base's admins get
+  nothing below. Inheriting is sharing: a project inherits only from a base its admin
+  administers too, or from Texera; the base's admins may send it back to Texera; a loop is
+  refused; a project others inherit from is not deleted; a public project needs a public chain.
+  Lists follow the same rule in Postgres (a recursive walk of the chain), and `?scope=` is the
+  project's chain.
+- **Settings.** A project's spec is `branding`, `defaults` (agent, model, unit, profile,
+  warehouse, add-ons, work mode) and `limits` (results kept, warehouse stores). A preference
+  comes from the nearest project that sets it, a limit is the strictest along the chain; Texera's
+  store list is the outer bound, empty when unset, so only Texera's admins open the deployment to
+  a store. `GET /projects/{rid}/settings` (MCP `project_settings`) says what holds and where
+  each value comes from. Runs, compiles, chats, retention and warehouses all read it. The
+  settings singleton, `/settings`, `/settings/public` and singleton kinds are gone; `/public`
+  serves Texera's look; an unnamed upload goes after `TEXERA_UPLOAD_GRACE`.
+- **Admins.** A project's owners are its admins (its settings, base, people), its editors its
+  members. The identity provider's administrators are made Texera's admins at sign-in; nobody
+  passes a check for being one (the PDP's admin bypass and the principal's flag are gone).
+- **Texera and releases.** Texera replaces the Built-in project: what a release ships goes into
+  it through the `shipped` ledger, which updates a resource only while its spec and
+  description are what the release wrote, never brings back what Texera's admins deleted, and
+  drops what no release ships any more and nobody changed. The engine's operators sync the same
+  way, and a workflow runs only operator types its project's chain offers, so taking one out of
+  Texera takes it from every workflow.
+- **App.** A project's Settings tab: what it inherits from (its admins pick another), what its
+  work runs with and which project each value comes from, and what it sets itself. People tab
+  with admins and members. Lists say "from <project>" for what is inherited; the sidebar wears
+  the working project's look; no Settings page, no built-in badge; a chat's setting from a
+  project names it.
+- **Migration 0012.** Built-in becomes Texera, every other project gets Texera as its base, a
+  project's flat defaults move under `defaults` (with their reference edges), the settings row
+  goes, administrators get `owner` on Texera, the principal's admin flag and the `shipped`
+  ledger table. Tested on a catalog of the old shape (`inherit_migration_test.go`) and run on
+  the dev stack's and the kind cluster's data.
+
+Verified: the catalog suite against Postgres (`go test ./...`, new: `projects_test.go` on Texera,
+inheritance, loops, settings and releases; `inherit_migration_test.go`; the authorizer contract
+with inheritance, on the in-memory model and on the real OpenFGA, `-tags integration`); the agent
+runtime (104); the app (294 unit tests, typecheck, lint). On the dev stack, migrated from the data
+of the earlier sessions (Built-in became Texera, Diabetes research inherits from it, texera-admin
+administers Texera and reads nobody else's projects): the scenarios, 51 passed
+(`test_projects.py` new, the results-expiry scenario no longer destructive), and Playwright, 64
+passed and 5 skipped (the model), a project's Settings tab among them. On kind, migrated from its own data the same way: `k8s.sh check`
+green, 55 scenarios and Playwright 64 passed, 5 skipped (the model). The first cluster run failed
+"a long first answer ends up on screen" (1 in 3 alone, 1 in 10 on the dev stack): the test scrolled
+up when the live copy alone showed, the catalog's copy then landed above it and the browser's
+scroll anchoring kept the live one in place; saved messages now say `data-message-seq` and the
+test waits for that copy (20 in 20). The API walkthrough runs against the dev stack as before.
+
+Decided along the way: the relations keep their names (owner, editor, viewer, user) and the app
+calls a project's owners admins and its editors members; a project has one base, so every
+setting has one answer; Texera stays open to everyone, so a link to it needs no tuple; Texera's
+store list is the outer bound of every project's; the model default is left to the agent unless a
+chat or a project chooses one. Next: quotas as limits in project settings when wanted; a base's
+admins see the projects that inherit from it only through a refused delete today.
+
 ## 2026-11-07 (session 15, part 4): nobody writes the engine's classes
 
 The user's rule: an agent or a person using operators never works on the class template; the

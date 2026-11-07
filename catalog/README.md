@@ -33,11 +33,11 @@ go test -tags integration ./internal/adapters/...   # the port contract suites a
 | `internal/api` | the Go types `oapi-codegen` generates from the contract |
 | `internal/kinds` | the generated kind table and JSON Schema validation of specs and statuses |
 | `internal/uri` | the one grammar of names: `texera://{plural}/{rid}[@vno][/subresource]`, executions nested under workflows, and the reference extractor |
-| `internal/store` | Postgres: twelve tables, generic over kinds (resources, versions, grants and the access index, the outbox, blobs and staging, edges and lineage events, messages, leases, the document of a live session) |
+| `internal/store` | Postgres: thirteen tables, generic over kinds (resources, versions, grants and the access index, the outbox, blobs and staging, edges and lineage events, messages, leases, the document of a live session, the ledger of what a release shipped) |
 | `internal/ports` | the eight ports: Identity, Workloads (unit identities), Authorizer, SecretStore, BlobStore, UnitProvider, Lake (the table catalog: its warehouses and the namespaces in them), LineageSink |
 | `internal/adapters` | one adapter per port (keycloak for Identity and Workloads, openfga, openbao, s3cas, staticunit, kube, lakekeeper, noop), `unitmux` to offer static and Kubernetes units side by side, and the memory adapters tests use |
 | `internal/auth`, `internal/authz` | who is calling (OIDC claims to a principal) and the policy decision point with the outbox relay to the authorizer |
-| `internal/catalog` | the domain service, one file per area: resources, hooks per kind, files, plan, executions, warehouses, lineage, compute, conversations, chat settings, events (a resource's watch), live (what the live service keeps and saves for people), iam, credentials, seed, the shipped agent (`agents/`) and skills (`skills/`) |
+| `internal/catalog` | the domain service, one file per area: resources, hooks per kind, files, plan, executions, warehouses, lineage, compute, conversations, chat settings, events (a resource's watch), live (what the live service keeps and saves for people), iam, credentials, projects (chains, settings, inheritance), release and seed (what a release ships into Texera), the shipped agent (`agents/`) and skills (`skills/`) |
 | `internal/server` | the HTTP server: generic routes from the kind table plus the actions, validated against the contract in tests |
 | `internal/mcp` | the MCP bridge: a tool call becomes the operation's request against the API in process, with the caller's token |
 | `internal/engine` | the client of a computing unit's engine API |

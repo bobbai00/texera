@@ -86,8 +86,8 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 ## catalog
 
 1. **Usable by everyone.** `visibility: public` grants `viewer` to `user:*`; viewing never
-   implies using. The system project additionally grants `user` to `user:*`, so the
-   platform's unit, credentials and model endpoint are usable by everyone through `parent`.
+   implies using. Texera, the root project, additionally grants `user` to `user:*`, so the
+   deployment's unit, credentials and model endpoint are usable by everyone through `parent`.
    A person's own credential is usable by its owner and editors, or by whoever is granted
    `user` on it or on its project.
 2. **A custom operator's output columns.** The engine needs every output column declared up
@@ -114,12 +114,12 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    provisioned unit deletes its client and credential.
 6. **Retention.** `DELETE /workflows/{rid}/executions/{eid}` removes a finished execution with its
    tables (409 while it runs or while a dataset version derives from it; `can_delete`, so the
-   runner and the owners above). The settings' `retention.results` (ISO 8601 duration) expires
-   the result tables of older finished executions: the record keeps its summaries, gets
-   `status.resultsExpiredAt`, and its rows, ports and saves answer 410 `expired`.
-   `retention.blobs` (default a day) removes uploaded files that no version and no staging
-   names. The catalog sweeps hourly; administrators run one with
-   `POST /settings/retention/sweep`.
+   runner and the owners above). A project's `limits.results` (ISO 8601 duration; the
+   shortest along its chain holds) expires the result tables of its older finished executions:
+   the record keeps its summaries, gets `status.resultsExpiredAt`, and its rows, ports and saves
+   answer 410 `expired`. An upload that no version and no staging names belongs to no project
+   and goes after `TEXERA_UPLOAD_GRACE` (default a day). The catalog sweeps hourly; Texera's
+   admins run one with `POST /retention/sweep`.
 7. **Updating a unit.** `PUT /computing-units/{rid}` takes a new spec like any kind; a
    Kubernetes unit rolls its Deployment to it at once (image, memory, cpu), and the next
    status probes say pending until the new pod answers. The provider cannot change, and a
@@ -201,9 +201,10 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    applied to the head as it is and saved onto no other.
 17. **An execution's warehouse.** A warehouse is a resource (`/warehouses`). Its
    `status.name` is its name in the lake, what an Iceberg client passes as `warehouse`: the
-   configured one for the platform's built-in warehouse, `w_<rid without dashes>` for any
-   other. An execution keeps its results in the warehouse the request names (`warehouse`),
-   else the workflow's `defaultWarehouse`, the project's, the settings' `defaults.warehouse`;
+   configured one for the warehouse the release ships into Texera, `w_<rid without dashes>` for
+   any other. An execution keeps its results in the warehouse the request names (`warehouse`),
+   else the workflow's `defaultWarehouse`, else its project's `defaults.warehouse`, which may come
+   from up the project's chain;
    none at all is 409 `no_warehouse`, and one the caller may not `use` is 403. The engine is
    told the warehouse by that name with the namespace, at the start (`resultStore`) and on
    every read of rows (`warehouse` in the query); the lake's address is the unit's own
@@ -247,13 +248,14 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 
 1. **What a chat runs with.** A conversation stores choices of how its agent works only, each
    optional: `spec.template`, `modelEndpoint`, `mcpServers`. `GET
-   /conversations/{rid}/settings` resolves them for the caller: the chat's choice, else its
-   project's default (`defaultAgentTemplate`, `defaultModelEndpoint`, `mcpServers`), else the
-   agent's own model and servers or the settings' defaults. Where an execution runs is not
-   among them (item 2). Each
-   setting says which level chose it (`from`: `chat`, `project`, `agent`, `platform`). The
-   add-ons a chat lists replace the agent's and the project's; the platform's own server, the
-   one whose URL is the catalog's MCP address, is `platform: true` and stays. A choice that
+   /conversations/{rid}/settings` resolves them for the caller: the chat's choice, else the
+   default of the nearest project up its project's chain (`defaults.agentTemplate`,
+   `defaults.modelEndpoint`, `defaults.mcpServers`, `defaults.workMode`; Texera's at the top),
+   else the agent's own model and servers. Where an execution runs is not among them (item 2).
+   Each setting says which level chose it (`from`: `chat`, `project`, `agent`, `default`) and,
+   from a project, which one (`project`). The add-ons a chat lists replace the agent's and the
+   project's; the catalog's own server, the one whose URL is the catalog's MCP address, is
+   `platform: true` and stays. A choice that
    names something gone, or not the caller's to use (no read; no `use` on a model endpoint's
    credential), is passed over and listed in `skipped`. `POST
    …/turns` pins the agent version the settings resolve to. `GET
@@ -261,25 +263,33 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
 2. **A call made in a chat.** The chat is the call's origin (`X-Texera-Origin`), which the
    catalog honors only with the runtime's service token. The catalog applies the chat's
    context itself, so no agent has to pass it. A compile or an execution takes its unit from
-   the request, else the workflow, the project and the settings, as any other does: a chat
+   the request, else the workflow, else the project's chain, as any other does: a chat
    chooses no unit. A list that names no `scope`, `project`, `parent` or `origin`
    is scoped to the chat's project. A resource made with no `parent` goes into the chat's
    project when the caller may write there, else into their home project.
 3. **Scope.** `scope=<project rid>` on a list (`GET /resources`, every kind's list, `GET
-   /computing-units/available`) keeps what is in that project and in the platform's, whose
-   built-ins every project inherits. Projects themselves are never narrowed, `project=` stays
-   exact, and a scope that does not name a project is `400 invalid`.
-4. **Built-ins.** A resource is built in when its project is the platform's
-   (`Me.systemProject`: named "Built-in", public, `user` for everyone). Nothing on the
-   resource marks it. A permission that changes one or adds to the project (write, share,
-   delete, rotate, execute) answers `409 builtin` for everyone but the platform's own
-   identity, an administrator included; reads go by the usual checks. At every start the seed
-   makes the project what the release ships: a new version for what changed, and removal of
-   what the platform made there and no longer ships; the settings' defaults move off a
-   removed one, and a chat that named it falls back.
-5. **Lists and checks.** A check is the authorizer's (`viewer from parent`, to any depth). A
-   list is filtered in the store by the same rule for the three levels there are: public,
-   owned or granted, on the resource, its parent or its project. Grants to a group are not
+   /computing-units/available`) keeps what is in that project and in the projects up its chain,
+   to Texera. Projects themselves are never narrowed, `project=` stays exact, and a scope that
+   does not name a project is `400 invalid`.
+4. **Projects and Texera.** A project's `metadata.base` is the project it inherits from
+   (`Me.rootProject`, Texera, has none): `POST /projects` takes `base` (default Texera), `PATCH
+   /resources/{rid}` changes it. The base must be a project the caller administers, or Texera;
+   the base's admins may also set it back to Texera; a loop is `400`, a public project with a
+   private base `409 private_base`, deleting a project others inherit from `409 inherited`.
+   The base names the project an `inheritor` in OpenFGA (`viewer` and `user` pass up, nothing
+   else; Texera needs no tuple, it is open to everyone). A project's spec is its settings
+   (`branding`, `defaults`, `limits`), changed by its admins (`admin`, the owner relation);
+   `GET /projects/{rid}/settings` resolves them along the chain with each value's source. What
+   a release ships goes into Texera through the `shipped` ledger: a resource whose spec and
+   description are still what the release wrote gets the next release's; one Texera's admins
+   changed stays; one they deleted stays gone; what no release ships any more and nobody
+   changed is removed, and Texera's defaults move off it. A workflow's operator types must be
+   offered by its project's chain (`400` naming the type otherwise). The identity provider's
+   administrators get `owner` on Texera at sign-in; nobody passes a check for being one.
+5. **Lists and checks.** A check is the authorizer's (`viewer from parent` and `from
+   inheritor`, to any depth). A list is filtered in the store by the same rule: public, owned
+   or granted, on the resource, its parent or its project, or in a project up the chain of a
+   project the caller may view. Grants to a group are not
    expanded in lists.
 6. **A unit's errors.** A unit answers an error in the contract's shape, `{code, message}`
    with a string code and the engine's own words. The catalog keeps the class and the words:

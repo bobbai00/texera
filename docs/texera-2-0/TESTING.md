@@ -29,8 +29,8 @@ Bob) goes through a guard fixture that puts it back.
 | Who I am, the seeds, workflow versions and edits, sharing, dataset files and references, a new chat that stores nothing and what it runs with, a turn and its origin, the one MCP server and every tool it has (acceptance 1, 2) | `test_catalog.py` | | 5 s |
 | Running a workflow in three phases: the dry run's plan is the execution's, stored without secrets; the tables the catalog named, ports, rows, lineage; the keep mark (acceptance 3, 4 at the API) | `test_run.py` | | 15 s |
 | Results kept per execution, through later executions and the unit's idle release; an execution deleted with its tables | `test_results.py` | slow | 1 min |
-| Old results expire under the retention policy; the record stays; a kept execution does not expire | `test_results.py` | destructive | 20 s |
-| A unit made from a profile has its packages: a Python function that imports one fails on the platform's unit and completes there; the execution records the profile version and each package as installed; the unit saved as the profile's next version and as a new one, its packages pinned | `test_profile.py` | cluster, slow | 3 min |
+| A project's limit expires its own old results, nobody else's; the record stays; a kept execution does not expire; Texera's admins sweep | `test_results.py` | | 20 s |
+| A unit made from a profile has its packages: a Python function that imports one fails on the deployment's unit and completes there; the execution records the profile version and each package as installed; the unit saved as the profile's next version and as a new one, its packages pinned | `test_profile.py` | cluster, slow | 3 min |
 | A custom operator as a resource, used by URI and run, deletion refused while referenced (acceptance 5) | `test_operator.py` | slow | 1 min |
 | A project shared with a viewer: reads, runs, nothing more; revoked (acceptance 6) | `test_sharing.py` | | 20 s |
 | What others shared with a person is one list whatever its kind and project (a project, a chat, a workflow, a dataset), not what is inside a project they were given; a grant taken back takes the thing off it | `test_sharing.py` | | 5 s |
@@ -40,21 +40,21 @@ Bob) goes through a guard fixture that puts it back.
 | The document of a workflow's live session is the live service's alone to read and write; only it saves a version in the names of the people who edited; an edit against a head that moved is a conflict | `test_collaboration.py` | | 5 s |
 | An execution watched through its event stream: operator progress, pause and resume through the catalog, the phase following the unit's word, every row at the end | `test_controls.py` | slow | 1 min |
 | A credential in an operator property, leased for the execution; a viewer refused before any execution exists, until granted use (acceptance 7) | `test_credentials.py` | | 30 s |
-| An execution keeps its results in a warehouse chosen like a unit: the platform's, built in, unless the project's default or the request names another; the rows are written there and read from there | `test_warehouse.py` | | 15 s |
-| Using a warehouse is a permission of its own: a viewer runs into the platform's, and into the project's once given the use of it | `test_warehouse.py` | | 15 s |
-| A warehouse on a store of its own: an address nobody listed is refused, the lake refuses a wrong key and nothing is made, the right one is taken and written to; its place cannot change and its credential stays | `test_warehouse.py` | | 10 s |
+| An execution keeps its results in a warehouse chosen like a unit: the one the project inherits from Texera unless the project's default or the request names another; the rows are written there and read from there | `test_warehouse.py` | | 15 s |
+| Using a warehouse is a permission of its own: a viewer runs into Texera's, and into the project's once given the use of it | `test_warehouse.py` | | 15 s |
+| A warehouse on a store of its own: an address Texera does not list is refused, a project's own list narrowing and never widening it, the lake refuses a wrong key and nothing is made, the right one is taken and written to; its place cannot change and its credential stays | `test_warehouse.py` | | 10 s |
 | A warehouse goes only when nothing keeps results in it and nothing names it | `test_warehouse.py` | | 10 s |
-| The lake holds an execution's namespace in the warehouse it names and not in the platform's; a person's own token gets nothing from it | `test_warehouse.py` | cluster | 10 s |
+| The lake holds an execution's namespace in the warehouse it names and not in the deployment's; a person's own token gets nothing from it | `test_warehouse.py` | cluster | 10 s |
 | The lake enforces the catalog's decision: namespaces per execution, identities per unit, nothing for anyone else | `test_lake.py` | local | 20 s |
 | The unit's doors: its API answers the catalog alone, the gateway has no route to it, only the running unit reports on an execution | `test_doors.py` | local | 20 s |
 | Results survive a restart of the unit | `test_unit_restart.py` | local, destructive | 2 min |
 | A computing unit as a resource on Kubernetes: ready, run, spec change rolls it, use granted, terminate, delete | `test_cluster_unit.py` | cluster, slow | 2 min |
 | What the engine says reaches whoever asked, through the API and the MCP tools: a raising operator fails the execution in its own words, a compile error, a port with no result; a port is empty until its table is written | `test_engine_errors.py` | | 30 s |
-| The agent runtime reaches every add-on a chat mounts, from inside its pod; the catalog's own server is the one marked the platform's | `test_cluster_agents.py` | cluster | 5 s |
-| A run in a chat goes where any run goes: the platform's unit when nothing is named, a workflow's own unit, a unit named in the call; a forged origin is refused | `test_chat_runs.py` | | 30 s |
-| What the platform ships is built in by living in its project: everyone lists and opens it, nobody changes it or adds to its project, an administrator included; a public project's contents are listed as they can be opened | `test_builtin.py` | | 10 s |
+| The agent runtime reaches every add-on a chat mounts, from inside its pod; the catalog's own server is the one marked `platform` | `test_cluster_agents.py` | cluster | 5 s |
+| A run in a chat goes where any run goes: the unit the project inherits from Texera when nothing is named, a workflow's own unit, a unit named in the call; a forged origin is refused | `test_chat_runs.py` | | 30 s |
+| Texera is what every project inherits from: open to everyone, its admins (the identity provider's administrator) change and add to it and nobody else does, its look is the sign-in page's; a project inherits from a base only its admin administers, its people read what the base holds and change none of it, the base's admins get nothing below and send it back to Texera; settings come from the nearest project and limits from the strictest; a public project's contents are listed as they can be opened | `test_projects.py` | | 20 s |
 | A scope is a project and what it inherits; a call made in a chat is scoped to the chat's project and what it makes goes there | `test_scope.py` | | 10 s |
-| A chat stores choices of how its agent works only (no unit); the catalog resolves what a turn runs with: the chat's choice, then the project's, then the agent's own or the platform's; a choice someone may not use is passed over for them | `test_chat_settings.py` | | 15 s |
+| A chat stores choices of how its agent works only (no unit); the catalog resolves what a turn runs with: the chat's choice, then the nearest project's up its chain (Texera's at the top, each named), then the agent's own; a choice someone may not use is passed over for them | `test_chat_settings.py` | | 15 s |
 | The Texera Agent builds, runs, edits and reruns through a chat that stores nothing; what it makes is in the chat's project, and every answer records its agent version, model and servers (acceptance 3, 9) | `test_agents.py` | model, slow | 2 min, about 30 model calls |
 | One agent, one chat: it consults the bio tools for research ideas, analyzes the person's data from an execution, and shares it with Bob, with no handoff (acceptance 10, 11) | `test_agents.py` | model, slow | 3 min, about 40 model calls |
 | The agent's executions go to the unit the person names in their words; the chat stores no unit | `test_agents.py` | model, slow | 1 min, about 10 model calls |
@@ -76,8 +76,10 @@ collapsed to a rail that lies over nothing, a
 chat's model, unit and add-ons chosen in its box, a turn that fails and says why across a
 reload, a long first answer that ends up on screen, the operator page with its versions and
 sharing, a computing unit made from a profile with a size of its own (its page says how it
-differs from the profile, and a package added there is saved on it), the platform's unit
-saved as a profile of one's own in the project one works in, a warehouse made from its page and kept as its
+differs from the profile, and a package added there is saved on it), the deployment's unit
+saved as a profile of one's own in the project one works in, a project's Settings tab saying what it
+inherits from and where each value comes from (its admin sends it back to Texera, and working in it
+the app wears its look), a warehouse made from its page and kept as its
 project's (the dialog asks where it keeps its tables; an execution's page names it and shows
 the rows; it stays while results are in it), an execution's lineage and its keep mark, two
 people in one chat (the other's messages and turn arrive live, under their name), an

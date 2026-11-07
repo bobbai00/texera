@@ -20,7 +20,7 @@ bin/texera-2-0/up.sh            # the containers, then the catalog, the computin
 `up.sh` takes a few minutes the first time (the Python environment, the engine's compilation)
 and is idempotent: run it again after a change to restart what changed. Open
 **http://localhost:8088** and sign in as `alice` / `alice` or `bob` / `bob` (`texera-admin` /
-`admin` is an administrator). Logs are in `logs/texera-2-0/<service>.log`.
+`admin` is one of Texera's admins). Logs are in `logs/texera-2-0/<service>.log`.
 
 ```
 bin/texera-2-0/down.sh          # stop everything, keep the data
@@ -89,37 +89,58 @@ name.
 
 **Projects.** Everything lives in a project, and you work in one at a time, picked at the top
 of the sidebar: "Personal", your home project, until you pick another, or "All projects". The
-lists show the project you work in and what it inherits, the built-ins; what you make goes
-into it (a chat, a workflow, anything, from a library page, the home page or the chat beside
+lists show the project you work in and what it inherits, each inherited thing saying which
+project it comes from; what you make goes into it (a chat, a workflow, anything, from a library page, the home page or the chat beside
 a page), and so does what the agent makes in a chat of that project. The "New …" dialog says
 which project that is. With "All projects" there is no one project to make things in, so the
 dialog and the chat box ask which; beside a page the chat box proposes that page's project.
 A project you make is the one you work in from then on, and a project's page has "Work in
 this project". A name is a label, so two
 things in a project may have the same name; each has its own address. Share a project and everything in it is
-shared the same way; make it public and everyone can read what is in it. A project can name
-its own defaults: the agent, the model, the computing unit, the warehouse, and add-on tools
-for all its chats.
+shared the same way; make it public and everyone can read what is in it.
 
-**Built-in.** What the platform ships (the agent, its skills and MCP servers, the model
-endpoint, the default unit and the profile it is made from, the warehouse, the engine's operators) lives in one project,
-"Built-in", and that is all that makes a resource built in. Everyone can view and use what is
-in it; nobody changes it through the app or the API, an administrator included (`409
-builtin`): it changes with a release. An administrator changes which agent, unit, profile,
-warehouse or model is the default in the settings, and a project in its own.
+**Inheritance.** A project inherits from one other, its *base*, up to **Texera**, the project at
+the top of every chain; a new project and your home inherit from Texera unless you pick one of
+your own. Its people read and use what the projects up its chain hold (the engine's operators,
+the profiles, the agent, a lab's shared functions) and change none of it; the base's admins get
+nothing in the projects below. Inheriting is sharing, so a project inherits only from a project
+its admin administers too, or from Texera, which is open to everyone; the base's admins may send
+a project back to Texera; a chain never loops; a project others inherit from cannot be
+deleted; and a project is public only when everything it inherits is.
+
+**A project's settings** are its spec: its look (`branding`: a name and a logo the app wears
+inside it), its `defaults` (the agent, the model, the computing unit, the profile a new unit is
+made from, the warehouse, the add-on tools and the work mode of its chats) and its `limits`
+(how long results are kept, which object stores a warehouse may use). What a project leaves
+out it inherits: a look or a default comes from the nearest project up the chain that sets it,
+a limit is the strictest along it, so a project narrows what it inherits and never widens it.
+Its Settings tab shows what holds and which project each value comes from
+(`GET /projects/{rid}/settings`), what it inherits from, and what it sets itself.
+
+**Admins and members.** A project's owners are its admins: they change the project itself, its
+settings, its base and its people. Its editors are its members: they work in it. Texera is a
+project like any other: the release ships into it (the agent, its skills and MCP servers, the
+model endpoint, the deployment's unit and its profile, the profile ladder, the warehouse, the
+engine's operators), and its admins change, add or delete any of it for everyone; a later
+release updates only what they left alone and never brings back what they deleted. Taking an
+engine operator out of Texera takes it from every workflow: a workflow runs only operators its
+project offers along its chain. The identity provider's administrators (`texera-admin`) are
+made Texera's admins when they sign in, and they make others admins on its People tab; nobody
+passes the authorization checks for being an administrator.
 
 **The library.** Every kind has a page under its plural, linked from the sidebar: what you
 make and keep (`/workflows`, `/datasets`, `/models`, `/operators`, `/computing-units`,
 `/profiles`, `/warehouses`), what happened (`/executions`, across workflows), what the agent is made
 of (`/agent-templates`, `/skills`, `/mcp-servers`, `/model-endpoints`, `/credentials`),
-`/projects`, and `/settings` for administrators. "New …" opens a form generated from the
+and `/projects`. "New …" opens a form generated from the
 kind's schema; a new computing unit asks for the profile it is made from and its size, a new warehouse for where it
 keeps its tables. A resource's page has its
 spec (a form, the JSON a click away), its versions, who can access it, its lineage and the raw
 envelope; `?panel=` opens a second resource beside the first.
 
-**Workflows.** The editor is a canvas over the spec: operators (the engine's built-ins and the
-custom operators of the workflow's project, by URI) joined by arrows. An operator is a card:
+**Workflows.** The editor is a canvas over the spec: operators (the engine's, which Texera
+offers every project unless its admins took one away, and the custom operators of the
+workflow's project and what it inherits, by URI) joined by arrows. An operator is a card:
 its name, and its settings in one line as a person would say them (a file by its name, a
 filter as `medal = Gold`). "Compact | Detailed" at the top of the canvas chooses how much every
 card says; "Detailed" lists each setting on a line. A card has the operator's own two buttons:
@@ -211,9 +232,10 @@ operators ("Can't open 1 thing this uses: iris"). "Share them too" gives them vi
 you may share; for the rest it says to ask the owner. The unit and the warehouse it names are
 left out: whoever opens it runs on their own.
 
-**Settings** (administrators): branding, the defaults an execution or a chat falls back to
-(agent, unit, profile, warehouse, model endpoint), the stores a warehouse of someone's own
-may be on, and retention (section 5).
+**Texera's settings** are what every project inherits unless it sets its own: the look of the
+sign-in page and of every project without one, the defaults (agent, unit, profile, warehouse),
+the stores a warehouse may be on at all, and how long results are kept (section 5). Its admins
+change them on Texera's Settings tab.
 
 ## 3. Agents
 
@@ -236,7 +258,9 @@ conversation at a time, on the person's behalf and with the person's own permiss
   Python operators, reading results, the literature review), so the prompt stays short.
 - The agent is told, at every step, today's date, the project the chat is in and the computing
   unit an execution falls back to. It works where the chat is: its searches cover the chat's
-  project and the built-ins unless it names another scope, and what it makes goes there.
+  project and what it inherits, up to Texera, unless it names another scope, and what it makes
+  goes there; `project_settings` tells it what a project runs with and where each value comes
+  from.
 - Asked from beside a page, it is also told what the person is looking at (the resource and,
   on a canvas, the selected operator), and "this" means that. In a chat several people write
   in, it reads each message under its writer's name and is told whom it is answering.
@@ -248,7 +272,8 @@ conversation at a time, on the person's behalf and with the person's own permiss
 
 **What a chat runs with.** A chat stores choices and nothing else: its agent, the model, the
 computing unit its executions prefer, its add-on servers. A turn runs with the chat's choice,
-else the project's, else the agent's own or the platform's default. The add-ons a chat lists
+else the default of the nearest project up the chat's project's chain (Texera's at the top),
+else the agent's own; each setting says which project it came from. The add-ons a chat lists
 take the place of the agent's and the project's; the catalog server is not an add-on and
 stays. The catalog decides, in one place: `GET /conversations/{rid}/settings` says what a turn
 would run with and which level chose each, `GET /projects/{rid}/chat-settings` the same for a
@@ -258,12 +283,12 @@ version, the model and the servers that wrote it.
 **Where it is defined.** The agent is a file in the repository,
 `catalog/internal/catalog/agents/texera-agent.md` (its card and its system prompt), next to the
 skills in `skills/*.md`; the model endpoint, the skills and the MCP servers it uses are a few
-lines of `seed.go`. The catalog seeds it at start into the Built-in project, as the settings'
-default. A changed file is a new version at the next start; a turn runs the newest version,
-and every message records the version that wrote it, so a change is traceable and is undone by
-reverting the file. The Built-in project holds what the release ships and nothing else: what
-an older release shipped is removed at the next start, and a chat that named it falls back to
-the platform's. The model, its key and the bio server's address come from the deployment
+lines of `seed.go`. The catalog ships it at start into Texera, as Texera's default agent. A
+changed file is a new version at the next start, unless Texera's admins changed the agent
+themselves (then theirs stays); a turn runs the newest version, and every message records the
+version that wrote it, so a change is traceable and is undone by reverting the file. What an
+older release shipped and nobody changed is removed at the next start, and a chat that named it
+falls back to the default. The model, its key and the bio server's address come from the deployment
 (`TEXERA_MODEL_NAME`, the key in `.env`, `TEXERA_BIOMCP_URL`).
 
 - **Model endpoints** name a provider and a model (`anthropic`, or `openai_compatible` with a
@@ -374,36 +399,40 @@ fit the phase answers 409. A workflow with an execution still going on the same 
 
 An execution runs on a computing unit and keeps its results in a warehouse. A warehouse is a
 resource, like a unit: a place in an object store whose tables the lake (Lakekeeper, an Iceberg
-REST catalog) manages. The platform's own is built in and is where results go unless something
-names another. A project can have its own: "New warehouse" makes one on the platform's store,
+REST catalog) manages. The deployment's own is Texera's, and every project keeps its results
+there unless something names another. A project can have its own: "New warehouse" makes one on
+the deployment's store,
 in a place of its own, or on a store of yours (`spec.storage`: the endpoint, the region, the
 bucket, a folder in it, and a credential whose secret holds `accessKeyId` and
 `secretAccessKey`). Such a store is S3-compatible and hands out short-lived keys itself (STS,
 as MinIO and RustFS do): the lake gives a unit access to one table's files that way, and no
-unit ever holds the store's key. An administrator lists the stores a warehouse may be on
-(`warehouseEndpoints` in the settings; the deployment's own always is), and the lake tries a
+unit ever holds the store's key. Texera's admins list the stores a warehouse may be on at all
+(`limits.warehouseEndpoints` of Texera; the deployment's own always is), a project's admins may
+narrow that list for their project and what inherits from it, and the lake tries a
 store before it takes it, so a wrong key or a bucket that is not there is refused when the
 warehouse is made. A warehouse does not move: its place is chosen once, and its key follows
 its credential when the secret is replaced.
 
 An execution keeps its results in the warehouse the request names (`warehouse` of `run`), else
-the workflow's (`defaultWarehouse`), the project's, the platform's, and records it
+the workflow's (`defaultWarehouse`), else the project's default (`defaults.warehouse`, which may
+come from up its chain), and records it
 (`spec.warehouse`); its page shows it. The bar beside Run says it before a run, `on <unit>
 (<profile> vN) · results in <warehouse>`, and picks another warehouse for the runs started
 there; an execution's card in lineage says the same. On a warehouse's page, "Keep <project>'s results here"
-makes it the project's. Whoever runs needs `use` on the warehouse (grant `user`; the
-platform's is everyone's). Reading is decided by the execution, not by the warehouse: whoever
+makes it the project's default, for its admins. Whoever runs needs `use` on the warehouse
+(grant `user`; Texera's is everyone's). Reading is decided by the execution, not by the warehouse: whoever
 may read an execution reads its rows, through the catalog. A warehouse is deleted only when no
 execution keeps results in it (`409 in_use`).
 
 Results are Iceberg tables in the execution's own namespace of its warehouse, written by the
-unit's own identity and readable through the catalog alone. The settings' `retention.results` (an ISO
-8601 duration, `P30D`) is how long a finished execution keeps its tables; absent, forever. The
-catalog sweeps hourly (`POST /settings/retention/sweep` runs one now, for administrators);
-an expired execution keeps its record and summaries and answers 410 to its rows. The label
-`texera.keep` on an execution (the Keep button) exempts it. `DELETE /workflows/{rid}/
-executions/{eid}` removes a finished execution with its tables; `retention.blobs` (default a day)
-removes uploaded files nobody committed.
+unit's own identity and readable through the catalog alone. A project's `limits.results` (an
+ISO 8601 duration, `P30D`) is how long a finished execution of it keeps its tables; the shortest
+along its chain holds, Texera's included, and set nowhere, forever. The catalog sweeps hourly
+(`POST /retention/sweep` runs one now, for Texera's admins); an expired execution keeps its
+record and summaries and answers 410 to its rows. The label `texera.keep` on an execution (the
+Keep button) exempts it. `DELETE /workflows/{rid}/executions/{eid}` removes a finished execution
+with its tables; an uploaded file nobody committed belongs to no project and goes after the
+deployment's grace period (`TEXERA_UPLOAD_GRACE`, a day).
 
 ## 6. Computing units
 
@@ -452,7 +481,8 @@ Anything that holds a person's token can do what the person can:
   a profile, `save_unit_as_profile`) and the verbs of a workflow and its executions
   (`create_workflow`, `get_workflow`, `edit_workflow`, `validate_workflow`, `run_workflow`,
   `get_execution`, `pause_execution`, `resume_execution`, `get_port_result`). A list takes a
-  `scope`, a project: it then holds that project and the built-ins. A tool that fails answers
+  `scope`, a project: it then holds that project and what it inherits up its chain, and
+  `project_settings` says what a project runs with. A tool that fails answers
   with the status and the words of the error, the engine's own when the engine refused. Point
   Claude Code, an SDK agent or any MCP client at it with a bearer token. The walkthrough shows
   one call.
@@ -505,9 +535,12 @@ rolls it; `terminate` removes it. Details, the images and the manifests:
 - **401 from the gateway.** The token is missing, expired or for another issuer; a realm
   change (`bin/texera-2-0/keycloak/texera-realm.json`) needs `down.sh --wipe`, Keycloak
   imports a realm once.
-- **409.** A change to a built-in resource, or to the Built-in project (`builtin`); a
-  duplicate name in the project; a delete of something still referenced or still holding
-  children (the response lists them); an execution on a unit that already runs one of this
+- **403** on a change to Texera or to what it holds, for someone who is not one of its admins;
+  on a project's settings or base, for a member who is not its admin; on a base one does not
+  administer.
+- **409.** A delete of something still referenced or still holding children, or of a project
+  others inherit from (the response lists them); Texera made private or deleted (`root`); a
+  public project inheriting from a private one (`private_base`); an execution on a unit that already runs one of this
   workflow; a unit with an execution on it being changed.
 - **410** on an execution's rows: its results expired under the retention policy; keep the
   ones you need.
