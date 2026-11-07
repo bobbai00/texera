@@ -23,7 +23,7 @@ import pytest
 
 from core.architecture.managers.executor_manager import ExecutorManager
 from core.models import Table
-from pytexera import FunctionOperator, returns
+from pytexera import Credential, FunctionOperator, FunctionSourceOperator, returns
 from pytexera.udf.function_operator import conform
 
 USER_CODE = '''import pandas as pd
@@ -41,16 +41,24 @@ def time_in_range(readings: pd.DataFrame, *, low: int = 70, high: int = 180) -> 
 
 def generated(code: str, function: str, columns, arguments, inputs=1, grouped=False):
     """The module the engine runs for a function operator, as the engine writes it."""
-    return (
+    head = (
         "from pytexera import *\n"
-        "from pytexera import FunctionOperator, returns\n\n"
+        "from pytexera import FunctionOperator, FunctionSourceOperator, returns\n\n"
         f"{code}\n\n"
-        "class ProcessTableOperator(FunctionOperator):\n"
+    )
+    body = (
         f"    function = staticmethod({function})\n"
         f"    columns = __import__('json').loads({json.dumps(json.dumps(columns))})\n"
         f"    arguments = __import__('json').loads({json.dumps(json.dumps(arguments))})\n"
-        f"    inputs = {inputs}\n"
-        f"    grouped = {grouped}\n"
+    )
+    if inputs == 0:
+        return head + "class GenerateOperator(FunctionSourceOperator):\n" + body
+    return (
+        head
+        + "class ProcessTableOperator(FunctionOperator):\n"
+        + body
+        + f"    inputs = {inputs}\n"
+        + f"    grouped = {grouped}\n"
     )
 
 
@@ -198,3 +206,84 @@ class TestFunctionOperator:
             "glucose": float,
         }
         assert sample_readings.__texera_nondeterministic__ is True
+
+    def test_a_function_that_yields_puts_out_each_dataframe_as_it_comes(self):
+        made = []
+
+        def by_patient(readings):
+            for who, rows in readings.groupby("patient_id"):
+                made.append(who)
+                yield pandas.DataFrame({"patient_id": [who], "n": [len(rows)]})
+
+        class ByPatient(FunctionOperator):
+            function = staticmethod(by_patient)
+            columns = [["patient_id", "string"], ["n", "long"]]
+
+        outputs = ByPatient().process_table(Table(READINGS), 0)
+        first = next(outputs)
+        # The first is out before the function makes the second.
+        assert first.to_dict("records") == [{"patient_id": "P-1", "n": 3}]
+        assert made == ["P-1"]
+        assert [x.to_dict("records") for x in outputs] == [
+            [{"patient_id": "P-2", "n": 2}]
+        ]
+
+        def wrong(readings):
+            yield readings
+
+        class Wrong(FunctionOperator):
+            function = staticmethod(wrong)
+            columns = [["n", "long"]]
+
+        with pytest.raises(ValueError, match="wrong returned the columns"):
+            list(Wrong().process_table(Table(READINGS), 0))
+
+    def test_a_function_that_reads_no_table_is_a_source_called_once(self):
+        code = """import pandas as pd
+
+@returns(n=int, square=int)
+def squares(*, upto: int = 3):
+    for n in range(1, upto + 1):
+        yield pd.DataFrame({"n": [n], "square": [n * n]})
+"""
+        manager = ExecutorManager()
+        try:
+            cls = manager.load_executor_definition(
+                generated(
+                    code,
+                    "squares",
+                    [["n", "long"], ["square", "long"]],
+                    {"upto": 2},
+                    inputs=0,
+                ),
+                is_source=True,
+            )
+        finally:
+            manager.close()
+        assert cls.__name__ == "GenerateOperator"
+        assert inspect.isabstract(FunctionSourceOperator) and not inspect.isabstract(
+            cls
+        )
+        out = [x.to_dict("records") for x in cls().produce()]
+        assert out == [[{"n": 1, "square": 1}], [{"n": 2, "square": 4}]]
+
+        class Once(FunctionSourceOperator):
+            function = staticmethod(
+                lambda *, n=2: pandas.DataFrame({"n": list(range(n))})
+            )
+            columns = [["n", "long"]]
+            arguments = {"n": 3}
+
+        [table] = list(Once().produce())
+        assert table["n"].tolist() == [0, 1, 2]
+
+    def test_a_credential_setting_is_text_the_function_reads(self):
+        @returns(auth=str)
+        def tag(rows, *, api_key: Credential):
+            return pandas.DataFrame({"auth": [api_key[-4:]] * len(rows)})
+
+        assert Credential("token-9f3a") == "token-9f3a"
+        assert (
+            tag(READINGS, api_key=Credential("token-9f3a"))["auth"].tolist()[0]
+            == "9f3a"
+        )

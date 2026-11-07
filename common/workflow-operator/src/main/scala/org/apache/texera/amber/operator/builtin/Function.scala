@@ -33,15 +33,17 @@ import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, Operat
 import scala.jdk.CollectionConverters._
 
 /**
-  * `function`: a Python function as an operator. A team keeps the Python it reuses as custom
+  * `function`: a Python function as an operator. A project keeps the Python it reuses as custom
   * operators whose code is a function under `@returns(...)`; the catalog compiles a workflow's
   * call to one into this operator, with the code, the function's name, its declared columns,
-  * its keyword arguments and `by`.
+  * its keyword arguments and `by`. People and agents write the function, never this operator:
+  * the class that runs it is the engine's.
   *
   * It runs on Python workers as a table operator: each worker calls the function once, with the
   * rows it got from each input as a DataFrame. With `by`, rows with the same values in those
   * columns go to the same worker, so every group reaches one call whole and the work spreads
-  * over the workers; without it, one worker gets every row.
+  * over the workers; without it, one worker gets every row. A function that reads no table is
+  * a source, called once. Either may yield DataFrames as it makes them instead of returning one.
   */
 class FunctionOp extends LogicalOp {
   @JsonProperty(required = true)
@@ -78,8 +80,11 @@ class FunctionOp extends LogicalOp {
 
   @JsonIgnore def keys: List[String] = Option(by).map(_.asScala.toList).getOrElse(Nil)
 
+  /** Its inputs' names; none for a function that reads no table, which is a source. */
   @JsonIgnore def inputNames: List[String] =
-    Option(inputs).map(_.asScala.toList).filter(_.nonEmpty).getOrElse(List(""))
+    Option(inputs).map(_.asScala.toList).getOrElse(List(""))
+
+  @JsonIgnore def isSource: Boolean = inputNames.isEmpty
 
   /** The declared columns, each a name and its type. */
   @JsonIgnore def columns: List[Attribute] = {
@@ -117,6 +122,8 @@ class FunctionOp extends LogicalOp {
   def outputColumns(inputSchemas: List[Schema]): Schema = {
     if (!FunctionOp.Identifier.matches(Option(function).getOrElse("")))
       throw new SettingError("function", s"""'$function' is not a Python function's name""")
+    if (isSource && keys.nonEmpty)
+      throw new SettingError("by", "a function that reads no table has no rows to group")
     inputSchemas.foreach(input => BuiltinOp.columnsOf("by", keys, input))
     Schema(columns)
   }
@@ -126,52 +133,68 @@ class FunctionOp extends LogicalOp {
     val declared = columns.map(a => List(a.getName, a.getType.getName).asJava).asJava
     val arguments = Option(args).getOrElse(new java.util.HashMap[String, Object]())
     def literal(value: Object): String = PythonModule.json(value)
-    List(
+    val caller =
+      if (isSource) List("class GenerateOperator(FunctionSourceOperator):")
+      else List("class ProcessTableOperator(FunctionOperator):")
+    val reads =
+      if (isSource) Nil
+      else
+        List(
+          s"    inputs = ${inputNames.size}",
+          s"    grouped = ${if (keys.nonEmpty) "True" else "False"}"
+        )
+    (List(
       "from pytexera import *",
-      "from pytexera import FunctionOperator, returns",
+      "from pytexera import FunctionOperator, FunctionSourceOperator, returns",
       "",
       code,
       "",
-      "",
-      "class ProcessTableOperator(FunctionOperator):",
+      ""
+    ) ++ caller ++ List(
       s"    function = staticmethod($function)",
       s"    columns = __import__('json').loads(${literal(declared)})",
-      s"    arguments = __import__('json').loads(${literal(arguments)})",
-      s"    inputs = ${inputNames.size}",
-      s"    grouped = ${if (keys.nonEmpty) "True" else "False"}",
-      ""
-    ).mkString("\n")
+      s"    arguments = __import__('json').loads(${literal(arguments)})"
+    ) ++ reads ++ List("")).mkString("\n")
   }
 
   override def getPhysicalOp(
       workflowId: WorkflowIdentity,
       executionId: ExecutionIdentity
   ): PhysicalOp = {
-    val ports = operatorInfo.inputPorts
-    val op = PhysicalOp
-      .oneToOnePhysicalOp(
-        workflowId,
-        executionId,
-        operatorIdentifier,
-        OpExecWithCode(module, "python")
-      )
-      .withInputPorts(ports)
-      .withOutputPorts(operatorInfo.outputPorts)
-      .withIsOneToManyOp(true)
-      .withDerivePartition(_ => UnknownPartition())
-      .withPropagateSchema(
-        SchemaPropagationFunc(in =>
-          Map(operatorInfo.outputPorts.head.id -> outputColumns(ports.map(p => in(p.id))))
+    val exec = OpExecWithCode(module, "python")
+    if (isSource) {
+      PhysicalOp
+        .sourcePhysicalOp(workflowId, executionId, operatorIdentifier, exec)
+        .withInputPorts(Nil)
+        .withOutputPorts(operatorInfo.outputPorts)
+        .withIsOneToManyOp(true)
+        .withPropagateSchema(
+          SchemaPropagationFunc(_ => Map(operatorInfo.outputPorts.head.id -> outputColumns(Nil)))
         )
-      )
-    if (keys.isEmpty) op.withParallelizable(false)
-    else op.withPartitionRequirement(ports.map(_ => Option(HashPartition(keys))))
+        .withLocationPreference(Option.empty)
+        .withParallelizable(false)
+    } else {
+      val ports = operatorInfo.inputPorts
+      val op = PhysicalOp
+        .oneToOnePhysicalOp(workflowId, executionId, operatorIdentifier, exec)
+        .withInputPorts(ports)
+        .withOutputPorts(operatorInfo.outputPorts)
+        .withIsOneToManyOp(true)
+        .withDerivePartition(_ => UnknownPartition())
+        .withPropagateSchema(
+          SchemaPropagationFunc(in =>
+            Map(operatorInfo.outputPorts.head.id -> outputColumns(ports.map(p => in(p.id))))
+          )
+        )
+      if (keys.isEmpty) op.withParallelizable(false)
+      else op.withPartitionRequirement(ports.map(_ => Option(HashPartition(keys))))
+    }
   }
 
   override def operatorInfo: OperatorInfo =
     OperatorInfo(
       "function",
-      "Call a team's Python function on each worker's rows, grouped by some columns.",
+      "Call a project's Python function on each worker's rows, grouped by some columns, or as a source.",
       OperatorGroupConstants.PYTHON_GROUP,
       inputPorts = inputNames.zipWithIndex.map {
         case (input, i) =>

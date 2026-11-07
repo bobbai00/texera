@@ -31,7 +31,12 @@ from .udf.udf_operator import (
     UDFBatchOperator,
     UDFSourceOperator,
 )
-from .udf.function_operator import FunctionOperator, returns
+from .udf.function_operator import (
+    Credential,
+    FunctionOperator,
+    FunctionSourceOperator,
+    returns,
+)
 from .udf.model_operator import ModelBatchOperator, ModelTableOperator
 from core.models.type.large_binary import largebinary
 from core.models.schema.attribute_type import AttributeType
@@ -49,6 +54,8 @@ __all__ = [
     "UDFBatchOperator",
     "UDFSourceOperator",
     "FunctionOperator",
+    "FunctionSourceOperator",
+    "Credential",
     "returns",
     "ModelBatchOperator",
     "ModelTableOperator",

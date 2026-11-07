@@ -17,7 +17,7 @@
 
 """A Python function as an operator.
 
-A team keeps the Python it reuses as functions:
+A project keeps the Python it reuses as functions, each one of its operators:
 
     @returns(patient_id=str, time_in_range=float)
     def time_in_range(readings: pd.DataFrame, *, low: int = 70) -> pd.DataFrame:
@@ -25,17 +25,25 @@ A team keeps the Python it reuses as functions:
 
 The engine runs one as a table operator. Each worker calls the function once, with the rows it
 got from each input as a DataFrame and the operator's settings as keyword arguments; when the
-operator groups its rows (`by`), every group reaches one worker whole. What the function returns
-is checked against its @returns and put out in that order.
+operator groups its rows (`by`), every group reaches one worker whole. A function that reads no
+table is a source, called once. What the function returns is checked against its @returns and
+put out in that order; a function that yields DataFrames has each put out as it comes.
+
+The classes here are the engine's: people and agents write the function, never a class.
 """
 
+import inspect
 from abc import abstractmethod
-from typing import Any, Callable, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, NewType, Optional
 
 import pandas
 
 from core.models import Table, TableLike
-from .udf_operator import UDFTableOperator
+from .udf_operator import UDFSourceOperator, UDFTableOperator
+
+# A setting that names a credential, as `api_key: Credential`: the workflow holds the
+# credential's URI, and the function gets its secret, leased for the run.
+Credential = NewType("Credential", str)
 
 
 def returns(*, nondeterministic: bool = False, **columns: Any) -> Callable:
@@ -105,6 +113,20 @@ def conform(name: str, out: Any, columns: List[List[str]]) -> pandas.DataFrame:
     return out
 
 
+def put_out(
+    name: str, out: Any, columns: List[List[str]]
+) -> Iterator[pandas.DataFrame]:
+    """
+    What one call gave, as its operator puts it out: the DataFrame it returned, or each
+    DataFrame it yields, as it yields it, so the rows go on and the run can pause between them.
+    """
+    if inspect.isgenerator(out):
+        for chunk in out:
+            yield conform(name, chunk, columns)
+    else:
+        yield conform(name, out, columns)
+
+
 class FunctionOperator(UDFTableOperator):
     """
     Runs `function` as a table operator. The class the engine makes for an operator sets
@@ -139,4 +161,25 @@ class FunctionOperator(UDFTableOperator):
             yield None
             return
         name = getattr(self.function, "__name__", "the function")
-        yield conform(name, self.function(*ordered, **self.arguments), self.columns)
+        yield from put_out(
+            name, self.function(*ordered, **self.arguments), self.columns
+        )
+
+
+class FunctionSourceOperator(UDFSourceOperator):
+    """
+    Runs `function`, which reads no table, as a source: one worker calls it once, with the
+    operator's settings as keyword arguments.
+    """
+
+    columns: List[List[str]] = []
+    arguments: Dict[str, Any] = {}
+
+    @staticmethod
+    @abstractmethod
+    def function(**settings: Any) -> pandas.DataFrame:
+        """The function the operator is."""
+
+    def produce(self) -> Iterator[Optional[TableLike]]:
+        name = getattr(self.function, "__name__", "the function")
+        yield from put_out(name, self.function(**self.arguments), self.columns)

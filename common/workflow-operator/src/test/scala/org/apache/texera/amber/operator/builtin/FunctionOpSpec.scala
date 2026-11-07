@@ -90,7 +90,7 @@ class FunctionOpSpec extends AnyFlatSpec with Matchers {
     )
     val module = tir.module
     module should startWith(
-      "from pytexera import *\nfrom pytexera import FunctionOperator, returns\n\nimport pandas as pd\n"
+      "from pytexera import *\nfrom pytexera import FunctionOperator, FunctionSourceOperator, returns\n\nimport pandas as pd\n"
     )
     module should include(code)
     module should include(
@@ -129,5 +129,26 @@ class FunctionOpSpec extends AnyFlatSpec with Matchers {
     pair.getPhysicalOp(ids._1, ids._2).partitionRequirement shouldBe
       List(Some(HashPartition(List("patient_id"))), Some(HashPartition(List("patient_id"))))
     pair.outputColumns(List(readings, labs)) shouldBe schema("n" -> LONG)
+  }
+
+  it should "be a source when it reads no table, called once on one worker" in {
+    val ids = (WorkflowIdentity(1L), ExecutionIdentity(1L))
+    val source = function(""""returns": ["n long"], "inputs": [], "args": {"upto": 3}""")
+    source.operatorInfo.inputPorts shouldBe Nil
+    source.outputColumns(Nil) shouldBe schema("n" -> LONG)
+    val op = source.getPhysicalOp(ids._1, ids._2)
+    op.isSourceOperator shouldBe true
+    op.parallelizable shouldBe false
+    op.inputPorts shouldBe empty
+    val module = source.module
+    module should include("class GenerateOperator(FunctionSourceOperator):\n")
+    module should include("    function = staticmethod(time_in_range)\n")
+    module should not include "inputs ="
+    module should not include "grouped ="
+    error(
+      function(""""returns": ["n long"], "inputs": [], "by": ["n"]""").outputColumns(Nil)
+    ) shouldBe "by: a function that reads no table has no rows to group"
+    // Absent, the inputs are the one table it reads.
+    function(""""returns": ["n long"]""").operatorInfo.inputPorts.size shouldBe 1
   }
 }
