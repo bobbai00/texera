@@ -124,6 +124,21 @@ export function ResourceGraph({ rid, graph, className }: { rid: string; graph: C
             if (upright && b.y < a.y) y2 = b.y + SIZE / 2 + UNDER;
             if (upright) [x1, x2] = [a.x, b.x];
             const main = e.relation === "reads" || e.relation === "makes";
+            // What a workflow uses and runs on is said faintly, and fully when one end is chosen.
+            const focused = chosen === e.from || chosen === e.to;
+            if (!main && !focused)
+              return (
+                <line
+                  key={`${e.from}>${e.to}>${e.relation}`}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  className="stroke-muted-foreground/20"
+                  strokeWidth={1}
+                  data-graph-edge={e.relation}
+                />
+              );
             return (
               <g key={`${e.from}>${e.to}>${e.relation}`} data-graph-edge={e.relation}>
                 <line

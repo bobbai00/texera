@@ -73,13 +73,30 @@ export function layoutGraph(graph: ConversationGraph, kept: ReadonlyMap<string, 
       taken.add(`${was.col}:${was.row}`);
     }
   }
-  for (const d of drawn) {
-    if (places.has(d.id)) continue;
-    const col = d.planned ? last + 1 : (column.get(d.id) ?? 0);
-    let row = 0;
-    while (taken.has(`${col}:${row}`)) row++;
-    places.set(d.id, { col, row });
-    taken.add(`${col}:${row}`);
+  // New nodes, column by column from the left, each column in the order of the rows of what
+  // its nodes connect to, so arrows cross as little as they can; what hangs off the work after.
+  const neighbours = new Map<string, string[]>();
+  for (const e of graph.edges) {
+    neighbours.set(e.from, [...(neighbours.get(e.from) ?? []), e.to]);
+    neighbours.set(e.to, [...(neighbours.get(e.to) ?? []), e.from]);
+  }
+  const colOf = (d: DrawnNode) => (d.planned ? last + 1 : (column.get(d.id) ?? 0));
+  const pull = (d: DrawnNode) => {
+    const rows = (neighbours.get(d.id) ?? []).map(id => places.get(id)?.row).filter((r): r is number => r !== undefined);
+    return rows.length ? rows.reduce((a, b) => a + b, 0) / rows.length : Number.POSITIVE_INFINITY;
+  };
+  const columns = [...new Set(drawn.map(colOf))].sort((a, b) => a - b);
+  for (const col of columns) {
+    const fresh = drawn.filter(d => !places.has(d.id) && colOf(d) === col);
+    const main = fresh.filter(d => d.node && MAIN.has(d.node.role));
+    const rest = fresh.filter(d => !(d.node && MAIN.has(d.node.role)));
+    const order = (list: DrawnNode[]) => list.map((d, i) => ({ d, i, at: pull(d) })).sort((a, b) => a.at - b.at || a.i - b.i);
+    for (const { d } of [...order(main), ...order(rest)]) {
+      let row = 0;
+      while (taken.has(`${col}:${row}`)) row++;
+      places.set(d.id, { col, row });
+      taken.add(`${col}:${row}`);
+    }
   }
   const all = [...places.values()];
   return {
