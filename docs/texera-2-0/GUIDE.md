@@ -57,8 +57,8 @@ a reload.
 the left of the chat page shows what the chat read, made and ran. Arrows carry data only: the
 dataset a workflow reads, the table it makes. A workflow is a card with the models and functions
 it uses on it, inside the frame of the unit it ran on (or, not run yet, its default unit);
-Inputs, Work and Results head the columns. What the plan has not made yet is dashed, and a dot
-marks what this chat made. It zooms in three levels: Overview, names only; Standard, each
+Data, Computation and Results head the columns. What the plan has not made yet is dashed, and
+a dot marks what this chat made. It zooms in three levels: Overview, names only; Standard, each
 thing's version, rows and last run; Detail, each workflow's steps, the file a step read and the
 table a step made standing level with it. Drag to move, scroll with Ctrl or ⌘ (or pinch) to
 zoom, Fit to see everything, and double-click a workflow to open its steps. A click shows what a

@@ -43,7 +43,7 @@ export interface Arrow {
 export interface Column {
   rank: number;
   x: number;
-  label: "Inputs" | "Work" | "Results";
+  label: "Data" | "Computation" | "Results";
   count: number;
 }
 
@@ -199,7 +199,7 @@ export function layOut(view: GraphView, m: Measured, level: Level, em: number): 
     columns.push({
       rank: r,
       x: (colX[r] as number) + (r % 2 === 1 ? pad : 0),
-      label: r === 0 ? "Inputs" : r % 2 === 1 ? "Work" : "Results",
+      label: r === 0 ? "Data" : r % 2 === 1 ? "Computation" : "Results",
       count,
     });
   }

@@ -91,7 +91,7 @@ describe("the resource graph's layout", () => {
     expect(at(port(W, "t1"))?.y).toBe(at(W)?.y);
     expect(layout.frames).toHaveLength(1);
     expect(layout.frames[0]).toMatchObject({ id: U, y: (at(W)?.y as number) - 30 });
-    expect(layout.columns.map(c => c.label)).toEqual(["Inputs", "Work", "Results"]);
+    expect(layout.columns.map(c => c.label)).toEqual(["Data", "Computation", "Results"]);
     // Arrows run straight between things that are level.
     expect(layout.arrows.map(a => a.relation)).toEqual(["reads", "makes"]);
     for (const a of layout.arrows) expect(a.path).not.toContain("Q");

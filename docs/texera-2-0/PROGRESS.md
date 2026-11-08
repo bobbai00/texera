@@ -2,6 +2,21 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-08 (session 15, part 8): the graph's columns are Data, Computation and Results
+
+The user put the graph's idea in their words: the workflow is the centre and the rest stands
+around it, the space split into data, computation and results, the unit a frame the work sits
+in ("fine and clear"). The columns were headed Inputs, Work and Results; they are now Data,
+Computation and Results (`layout.ts`, its test, `graph.spec.ts`, the guide).
+
+Verified on the dev stack: 320 unit tests, the type check, `graph.spec.ts` (16.7 s), and the
+three levels looked at on this machine's chats. Kind: the frontend image rebuilt and rolled out
+(`k8s.sh up --no-build`), `graph.spec.ts` passed there (21.9 s).
+
+Next: a model or function the chat made that no workflow uses yet is not drawn (only the List
+tab has it), the one thing the centre-on-the-workflow layout has no place for; then the lineage
+tab.
+
 ## 2026-11-08 (session 15, part 7): the resource graph redrawn, with zoom
 
 The user found the graph beside a chat not nice to look at, inconsistent, and without the first

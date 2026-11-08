@@ -2,11 +2,11 @@ import { expect, type Locator, test } from "@playwright/test";
 import { api, cleanups, inTurn, signIn, tidyUp, withIris } from "./support";
 
 // Once a chat starts work, what it reads, makes and runs takes the left of the chat page as a
-// graph: arrows only for data, under Inputs, Work and Results; each workflow a card in the frame
-// of the unit it ran on; what its plan has not made yet dashed. Nothing moves when more arrives;
-// it zooms from the whole graph to each workflow's steps; a click says what a thing is, and the
-// same things are a list a click away. The agent's calls are made here as the runtime makes
-// them, in a turn of the chat, so no model is needed.
+// graph: arrows only for data, under Data, Computation and Results; each workflow a card in the
+// frame of the unit it ran on; what its plan has not made yet dashed. Nothing moves when more
+// arrives; it zooms from the whole graph to each workflow's steps; a click says what a thing is,
+// and the same things are a list a click away. The agent's calls are made here as the runtime
+// makes them, in a turn of the chat, so no model is needed.
 
 test.afterEach(tidyUp);
 
@@ -107,7 +107,8 @@ test("a chat that started work shows what it read, made and ran as a graph that 
   await expect(graph.locator('[data-graph-edge="reads"]')).toHaveCount(1);
   await expect(graph.locator('[data-graph-edge="makes"]')).not.toHaveCount(0);
   await expect(graph.locator('[data-graph-edge="runsOn"], [data-graph-edge="uses"]')).toHaveCount(0);
-  await expect(graph.locator('[data-graph-column="inputs"]')).toContainText("Inputs");
+  await expect(graph.locator('[data-graph-column="data"]')).toContainText("Data");
+  await expect(graph.locator('[data-graph-column="computation"]')).toContainText("Computation");
   await expect(graph.locator('[data-graph-column="results"]')).toContainText("Results");
   // Above it, the outside source the agent consulted; a click lists what it asked.
   const source = graph.locator('[data-graph-sources] [data-graph-source="biomcp"]');
