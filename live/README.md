@@ -46,7 +46,9 @@ The catalog's versions are the truth and the document is a working copy of them.
    state holds it (`catalog: {vno, refused?}`), so it reaches whoever joins, whenever. A
    version the catalog does not take (a file that does not exist, the catalog being away)
    leaves the edits in the document and says why. Such a document is not let go when the last
-   person leaves, and the save is tried again every `TEXERA_LIVE_RECHECK_MS`.
+   person leaves, and the save is tried again every `TEXERA_LIVE_RECHECK_MS`. A workflow that
+   is gone (the catalog answers 404, and the service sees every resource) has nothing left to
+   save to: its document is let go with what it holds, and not tried again.
 5. **A save can be asked for**: `save:<id>` as a stateless message, answered to the asker with
    `saved:<id>:<vno>` or `not-saved:<id>:<reason>`. A run, and an agent asked about the
    workflow, read the catalog's version, so the app asks first.

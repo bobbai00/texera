@@ -71,9 +71,11 @@ export function fakeCatalog() {
     version: async (rid, vno) => of(rid).versions[vno - 1] as WorkflowSpec,
     kept: async (rid) => kept.get(rid),
     async keep(rid, document) {
+      of(rid);
       kept.set(rid, document);
     },
     async save(rid, spec, expectedHead, onBehalfOf) {
+      of(rid);
       const reason = refusing.get(rid);
       if (reason) throw new CatalogError(400, reason);
       if (expectedHead !== of(rid).versions.length) throw new CatalogError(409, "the head moved");
@@ -119,6 +121,13 @@ export function fakeCatalog() {
       if (what === "read") of(rid).readers.delete(person.pid);
     },
     followers: (rid: string) => followers.get(rid)?.size ?? 0,
+    /** Deletes a resource, as its owner does: it is gone, and whoever follows it is told so. */
+    remove(rid: string) {
+      held.delete(rid);
+      kept.delete(rid);
+      refusing.delete(rid);
+      for (const f of followers.get(rid) ?? []) f.gone();
+    },
     /** Makes the catalog take no version of a resource, for a reason; undefined lets it again. */
     refuse(rid: string, reason: string | undefined) {
       if (reason) refusing.set(rid, reason);

@@ -16,7 +16,8 @@
  *  - How the document stands with the catalog is part of the session's own awareness state,
  *    so everyone in it knows, whenever they joined: the version it was last saved as, and why
  *    the last save was not taken. A document the catalog does not have is not let go when the
- *    last person leaves; the save is tried again until the catalog takes it.
+ *    last person leaves; the save is tried again until the catalog takes it. A workflow that is
+ *    gone, deleted, has nothing left to save to: its document is let go with what it holds.
  */
 import { Forbidden } from "@hocuspocus/common";
 import type { Connection, Document, Extension, Hocuspocus } from "@hocuspocus/server";
@@ -65,7 +66,9 @@ interface Session {
   stop: AbortController;
   /** Why the catalog took no version at the last save, while that stands. */
   refused?: string;
-  /** Lets the document go if nobody is on it and the catalog has it; otherwise does nothing. */
+  /** The catalog has no such workflow any more: nothing the document holds can be saved. */
+  gone?: boolean;
+  /** Lets the document go if nobody is on it and the catalog has it, or the workflow is gone; otherwise does nothing. */
   letGo: () => void;
 }
 
@@ -78,6 +81,8 @@ export interface Rooms extends Extension<Member> {
 
 /** Why a save did not happen, as the people in the session read it. */
 const reasonOf = (err: unknown) => (err instanceof CatalogError ? err.message : "the catalog could not be reached");
+/** The live service sees every resource, so the catalog not finding one means it was deleted. */
+const goneFrom = (err: unknown) => err instanceof CatalogError && err.status === 404;
 
 export function rooms({ catalog, log }: { catalog: Catalog; log: Logger }): Rooms {
   const sessions = new Map<string, Session>();
@@ -142,7 +147,11 @@ export function rooms({ catalog, log }: { catalog: Catalog; log: Logger }): Room
       session.refused = undefined;
     } catch (err) {
       session.refused = reasonOf(err);
-      log.warn("not saved", { rid, reason: session.refused });
+      if (!goneFrom(err)) log.warn("not saved", { rid, reason: session.refused });
+      else if (!session.gone) {
+        session.gone = true;
+        log.info("let go: the workflow is gone", { rid });
+      }
     }
     tell(document, session);
     if (asked) {
@@ -235,13 +244,13 @@ export function rooms({ catalog, log }: { catalog: Catalog; log: Logger }): Room
     },
 
     // A document is let go only when the catalog has what it holds: one more try, and it stays
-    // if that fails, for whoever comes back and for the next retry.
+    // if that fails, for whoever comes back and for the next retry. A workflow that is gone has
+    // nothing to come back to.
     async beforeUnloadDocument({ document, documentName }) {
       const session = sessions.get(documentName);
-      if (!session || same(versionSpecOf(document, session.saved), session.saved)) return;
-      if (!(await document.saveMutex.runExclusive(() => store(document, documentName, session)))) {
-        throw new Error(`${documentName} is not saved: ${session.refused}`);
-      }
+      if (!session || session.gone || same(versionSpecOf(document, session.saved), session.saved)) return;
+      const kept = await document.saveMutex.runExclusive(() => store(document, documentName, session));
+      if (!kept && !session.gone) throw new Error(`${documentName} is not saved: ${session.refused}`);
     },
 
     async afterUnloadDocument({ documentName }) {
@@ -267,7 +276,9 @@ export function rooms({ catalog, log }: { catalog: Catalog; log: Logger }): Room
     async retry(instance) {
       for (const [rid, document] of instance.documents) {
         const session = sessions.get(rid);
-        if (session?.refused !== undefined) await alone(document, session, () => store(document, rid, session));
+        if (session?.refused !== undefined && !session.gone) {
+          await alone(document, session, () => store(document, rid, session));
+        }
       }
     },
   };

@@ -369,6 +369,33 @@ describe("a workflow edited together", () => {
     await until(() => live.hocuspocus.getDocumentsCount() === 0);
   });
 
+  test("a workflow deleted while it is open is let go: there is nothing left to save it to", async () => {
+    const { live, fake } = start();
+    // Laid out when it opened, the document holds where the operators sit, which the catalog keeps.
+    const alice = await live.join("alice", WORKFLOW);
+    fake.remove(WORKFLOW);
+    await until(() => live.hocuspocus.getDocumentsCount() === 0);
+    expect(live.lines.filter((line) => line.includes('"not saved"'))).toEqual([]);
+    expect(fake.followers(WORKFLOW)).toBe(0);
+    alice.destroy();
+  });
+
+  test("a workflow deleted with edits not saved yet is let go too, and not tried again", async () => {
+    const { live, fake } = start();
+    const alice = await live.join("alice", WORKFLOW);
+    fake.refuse(WORKFLOW, "the catalog could not be reached");
+    edit(alice, (s) => {
+      s.operators.push(limit);
+    });
+    await until(() => standingFor(alice)?.refused !== undefined);
+    fake.remove(WORKFLOW);
+    await until(() => live.hocuspocus.getDocumentsCount() === 0);
+    await live.rules.retry(live.hocuspocus);
+    expect(live.hocuspocus.getDocumentsCount()).toBe(0);
+    expect(fake.saved).toEqual([]);
+    alice.destroy();
+  });
+
   test("what the spec leaves out is gone from the document the session keeps", async () => {
     const { live, fake } = start();
     const alice = await live.join("alice", WORKFLOW);
