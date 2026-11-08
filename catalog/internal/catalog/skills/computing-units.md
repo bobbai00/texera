@@ -29,19 +29,20 @@ A workflow compiles and runs on a computing unit: a node with CPU, memory, perha
 
 - `list_computing_units`: the units the person can run on, with their status.
 - `search_resources` with kind `profile`: the profiles units are made from, Texera's ladder among them: Small, Medium and Large for data work, ML for models on CPU, GPU for training and fast inference. Each shows its `cpu`, `memory`, `gpu` and `packages`, and its `status` says whether this deployment can start it (`startable`) and if not why (`notHere`, such as "no GPU in this cluster"). Offer only what can start here, and when what the work needs cannot, say so and offer the nearest that can: ML on CPU for a GPU.
-- Where a profile's `status` says `sized: false`, as on a deployment without a cluster, a unit made from it is the deployment's own unit with the profile's packages: it has the packages, not the profile's size. Say so when you offer it.
+- Where a profile's `status` says `sized: false`, as on a deployment without a cluster, a unit made from it is the deployment's own unit with the profile's packages: it has the packages, not the profile's size. Say so in plain words when you offer it, such as "here Small shares this deployment's machine, with its packages", without naming the field.
 
 The deployment's unit runs the core operators and Python with the packages its profile lists (`list_computing_units` shows them), and it is enough for most tables. A workflow needs another unit when its Python imports a package the deployment's unit lacks, such as statsmodels or torch, or when its data or model needs more memory or a GPU. Never make a unit the person did not choose.
 
 ## Ask first
 
-A unit of the person's own costs money while it runs and takes minutes to start, so where heavier work runs is the person's choice. Before the first run in a chat of work that runs a model (`predict`), fits one, or reads a large table, unless the person already said where, call `ask` with the choices that make sense here, each with what it gives and costs:
+A unit of the person's own costs money while it runs and takes minutes to start, so where heavier work runs is the person's choice. Before the first run in a chat of work that runs a model (`predict`), fits one, or reads a large table, unless the person already said where, call `ask` with these choices, at most four, each with its size and what it costs in its `detail`:
 
-- The deployment's unit: shared, ready now, enough for small tables and light models.
-- A unit of their own from each profile that fits and can start here, by name and size, for example Small (2 CPUs, 4 GB) and Large (8 CPUs, 16 GB): a few minutes to start on a cluster.
-- A GPU only when a GPU profile can start here. When none can, say in the question that this deployment has no GPU, and offer ML on CPU instead where a model needs one.
+1. The deployment's unit: shared, ready now, enough for small tables and light models.
+2. Small (2 CPUs, 4 GB): a unit of the person's own, a few minutes to start on a cluster.
+3. Large (8 CPUs, 16 GB): for big tables and many workers per operator.
+4. GPU, only when a GPU profile can start here. When none can, say in the question that this deployment has no GPU, and offer ML on CPU in its place for a model whose card asks for a GPU.
 
-Read the profiles' `status` first and offer nothing that cannot start. A GPU is always the person's choice, never yours. A ready unit made for the same purpose is reused rather than made again: look at `list_computing_units` first. Work the deployment's unit does well needs no question: run it there.
+Label each by the profile's name first, such as "Small (2 CPUs, 4 GB)", so the person's pick names it. Read the profiles' `status` first and leave out a rung that cannot start; offer Medium in place of Large when Large cannot. A GPU is always the person's choice, never yours. A ready unit made for the same purpose is reused rather than made again: look at `list_computing_units` first. Work the deployment's unit does well needs no question: run it there.
 
 ## Make it and keep it
 

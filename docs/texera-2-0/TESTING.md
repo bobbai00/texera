@@ -27,6 +27,7 @@ Bob) goes through a guard fixture that puts it back.
 | Use case | Module | Markers | About |
 | --- | --- | --- | --- |
 | Who I am, the seeds, workflow versions and edits, sharing, dataset files and references, a new chat that stores nothing and what it runs with, a turn and its origin, the one MCP server and every tool it has (acceptance 1, 2) | `test_catalog.py` | | 5 s |
+| A dataset's import reaches the public internet only: the platform's own gateway by name and by address, private and metadata addresses, plain http, a password in the URL are refused and nothing is staged; a viewer imports nothing | `test_import.py` | | 1 s |
 | Running a workflow in three phases: the dry run's plan is the execution's, stored without secrets; the tables the catalog named, ports, rows, lineage; the keep mark (acceptance 3, 4 at the API) | `test_run.py` | | 15 s |
 | Results kept per execution, through later executions and the unit's idle release; an execution deleted with its tables | `test_results.py` | slow | 1 min |
 | A project's limit expires its own old results, nobody else's; the record stays; a kept execution does not expire; Texera's admins sweep | `test_results.py` | | 20 s |
@@ -60,6 +61,7 @@ Bob) goes through a guard fixture that puts it back.
 | The agent's executions go to the unit the person names in their words; the chat stores no unit | `test_agents.py` | model, slow | 1 min, about 10 model calls |
 | Asked to, the agent makes a unit from a profile, runs on it and keeps the results in the warehouse it was told | `test_agents.py` | model, slow | 3 min, about 15 model calls |
 | Bob, an editor of Alice's chat, asks the analyst; the question and the answer are his turn, and Alice reads them | `test_agents.py` | model, slow | 30 s, a few model calls |
+| The diabetes use case: a researcher asks what the platform gives her (nothing is made), has the agent bring the public Pima cohort into a dataset (the file byte for byte), asks to screen it with the team's onset-risk model; the agent asks where it runs, offering what can start here and no GPU where none starts; she picks Small; the unit is made from Small, every run goes to it, and the chat's graph joins the cohort, the model and the team's operators to the workflow and the workflow to the unit | `test_diabetes.py` | model, slow | 5 to 10 min, about 40 model calls |
 
 Markers gate what runs: `model`, `cluster`, `local` and `destructive` tests are skipped unless
 the matching flag is given (`--model`, `--cluster`, `--local`, `--destructive`); `test.sh`
@@ -67,7 +69,7 @@ passes the right ones per layer. `local` means the Compose stack's host ports (L
 Keycloak, OpenBao, the unit process); `destructive` means other tests may see the effect
 (the unit restarts, every finished run on the stack expires), so those run last.
 
-Playwright covers the pages, in nine files under `frontend-next/e2e/`. `texera2.spec.ts`, the
+Playwright covers the pages, in twelve files under `frontend-next/e2e/`. `texera2.spec.ts`, the
 app: sign-in, a chat started by its first message with an upload that becomes a dataset and stays a card of the message, the agent's page (on show, read-only),
 the project a person works in (what the lists show, where new things go, the pick kept; a
 project made in the app is worked in at once and the dialog names it; with every project in
@@ -162,6 +164,13 @@ everyone's page, does not run, and is saved once put right; a note is posted fro
 box without asking the agent, also during someone else's turn; what a chat runs with changes
 in everyone's box at once; and with the model, one of two people asks the agent, which answers
 from what the other said under his name, while the other watches the answer arrive.
+
+`diabetes.spec.ts`, with the model: the diabetes use case in the app. A project of the test's
+own holds the team's onset-risk model (fitted by the scenarios' Python, `texera_e2e.diabetes`)
+and two of its operators; the researcher asks what there is, has the agent bring the public
+Pima cohort into a dataset, asks for the screening, picks Small on the agent's question card,
+and the graph shows the cohort, the model, the unit and the workflow, joined
+(`test-results/diabetes-ask.png`, `diabetes-graph.png`).
 `e2e/support.ts` holds what the files share: signing in, the API caller, a page of every kind,
 and the tidying up each scenario owes the stack.
 

@@ -67,6 +67,43 @@ python3 scenario.py                 # needs the platform's model key on the stac
 python3 scenario.py --ask 3         # one question, in a new chat
 ```
 
+## Screening a cohort: data in, a model run, the graph
+
+A researcher new to the team works through the agent, one message at a time, in a chat in
+"Diabetes research" (or any project with the team's onset-risk model and its ROC AUC and Risk
+calibration operators):
+
+1. *"I study type 2 diabetes and I'm new to this team. What tools does this platform give me:
+   data, models, operators, and where my work can run?"* The agent lists the operators by group
+   (the team's own among them), the models, the profiles that can start here and the outside
+   sources it can read, such as PubMed. It makes nothing.
+2. *"Please get the Pima Indians diabetes data from
+   https://raw.githubusercontent.com/plotly/datasets/master/diabetes.csv and put it into a new
+   dataset called 'Pima cohort'."* The agent says its plan, makes the dataset and has the
+   catalog fetch the file itself (`import_dataset_file`: the bytes never pass through the chat,
+   and only public https addresses are fetched), commits version 1 with its source, and reads the
+   header back. The project already holds a curated copy with a patient_id; this is the public
+   file as published.
+3. *"Now screen every woman in the Pima cohort with our diabetes onset-risk model: how well does
+   its risk separate the women who developed diabetes from those who did not, and is it
+   calibrated? Use the team's ROC AUC and Risk calibration operators."* The agent reads the
+   model's contract and card, and before anything runs asks where: the deployment's unit, or a
+   unit of the researcher's own from the profiles that can start here, Small or Large; it says
+   when the deployment has no GPU.
+4. Pick **Small** on the question's card. The agent makes a unit from Small (on a cluster a pod
+   of 2 CPUs and 4 GB, on Compose the deployment's own unit with Small's packages), builds the
+   workflow (the cohort, `predict` with the model, the two operators), runs it on that unit and
+   reports. The graph left of the chat shows the Pima cohort and the model going into the
+   workflow with the team's operators, and the workflow running on the Small unit.
+
+The model scores the women it was fitted on, so its card calls the AUC optimistic, and so should
+the agent. The profiles pin scikit-learn to the version the models are fitted with (1.7.2): a
+model saved with joblib does not load in a scikit-learn much newer than the one that saved it.
+
+Two tests run the same, through the real model, each in a project of its own with the model
+fitted on the public file: `tests/e2e/test_diabetes.py` (a scenario, `--model`) and
+`frontend-next/e2e/diabetes.spec.ts` (in the app, clicking Small on the card).
+
 ## Sources
 
 - Smith JW, Everhart JE, Dickson WC, Knowler WC, Johannes RS. Using the ADAP learning algorithm to

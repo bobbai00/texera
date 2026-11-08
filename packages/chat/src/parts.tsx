@@ -161,7 +161,8 @@ export function AskPart({ part, onPick }: { part: ToolPart; onPick?: (label: str
       </p>
       <div className="flex flex-wrap gap-2">
         {options.map(o => (
-          <Button key={o.label} variant="outline" size="sm" className="h-auto flex-col items-start gap-0 py-1.5 text-left" disabled={!onPick} onClick={() => onPick?.(o.label)} data-ask-option={o.label}>
+          // A choice says what it costs in a line of its own, which wraps within the card.
+          <Button key={o.label} variant="outline" size="sm" className="h-auto max-w-full flex-col items-start gap-0 whitespace-normal py-1.5 text-left" disabled={!onPick} onClick={() => onPick?.(o.label)} data-ask-option={o.label}>
             <span>{o.label}</span>
             {o.detail && <span className="text-2xs font-normal text-muted-foreground">{o.detail}</span>}
           </Button>

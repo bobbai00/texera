@@ -2,6 +2,50 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-07 (session 15, part 6): the diabetes screening use case
+
+The user asked for a diabetes research use case, not too complicated, with models and the
+platform's operators: a researcher asks what tools there are, has the agent get data into a
+dataset, says what she wants done, and the agent asks for the specs (a profile: small, large or
+with a GPU); at the end the resource graph shows a model, a dataset and a computing unit joined
+to the workflow. The use case is in `bin/texera-2-0/examples/diabetes/README.md` (four
+messages): what the platform gives; the public Pima cohort brought into a dataset; a screening
+with the team's onset-risk model, for which the agent asks where to run; Small picked on the
+card, a unit made from it, the workflow (the cohort, `predict`, the team's ROC AUC and Risk
+calibration operators) run there. What it needed, each its own commit:
+
+- **Kind's GPU** (`3774ad7f2`): the catalog could not list nodes, and a cluster it cannot read
+  is not refused for that, so every profile said it could start, GPU included, on a cluster
+  with no GPU node. A cluster role lets it read nodes: "no GPU in this cluster".
+- **Profiles on Compose** (`2df542c94`): no profile could start, so the agent had nothing to
+  offer. A unit made from a profile is now the deployment's own unit with the profile's
+  packages (the unit builds their environment per run, as for any unit), its status
+  `sized: false`, the app saying "on this deployment's own unit"; GPU does not start. A unit
+  from a profile the deployment cannot start is refused with the reason (409 `not_here`) on
+  both setups, where a GPU unit used to be made and wait for good. The profile scenario and the
+  agent's unit-from-a-profile scenario now run on Compose too (the first in seconds).
+- **Data from the internet** (`266fe12fb`): `POST /{datasets,models}/{rid}/import` has the
+  catalog fetch a file into the staging area, and the agent has `create_dataset` and
+  `import_dataset_file`. Public internet only, checked when each connection is made (after the
+  name resolves and after every redirect: loopback, private, link-local and metadata,
+  carrier-grade NAT, NAT64, 6to4, reserved), https only, no password in the URL, no proxy, up
+  to `TEXERA_IMPORT_MAX_BYTES` (1 GiB); a caller who may not write fetches nothing. Skill
+  `importing-data`; `exploring-resources` answers what the platform offers.
+- **scikit-learn pinned** (`36ff4580f`): the profiles listed it unpinned, so a unit made today
+  installed 1.9.1, where a model saved by 1.7.2 does not load (`'SimpleImputer' object has no
+  attribute '_fill_dtype'`). The release pins 1.7.2, the dev stack's and the example's.
+- **The agent asks where model work runs**: before the first run of a model in a chat, the
+  deployment's unit, Small, Large, and GPU only where one starts. The first two tries offered
+  one size ("Local unit" and Medium, then "Local unit" and Small): the agent had loaded
+  using-models, not computing-units, so using-models now carries the choices itself. The ask
+  card's options wrap within the card (their costs ran past its edge).
+
+Verified on the dev stack: the catalog's suite; the app's 294 tests; the agent runtime's 104;
+the scenarios, 54 passed; the use case through the real model as a scenario
+(`tests/e2e/test_diabetes.py`, 74 s: AUC 0.845 on the 768 women, called optimistic since the
+model was fitted on them, and a calibration table of ten bands) and in the app
+(`frontend-next/e2e/diabetes.spec.ts`, 1.4 min, with screenshots of the card and the graph).
+
 ## 2026-11-07 (session 15, part 5): everything under a project; projects inherit, up to Texera
 
 The user's design: no "built-in", no global settings, no global admin. Projects inherit from
