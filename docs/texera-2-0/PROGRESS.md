@@ -40,11 +40,20 @@ calibration operators) run there. What it needed, each its own commit:
   using-models, not computing-units, so using-models now carries the choices itself. The ask
   card's options wrap within the card (their costs ran past its edge).
 
+- **Always asked** (`eab028d0c`): on kind the agent loaded both skills and still ran the light
+  screening on the deployment's unit, since computing-units also said work it does well needs no
+  question. A model's first run in a chat is now always asked about, however small; only work
+  with no model in it goes there unasked.
+
 Verified on the dev stack: the catalog's suite; the app's 294 tests; the agent runtime's 104;
 the scenarios, 54 passed; the use case through the real model as a scenario
-(`tests/e2e/test_diabetes.py`, 74 s: AUC 0.845 on the 768 women, called optimistic since the
+(`tests/e2e/test_diabetes.py`, 70 s: AUC 0.845 on the 768 women, called optimistic since the
 model was fitted on them, and a calibration table of ten bands) and in the app
-(`frontend-next/e2e/diabetes.spec.ts`, 1.4 min, with screenshots of the card and the graph).
+(`frontend-next/e2e/diabetes.spec.ts`, 1.2 min, with screenshots of the card and the graph).
+Kind, redeployed: `k8s.sh check` green, 57 scenarios and Playwright 64 passed, 6 skipped (the
+model tests); the use case as a scenario (86 s; the Small unit a pod of 2 CPUs and 4 GB) and in
+the app (1.5 min). Next: a GPU on kind needs the NVIDIA device plugin, which this machine's
+cluster does not have; the agent leaves GPU out where none starts but does not always say so.
 
 ## 2026-11-07 (session 15, part 5): everything under a project; projects inherit, up to Texera
 
