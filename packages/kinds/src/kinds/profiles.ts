@@ -93,6 +93,15 @@ export function sizeLabel(m: Makeup): string {
 export const makeupFacts = (m: Makeup): string[] =>
   [sizeLabel(m), m.packages?.length ? plural(m.packages.length, "package") : ""].filter(Boolean);
 
+/** What this deployment does with a profile, in words: why it cannot start a unit from it, or
+ * that such a unit is the deployment's own, with the profile's packages but not its size. */
+export const hereFacts = (status: { startable?: boolean; notHere?: string; sized?: boolean } | undefined): string[] =>
+  status?.startable === false && status.notHere
+    ? [`not here: ${status.notHere}`]
+    : status?.sized === false
+      ? ["on this deployment's own unit"]
+      : [];
+
 /** One way a node differs from its profile: a size, or a package added, removed or asked for otherwise. */
 export interface Change {
   /** `memory`, `cpu`, `gpu`, or a package's name. */

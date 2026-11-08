@@ -2,7 +2,9 @@
 platform's runtime. A unit made from a profile has them: a Python function that imports one of them
 runs there and fails on a unit without it; the execution records the profile version and each
 package as the unit installed it. Saving the unit as a profile makes the profile's next version,
-its packages pinned, or a new profile; the unit is then made from what was saved."""
+its packages pinned, or a new profile; the unit is then made from what was saved. On a cluster the
+unit is a pod of the profile's size; on Compose it is the deployment's own unit, with the
+profile's packages."""
 import re
 
 import pytest
@@ -11,7 +13,6 @@ from texera_e2e import workflows as w
 from texera_e2e.units import wait_ready
 
 
-@pytest.mark.cluster
 @pytest.mark.slow
 def test_a_unit_made_from_a_profile_has_its_packages(alice, project, iris, unit):
     profile = alice.create("profiles", "py-humanize", {"memory": "2Gi", "packages": ["humanize"]}, project=project)

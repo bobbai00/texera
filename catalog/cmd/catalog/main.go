@@ -146,6 +146,7 @@ func run(log *slog.Logger) error {
 			},
 			LineageCallbackURL: cfg.LineageCallbackURL,
 			PresignTTL:         cfg.PresignTTL, LeaseTTL: cfg.LeaseTTL, MaxDownloadBytes: cfg.MaxDownloadBytes, UploadGrace: cfg.UploadGrace,
+			ProfileUnits:       profileUnits(cfg),
 			StaticUnitEndpoint: cfg.StaticUnitEndpoint, StaticUnitName: cfg.StaticUnitName, StaticUnitClientID: cfg.StaticUnitClientID, BioMcpURL: cfg.BioMcpURL, BioMcpKey: cfg.BioMcpKey,
 			ModelName: cfg.ModelName, ModelSecretPath: cfg.ModelSecretPath,
 		},
@@ -224,4 +225,13 @@ func (o outbox) AllTuples(ctx context.Context) ([]authz.OutboxEntry, error) {
 		out[i] = authz.OutboxEntry{Op: e.Op, Object: e.Object, Relation: e.Relation, Subject: e.Subject}
 	}
 	return out, nil
+}
+
+// profileUnits is where units made from profiles run: on Kubernetes when the catalog starts
+// units there, else as the deployment's own static unit, with each profile's packages.
+func profileUnits(cfg config.Config) api.UnitProvider {
+	if cfg.KubeNamespace == "" && cfg.StaticUnitEndpoint != "" {
+		return api.UnitProviderStatic
+	}
+	return api.UnitProviderKubernetes
 }

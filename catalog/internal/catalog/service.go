@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/apache/texera/catalog/internal/api"
 	"github.com/apache/texera/catalog/internal/auth"
 	"github.com/apache/texera/catalog/internal/authz"
 	"github.com/apache/texera/catalog/internal/engine"
@@ -51,6 +52,10 @@ type Config struct {
 	// WatchBeat is how often an open watch is kept alive and its watcher's right to read is
 	// asked again; 15 seconds when unset.
 	WatchBeat time.Duration
+	// ProfileUnits is where a unit made from a profile runs: on the deployment's Kubernetes
+	// (kubernetes, the default), or as the deployment's own unit (static), which takes the
+	// profile's packages but keeps its own size, as on Compose.
+	ProfileUnits api.UnitProvider
 	// The seeds of the dev stack.
 	StaticUnitEndpoint string
 	StaticUnitName     string

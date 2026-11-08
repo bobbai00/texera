@@ -30,7 +30,7 @@ Bob) goes through a guard fixture that puts it back.
 | Running a workflow in three phases: the dry run's plan is the execution's, stored without secrets; the tables the catalog named, ports, rows, lineage; the keep mark (acceptance 3, 4 at the API) | `test_run.py` | | 15 s |
 | Results kept per execution, through later executions and the unit's idle release; an execution deleted with its tables | `test_results.py` | slow | 1 min |
 | A project's limit expires its own old results, nobody else's; the record stays; a kept execution does not expire; Texera's admins sweep | `test_results.py` | | 20 s |
-| A unit made from a profile has its packages: a Python function that imports one fails on the deployment's unit and completes there; the execution records the profile version and each package as installed; the unit saved as the profile's next version and as a new one, its packages pinned | `test_profile.py` | cluster, slow | 3 min |
+| A unit made from a profile has its packages: a Python function that imports one fails on the deployment's unit and completes there; the execution records the profile version and each package as installed; the unit saved as the profile's next version and as a new one, its packages pinned; on Compose the unit is the deployment's own with the profile's packages | `test_profile.py` | slow | 3 min on a cluster, seconds on Compose |
 | A custom operator as a resource, used by URI and run, deletion refused while referenced (acceptance 5) | `test_operator.py` | slow | 1 min |
 | A project shared with a viewer: reads, runs, nothing more; revoked (acceptance 6) | `test_sharing.py` | | 20 s |
 | What others shared with a person is one list whatever its kind and project (a project, a chat, a workflow, a dataset), not what is inside a project they were given; a grant taken back takes the thing off it | `test_sharing.py` | | 5 s |
@@ -58,7 +58,7 @@ Bob) goes through a guard fixture that puts it back.
 | The Texera Agent builds, runs, edits and reruns through a chat that stores nothing; what it makes is in the chat's project, and every answer records its agent version, model and servers (acceptance 3, 9) | `test_agents.py` | model, slow | 2 min, about 30 model calls |
 | One agent, one chat: it consults the bio tools for research ideas, analyzes the person's data from an execution, and shares it with Bob, with no handoff (acceptance 10, 11) | `test_agents.py` | model, slow | 3 min, about 40 model calls |
 | The agent's executions go to the unit the person names in their words; the chat stores no unit | `test_agents.py` | model, slow | 1 min, about 10 model calls |
-| Asked to, the agent makes a unit from a profile, runs on it and keeps the results in the warehouse it was told | `test_agents.py` | model, cluster, slow | 3 min, about 15 model calls |
+| Asked to, the agent makes a unit from a profile, runs on it and keeps the results in the warehouse it was told | `test_agents.py` | model, slow | 3 min, about 15 model calls |
 | Bob, an editor of Alice's chat, asks the analyst; the question and the answer are his turn, and Alice reads them | `test_agents.py` | model, slow | 30 s, a few model calls |
 
 Markers gate what runs: `model`, `cluster`, `local` and `destructive` tests are skipped unless

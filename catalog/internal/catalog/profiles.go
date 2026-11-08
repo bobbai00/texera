@@ -204,14 +204,43 @@ func (s *Service) nodesFromProfiles(ctx context.Context, caller *auth.Caller, sp
 	return mustJSON(doc), nil
 }
 
+// sharesTheUnit says whether a unit made from a profile is the deployment's own unit, with the
+// profile's packages and the unit's size, rather than one started at the profile's size.
+func (s *Service) sharesTheUnit() bool { return s.Config.ProfileUnits == api.UnitProviderStatic }
+
+// profileUnit is the spec of a unit made from a profile with this master node: started on the
+// deployment's Kubernetes, or the deployment's own unit where units from profiles share it.
+func (s *Service) profileUnit(master api.ComputingNodeSpec) api.ComputingUnitSpec {
+	master.Name, master.Role = "master", api.ComputingNodeSpecRoleMaster
+	spec := api.ComputingUnitSpec{Provider: api.UnitProviderKubernetes, ComputingNodes: &[]api.ComputingNodeSpec{master}}
+	if s.sharesTheUnit() {
+		endpoint := s.Config.StaticUnitEndpoint
+		spec.Provider, spec.Endpoint = api.UnitProviderStatic, &endpoint
+		if s.Config.StaticUnitClientID != "" {
+			client := s.Config.StaticUnitClientID
+			spec.ClientId = &client
+		}
+	}
+	return spec
+}
+
 // UnitFromProfile makes a computing unit from a profile: one master node of the profile's size
-// with its packages, run on the deployment's Kubernetes. With WaitSeconds it waits for the unit
-// to be ready or failed.
+// with its packages, run on the deployment's Kubernetes, or where there is none, the
+// deployment's own unit with the profile's packages. One this deployment cannot start (a GPU
+// where there is none) is refused with the reason rather than made to wait for good. With
+// WaitSeconds it waits for the unit to be ready or failed.
 func (s *Service) UnitFromProfile(ctx context.Context, caller *auth.Caller, in api.ComputingUnitFromProfile) (*store.Resource, error) {
 	profile := in.Profile
-	spec := api.ComputingUnitSpec{
-		Provider:       api.UnitProviderKubernetes,
-		ComputingNodes: &[]api.ComputingNodeSpec{{Name: "master", Role: api.ComputingNodeSpecRoleMaster, Profile: &profile}},
+	spec := s.profileUnit(api.ComputingNodeSpec{Profile: &profile})
+	filled, err := s.nodesFromProfiles(ctx, caller, mustJSON(spec))
+	if err != nil {
+		return nil, err
+	}
+	var sized api.ComputingUnitSpec
+	if err := json.Unmarshal(filled, &sized); err == nil && s.Units != nil {
+		if err := s.Units.Offers(ctx, sized); err != nil {
+			return nil, Conflict("not_here", "this deployment cannot start a unit from "+string(profile)+": "+err.Error(), map[string]any{"field": "profile"})
+		}
 	}
 	var parent *uuid.UUID
 	if in.Parent != nil {
@@ -373,16 +402,15 @@ func (s *Service) recordInstalled(ctx context.Context, unitRID, execRID uuid.UUI
 }
 
 // Present adds to a resource what is true of it now rather than what is stored: for a profile,
-// whether this deployment can start a unit from it, and if not why.
+// whether this deployment can start a unit from it, and if not why, and whether such a unit is
+// held to the profile's size.
 func (s *Service) Present(ctx context.Context, env *api.Resource) {
 	if env.Kind != "profile" || s.Units == nil {
 		return
 	}
 	var spec api.ProfileSpec
 	_ = json.Unmarshal(mustJSON(env.Spec), &spec)
-	unit := api.ComputingUnitSpec{Provider: api.UnitProviderKubernetes, ComputingNodes: &[]api.ComputingNodeSpec{{
-		Name: "master", Role: api.ComputingNodeSpecRoleMaster, Cpu: spec.Cpu, Memory: spec.Memory, Gpu: spec.Gpu,
-	}}}
+	unit := s.profileUnit(api.ComputingNodeSpec{Cpu: spec.Cpu, Memory: spec.Memory, Gpu: spec.Gpu})
 	status := map[string]any{}
 	if env.Status != nil {
 		for k, v := range *env.Status {
@@ -395,5 +423,6 @@ func (s *Service) Present(ctx context.Context, env *api.Resource) {
 		status["startable"] = true
 		delete(status, "notHere")
 	}
+	status["sized"] = !s.sharesTheUnit()
 	env.Status = &status
 }

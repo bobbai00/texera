@@ -465,7 +465,12 @@ too. Naming a unit gives no right to it: you must be allowed to run on it.
 Python packages it adds to the platform's runtime (PEP 508 lines), versioned. A unit is made
 from a profile version ("New computing unit" proposes the settings' default profile and lets
 you change the size; `POST /computing-units/from-profile` with `waitSeconds` waits until it is
-ready): its node gets the profile's size and packages and names the version. A unit may change
+ready): its node gets the profile's size and packages and names the version. On a cluster the
+unit is a pod of that size; a profile the cluster cannot start, a GPU where no node has one, is
+refused with the reason (409 `not_here`), and its status says so when read (`startable`,
+`notHere`). On Compose, with no cluster, a unit from a profile is the deployment's own unit
+with the profile's packages, not its size (the profile's status says `sized: false`), and a
+GPU profile does not start. A unit may change
 since, another size or a package added on its page, and its page says how it differs from its
 profile. A run installs the unit's packages first, once per list of packages on a unit (the
 execution is `provisioning` meanwhile), and records what the unit had in `spec.computing`: the

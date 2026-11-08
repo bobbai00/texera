@@ -1845,7 +1845,7 @@ export type ProfileSpec = {
 };
 
 /**
- * Whether this deployment can start a unit from the profile, as the catalog finds when the profile is read: Compose starts none, a cluster without GPUs no GPU unit.
+ * Whether this deployment can start a unit from the profile, as the catalog finds when the profile is read: a cluster without GPUs starts no GPU unit, and on Compose a unit from a profile is the deployment's own unit.
  */
 export type ProfileStatus = {
     /**
@@ -1856,6 +1856,10 @@ export type ProfileStatus = {
      * Why not, in a person's words: "no GPU in this cluster".
      */
     notHere?: string;
+    /**
+     * Whether a unit made from it is held to the profile's CPU, memory and GPUs. False where such a unit is the deployment's own, as on Compose: it has the profile's packages, and the size the unit was started with.
+     */
+    sized?: boolean;
 };
 
 /**

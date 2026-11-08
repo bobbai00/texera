@@ -119,7 +119,6 @@ def test_the_agent_runs_on_the_unit_the_person_names(alice, project, my_iris):
 
 
 @pytest.mark.model
-@pytest.mark.cluster
 @pytest.mark.slow
 def test_the_agent_makes_a_unit_from_a_profile_and_keeps_results_where_asked(alice, project, my_iris):
     """The agent works with the platform's resources as a person does: it makes a computing unit

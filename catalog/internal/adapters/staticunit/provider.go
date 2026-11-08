@@ -29,4 +29,15 @@ func (Provider) Endpoint(_ context.Context, _ string, spec api.ComputingUnitSpec
 func (Provider) Terminate(context.Context, string, api.ComputingUnitSpec) error { return nil }
 
 // Offers: a static unit is there already.
-func (Provider) Offers(context.Context, api.ComputingUnitSpec) error { return nil }
+// Offers takes any unit but one that asks for a GPU: a static unit is one already running, and
+// where units from profiles are the deployment's own unit, that unit is sized as it was started.
+func (Provider) Offers(_ context.Context, spec api.ComputingUnitSpec) error {
+	if spec.ComputingNodes != nil {
+		for _, n := range *spec.ComputingNodes {
+			if n.Gpu != nil && *n.Gpu > 0 {
+				return errors.New("no GPU here: a unit from a profile is this deployment's own unit")
+			}
+		}
+	}
+	return nil
+}

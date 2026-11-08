@@ -160,3 +160,59 @@ func TestAProfileSaysWhetherThisDeploymentCanStartIt(t *testing.T) {
 		t.Fatalf("its page says so too: %v", one.Status)
 	}
 }
+
+// On a deployment with no Kubernetes, as on Compose, a unit made from a profile is the
+// deployment's own unit with the profile's packages: every rung but the GPU starts, none is
+// held to its size, and a GPU unit is refused with the reason before anything is made.
+func TestWithoutKubernetesAUnitFromAProfileIsTheDeploymentsOwn(t *testing.T) {
+	h := newHarness(t)
+	h.svc.Units = unitmux.Mux{api.UnitProviderStatic: staticunit.Provider{}}
+	h.svc.Config.ProfileUnits = api.UnitProviderStatic
+	var listed api.ResourcePage
+	h.mustJSON("alice", "GET", p+"/profiles?limit=50", nil, &listed)
+	byName := map[string]envelope{}
+	for _, it := range listed.Items {
+		byName[it.Metadata.Name] = it
+		status := *it.Status
+		if status["sized"] != false {
+			t.Fatalf("%s says it is held to its size where it is not: %v", it.Metadata.Name, status)
+		}
+		want := it.Metadata.Name != "GPU"
+		if status["startable"] != want {
+			t.Fatalf("%s startable %v, want %v: %v", it.Metadata.Name, status["startable"], want, status)
+		}
+	}
+	if why := (*byName["GPU"].Status)["notHere"]; why != "no GPU here: a unit from a profile is this deployment's own unit" {
+		t.Fatalf("the GPU rung says why it cannot start: %v", why)
+	}
+
+	small := byName["Small"]
+	var made envelope
+	h.mustJSON("alice", "POST", p+"/computing-units/from-profile", map[string]any{"name": "small unit", "profile": small.Metadata.Uri, "waitSeconds": 5}, &made)
+	var spec api.ComputingUnitSpec
+	mustDecode(t, made.Spec, &spec)
+	if spec.Provider != api.UnitProviderStatic || spec.Endpoint == nil || *spec.Endpoint != h.svc.Config.StaticUnitEndpoint || spec.ClientId == nil || *spec.ClientId != "texera-unit" {
+		t.Fatalf("the unit is the deployment's own: %+v", spec)
+	}
+	var smallSpec api.ProfileSpec
+	mustDecode(t, small.Spec, &smallSpec)
+	node := (*spec.ComputingNodes)[0]
+	if node.Profile == nil || string(*node.Profile) != string(small.Metadata.Uri)+"@1" || node.Packages == nil || len(*node.Packages) != len(*smallSpec.Packages) {
+		t.Fatalf("with the profile's packages, its version named: %+v", node)
+	}
+	if phase := (*made.Status)["phase"]; phase != "ready" {
+		t.Fatalf("it is ready at once, as the deployment's unit is: %v", made.Status)
+	}
+
+	status, body := h.do("alice", "POST", p+"/computing-units/from-profile", map[string]any{"name": "gpu unit", "profile": byName["GPU"].Metadata.Uri})
+	if status != http.StatusConflict || !strings.Contains(string(body), "no GPU here") {
+		t.Fatalf("a GPU unit is refused, saying why: %d %s", status, body)
+	}
+	var units api.ResourcePage
+	h.mustJSON("alice", "GET", p+"/computing-units?limit=50", nil, &units)
+	for _, u := range units.Items {
+		if u.Metadata.Name == "gpu unit" {
+			t.Fatalf("nothing was made for it: %+v", u.Metadata)
+		}
+	}
+}

@@ -405,11 +405,12 @@ export const zProfileSpec = z.object({
 });
 
 /**
- * Whether this deployment can start a unit from the profile, as the catalog finds when the profile is read: Compose starts none, a cluster without GPUs no GPU unit.
+ * Whether this deployment can start a unit from the profile, as the catalog finds when the profile is read: a cluster without GPUs starts no GPU unit, and on Compose a unit from a profile is the deployment's own unit.
  */
 export const zProfileStatus = z.object({
     startable: z.boolean().optional(),
-    notHere: z.string().optional()
+    notHere: z.string().optional(),
+    sized: z.boolean().optional()
 });
 
 /**

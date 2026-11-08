@@ -26,6 +26,7 @@ import type { KindSpec } from "../types";
 import {
   changeLabel,
   changesFrom,
+  hereFacts,
   type Makeup,
   madeFrom,
   makeupFacts,
@@ -370,12 +371,12 @@ function NewUnit({ spec, onChange }: { spec: unknown; onChange: (spec: unknown) 
           className="w-full"
           data-field="profile">
           {profiles?.items.map(p => {
-            // A profile this deployment cannot start says why beside its name.
+            // A profile this deployment cannot start says why beside its name, and one whose unit is
+            // the deployment's own says so.
             const status = p.status as ProfileStatus | undefined;
-            const notHere = status?.startable === false && status.notHere ? [`not here: ${status.notHere}`] : [];
             return (
               <option key={p.metadata.uri} value={p.metadata.uri} data-startable={status?.startable !== false}>
-                {[p.metadata.name, ...makeupFacts(p.spec as ProfileSpec), ...notHere].join(" · ")}
+                {[p.metadata.name, ...makeupFacts(p.spec as ProfileSpec), ...hereFacts(status)].join(" · ")}
               </option>
             );
           })}

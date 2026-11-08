@@ -1,7 +1,7 @@
 import type { ProfileSpec, ProfileStatus } from "@texera/catalog-client/types";
 import { Package } from "lucide-react";
 import type { KindSpec } from "../types";
-import { makeupFacts } from "./profiles";
+import { hereFacts, makeupFacts } from "./profiles";
 import { SizeFields } from "./SizeFields";
 
 /** A new profile's size, asked when it is made; its packages are added on its page. */
@@ -30,9 +30,7 @@ export const profileKind: KindSpec = {
   CreateFields: NewProfile,
   // The runtime release a profile was saved on is the platform's to say.
   hidden: ["runtime"],
-  // What it is made of, and why this deployment cannot start a unit from it, when it cannot.
-  facts: r => {
-    const status = r.status as ProfileStatus | undefined;
-    return [...makeupFacts(r.spec as ProfileSpec), ...(status?.startable === false && status.notHere ? [`not here: ${status.notHere}`] : [])];
-  },
+  // What it is made of, and what this deployment does with it: why it cannot start a unit from
+  // it, or that such a unit is the deployment's own.
+  facts: r => [...makeupFacts(r.spec as ProfileSpec), ...hereFacts(r.status as ProfileStatus | undefined)],
 };
