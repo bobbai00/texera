@@ -106,6 +106,144 @@ func TestAChatsGraphIsWhatItReadMadeAndRan(t *testing.T) {
 	}
 }
 
+// A workflow's node carries the steps of the version it shows, and each table the step that
+// made it. What a workflow names is drawn whoever touched it: the function a workflow the chat
+// ran calls, though the chat never touched it, and for a workflow not run yet the data it will
+// read and the default unit it will run on. Workflows come in the order the chat first made or
+// ran them. Only the latest plan counts: an item is made by a thing of its kind and name, else
+// by one of its kind made in or after the plan's turn, and a run by a run started then.
+func TestAChatsGraphShowsStepsWhatWorkflowsNameAndTheLatestPlan(t *testing.T) {
+	h := newHarness(t)
+	agent := theAgent(t, h)
+	ds := h.create("alice", "datasets", "cohort", map[string]any{"format": "csv"})
+	h.mustJSON("alice", "PUT", p+"/datasets/"+rid(ds)+"/files/cohort.csv", "patient_id,glucose\nP-1,64\n", nil)
+	h.mustJSON("alice", "POST", p+"/datasets/"+rid(ds)+"/commit", map[string]any{}, nil)
+	file := string(ds.Metadata.Uri) + "@1/files/cohort.csv"
+	op := func(id, typ string, props map[string]any) map[string]any {
+		return map[string]any{"operatorID": id, "operatorType": typ, "operatorProperties": props}
+	}
+	link := func(from, to string) map[string]any {
+		return map[string]any{"linkID": from + to, "source": map[string]any{"operatorID": from, "portID": "output-0"}, "target": map[string]any{"operatorID": to, "portID": "input-0"}}
+	}
+	// The team's function and a workflow that calls it, made outside any chat.
+	var fn envelope
+	h.mustJSON("alice", "POST", p+"/operators", map[string]any{"name": "time in range", "description": "Time in range per patient.", "spec": map[string]any{
+		"implementation": map[string]any{"python": map[string]any{"code": tirCode, "function": "time_in_range"}},
+	}}, &fn)
+	calls := string(fn.Metadata.Uri) + "@1"
+	var team envelope
+	h.mustJSON("alice", "POST", p+"/workflows", map[string]any{"name": "team screen", "spec": map[string]any{
+		"operators": []any{op("scan", "CSVFileScan", map[string]any{"fileName": file}), op("tir", calls, map[string]any{"by": []any{"patient_id"}})},
+		"links":     []any{link("scan", "tir")},
+	}}, &team)
+
+	conv := h.create("alice", "conversations", "the work", map[string]any{"template": string(agent.Metadata.Uri)})
+	turnIn := func() (string, []string) {
+		var turn api.Turn
+		h.mustJSON("alice", "POST", p+"/conversations/"+rid(conv)+"/turns", map[string]any{}, &turn)
+		return turn.Turn, []string{"X-Texera-Origin", "conversation=" + rid(conv) + ";turn=" + turn.Turn + ";template=" + string(turn.Template), "X-Texera-Service-Token", "service"}
+	}
+	plan := func(turn string, in []string, makes ...[2]string) {
+		var items []any
+		for _, m := range makes {
+			items = append(items, map[string]any{"kind": m[0], "name": m[1]})
+		}
+		h.mustJSON("alice", "POST", p+"/conversations/"+rid(conv)+"/messages", map[string]any{"turn": turn, "role": "assistant", "parts": []any{
+			map[string]any{"type": "tool_call", "toolName": "start_work", "toolCallId": "w-" + turn, "args": map[string]any{"goal": "screen", "makes": items}},
+		}}, nil, in...)
+	}
+	ran := func(workflow, step string, in []string) {
+		exec, _ := runOnUnit(t, h, "alice", workflow, map[string]any{}, in...)
+		ns := "e_" + strings.ReplaceAll(rid(exec), "-", "")
+		report(t, h, exec, step, map[string]any{"opid": step, "state": "Completed", "rowsOut": 1}, map[string]map[string]any{"output-0": {"table": ns + "." + step + "_output_0", "tupleCount": 1}})
+		finish(t, h, exec, "completed")
+	}
+	graphOf := func() (api.ConversationGraph, map[string]api.GraphNode, []string) {
+		var graph api.ConversationGraph
+		h.mustJSON("alice", "GET", p+"/conversations/"+rid(conv)+"/graph", nil, &graph)
+		byName := map[string]api.GraphNode{}
+		name := map[string]string{}
+		var flows []string
+		for _, n := range graph.Nodes {
+			byName[string(n.Role)+" "+n.Name] = n
+			name[string(n.Uri)] = n.Name
+			if n.Role == api.GraphRoleWorkflow {
+				flows = append(flows, n.Name)
+			}
+		}
+		var edges []string
+		for _, e := range graph.Edges {
+			edges = append(edges, name[string(e.From)]+" "+string(e.Relation)+" "+name[string(e.To)])
+		}
+		sort.Strings(edges)
+		return graph, byName, append(flows, edges...)
+	}
+	plannedNames := func(graph api.ConversationGraph) []string {
+		var out []string
+		for _, item := range graph.Planned {
+			out = append(out, item.Name)
+		}
+		return out
+	}
+
+	// Turn one plans a draft name, a run and a dataset; it makes the workflow under another name
+	// and runs it, then runs the team's.
+	t1, in1 := turnIn()
+	plan(t1, in1, [2]string{"workflow", "screen draft"}, [2]string{"run", "rerun team screen"}, [2]string{"dataset", "never made"})
+	var mine envelope
+	h.mustJSON("alice", "POST", p+"/workflows", map[string]any{"name": "my screen", "spec": map[string]any{
+		"operators": []any{op("lows", "filter", map[string]any{"where": "glucose < 70"}), op("scan", "CSVFileScan", map[string]any{"fileName": file})},
+		"links":     []any{link("scan", "lows")},
+	}}, &mine, in1...)
+	ran(rid(mine), "lows", in1)
+	ran(rid(team), "tir", in1)
+	h.mustJSON("alice", "DELETE", p+"/conversations/"+rid(conv)+"/turns/"+t1, nil, nil)
+
+	graph, nodes, said := graphOf()
+	screen := nodes["workflow my screen"]
+	var steps []string
+	for _, st := range stepsOf(screen) {
+		steps = append(steps, st.Id+":"+st.Type)
+	}
+	if strings.Join(steps, " ") != "scan:CSVFileScan lows:filter" || screen.Turn == nil || *screen.Turn != t1 {
+		t.Fatalf("my screen's steps, each after what it reads, and its turn: %v %v", steps, screen.Turn)
+	}
+	if lows := nodes["data lows"]; lows.Step == nil || *lows.Step != "lows" {
+		t.Fatalf("a table says the step that made it: %+v", lows)
+	}
+	if fnNode := nodes["function time in range"]; fnNode.Version == nil || *fnNode.Version != 1 || fnNode.Description == nil || fnNode.Made || fnNode.Turn != nil {
+		t.Fatalf("the team's function, which the chat never touched: %+v", fnNode)
+	}
+	want := []string{"my screen", "team screen", "cohort reads my screen", "cohort reads team screen", "my screen makes lows", "my screen runsOn " + unitOf(h).Name, "team screen makes tir", "team screen runsOn " + unitOf(h).Name, "time in range uses team screen"}
+	if strings.Join(said, "; ") != strings.Join(want, "; ") {
+		t.Fatalf("the workflows in the order the chat came to them, then the edges:\n got %q\nwant %q", said, want)
+	}
+	if got := plannedNames(graph); strings.Join(got, ",") != "never made" {
+		t.Fatalf("a draft name is made by the workflow of its turn, a run by the run: %v", got)
+	}
+
+	// Turn two plans afresh, and makes a workflow it does not run: it reads the cohort, calls
+	// the function and will run on its default unit. The first plan's leftover is given up.
+	t2, in2 := turnIn()
+	plan(t2, in2, [2]string{"workflow", "next"}, [2]string{"dataset", "Later"})
+	h.mustJSON("alice", "POST", p+"/workflows", map[string]any{"name": "next", "spec": map[string]any{
+		"defaultComputingUnit": "texera://computing-units/" + unitOf(h).RID.String(),
+		"operators":            []any{op("scan", "CSVFileScan", map[string]any{"fileName": file}), op("tir", calls, map[string]any{"by": []any{"patient_id"}})},
+		"links":                []any{link("scan", "tir")},
+	}}, nil, in2...)
+	graph, nodes, said = graphOf()
+	want = []string{"my screen", "team screen", "next", "cohort reads my screen", "cohort reads next", "cohort reads team screen", "my screen makes lows", "my screen runsOn " + unitOf(h).Name, "next runsOn " + unitOf(h).Name, "team screen makes tir", "team screen runsOn " + unitOf(h).Name, "time in range uses next", "time in range uses team screen"}
+	if strings.Join(said, "; ") != strings.Join(want, "; ") {
+		t.Fatalf("a workflow not run yet, with what it will read, use and run on:\n got %q\nwant %q", said, want)
+	}
+	if next := nodes["workflow next"]; next.Runs != nil || len(stepsOf(next)) != 2 {
+		t.Fatalf("next has not run, and shows its version's steps: %+v", next)
+	}
+	if got := plannedNames(graph); strings.Join(got, ",") != "Later" {
+		t.Fatalf("only the latest plan counts: %v", got)
+	}
+}
+
 // Above the graph, the outside sources the chat's agent consulted, each with what it asked of
 // them; not the platform's own server, which every chat calls, and not the agent's own tools.
 func TestAChatsGraphSaysWhatOutsideSourcesItConsulted(t *testing.T) {
@@ -148,4 +286,11 @@ func TestAChatsGraphSaysWhatOutsideSourcesItConsulted(t *testing.T) {
 	if strings.Join(calls, "; ") != strings.Join(want, "; ") {
 		t.Fatalf("the calls:\n got %q\nwant %q", calls, want)
 	}
+}
+
+func stepsOf(n api.GraphNode) []api.GraphStep {
+	if n.Steps == nil {
+		return nil
+	}
+	return *n.Steps
 }

@@ -190,6 +190,16 @@ export const zGraphRole = z.enum([
 ]);
 
 /**
+ * A step of a workflow on a chat's graph: one operator of the version it shows.
+ */
+export const zGraphStep = z.object({
+    id: z.string(),
+    type: z.string(),
+    settings: z.record(z.string(), z.unknown()).optional(),
+    inputs: z.array(z.string()).optional()
+});
+
+/**
  * A file the catalog fetches itself into the staging area, from the internet.
  */
 export const zImportFile = z.object({
@@ -341,7 +351,7 @@ export const zOperatorStatus = z.object({
 export const zPid = z.string();
 
 /**
- * Something a chat's plan said it would make that it has not made yet.
+ * Something the chat's latest plan said it would make that it has not made yet. An earlier plan's items are done or given up.
  */
 export const zPlannedItem = z.object({
     kind: z.string().optional(),
@@ -718,7 +728,7 @@ export const zExecutionPort = z.object({
 });
 
 /**
- * An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on.
+ * An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on. A workflow that has not run reads, uses and runs on what its version names and its default unit.
  */
 export const zGraphEdge = z.object({
     from: zUri,
@@ -1136,17 +1146,21 @@ export const zDatasetVersion = z.object({
 });
 
 /**
- * A node of a chat's graph.
+ * A node of a chat's graph. Nodes come in the order the chat first touched them, so a new one never comes before one already drawn.
  */
 export const zGraphNode = z.object({
     uri: zUri,
     role: zGraphRole,
     kind: zResourceKind,
     name: z.string(),
+    description: z.string().optional(),
     version: zVno.optional(),
     made: z.boolean(),
+    turn: z.string().optional(),
     state: z.string().optional(),
     runs: z.array(zGraphRun).optional(),
+    steps: z.array(zGraphStep).optional(),
+    step: z.string().optional(),
     rows: z.coerce.bigint().min(BigInt('-9223372036854775808'), { error: 'Invalid value: Expected int64 to be >= -9223372036854775808' }).max(BigInt('9223372036854775807'), { error: 'Invalid value: Expected int64 to be <= 9223372036854775807' }).optional()
 });
 

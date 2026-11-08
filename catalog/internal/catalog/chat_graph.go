@@ -9,7 +9,9 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -45,6 +47,50 @@ type chatGraph struct {
 	byURI map[string]*api.GraphNode
 	edges []api.GraphEdge
 	seen  map[api.GraphEdge]bool
+	// When the chat first made or ran each node, where it did.
+	touched map[string]time.Time
+}
+
+func (g *chatGraph) touch(node string, at time.Time) {
+	if was, ok := g.touched[node]; !ok || at.Before(was) {
+		g.touched[node] = at
+	}
+}
+
+// workflowsInOrder puts the workflows in the order the chat first made or ran them, each in a
+// place a workflow held, so a workflow the chat comes to later never comes before one drawn.
+// A workflow it only worked from, and never ran, comes last.
+func (g *chatGraph) workflowsInOrder() {
+	var at []int
+	var flows []*api.GraphNode
+	for i, n := range g.nodes {
+		if n.Role == api.GraphRoleWorkflow {
+			at = append(at, i)
+			flows = append(flows, n)
+		}
+	}
+	slices.SortStableFunc(flows, func(a, b *api.GraphNode) int {
+		ta, oka := g.touched[string(a.Uri)]
+		tb, okb := g.touched[string(b.Uri)]
+		switch {
+		case oka && okb:
+			return ta.Compare(tb)
+		case oka:
+			return -1
+		case okb:
+			return 1
+		}
+		return 0
+	})
+	for j, i := range at {
+		g.nodes[i] = flows[j]
+	}
+}
+
+// chatRun is a run the chat started: of which workflow, in which turn.
+type chatRun struct {
+	workflow string
+	turn     string
 }
 
 func (g *chatGraph) node(n api.GraphNode) *api.GraphNode {
@@ -72,8 +118,11 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 	if err != nil {
 		return nil, err
 	}
-	g := &chatGraph{byURI: map[string]*api.GraphNode{}, seen: map[api.GraphEdge]bool{}}
+	g := &chatGraph{byURI: map[string]*api.GraphNode{}, seen: map[api.GraphEdge]bool{}, touched: map[string]time.Time{}}
 	var executions []*store.Resource
+	// The version each workflow shows: the one its newest run ran, else the one the chat has.
+	shown := map[string]string{}
+	workflows := map[string]*store.Resource{}
 	for i := range items {
 		item := &items[i]
 		r := &item.Resource
@@ -85,18 +134,35 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 		if role == "" {
 			continue
 		}
-		n := api.GraphNode{Uri: api.Uri(URI(r).String()), Role: role, Kind: api.ResourceKind(r.Kind), Name: r.Name, Made: item.Made}
+		n := api.GraphNode{Uri: api.Uri(URI(r).String()), Role: role, Kind: api.ResourceKind(r.Kind), Name: r.Name, Made: item.Made, Description: r.Description}
+		if r.Origin != nil && r.Origin.Conversation == rid {
+			turn := r.Origin.Turn
+			n.Turn = &turn
+			g.touch(string(n.Uri), r.CreatedAt)
+		}
 		if len(item.Versions) > 0 {
 			v := api.Vno(item.Versions[0].Vno)
 			n.Version = &v
 		}
+		for _, v := range item.Versions {
+			if v.Made {
+				g.touch(string(n.Uri), v.CreatedAt)
+			}
+		}
 		g.node(n)
+		if r.Kind == "workflow" {
+			workflows[string(n.Uri)] = r
+			if n.Version != nil {
+				shown[string(n.Uri)] = URI(r).WithVersion(int(*n.Version)).String()
+			}
+		}
 	}
 
 	// Each run: what it read, where it ran, and for the newest of each workflow what it kept.
 	slices.SortStableFunc(executions, func(a, b *store.Resource) int { return b.CreatedAt.Compare(a.CreatedAt) })
 	newest := map[string]bool{}
-	workflowVersions := map[string]string{}
+	ranVersion := map[string]bool{}
+	var runs []chatRun
 	for _, exec := range executions {
 		var spec api.ExecutionSpec
 		var status api.ExecutionStatus
@@ -113,20 +179,25 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 		if wfNode == nil {
 			continue
 		}
-		if _, ok := workflowVersions[workflow]; !ok {
-			workflowVersions[workflow] = string(spec.Workflow)
+		g.touch(workflow, exec.CreatedAt)
+		if exec.Origin != nil && exec.Origin.Conversation == rid {
+			runs = append(runs, chatRun{workflow: wfNode.Name, turn: exec.Origin.Turn})
 		}
-		run := api.GraphRun{Uri: api.Uri(URI(exec).String()), Phase: string(status.Phase), Steps: int32(planSteps(spec)), Reused: 0}
+		if !ranVersion[workflow] {
+			ranVersion[workflow] = true
+			shown[workflow] = string(spec.Workflow)
+		}
+		run := api.GraphRun{Uri: api.Uri(URI(exec).String()), Phase: string(status.Phase), Steps: int32(planSteps(spec))}
 		if spec.Reused != nil {
 			run.Reused = int32(len(*spec.Reused))
 		}
 		run.StartedAt, run.FinishedAt = status.StartedAt, status.FinishedAt
-		runs := []api.GraphRun{}
+		listed := []api.GraphRun{}
 		if wfNode.Runs != nil {
-			runs = *wfNode.Runs
+			listed = *wfNode.Runs
 		}
-		runs = append(runs, run)
-		wfNode.Runs = &runs
+		listed = append(listed, run)
+		wfNode.Runs = &listed
 		if wfNode.State == nil {
 			phase := string(status.Phase)
 			wfNode.State = &phase
@@ -146,18 +217,7 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 				}
 			}
 		}
-		if unit := string(spec.ComputingUnit); unit != "" {
-			if g.byURI[unit] == nil {
-				if r, err := s.resourceByURI(ctx, caller, unit, &unitKind); err == nil {
-					n := api.GraphNode{Uri: api.Uri(unit), Role: api.GraphRoleUnit, Kind: api.ResourceKind(r.Kind), Name: r.Name}
-					var us api.ComputingUnitStatus
-					if json.Unmarshal(r.Status, &us) == nil && us.Phase != "" {
-						phase := string(us.Phase)
-						n.State = &phase
-					}
-					g.node(n)
-				}
-			}
+		if unit := string(spec.ComputingUnit); unit != "" && s.unitNode(ctx, caller, g, unit) {
 			g.edge(workflow, unit, api.GraphEdgeRelationRunsOn)
 		}
 		if newest[workflow] || status.Ports == nil || status.ResultsExpiredAt != nil {
@@ -171,31 +231,81 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 			}
 			port := URI(exec).String() + "/operators/" + p.OperatorID + "/ports/" + p.PortID
 			n := g.node(api.GraphNode{Uri: api.Uri(port), Role: api.GraphRoleData, Kind: api.ResourceKind("execution"), Name: p.OperatorID, Made: true})
+			step := p.OperatorID
+			n.Step = &step
 			n.Rows = p.Rows
 			g.edge(workflow, port, api.GraphEdgeRelationMakes)
 		}
 	}
 
-	// The functions a workflow's version names.
+	// What each workflow's version is made of, and what it names: the functions and models it
+	// uses, and the data it reads, which for a workflow that has not run is what it will read.
+	byVersion := map[string]string{}
 	var sources []string
-	for _, version := range workflowVersions {
+	for _, n := range g.nodes {
+		version := shown[string(n.Uri)]
+		if n.Role != api.GraphRoleWorkflow || version == "" {
+			continue
+		}
+		byVersion[version] = string(n.Uri)
 		sources = append(sources, version)
+		if steps := s.stepsOf(ctx, version); steps != nil {
+			n.Steps = &steps
+		}
 	}
 	refs, err := s.Store.ReferencesFrom(ctx, sources)
 	if err != nil {
 		return nil, err
 	}
 	for _, e := range refs {
+		workflow := byVersion[e.From]
 		ref, err := uri.Parse(e.To)
-		if err != nil || ref.Kind.Name != "operator" {
+		if workflow == "" || err != nil {
 			continue
 		}
-		from, err := uri.Parse(e.From)
+		target := uri.Of(ref.Kind, ref.Rid).String()
+		relation := api.GraphEdgeRelationUses
+		switch ref.Kind.Name {
+		case "dataset":
+			relation = api.GraphEdgeRelationReads
+		case "operator", "model":
+		default:
+			continue
+		}
+		if g.byURI[target] == nil {
+			r, err := s.resourceByURI(ctx, caller, target, nil)
+			if err != nil || roleOf(r) == "" {
+				continue
+			}
+			n := api.GraphNode{Uri: api.Uri(target), Role: roleOf(r), Kind: api.ResourceKind(r.Kind), Name: r.Name, Description: r.Description}
+			if ref.Vno > 0 {
+				v := api.Vno(ref.Vno)
+				n.Version = &v
+			}
+			g.node(n)
+		}
+		g.edge(target, workflow, relation)
+	}
+	// A workflow that has not run will run on its default unit.
+	for _, n := range g.nodes {
+		r := workflows[string(n.Uri)]
+		if r == nil || n.Runs != nil {
+			continue
+		}
+		var spec api.WorkflowSpec
+		if json.Unmarshal(r.Spec, &spec) != nil || spec.DefaultComputingUnit == nil {
+			continue
+		}
+		ref, err := uri.Parse(string(*spec.DefaultComputingUnit))
 		if err != nil {
 			continue
 		}
-		g.edge(uri.Of(ref.Kind, ref.Rid).String(), uri.Of(from.Kind, from.Rid).String(), api.GraphEdgeRelationUses)
+		unit := uri.Of(ref.Kind, ref.Rid).String()
+		if s.unitNode(ctx, caller, g, unit) {
+			g.edge(string(n.Uri), unit, api.GraphEdgeRelationRunsOn)
+		}
 	}
+	g.workflowsInOrder()
 
 	said, err := s.chatSaid(ctx, rid)
 	if err != nil {
@@ -204,7 +314,7 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 	out := &api.ConversationGraph{
 		Nodes:   make([]api.GraphNode, 0, len(g.nodes)),
 		Edges:   g.edges,
-		Planned: said.notMade(g),
+		Planned: said.notMade(g, runs),
 		Sources: s.consulted(ctx, caller, said),
 	}
 	if out.Edges == nil {
@@ -214,6 +324,95 @@ func (s *Service) ConversationGraph(ctx context.Context, caller *auth.Caller, ri
 		out.Nodes = append(out.Nodes, *n)
 	}
 	return out, nil
+}
+
+// unitNode puts a computing unit the caller may read on the graph, with its phase, and says
+// whether it is there.
+func (s *Service) unitNode(ctx context.Context, caller *auth.Caller, g *chatGraph, unit string) bool {
+	if g.byURI[unit] != nil {
+		return true
+	}
+	r, err := s.resourceByURI(ctx, caller, unit, &unitKind)
+	if err != nil {
+		return false
+	}
+	n := api.GraphNode{Uri: api.Uri(unit), Role: api.GraphRoleUnit, Kind: api.ResourceKind(r.Kind), Name: r.Name, Description: r.Description}
+	var us api.ComputingUnitStatus
+	if json.Unmarshal(r.Status, &us) == nil && us.Phase != "" {
+		phase := string(us.Phase)
+		n.State = &phase
+	}
+	g.node(n)
+	return true
+}
+
+// stepsOf is a workflow version's operators as steps, each after the steps it reads; nil when
+// the version cannot be read.
+func (s *Service) stepsOf(ctx context.Context, version string) []api.GraphStep {
+	ref, err := uri.Parse(version)
+	if err != nil {
+		return nil
+	}
+	id, err := uuid.Parse(ref.Rid)
+	if err != nil {
+		return nil
+	}
+	v, err := s.Store.GetVersion(ctx, id, ref.Vno)
+	if err != nil {
+		return nil
+	}
+	var spec api.WorkflowSpec
+	if json.Unmarshal(v.Content, &spec) != nil {
+		return nil
+	}
+	return stepsOfSpec(spec)
+}
+
+func stepsOfSpec(spec api.WorkflowSpec) []api.GraphStep {
+	port := func(p string) int {
+		n, _ := strconv.Atoi(p[strings.LastIndex(p, "-")+1:])
+		return n
+	}
+	links := slices.Clone(spec.Links)
+	slices.SortStableFunc(links, func(a, b api.WorkflowLink) int { return port(a.Target.PortID) - port(b.Target.PortID) })
+	ops := map[string]bool{}
+	var remaining []api.WorkflowOperator
+	for _, op := range spec.Operators {
+		if op.IsDisabled != nil && *op.IsDisabled {
+			continue
+		}
+		ops[op.OperatorID] = true
+		remaining = append(remaining, op)
+	}
+	inputs := map[string][]string{}
+	for _, l := range links {
+		if ops[l.Source.OperatorID] && ops[l.Target.OperatorID] {
+			inputs[l.Target.OperatorID] = append(inputs[l.Target.OperatorID], l.Source.OperatorID)
+		}
+	}
+	placed := map[string]bool{}
+	steps := make([]api.GraphStep, 0, len(remaining))
+	for len(remaining) > 0 {
+		i := slices.IndexFunc(remaining, func(op api.WorkflowOperator) bool {
+			return !slices.ContainsFunc(inputs[op.OperatorID], func(in string) bool { return !placed[in] })
+		})
+		if i < 0 {
+			i = 0
+		}
+		op := remaining[i]
+		remaining = slices.Delete(remaining, i, i+1)
+		placed[op.OperatorID] = true
+		step := api.GraphStep{Id: op.OperatorID, Type: op.OperatorType}
+		if len(op.OperatorProperties) > 0 {
+			settings := op.OperatorProperties
+			step.Settings = &settings
+		}
+		if in := inputs[op.OperatorID]; len(in) > 0 {
+			step.Inputs = &in
+		}
+		steps = append(steps, step)
+	}
+	return steps
 }
 
 // planSteps are the operators of the workflow a run ran: those in its plan and those it skipped.
@@ -232,22 +431,21 @@ func planSteps(spec api.ExecutionSpec) int {
 	return n
 }
 
-// chatSaid is what a chat's messages say beyond their text: what its start_work calls said they
-// would make, and the calls its agent made to MCP servers' tools.
+// chatSaid is what a chat's messages say beyond their text: what its latest start_work call
+// said it would make, and the calls its agent made to MCP servers' tools.
 type chatSaid struct {
-	plans []plannedIn
+	// The latest plan and its turn; an earlier plan is done or given up.
+	plan     []planItem
+	planTurn string
+	// Each turn's place in the chat, by its first message.
+	turns map[string]int
 	// The calls to each server's tools, and the servers in the order they were first called.
 	calls   map[string][]api.GraphCall
 	servers []string
 }
 
-type plannedIn struct {
-	planItem
-	turn string
-}
-
 func (s *Service) chatSaid(ctx context.Context, rid uuid.UUID) (*chatSaid, error) {
-	out := &chatSaid{calls: map[string][]api.GraphCall{}}
+	out := &chatSaid{calls: map[string][]api.GraphCall{}, turns: map[string]int{}}
 	var after int64
 	for {
 		messages, err := s.Store.ListMessages(ctx, rid, after, 500)
@@ -256,6 +454,11 @@ func (s *Service) chatSaid(ctx context.Context, rid uuid.UUID) (*chatSaid, error
 		}
 		for _, m := range messages {
 			after = m.Seq
+			if turn := deref(m.Turn); turn != "" {
+				if _, ok := out.turns[turn]; !ok {
+					out.turns[turn] = len(out.turns)
+				}
+			}
 			var parts []api.MessagePart
 			if json.Unmarshal(m.Parts, &parts) != nil {
 				continue
@@ -265,9 +468,7 @@ func (s *Service) chatSaid(ctx context.Context, rid uuid.UUID) (*chatSaid, error
 					continue
 				}
 				if *p.ToolName == "start_work" {
-					for _, item := range planOf(p.Args) {
-						out.plans = append(out.plans, plannedIn{item, deref(m.Turn)})
-					}
+					out.plan, out.planTurn = planOf(p.Args), deref(m.Turn)
 				}
 				if p.Server != nil {
 					server := string(*p.Server)
@@ -284,23 +485,67 @@ func (s *Service) chatSaid(ctx context.Context, rid uuid.UUID) (*chatSaid, error
 	}
 }
 
-// notMade is what the plans said they would make that the graph does not hold yet, by kind and
-// name.
-func (c *chatSaid) notMade(g *chatGraph) []api.PlannedItem {
-	made := map[string]bool{}
+// notMade is what the chat's latest plan said it would make that it has not made yet. An item
+// is made when the graph holds a thing of its kind and name; failing that, by the first thing of
+// its kind the chat made in the plan's turn or after it that no item names; and a run by a run
+// the chat started then, of the workflow the item names when one does. Plans name kinds as the
+// agent writes them, so a unit or a run is read under its other names too.
+func (c *chatSaid) notMade(g *chatGraph, runs []chatRun) []api.PlannedItem {
+	out := []api.PlannedItem{}
+	since, ok := c.turns[c.planTurn]
+	if len(c.plan) == 0 || !ok {
+		return out
+	}
+	after := func(turn *string) bool {
+		if turn == nil {
+			return false
+		}
+		i, ok := c.turns[*turn]
+		return ok && i >= since
+	}
+	key := func(kind, name string) string { return kind + "\x00" + strings.ToLower(strings.TrimSpace(name)) }
+	held := map[string]bool{}
 	for _, n := range g.nodes {
-		if n.Made {
-			made[string(n.Kind)+"\x00"+strings.ToLower(n.Name)] = true
+		held[key(string(n.Kind), n.Name)] = true
+	}
+	named := map[string]bool{}
+	for _, item := range c.plan {
+		named[key(planKind(item.Kind), item.Name)] = true
+	}
+	taken := map[*api.GraphNode]bool{}
+	var later []chatRun
+	for _, r := range runs {
+		if after(&r.turn) {
+			later = append(later, r)
 		}
 	}
-	out := []api.PlannedItem{}
-	for _, item := range c.plans {
-		if item.Name == "" || made[item.Kind+"\x00"+strings.ToLower(item.Name)] {
+	slices.Reverse(later) // oldest first
+	ranTaken := make([]bool, len(later))
+	for _, item := range c.plan {
+		kind := planKind(item.Kind)
+		if item.Name == "" || held[key(kind, item.Name)] {
 			continue
 		}
-		planned := api.PlannedItem{Name: item.Name, Turn: item.turn}
+		if kind == "execution" {
+			i := slices.IndexFunc(later, func(r chatRun) bool {
+				return strings.Contains(strings.ToLower(item.Name), strings.ToLower(r.workflow))
+			})
+			if i < 0 || ranTaken[i] {
+				i = slices.Index(ranTaken, false)
+			}
+			if i >= 0 {
+				ranTaken[i] = true
+				continue
+			}
+		} else if n := g.madeSince(kind, after, func(n *api.GraphNode) bool {
+			return !taken[n] && !named[key(string(n.Kind), n.Name)]
+		}); n != nil {
+			taken[n] = true
+			continue
+		}
+		planned := api.PlannedItem{Name: item.Name, Turn: c.planTurn}
 		if item.Kind != "" {
-			planned.Kind = &item.Kind
+			planned.Kind = &kind
 		}
 		if item.Detail != "" {
 			planned.Detail = &item.Detail
@@ -308,6 +553,35 @@ func (c *chatSaid) notMade(g *chatGraph) []api.PlannedItem {
 		out = append(out, planned)
 	}
 	return out
+}
+
+// madeSince is the first node of a kind the chat made in a turn that passes, and that is free.
+func (g *chatGraph) madeSince(kind string, after func(*string) bool, free func(*api.GraphNode) bool) *api.GraphNode {
+	for _, n := range g.nodes {
+		if string(n.Kind) == kind && n.Made && after(n.Turn) && free(n) {
+			return n
+		}
+	}
+	return nil
+}
+
+// planKind reads the kind a plan names as the catalog names it: the agent may write a unit, a
+// run or a function.
+func planKind(kind string) string {
+	switch k := strings.ToLower(strings.TrimSpace(kind)); k {
+	case "unit", "units", "computing unit", "computing units", "computing-units":
+		return "computing-unit"
+	case "run", "runs", "execution", "executions", "workflow run":
+		return "execution"
+	case "function", "functions", "custom operator", "operators":
+		return "operator"
+	case "workflows":
+		return "workflow"
+	case "datasets", "table":
+		return "dataset"
+	default:
+		return k
+	}
 }
 
 // consulted is the outside servers the chat's agent called, as the caller may see them: not the

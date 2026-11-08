@@ -1064,7 +1064,7 @@ export type GraphCall = {
 };
 
 /**
- * An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on.
+ * An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on. A workflow that has not run reads, uses and runs on what its version names and its default unit.
  */
 export type GraphEdge = {
     from: Uri;
@@ -1073,7 +1073,7 @@ export type GraphEdge = {
 };
 
 /**
- * A node of a chat's graph.
+ * A node of a chat's graph. Nodes come in the order the chat first touched them, so a new one never comes before one already drawn.
  */
 export type GraphNode = {
     /**
@@ -1084,6 +1084,10 @@ export type GraphNode = {
     kind: ResourceKind;
     name: string;
     /**
+     * What the resource says it is.
+     */
+    description?: string;
+    /**
      * The version the chat worked from or made, the newest when there are several.
      */
     version?: Vno;
@@ -1092,6 +1096,10 @@ export type GraphNode = {
      */
     made: boolean;
     /**
+     * The turn of this chat that made it; absent for what the chat only worked from.
+     */
+    turn?: string;
+    /**
      * For a workflow, its last run's phase; for a unit, its phase.
      */
     state?: string;
@@ -1099,6 +1107,14 @@ export type GraphNode = {
      * For a workflow, its runs in the chat, newest first.
      */
     runs?: Array<GraphRun>;
+    /**
+     * For a workflow, the steps of the version its newest run ran, or of the version the chat made or worked from when it has not run, each after the steps it reads.
+     */
+    steps?: Array<GraphStep>;
+    /**
+     * For a table a run made, the step that made it.
+     */
+    step?: string;
     /**
      * For a table a run made, its rows.
      */
@@ -1135,6 +1151,30 @@ export type GraphSource = {
     uri: Uri;
     name: string;
     calls: Array<GraphCall>;
+};
+
+/**
+ * A step of a workflow on a chat's graph: one operator of the version it shows.
+ */
+export type GraphStep = {
+    /**
+     * The operator's ID in the workflow; the tables it makes are named by it.
+     */
+    id: string;
+    /**
+     * What the step does: a built-in's type (scan, filter, join, ...), predict, or a custom operator's URI at a version.
+     */
+    type: string;
+    /**
+     * Its settings, as the workflow version has them.
+     */
+    settings?: {
+        [key: string]: unknown;
+    };
+    /**
+     * The steps whose rows it reads, in port order.
+     */
+    inputs?: Array<string>;
 };
 
 /**
@@ -1739,7 +1779,7 @@ export type Origin = {
 export type Pid = string;
 
 /**
- * Something a chat's plan said it would make that it has not made yet.
+ * Something the chat's latest plan said it would make that it has not made yet. An earlier plan's items are done or given up.
  */
 export type PlannedItem = {
     kind?: string;

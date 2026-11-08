@@ -6567,7 +6567,7 @@ components:
             - makes
             - uses
             - runsOn
-      description: "An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on."
+      description: "An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on. A workflow that has not run reads, uses and runs on what its version names and its default unit."
     GraphNode:
       type: object
       required:
@@ -6587,6 +6587,9 @@ components:
           $ref: '#/components/schemas/ResourceKind'
         name:
           type: string
+        description:
+          type: string
+          description: What the resource says it is.
         version:
           allOf:
             - $ref: '#/components/schemas/Vno'
@@ -6594,6 +6597,9 @@ components:
         made:
           type: boolean
           description: The chat made it, or a version of it.
+        turn:
+          type: string
+          description: The turn of this chat that made it; absent for what the chat only worked from.
         state:
           type: string
           description: For a workflow, its last run's phase; for a unit, its phase.
@@ -6602,11 +6608,19 @@ components:
           items:
             $ref: '#/components/schemas/GraphRun'
           description: For a workflow, its runs in the chat, newest first.
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphStep'
+          description: For a workflow, the steps of the version its newest run ran, or of the version the chat made or worked from when it has not run, each after the steps it reads.
+        step:
+          type: string
+          description: For a table a run made, the step that made it.
         rows:
           type: integer
           format: int64
           description: For a table a run made, its rows.
-      description: A node of a chat's graph.
+      description: A node of a chat's graph. Nodes come in the order the chat first touched them, so a new one never comes before one already drawn.
     GraphRole:
       type: string
       enum:
@@ -6659,6 +6673,28 @@ components:
           items:
             $ref: '#/components/schemas/GraphCall'
       description: An outside MCP server the chat's agent consulted, and its calls, oldest first.
+    GraphStep:
+      type: object
+      required:
+        - id
+        - type
+      properties:
+        id:
+          type: string
+          description: The operator's ID in the workflow; the tables it makes are named by it.
+        type:
+          type: string
+          description: "What the step does: a built-in's type (scan, filter, join, ...), predict, or a custom operator's URI at a version."
+        settings:
+          type: object
+          additionalProperties: {}
+          description: Its settings, as the workflow version has them.
+        inputs:
+          type: array
+          items:
+            type: string
+          description: The steps whose rows it reads, in port order.
+      description: "A step of a workflow on a chat's graph: one operator of the version it shows."
     ImportFile:
       type: object
       required:
@@ -7610,7 +7646,7 @@ components:
         turn:
           type: string
           description: The turn whose start_work said so.
-      description: Something a chat's plan said it would make that it has not made yet.
+      description: Something the chat's latest plan said it would make that it has not made yet. An earlier plan's items are done or given up.
     PortSummary:
       type: object
       required:

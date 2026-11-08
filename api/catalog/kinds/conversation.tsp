@@ -125,33 +125,53 @@ model GraphRun {
   finishedAt?: utcDateTime;
 }
 
-@doc("A node of a chat's graph.")
+@doc("A step of a workflow on a chat's graph: one operator of the version it shows.")
+model GraphStep {
+  @doc("The operator's ID in the workflow; the tables it makes are named by it.")
+  id: string;
+  @doc("What the step does: a built-in's type (scan, filter, join, ...), predict, or a custom operator's URI at a version.")
+  type: string;
+  @doc("Its settings, as the workflow version has them.")
+  settings?: Record<unknown>;
+  @doc("The steps whose rows it reads, in port order.")
+  inputs?: string[];
+}
+
+@doc("A node of a chat's graph. Nodes come in the order the chat first touched them, so a new one never comes before one already drawn.")
 model GraphNode {
   @doc("What the node opens: a resource's URI, or for a table a run made, its port's.")
   uri: Uri;
   role: GraphRole;
   kind: ResourceKind;
   name: string;
+  @doc("What the resource says it is.")
+  description?: string;
   @doc("The version the chat worked from or made, the newest when there are several.")
   version?: Vno;
   @doc("The chat made it, or a version of it.")
   made: boolean;
+  @doc("The turn of this chat that made it; absent for what the chat only worked from.")
+  turn?: string;
   @doc("For a workflow, its last run's phase; for a unit, its phase.")
   state?: string;
   @doc("For a workflow, its runs in the chat, newest first.")
   runs?: GraphRun[];
+  @doc("For a workflow, the steps of the version its newest run ran, or of the version the chat made or worked from when it has not run, each after the steps it reads.")
+  steps?: GraphStep[];
+  @doc("For a table a run made, the step that made it.")
+  step?: string;
   @doc("For a table a run made, its rows.")
   rows?: int64;
 }
 
-@doc("An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on.")
+@doc("An arrow of a chat's graph: data a workflow reads, what it makes, a model or function it uses, the unit it runs on. A workflow that has not run reads, uses and runs on what its version names and its default unit.")
 model GraphEdge {
   from: Uri;
   to: Uri;
   relation: "reads" | "makes" | "uses" | "runsOn";
 }
 
-@doc("Something a chat's plan said it would make that it has not made yet.")
+@doc("Something the chat's latest plan said it would make that it has not made yet. An earlier plan's items are done or given up.")
 model PlannedItem {
   kind?: string;
   name: string;
