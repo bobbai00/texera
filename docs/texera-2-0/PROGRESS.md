@@ -65,8 +65,18 @@ Decided along the way: the relations keep their names (owner, editor, viewer, us
 calls a project's owners admins and its editors members; a project has one base, so every
 setting has one answer; Texera stays open to everyone, so a link to it needs no tuple; Texera's
 store list is the outer bound of every project's; the model default is left to the agent unless a
-chat or a project chooses one. Next: quotas as limits in project settings when wanted; a base's
-admins see the projects that inherit from it only through a refused delete today.
+chat or a project chooses one. Next: quotas as limits in project settings when wanted.
+
+Then, at the user's request, the administration a project needed: `GET /projects/{rid}/inheritors`
+for its admins, with "Send back to Texera" on the Settings tab; a person's role on a project beside
+its name; its description edited by its admins; on the People tab a role changed in place and what
+each role may do; a member or viewer told that only the admins see its people. Covered in the
+catalog's suite, the scenarios (an in-place role change, the inheritors list) and Playwright (alice
+manages the study, bob sees himself a viewer, the lab's admin sends the study back). Dev stack:
+Playwright 64 passed, 5 skipped. Kind, redeployed: `k8s.sh check` green, 55 scenarios and
+Playwright 64 passed, 5 skipped. On the way the long-answer test failed again on the cluster,
+waiting for a saved copy that never came: it wrote the turn's messages only after the page had
+the whole stream. It now writes them first, as the runtime does (15 in 15 on both stacks).
 
 ## 2026-11-07 (session 15, part 4): nobody writes the engine's classes
 

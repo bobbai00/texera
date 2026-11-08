@@ -275,7 +275,9 @@ are `texera://` URIs, runs are the catalog's, and a conversation runs a template
    (`Me.rootProject`, Texera, has none): `POST /projects` takes `base` (default Texera), `PATCH
    /resources/{rid}` changes it. The base must be a project the caller administers, or Texera;
    the base's admins may also set it back to Texera; a loop is `400`, a public project with a
-   private base `409 private_base`, deleting a project others inherit from `409 inherited`.
+   private base `409 private_base`, deleting a project others inherit from `409 inherited`;
+   `GET /projects/{rid}/inheritors` names, for its admins, the projects that inherit from it
+   (Texera's: `400`, every project).
    The base names the project an `inheritor` in OpenFGA (`viewer` and `user` pass up, nothing
    else; Texera needs no tuple, it is open to everyone). A project's spec is its settings
    (`branding`, `defaults`, `limits`), changed by its admins (`admin`, the owner relation);

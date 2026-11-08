@@ -118,7 +118,12 @@ Its Settings tab shows what holds and which project each value comes from
 (`GET /projects/{rid}/settings`), what it inherits from, and what it sets itself.
 
 **Admins and members.** A project's owners are its admins: they change the project itself, its
-settings, its base and its people. Its editors are its members: they work in it. Texera is a
+settings, its base and its people. Its editors are its members: they work in it. A project's page
+says your role beside its name (admin, member or viewer). On its People tab its admins add people,
+change a person's role in place and remove them; the person who made the project stays its admin.
+On its Settings tab its admins say what it is for, choose what it inherits from, and see the
+projects that inherit from it, each with "Send back to Texera"
+(`GET /projects/{rid}/inheritors`). Texera is a
 project like any other: the release ships into it (the agent, its skills and MCP servers, the
 model endpoint, the deployment's unit and its profile, the profile ladder, the warehouse, the
 engine's operators), and its admins change, add or delete any of it for everyone; a later
