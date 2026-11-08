@@ -49,13 +49,24 @@ and follows its project's and the platform's defaults. Where its executions run 
 choice: they go where any execution goes (see "Computing units"), and you say "run it on my GPU
 unit" in words when you want another. Attach a CSV from the box
 and it becomes a dataset of the chat's project, shown as a card of your message. What the
-agent makes shows as a card in its message. Beside the chat, "From this chat" holds what the
-chat made and what it worked from as a tree: a section per kind, each resource, its versions,
-and under a version the executions that ran it or the files it holds. Every level folds. What
-the chat made reads plainly; what it worked from (what you attached, what its workflows read,
-the workflow a run ran) is dimmed. What a search or a list only returned is not in it.
-Each answer is labelled with the version of the agent and the model that wrote it. A turn that
-fails says why in the chat, and still does after a reload.
+agent makes shows as a card in its message. Each answer is labelled with the version of the
+agent and the model that wrote it. A turn that fails says why in the chat, and still does after
+a reload.
+
+**The graph beside a chat.** Once the agent starts to change things (its plan, `start_work`),
+the left of the chat page shows what the chat read, made and ran. Arrows carry data only: the
+dataset a workflow reads, the table it makes. A workflow is a card with the models and functions
+it uses on it, inside the frame of the unit it ran on (or, not run yet, its default unit);
+Inputs, Work and Results head the columns. What the plan has not made yet is dashed, and a dot
+marks what this chat made. It zooms in three levels: Overview, names only; Standard, each
+thing's version, rows and last run; Detail, each workflow's steps, the file a step read and the
+table a step made standing level with it. Drag to move, scroll with Ctrl or ⌘ (or pinch) to
+zoom, Fit to see everything, and double-click a workflow to open its steps. A click shows what a
+thing is beside the graph (under it, in a narrow panel), and Open opens it. Nothing drawn moves
+when more arrives. The List tab holds the same as a tree, "From this chat": a section per kind,
+each resource, its versions, and under a version the executions that ran it or the files it
+holds; what the chat worked from (what you attached, what its workflows read) is dimmed, and
+what a search only returned is not in it.
 
 **A chat with others.** Share a conversation like any resource and it is a group chat: an
 editor posts and takes turns, a viewer reads along. Their messages arrive as they are sent,

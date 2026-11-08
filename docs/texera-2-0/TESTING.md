@@ -122,6 +122,13 @@ workflow and its executions as cards with the arrows' words, then the file, the 
 ran and each result; a person the workflow is shared with, without its dataset, sees the graph
 once and steadily (it used to blink without end), the dataset drawn "Not shared with you".
 
+`graph.spec.ts`: the graph beside a chat, made the way the runtime makes it, in a turn, so no
+model is needed: a workflow over iris in the frame of its unit, one arrow for the read and one
+for each table, no arrow for a unit or a function, the plan's dataset dashed; nothing moves when
+a second workflow arrives; Detail shows the steps in order with each table level with its step,
+Overview only names, a double-click opens a workflow at its steps, and a click opens its details
+with its run (`test-results/resource-graph.png`, `resource-graph-detail.png`).
+
 `dock.spec.ts`, the agent beside a page: on the page of every kind (fourteen, made in a
 project of the test's or taken from the built-ins) the chat button opens a chat whose message
 tells the agent the kind, the name and the URI of what is on screen, in the project the
@@ -169,8 +176,9 @@ from what the other said under his name, while the other watches the answer arri
 own holds the team's onset-risk model (fitted by the scenarios' Python, `texera_e2e.diabetes`)
 and two of its operators; the researcher asks what there is, has the agent bring the public
 Pima cohort into a dataset, asks for the screening, picks Small on the agent's question card,
-and the graph shows the cohort, the model, the unit and the workflow, joined
-(`test-results/diabetes-ask.png`, `diabetes-graph.png`).
+and the graph shows the cohort read by the workflow, the model and the operators on its card,
+and the workflow in the frame of her unit; a double-click shows its steps, predict with the model
+among them (`test-results/diabetes-ask.png`, `diabetes-graph.png`, `diabetes-graph-steps.png`).
 `e2e/support.ts` holds what the files share: signing in, the API caller, a page of every kind,
 and the tidying up each scenario owes the stack.
 

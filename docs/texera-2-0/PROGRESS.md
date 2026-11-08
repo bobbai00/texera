@@ -2,6 +2,60 @@
 
 Newest first. Each entry: what was done, how it was verified, what is next.
 
+## 2026-11-08 (session 15, part 7): the resource graph redrawn, with zoom
+
+The user found the graph beside a chat not nice to look at, inconsistent, and without the first
+design's zoom for details. A review page with a prototype on this machine's real chats (an
+Artifact) named what was wrong: every resource the same circle, so a workflow looked like the
+function it calls; what a workflow uses stacked in one column with one line through it, reading
+as a chain; labels under lines; bands that said the wrong thing; tables named by step ids and
+"1 rows"; no zoom or fit; a planned rerun dashed for good; a function the chat had not touched
+left out; what the chat worked from drawn at 75%. The revision of the design had dropped the
+zoom levels to keep it simple, which took away the way to see more. The user said go ahead.
+
+- **The endpoint** (`ec5884c6a`, `f12d4e539`): a workflow's node carries the steps of the
+  version it shows, each after what it reads; a table the step that made it; every node its
+  description and the turn that made it; a unit its phase, whether or not anything ran on it.
+  What a workflow's version names is drawn whoever touched it: the function a run calls though
+  the chat never touched it (Odds ratio was missing), and for a workflow not run yet the data it
+  will read and its default unit. Workflows come in the order the chat first made or ran them.
+  Only the latest plan counts: an item is made by a thing of its kind and name, else of its kind
+  made in or after the plan's turn, and a run by a run started then.
+- **The view** (`c503f1560`): arrows only for data (reads, makes), straight or with one rounded
+  elbow; a workflow is the one strong card with its models and functions as chips; a unit the
+  frame around what ran on it; a dataset a capsule, a table a small tile; columns Inputs, Work,
+  Results; dashed means planned, a dot what the chat made. Three zoom levels at their own type
+  size: Overview (names), Standard (versions, rows, last run, chips), Detail (each workflow's
+  steps, the file a step read and the table it made level with it). Drag, Ctrl/⌘-scroll or pinch,
+  Fit; a double-click opens a workflow at its steps; details beside the graph, or a sheet under
+  it in a narrow panel. A row per workflow in the chat's order, so nothing drawn moves when more
+  arrives, and a graph framed for its three columns before it has them. Models are violet, the
+  hue of model endpoints, apart from data's green.
+
+Found on the way: a double-click on a workflow did nothing at Overview in a 1280 px window,
+since the first click opened the details beside the graph and the second landed on them; a click
+now waits for a double-click, and a narrow panel opens the details under the graph. A graph
+framed when the plan opened it (the cohort alone) let the workflow column run off its right edge.
+
+Verified on the dev stack: the catalog's suite (a new test: steps, a function no one in the chat
+touched, a workflow not run yet with its default unit, the order, the latest plan, a made unit's
+phase); the app's 320 tests (the view, its layout with no overlap whatever the plan, the steps'
+rows), tsc and Biome; the scenarios, 54 passed; Playwright without the model, 64 passed and 6
+skipped (graph.spec rewritten: the frame, data-only arrows, the levels, a table level with its
+step, nothing moving); the diabetes use case through the real model as a scenario (79 s) and in
+the app (1.2 min, with the graph and the workflow's steps screenshotted). Kind: `k8s.sh check`
+green, 57 scenarios and Playwright 64 passed, 6 skipped; the diabetes scenario (95 s) and the
+diabetes and graph browser tests on the cluster (1.7 min), the Small unit a pod. GitHub's release
+downloads answered 504 during the rebuild, so the computing unit's image (untouched by this
+work) kept its build of the morning: the catalog, runtime, live, frontend and bio-mcp images
+were rebuilt and rolled with `k8s.sh up --no-build`.
+
+Not done: the lineage tab still draws lineage its own way (cards on a dotted grid, its own
+Compact and Resources/Data flow switches). Making it this view centred on one resource is next;
+it also shows references between agents, skills, profiles and units, which the data-flow layout
+does not cover yet. The design doc (Claude Doc) lives in another organization than this
+session's, so it was not updated.
+
 ## 2026-11-07 (session 15, part 6): the diabetes screening use case
 
 The user asked for a diabetes research use case, not too complicated, with models and the

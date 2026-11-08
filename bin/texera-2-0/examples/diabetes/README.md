@@ -93,8 +93,10 @@ calibration operators):
 4. Pick **Small** on the question's card. The agent makes a unit from Small (on a cluster a pod
    of 2 CPUs and 4 GB, on Compose the deployment's own unit with Small's packages), builds the
    workflow (the cohort, `predict` with the model, the two operators), runs it on that unit and
-   reports. The graph left of the chat shows the Pima cohort and the model going into the
-   workflow with the team's operators, and the workflow running on the Small unit.
+   reports. The graph left of the chat shows the Pima cohort read by the workflow, the model and
+   the team's operators on the workflow's card, the workflow inside the Small unit's frame, and
+   the two tables it made. Double-click the workflow to see its steps, each table level with the
+   step that made it.
 
 The model scores the women it was fitted on, so its card calls the AUC optimistic, and so should
 the agent. The profiles pin scikit-learn to the version the models are fitted with (1.7.2): a
