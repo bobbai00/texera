@@ -184,8 +184,13 @@ func newFakeUnit(t *testing.T) *fakeUnit {
 			Packages []string `json:"packages"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		// A package pinned is installed at its pin; any other at 1.0.
 		installed := []string{"joblib==1.0"}
 		for _, p := range req.Packages {
+			if strings.Contains(p, "==") {
+				installed = append(installed, strings.TrimSpace(p))
+				continue
+			}
 			installed = append(installed, strings.TrimSpace(strings.SplitN(p, ">", 2)[0])+"==1.0")
 		}
 		writeJSON(w, map[string]any{"key": req.Key, "status": "ready", "installed": installed})

@@ -47,7 +47,7 @@ set calibration: aggregate(scored, by=["predicted"], outputs=["n = count(*)", "o
 - `model` names the model by its name, at the newest version or the one `@n` pins, or by its URI with `@version`. The answer's lines show the URI at the version used, and the execution records that it used that version.
 - The input must have every column the model reads, by its exact name, and numbers where it reads numbers. A mismatch is an error on the line before anything runs: rename with `project`, or convert in `compute`. A missing value is passed to the model as it is, and many models refuse one: filter the rows first, or fill them in a `compute`, and say which you did.
 - The outputs are added to every row; for a grouped model, the output is one row per group, its keys then its outputs, and the line needs `by`.
-- A model whose `needs` names a GPU or much memory should run on a unit that has it: the `computing-units` skill says how to ask.
+- Before a model's first run in a chat, ask where it runs, unless the person already said: the deployment's unit, or a unit of their own from a profile (the `computing-units` skill, Ask first). A model whose `needs` names a GPU or much memory should run on a unit that has it.
 
 ## Check what it says
 

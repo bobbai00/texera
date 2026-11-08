@@ -101,7 +101,7 @@ func TestRunInThreePhases(t *testing.T) {
 	if c := execSpec.Computing; c == nil || c.Profile == nil || !strings.Contains(string(*c.Profile), "/profiles/") || !strings.HasSuffix(string(*c.Profile), "@1") {
 		t.Fatalf("the execution names the profile its unit was made from: %+v", execSpec.Computing)
 	}
-	if got := strings.Join(*execSpec.Computing.Packages, ","); got != "numpy==1.0,pandas==1.0,scikit-learn==1.0" {
+	if got := strings.Join(*execSpec.Computing.Packages, ","); got != "numpy==1.0,pandas==1.0,scikit-learn==1.7.2" {
 		t.Fatalf("the packages it ran with, as installed: %s", got)
 	}
 	var unit envelope

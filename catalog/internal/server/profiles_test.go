@@ -68,7 +68,7 @@ func TestAUnitIsSavedAsAProfile(t *testing.T) {
 	h.mustJSON("alice", "POST", p+"/computing-units/"+unitRID+"/profile", map[string]any{"name": "like the deployment's"}, &mine)
 	var saved api.ProfileSpec
 	mustDecode(t, mine.Spec, &saved)
-	if saved.Packages == nil || strings.Join(*saved.Packages, ",") != "numpy==1.0,pandas==1.0,scikit-learn==1.0" {
+	if saved.Packages == nil || strings.Join(*saved.Packages, ",") != "numpy==1.0,pandas==1.0,scikit-learn==1.7.2" {
 		t.Fatalf("the packages are saved pinned: %+v", saved.Packages)
 	}
 	// A new profile needs a name.

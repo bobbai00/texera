@@ -145,18 +145,22 @@ func (s *Service) Seed(ctx context.Context) error {
 		return uriPtr(URI(r).String())
 	}
 
+	// scikit-learn is pinned: a model saved with joblib loads only in a scikit-learn close to the
+	// one it was fitted with (one fitted with 1.7 does not load in 1.9), so every unit the release
+	// makes runs the one the teams fit their models with, which the dev stack's Python has too.
+	const fitsModels = "scikit-learn==1.7.2"
 	// The profile the deployment's unit is made from: a node of 2 GB with the Python libraries
 	// most analyses use.
-	memory, packages := "2Gi", []string{"pandas", "numpy", "scikit-learn"}
+	memory, packages := "2Gi", []string{"pandas", "numpy", fitsModels}
 	profile, err := ship("profile", "python-default", "2 GB with pandas, numpy and scikit-learn", api.ProfileSpec{Memory: &memory, Packages: &packages}, nil)
 	if err != nil {
 		return err
 	}
 
 	// The ladder the agent offers: sizes for data work, and for models on CPU or on a GPU.
-	// Each says, when read, whether this deployment can start it: Compose starts no unit from
-	// a profile, and a cluster without GPUs no GPU unit.
-	data := []string{"pandas", "numpy", "pyarrow", "scipy", "scikit-learn", "statsmodels"}
+	// Each says, when read, whether this deployment can start it: a cluster without GPUs starts
+	// no GPU unit, and on Compose a unit from a profile is the deployment's own unit.
+	data := []string{"pandas", "numpy", "pyarrow", "scipy", fitsModels, "statsmodels"}
 	ml := append(append([]string{}, data...), "torch", "xgboost", "onnxruntime")
 	for _, rung := range []struct {
 		name, description, cpu, memory string
