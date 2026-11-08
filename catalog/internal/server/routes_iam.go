@@ -72,6 +72,18 @@ func (s *Server) routeIAM() {
 		writeJSON(w, http.StatusOK, out)
 		return nil
 	})
+	s.handle("GET "+Prefix+"/projects/{rid}/inheritors", func(w http.ResponseWriter, r *http.Request) error {
+		rid, err := ridParam(r, "rid")
+		if err != nil {
+			return err
+		}
+		out, err := s.svc.Inheritors(ctxOf(r), callerOf(r), rid)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, out)
+		return nil
+	})
 	s.handle("GET "+Prefix+"/projects/{rid}/settings", func(w http.ResponseWriter, r *http.Request) error {
 		rid, err := ridParam(r, "rid")
 		if err != nil {

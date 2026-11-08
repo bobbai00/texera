@@ -130,6 +130,12 @@ namespace Routes {
     })
     settings(@path rid: Rid): ProjectSettings | Error;
 
+    @doc("The projects that inherit from this one, for its admins, who may send any of them back to Texera. Every project inherits from Texera unless it inherits from another, so Texera lists none: 400.")
+    @get
+    @route("/{rid}/inheritors")
+    @extension("x-texera-permission", "admin")
+    inheritors(@path rid: Rid): ProjectRef[] | Error;
+
     @doc("What a turn of a new chat in this project runs with, for the caller.")
     @get
     @route("/{rid}/chat-settings")

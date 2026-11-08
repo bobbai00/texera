@@ -5876,6 +5876,33 @@ export type ProjectsChatSettingsResponses = {
 
 export type ProjectsChatSettingsResponse = ProjectsChatSettingsResponses[keyof ProjectsChatSettingsResponses];
 
+export type ProjectsInheritorsData = {
+    body?: never;
+    path: {
+        rid: Rid;
+    };
+    query?: never;
+    url: '/catalog/v1/projects/{rid}/inheritors';
+};
+
+export type ProjectsInheritorsErrors = {
+    /**
+     * An unexpected error response.
+     */
+    default: Error;
+};
+
+export type ProjectsInheritorsError = ProjectsInheritorsErrors[keyof ProjectsInheritorsErrors];
+
+export type ProjectsInheritorsResponses = {
+    /**
+     * The request has succeeded.
+     */
+    200: Array<ProjectRef>;
+};
+
+export type ProjectsInheritorsResponse = ProjectsInheritorsResponses[keyof ProjectsInheritorsResponses];
+
 export type ProjectsSettingsData = {
     body?: never;
     path: {

@@ -80,6 +80,7 @@ var Permissions = map[string]string{
 	"GET /catalog/v1/projects":                                                                    "list",
 	"GET /catalog/v1/projects/{rid}":                                                              "read",
 	"GET /catalog/v1/projects/{rid}/chat-settings":                                                "read",
+	"GET /catalog/v1/projects/{rid}/inheritors":                                                   "admin",
 	"GET /catalog/v1/projects/{rid}/settings":                                                     "read",
 	"GET /catalog/v1/public":                                                                      "public",
 	"GET /catalog/v1/resources":                                                                   "list",

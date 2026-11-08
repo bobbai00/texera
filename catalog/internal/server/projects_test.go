@@ -209,6 +209,15 @@ func TestAProjectInheritsWhatItsBaseHolds(t *testing.T) {
 	refused(t, h, "bob", "PUT", "/projects/"+rid(study), map[string]any{"spec": map[string]any{"branding": map[string]any{"name": "Bob's"}}}, http.StatusForbidden, "forbidden")
 	refused(t, h, "bob", "PATCH", "/resources/"+rid(study), map[string]any{"name": "Bob's"}, http.StatusForbidden, "forbidden")
 
+	// The lab's admins see what inherits from it, by name; nobody else does, and Texera lists none.
+	var inheritors []api.ProjectRef
+	h.mustJSON("admin", "GET", p+"/projects/"+rid(lab)+"/inheritors", nil, &inheritors)
+	if len(inheritors) != 1 || inheritors[0].Rid != study.Metadata.Rid || inheritors[0].Name != "study" {
+		t.Fatalf("the lab's inheritors: %+v", inheritors)
+	}
+	refused(t, h, "bob", "GET", "/projects/"+rid(lab)+"/inheritors", nil, http.StatusForbidden, "forbidden")
+	refused(t, h, "admin", "GET", "/projects/"+string(me(h, "admin").RootProject)+"/inheritors", nil, http.StatusBadRequest, "invalid")
+
 	// The lab's admin gets nothing in the study.
 	h.mustJSON("admin", "DELETE", p+"/resources/"+rid(lab)+"/grants/"+alice, nil, nil)
 	refused(t, h, "admin", "GET", "/projects/"+rid(study), nil, http.StatusForbidden, "forbidden")
@@ -228,6 +237,10 @@ func TestAProjectInheritsWhatItsBaseHolds(t *testing.T) {
 	}
 	if !list(h, "bob", "/skills?limit=200")["bob's notes"] {
 		t.Fatal("what is in the study stays its own")
+	}
+	h.mustJSON("admin", "GET", p+"/projects/"+rid(lab)+"/inheritors", nil, &inheritors)
+	if len(inheritors) != 0 {
+		t.Fatalf("the lab's inheritors after the study left: %+v", inheritors)
 	}
 }
 

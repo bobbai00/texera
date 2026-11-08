@@ -325,6 +325,30 @@ func keepIdentityLabels(current, requested map[string]string) map[string]string 
 	return out
 }
 
+// Inheritors lists, for a project's admins, the projects that inherit from it: they let them in,
+// and they may send any back to Texera. They see each by name whether or not they may open it.
+func (s *Service) Inheritors(ctx context.Context, caller *auth.Caller, rid uuid.UUID) ([]api.ProjectRef, error) {
+	r, err := s.Get(ctx, caller, &projectKind, rid)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.require(ctx, caller, authz.Admin, r.RID); err != nil {
+		return nil, err
+	}
+	if s.isRoot(r) {
+		return nil, Invalid("every project inherits from Texera unless it inherits from another: Texera lists none", nil)
+	}
+	inheritors, err := s.Store.Inheritors(ctx, r.RID, 500)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.ProjectRef, 0, len(inheritors))
+	for i := range inheritors {
+		out = append(out, api.ProjectRef{Rid: api.Rid(inheritors[i].RID.String()), Name: inheritors[i].Name})
+	}
+	return out, nil
+}
+
 // beforeDeleteProject refuses to delete a project another inherits from: its people would lose
 // what it gives them.
 func (s *Service) beforeDeleteProject(ctx context.Context, r *store.Resource) error {

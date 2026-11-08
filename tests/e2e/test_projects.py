@@ -81,12 +81,21 @@ def test_a_project_inherits_what_its_base_holds(alice, bob, admin, run_id):
         assert bob.status("PUT", f"/skills/{skill}", {"spec": {**SKILL, "body": "mine"}}) == 403
         assert bob.status("PUT", f"/projects/{study}", {"spec": {"branding": {"name": "Bob's"}}}) == 403, "a member works in a project; its admins change it"
         assert [p["name"] for p in bob.settings(study)["chain"]][:2] == [f"e2e study {run_id}", f"e2e lab {run_id}"]
+        # The lab's admins see by name what inherits from it; a member of the study does not.
+        assert [p["name"] for p in admin.get(f"/projects/{lab}/inheritors")] == [f"e2e study {run_id}"]
+        assert bob.status("GET", f"/projects/{lab}/inheritors") == 403
+        assert admin.status("GET", f"/projects/{admin.root()}/inheritors") == 400, "every project inherits from Texera"
+        # A study's admin changes a person's role in place: bob, a member, becomes a viewer.
+        alice.grant(study, bob.pid(), "viewer")
+        assert bob.status("POST", "/skills", {"name": "not his", "parent": study, "spec": SKILL}) == 403
+        alice.grant(study, bob.pid(), "editor")
         # The lab's admin gets nothing in the study, and may send it back to Texera.
         admin.revoke(lab, alice.pid())
         assert admin.status("GET", f"/projects/{study}") == 403
         admin.call("PATCH", f"/resources/{study}", {"base": admin.root()})
         assert bob.status("GET", f"/skills/{skill}") == 403, "what the study no longer inherits"
         assert alice.get(f"/projects/{study}")["metadata"]["base"] == alice.root()
+        assert admin.get(f"/projects/{lab}/inheritors") == []
     finally:
         if study:
             alice.call("DELETE", f"/projects/{study}")

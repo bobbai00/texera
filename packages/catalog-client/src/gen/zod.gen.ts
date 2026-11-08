@@ -3098,6 +3098,15 @@ export const zProjectsChatSettingsPath = z.object({
  */
 export const zProjectsChatSettingsResponse = zChatSettings;
 
+export const zProjectsInheritorsPath = z.object({
+    rid: zRid
+});
+
+/**
+ * The request has succeeded.
+ */
+export const zProjectsInheritorsResponse = z.array(zProjectRef);
+
 export const zProjectsSettingsPath = z.object({
     rid: zRid
 });
