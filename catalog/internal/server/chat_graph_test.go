@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/apache/texera/catalog/internal/adapters/staticunit"
+	"github.com/apache/texera/catalog/internal/adapters/unitmux"
 	"github.com/apache/texera/catalog/internal/api"
 )
 
@@ -241,6 +243,23 @@ func TestAChatsGraphShowsStepsWhatWorkflowsNameAndTheLatestPlan(t *testing.T) {
 	}
 	if got := plannedNames(graph); strings.Join(got, ",") != "Later" {
 		t.Fatalf("only the latest plan counts: %v", got)
+	}
+
+	// A unit the chat makes says how it stands, as one it ran on does.
+	h.svc.Units = unitmux.Mux{api.UnitProviderStatic: staticunit.Provider{}}
+	h.svc.Config.ProfileUnits = api.UnitProviderStatic
+	var profiles api.ResourcePage
+	h.mustJSON("alice", "GET", p+"/profiles?limit=50", nil, &profiles)
+	var small envelope
+	for _, it := range profiles.Items {
+		if it.Metadata.Name == "Small" {
+			small = it
+		}
+	}
+	h.mustJSON("alice", "POST", p+"/computing-units/from-profile", map[string]any{"name": "screening unit", "profile": small.Metadata.Uri, "waitSeconds": 5}, nil, in2...)
+	_, nodes, _ = graphOf()
+	if u := nodes["unit screening unit"]; !u.Made || u.Turn == nil || *u.Turn != t2 || u.State == nil || *u.State == "" {
+		t.Fatalf("the unit the chat made, with how it stands: %+v", u)
 	}
 }
 
