@@ -82,12 +82,25 @@ Then everyone in a project sees its people: a project's grants are listed for wh
 while changing them stays its admins' (anything else's grants stay its sharers'); the People tab
 shows a member or a viewer the list and the roles, and nothing to change. The catalog's suite, the
 app's tests, the scenarios and the Playwright tests of projects and sharing passed on the dev stack.
-Then the machine's disk filled (99%, 4 GB left of 281 GB, most of it Docker's build cache and old
-images, shared with other stacks): the kind redeploy stopped loading an image (`no space left on
-device`), so the cluster still runs the step before, and Chrome on the dev stack began to fail its
-page loads (`ERR_INSUFFICIENT_RESOURCES`, blank pages in the long sharing test, the code before this
-step included). Both wait for space; this session removed only its own leftovers (a 3 GB image
-tarball of an interrupted load, its Go build cache).
+Then the machine's disk filled (99%, 4 GB left of 281 GB, most of it Docker's build cache, shared
+with other stacks): the kind redeploy stopped loading an image (`no space left on device`), and
+Chrome on the dev stack began to fail its page loads (`ERR_INSUFFICIENT_RESOURCES`, blank pages in
+the long sharing test). This session removed its own leftovers (a 3 GB image tarball of an
+interrupted load, its Go build cache), and with the user's approval Docker's build cache went
+(`docker builder prune -af`, 79 GB back; no image or container). The first Playwright run after
+it timed out once at sign-in, on the first page load (the dock test, then 5 in 5 alone).
+
+On the way the dev stack's live log turned out to hold 295 MB from a day of tests: a workflow
+deleted while it was open kept its room, since the last save on leaving got a 404 and the room
+tried again every 15 seconds, for good, with a warning and a stack trace each time (213 rooms).
+The live service sees every resource, so a 404 now means the workflow is gone: its document is
+let go and not tried again (`live/src/rooms.ts`; the fake catalog deletes as the real one does,
+and two tests cover an open workflow deleted with and without edits not saved yet). The cluster's
+live pod had the same leak.
+
+Then, with all of it: dev stack, the scenarios 51 passed and Playwright 64 passed, 5 skipped, the
+live log 7 KB after both (19 workflows let go once each); kind, redeployed, `k8s.sh check` green,
+55 scenarios and Playwright 64 passed, 5 skipped, its live pod's log the same.
 
 ## 2026-11-07 (session 15, part 4): nobody writes the engine's classes
 
